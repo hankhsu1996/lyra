@@ -273,6 +273,12 @@ Rules:
         Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
         include/lyra/lowering/ast_to_hir.
 
+  A028  The conformance suite is no part of Lyra. A simulator is held to the
+        corpus by building the suite's runner alone, so nothing in the suite
+        includes a Lyra header or Lyra's test framework, and no build file of
+        it names a target outside it.
+        Scope: conformance/.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -1332,6 +1338,44 @@ def check_a027(repo_root: Path) -> list[str]:
     return errors
 
 
+# Rule A028
+SUITE_ROOT = "conformance"
+A028_INCLUDE_PATTERN = re.compile(r'#\s*include\s*"(?:lyra/|tests/)')
+# A label of the main repository outside the suite.
+A028_LABEL_PATTERN = re.compile(r'"(//(?!conformance[/:"])[^"]*)"')
+# A load names the macros a build file is written with and a visibility names
+# who may use a target; neither is something the runner is built from.
+A028_NOT_A_DEPENDENCY_PATTERN = re.compile(r'^\s*(?:load\(|visibility\s*=)')
+
+
+def a028_label_violations(text: str) -> list[tuple[int, str]]:
+    found = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if A028_NOT_A_DEPENDENCY_PATTERN.match(line):
+            continue
+        for label in A028_LABEL_PATTERN.findall(line.split("#", 1)[0]):
+            found.append((lineno, label))
+    return found
+
+
+def check_a028(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_files(repo_root, SUITE_ROOT):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if A028_INCLUDE_PATTERN.search(strip_comment(line)):
+                errors.append(
+                    f"  {rel}:{lineno}: A028 the conformance suite includes "
+                    f"part of Lyra, so a simulator could not be held to the "
+                    f"corpus without building it")
+    for build in sorted((repo_root / SUITE_ROOT).rglob("BUILD.bazel")):
+        rel = build.relative_to(repo_root)
+        for lineno, label in a028_label_violations(build.read_text()):
+            errors.append(
+                f"  {rel}:{lineno}: A028 the conformance suite depends on "
+                f"{label}, which is part of Lyra")
+    return errors
+
+
 # Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
@@ -1905,6 +1949,28 @@ def run_self_tests() -> bool:
         not A027_PATTERN.search("  auto t = InternExpressionType(sel, span);"),
         "A027 the deciding function is clean")
 
+    # A028
+    ok &= expect(
+        A028_INCLUDE_PATTERN.search('#include "lyra/base/overloaded.hpp"'),
+        "A028 a Lyra header in the suite is reported")
+    ok &= expect(
+        A028_INCLUDE_PATTERN.search('#include "tests/framework/cli_fixture.hpp"'),
+        "A028 Lyra's test framework in the suite is reported")
+    ok &= expect(
+        not A028_INCLUDE_PATTERN.search(
+            '#include "conformance/framework/process.hpp"'),
+        "A028 the suite's own header is clean")
+    ok &= expect(
+        a028_label_violations('    deps = ["//:driver"],') == [(1, "//:driver")],
+        "A028 a Lyra library in the suite's build is reported")
+    ok &= expect(
+        not a028_label_violations(
+            '    data = ["//conformance:corpus"],\n'
+            '    deps = [":reader", "//conformance/framework:process", "@fmt"],\n'
+            'load("//tools/bazel:copts.bzl", "LYRA_COPTS")\n'
+            '    visibility = ["//tests:__subpackages__"],'),
+        "A028 the suite's own targets, a load and a visibility are clean")
+
     return ok
 
 
@@ -1938,6 +2004,7 @@ CHECKS = [
     ("A025 HIR equality not derived exactly", check_a025),
     ("A026 front end's own fold read", check_a026),
     ("A027 expression type interned directly", check_a027),
+    ("A028 conformance suite depends on Lyra", check_a028),
 ]
 
 

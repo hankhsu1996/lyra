@@ -1451,21 +1451,18 @@ enough to warrant its own focused review.
       declarations have to another's, and a cycle in those edges has no target-language form and is
       refused.
 
-- [ ] R94 -- A choice the standard leaves open is pinned by a conformance case, which is the one
-      thing that corpus says a case may not do: a case states what the standard requires, so it is
-      valid under any conforming simulator. The order two packages' variable initializers run in is
-      such a choice -- IEEE 1800 states the barrier four times (6.7.3, 6.8, 10.5, 26.2) and an order
-      nowhere -- and a case checks the value that only one order produces. It is not the only one of
-      its kind; a pass over the corpus asking "would a conforming simulator be free to answer
-      otherwise" is what finds the rest.
+- [x] R94 -- A choice the standard leaves open is held by a case of its own that only Lyra runs, in
+      `tests/choices/`, beside the corpus and in its shape, so the corpus states only what the
+      standard requires and is valid under any conforming simulator. The order two packages'
+      variable initializers run in is such a choice -- IEEE 1800 states the barrier four times
+      (6.7.3, 6.8, 10.5, 26.2) and an order nowhere -- and its case lives there. A check over the
+      whole corpus finds every static initializer that reads another one's value, so no case pins
+      that order again unless every order gives the answer it checks.
 
-      What makes this hard to simply delete is that the behaviour is deliberate and worth guarding:
-      an initializer reading another package's variable sees that package's value, which is what
-      every established simulator answers. Removing the case loses the only thing standing between
-      that and a silent regression. **Target shape**: somewhere for a case that pins a choice of
-      ours, kept apart from the corpus that answers to the standard, so neither has to carry the
-      other's contract. Until there is one, such a case says in its own text which of the two it
-      is.
+      It used to be a conformance case: the corpus pinned one order, the behaviour was deliberate
+      and worth guarding, and deleting the case would have lost the only guard on it. The shape that
+      resolved it was a corpus of Lyra's own choices beside the one that answers to the standard,
+      so neither carries the other's contract.
 
 - [ ] R95 -- A body a unit's namespace owns takes no LIR function identity, so a call to one inside
       the very unit that defines it is lowered as a reach for a linker symbol rather than as a call

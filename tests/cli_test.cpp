@@ -32,22 +32,23 @@
 #include <variant>
 #include <vector>
 
+#include "conformance/framework/process.hpp"
+#include "conformance/framework/process_matchers.hpp"
 #include "lyra/driver/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
-#include "tests/framework/process.hpp"
 
 namespace {
 
-using lyra::test::Describe;
-using lyra::test::ExitedWithCode;
-using lyra::test::MakeScratchDir;
+using conformance::framework::Describe;
+using conformance::framework::ExitedWithCode;
+using conformance::framework::MakeScratchDir;
+using conformance::framework::RunChildProcess;
+using conformance::framework::RunShellScript;
+using conformance::framework::RunUnderAddressLimit;
+using conformance::framework::TimedOut;
 using lyra::test::ReadJson;
 using lyra::test::ResolveLyra;
-using lyra::test::RunChildProcess;
 using lyra::test::RunLyraFrom;
-using lyra::test::RunShellScript;
-using lyra::test::RunUnderAddressLimit;
-using lyra::test::TimedOut;
 using lyra::test::WriteTrivialSource;
 using testing::Ne;
 
@@ -2835,7 +2836,7 @@ auto WriteCompilerThatNeverFinishes(
 // What a build that was ended from outside left, and whether the tool it had
 // started was still running a few seconds on.
 struct EndedBuild {
-  lyra::test::ProcessOutcome outcome;
+  conformance::framework::ProcessOutcome outcome;
   std::size_t left_in_temporary = 0;
   std::size_t left_beside_the_program = 0;
 };

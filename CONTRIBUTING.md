@@ -75,9 +75,10 @@ clang-tidy -p . <files>
 
 ## Tests
 
-Tests live in `tests/conformance/`, one directory per case entered through `main.sv`.
-`tests/conformance/README.md` states what a case may claim and how to add one. CI runs
-`bazel test //...`; do the same locally before submitting.
+Most tests are cases of the conformance suite in `conformance/`, one directory per case under
+`conformance/cases/`, entered through `main.sv`. `conformance/README.md` states what a case may
+claim and how to add one, and `tests/paths/README.md` how Lyra records what it currently answers. CI
+runs `bazel test //...`; do the same locally before submitting.
 
 ```bash
 bazel test //... --test_output=errors

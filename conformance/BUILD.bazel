@@ -1,0 +1,37 @@
+# The conformance suite: cases stating what IEEE 1800 requires of any
+# simulator, the helpers they include, the checks of those helpers, and in its
+# packages the judgement and a reader per tool. Nothing here is any part of
+# Lyra; Lyra is one tool held to it, and `tools/policy/check_architecture.py`
+# (A028) keeps the dependency running one way.
+
+# The cases and the helpers they include, as data, for any runner.
+filegroup(
+    name = "corpus",
+    srcs = glob(
+        [
+            "cases/**/*.sv",
+            "cases/**/*.c",
+            "cases/**/*.cpp",
+            "cases/**/expected/*",
+            "cases/**/lib.map",
+            "harness/*.sv",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+# Cases of the same shape that check the suite's own helpers rather than a
+# requirement of the standard: every tool runs them, and none counts toward
+# what a tool conforms to.
+filegroup(
+    name = "selftest",
+    srcs = glob(
+        [
+            "selftest/**/*.sv",
+            "selftest/**/expected/*",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)

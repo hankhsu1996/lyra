@@ -8,10 +8,10 @@ all output. Revised 2026-10-28: a case asks for at most one report the run may e
 
 A conformance case checks itself in SystemVerilog, and the judgement reads whether the sentinel was
 printed and how the run ended. That shape is what makes a case portable and its oracle independent,
-and it is settled in [conformance-case-shape](conformance-case-shape.md). It also has a boundary:
-IEEE 1800 states requirements whose entire content is that a tool issues -- or does not issue -- a
-report, and a program cannot read a message about itself. Such a requirement moves neither signal,
-so a case for it passes whatever the implementation does.
+and it is settled in [case-shape](case-shape.md). It also has a boundary: IEEE 1800 states
+requirements whose entire content is that a tool issues -- or does not issue -- a report, and a
+program cannot read a message about itself. Such a requirement moves neither signal, so a case for
+it passes whatever the implementation does.
 
 The boundary is not hypothetical and it is not narrow. LRM 12.4.2 and 12.5.3 require a violation
 report when a `unique` or `priority` statement matches nothing, and forbid one when an explicit
@@ -141,9 +141,9 @@ does wherever the line ties the report to its statement.
 ## What this does not become
 
 The directive states a claim about a report; it is not a golden-output mechanism and does not grow
-into one. `conformance-case-shape` D6 reserves recorded output for the cases whose subject is the
-output channel itself -- how stdout and stderr divide, and the order output interleaves -- and that
-stays the only place a case is compared against text a tool wrote.
+into one. `case-shape` D6 reserves recorded output for the cases whose subject is the output channel
+itself -- how stdout and stderr divide, and the order output interleaves -- and that stays the only
+place a case is compared against text a tool wrote.
 
 ## Rejected alternatives
 
@@ -184,8 +184,7 @@ stays the only place a case is compared against text a tool wrote.
 
 ## Cross-references
 
-- [conformance-case-shape](conformance-case-shape.md) -- the shape this extends, and the judgement
-  every claim is read by.
-- [qualified-statement-violation-check](qualified-statement-violation-check.md) -- the requirement
-  that forced this, and what the corpus could not see about it.
-- `../../tests/conformance/README.md` -- the contract cases are written against.
+- [case-shape](case-shape.md) -- the shape this extends, and the judgement every claim is read by.
+- `../../../docs/decisions/qualified-statement-violation-check.md` -- the requirement that forced
+  this, and what the corpus could not see about it.
+- `../../README.md` -- the contract cases are written against.

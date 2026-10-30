@@ -29,18 +29,18 @@
 #include <utility>
 #include <vector>
 
+#include "conformance/framework/process.hpp"
 #include "tests/framework/cli_fixture.hpp"
 #include "tests/framework/held_record.hpp"
-#include "tests/framework/process.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 using bazel::tools::cpp::runfiles::Runfiles;
-using lyra::test::ExitCodeOf;
+using conformance::framework::ExitCodeOf;
+using conformance::framework::MakeScratchDir;
+using conformance::framework::RunChildProcess;
 using lyra::test::HoldToRecord;
 using lyra::test::LoadByName;
-using lyra::test::MakeScratchDir;
 using lyra::test::ReadJson;
-using lyra::test::RunChildProcess;
 
 namespace {
 

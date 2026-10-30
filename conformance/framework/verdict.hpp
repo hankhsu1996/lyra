@@ -3,10 +3,10 @@
 #include <string>
 #include <variant>
 
-#include "conformance_case.hpp"
-#include "conformance_observation.hpp"
+#include "conformance/framework/case.hpp"
+#include "conformance/framework/observation.hpp"
 
-namespace lyra::test {
+namespace conformance::framework {
 
 // What one run says of one tool against one requirement. A tool that cannot be
 // asked for what the case needs, or a harness that could not run it, has not
@@ -34,10 +34,10 @@ auto Judge(const Claim& claim, const Observation& observation) -> Verdict;
 // The verdict a whole case gets: its claim's, and where that conforms, each
 // file the case expects compared with the one the run left, as the standard
 // reads that kind of file. A file the run did not write does not conform.
-auto JudgeCase(const ConformanceCase& test_case, const Observation& observation)
+auto JudgeCase(const Case& test_case, const Observation& observation)
     -> Verdict;
 
 // The verdict in words: "conforms", "does not conform: ...".
 auto Describe(const Verdict& verdict) -> std::string;
 
-}  // namespace lyra::test
+}  // namespace conformance::framework

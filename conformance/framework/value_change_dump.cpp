@@ -1,4 +1,4 @@
-#include "value_change_dump.hpp"
+#include "conformance/framework/value_change_dump.hpp"
 
 #include <algorithm>
 #include <array>
@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-namespace lyra::test {
+namespace conformance::framework {
 namespace {
 
 auto Tokens(std::string_view text) -> std::vector<std::string_view> {
@@ -491,4 +491,4 @@ auto DumpDifference(std::string_view expected, std::string_view written)
   return Difference(*want, *got);
 }
 
-}  // namespace lyra::test
+}  // namespace conformance::framework

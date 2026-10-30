@@ -1,15 +1,27 @@
-# The conformance corpus
+# The conformance suite
 
 Every case here answers one question: does a tool implement IEEE 1800 correctly? A case states what
 the standard requires of a program and checks itself against it, so it is valid under any conforming
-simulator and says nothing about Lyra. Lyra is held to the corpus, and so is any other tool someone
-writes a reader for; the first half of this file is what a case is, and the second is how Lyra holds
-itself to it.
+simulator and says nothing about any one tool. Any tool someone writes a reader for is held to it,
+Lyra among them. This directory is no part of Lyra, and builds none of it, so a simulator is held to
+the suite without building Lyra:
+
+```
+cases/<clause>/<subject>/   what IEEE 1800 requires, one case a directory
+harness/                    SystemVerilog helpers a case includes by name
+selftest/                   cases that check those helpers, run by every tool, counted toward none
+framework/                  what a case is, what a tool was seen to do, the verdict; running a child
+adapters/<tool>/            a reader per tool: how to ask it to run a case, how to read what it wrote
+runner/                     a program that holds a tool to the whole suite
+docs/decisions/             why the suite has this shape
+```
+
+How Lyra records what it answers is Lyra's, in `../tests/paths/README.md`.
 
 ## A case is a directory, entered through `main.sv`
 
 ```
-tests/conformance/09_processes/always_comb_combinational_value/main.sv
+cases/09_processes/always_comb_combinational_value/main.sv
 ```
 
 ```systemverilog
@@ -46,9 +58,9 @@ Six rules follow from that shape:
   not fix, a value it leaves open within a set -- the case accepts each of them: it sorts what a
   locator returns before reading it, accepts either neighbour a narrower format rounds to, keeps
   only checks that every order of its processes passes. A case that pins one is testing a tool's
-  choice, and that is not a case here (see [Lyra's choices](#lyras-choices)). Where two clauses give
-  one text different meanings, the case keeps what both require, and the dispute is a ruling in
-  `docs/architecture/language_conformance.md`.
+  choice, and that is not a case here (a tool that wants its own choice held keeps such a case
+  itself, as Lyra does in `../tests/choices/`). Where two clauses give one text different meanings,
+  the case keeps what both require and its prose names the clauses that disagree.
 - **The program is one the standard allows.** A case built on a forbidden text claims nothing of a
   tool that rightly refuses it, so a forbidden text is covered by a case that claims its refusal
   (`@rejected:`), never by being used. Static initializers have no order among themselves (LRM 6.8),
@@ -114,8 +126,8 @@ the directory already says which case it belongs to.
 The outer directory is the LRM clause the case tests and the inner one is the subject:
 
 ```
-tests/conformance/09_processes/always_comb_combinational_value/
-tests/conformance/27_generate_constructs/conditional_scope_elaborates/
+cases/09_processes/always_comb_combinational_value/
+cases/27_generate_constructs/conditional_scope_elaborates/
 ```
 
 The standard's structure is the only enumeration of its requirements that exists, so it is the only
@@ -176,11 +188,13 @@ depends on it says which, and one whose meaning does not says nothing.
 
 ### `@includes`
 
-Files of the corpus's own harness, in `tests/harness/`, compiled before the case's sources. The
-harness is SystemVerilog a case leans on where checking in the language would otherwise mean writing
-the same recognizer in many cases: today, a recognizer of the assignment patterns `%p` writes, which
-takes every spelling LRM 21.2.1.6 allows of a value. It is held to its own case under `harness/`,
-which every tool runs, so a tool failing it shows the harness wrong, not the tool.
+Files of the corpus's own harness, in `harness/`, compiled before the case's sources. The harness is
+SystemVerilog a case leans on where checking in the language would otherwise mean writing the same
+recognizer in many cases: today, a recognizer of the assignment patterns `%p` writes, which takes
+every spelling LRM 21.2.1.6 allows of a value. It is held to a case of its own under `selftest/`,
+which every tool runs and none counts toward what it conforms to, so a tool failing it shows the
+harness wrong, not the tool. A runner names where the harness is; nothing finds it by where the
+cases are.
 
 ```systemverilog
 // @includes: assignment_pattern.sv
@@ -311,12 +325,16 @@ and that reading into a verdict, the same for every tool:
 - **not run** -- the case never reached the tool: the harness could not hand it the files. It says
   nothing of the tool.
 
-A reader exists for Lyra, used by the targets below, and for Verilator, which is held to the corpus
-to learn whether a case says only what the standard requires:
+A reader exists for Lyra and for Verilator, each under `adapters/`. `runner/` holds one tool to the
+suite, named by `--tool`, with the tool's own binaries named or found on PATH:
 
 ```bash
-bazel run //tests:verilator_conformance -- 09_processes/always_comb_combinational_value
+bazel run //conformance/runner:conformance -- --tool verilator 09_processes/always_comb_combinational_value
+bazel run //conformance/runner:conformance -- --tool lyra --lyra ./bazel-bin/lyra
 ```
+
+It prints a verdict per case and the evidence for each that does not conform, and decides nothing
+else: whether a tool is known to give a verdict is that tool's own business, as Lyra's records are.
 
 How wide it runs and how much memory each program it starts may take are the caller's to say
 (`--jobs`, `--address-limit`), since they are facts of the machine and not of the corpus; a whole
@@ -324,94 +342,3 @@ run belongs inside one memory ceiling the caller sets, and its first line states
 A program stopped at one of those limits is unresolved, never a failure.
 
 Verilator is a second opinion here, never an oracle: what it answers is judged by the same claim.
-
-## How Lyra holds itself to the corpus
-
-Everything from here on is Lyra's, and none of it changes a verdict: it says which verdict Lyra is
-known to give, and every case is run with Lyra's own checks of itself switched on.
-
-### What a path cannot do
-
-A path is the artifact a run produces -- the C++ project, or the LLVM module -- not the way that
-artifact is executed. What a path currently refuses is recorded once for the path, in
-`tests/paths/<path>.yaml`, never on a case:
-
-```yaml
-16_assertions/immediate_assertion_severity: "assertions are not yet supported"
-```
-
-A case listed there is expected to fall short with output containing that text. One that conforms
-instead fails until its entry is removed, so the file only ever shrinks. That is what makes it the
-coverage report: the cases absent from it are the cases the path runs.
-
-Absence of an entry is therefore a claim, which is why no case carries a per-path tag. A tag's
-absence cannot tell "this path refuses the construct" from "nobody has tagged it yet".
-
-A compiler bug is neither. A run that reports one fails whatever the records say, because "not
-implemented yet" and "implemented wrongly" recorded the same way would leave nothing able to report
-coverage. Every case is lowered with Lyra's verification of its middle form after each rewrite, and
-also reading each instance through a body of its own, each held to the compiled unit it shares; one
-that lowers differently fails as a compiler bug. A foreign source is compiled after the header Lyra
-generates for the design, so a prototype that header gets wrong is a failure of the case even though
-the case never includes it.
-
-### Where a path answers wrongly
-
-A wrong answer is not a refusal, so it is recorded separately, in `tests/paths/<path>.defects.yaml`,
-holding text the failing run produces:
-
-```yaml
-11_operators/packed_power_operator: "zero_base_negative_exponent was"
-```
-
-The case keeps every check it makes. It is expected to fall short, and to say that; the day the
-answer becomes right the case conforms, and the run then fails until the entry goes. That is the
-point of recording a defect here rather than commenting the check out inside the case, where the
-check stops running and nothing notices when the behaviour is fixed.
-
-A run whose programs are built to check their memory (`--sanitize address`, in the run that checks
-Lyra's own) sees what no other run does, so what it finds unfixed is recorded apart, in
-`tests/paths/<path>.address.defects.yaml`, in the same form. Only that run reads it, since the same
-case passes in every other.
-
-A case appears in at most one of the records -- refused and wrong are different outcomes and a case
-recorded twice leaves no saying which it is held to. No record is a place for a failure that is
-merely inconvenient. What goes in is a defect someone has diagnosed, with an entry in the matching
-progress doc saying what the standard requires.
-
-### A case no path can run
-
-A case Lyra cannot run without harm -- one that never ends, or takes the machine's memory with it --
-is named in `tests/paths/parked.yaml` with why, and is held only to elaborating. The case itself is
-left as it is, so every other tool runs it. This is the last resort, because a parked case is the
-one shape here that nothing watches.
-
-### Lyra's choices
-
-Where the standard leaves an answer to the tool and Lyra has chosen one, a case holding Lyra to that
-choice lives in `tests/choices/`, in the same shape and under the same clause, and only Lyra runs
-it. It is how a choice is kept from changing by accident, and it is never a statement of the
-standard. Where two clauses disagree, the choices case holds the reading the ruling in
-`docs/architecture/language_conformance.md` gives, and the conformance case beside it keeps what
-both readings require.
-
-### Running
-
-```bash
-bazel test //tests:llvm_tests
-bazel test //tests:cpp_tests
-```
-
-To run one case, filter by its path under this directory with `/` written as `.`. Nothing names the
-path that runs it, because the target already does:
-
-```bash
-bazel test //tests:llvm_tests \
-  --test_filter='27_generate_constructs.loop_increment_forms'
-```
-
-A parked case's elaboration check answers to `Parked.` and then the same name, that being the one
-thing the target does not already say.
-
-Adding a SystemVerilog feature means adding or extending a case first, then implementing until it
-passes.

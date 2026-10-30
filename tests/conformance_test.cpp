@@ -21,17 +21,17 @@
 
 #include <fmt/core.h>
 
-#include "tests/framework/conformance_case.hpp"
+#include "conformance/framework/case.hpp"
 #include "tests/framework/conformance_run.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 using bazel::tools::cpp::runfiles::Runfiles;
+using conformance::framework::Case;
+using conformance::framework::LoadCases;
 using lyra::test::CaseRecord;
 using lyra::test::CheckParkedCase;
-using lyra::test::ConformanceCase;
 using lyra::test::ConformancePath;
 using lyra::test::FindConformancePath;
-using lyra::test::LoadConformanceCases;
 using lyra::test::PathRecords;
 using lyra::test::RunConformanceCase;
 
@@ -51,12 +51,15 @@ auto HostCompiler() -> std::string {
 #endif
 }
 
-// The cases every tool is held to, and beside them, in the same shape, the
-// ones holding Lyra to what it chose where the standard leaves the answer to
-// the tool. Lyra runs both, and only the first say anything of the standard.
+// The cases every tool is held to, the suite's checks of its own helpers, and
+// beside them, in the same shape, the ones holding Lyra to what it chose where
+// the standard leaves the answer to the tool. Lyra runs all three, and only the
+// first say anything of the standard.
 struct Corpus {
   std::filesystem::path lyra_exe;
   std::filesystem::path cases_root;
+  std::filesystem::path selftest_root;
+  std::filesystem::path harness;
   std::filesystem::path choices_root;
   std::filesystem::path paths_root;
 };
@@ -98,7 +101,7 @@ class CaseRuns : public testing::Environment {
 
   // Names the case a registered test reports, so the run can find the cases
   // gtest chose by the tests it chose.
-  void Register(std::string test_name, const ConformanceCase& c) {
+  void Register(std::string test_name, const Case& c) {
     by_test_name_.emplace(std::move(test_name), &c);
   }
 
@@ -140,7 +143,7 @@ class CaseRuns : public testing::Environment {
   }
 
   // What the case's run is judged to have done, once it has ended.
-  auto Verdict(const ConformanceCase& c) const -> std::optional<std::string> {
+  auto Verdict(const Case& c) const -> std::optional<std::string> {
     return verdict_of_.at(&c).get();
   }
 
@@ -160,11 +163,11 @@ class CaseRuns : public testing::Environment {
   const std::filesystem::path* lyra_exe_;
   const ConformancePath* path_;
   const PathRecords* records_;
-  std::unordered_map<std::string, const ConformanceCase*> by_test_name_;
-  std::vector<const ConformanceCase*> chosen_;
+  std::unordered_map<std::string, const Case*> by_test_name_;
+  std::vector<const Case*> chosen_;
   std::vector<std::promise<std::optional<std::string>>> verdicts_;
   std::unordered_map<
-      const ConformanceCase*, std::shared_future<std::optional<std::string>>>
+      const Case*, std::shared_future<std::optional<std::string>>>
       verdict_of_;
   std::atomic<std::size_t> next_{0};
   std::vector<std::jthread> running_;
@@ -172,7 +175,7 @@ class CaseRuns : public testing::Environment {
 
 class ConformanceTest : public testing::Test {
  public:
-  ConformanceTest(const ConformanceCase& c, const CaseRuns* runs)
+  ConformanceTest(const Case& c, const CaseRuns* runs)
       : case_(&c), runs_(runs) {
   }
 
@@ -184,14 +187,13 @@ class ConformanceTest : public testing::Test {
   }
 
  private:
-  const ConformanceCase* case_;
+  const Case* case_;
   const CaseRuns* runs_;
 };
 
 class ParkedCaseTest : public testing::Test {
  public:
-  ParkedCaseTest(
-      const ConformanceCase& c, const std::filesystem::path* lyra_exe)
+  ParkedCaseTest(const Case& c, const std::filesystem::path* lyra_exe)
       : case_(&c), lyra_exe_(lyra_exe) {
   }
 
@@ -203,7 +205,7 @@ class ParkedCaseTest : public testing::Test {
   }
 
  private:
-  const ConformanceCase* case_;
+  const Case* case_;
   const std::filesystem::path* lyra_exe_;
 };
 
@@ -220,7 +222,9 @@ auto main(int argc, char** argv) -> int {
   }
   static const Corpus kCorpus{
       .lyra_exe = runfiles->Rlocation("_main/lyra"),
-      .cases_root = runfiles->Rlocation("_main/tests/conformance"),
+      .cases_root = runfiles->Rlocation("_main/conformance/cases"),
+      .selftest_root = runfiles->Rlocation("_main/conformance/selftest"),
+      .harness = runfiles->Rlocation("_main/conformance/harness"),
       .choices_root = runfiles->Rlocation("_main/tests/choices"),
       .paths_root = runfiles->Rlocation("_main/tests/paths")};
 
@@ -267,22 +271,25 @@ auto main(int argc, char** argv) -> int {
     return path;
   }();
 
-  static const std::vector<ConformanceCase> kCases = [] {
-    std::vector<ConformanceCase> cases =
-        LoadConformanceCases(kCorpus.cases_root);
-    std::vector<ConformanceCase> choices =
-        LoadConformanceCases(kCorpus.choices_root);
-    cases.insert(
-        cases.end(), std::make_move_iterator(choices.begin()),
-        std::make_move_iterator(choices.end()));
+  static const std::vector<Case> kCases = [] {
+    std::vector<Case> cases;
+    for (const std::filesystem::path& root :
+         {kCorpus.cases_root, kCorpus.selftest_root, kCorpus.choices_root}) {
+      std::vector<Case> found = LoadCases(root, kCorpus.harness);
+      cases.insert(
+          cases.end(), std::make_move_iterator(found.begin()),
+          std::make_move_iterator(found.end()));
+    }
     return cases;
   }();
   // A record names a case by its id alone, so no two cases may share one.
   std::unordered_map<std::string, std::size_t> named;
-  for (const ConformanceCase& c : kCases) {
+  for (const Case& c : kCases) {
     if (++named[c.id] == 2) {
       fmt::print(
-          stderr, "'{}' names a case of the corpus and one of Lyra's choices\n",
+          stderr,
+          "'{}' names two cases among the corpus, the selftest and Lyra's "
+          "choices\n",
           c.id);
       return 1;
     }
@@ -360,7 +367,7 @@ auto main(int argc, char** argv) -> int {
   CaseRuns* const runs = owned_runs.get();
   testing::AddGlobalTestEnvironment(owned_runs.release());
 
-  for (const ConformanceCase& c : kCases) {
+  for (const Case& c : kCases) {
     if (kParked.Find(c.id)) {
       continue;
     }
@@ -377,7 +384,7 @@ auto main(int argc, char** argv) -> int {
   // target holds them to the same thing rather than one being picked to. A
   // parked case answers to a group of its own, since a target holds both kinds
   // and only the name says which of the two a result came from.
-  for (const ConformanceCase& c : kCases) {
+  for (const Case& c : kCases) {
     if (!kParked.Find(c.id)) {
       continue;
     }

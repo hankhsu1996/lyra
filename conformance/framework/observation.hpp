@@ -9,10 +9,10 @@
 #include <variant>
 #include <vector>
 
-#include "conformance_case.hpp"
-#include "process.hpp"
+#include "conformance/framework/case.hpp"
+#include "conformance/framework/process.hpp"
 
-namespace lyra::test {
+namespace conformance::framework {
 
 // A report as one tool's reader placed it: what the standard fixes of a report,
 // read off whatever that tool writes -- each where the tool gave it -- and the
@@ -71,8 +71,7 @@ using RunEnd = std::variant<
 // cannot. A tool asked to read a file that is not there refuses the command,
 // which reads exactly like refusing the program, so a reader checks first and
 // never lets the harness's failure stand as the tool's answer.
-auto MissingInput(const ConformanceCase& test_case)
-    -> std::optional<HarnessFailed>;
+auto MissingInput(const Case& test_case) -> std::optional<HarnessFailed>;
 
 // How a command a tool's reader ran ended, before its output is read: a child
 // that never started is the harness's failure, an exit is the tool answering,
@@ -116,11 +115,11 @@ void RecordCommand(
 // The files the case expects, read from the directory the run was made in.
 // What they mean is the judgement's to say; a reader only hands them over.
 void ReadOutputs(
-    const ConformanceCase& test_case, const std::filesystem::path& directory,
+    const Case& test_case, const std::filesystem::path& directory,
     Observation& seen);
 
 // Whether the program printed the case's two markers. They are text the case
 // itself writes to standard output, so no tool's reader reads them its own way.
 void ReadMarkers(std::string_view program_output, Observation& seen);
 
-}  // namespace lyra::test
+}  // namespace conformance::framework

@@ -8,7 +8,7 @@
 #include <variant>
 #include <vector>
 
-namespace lyra::test {
+namespace conformance::framework {
 
 // The text a case prints once every check it makes has passed. A case that
 // reports success without having run its checks is the failure mode the corpus
@@ -34,9 +34,6 @@ inline constexpr std::string_view kCaseLibraryMap = "lib.map";
 
 // The directory beside a case's sources holding the files its run is held to.
 inline constexpr std::string_view kCaseExpectedOutputs = "expected";
-
-// The directory beside a corpus holding the helpers its cases may include.
-inline constexpr std::string_view kHarnessDirectory = "harness";
 
 // The kinds of report the standard names. A severity task's report carries the
 // severity it was called at (LRM 20.10), a failing assertion's default action
@@ -128,7 +125,7 @@ struct ExpectedOutput {
 // is where a file sits rather than something a directive has to say; the
 // directives that remain state what the standard cannot be read from the
 // sources alone.
-struct ConformanceCase {
+struct Case {
   // The case directory's path under the corpus root, which is its identity: the
   // outer directory is the LRM clause it tests and the inner one is the subject
   // within that clause.
@@ -163,8 +160,11 @@ auto ReadDecimal(std::string_view text) -> std::optional<std::uint64_t>;
 
 // Every case under `corpus_root`, ordered by id. A directory holding the entry
 // source is a case; one that does not is a clause, so the corpus's shape is
-// read directly rather than inferred from what the cases mention.
-auto LoadConformanceCases(const std::filesystem::path& corpus_root)
-    -> std::vector<ConformanceCase>;
+// read directly rather than inferred from what the cases mention. A helper a
+// case includes is looked up in `harness`, which the caller names, so where the
+// helpers are is an input rather than a place inferred from the corpus.
+auto LoadCases(
+    const std::filesystem::path& corpus_root,
+    const std::filesystem::path& harness) -> std::vector<Case>;
 
-}  // namespace lyra::test
+}  // namespace conformance::framework

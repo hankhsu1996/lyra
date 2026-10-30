@@ -28,6 +28,7 @@
 
 #include <fmt/format.h>
 
+#include "conformance/framework/case.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -36,13 +37,12 @@
 #include "lyra/hir/dump.hpp"
 #include "lyra/hir/specialization.hpp"
 #include "tests/compiled_twice.hpp"
-#include "tests/framework/conformance_case.hpp"
 
 namespace {
 
+using conformance::framework::Case;
 using lyra::support::BodiesRead;
 using lyra::test::Compilation;
-using lyra::test::ConformanceCase;
 using lyra::test::Elaborate;
 using lyra::test::FirstDifference;
 using lyra::test::kWide;
@@ -106,8 +106,7 @@ auto Describe(const LoweredUnits& first, const LoweredUnits& second)
 
 class RepeatableLoweringTest : public testing::Test {
  public:
-  explicit RepeatableLoweringTest(const ConformanceCase& test_case)
-      : case_(&test_case) {
+  explicit RepeatableLoweringTest(const Case& test_case) : case_(&test_case) {
   }
 
   void TestBody() override {
@@ -131,7 +130,7 @@ class RepeatableLoweringTest : public testing::Test {
   }
 
  private:
-  const ConformanceCase* case_;
+  const Case* case_;
 };
 
 // The design written to show an ordering, held to the same claim and to one
@@ -141,7 +140,7 @@ class RepeatableLoweringTest : public testing::Test {
 // silently untrue.
 TEST(RepeatableLowering, ADesignWrittenToShowAnOrderingStatesOneThing) {
   const ScratchDirectory scratch("wide-sensitivity-lowering");
-  const ConformanceCase design =
+  const Case design =
       lyra::test::WriteWideSensitivityDesign(scratch.Under("source"));
 
   Compilation first = Elaborate(design);
@@ -164,7 +163,7 @@ TEST(RepeatableLowering, ADesignWrittenToShowAnOrderingStatesOneThing) {
 auto main(int argc, char** argv) -> int {
   return lyra::test::RunOverCorpus(
       argc, argv, "a lowered form",
-      [](const ConformanceCase& test_case) -> std::unique_ptr<testing::Test> {
+      [](const Case& test_case) -> std::unique_ptr<testing::Test> {
         return std::make_unique<RepeatableLoweringTest>(test_case);
       });
 }

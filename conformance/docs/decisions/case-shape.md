@@ -1,11 +1,14 @@
 # A conformance case is a self-checking SystemVerilog program, indexed by LRM clause
 
 Date: 2026-08-26. Status: accepted. Revised 2026-10-27: a run is read by a reader per tool and
-judged once for every tool (D10), a case names nothing of any tool (D3, D5), what Lyra chose where
+judged once for every tool (D10), a case names nothing of any tool (D3, D5), what a tool chose where
 the standard is silent lives apart (D11), and parking is a record rather than a file name (D12).
 Revised 2026-10-28: a case claims only what every tool owes, with a forbidden text covered by its
 refusal (D2), a dump compared as the standard reads one (D6), a harness of the corpus's own (D13),
 limits the caller sets (D14), and a disputed reading kept to what both readings require (D15).
+Revised 2026-10-29: the suite is a sub-project of its own that builds none of Lyra (D16), and what
+one tool is known to answer is that tool's to record (D7, D8, D8a, D11, D12), which for Lyra is
+`../../../docs/decisions/lyra-is-held-to-the-conformance-suite.md`.
 
 ## Why this decision matters
 
@@ -52,7 +55,7 @@ D2. The expected value is written by a human, in the case, and is never a value 
     used, since a case built on one claims nothing of a tool that rightly refuses it.
 
 D3. A case names no tool: no path, no backend, no command, no option, no file a tool generates,
-    and no wording of a tool's message. It would be valid if Lyra had one path or twenty, and it
+    and no wording of a tool's message. It would be valid if a tool had one path or twenty, and it
     runs unmodified under any conforming simulator -- which is checked by running it under another
     one, not assumed.
 
@@ -66,7 +69,7 @@ D5. There is no per-case manifest file. Metadata that a case genuinely needs is 
     to be said: the instances to elaborate, the simulated program's argv, which of the two
     compilation-unit use models the case's files are compiled under (LRM 3.12.1), and what the run
     is held to -- a refusal, a report by kind, or the absence of kinds of report
-    ([conformance-diagnostic-claims](conformance-diagnostic-claims.md)). Extra sources are files in
+    ([diagnostic-claims](diagnostic-claims.md)). Extra sources are files in
     the directory. Prose describing the claim is an ordinary comment and is never parsed.
 
 D6. Golden output is a sibling file, and exists only where the output channel is itself the subject
@@ -76,23 +79,17 @@ D6. Golden output is a sibling file, and exists only where the output channel is
     tool decides nothing. Format-string behavior is checked in-language through $sformatf, which
     returns the formatted text as a value, and only for what the standard fixes of that text.
 
-D7. What a path cannot do is recorded once per path, not once per case, as a list of case paths and
-    the refusal each currently produces. A case that unexpectedly passes fails the run just as an
-    unexpected refusal does, so the list can only shrink as a path fills in, and it is the coverage
-    report.
+D7. What a tool cannot do is recorded by the tool, never on a case, and never here: the suite holds
+    no record of what any tool answers, so its verdicts are the same whoever runs it.
 
-D8. A path is defined by the artifact it produces, not by how that artifact is executed. Every way
-    of running one path's artifact shares that artifact and therefore one acceptance surface; they
-    can never disagree about which programs are accepted, so they share one list.
+D8. (Held by each tool.)
 
-D8a. Where a path answers wrongly is recorded too, in a second list beside the first, holding text
-    the failing run produces. The case keeps every check it makes, so the day the answer becomes
-    right the case passes and the run fails until the entry goes. A case is in one list or neither,
-    never both. Coverage is therefore what is absent from both.
+D8a. (Held by each tool.)
 
-D9. A test whose subject is not an IEEE 1800 requirement is not a case. The command line, the
-    emitted project's portability, and the harness's own machinery are ordinary tests outside the
-    corpus.
+D9. A test whose subject is not an IEEE 1800 requirement is not a case. A tool's command line and
+    what it emits are that tool's tests; the runner's own machinery is tested beside it, and the
+    harness's helpers are checked by cases of the same shape kept apart from the corpus, which every
+    tool runs and none counts toward what it conforms to.
 
 D10. A run is read by a reader written for the tool that made it, and judged once, the same for
     every tool. The reader knows how to ask its tool for each use model a case needs and how to
@@ -103,25 +100,33 @@ D10. A run is read by a reader written for the tool that made it, and judged onc
     the tool -- the harness could not hand it the files. A tool lacking a use model the standard
     requires of every tool does not conform.
 
-D11. What Lyra chose where the standard leaves the answer to the tool is held in a corpus of its
-    own, in the same shape, which only Lyra runs. It is a regression of Lyra's, never a statement
-    of the standard.
+D11. What a tool chose where the standard leaves the answer to the tool is held by that tool, in
+    cases of the same shape it keeps itself. It is a regression of that tool's, never a statement
+    of the standard, and never a case here.
 
-D12. A case Lyra cannot run without harm is parked by a record naming it and why, and is held only
-    to elaborating. The case is left as it is, so every other tool runs it.
+D12. A case a tool cannot run without harm is set aside by that tool's own record. The case is left
+    as it is here, so every other tool runs it.
 
 D13. Where checking in the language would mean writing one recognizer in many cases -- the
     spellings LRM 21.2.1.6 allows of a `%p` text -- the corpus keeps it once, as SystemVerilog a
-    case names by directive, and holds it to a case of its own that every tool runs, so a tool
-    failing that case shows the harness wrong rather than the tool.
+    case names by directive, and holds it to a selftest case that every tool runs, so a tool
+    failing that case shows the harness wrong rather than the tool. Where the helpers are is an
+    input the runner names, never a place derived from where the cases are.
 
 D14. How wide a run goes and how much memory and time each program may take are the caller's to
     set, since they are facts of the machine and not of the corpus. A program stopped at one is
     unresolved, never a failure, and a run states what it ran under.
 
 D15. Where two clauses give one text different meanings, the case keeps what both readings
-    require. The dispute is a ruling in `../architecture/language_conformance.md`, and Lyra's
-    reading is held by a case of D11's corpus.
+    require, and its prose names the clauses that disagree. A tool's own reading is held by a case
+    of D11's kind, in that tool.
+
+D16. The suite is a sub-project that builds no part of any tool it judges: its cases, helpers,
+    judgement and a reader per tool are built and run with nothing of Lyra's but the `lyra` binary
+    its reader is handed, so another simulator is held to it without building Lyra. A reader
+    drives a binary and reads what it wrote, so every reader lives with the suite, Lyra's beside
+    Verilator's. The suite lives in Lyra's repository, where one change carries a case and the
+    work it tests together, and the one-way dependency is checked rather than trusted.
 ```
 
 ## Rejected alternatives
@@ -145,9 +150,9 @@ D15. Where two clauses give one text different meanings, the case keeps what bot
   `if`, case equality, and `$fatal` -- and treats assertions as a subject it tests rather than a
   tool it uses. A helper task or macro would enlarge that foundation rather than shrink it.
 
-- **Per-backend tags on the case.** Absence of a tag cannot distinguish "this path refuses the
-  construct" from "nobody has tagged it yet", so a path's real coverage is unmeasurable, and
-  teaching a path one construct edits every case that uses it.
+- **Per-tool or per-backend tags on the case.** Absence of a tag cannot distinguish "this tool
+  refuses the construct" from "nobody has tagged it yet", so a tool's real coverage is unmeasurable,
+  and teaching a tool one construct edits every case that uses it.
 
 - **A directory named for a backend.** The previous layout had one, from a time when there was only
   one backend; the second backend reused the directory and the name became false. A path name in the
@@ -193,37 +198,24 @@ A program with no limit can take the memory of the machine it shares, so every r
 limit is then a reading of the run and not a verdict about the tool, and it is the caller's, since
 the corpus does not know the machine it runs on.
 
-## Where D8a came from
-
-The first cut of this decision gave a wrong answer no home at all: it failed, and stayed failing
-until the case or the implementation was right. That is the stricter rule and it reads well, but
-what it produced in practice was worse than what it forbade. Twenty-two cases met a diagnosed Lyra
-defect during the migration, and every one of them handled it the same way -- comment the check out,
-name the symptom in a `TODO`, write the gap into a progress doc. So the wrong answers were
-normalized anyway, in the one form nothing watches: a commented-out check does not run, and fixing
-the defect produces no signal at all. Prose in a progress doc was the only thing left remembering.
-
-D8a takes the property that makes the refusal record work -- an entry that becomes false fails the
-run -- and gives it to the case a path gets wrong. It costs the strictness of "no home", and it buys
-the thing the strict rule was for: a defect that cannot be quietly forgotten.
-
 ## Consequences
 
 - The judgement decides from the sentinel, how the run ended, and the reports a claim asks about, as
   a tool's reader read them. Source rewriting, the probe-marker protocol, the expected-value
   renderer, and the SV-literal parser all leave with the mechanism they served.
-- A tool other than Lyra is held to the corpus by writing a reader for it, and nothing in a case
+- A tool is held to the corpus by writing a reader for it under `adapters/`, and nothing in a case
   changes for it.
 - A case is executable by any conforming simulator with no harness beyond the corpus's own
   SystemVerilog, except that a dump it writes is compared outside the run. A second simulator is a
   second opinion on whether a case says only what the standard requires, never an oracle on what the
   standard requires: its answers are judged by the same claims.
-- Coverage becomes a question with an answer: which clauses hold cases, and which cases each path
-  refuses.
+- Coverage becomes a question with an answer: which clauses hold cases, and which cases each tool's
+  own record says it refuses.
 - A case that checks nothing cannot pass silently, because the sentinel is printed after the checks.
 
 ## Cross-references
 
-- `../architecture/testing_strategy.md` -- the contract form of this decision.
-- `../../CLAUDE.md` -- the error-handling policy that separates a path's refusal from a compiler
-  bug, which is what lets a refusal be recorded rather than investigated.
+- `../../README.md` -- the contract every case answers to.
+- [diagnostic-claims](diagnostic-claims.md) -- how a claim whose observable is a report is stated.
+- `../../../docs/decisions/lyra-is-held-to-the-conformance-suite.md` -- what Lyra records of its
+  answers, and the D8a derivation.

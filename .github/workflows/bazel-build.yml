@@ -27,6 +27,7 @@ jobs:
               - 'src/**'
               - 'include/**'
               - 'tests/**'
+              - 'conformance/**'
               - 'examples/**'
               - 'BUILD.bazel'
               - 'MODULE.bazel'

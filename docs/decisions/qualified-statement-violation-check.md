@@ -138,6 +138,6 @@ reports `unique case` with no `default` and is silent once one is added, in both
 
 - [ambient-runtime-services](ambient-runtime-services.md) -- who owns a pending violation report,
   and what discards it before it matures.
-- [conformance-diagnostic-claims](conformance-diagnostic-claims.md) -- the instrument that can see a
-  requirement whose whole observable is a report, which a self-checking case cannot.
+- [diagnostic-claims](../../conformance/docs/decisions/diagnostic-claims.md) -- the instrument that
+  can see a requirement whose whole observable is a report, which a self-checking case cannot.
 - `../architecture/scheduling.md` -- the Observed region the report matures in.

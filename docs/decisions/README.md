@@ -1606,14 +1606,11 @@ the detail lives in the entry itself.
 
 ### Conformance testing
 
-- [conformance-case-shape](conformance-case-shape.md) -- a case is a self-checking SystemVerilog
-  program indexed by LRM clause that names nothing of any tool; a reader per tool reads a run and
-  one judgement gives every tool the same four verdicts; what a path cannot do is recorded once per
-  path, and what Lyra chose where the standard is silent lives apart.
-- [conformance-diagnostic-claims](conformance-diagnostic-claims.md) -- a requirement whose whole
-  observable is a report is stated as a directive, by the kind of report and what the standard fixes
-  of it, and written in both directions; an absence is of named kinds, never of all output, and
-  golden output stays reserved for cases whose subject is the output channel.
+- [lyra-is-held-to-the-conformance-suite](lyra-is-held-to-the-conformance-suite.md) -- the suite in
+  `conformance/` decides whether a run conforms, and Lyra's records say only what Lyra is known to
+  answer: what each path refuses, where it answers wrongly, what it parks, reconciled strictly both
+  ways; Lyra's own choices are cases only Lyra runs. What a case is, and why, is the suite's own
+  record, `conformance/docs/decisions/`.
 
 ### Measurement
 

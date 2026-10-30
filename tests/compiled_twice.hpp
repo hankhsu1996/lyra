@@ -33,9 +33,9 @@
 #include <fmt/format.h>
 #include <slang/driver/Driver.h>
 
+#include "conformance/adapters/lyra/reader.hpp"
+#include "conformance/framework/case.hpp"
 #include "lyra/compiler/compile.hpp"
-#include "tests/framework/conformance_case.hpp"
-#include "tests/framework/lyra_adapter.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 namespace lyra::test {
@@ -52,13 +52,15 @@ struct Compilation {
   compiler::FrontEndResult front;
 };
 
-inline auto Elaborate(const ConformanceCase& test_case) -> Compilation {
+inline auto Elaborate(const conformance::framework::Case& test_case)
+    -> Compilation {
   Compilation out;
   out.driver = std::make_unique<slang::driver::Driver>();
   out.driver->addStandardArgs();
 
   std::vector<std::string> args{"lyra"};
-  const std::vector<std::string> design = LyraDesignArguments(test_case);
+  const std::vector<std::string> design =
+      conformance::adapters::lyra::DesignArguments(test_case);
   args.insert(args.end(), design.begin(), design.end());
 
   std::vector<const char*> argv;
@@ -185,14 +187,14 @@ endmodule
 )";
 
 inline auto WriteWideSensitivityDesign(const std::filesystem::path& dir)
-    -> ConformanceCase {
+    -> conformance::framework::Case {
   std::filesystem::create_directories(dir);
   const std::filesystem::path path = dir / "wide_sensitivity.sv";
   std::ofstream out(path);
   out << kWideSensitivity;
   out.close();
 
-  ConformanceCase written;
+  conformance::framework::Case written;
   written.id = "wide_sensitivity";
   written.directory = dir;
   written.entry = path;
@@ -224,14 +226,20 @@ auto RunOverCorpus(
     return 1;
   }
 
-  static const std::vector<ConformanceCase> kCases = [&] {
-    std::vector<ConformanceCase> cases =
-        LoadConformanceCases(runfiles->Rlocation("_main/tests/conformance"));
-    std::vector<ConformanceCase> choices =
-        LoadConformanceCases(runfiles->Rlocation("_main/tests/choices"));
-    cases.insert(
-        cases.end(), std::make_move_iterator(choices.begin()),
-        std::make_move_iterator(choices.end()));
+  static const std::vector<conformance::framework::Case> kCases = [&] {
+    const std::filesystem::path harness =
+        runfiles->Rlocation("_main/conformance/harness");
+    std::vector<conformance::framework::Case> cases;
+    for (const std::string_view root :
+         {"_main/conformance/cases", "_main/conformance/selftest",
+          "_main/tests/choices"}) {
+      std::vector<conformance::framework::Case> found =
+          conformance::framework::LoadCases(
+              runfiles->Rlocation(std::string(root)), harness);
+      cases.insert(
+          cases.end(), std::make_move_iterator(found.begin()),
+          std::make_move_iterator(found.end()));
+    }
     return cases;
   }();
   if (kCases.empty()) {
@@ -242,10 +250,11 @@ auto RunOverCorpus(
     return 1;
   }
 
-  for (const ConformanceCase& test_case : kCases) {
+  for (const conformance::framework::Case& test_case : kCases) {
     // A design the standard requires to be rejected never reaches a compiled
     // form, so there is nothing of it to compare.
-    if (std::holds_alternative<RejectedBeforeRunning>(test_case.claim)) {
+    if (std::holds_alternative<conformance::framework::RejectedBeforeRunning>(
+            test_case.claim)) {
       continue;
     }
     const std::size_t split = test_case.id.rfind('/');

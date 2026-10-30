@@ -18,15 +18,16 @@
 #include <string_view>
 #include <vector>
 
+#include "conformance/framework/process.hpp"
+#include "conformance/framework/process_matchers.hpp"
 #include "tests/framework/cli_fixture.hpp"
-#include "tests/framework/process.hpp"
 
 namespace {
 
-using lyra::test::ExitedWithCode;
-using lyra::test::MakeScratchDir;
+using conformance::framework::ExitedWithCode;
+using conformance::framework::MakeScratchDir;
+using conformance::framework::RunChildProcess;
 using lyra::test::ResolveLyra;
-using lyra::test::RunChildProcess;
 using testing::Not;
 
 // A sum and a logical or of three thousand operands each, two-state and
@@ -91,8 +92,8 @@ endmodule
 // with `limit`, a `ulimit` invocation.
 auto CheckUnderStackLimit(
     const std::filesystem::path& lyra, const std::filesystem::path& src,
-    std::string_view limit) -> lyra::test::ProcessOutcome {
-  return lyra::test::RunShellScript(
+    std::string_view limit) -> conformance::framework::ProcessOutcome {
+  return conformance::framework::RunShellScript(
       std::format(
           "{} && exec '{}' check --top Test '{}'", limit, lyra.string(),
           src.string()));

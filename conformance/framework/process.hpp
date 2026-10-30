@@ -1,16 +1,15 @@
 #pragma once
 
 #include <chrono>
+#include <expected>
 #include <filesystem>
-#include <gmock/gmock.h>
 #include <optional>
-#include <ostream>
 #include <span>
 #include <string>
 #include <string_view>
 #include <variant>
 
-namespace lyra::test {
+namespace conformance::framework {
 
 // The child was never seen to end: it could not be started, or this process
 // lost track of it. Neither says anything about the program it named.
@@ -60,14 +59,15 @@ auto Transcript(
     const std::filesystem::path& exe, std::span<const std::string> args,
     const ProcessOutcome& outcome) -> std::string;
 
-// What an assertion shows of an outcome it rejected: how it ended. The streams
-// are long, so a caller adds whichever one says why.
-void PrintTo(const ProcessOutcome& outcome, std::ostream* out);
+// The program of that name as the shell that started this would find it, or
+// nothing where no directory on PATH holds one.
+auto FindOnPath(std::string_view name) -> std::optional<std::filesystem::path>;
 
-// The child exited, with a code `code` accepts; a child that did not exit
-// matches no code.
-auto ExitedWithCode(const testing::Matcher<int>& code)
-    -> testing::Matcher<const ProcessOutcome&>;
+// A directory of the caller's own to run in. The name is drawn rather than
+// derived from anything, because a run that repeats must not inherit what an
+// earlier one left. Returns why it failed rather than throwing, so a setup
+// failure is reported as the run failing rather than as a crash.
+auto MakeScratchDir() -> std::expected<std::filesystem::path, std::string>;
 
 // Spawns `exe` with `args` and collects both streams. It starts in
 // `working_directory` where one is given, and where this process is otherwise.
@@ -104,4 +104,4 @@ auto RunUnderAddressLimit(
     const std::filesystem::path& program, std::span<const std::string> args,
     int kibibytes) -> ProcessOutcome;
 
-}  // namespace lyra::test
+}  // namespace conformance::framework

@@ -15,7 +15,7 @@ Rules:
         Scope: every tracked markdown file.
         A path counts as repo-rooted when its first component is a
         directory at the repo root, which is what distinguishes
-        `tests/conformance/` from a bare `dispatch.hpp` named relative to
+        `conformance/cases/` from a bare `dispatch.hpp` named relative to
         whatever directory the surrounding prose is discussing.
 
   D002  A relative markdown link must resolve.
@@ -432,8 +432,8 @@ def run_self_tests() -> bool:
                  "D002 accepts a directory")
 
     # D001 only fires on repo-rooted paths.
-    m = CITED_PATH_PATTERN.search("see `tests/conformance/` for the corpus")
-    ok &= expect(m is not None and m.group(1) == "tests/conformance/",
+    m = CITED_PATH_PATTERN.search("see `conformance/cases/` for the corpus")
+    ok &= expect(m is not None and m.group(1) == "conformance/cases/",
                  "D001 captures a repo-rooted path")
     m2 = CITED_PATH_PATTERN.search("the `dispatch.hpp` entry")
     ok &= expect(m2 is not None and "/" not in m2.group(1),

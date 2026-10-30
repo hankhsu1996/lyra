@@ -1,4 +1,4 @@
-#include "conformance_case.hpp"
+#include "conformance/framework/case.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -17,9 +17,9 @@
 #include <utility>
 #include <vector>
 
-#include "value_change_dump.hpp"
+#include "conformance/framework/value_change_dump.hpp"
 
-namespace lyra::test {
+namespace conformance::framework {
 namespace {
 
 auto ReadFile(const std::filesystem::path& path) -> std::string {
@@ -208,8 +208,7 @@ void CheckNameAlphabet(
 // the library map saying which library each source belongs to. A
 // case's directory holds exactly what the case needs, so this is a listing
 // rather than a lookup of anything the case had to declare.
-void CollectCompanions(
-    const std::filesystem::path& directory, ConformanceCase& c) {
+void CollectCompanions(const std::filesystem::path& directory, Case& c) {
   for (const auto& entry : std::filesystem::directory_iterator(directory)) {
     if (!entry.is_regular_file()) {
       continue;
@@ -259,8 +258,9 @@ void CollectCompanions(
 
 auto ParseCase(
     const std::filesystem::path& corpus_root,
-    const std::filesystem::path& directory) -> ConformanceCase {
-  ConformanceCase c;
+    const std::filesystem::path& harness,
+    const std::filesystem::path& directory) -> Case {
+  Case c;
   c.directory = directory;
   c.id = directory.lexically_relative(corpus_root).generic_string();
   CheckNameAlphabet(c.id, directory);
@@ -357,8 +357,7 @@ auto ParseCase(
       // everything the case holds, as test262's harness includes are.
       std::vector<std::filesystem::path> included;
       for (const std::string& name : SplitOnWhitespace(d.value)) {
-        const std::filesystem::path helper =
-            corpus_root.parent_path() / kHarnessDirectory / name;
+        const std::filesystem::path helper = harness / name;
         if (!std::filesystem::exists(helper)) {
           throw std::runtime_error(
               std::format(
@@ -438,9 +437,10 @@ auto MayEndTheRun(ReportKind kind) -> bool {
   return true;
 }
 
-auto LoadConformanceCases(const std::filesystem::path& corpus_root)
-    -> std::vector<ConformanceCase> {
-  std::vector<ConformanceCase> cases;
+auto LoadCases(
+    const std::filesystem::path& corpus_root,
+    const std::filesystem::path& harness) -> std::vector<Case> {
+  std::vector<Case> cases;
   if (!std::filesystem::exists(corpus_root)) {
     return cases;
   }
@@ -452,11 +452,11 @@ auto LoadConformanceCases(const std::filesystem::path& corpus_root)
        std::filesystem::recursive_directory_iterator(corpus_root)) {
     if (entry.is_directory() &&
         std::filesystem::exists(entry.path() / kCaseEntrySource)) {
-      cases.push_back(ParseCase(corpus_root, entry.path()));
+      cases.push_back(ParseCase(corpus_root, harness, entry.path()));
     }
   }
-  std::ranges::sort(cases, {}, &ConformanceCase::id);
+  std::ranges::sort(cases, {}, &Case::id);
   return cases;
 }
 
-}  // namespace lyra::test
+}  // namespace conformance::framework

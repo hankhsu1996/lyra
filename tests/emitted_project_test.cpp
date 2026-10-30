@@ -27,16 +27,17 @@
 #include <utility>
 #include <vector>
 
+#include "conformance/framework/process.hpp"
+#include "conformance/framework/process_matchers.hpp"
 #include "lyra/driver/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
-#include "tests/framework/process.hpp"
 
 namespace {
 
-using lyra::test::ExitedWithCode;
-using lyra::test::MakeScratchDir;
+using conformance::framework::ExitedWithCode;
+using conformance::framework::MakeScratchDir;
+using conformance::framework::RunChildProcess;
 using lyra::test::ResolveLyra;
-using lyra::test::RunChildProcess;
 using lyra::test::WriteTrivialSource;
 using testing::Ne;
 using namespace std::chrono_literals;
@@ -376,13 +377,14 @@ TEST(
       << "  free(text);\n"
       << "  return text;\n"
       << "}\n";
-  const auto reports_the_read = [](const lyra::test::ProcessOutcome& ran) {
-    return testing::Matches(ExitedWithCode(Ne(0)))(ran) &&
-           ran.stderr_text.find(
-               "ERROR: AddressSanitizer: heap-use-after-free") !=
-               std::string::npos &&
-           ran.stderr_text.find("freed by thread") != std::string::npos;
-  };
+  const auto reports_the_read =
+      [](const conformance::framework::ProcessOutcome& ran) {
+        return testing::Matches(ExitedWithCode(Ne(0)))(ran) &&
+               ran.stderr_text.find(
+                   "ERROR: AddressSanitizer: heap-use-after-free") !=
+                   std::string::npos &&
+               ran.stderr_text.find("freed by thread") != std::string::npos;
+      };
 
   const auto out_dir = *tmp_or / "out";
   const std::vector<std::string> emit = {

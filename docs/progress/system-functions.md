@@ -3,7 +3,7 @@
 Tracks the LRM Clause 20 utility system tasks and functions that remain unimplemented and have no
 home in another progress file. The computational families run today -- array and data query (LRM
 20.6, 20.7), integer and real math (LRM 20.8), the bit-vector functions (LRM 20.9), and the real and
-sign conversions (LRM 20.5); `tests/conformance/` is the record of which. What is left is the
+sign conversions (LRM 20.5); `conformance/cases/` is the record of which. What is left is the
 control and query leftovers queued below, plus the domain families each tracked with its own
 feature.
 

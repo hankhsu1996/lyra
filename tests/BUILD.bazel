@@ -61,31 +61,15 @@ cc_library(
     deps = [
         "//:base",
         "//:driver",
+        "//conformance/adapters/lyra:reader",
+        "//conformance/framework",
+        "//conformance/framework:process",
+        "//conformance/framework:process_matchers",
         "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
         "@googletest//:gtest",
         "@nlohmann_json//:json",
         "@yaml-cpp//:yaml-cpp",
-    ],
-)
-
-cc_test(
-    name = "conformance_verdict_test",
-    srcs = ["conformance_verdict_test.cpp"],
-    copts = LYRA_COPTS,
-    deps = [
-        ":framework",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "process_test",
-    srcs = ["process_test.cpp"],
-    copts = LYRA_COPTS,
-    deps = [
-        ":framework",
-        "@googletest//:gtest_main",
     ],
 )
 
@@ -812,16 +796,13 @@ CONFORMANCE_DATA = [
         "choices/**/*.sv",
         "choices/**/expected/*",
         "choices/**/lib.map",
-        "conformance/**/*.sv",
-        "conformance/**/*.c",
-        "conformance/**/*.cpp",
-        "conformance/**/expected/*",
-        "conformance/**/lib.map",
-        "harness/*.sv",
         "paths/*.yaml",
     ],
     allow_empty = True,
-)
+) + [
+    "//conformance:corpus",
+    "//conformance:selftest",
+]
 
 cc_test(
     name = "cpp_tests",
@@ -885,33 +866,6 @@ cc_test(
         "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
         "@googletest//:gtest",
-    ],
-)
-
-# The corpus held up against Verilator, judged by the same claims as Lyra, to
-# learn whether a case says only what the standard requires. It reads the
-# machine's own Verilator from PATH and builds every case with the host
-# compiler, so it is a program run by hand and never a test:
-# `bazel run //tests:verilator_conformance -- <case id>...`.
-cc_binary(
-    name = "verilator_conformance",
-    srcs = ["verilator_conformance.cpp"],
-    copts = LYRA_COPTS,
-    data = glob(
-        [
-            "conformance/**/*.sv",
-            "conformance/**/*.c",
-            "conformance/**/*.cpp",
-            "conformance/**/expected/*",
-            "conformance/**/lib.map",
-            "harness/*.sv",
-        ],
-        allow_empty = True,
-    ),
-    deps = [
-        ":framework",
-        "@bazel_tools//tools/cpp/runfiles",
-        "@fmt",
     ],
 )
 
