@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 
+#include <format>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
@@ -39,16 +40,26 @@ auto EndpointAt(const mir::CompilationUnit& unit, MemberPlace place)
 auto ClimbedEndpoint(
     const StructuralScopeLowerer& lowerer, const ClimbedRoute& climbed,
     const hir::DataLeaf& leaf) -> BoundEndpoint {
+  // A declaration of the reader's own scope is named by its layout, which no
+  // scope above it shares.
+  const auto own = [&](const char* what) -> const StructuralScopeLowerer& {
+    if (climbed.hops.value > 0) {
+      throw InternalError(
+          std::format(
+              "ClimbedEndpoint: a route names {} of a scope above the reader's "
+              "own, which it reaches only through what that scope published -- "
+              "please report this as a bug",
+              what));
+    }
+    return lowerer;
+  };
   const mir::ClassFieldTarget field = std::visit(
       Overloaded{
           [&](const hir::StructuralDataObjectLeaf& l) {
-            return lowerer.EnclosingScopeAtHops(climbed.hops)
-                .TranslateStructuralDataObject(
-                    hir::StructuralHops{0}, l.object);
+            return own("a data object").TranslateStructuralDataObject(l.object);
           },
           [&](const hir::ProceduralStaticLeaf& l) {
-            return lowerer.EnclosingScopeAtHops(climbed.hops)
-                .ProceduralStaticField(l.body, l.var);
+            return own("a static").ProceduralStaticField(l.body, l.var);
           },
           [&](const hir::PublishedMemberLeaf& l) {
             const ScopeClassLayout& record =

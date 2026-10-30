@@ -14,7 +14,8 @@ D6 lays out the table a body's scopes are built from. D1 to D3 widened and D4 to
 2026-10-25: what held for a reach into a neighbouring block holds for every reach leaving a body,
 upward ones included, and which body each child of an object is, is that object's construction, so a
 parent's code names no child body either; that is what lets bodies be found by comparing what they
-state (fact 6).
+state (fact 6). D5 and D6 revised 2026-10-29: a block body no longer stands on another body's
+lowering, and an interface port is reached through what its scope published like every other reach.
 
 ## Requirement
 
@@ -78,16 +79,19 @@ base every scope extends, so every body realizing the class has it in one place.
 once per scope and views what it reached as the class that scope published, so a block's code names
 no enclosing scope's implementation.
 
-**D5. A block body is lowered inside the scope publishing the class its own class sits in.** It is
-the unit's own scope or, inside a block, the first block body publishing that class: every scope
-publishing one class publishes alike, and a body reaches the scopes around it only through what they
-published (D1, D4), so whichever stands there is read the same, and taking the first makes the
-lowering a function of the body alone and never of which object built it first.
+**D5. A block body is lowered against the classes the scopes around it published, and against no
+other body's lowering.** A body reaches the scopes around it only through what they published (D1,
+D4), so what its lowering needs of each is that class and the link the class keeps to the scope
+around it, both read off the signature. Revised 2026-10-29: the body used to be lowered inside the
+first block body publishing the class around its own, which was sound for the same reason and still
+made one body's lowering stand on another's.
 
-**D6. Two reaches still name another scope's own identity, each where only one scope can stand.** An
-interface port is declared only on the unit's own scope, which one implementation holds once. A
+**D6. One reach still names another scope's own identity, where only one scope can stand.** A
 class's static is kept by the scope declaring the class, and a block declaring a class is named by
-its index, as is every block holding one, so its body is the only one of its class.
+its index, as is every block holding one, so its body is the only one of its class. Revised
+2026-10-29: an interface port of the unit's own scope, reached from a block inside it, was the
+other, on the ground that one implementation holds the unit's scope once; it is now reached through
+what that scope published, as D1 says of every reach leaving the reader's own scope.
 
 ## Limits
 

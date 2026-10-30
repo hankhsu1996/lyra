@@ -448,9 +448,9 @@ the detail lives in the entry itself.
   scope, goes through what that scope published, a subroutine of another scope is called through its
   published slot, a block keeps the scope that built it as what that scope published, a scope's
   construction table is its own and says which body each child is, and a block body is lowered
-  inside the first scope publishing the class around its own. Calling another block's subroutine
-  directly, reaching a table section by offset, and lowering a block inside whichever scope first
-  built it are rejected.
+  against the classes the scopes around it published. Calling another block's subroutine directly,
+  reaching a table section by offset, and lowering a block inside whichever scope first built it are
+  rejected.
 - [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md)
   -- every instance one identity names lowers alike because the lowering reads nothing of it the
   identity does not hold, not because a check finds the copies alike. Read it for what the lowering

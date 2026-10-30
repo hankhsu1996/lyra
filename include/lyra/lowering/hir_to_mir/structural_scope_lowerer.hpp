@@ -74,46 +74,41 @@ struct StoredRoute {
 using RouteReach = std::variant<ClimbedRoute, StoredRoute>;
 
 // Lowers one HIR structural scope into one MIR class, in two passes over the
-// scope tree: the first settles what every scope declares, the second lowers
+// unit's scopes: the first settles what every scope declares, the second lowers
 // every body against those. Two, because a body may name any peer's
-// declaration while no declaration names a body. Each scope's lowering holds
-// what it settled and borrows the enclosing one, so a reference climbing out
-// resolves against the scope it names; and the tree of them outlives the first
-// pass, which is what the second reads. The class being built is not held here
-// -- a body reaches it down the walk, like everything else that changes as the
-// walk moves.
+// declaration while no declaration names a body. A block body is lowered once
+// whichever objects build it, and reaches the scopes around it only through
+// what each published, so its lowering stands on those published classes. The
+// class being built is not held here -- a body
+// reaches it down the walk, like everything else that changes as the walk
+// moves.
 class StructuralScopeLowerer {
  public:
   StructuralScopeLowerer(
-      UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-      const hir::StructuralScope& hir_scope,
+      UnitLowerer& unit_lowerer, const hir::StructuralScope& hir_scope,
       std::optional<DesignRootInputs> design_root = std::nullopt)
       : owner_(&unit_lowerer),
-        parent_(parent),
         hir_scope_(&hir_scope),
         design_root_(std::move(design_root)) {
   }
 
-  // The lowering of a unit's scopes: the root scope's, which owns every other,
-  // and each block body's, by the body's id.
+  // The lowering of a unit's scopes: the root scope's, and each block body's,
+  // by the body's id.
   struct Tree {
     std::unique_ptr<StructuralScopeLowerer> root;
-    std::vector<StructuralScopeLowerer*> blocks;
+    std::vector<std::unique_ptr<StructuralScopeLowerer>> blocks;
   };
 
   // The lowering of the unit's root scope and of every block body the unit
   // holds, each taking the identity of the class its unit published of it as
   // it is built -- which is before any type translates, since a type may name
-  // one. A block body is lowered once whichever objects build it, its code
-  // reaching the scopes around it only through what they published, so it is
-  // lowered inside the first scope publishing the class its own class sits in.
+  // one.
   [[nodiscard]] static auto ForRoot(
       UnitLowerer& unit_lowerer, const hir::StructuralScope& root_scope,
       std::optional<DesignRootInputs> design_root) -> Tree;
 
-  // Mints this class's identity, builds its structural shape, publishes the
-  // shape so peer body lowering can query it, and recurses to declare the
-  // shape of every block body this scope stands as the parent of.
+  // Mints this class's identity, builds its structural shape, and publishes
+  // the shape so peer body lowering can query it.
   auto DeclareShape() -> diag::Result<mir::ClassId>;
 
   // The class the unit published of the object this scope is.
@@ -147,11 +142,8 @@ class StructuralScopeLowerer {
   }
 
   // Lowers every body and every install statement against the already-
-  // published shape, recurses into descendants, and commits the composed
-  // class to the compilation unit. `parent_frame` carries the
-  // enclosing-class chain this scope's bodies thread through; the root call
-  // receives a default `WalkFrame`.
-  auto PopulateBodies(WalkFrame parent_frame) -> diag::Result<void>;
+  // published shape, and commits the composed class to the compilation unit.
+  auto PopulateBodies() -> diag::Result<void>;
 
   // Central scope-level expression dispatcher. One switch over `hir::Expr::
   // data` routing each kind to its per-family handler.
@@ -182,10 +174,6 @@ class StructuralScopeLowerer {
 
   [[nodiscard]] auto Owner() const -> UnitLowerer& {
     return *owner_;
-  }
-
-  [[nodiscard]] auto Parent() const -> const StructuralScopeLowerer* {
-    return parent_;
   }
 
   [[nodiscard]] auto HirScope() const -> const hir::StructuralScope& {
@@ -257,23 +245,6 @@ class StructuralScopeLowerer {
       const WalkFrame& frame, hir::RoutedDisableTargetRefId id) const
       -> mir::ExprId;
 
-  // The scope `hops` enclosing edges out from this one, in the same
-  // compilation unit. A route anchored there resolves each identity it names
-  // against that scope, the same reach a sibling or child route uses.
-  [[nodiscard]] auto EnclosingScopeAtHops(hir::StructuralHops hops) const
-      -> const StructuralScopeLowerer& {
-    if (hops.value == 0) {
-      return *this;
-    }
-    if (parent_ == nullptr) {
-      throw InternalError(
-          "StructuralScopeLowerer::EnclosingScopeAtHops: hops walk ran past "
-          "the root scope");
-    }
-    return parent_->EnclosingScopeAtHops(
-        hir::StructuralHops{.value = hops.value - 1});
-  }
-
   // The MIR field the history of one sampled expression became (LRM 16.9.3).
   // It takes no hop count: a history is recorded on the scope whose process
   // reads it, so the reader and the storage are always the same scope.
@@ -290,39 +261,18 @@ class StructuralScopeLowerer {
     return concurrent_assertion_fields_.Get(hir_id);
   }
 
-  // The MIR field a structural data object became, in the scope `hops`
-  // enclosing edges out from this one: a field of the published class where
-  // the unit published it, and of this scope's own class otherwise.
+  // The MIR field a structural data object of this scope became: a field of
+  // the published class where the unit published it, and of this scope's own
+  // class otherwise.
   [[nodiscard]] auto TranslateStructuralDataObject(
-      hir::StructuralHops hops, hir::StructuralDataObjectId hir_id) const
-      -> mir::ClassFieldTarget {
-    if (hops.value == 0) {
-      return data_object_fields_.Get(hir_id);
-    }
-    if (parent_ == nullptr) {
-      throw InternalError(
-          "StructuralScopeLowerer::TranslateStructuralDataObject: hops walk "
-          "ran past the root scope");
-    }
-    return parent_->TranslateStructuralDataObject(
-        hir::StructuralHops{hops.value - 1}, hir_id);
+      hir::StructuralDataObjectId hir_id) const -> mir::ClassFieldTarget {
+    return data_object_fields_.Get(hir_id);
   }
 
-  // The MIR field an interface port became, in the scope `hops` enclosing
-  // edges out from this one.
-  [[nodiscard]] auto TranslateInterfacePort(
-      hir::StructuralHops hops, hir::InterfacePortId hir_id) const
+  // The MIR field an interface port of this scope became.
+  [[nodiscard]] auto TranslateInterfacePort(hir::InterfacePortId hir_id) const
       -> mir::ClassFieldTarget {
-    if (hops.value == 0) {
-      return interface_port_fields_.Get(hir_id);
-    }
-    if (parent_ == nullptr) {
-      throw InternalError(
-          "StructuralScopeLowerer::TranslateInterfacePort: hops walk ran past "
-          "the root scope");
-    }
-    return parent_->TranslateInterfacePort(
-        hir::StructuralHops{hops.value - 1}, hir_id);
+    return interface_port_fields_.Get(hir_id);
   }
 
   // Registry identity of the class this scope lowers to.
@@ -399,14 +349,15 @@ class StructuralScopeLowerer {
   // The lowering of `hir_scope`, taking the identity of the class its unit
   // published of it.
   [[nodiscard]] static auto LoweringOf(
-      UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-      const hir::StructuralScope& hir_scope,
+      UnitLowerer& unit_lowerer, const hir::StructuralScope& hir_scope,
       std::optional<DesignRootInputs> design_root)
       -> std::unique_ptr<StructuralScopeLowerer>;
 
   UnitLowerer* owner_;
-  const StructuralScopeLowerer* parent_;
   const hir::StructuralScope* hir_scope_;
+  // The classes the unit published of the scopes standing around this one,
+  // outermost first: none for the unit's own scope.
+  std::vector<mir::ClassId> published_around_;
   // Present only on the design root's own scope, the sole scope whose
   // elaboration spans the whole design: it brings up every namespace and
   // states every specialization's construction table as constants of its
@@ -463,8 +414,6 @@ class StructuralScopeLowerer {
   // this one and holds nothing else, so what the unit adds while lowering its
   // bodies moves no field a referrer reads.
   mir::ClassId published_class_id_{};
-  // The lowering of each block body this scope stands around.
-  std::vector<std::unique_ptr<StructuralScopeLowerer>> block_children_;
   // The classes this scope replicates: those it declares (LRM 23.9), and the
   // specializations of a generic on one (LRM 8.25), each a type of this scope's
   // instance (LRM 6.22). So the scope both settles its shape and lowers its

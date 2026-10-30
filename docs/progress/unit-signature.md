@@ -237,11 +237,6 @@ why nothing a signature states may rest on it.
       port was an internal error.
 - [ ] S24 -- Waiting on another instance's clocking block (`@(p.cb)`, LRM 14.10) is refused, as
       waiting on one's own is; clocking block signals are refused.
-- [ ] S25 -- A few facts a declaration of another unit states are still read off the front end where
-      a name reaches it: the direction of a callee's formal, where a procedure's read set decides
-      whether an argument is also written, and the declared type at the end of a name a wait
-      watches. Each is a fact the declaring unit publishes, so each has two sources until it is read
-      from there.
 
 ## Out of scope
 
