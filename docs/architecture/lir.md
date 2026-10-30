@@ -77,11 +77,11 @@ below LIR, at LIR-to-LLVM.
   whether ending a value of a type does anything, answered once by one query: the value's bytes, the
   library's entry for what it is held as, a function the unit states built from the type's parts (a
   product's components in order, an array's elements, a tagged union's live member, a closure's
-  captures), or the definition a value opens with. And for each class the unit defines that a value
-  is built of, how the parts it places begin and end and how an object of it is created whole and
-  given its class, and ended. The step is stated as an operation -- a copy, a value built of parts,
-  a value put in storage -- and the query says what it does, as rustc's `Drop` names a type's drop
-  glue.
+  captures), the definition a value opens with, or, for an owning pointer's end, what it points at,
+  ended where the pointer ends. And for each class the unit defines that a value is built of, how
+  the parts it places begin and end and how an object of it is created whole and given its class,
+  and ended. The step is stated as an operation -- a copy, a value built of parts, a value put in
+  storage -- and the query says what it does, as rustc's `Drop` names a type's drop glue.
 - Who ends a value a pointer owns: a uniquely owning pointer is an owned value with no copy, moved
   wherever it is handed on -- into a slot, to a caller, to a callee -- and ended by its last holder,
   which ends what it points at and gives the storage back. Storage of dynamic duration for a value

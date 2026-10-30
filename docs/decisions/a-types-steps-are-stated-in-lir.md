@@ -28,17 +28,18 @@ operations ([../architecture/backend_contract.md](../architecture/backend_contra
 steps are the ones the runtime's table of a type asks: copy into storage holding nothing, move out
 of a value whose holder still ends it, write over a value already there, and end. One query of LIR
 answers how a step of a type is carried out: the value's bytes, the library's entry for what the
-value is held as, a function the unit states, or the definition the value opens with; and whether
-ending a value of a type does anything is LIR's answer, which the code generator reads where it lays
-a value out and states nowhere itself. Whether ending storage of the library's -- a variable's cell,
-a net -- does anything is the library's statement of that storage.
+value is held as, a function the unit states, the definition the value opens with, or, for an owning
+pointer's end, what it points at, ended where the pointer ends and its storage then given back; and
+whether ending a value of a type does anything is LIR's answer, which the code generator reads where
+it lays a value out and states nowhere itself. Whether ending storage of the library's -- a
+variable's cell, a net -- does anything is the library's statement of that storage.
 
 **D2. Where the answer is a function, the lowering builds it from the type's parts**, as rustc
 builds drop glue and clone shims: a product's components in order, an array's elements in a loop
-counted by a machine integer, the member a tagged union's tag names, a closure's captures, and for
-an owning pointer what it points at and then the storage given back. A copy and a move answer the
-value they build in the body's return place, built part by part there. A value laid out by its type
-has a function for every step it has, its bytes or not, because the library's table names one.
+counted by a machine integer, the member a tagged union's tag names, and a closure's captures. A
+copy and a move answer the value they build in the body's return place, built part by part there. A
+value laid out by its type has a function for every step it has, its bytes or not, because the
+library's table names one.
 
 **D3. Each class this unit defines that a value is built of has its creations and ends stated the
 same way**: the parts it places begun -- what it extends, then its own members -- and ended, last
@@ -57,7 +58,10 @@ crosses the runtime's C interface stays its own, since that is the target's spel
 - **rustc** builds drop glue and clone shims per type as MIR bodies (`build_drop_shim`,
   `build_clone_shim`, `compiler/rustc_mir_transform/src/shim.rs`); its MIR is the layer Lyra's LIR
   plays. Its code generator resolves the glue and emits nothing where the glue is empty
-  (`compiler/rustc_codegen_ssa/src/mir/block.rs`), and never walks a type itself.
+  (`compiler/rustc_codegen_ssa/src/mir/block.rs`), and never walks a type itself. A `Box`'s drop is
+  the exception: drop elaboration writes it out where the box is dropped, its contents dropped and
+  then its storage freed (`open_drop_for_box_contents`,
+  `compiler/rustc_mir_transform/src/elaborate_drop.rs`), so no function is made per boxed type.
 - **Swift** states a class's member destruction, its superclass's deinit and its deallocation in SIL
   (`emitIVarDestroyer`, `emitDestroyingDestructor`, `emitDeallocatingClassDestructor`,
   `lib/SILGen/SILGenDestructor.cpp`). A struct's per-field copy and destroy is in IRGen, because a
@@ -94,14 +98,14 @@ rustc's answer is taken.
 
 ## Consequences
 
-- LIR holds a function per laid-out type and step, per closure and per owning pointer whose end is
-  one, and four per class, each named from the type or the class. Every laid-out type the unit names
-  gets its functions, whether or not a table or a step of it is then emitted, where the code
-  generator built one only when something asked for it: a declaration brings its operations
-  ([../design-process.md](../design-process.md)), and what an unused one costs is its compile. LIR's
-  verification admits a value built part by part in a body's return place -- the shape a
-  construction takes, not a proof that each part is made once -- and LIR states a value ended and
-  built anew where it lies as one statement.
+- LIR holds a function per laid-out type and step, per closure, and four per class, each named from
+  the type or the class; an owning pointer's end has none, so a value boxed only past a size adds no
+  function. Every laid-out type the unit names gets its functions, whether or not a table or a step
+  of it is then emitted, where the code generator built one only when something asked for it: a
+  declaration brings its operations ([../design-process.md](../design-process.md)), and what an
+  unused one costs is its compile. LIR's verification admits a value built part by part in a body's
+  return place -- the shape a construction takes, not a proof that each part is made once -- and LIR
+  states a value ended and built anew where it lies as one statement.
 - A value laid out by its type that holds an owning pointer has no copy, no write over it and no
   move, only an end: a move leaves what it took for its holder to end, which would give back what
   the pointer moved into the new value owns. No lowering makes one -- a value too large for a frame

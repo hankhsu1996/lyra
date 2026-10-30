@@ -450,6 +450,28 @@ auto CodeGenModule::EmitStep(
             EndObject(builder, held);
             return {};
           },
+          // An owning pointer ends what it points at -- a variable's cell
+          // with its storage, a value as its type ends one -- and gives the
+          // storage back, as clang writes a `delete` out where it is.
+          [&](const lir::StepThroughPointee&) -> diag::Result<void> {
+            if (step != lir::ValueStep::kEnd) {
+              throw InternalError(
+                  "llvm codegen: an owning pointer is asked through what it "
+                  "points at for a step other than its end -- please report "
+                  "this as a bug");
+            }
+            llvm::Value* const held = builder.CreateLoad(types_.Ptr(), args[0]);
+            const lir::TypeId pointee = *unit_->types.Get(type).Pointee();
+            const std::array<llvm::Value*, 1> at{held};
+            auto ended =
+                unit_->types.Get(pointee).Is<lir::ObservableType>()
+                    ? EndStorageAt(builder, pointee, CellStorage(pointee), held)
+                    : EmitStep(builder, pointee, lir::ValueStep::kEnd, at);
+            if (!ended) {
+              return ended;
+            }
+            return EmitDeleteCall(builder, pointee, held);
+          },
           [&](const lir::StepByLibrary& library) -> diag::Result<void> {
             return EmitLibraryStep(builder, type, library.object, step, args);
           },

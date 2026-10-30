@@ -118,8 +118,8 @@ TEST(ValueStepTest, AValueHoldingSomethingToEndIsSteppedByItsFunction) {
 }
 
 // An owning pointer moves as the address it is and is never copied; ending it
-// ends what it points at, by the function its type has where its type says
-// how, and through the definition an object opens with where only that knows.
+// ends what it points at, as its type says where the pointer ends, and through
+// the definition an object opens with where only that knows.
 // A value holding one has no copy and no move: a move leaves what it took to be
 // ended, which would give back what the moved pointer now owns. It still ends.
 TEST(ValueStepTest, AnOwningPointerMovesAndEndsButIsNeverCopied) {
@@ -128,7 +128,7 @@ TEST(ValueStepTest, AnOwningPointerMovesAndEndsButIsNeverCopied) {
   EXPECT_TRUE(Is<StepIsBytes>(t.Step(boxed, ValueStep::kMove)));
   EXPECT_TRUE(Is<NoSuchStep>(t.Step(boxed, ValueStep::kCopy)));
   EXPECT_TRUE(Is<NoSuchStep>(t.Step(boxed, ValueStep::kAssign)));
-  EXPECT_TRUE(Is<StepByFunction>(t.Step(boxed, ValueStep::kEnd)));
+  EXPECT_TRUE(Is<StepThroughPointee>(t.Step(boxed, ValueStep::kEnd)));
 
   const ClassId cls = t.unit.classes.Add(Class{});
   const TypeId object = t.unit.types.Intern(Type{ObjectType{.class_id = cls}});

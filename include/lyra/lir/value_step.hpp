@@ -33,6 +33,10 @@ auto ValueStepName(ValueStep step) -> std::string_view;
 // - a function of the unit, built from the type's parts;
 // - the definition the value opens with, which a value whose type is known
 //   only where the program runs is ended through;
+// - what an owning pointer points at, ended as its type says where the
+//   pointer ends, and the storage then given back, as rustc's drop
+//   elaboration writes a `Box`'s drop out where it is dropped rather than
+//   calling a function per pointee;
 // - no such step, for a value that has none: an owning pointer is never
 //   copied, and a closure is ended where it lies and never moved.
 struct StepIsBytes {};
@@ -41,10 +45,11 @@ struct StepByLibrary {
 };
 struct StepByFunction {};
 struct StepThroughDefinition {};
+struct StepThroughPointee {};
 struct NoSuchStep {};
 using StepRealization = std::variant<
     StepIsBytes, StepByLibrary, StepByFunction, StepThroughDefinition,
-    NoSuchStep>;
+    StepThroughPointee, NoSuchStep>;
 
 // Whether a value of `type` is the bytes its type lays out -- a tuple, a
 // structure, a union of either kind, a fixed-size unpacked array -- which
@@ -59,8 +64,7 @@ using StepRealization = std::variant<
 
 // How `step` of a value of `type` is carried out in `unit`. Where the answer is
 // a function, it is the one the unit states for it, which every value laid out
-// by its type with something to end, every closure and every owning pointer to
-// a value or a cell has.
+// by its type with something to end and every closure has.
 [[nodiscard]] auto StepOf(
     const CompilationUnit& unit, TypeId type, ValueStep step)
     -> StepRealization;

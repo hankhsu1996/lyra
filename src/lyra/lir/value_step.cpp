@@ -171,7 +171,8 @@ auto StepOf(const CompilationUnit& unit, TypeId type, ValueStep step)
           // gives the storage back. What it points at is ended through the
           // definition that value opens with where only that definition knows
           // it -- an object of whatever class it was created as, a closure of
-          // no known type -- and otherwise by its type.
+          // no known type -- and otherwise as its type says, where the pointer
+          // ends.
           [&](const OwnedStorageAddress&) -> StepRealization {
             switch (step) {
               case ValueStep::kMove:
@@ -187,7 +188,7 @@ auto StepOf(const CompilationUnit& unit, TypeId type, ValueStep step)
                 pointee.Is<ErasedCallableType>()) {
               return StepThroughDefinition{};
             }
-            return StepByFunction{};
+            return StepThroughPointee{};
           },
           // A closure is built where it lies and ended there, by the body
           // its declaration's captures make.

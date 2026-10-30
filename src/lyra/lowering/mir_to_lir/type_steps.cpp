@@ -182,10 +182,10 @@ void BuildPart(
 void UnitLowerer::StateTypeSteps() {
   // Every type the unit names that a step is carried out by a function for --
   // a value laid out by its type, which the library holding one asks every
-  // step of, a closure, an owning pointer ending what it points at -- is given
-  // that function. Each is named before any body is built, since a body steps
-  // the parts of its value as their own types say; building them names no type
-  // that needs one of its own: borrowed pointers, machine integers, void.
+  // step of, and a closure -- is given that function. Each is named before any
+  // body is built, since a body steps the parts of its value as their own types
+  // say; building them names no type that needs one of its own: borrowed
+  // pointers, machine integers, void.
   std::vector<std::pair<lir::TypeId, lir::ValueStep>> stated;
   for (const lir::TypeId type : out_.types.Ids()) {
     for (const lir::ValueStep step : kEveryStep) {
@@ -333,30 +333,6 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, lir::ValueStep step)
                   .declared_by = type, .slot = lir::MemberSlot{i}}});
       body.Statement(lir::EndStorageInstr{.place = std::move(capture)});
     }
-    return std::move(body).Finish();
-  }
-
-  // An owning pointer ends what it points at -- a variable's cell together
-  // with its storage, a value as its type ends one -- and gives the storage
-  // back.
-  if (const auto* owner = stated.As<lir::PointerType>()) {
-    const lir::Operand held = body.Load(taken, type);
-    const lir::Place pointed{.base = held, .chain = {lir::DerefProjection{}}};
-    if (out_.types.Get(owner->pointee).Is<lir::ObservableType>()) {
-      body.Statement(lir::EndStorageInstr{.place = pointed});
-    } else if (lir::NeedsEnd(out_, owner->pointee)) {
-      body.Emit(
-          void_type, lir::CallInstr{
-                         .target = lir::EndValueTarget{},
-                         .args = {body.Load(pointed, owner->pointee)}});
-    }
-    body.Emit(
-        void_type,
-        lir::CallInstr{
-            .target =
-                lir::DynamicStorageTarget{
-                    .op = lir::DynamicStorageTarget::Op::kDeallocate},
-            .args = {held}});
     return std::move(body).Finish();
   }
 
