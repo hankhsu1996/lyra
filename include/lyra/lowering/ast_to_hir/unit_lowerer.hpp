@@ -466,11 +466,11 @@ struct InstanceHop {
   std::vector<std::uint32_t> indices;
 };
 struct LoopBlockHop {
-  const slang::ast::GenerateBlockSymbol* block;
+  const slang::ast::GenerateBlockSymbol* block = nullptr;
   hir::ExprId position;
 };
 struct ChosenBlockHop {
-  const slang::ast::GenerateBlockSymbol* block;
+  const slang::ast::GenerateBlockSymbol* block = nullptr;
 };
 struct ProceduralHop {
   support::DefPathData step;
@@ -767,8 +767,10 @@ class UnitLowerer {
   }
 
   // What a declared type this unit names declares: its own, as it defined it,
-  // and another unit's, as that unit published it, taken the first time it is
-  // asked for, which is after every unit has published.
+  // and one it did not define -- another unit's, or one a block only another
+  // specialization of this unit built declares -- as its unit published it,
+  // taken the first time it is asked for, which is after every unit has
+  // published.
   auto TypeDefinitionOf(const hir::TypeDeclarationRef& declaration)
       -> const hir::TypeDefinition&;
   auto DefinitionOf(const hir::EnumType& type) -> const hir::EnumDefinition& {
@@ -1032,27 +1034,6 @@ class UnitLowerer {
   auto ResolveClassType(const slang::ast::Type& type, diag::SourceSpan span)
       -> diag::Result<hir::ClassId>;
 
-  // What a class's declaration names beside itself: the class it extends, and
-  // the interface classes it implements or, for an interface class, extends
-  // (LRM 8.26.2), in the order written.
-  struct ClassParents {
-    std::optional<hir::ClassId> base;
-    std::vector<hir::ClassId> implements;
-  };
-  auto ParentsOf(hir::ClassId cls) -> ClassParents;
-
-  // Appends the interface class `iface`, then every interface class it extends
-  // (LRM 8.26.2), skipping one already in `reached`: an interface class is one
-  // however many ways it is arrived at (LRM 8.26.6.3). What each extends is
-  // read where that class states it, so one of another unit is its signature
-  // consumed.
-  void ReachInterface(hir::ClassId iface, std::vector<hir::ClassId>& reached);
-
-  // Every interface class a value of `cls` is also a value of (LRM 8.26.5):
-  // the ones the class it extends is (LRM 8.26), then the ones `cls` names and
-  // the ones those extend.
-  auto AllInterfacesOf(hir::ClassId cls) -> std::vector<hir::ClassId>;
-
   // What the class of `method` declares of it, or nothing for a method the
   // front end supplies every class (LRM 18.6, 18.8), which no declaration
   // lists.
@@ -1065,22 +1046,6 @@ class UnitLowerer {
   auto IsTypeAssociatedMethod(
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
       -> diag::Result<bool>;
-
-  // For a class that is not an interface class, states which behavior of its
-  // lineage answers each behavior of every interface class it is also a value
-  // of. The answer is found by looking the behavior's name up in the class,
-  // which is how the language finds it (LRM 8.26.2).
-  auto StateConformance(
-      const slang::ast::ClassType& cls, diag::SourceSpan span,
-      hir::ClassDecl& decl) -> diag::Result<void>;
-
-  // The behavior `method` is part of -- a method, or a constraint block, which
-  // is overridden as one (LRM 18.5.2) -- named by the member that introduced
-  // it, whichever unit declares that member's class: what a member overriding
-  // it overrides, and what an interface class's behavior is answered by.
-  auto IntroducingMethodTarget(
-      const slang::ast::Symbol& method, diag::SourceSpan span)
-      -> diag::Result<hir::ClassMethodTarget>;
 
   // The interface a subroutine's own declaration states: its call protocol and
   // each formal's direction and type (LRM 13.5), in this unit's types. It is
@@ -1509,17 +1474,18 @@ class UnitLowerer {
   auto PopulateClassBody(PendingClassBody& pending)
       -> diag::Result<hir::ClassDecl>;
 
-  // Requires every class the unit holds to have its code in a scope once the
-  // unit's scopes are lowered. Each class is replicated by a structural scope,
-  // which lowers its code; a block instance no body was lowered from
+  // Requires every class this specialization elaborated to have its code in
+  // a scope once its scopes are lowered. Each is replicated by a structural
+  // scope, which lowers its code; a block instance no body was lowered from
   // replicates only classes the block it shares a body with holds the code of.
   void RequireEveryClassBodyLowered() const;
 
   // Marks the class `cls` as one this unit reads, not only names: the
   // declaration phase meets classes whose objects the unit makes and whose
-  // methods it calls -- the coverage library's -- while other units'
-  // signatures are not yet reachable, so their declarations are read once every
-  // body has lowered.
+  // methods it calls -- the coverage library's -- and the classes its own
+  // extend and implement, off which what answers an interface class's
+  // behaviors is read (LRM 8.26.5), while other units' signatures are not yet
+  // reachable, so their declarations are read once every body has lowered.
   void ReadDeclarationLater(hir::ClassId cls);
   void ReadPendingDeclarations();
   // Takes what each declared type this unit names declares, which a later
@@ -1530,6 +1496,12 @@ class UnitLowerer {
   // included: which blocks a construction built is no part of the unit, so
   // every body of it states every one of its classes alike.
   void RecordPublishedScopeClasses();
+  // Declares every class, covergroup and type the unit publishes, those a
+  // block only another specialization of the unit built declares included, as
+  // the unit published them: a construction never elaborates a block it did
+  // not build (LRM 27.5), and what the unit declares is one thing to every
+  // body of it.
+  auto ReadOwnUnitDeclarations() -> diag::Result<void>;
 
   // Builds a HIR Expr referring to the data `route` navigates to.
   // `owner_frame` is the frame whose routes hold it.

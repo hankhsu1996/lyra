@@ -35,6 +35,16 @@ struct IntroducesVirtual {
   auto operator==(const IntroducesVirtual&) const -> bool = default;
 };
 
+// A behavior (LRM 8.20) as anything outside the class introducing it names it:
+// by that class and the name it was introduced under. Its position is found
+// where that class's declaration is read.
+struct NamedBehavior {
+  ClassId introducer;
+  std::string name;
+
+  auto operator==(const NamedBehavior&) const -> bool = default;
+};
+
 // A method overriding a virtual method of a class this one extends, whether or
 // not the source wrote `virtual` (LRM 8.20), naming the behavior it overrides
 // by the class that introduced it and the name it was introduced under: the
@@ -48,8 +58,7 @@ struct IntroducesVirtual {
 // extended put there.
 struct OverridesVirtual {
   bool is_pure = false;
-  ClassId introducer;
-  std::string name;
+  NamedBehavior overridden;
 
   auto operator==(const OverridesVirtual&) const -> bool = default;
 };

@@ -813,16 +813,7 @@ auto ClassDeclLowerer::PopulateBodies(
   const ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
 
   mir::Class mir_class = shape.OpenClass();
-  for (const hir::ConformingBehavior& answered : hir_class.conforming) {
-    mir_class.conforming.push_back(
-        mir::ConformingBehavior{
-            .interface_behavior =
-                unit_lowerer.VirtualSlotOf(answered.interface_behavior),
-            .answered_by = answered.answered_by.transform(
-                [&](const hir::ClassMethodTarget& behavior) {
-                  return unit_lowerer.VirtualSlotOf(behavior);
-                })});
-  }
+  mir_class.conforming = unit_lowerer.ConformanceOf(hir_class_id_);
 
   mir::CallableCode ctor_code = mir::CallableCode::Defined();
   CallableBindings ctor_bindings(unit_lowerer.Unit(), ctor_code);
@@ -1101,12 +1092,18 @@ auto ClassDeclLowerer::PopulateBodies(
     return std::unexpected(std::move(r.error()));
   }
 
-  // What the class states is the same from every body declaring it once its
-  // code has moved, so whichever body is lowered first states it.
-  if (shape.declaring_instance.has_value()) {
+  // A class a design element's unit declares keeps its code in the body
+  // realizing the scope its object's instance is, and is itself what every
+  // body of the unit states alike.
+  if (hir::RootsAnObject(unit_lowerer.Hir().role)) {
     MoveCodeIntoBody(
         unit_lowerer, class_id_, mir_class, declaring_frame,
         declaring_scope_->PublishedClassId());
+    if (!unit_lowerer.Unit().classes.IsDefined(class_id_)) {
+      unit_lowerer.Unit().DefineClass(
+          class_id_, StateClassFromDeclaration(unit_lowerer, hir_class_id_));
+    }
+    return {};
   }
   if (!unit_lowerer.Unit().classes.IsDefined(class_id_)) {
     unit_lowerer.Unit().DefineClass(class_id_, std::move(mir_class));

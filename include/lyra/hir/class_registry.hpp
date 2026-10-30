@@ -131,16 +131,18 @@ class ClassRegistry {
             },
             [&](const OverridesVirtual& overriding)
                 -> std::optional<ClassMethodTarget> {
-              return IntroducedBy(overriding.introducer, overriding.name);
+              return IntroducedBy(overriding.overridden);
             }},
         Declaration(method.owner).methods.Get(method.method).dispatch);
   }
 
-  // The method of the class `introducer` declared under `name`, which
-  // introduced a behavior (LRM 8.20). A class declares at most one member under
-  // a name, so the name finds it.
-  [[nodiscard]] auto IntroducedBy(
-      ClassId introducer, std::string_view name) const -> ClassMethodTarget {
+  // The method declaring the behavior `behavior` names (LRM 8.20), in the
+  // class that introduced it. A class declares at most one member under a
+  // name, so the name finds it.
+  [[nodiscard]] auto IntroducedBy(const NamedBehavior& behavior) const
+      -> ClassMethodTarget {
+    const ClassId introducer = behavior.introducer;
+    const std::string_view name = behavior.name;
     const std::optional<MethodId> method =
         FindMethod(Declaration(introducer).methods, name);
     if (!method.has_value()) {

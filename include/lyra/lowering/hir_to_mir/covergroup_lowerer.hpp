@@ -112,6 +112,23 @@ class CovergroupLowerer {
 [[nodiscard]] auto CovergroupOperations()
     -> std::array<std::pair<mir::CallableId, std::string_view>, 4>;
 
+// What the code of the operation `point` of the class the covergroup
+// `covergroup` is written as takes and answers, read off what the unit
+// published of the covergroup alone: the code is compiled only by a body whose
+// construction built the scope declaring the covergroup, and what it takes is
+// the same to every body of the unit.
+[[nodiscard]] auto CovergroupOperationPrototype(
+    UnitLowerer& unit_lowerer, hir::CovergroupId covergroup,
+    const ClassCodePoint& point) -> mir::CallableCode;
+
+// The class the covergroup `covergroup`, which belongs to an instance (LRM
+// 6.22), is written as, as every body of its unit states it: its layout and an
+// entry for each of its operations, read off what the unit published of it. A
+// body whose construction did not build the scope declaring it states it too
+// (LRM 27.5).
+[[nodiscard]] auto StateCovergroupClassFromDeclaration(
+    UnitLowerer& unit_lowerer, hir::CovergroupId covergroup) -> mir::Class;
+
 // The behavior the class embedding `first`, the first covergroup of a lineage,
 // makes it by, as a call through an object of that class and an override name
 // it.

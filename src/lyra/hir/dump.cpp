@@ -286,6 +286,10 @@ auto FormatClassMethod(const ClassMethodTarget& t) -> std::string {
   return std::format("Class[{}].{}", t.owner.value, t.method.value);
 }
 
+auto FormatBehavior(const NamedBehavior& behavior) -> std::string {
+  return std::format("Class[{}].{}", behavior.introducer.value, behavior.name);
+}
+
 auto SubroutineKindName(SubroutineKind kind) -> std::string_view {
   switch (kind) {
     case SubroutineKind::kTask:
@@ -315,8 +319,8 @@ auto FormatMethodDispatch(const MethodDispatch& dispatch) -> std::string {
           },
           [&](const OverridesVirtual& overrides) {
             return std::format(
-                " virtual{} overrides=Class[{}].{}", pure(overrides.is_pure),
-                overrides.introducer.value, overrides.name);
+                " virtual{} overrides={}", pure(overrides.is_pure),
+                FormatBehavior(overrides.overridden));
           }},
       dispatch);
 }
@@ -1741,9 +1745,11 @@ class HirDumper {
         }
         const auto declaring = covergroup_declaring_scopes_.find(id);
         if (declaring == covergroup_declaring_scopes_.end()) {
-          throw InternalError(
-              "HirDumper::Dump: every covergroup a unit declares is named by "
-              "one of its scopes");
+          Line(
+              std::format(
+                  "[{}] <declared> \"{}\"", id.value,
+                  support::DisplayOf(u.covergroups.PathOf(id))));
+          continue;
         }
         for (const StructuralScope* scope : declaring->second) {
           DumpCovergroup(
@@ -2034,8 +2040,11 @@ class HirDumper {
         declared.is_interface_class ? "interface class" : "class";
     Line(std::format("[{}] {} \"{}\"", id.value, kind, name));
     Indent();
-    if (declared.takes_declaring_instance) {
-      Line("Takes: the instance it belongs to");
+    if (declared.instance_scope.has_value()) {
+      Line(
+          std::format(
+              "Takes: the instance of {} it belongs to",
+              support::DisplayOf(*declared.instance_scope)));
     }
     if (declared.base.has_value()) {
       Line(std::format("Extends: {}", FormatClass(*declared.base)));
@@ -2043,13 +2052,12 @@ class HirDumper {
     for (const auto& impl : declared.implements) {
       Line(std::format("Implements: {}", FormatClass(impl)));
     }
-    for (const ConformingBehavior& answered : c.conforming) {
+    for (const ConformingBehavior& answered : declared.conforming) {
       Line(
           std::format(
-              "Conforms: {} <- {}",
-              FormatClassMethod(answered.interface_behavior),
+              "Conforms: {} <- {}", FormatBehavior(answered.interface_behavior),
               answered.answered_by.has_value()
-                  ? FormatClassMethod(*answered.answered_by)
+                  ? FormatBehavior(*answered.answered_by)
                   : std::string{"nothing"}));
     }
     for (const DeclaredProperty& field : declared.properties) {

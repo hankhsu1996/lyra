@@ -699,13 +699,15 @@ struct StructuralScope {
   // a generic on such a type (LRM 8.25). An object of one belongs to the one
   // instance it was created in and its bodies reach that instance; stating the
   // relation on the scope is what lets the instance be supplied where it is
-  // known. Every class a unit holds is named by a scope, the namespace unit's
-  // root scope included, so nothing is reached by elimination: by each body of
-  // the scope declaring it, with the code that body compiled.
+  // known. Every class declared in a scope the body's construction built is
+  // named by one of its scopes, the namespace unit's root scope included, with
+  // the code that body compiled; one declared in a block the construction did
+  // not build (LRM 27.5) is named by none of them and has no code in the body.
   std::vector<ReplicatedClass> replicated_classes;
   // The covergroups that are types of this scope's instance in the same sense
   // (LRM 19.3), a class's embedded ones among them (LRM 19.4): each is made
-  // into a class replicated with this scope.
+  // into a class replicated with this scope, and one declared in a block the
+  // construction did not build is named by none.
   std::vector<ReplicatedCovergroup> replicated_covergroups;
   std::vector<ForeignExportDecl> foreign_exports;
   // Every scope's identity is minted before any body is lowered, so a `disable`

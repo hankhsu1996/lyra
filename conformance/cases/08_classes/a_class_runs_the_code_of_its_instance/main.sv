@@ -7,7 +7,9 @@
 // parameter (LRM 8.13, 8.15, 8.20), for a class whose declaration differs
 // between the blocks of a loop, and for a covergroup each block declares (LRM
 // 19.3), whose type's coverage counts its own block's instances alone (LRM
-// 19.11).
+// 19.11). It holds too where instances of one module build different
+// alternatives of a conditional generate (LRM 27.5) and only one of them
+// builds the block declaring the classes, the covergroup and the types.
 class Base;
 endclass
 
@@ -118,6 +120,49 @@ module Blocks (output int o[3], output int same[3], output int width[3],
   end
 endmodule
 
+module Chooses #(parameter int P = 0) (output int o);
+  if (P == 0) begin : off
+    typedef struct {
+      int a;
+      int b;
+    } pair_t;
+    typedef enum {
+      RED,
+      GREEN = 5
+    } color_t;
+    class Held extends Base;
+      static int made = 0;
+      virtual function int get();
+        made++;
+        return 10 + made;
+      endfunction
+    endclass
+    class Local;
+      function int get();
+        return 3;
+      endfunction
+    endclass
+    covergroup cg;
+      coverpoint o;
+    endgroup
+    pair_t p;
+    color_t k;
+    Held h = new;
+    cg c = new;
+    initial begin
+      Local l;
+      l = new;
+      p.a = 2;
+      p.b = 3;
+      k = GREEN;
+      o = h.get() + l.get() + p.a + p.b + int'(k);
+      c.sample();
+    end
+  end else begin : on
+    initial o = P;
+  end
+endmodule
+
 module Top;
   int narrow[5];
   int wide[5];
@@ -126,10 +171,13 @@ module Top;
   int width[3];
   real cov[3];
   real type_cov[3];
+  int chose[2];
   Holds #(.K(2)) n (.o(narrow));
   Holds #(.K(3)) w (.o(wide));
   Blocks b (
       .o(blocks), .same(same), .width(width), .cov(cov), .type_cov(type_cov));
+  Chooses #(.P(0)) chose_off (.o(chose[0]));
+  Chooses #(.P(1)) chose_on (.o(chose[1]));
 
   final begin
     if (narrow[0] !== 24 || wide[0] !== 39)
@@ -155,6 +203,9 @@ module Top;
     if (type_cov[0] != 100.0 || type_cov[1] != 50.0 || type_cov[2] != 50.0)
       $fatal(1, "covergroup types gave %0f %0f %0f", type_cov[0], type_cov[1],
              type_cov[2]);
+    if (chose[0] !== 24 || chose[1] !== 1)
+      $fatal(1, "instances choosing blocks gave %0d and %0d", chose[0],
+             chose[1]);
     $display("All checks passed");
   end
 endmodule

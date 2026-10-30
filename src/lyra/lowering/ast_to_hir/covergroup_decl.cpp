@@ -971,8 +971,9 @@ auto UnitLowerer::PublishedFactoryOf(
     if (!introducer) return std::unexpected(std::move(introducer.error()));
     dispatch = hir::OverridesVirtual{
         .is_pure = false,
-        .introducer = *introducer,
-        .name = hir::CovergroupFactoryName(DefPathOf(first, Naming()))};
+        .overridden = hir::NamedBehavior{
+            .introducer = *introducer,
+            .name = hir::CovergroupFactoryName(DefPathOf(first, Naming()))}};
   }
   return hir::DeclaredMethod{
       .prototype =

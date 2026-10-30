@@ -303,6 +303,19 @@ auto ReaderImporter(
       }};
 }
 
+namespace {
+
+// `behavior` with the class introducing it taken into the pool `importer`
+// writes.
+auto ImportNamedBehavior(TypeImporter& importer, const NamedBehavior& behavior)
+    -> NamedBehavior {
+  return NamedBehavior{
+      .introducer = importer.ImportClass(behavior.introducer),
+      .name = behavior.name};
+}
+
+}  // namespace
+
 auto ImportClassDeclaration(
     TypeImporter& importer, const ClassDeclaration& declared)
     -> ClassDeclaration {
@@ -320,9 +333,19 @@ auto ImportClassDeclaration(
             return ImportCalleeInterface(importer, stated);
           }),
       .methods = ImportMethods(importer, declared.methods),
-      .takes_declaring_instance = declared.takes_declaring_instance};
+      .instance_scope = declared.instance_scope,
+      .conforming = {}};
   for (const ClassId iface : declared.implements) {
     cls.implements.push_back(importer.ImportClass(iface));
+  }
+  const auto import_named = [&](const NamedBehavior& behavior) {
+    return ImportNamedBehavior(importer, behavior);
+  };
+  for (const ConformingBehavior& answered : declared.conforming) {
+    cls.conforming.push_back(
+        ConformingBehavior{
+            .interface_behavior = import_named(answered.interface_behavior),
+            .answered_by = answered.answered_by.transform(import_named)});
   }
   return cls;
 }
@@ -371,8 +394,8 @@ auto ImportMethods(TypeImporter& importer, const DeclaredMethods& methods)
             [&](const OverridesVirtual& overriding) -> MethodDispatch {
               return OverridesVirtual{
                   .is_pure = overriding.is_pure,
-                  .introducer = importer.ImportClass(overriding.introducer),
-                  .name = overriding.name};
+                  .overridden =
+                      ImportNamedBehavior(importer, overriding.overridden)};
             },
             [](const TypeAssociated& kept) -> MethodDispatch { return kept; },
             [](const NotVirtual& kept) -> MethodDispatch { return kept; },

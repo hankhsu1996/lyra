@@ -1119,6 +1119,35 @@ void UnitLowerer::RecordPublishedScopeClasses() {
   }
 }
 
+auto UnitLowerer::ReadOwnUnitDeclarations() -> diag::Result<void> {
+  const hir::UnitSignature& signature = *Signatures().Find(unit_.name);
+  // Every identity first, since a declaration read names the others it
+  // extends or holds; then each one this specialization's own walk did not
+  // declare, read as the unit published it, which is what that walk would
+  // have stated had the construction built its block.
+  std::vector<hir::ClassId> classes;
+  for (const hir::ClassDeclaration& declared : signature.classes) {
+    classes.push_back(unit_.classes.DeclareOwn(declared.class_path));
+  }
+  std::vector<hir::CovergroupId> covergroups;
+  for (const hir::PublishedCovergroup& declared : signature.covergroups) {
+    covergroups.push_back(unit_.covergroups.DeclareOwn(declared.path));
+  }
+  for (const hir::ClassId cls : classes) {
+    DeclarationOf(cls);
+  }
+  for (const hir::CovergroupId covergroup : covergroups) {
+    if (auto named = NameCoverageLibrary(diag::SourceSpan{}); !named) {
+      return std::unexpected(std::move(named.error()));
+    }
+    CovergroupDeclarationOf(covergroup);
+  }
+  for (const auto& [declaration, _] : signature.type_definitions) {
+    TypeDefinitionOf(declaration);
+  }
+  return {};
+}
+
 auto UnitLowerer::DeclarationOf(hir::ClassId cls)
     -> const hir::ClassDeclaration& {
   if (unit_.classes.HasDeclaration(cls)) {
@@ -1159,13 +1188,8 @@ auto UnitLowerer::TypeDefinitionOf(const hir::TypeDeclarationRef& declaration)
           unit_.type_definitions.Find(declaration)) {
     return *known;
   }
-  if (unit_.IsItself(declaration.unit_name)) {
-    throw InternalError(
-        std::format(
-            "UnitLowerer::TypeDefinitionOf: '{}' declares '{}' and did not "
-            "define it where it named it -- please report this as a bug",
-            declaration.unit_name, support::DisplayOf(declaration.path)));
-  }
+  // One this unit declares and this specialization did not define is in a
+  // block only another specialization built, and is what the unit published.
   const hir::UnitSignature& signature = Signatures().Declaring(declaration);
   hir::TypeImporter importer = ReadingImporter(signature);
   unit_.type_definitions.Define(

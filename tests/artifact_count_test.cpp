@@ -18,17 +18,22 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <map>
 #include <optional>
+#include <regex>
 #include <set>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/driver/Driver.h>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -36,6 +41,11 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/scope_construction.hpp"
 #include "lyra/hir/specialization.hpp"
+#include "lyra/mir/class.hpp"
+#include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/dump.hpp"
+#include "lyra/mir_transform/pass.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace {
@@ -44,9 +54,11 @@ namespace {
 // time; a probe holds them all, so it can ask anything any unit says.
 using LoweredUnits = std::vector<lyra::hir::Specialization>;
 
-// The design `source` states, lowered to HIR through the same entries the
-// command line uses.
-auto LowerDesign(std::string_view source) -> std::optional<LoweredUnits> {
+// The design `source` states, its units declared through the same entries the
+// command line uses, handed to `use` with the source text its spans resolve
+// through and the sink a lowering reports to.
+template <typename Use>
+auto WithDeclaredDesign(std::string_view source, const Use& use) -> bool {
   lyra::diag::DiagnosticSink sink;
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() /
@@ -68,28 +80,41 @@ auto LowerDesign(std::string_view source) -> std::optional<LoweredUnits> {
   lyra::compiler::FrontEndResult front = lyra::compiler::RunFrontEnd(driver);
   EXPECT_TRUE(front.elaborated.has_value())
       << "the front end rejected the probe design: " << front.diagnostics;
-  if (!front.elaborated.has_value()) return std::nullopt;
+  if (!front.elaborated.has_value()) return false;
 
   auto design = lyra::compiler::DeclareUnits(
       std::move(front.elaborated->compilation),
       lyra::compiler::LoweringPolicy{}, sink);
   EXPECT_TRUE(design.has_value()) << "the probe design did not declare";
-  if (!design.has_value()) return std::nullopt;
+  if (!design.has_value()) return false;
 
+  use(*design, front.elaborated->diag_sources, sink);
+  EXPECT_FALSE(sink.HasErrors()) << "the probe design did not lower";
+  return !sink.HasErrors();
+}
+
+// The design `source` states, lowered to HIR through the same entries the
+// command line uses.
+auto LowerDesign(std::string_view source) -> std::optional<LoweredUnits> {
   // What is compiled is each implementation, once.
   LoweredUnits units;
-  lyra::compiler::LowerToHir(
-      *design, sink, 1,
-      [](lyra::hir::Specialization lowered)
-          -> lyra::diag::Result<std::optional<lyra::hir::Specialization>> {
-        if (!lowered.IsFirstOfItsImplementation()) return std::nullopt;
-        return lowered;
-      },
-      [&units](std::optional<lyra::hir::Specialization> lowered) {
-        if (lowered.has_value()) units.push_back(*std::move(lowered));
+  const bool lowered = WithDeclaredDesign(
+      source,
+      [&](lyra::compiler::ElaboratedDesign& design,
+          const lyra::diag::SourceManager&, lyra::diag::DiagnosticSink& sink) {
+        lyra::compiler::LowerToHir(
+            design, sink, 1,
+            [](lyra::hir::Specialization lowered)
+                -> lyra::diag::Result<
+                    std::optional<lyra::hir::Specialization>> {
+              if (!lowered.IsFirstOfItsImplementation()) return std::nullopt;
+              return lowered;
+            },
+            [&units](std::optional<lyra::hir::Specialization> lowered) {
+              if (lowered.has_value()) units.push_back(*std::move(lowered));
+            });
       });
-  EXPECT_FALSE(sink.HasErrors()) << "the probe design did not lower";
-  if (sink.HasErrors()) return std::nullopt;
+  if (!lowered) return std::nullopt;
   return units;
 }
 
@@ -1463,6 +1488,225 @@ endmodule
   ASSERT_TRUE(design.has_value());
   EXPECT_EQ(UnitsOf(*design, "Holds"), 1U);
   EXPECT_EQ(BodiesOf(*design, "Holds"), 2U);
+}
+
+// Every body the design `source` is compiled to, lowered to MIR, each
+// rewritten as the command line rewrites it.
+auto LowerBodiesToMir(std::string_view source)
+    -> std::vector<lyra::mir::CompilationUnit> {
+  std::vector<lyra::mir::CompilationUnit> bodies;
+  WithDeclaredDesign(
+      source, [&](lyra::compiler::ElaboratedDesign& design,
+                  const lyra::diag::SourceManager& sources,
+                  lyra::diag::DiagnosticSink& sink) {
+        const auto semantic = lyra::compiler::LowerToSemantic(
+            design, sources, lyra::mir_transform::PassOptions{}, sink, 1,
+            [](lyra::mir::CompilationUnit unit)
+                -> lyra::diag::Result<lyra::mir::CompilationUnit> {
+              return unit;
+            },
+            [&bodies](lyra::mir::CompilationUnit unit) {
+              bodies.push_back(std::move(unit));
+            });
+        EXPECT_TRUE(semantic.has_value()) << "the probe design did not lower";
+      });
+  return bodies;
+}
+
+// The class `id` of `unit` as its identity reads, and the name of a root
+// otherwise.
+auto ClassText(const lyra::mir::CompilationUnit& unit, lyra::mir::ClassId id)
+    -> std::string {
+  const lyra::support::DefPath* path =
+      lyra::support::PathOf(unit.GetClass(id).identity);
+  return path == nullptr ? "unnamed" : lyra::support::DisplayOf(*path);
+}
+
+// The type `type` of `unit` as what it is, a class it names by the class's
+// identity, so two bodies numbering their types and classes apart agree on it.
+auto TypeText(const lyra::mir::CompilationUnit& unit, lyra::mir::TypeId type)
+    -> std::string {
+  static const std::regex kNamed{R"((Type|Class)\[#?(\d+)\])"};
+  // The dump leads with the type's own id, which is this body's numbering.
+  const std::string listed = lyra::mir::DumpType(unit, type);
+  const std::string dumped = listed.substr(listed.find(' ') + 1);
+  std::string text;
+  std::size_t at = 0;
+  for (auto it = std::sregex_iterator(dumped.begin(), dumped.end(), kNamed);
+       it != std::sregex_iterator(); ++it) {
+    const std::smatch& named = *it;
+    text += dumped.substr(at, static_cast<std::size_t>(named.position()) - at);
+    const auto value = static_cast<std::uint32_t>(std::stoul(named[2].str()));
+    text += named[1].str() == "Type"
+                ? TypeText(unit, lyra::mir::TypeId{.value = value})
+                : ClassText(unit, lyra::mir::ClassId{value});
+    at = static_cast<std::size_t>(named.position() + named.length());
+  }
+  return text + dumped.substr(at);
+}
+
+// What a callable of `unit` takes and answers, and the part it takes in
+// dispatch, which is what a class states of it to every unit; its body is the
+// body's own.
+auto CallableText(
+    const lyra::mir::CompilationUnit& unit, const lyra::mir::CallableDecl& decl)
+    -> std::string {
+  std::string text = "(";
+  for (const lyra::mir::LocalId param : decl.code.params) {
+    text += TypeText(unit, decl.code.locals.Get(param).type) + ",";
+  }
+  text += std::format(
+      ") receiver={} -> {}", decl.code.TakesReceiver(),
+      TypeText(unit, decl.code.result_type));
+  if (decl.virtual_dispatch.has_value()) {
+    text += std::visit(
+        lyra::Overloaded{
+            [](const lyra::mir::IntroducesVirtualSlot& introduces) {
+              return std::format(" introduces pure={}", introduces.is_pure);
+            },
+            [&](const lyra::mir::OverridesVirtualSlot& overrides) {
+              return std::format(
+                  " overrides {}.{}",
+                  ClassText(unit, overrides.overridden.owner_class),
+                  overrides.overridden.slot.value);
+            }},
+        *decl.virtual_dispatch);
+  }
+  return text;
+}
+
+// What `unit` states of every class each body of its unit states, by the
+// class's identity: what it extends, its fields, and what each of its
+// callables and its construction take and answer.
+auto ClassesEveryBodyStates(const lyra::mir::CompilationUnit& unit)
+    -> std::map<std::string, std::string> {
+  std::map<std::string, std::string> stated;
+  for (const lyra::mir::ClassId id : unit.classes.Ids()) {
+    if (!unit.classes.IsDefined(id) ||
+        lyra::mir::IsDefinedElsewhere(unit, id) ||
+        !lyra::mir::IsStatedByEveryBody(unit, id)) {
+      continue;
+    }
+    const lyra::mir::Class& cls = unit.GetClass(id);
+    std::string text;
+    if (const std::optional<lyra::mir::ClassId> base =
+            lyra::mir::DeclaredBase(cls)) {
+      text += "extends " + ClassText(unit, *base) + "\n";
+    }
+    for (const lyra::mir::FieldDecl& field : cls.fields) {
+      text += "field " + TypeText(unit, field.type) + "\n";
+    }
+    for (const lyra::mir::NamedField& named : cls.named_fields) {
+      text += std::format("named field {} {}\n", named.name, named.slot.value);
+    }
+    for (const lyra::mir::CallableDecl& callable : cls.callables) {
+      text += "callable " + CallableText(unit, callable) + "\n";
+    }
+    for (const lyra::mir::NamedCallable& named : cls.named_callables) {
+      text +=
+          std::format("named callable {} {}\n", named.name, named.body.value);
+    }
+    text += std::format("conforms to {}\n", cls.conforming.size());
+    if (cls.constructor.has_value()) {
+      text += "constructor " +
+              CallableText(
+                  unit,
+                  lyra::mir::CallableDecl{
+                      .code = cls.constructor->code,
+                      .foreign = std::nullopt,
+                      .virtual_dispatch = std::nullopt,
+                      .defining_unit = std::nullopt}) +
+              "\n";
+    }
+    stated.emplace(ClassText(unit, id), std::move(text));
+  }
+  return stated;
+}
+
+TEST(ArtifactCount, EveryBodyOfAUnitStatesItsClassesAlike) {
+  // A unit is compiled to a body per distinct code, and every class another
+  // unit can name of it -- what it published of each of its scopes, and each
+  // class and covergroup it declares -- is stated by every one of those bodies
+  // for the link to keep one. So every body states each alike, including a
+  // body whose construction did not build the block declaring the class (LRM
+  // 27.5): a program built of either body's statement runs the same, and
+  // nothing a simulation does can tell which the link kept.
+  const std::vector<lyra::mir::CompilationUnit> bodies = LowerBodiesToMir(R"(
+class Base;
+endclass
+
+module Chooses #(parameter int P = 0) (output int o);
+  class Kept;
+    function int get();
+      return P;
+    endfunction
+  endclass
+  Kept kept = new;
+  if (P == 0) begin : off
+    class Held extends Base;
+      static int made = 0;
+      virtual function int get();
+        return 10 + made;
+      endfunction
+      task later(output int r);
+        #1 r = get();
+      endtask
+    endclass
+    class Local;
+      function int get();
+        return 3;
+      endfunction
+    endclass
+    covergroup cg;
+      coverpoint o;
+    endgroup
+    Held h = new;
+    cg c = new;
+    initial begin
+      Local l;
+      l = new;
+      o = h.get() + l.get();
+      c.sample();
+    end
+  end else begin : on
+    initial o = kept.get();
+  end
+endmodule
+
+module Top;
+  int o[2];
+  Chooses #(.P(0)) off (.o(o[0]));
+  Chooses #(.P(1)) on (.o(o[1]));
+endmodule
+)");
+  std::map<std::string, std::vector<const lyra::mir::CompilationUnit*>> units;
+  for (const lyra::mir::CompilationUnit& body : bodies) {
+    units[body.name].push_back(&body);
+  }
+  std::size_t compared = 0;
+  for (const auto& [name, of_unit] : units) {
+    if (of_unit.size() < 2) continue;
+    ++compared;
+    const auto first = ClassesEveryBodyStates(*of_unit.front());
+    for (const lyra::mir::CompilationUnit* other : of_unit) {
+      const auto stated = ClassesEveryBodyStates(*other);
+      for (const auto& [cls, text] : first) {
+        const auto found = stated.find(cls);
+        if (found == stated.end()) {
+          ADD_FAILURE() << "body '" << other->body_name << "' of '" << name
+                        << "' does not state the class '" << cls << "'";
+          continue;
+        }
+        EXPECT_EQ(found->second, text)
+            << "the bodies of '" << name << "' state the class '" << cls
+            << "' differently";
+      }
+      EXPECT_EQ(stated.size(), first.size())
+          << "the bodies of '" << name << "' state different classes";
+    }
+  }
+  EXPECT_EQ(compared, 1U)
+      << "the design written to have a unit of two bodies no longer has one";
 }
 
 TEST(ArtifactCount, AValueFixingAGrandchildsCodeLeavesTheBodyHandingItOnOne) {

@@ -829,10 +829,13 @@ the detail lives in the entry itself.
   vocabulary is untouched because the hop is resolved once per body rather than once per reference.
   The class is declared once by the unit and its code is the code of the body of the scope declaring
   it: each operation is an entry dispatching on the instance to the method the scope's published
-  class introduces for it, which each body overrides with what it compiled. Putting the object in
-  the runtime tree, reaching the scope by lexical capture, refusing a construction reached through
-  another unit's generic, a class per specialization of a scope declaring one, and a binding object
-  per class and instance are rejected.
+  class introduces for it, which each body overrides with what it compiled. The class and those
+  methods are stated from the unit's declarations alone, so a body whose construction did not build
+  the declaring block states them alike. Putting the object in the runtime tree, reaching the scope
+  by lexical capture, refusing a construction reached through another unit's generic, a class per
+  specialization of a scope declaring one, a unit per set of blocks its specializations built,
+  reading the published methods off a body's code, and a binding object per class and instance are
+  rejected.
 - [object-identity-is-carried-not-derived](object-identity-is-carried-not-derived.md) -- an object's
   identity is fixed when it is created and carried unchanged by every reference to it, and equality
   and null read it alone; a reference is one storage shape at every program point, because two sides

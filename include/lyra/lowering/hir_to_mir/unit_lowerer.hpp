@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <map>
 #include <optional>
-#include <set>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -220,18 +219,9 @@ struct ClassCodeSlot {
   // class and the operation, apart by a space, which no identifier holds (LRM
   // 5.6.1), so no subroutine the scope published shares it.
   std::string name;
-  // What every override takes and answers, stated by the first body to compile
-  // the code; every body compiles it from one declaration.
-  std::optional<mir::CallableCode> prototype;
-};
-
-// The cell a static property of a class a scope declares is (LRM 8.9), a
-// field of what the scope published: each instance of the scope has its own
-// (LRM 6.22), and every body of the unit places it alike.
-struct ClassStaticCell {
-  hir::ClassId cls;
-  hir::StaticPropertyId property;
-  mir::FieldId field;
+  // What the operation's code takes and answers, read off the declaration;
+  // the method takes the scope's object, then that.
+  mir::CallableCode operation;
 };
 
 // A class this unit published of its scopes. Several scopes may be published
@@ -244,7 +234,6 @@ struct ClassStaticCell {
 struct PublishedScope {
   ScopeClassLayout layout;
   base::Translation<hir::PublishedCallableId, PublishedSubroutine> subroutines;
-  std::vector<ClassStaticCell> class_statics;
   std::vector<ClassCodeSlot> class_code;
 };
 
@@ -357,17 +346,28 @@ class UnitLowerer {
     return published_scopes_;
   }
 
+  // The class the unit published of its scope `scope`, whichever blocks this
+  // body's construction built.
+  [[nodiscard]] auto PublishedClassOf(const support::DefPath& scope) const
+      -> mir::ClassId;
+
+  // The scope whose instance the class the covergroup `covergroup` of this
+  // unit is written as belongs to (LRM 6.22, 19.3): that of the class
+  // embedding it (LRM 19.4), or else the scope declaring it; nothing where the
+  // class embedding it belongs to no instance.
+  [[nodiscard]] auto InstanceScopeOf(hir::CovergroupId covergroup) const
+      -> std::optional<support::DefPath>;
+
   // The virtual method the class `published` introduces for the code at
   // `point` of the class `cls` its scopes declare.
   [[nodiscard]] auto ClassCodeSlotOf(
       mir::ClassId published, mir::ClassId cls, ClassCodePoint point) const
       -> mir::CallableId;
 
-  // States what that method takes and answers, read off the code a body
-  // compiled for it, the first time a body does.
-  void StateClassCodePrototype(
-      mir::ClassId published, mir::ClassId cls, ClassCodePoint point,
-      mir::CallableCode prototype);
+  // What the code of that operation takes and answers.
+  [[nodiscard]] auto ClassCodePrototypeOf(
+      mir::ClassId published, mir::ClassId cls, ClassCodePoint point) const
+      -> const mir::CallableCode&;
 
   // What this unit knows of the scope class `hir_id` records: of one of its
   // own, where that scope's shape placed what was published; of another
@@ -376,6 +376,13 @@ class UnitLowerer {
   // one finds it.
   [[nodiscard]] auto ScopeClassLayoutOf(hir::ScopeClassId hir_id) const
       -> const ScopeClassLayout&;
+
+  // What every unit states of the class `cls` from its declaration alone into
+  // `stated`: whether it is an interface class, what it extends and
+  // implements, and the fields of an object of it, answering the member that
+  // records the instance the object belongs to where it has one.
+  auto StateDeclaredLayout(hir::ClassId cls, mir::Class& stated) const
+      -> std::optional<DeclaringInstance>;
 
   // The fields of an object of the class `declared` describes.
   [[nodiscard]] auto ClassFieldsOf(const hir::ClassDeclaration& declared) const
@@ -515,6 +522,12 @@ class UnitLowerer {
   // names is in dispatch.
   [[nodiscard]] auto VirtualSlotOf(const hir::ClassMethodTarget& behavior) const
       -> mir::VirtualSlot;
+
+  // What answers each behavior of every interface class a value of the class
+  // `cls` is also a value of (LRM 8.26.5), as its declaration states it, each
+  // named as a call names it.
+  [[nodiscard]] auto ConformanceOf(hir::ClassId cls) const
+      -> std::vector<mir::ConformingBehavior>;
 
   // Receiver-less callable of a unit's namespace (LRM 26.3 package function or
   // task). A body of that same unit names the position its declaration sits at,
@@ -689,26 +702,17 @@ class UnitLowerer {
   [[nodiscard]] auto UnionMemberTypes(const hir::UnpackedUnionDefinition& src)
       -> std::vector<mir::TypeId>;
 
-  // The scopes of this body published as `published`: the unit's own, or the
-  // bodies a generate block came out as at its places (LRM 27.3).
-  [[nodiscard]] auto ScopesPublishedAs(mir::ClassId published) const
-      -> std::vector<const hir::StructuralScope*>;
-
-  // The classes the scopes published as `published` declare that belong to
-  // their instance (LRM 6.22), ordered by path, so every body of the unit lists
-  // them alike whichever of the scopes it built.
-  [[nodiscard]] auto InstanceClassesOf(mir::ClassId published) const
+  // The classes the unit declares in the scope `scope` that belong to its
+  // instance (LRM 6.22), ordered by path: read off the unit's declarations,
+  // so every body of the unit lists them alike whichever blocks its
+  // construction built (LRM 27.5).
+  [[nodiscard]] auto InstanceClassesOf(const support::DefPath& scope) const
       -> std::vector<hir::ClassId>;
 
-  // The covergroups the scopes published as `published` declare (LRM 19.3),
-  // ordered by path, as their classes are.
-  [[nodiscard]] auto InstanceCovergroupsOf(mir::ClassId published) const
+  // The covergroups the unit declares in that scope (LRM 19.3), ordered by
+  // path, as its classes are.
+  [[nodiscard]] auto InstanceCovergroupsOf(const support::DefPath& scope) const
       -> std::vector<hir::CovergroupId>;
-
-  // The static properties of those classes the scopes published (LRM 23.6),
-  // whose cells are where the publication put them.
-  [[nodiscard]] auto PublishedStaticsOf(mir::ClassId published) const
-      -> std::set<std::pair<hir::ClassId, hir::StaticPropertyId>>;
 
   // Defines the record `id` the struct or the union `source` names: its kind,
   // its members, and the unit declaring it where that is another, which a

@@ -447,6 +447,10 @@ class Writer {
     }
     List(declared, [&](const ClassDeclaration* of) {
       const ClassDeclaration& cls = *of;
+      const auto named = [&](const NamedBehavior& behavior) {
+        Class(behavior.introducer);
+        Text(behavior.name);
+      };
       OwnPath(cls.class_path);
       Optional(cls.base, [&](ClassId base) { Class(base); });
       Number(cls.is_interface_class ? 1 : 0);
@@ -468,14 +472,19 @@ class Writer {
                 [&](const OverridesVirtual& v) {
                   Mark('o');
                   Number(v.is_pure ? 1 : 0);
-                  Class(v.introducer);
-                  Text(v.name);
+                  named(v.overridden);
                 }},
             method.dispatch);
         Optional(method.replaces, [&](RandomizationHook hook) { Kind(hook); });
         Optional(method.makes, [&](CovergroupId id) { Covergroup(id); });
       });
-      Number(cls.takes_declaring_instance ? 1 : 0);
+      Optional(cls.instance_scope, [&](const support::DefPath& scope) {
+        OwnPath(scope);
+      });
+      List(cls.conforming, [&](const ConformingBehavior& answered) {
+        named(answered.interface_behavior);
+        Optional(answered.answered_by, named);
+      });
     });
   }
 

@@ -240,6 +240,9 @@ auto UnitLowerer::LowerBodies(
   signatures_ = &signatures;
   built_as_ = &built_as;
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
+  if (auto declared = ReadOwnUnitDeclarations(); !declared) {
+    return std::unexpected(std::move(declared.error()));
+  }
   RecordPublishedScopeClasses();
   auto own = LowerScopeOf(*scope_);
   if (!own) return std::unexpected(std::move(own.error()));
@@ -949,7 +952,7 @@ auto UnitLowerer::TakesDeclaringInstance(
   }
   auto id = ResolveClass(cls, span);
   if (!id) return std::unexpected(std::move(id.error()));
-  return DeclarationOf(*id).takes_declaring_instance;
+  return DeclarationOf(*id).instance_scope.has_value();
 }
 
 auto UnitLowerer::DeclaringScopeHopsFrom(

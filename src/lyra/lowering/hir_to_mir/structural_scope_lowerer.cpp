@@ -33,6 +33,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/class_code.hpp"
 #include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
@@ -203,16 +204,10 @@ auto BuildPublishedClass(
         mir::NamedCallable{.name = subroutine.name, .body = id});
   }
   for (const ClassCodeSlot& code : published.class_code) {
-    if (!code.prototype.has_value()) {
-      throw InternalError(
-          "BuildPublishedClass: every class a scope declares is compiled by a "
-          "body of the unit, which states what each of its operations takes "
-          "-- please report this as a bug");
-    }
     cls.callables.Define(
         code.slot,
         mir::CallableDecl{
-            .code = *code.prototype,
+            .code = SlotPrototype(code.operation, shape.self_pointer_type),
             .foreign = std::nullopt,
             .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true},
             .defining_unit = std::nullopt});
@@ -2483,8 +2478,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   std::vector<std::vector<PlacedStatic>> placed_subroutine_statics(
       hir_scope.structural_subroutines.size());
   // The cells of the static properties of the classes this scope declares,
-  // keyed by the class, which takes them over: each a field of the class the
-  // scope published, the published ones where the publication put them.
+  // keyed by the class, which takes them over: the scope publishes every one
+  // (LRM 8.9, 23.6), so each is where the publication put it.
   std::map<hir::ClassId, std::vector<PlacedProperty>> placed_class_statics;
   std::map<hir::CovergroupId, mir::ClassFieldTarget> covergroup_events;
   // What each published generate construct built, and what each published
@@ -2548,15 +2543,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     disable_cells[id.value] = on_published(layout.disable_targets.Get(
         hir::PublishedDisableTargetId{published_disable_target++}));
   }
-  // The other static properties of the classes this scope declares are cells
-  // its published class gives them too, alike in every body.
-  for (const ClassStaticCell& cell :
-       unit_lowerer.PublishedScopes().at(owner).class_statics) {
-    placed_class_statics[cell.cls].push_back(
-        PlacedProperty{
-            .property = cell.property, .field = on_published(cell.field)});
-  }
-
   // A data object nothing outside the scope may name is the one member the
   // scope publishes nothing of, so it alone is placed in this scope's own
   // class, in the order it was declared.

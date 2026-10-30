@@ -174,16 +174,23 @@ methods in two bodies -- while every referrer, another unit's class extending it
 against the class as the unit declared it and never against a body.
 
 - **HIR.** The unit's class registry holds each class's declaration, one per class whichever copy of
-  its text was elaborated. The code of each class -- its methods, constructor, initializers,
+  its text was elaborated, and the declaration states the scope whose instance the class belongs to:
+  the one declaring it, or for a specialization on a type of a scope, that scope (Decision 4). Every
+  body's registry holds every class, covergroup and type the unit declares, those a block only
+  another specialization built declares included (LRM 27.5), read from the unit's own signature as
+  another unit's would be. The code of each class -- its methods, constructor, initializers,
   constraints, a covergroup's bodies -- is held by the structural scope replicating it and compared
-  with the rest of that scope, so two bodies differing only there are two bodies.
-- **MIR.** The class is stated alike by every body: its layout, and one entry per operation, which
+  with the rest of that scope, so two bodies differing only there are two bodies, and a body whose
+  construction did not build a block holds no code of what the block declares.
+- **MIR.** The class is stated alike by every body from its declaration alone: its layout, what
+  answers each behavior of the interface classes it implements, and one entry per operation, which
   reads the instance (the object's member, or the instance a construction or a static method is
   handed) and dispatches on it. The class the scope published introduces a virtual method per
-  operation of each class it declares, after the subroutines it published, in an order the
-  declarations alone fix. Each body realizing the scope overrides each with the code it compiled: a
-  method of the body's class, the instance as its object and the operation's own object, if any,
-  after it.
+  operation of each class belonging to the scope's instance, after the subroutines it published, in
+  an order and with what each takes that the declarations alone fix. Each body realizing the scope
+  overrides each with the code it compiled: a method of the body's class, the instance as its object
+  and the operation's own object, if any, after it. What that code takes is checked against the
+  declaration as it moves, never read off it.
 - **Backends.** The class is defined by every body alike and kept once by the link
   (`mir::IsStatedByEveryBody`); the code is the body's own.
 
@@ -192,6 +199,13 @@ and so does a construction or a static call made in the declaring scope itself. 
 one, for a construction and a static call, are what removing the per-specialization class costs,
 against an artifact per specialization and per loop index. Where an operation is a task, the entry
 is a coroutine awaiting the override, one frame more per call.
+
+Nothing a body states of a class comes from the code it compiled, because a unit's specializations
+need not build the same blocks: one whose construction built none of a block still states the
+block's classes, and the published class's methods, alike with one that did, for the link to keep
+either. This was first built with the methods and their signatures read off whichever body compiled
+the code, which two specializations building different blocks of one unit falsified: one body stated
+the block's class with its methods and the other with none, under one name.
 
 The survey: rustc keeps an item's signature and its bodies under different owners (`hir::OwnerNodes`
 holds the bodies an item's HIR contains, and `fn_sig` is a query of its own), as HIR here keeps the
@@ -202,10 +216,19 @@ referrer here names only what the scope published -- which body an instance is, 
 data. A `dyn Trait` call in Rust reaches the concrete type's method through the object's table
 (`rustc_codegen_ssa/src/meth.rs`); here the table dispatched on is the instance's, not the class
 object's, because a class of another unit extending this one fills its own table without knowing any
-body.
+body. That table's shape is rustc's `vtable_entries` (`rustc_trait_selection/src/traits/vtable.rs`),
+read off the trait's items and no implementation, as the published class's methods are read off the
+declarations; clang decides which translation unit emits a vtable by linkage alone
+(`CodeGenModule::getVTableLinkage`), every unit seeing the whole class.
 
 ## Rejected alternatives
 
+- **The published class's methods and their signatures read off the code a body compiled.** A body
+  whose construction did not build the block declaring a class has none, and states the class and
+  the published class differently from one that did.
+- **A unit per set of blocks its specializations built where a block declares a class.** It brings
+  back a unit per construction for a fact that is the construction's
+  (`a-generate-block-is-a-nested-definition.md`).
 - **A class per specialization of a scope declaring one, and per place of a block declaring one**
   (the rule Decisions 1 to 4 rested on). A loop's blocks compile a class each, and a specialization
   differing only in code is an artifact of its own.
