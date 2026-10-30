@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -16,6 +17,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/scope_instantiations.hpp"
 #include "lyra/hir/specialization_ref.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
@@ -490,6 +492,9 @@ class ConstructionTables {
         cls_(&cls),
         instantiations_(&instantiations),
         entry_types_(&entry_types) {
+    for (const auto& [_, made] : instantiations.by_specialization) {
+      Gather(made.body, std::nullopt, made.made);
+    }
   }
 
   // The table of the specialization `made`, which is stated once.
@@ -500,7 +505,8 @@ class ConstructionTables {
     }
     const SpecializationMade& found = Made(made);
     const mir::ClassConstantRef table =
-        Of(BodyRef{.unit = made.unit, .body = found.body}, found.made);
+        Of(BodyRef{.unit = made.unit, .body = found.body}, std::nullopt,
+           found.made);
     of_specialization_.emplace(made.specialization, table);
     return table;
   }
@@ -535,15 +541,89 @@ class ConstructionTables {
     auto operator==(const Content&) const -> bool = default;
   };
 
-  // The table of a scope of the body `owner` laid out as `layout`: at each
+  // Where blocks of one generate stand among the scopes the design builds of
+  // one body: the body, the block body whose scope holds the generate, none
+  // for the body's own, the generate, and one place of it, or every place
+  // where `place` is none.
+  struct GeneratePlace {
+    std::string body;
+    std::optional<hir::BlockBodyId> scope;
+    std::size_t generate = 0;
+    std::optional<std::size_t> place;
+
+    // The place `k` of the same generate.
+    [[nodiscard]] auto At(std::size_t k) const -> GeneratePlace {
+      GeneratePlace at = *this;
+      at.place = k;
+      return at;
+    }
+
+    auto operator<=>(const GeneratePlace&) const = default;
+  };
+
+  // Records, for every place of every scope the design builds, each block
+  // built there, under the place and under the whole generate.
+  void Gather(
+      const std::string& body, std::optional<hir::BlockBodyId> scope,
+      const hir::ScopeInstantiations& layout) {
+    const std::span<const hir::GeneratePlaces> generates = layout.Generates();
+    for (std::size_t g = 0; g < generates.size(); ++g) {
+      for (std::size_t k = 0; k < generates[g].places.size(); ++k) {
+        const hir::PlacedBlock& block = generates[g].places[k];
+        if (!block.body.has_value()) continue;
+        const GeneratePlace generate{
+            .body = body, .scope = scope, .generate = g, .place = std::nullopt};
+        built_at_[generate].push_back(&block);
+        built_at_[generate.At(k)].push_back(&block);
+        Gather(body, block.body, block.made);
+      }
+    }
+  }
+
+  // The entry of the block `block` of the body `owner`.
+  auto EntryOf(const BodyRef& owner, const hir::PlacedBlock& block) -> Entry {
+    return Entry{
+        .made = owner,
+        .block = BlockBodyOrdinalOf(*block.body),
+        .table = Of(owner, block.body, block.made)};
+  }
+
+  // The entry every block built at `at` anywhere holds, where they all hold
+  // one, and nothing otherwise. That is a question of the place alone, so two
+  // scopes answer it alike whichever of them is asked first.
+  auto UniformEntryAt(const BodyRef& owner, const GeneratePlace& at)
+      -> std::optional<Entry> {
+    if (const auto known = uniform_entries_.find(at);
+        known != uniform_entries_.end()) {
+      return known->second;
+    }
+    std::optional<Entry> held;
+    if (const auto built = built_at_.find(at); built != built_at_.end()) {
+      std::vector<Entry> entries;
+      for (const hir::PlacedBlock* block : built->second) {
+        entries.push_back(EntryOf(owner, *block));
+      }
+      if (std::ranges::all_of(entries, [&](const Entry& entry) {
+            return entry == entries.front();
+          })) {
+        held = entries.front();
+      }
+    }
+    uniform_entries_.emplace(at, held);
+    return held;
+  }
+
+  // The table of a scope of the body `owner` laid out as `layout` -- the
+  // body's own scope, or that of its block body `scope`: at each
   // instantiation it declares, how the specialization made there is made,
   // then at each place of each of its generates, how the block built there is
   // made. Scopes whose tables hold the same entries are made with one table
   // -- the blocks of a loop handed different values that build alike, above
   // all -- so the tables follow what objects differ in rather than how many
   // there are. A table named by another is stated before it.
-  auto Of(const BodyRef& owner, const hir::ScopeInstantiations& layout)
-      -> mir::ClassConstantRef {
+  auto Of(
+      const BodyRef& owner, std::optional<hir::BlockBodyId> scope,
+      const hir::ScopeInstantiations& layout) -> mir::ClassConstantRef {
     Content content;
     for (const hir::SpecializationRef& made : layout.Instantiated()) {
       content.instances.push_back(
@@ -552,23 +632,35 @@ class ConstructionTables {
               .block = std::nullopt,
               .table = Of(made)});
     }
-    for (const hir::GeneratePlaces& generate : layout.Generates()) {
+    const std::span<const hir::GeneratePlaces> generates = layout.Generates();
+    for (std::size_t g = 0; g < generates.size(); ++g) {
+      const GeneratePlace generate{
+          .body = owner.body,
+          .scope = scope,
+          .generate = g,
+          .place = std::nullopt};
       Places& placed = content.generates.emplace_back(
-          Places{.handed_an_index = generate.handed_an_index, .places = {}});
-      for (const hir::PlacedBlock& block : generate.places) {
+          Places{
+              .handed_an_index = generates[g].handed_an_index, .places = {}});
+      // A place an object built no block at -- an alternative it did not
+      // select (LRM 27.5) -- is never read there, so all it decides is which
+      // tables are one, and it holds what that place holds wherever a block
+      // was built at it.
+      for (std::size_t k = 0; k < generates[g].places.size(); ++k) {
+        const hir::PlacedBlock& block = generates[g].places[k];
         placed.places.push_back(
-            block.body.has_value()
-                ? std::optional{Entry{
-                      .made = owner,
-                      .block = BlockBodyOrdinalOf(*block.body),
-                      .table = Of(owner, block.made)}}
-                : std::nullopt);
+            block.body.has_value() ? std::optional{EntryOf(owner, block)}
+                                   : UniformEntryAt(owner, generate.At(k)));
       }
       // Places that all hold one entry list it once, and the runtime reads it
-      // at every place.
-      if (std::ranges::all_of(placed.places, [&](const auto& at) {
-            return at == placed.places.front();
-          })) {
+      // at every place: every block the generate builds wherever it stands,
+      // whichever places and how many this object built -- a loop's count is
+      // its construction's (LRM 27.4) -- or failing that the places here.
+      if (const std::optional<Entry> held = UniformEntryAt(owner, generate)) {
+        placed.places = {held};
+      } else if (std::ranges::all_of(placed.places, [&](const auto& at) {
+                   return at == placed.places.front();
+                 })) {
         placed.places.resize(std::min<std::size_t>(placed.places.size(), 1));
       }
     }
@@ -635,9 +727,9 @@ class ConstructionTables {
              mir::ConstructionTableType(unit_->types))});
   }
 
-  // A place no object of the body builds a block at -- an alternative it did
-  // not select -- which holds no entry, and the body's code never reads one
-  // there.
+  // A place this object built no block at -- an alternative it did not select
+  // -- that no one entry fills, which holds no entry; the body's code never
+  // reads one there.
   auto NoEntryRecord(mir::Block& entry) -> mir::ExprId {
     return Record(
         *unit_, entry, mir::RuntimeLibraryKind::kInstantiation,
@@ -687,6 +779,11 @@ class ConstructionTables {
   std::map<std::string, mir::ClassConstantRef, std::less<>> of_specialization_;
   // Each table stated, with what it holds.
   std::vector<std::pair<Content, mir::ClassConstantRef>> stated_;
+  // Every block built at each place of every scope the design builds.
+  std::map<GeneratePlace, std::vector<const hir::PlacedBlock*>> built_at_;
+  // The one entry each place, or each generate, holds wherever a block was
+  // built at it, once worked out.
+  std::map<GeneratePlace, std::optional<Entry>> uniform_entries_;
 };
 
 // What the definition of one class states that its lineage decides, read

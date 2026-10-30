@@ -4,11 +4,13 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
@@ -205,8 +207,23 @@ auto ClimbOutOf(
         "ClimbOutOf: a name lands in an instance's body or a generate block "
         "inside one");
   }
+  std::vector<const slang::ast::Scope*> blocks_passed;
+  const slang::ast::Scope* run = nullptr;
+  for (const auto& element : written.path) {
+    if (element.symbol->kind == slang::ast::SymbolKind::GenerateBlockArray) {
+      continue;
+    }
+    if (const auto* block =
+            element.symbol->as_if<slang::ast::GenerateBlockSymbol>()) {
+      run = block;
+      continue;
+    }
+    if (run != nullptr) blocks_passed.push_back(std::exchange(run, nullptr));
+  }
+  if (run != nullptr) blocks_passed.push_back(run);
   return ClimbAnchor{
       .scope = landed,
+      .blocks_passed = std::move(blocks_passed),
       .instance = instance,
       .carries = ClassScopesAlong(found, written),
       .reads = ConstantRead(found)};

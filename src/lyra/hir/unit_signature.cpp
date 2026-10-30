@@ -153,6 +153,139 @@ auto PublishedTypeDefinition(
   return *published;
 }
 
+namespace {
+
+// `ports` with every type they name taken into the pool `importer` writes.
+auto ImportPorts(TypeImporter& importer, std::vector<PortDecl> ports)
+    -> std::vector<PortDecl> {
+  for (PortDecl& port : ports) {
+    for (PortPart& part : port.parts) {
+      std::visit(
+          Overloaded{
+              [&](DataPortPart& data) {
+                data.type = importer.Import(data.type);
+                std::visit(
+                    Overloaded{
+                        [&](MemberProjection& projection) {
+                          projection =
+                              ImportProjection(importer, std::move(projection));
+                        },
+                        [](NoInternalTarget&) {}},
+                    data.target);
+              },
+              [](InterfacePortPart&) {}},
+          part);
+    }
+  }
+  return ports;
+}
+
+}  // namespace
+
+void PublishBlocksBuiltBy(
+    UnitSignature& unit, const UnitSignature& specialization) {
+  TypeImportMemo memo;
+  TypeImporter importer(
+      specialization.types, unit.types, memo,
+      [&](ClassId id) { return unit.ClassIdOf(specialization.ClassKeyOf(id)); },
+      [&](CovergroupId id) {
+        return unit.CovergroupIdOf(specialization.CovergroupKeyOf(id));
+      },
+      [&](ScopeClassId id) {
+        return unit.ScopeClassIdOf(specialization.ScopeClassKeyOf(id));
+      });
+  const auto differs = [&](const support::DefPath& path) {
+    throw InternalError(
+        std::format(
+            "hir::PublishBlocksBuiltBy: two specializations grouped into unit "
+            "'{}' publish '{}' differently, so the grouping compared less than "
+            "they publish -- please report this as a bug",
+            unit.unit_name, support::DisplayOf(path)));
+  };
+  // Each declaration either is one the unit publishes already, which the
+  // later specialization must publish alike, or is declared in a block only
+  // the later one built, and joins what the unit publishes.
+  const auto publish = [&](const auto* held, auto taken, auto add,
+                           const support::DefPath& path) {
+    if (held == nullptr) {
+      add(std::move(taken));
+    } else if (*held != taken) {
+      differs(path);
+    }
+  };
+  for (const auto& [declaration, definition] :
+       specialization.type_definitions) {
+    publish(
+        unit.type_definitions.Find(declaration),
+        ImportTypeDefinition(importer, definition),
+        [&](TypeDefinition taken) {
+          unit.type_definitions.Define(declaration, std::move(taken));
+        },
+        declaration.path);
+  }
+  for (const ClassDeclaration& declared : specialization.classes) {
+    publish(
+        unit.FindClass(declared.class_path),
+        ImportClassDeclaration(importer, declared),
+        [&](ClassDeclaration taken) {
+          unit.classes.push_back(std::move(taken));
+        },
+        declared.class_path);
+  }
+  for (const PublishedCovergroup& declared : specialization.covergroups) {
+    publish(
+        unit.FindCovergroup(declared.path), importer.Import(declared),
+        [&](PublishedCovergroup taken) {
+          unit.covergroups.push_back(std::move(taken));
+        },
+        declared.path);
+  }
+  // What the unit declares outside every block, each specialization declares.
+  const auto lacks = [](const support::DefPath& path, bool found) {
+    return !found && support::DeclaringScopeClassOf(path).data.empty();
+  };
+  for (const auto& [declaration, _] : unit.type_definitions) {
+    if (lacks(
+            declaration.path,
+            specialization.type_definitions.Find(declaration) != nullptr)) {
+      differs(declaration.path);
+    }
+  }
+  for (const ClassDeclaration& declared : unit.classes) {
+    if (lacks(
+            declared.class_path,
+            specialization.FindClass(declared.class_path) != nullptr)) {
+      differs(declared.class_path);
+    }
+  }
+  for (const PublishedCovergroup& declared : unit.covergroups) {
+    if (lacks(
+            declared.path,
+            specialization.FindCovergroup(declared.path) != nullptr)) {
+      differs(declared.path);
+    }
+  }
+  // A namespace builds no block.
+  const auto* built = std::get_if<PublishedDesignElement>(&specialization.unit);
+  auto* element = std::get_if<PublishedDesignElement>(&unit.unit);
+  if (built == nullptr || element == nullptr) return;
+  if (element->instance_class !=
+          ImportScopeClass(importer, built->instance_class) ||
+      element->handed != ImportTypes(importer, built->handed) ||
+      element->ports != ImportPorts(importer, built->ports)) {
+    differs(built->instance_class.class_path);
+  }
+  for (const ScopeClassSignature& block : built->blocks) {
+    publish(
+        element->FindScopeClass(block.class_path),
+        ImportScopeClass(importer, block),
+        [&](ScopeClassSignature taken) {
+          element->blocks.push_back(std::move(taken));
+        },
+        block.class_path);
+  }
+}
+
 auto ReaderImporter(
     const UnitSignature& signature, TypePool& into, ClassRegistry& classes,
     CovergroupRegistry& covergroups, ScopeClassRegistry& scope_classes,

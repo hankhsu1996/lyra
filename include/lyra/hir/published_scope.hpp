@@ -5,7 +5,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
@@ -19,76 +18,36 @@
 
 namespace lyra::hir {
 
-// A loop generate whose blocks are all one application of its text: an array
-// of block instances of one class (LRM 27.4), which is the case where nothing
-// a block declares uses the index, whether its code reads it or not. How many
-// blocks there are and which indices they stand at is what each construction
-// of the holding scope counts out, so the class says neither, and two objects
-// of it may hold different numbers of them. `class_path` is absent where no
-// object of the holding class counted a block.
-struct PublishedLoopOfOneClass {
+// A loop generate a scope publishes, which a name steps through into one of
+// its blocks (LRM 23.6, 27.4). How many blocks there are, which indices they
+// stand at and which class each is, is what each construction of the holding
+// scope counts out, so the class says none of it, and two objects of it may
+// hold different numbers of them. Its member holds the blocks the object's
+// own construction built, each under the value its index stood at, so a name
+// asks for a block by that value; the front end resolved the name to a block
+// built where it is read, and that block says what it was published as.
+struct PublishedLoop {
   std::string name;
-  std::optional<support::DefPath> class_path;
 
-  auto operator==(const PublishedLoopOfOneClass&) const -> bool = default;
-};
-
-// One block of a loop whose blocks are of several classes: the value its index
-// stood at, which is how a name finds its class, and which of the loop's
-// classes it is an object of, by position among them.
-struct PublishedLoopBlock {
-  std::int64_t index = 0;
-  std::uint32_t class_at = 0;
-
-  auto operator==(const PublishedLoopBlock&) const -> bool = default;
-};
-
-// A loop generate whose blocks are several applications of its text, so which
-// class stands at each index is part of what the holding class declares.
-// `blocks` lists every index any object of the holding class counted out, in
-// ascending order, and `classes` the applications in the order that list first
-// names them.
-struct PublishedLoopByIndex {
-  std::string name;
-  std::vector<support::DefPath> classes;
-  std::vector<PublishedLoopBlock> blocks;
-
-  auto operator==(const PublishedLoopByIndex&) const -> bool = default;
-};
-
-// One block of a construct that builds at most one: where the source wrote it
-// among the construct's alternatives, and the class it was published as.
-struct PublishedAlternative {
-  std::uint32_t position = 0;
-  support::DefPath class_path;
-
-  auto operator==(const PublishedAlternative&) const -> bool = default;
+  auto operator==(const PublishedLoop&) const -> bool = default;
 };
 
 // A construct that builds at most one block: a block standing on its own, or a
-// conditional (LRM 27.5). Which alternative stands is chosen where the scope
-// is built, so the objects of one class may have chosen differently, and the
-// class publishes every alternative any of them built, in the order the source
-// wrote them. Its member holds the one object its scope built.
+// conditional (LRM 27.5). Which alternative stands, and so which class the
+// block is, is chosen where the scope is built, so the class says nothing of
+// it and objects of one class may have chosen differently. Its member holds
+// the one object its scope built, as the base every block extends; a name
+// reaching the block knows which block it reached, and so its class.
 //
 // `construct` is where the source wrote the construct among the generate
-// constructs of its scope. A name finds a block by that and by its position,
-// and not by its label: the alternatives of one conditional may share a label,
-// and so may two conditionals of which a scope only ever builds one.
+// constructs of its scope. A name finds the construct by that and not by a
+// label: the alternatives of one conditional may share a label, and so may two
+// conditionals of which a scope only ever builds one.
 struct PublishedChoice {
   std::uint32_t construct = 0;
-  std::vector<PublishedAlternative> blocks;
 
   auto operator==(const PublishedChoice&) const -> bool = default;
 };
-
-// A loop generate a scope publishes, which a name steps through into one of
-// its blocks (LRM 23.6, 27.4). Its member holds the blocks the object's own
-// construction built, each under the value its index stood at, so a name asks
-// for a block by that value: where it stands among the loop's blocks is the
-// object's to answer, since the object is what ran the loop.
-using PublishedLoop =
-    std::variant<PublishedLoopOfOneClass, PublishedLoopByIndex>;
 
 // Which of the loops a scope published, by its position among them.
 struct PublishedLoopId {

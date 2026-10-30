@@ -15,6 +15,12 @@ D1 and D2,
 D1 and D4, and [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md)
 D4 and D7.
 
+Fact 4, D4, D8 and one rejection revised 2026-10-29: which blocks a construction built, how many a
+loop counted out and which class each block is are no part of any class or unit. D4 as first written
+made a block's class follow which alternative a construct inside it built, though the choice is made
+from a value handed at construction; a loop whose blocks chose differently was a class per choice,
+and the loop around it stated one table entry per block.
+
 Those records named a unit before anything was declared, by predicting from the front end's record
 of which parameters each constant evaluation read which values what a unit declares relies on. The
 prediction needed records of our own in the front end, missed three things a signature holds (a
@@ -42,8 +48,11 @@ which of an instance's values will matter.
    type names.
 3. An outside instance it reaches may be an ancestor, so its class cannot be known when the instance
    is compared: the ancestor's class depends on the instance's (fact 2's first kind, one level up).
-4. An alternative a conditional generate did not select is not elaborated (LRM 27.5), so what a
-   scope built is part of what it is, at every level: a unit, and a block of a loop.
+4. An alternative a conditional generate did not select is not elaborated, and its text need not be
+   valid for that instance's values (LRM 27.5), so nothing is lowered for it there. Which
+   alternative stands is chosen from values handed at construction, as a C++ constructor's `if`
+   chooses, and unlike `if constexpr`, whose discarded arm is never instantiated because its
+   condition is a template argument (clang `TreeTransform::TransformIfStmt`).
 5. A class declared inside a design element or one of its generate blocks has its methods compiled
    into the element's code and named by the element's class, and another unit calls them by name.
 6. The front end has already folded every position where the language requires a constant; what is
@@ -85,9 +94,13 @@ for; adding an instance otherwise, or editing a body, renames no class.
 **D4. A generate block's class is found the same way inside its unit.** Inside its own bytes a path
 is written from the block -- one inside it from where it stands, one reaching a block around it by
 how far out that block is -- and a block nested in it by its class, so blocks of a loop that declare
-alike are one class whatever their index. Which alternatives a construct inside it built is part of
-it (fact 4), so a loop whose blocks build different alternatives is one class per alternative built,
-which follows what they declare and never how many the loop counted out.
+alike are one class whatever their index. What is declared in a block -- a type, a class, a
+covergroup -- is written with the block's class and no other. A generate construct inside it is
+written as the source wrote it: which alternative it built, how many blocks a loop counted out and
+which class each block is, is each object's construction (fact 4), so blocks building different
+alternatives are one class, and specializations of one unit that built different blocks are one
+unit, publishing every block class any of them built. A name reaching a block takes its class from
+the block the front end resolved it to, which is built where the name is read.
 
 **D5. A design element declaring a class is a class of its own for each specialization, and a
 generate block declaring one for each place it stands.** Two specializations publishing alike may
@@ -113,9 +126,10 @@ what the front end settled it to. A parameter a class declares, one a nested def
 one the code of a scope declaring a class reads hold the value this elaboration settled.
 
 **D8. Every specialization lowered, and in a compile that checks itself every specialization, is
-declared again under the class's naming and must publish exactly what the class does.** Where it
-does not, grouping compared less than a signature holds, which is this compiler's defect, reported
-as one.
+declared again under the class's naming and must publish alike everything the class does.** It may
+add the class of a block only it built, with what is declared in that block (D4). Where it publishes
+anything else, grouping compared less than a signature holds, which is this compiler's defect,
+reported as one.
 
 **D9. A specialization is lowered once for what its objects are built as: its key worked out again
 once the classes are known, every other instance in it named by what that one is built as, and every
@@ -155,6 +169,15 @@ is built as.
   local's initializer depends on is read off the initializer as written, not off what it calls.
 - Which specializations on a cycle are found to be on it follows the order the walk meets them.
   Cause: the cycle is found by the walk, not by a pass over the whole graph.
+- A unit compiles a body per set of blocks its specializations built, each repeating the unit's own
+  code. Cause: a body is lowered from one specialization with the blocks it built, and an
+  alternative can be lowered only where it was built (fact 4).
+- Which alternative stands is decided only by the condition the object evaluates when it is built,
+  and an alternative's table entry where it was not built holds what it holds wherever it was, so an
+  evaluation disagreeing with the front end's would build that alternative rather than stop. Cause:
+  the condition is compiled from the expression the front end evaluated, like every constant
+  expression the compiler evaluates, and is held to the standard by the conformance suite, not by a
+  second statement of the answer in the data.
 
 ## Survey
 
@@ -184,9 +207,12 @@ is built as.
   record did not, and threw where the prediction was wrong.
 - **A class per specialization, as rustc and Verilator name one.** A loop handing each child its
   index would compile a class per index.
-- **One class for a loop's blocks holding every alternative any of them built.** It is a second
-  representation laid over the structures the blocks have, and a referrer would compile against an
-  alternative the block it names never built.
+- **Which alternatives a construct built as part of the class holding it (D4 as first written).** It
+  is `if constexpr`'s shape laid over a choice made at construction (fact 4): the holding class
+  splits by an answer its code computes anyway, and a loop around it states one table entry per
+  block. Its objection to one class -- that a referrer would compile against an alternative the
+  block it names never built -- does not hold: a name reaching an alternative is legal only where
+  the front end built it, and takes the class from there.
 - **A body named by the least key among its specializations.** It renames the body when an edit
   hands an instance a smaller key.
 - **A local parameter supplied with the front end's value through each specialization's construction
@@ -210,8 +236,8 @@ is built as.
   D1: no parameter is an argument of a unit's name; a class is what is published. D2 holds of a
   specialization, whose instances lower alike, rather than of a unit, whose specializations may not.
 - [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
-  D1 and D4: which blocks were built is part of what a scope publishes, not an input to a name, and
-  a value deciding what a child builds names nothing of the scope handing it.
+  D1 and D4: which blocks were built is neither an input to a name nor part of what a scope
+  publishes, and a value deciding what a child builds names nothing of the scope handing it.
 - [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D4 and D7: a
   block's class is what it publishes, not what its declarations spell, and a block declaring a class
   is one per place for the reason D5 gives, not because it is named by its index.

@@ -1,9 +1,7 @@
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
 #include <format>
-#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -113,18 +111,6 @@ namespace lyra::lowering::ast_to_hir {
     }
   }
   return nullptr;
-}
-
-// Where among its construct's alternatives the source wrote `block`, counted
-// from the first. A block no conditional produced is the one its construct
-// holds.
-[[nodiscard]] inline auto AlternativePositionOf(
-    const slang::ast::GenerateBlockSymbol& block) -> std::uint32_t {
-  if (!IsAlternative(block)) return 0;
-  const auto alternatives = AlternativesOfConstruct(block);
-  const auto position = std::ranges::find(alternatives, &block);
-  return static_cast<std::uint32_t>(
-      std::distance(alternatives.begin(), position));
 }
 
 // The label a generate block answers to (LRM 27.6), which every block instance

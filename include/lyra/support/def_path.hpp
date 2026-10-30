@@ -165,6 +165,13 @@ struct DefPath {
       path.data.back());
 }
 
+// The scope of the design hierarchy a declaration at `path` is declared in:
+// the innermost generate block on the path, or the unit's own scope.
+[[nodiscard]] inline auto DeclaringScopeClassOf(DefPath path) -> DefPath {
+  while (!NamesScopeClass(path)) path.data.pop_back();
+  return path;
+}
+
 // The path as a person reads it, in a dump or a diagnostic. Nothing compares
 // or looks a declaration up through it: two paths may read alike here.
 [[nodiscard]] inline auto DisplayOf(const DefPath& path) -> std::string {

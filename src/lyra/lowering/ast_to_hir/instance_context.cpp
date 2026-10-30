@@ -196,6 +196,7 @@ auto InstanceContextOf(
               .path = held.path,
               .written = written,
               .scope = climb.scope,
+              .blocks_passed = climb.blocks_passed,
               .instance = climb.instance,
               .reads = climb.reads});
     }
@@ -206,6 +207,7 @@ auto InstanceContextOf(
               .path = std::format("{}.{}", held.path, name.path),
               .written = name.written,
               .scope = name.scope,
+              .blocks_passed = name.blocks_passed,
               .instance = name.instance,
               .reads = name.reads});
     }

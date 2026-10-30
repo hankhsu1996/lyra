@@ -269,12 +269,10 @@ struct ScopePublicationRecord {
     const slang::ast::GenerateBlockArraySymbol* loop = nullptr;
   };
   // A conditional generate (LRM 27.5): where the source wrote it among the
-  // generate constructs of its scope, and the alternatives this elaboration
-  // built a scope for.
+  // generate constructs of its scope.
   struct Choice {
     hir::GenerateId id;
     std::uint32_t construct = 0;
-    std::vector<const slang::ast::GenerateBlockSymbol*> built;
   };
   using Construct = std::variant<Loop, Choice>;
 
@@ -453,27 +451,25 @@ struct ScopeRoute {
 
 // A hop of a descent this unit declares nothing about, as the front end says
 // the name reached it: an instance, with the coordinates the name wrote for
-// it; a block of a loop generate, by the label of the loop, the value the
-// front end resolved its select to, which says what the block was published
-// as, and the select itself, evaluated in each object the name is read in
-// (LRM 27.4); a block that stands alone or that a conditional chose, by where
-// the source wrote its construct among those of its scope and the block among
-// that construct's alternatives, since a label does not tell the alternatives
-// of a conditional apart (LRM 27.5); or a named block or subroutine, which is
-// no object (LRM 23.9). It is resolved against what the scope standing above
-// it published, which is known only once the whole descent is in hand.
+// it; a block of a loop generate, by the label of the loop and the select the
+// name wrote, evaluated in each object the name is read in (LRM 27.4); a block
+// that stands alone or that a conditional chose, by where the source wrote its
+// construct among those of its scope (LRM 27.5); or a named block or
+// subroutine, which is no object (LRM 23.9). A block carries the one the front
+// end resolved the name to, which is built where the name is read and says
+// what the block was published as. It is resolved against what the scope
+// standing above it published, which is known only once the whole descent is
+// in hand.
 struct InstanceHop {
   std::string name;
   std::vector<std::uint32_t> indices;
 };
 struct LoopBlockHop {
-  std::string loop;
-  std::int64_t resolved_index;
+  const slang::ast::GenerateBlockSymbol* block;
   hir::ExprId position;
 };
 struct ChosenBlockHop {
-  std::uint32_t construct;
-  std::uint32_t position;
+  const slang::ast::GenerateBlockSymbol* block;
 };
 struct ProceduralHop {
   support::DefPathData step;
@@ -1534,6 +1530,11 @@ class UnitLowerer {
   // Takes what each declared type this unit names declares, which a later
   // layer reads off the unit rather than off the declaring one.
   void ReadTypeDefinitions();
+  // Records every class of a scope the unit publishes, in the order it
+  // publishes them, the blocks only another specialization of the unit built
+  // included: which blocks a construction built is no part of the unit, so
+  // every body of it states every one of its classes alike.
+  void RecordPublishedScopeClasses();
 
   // Builds a HIR Expr referring to the data `route` navigates to.
   // `owner_frame` is the frame whose routes hold it.
@@ -1933,10 +1934,9 @@ class UnitLowerer {
   void DeclareClassStatics(
       const slang::ast::ClassType& cls, const slang::ast::Scope& replicating);
 
-  // The class `scopes` are objects of, in this unit's own types, the scopes in
-  // the order the lowering reads them: what it declares as the first records
-  // it, and every block any of them built.
-  auto PublishScopeClass(std::span<const slang::ast::Scope* const> scopes)
+  // The class `scope` is an object of, in this unit's own types: what it
+  // declares, which every scope of that class declares alike.
+  auto PublishScopeClass(const slang::ast::Scope& scope)
       -> diag::Result<hir::ScopeClassSignature>;
 
   // A published callable as this unit's own types state it.

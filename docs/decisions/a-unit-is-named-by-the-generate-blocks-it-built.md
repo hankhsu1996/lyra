@@ -34,6 +34,11 @@ which blocks an instance built is part of what it publishes, which is what decid
 input to a name worked out before it is declared; a value deciding what a child builds names nothing
 of the scope handing it.
 
+D1 and D4 reversed 2026-10-29 by the same record: which blocks an instance built is no part of what
+its unit publishes either. The requirement above stands, and does not select D1: the blocks built
+are chosen from values handed at construction, so instances that built different blocks are one unit
+publishing every block class any of them built, and a body is still a function of its name.
+
 ## Requirement
 
 A compiled body is a function of its name. Two instances of one name compile to the same artifact,
@@ -69,9 +74,9 @@ and an instance added anywhere in the design changes no artifact another name al
 
 ## Decision
 
-**D1. The generate blocks an instance built are part of its unit's name.** Each block enters as the
-steps from the instance down to it, each step the block's label, which one it is among blocks of
-that label, and the application of its definition it is
+**D1 (reversed 2026-10-29, see Status). The generate blocks an instance built are part of its unit's
+name.** Each block enters as the steps from the instance down to it, each step the block's label,
+which one it is among blocks of that label, and the application of its definition it is
 ([a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D1). A loop's
 blocks enter as the kinds of block it built and not as how many: the construction counts them out
 (LRM 27.4), so a loop of eight and a loop of sixteen blocks of one kind are one name. Where one loop
@@ -90,14 +95,14 @@ every instance is read through its own body -- the check of the compile against 
 instance of the name is lowered too and has to come out equal; one that does not is a defect of how
 the name was worked out.
 
-**D4. A value a scope hands a child, where it decides which blocks the child builds, is one the
-scope's signature uses.** The scope declares the child as a member of the child's unit, and which
-blocks the child built is part of that unit's name, so the value names the scope's class as it would
-if the child's signature used it -- `Leaf<i>` in C++, one class per value. A loop handing each child
-its index, where the index decides what the child builds, therefore compiles its block once per
-index. What decides is every value a generate scheme reads: a conditional's condition, a case's
-selector and items, and a loop's initial value, stop condition and iteration (LRM 27.4, 27.5), each
-of which the front end records as it evaluates the scheme.
+**D4 (reversed 2026-10-29, see Status). A value a scope hands a child, where it decides which blocks
+the child builds, is one the scope's signature uses.** The scope declares the child as a member of
+the child's unit, and which blocks the child built is part of that unit's name, so the value names
+the scope's class as it would if the child's signature used it -- `Leaf<i>` in C++, one class per
+value. A loop handing each child its index, where the index decides what the child builds, therefore
+compiles its block once per index. What decides is every value a generate scheme reads: a
+conditional's condition, a case's selector and items, and a loop's initial value, stop condition and
+iteration (LRM 27.4, 27.5), each of which the front end records as it evaluates the scheme.
 
 **D5. Within one instance, a loop's blocks of one name are still one body.** Blocks of one class at
 different indices may build different nested alternatives, a chain's first block and its others for

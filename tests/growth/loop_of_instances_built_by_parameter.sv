@@ -4,12 +4,11 @@
 // case generate, and how many blocks a loop generate counts out (LRM 27.4).
 // N is how many instances there are.
 //
-// Which blocks an instance built is part of its unit's name, so the child is
-// one unit per set of blocks its values build -- at most eight here, whatever
-// N is -- and the loop's block, named by what it declares, is one class per
-// unit of the child it holds. Each instance is handed a value of its own, so
-// each is a specialization of its own, lowered to HIR on its own and built
-// from a table entry of its own; that is what each step adds.
+// Which blocks an instance built is no part of its unit, so the child is one
+// unit publishing every block any instance built, and the loop's block, named
+// by what it declares, is one class. Each instance is handed a value of its
+// own, so each is a specialization of its own, lowered to HIR on its own and
+// built from a table entry of its own; that is what each step adds.
 // @each-adds: bytes, bodies lowered 1
 module Leaf #(parameter int K = 0) (input var bit c, output int o);
   localparam bit ODD = K % 2 != 0;

@@ -115,12 +115,12 @@ object's own.
 
 **D3. A body is the code a specialization comes out as, compiled on its own.** Each specialization
 is lowered from the instance it is named for into HIR, and declares the unit's signature from that
-instance: which generate blocks were built is part of the unit's name
-([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)),
-so every specialization of a unit built the same ones. What it states beside how its objects are
-built is looked up among what the specializations before it came out as, in the design's order: a
-digest of its text narrows which are compared, and it shares one only where everything they state is
-equal (fact 9). One that shares is no further work; one that does not is a body, named for that
+instance, and a later specialization of the unit adds the class of each generate block only it built
+([a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md)
+D4, D8), since which blocks were built is no part of a unit. What it states beside how its objects
+are built is looked up among what the specializations before it came out as, in the design's order:
+a digest of its text narrows which are compared, and it shares one only where everything they state
+is equal (fact 9). One that shares is no further work; one that does not is a body, named for that
 specialization, and goes on to be compiled. The published classes are built from declarations alone,
 so every body states them alike, and the link keeps one of each (fact 7): the execution backend
 links them weak, and the C++ backend defines them inline in the header every body writes alike,

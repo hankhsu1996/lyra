@@ -87,14 +87,15 @@ SystemVerilog writes both kinds as `parameter`, where C++ and Rust make the auth
 which one a parameter is is read off what relies on it. A reference anywhere else adds nothing to
 the key, and that includes what a construction evaluates to decide what it builds: a conditional
 generate's condition, a `case` generate's selector and labels, and a loop generate's header (LRM
-27.4, 27.5). What an instance built is part of its unit's name instead
-([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
-D1), so two values that build the same blocks are one unit. A parameter stays in the key as well
-where an instantiation may override it and it is written with no type (LRM 6.20.2: its type is the
-type of the value it is given), where it is handed on to a child parameter that decides something
-there, where a design element declared inside this one reads it, where it is read through a
-hierarchical name, and where another deciding parameter is written from it -- including one the
-module's blocks or subroutines declare.
+27.4, 27.5). What an instance built is no part of its unit either
+([a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md)
+D4): values that build different blocks are one unit publishing every block class any built, and one
+body per set of blocks built. A parameter stays in the key as well where an instantiation may
+override it and it is written with no type (LRM 6.20.2: its type is the type of the value it is
+given), where it is handed on to a child parameter that decides something there, where a design
+element declared inside this one reads it, where it is read through a hierarchical name, and where
+another deciding parameter is written from it -- including one the module's blocks or subroutines
+declare.
 
 **What relies on a parameter is the front end's own record, not a list kept here.** A list of a
 language's positions kept beside the code that decides them -- the positions this compiler lowers as
@@ -149,10 +150,12 @@ it is found.
 
 ### D2. Every instance of a unit lowers alike, and the check of the compile against itself holds them to it
 
-**What an instance's construction built is part of its unit's name**
-([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
-D1), so every instance of a unit built the same blocks, and a unit is lowered and declared from the
-instance it is named for alone.
+**What an instance's construction built is decided by the values naming its specialization**, so
+every instance of one specialization built the same blocks, and a specialization is lowered and
+declared from the instance it is named for alone; its unit publishes every block class any of its
+specializations built
+([a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md)
+D4, D8).
 
 They agree by construction, because the lowering reads a value only through what the unit's identity
 holds or as one the object is built with; that is what D1 makes the classification answer. Where two

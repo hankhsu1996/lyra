@@ -28,11 +28,12 @@ shared by all consumers: external references, child routing, and construction.
    from a parallel side table.
 2. A compilation unit that has a generate structure contributes that structure as constructor-time
    construction logic. The constructor expands generate via `if`, loop, and sequence to build
-   children. Which generate blocks an instance built is part of its unit's name, so a unit holds the
-   blocks its own instances built and no other (`compiling_a_design.md`). How many blocks a loop
-   counts out is not part of it; the constructor runs the loop. Which body each block it builds is,
-   is stated in the object's construction table, and the constructor builds every block through the
-   entry there, as it builds an instance, so the unit's code names no block's body.
+   children. Which generate blocks an instance built is no part of its unit, which publishes every
+   block class any of its instances built (`compiling_a_design.md`), and how many blocks a loop
+   counts out is not either; the constructor runs the loop and chooses the alternative. Which body
+   each block it builds is, is stated in the object's construction table, and the constructor builds
+   every block through the entry there, as it builds an instance, so the unit's code names no
+   block's body.
 3. A named generate scope is a first-class constructed object. An unnamed generate scope is not
    addressable and is not materialized as an object.
 4. External references, runtime child routing, and the runtime constructor all navigate the same

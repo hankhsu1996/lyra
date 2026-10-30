@@ -20,6 +20,14 @@ rejection of folding identical artifacts afterwards, are reversed by the same D5
 body of its own, and bodies are found by comparing what they came out as, on HIR, before anything
 after it runs.
 
+Revised 2026-10-29 with
+[a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md)
+D4: the table held the answer after all, an alternative an object did not select being an empty
+entry, and the class holding the construct followed which one was built, so a loop around it held
+one entry per block. Now the class holding a conditional is one whichever alternative stands, and an
+alternative's entry where it was not selected holds what it holds wherever it was, when that is one
+entry, so places differing only in the answer share a table.
+
 ## Context
 
 A loop generate's blocks compile to one body where they lower alike and to one body per index where

@@ -103,14 +103,9 @@ auto NamedHopInto(
     if (block->getArrayIndex() != nullptr) {
       const std::optional<hir::ExprId> position = select_of(*block);
       if (!position.has_value()) return std::nullopt;
-      return LoopBlockHop{
-          .loop = std::string{block->getParentScope()->asSymbol().name},
-          .resolved_index = LoopIndexOf(*block),
-          .position = *position};
+      return LoopBlockHop{.block = block, .position = *position};
     }
-    return ChosenBlockHop{
-        .construct = block->constructIndex,
-        .position = AlternativePositionOf(*block)};
+    return ChosenBlockHop{.block = block};
   }
   if (symbol.kind == slang::ast::SymbolKind::Subroutine ||
       symbol.kind == slang::ast::SymbolKind::StatementBlock) {
@@ -204,68 +199,26 @@ auto AddCoordinate(DescentHop& hop, std::uint32_t position) -> bool {
       hop);
 }
 
-// Where a scope published the block of a loop a name reaches: the loop, and
-// the class the block was published as.
-struct PublishedLoopBlockAt {
-  hir::PublishedLoopId loop;
-  support::DefPath class_path;
-};
-
-// Where the scope published the block of a loop the name was resolved to: its
-// class is the loop's one class or, where the loop has several, the one the
-// block standing at the index the front end resolved the select to was
-// published as (LRM 27.4). Nothing where the scope published no such block.
-auto FindPublishedLoopBlock(
+// Where a scope published the loop a name steps through, found by its name
+// (LRM 27.4).
+auto FindPublishedLoop(
     const base::Arena<hir::PublishedLoop, hir::PublishedLoopId>& loops,
-    const LoopBlockHop& hop) -> std::optional<PublishedLoopBlockAt> {
+    const LoopBlockHop& hop) -> std::optional<hir::PublishedLoopId> {
   for (const hir::PublishedLoopId at : loops.Ids()) {
-    auto class_path = std::visit(
-        Overloaded{
-            [&](const hir::PublishedLoopOfOneClass& loop)
-                -> std::optional<support::DefPath> {
-              if (loop.name != hop.loop) return std::nullopt;
-              return loop.class_path;
-            },
-            [&](const hir::PublishedLoopByIndex& counted)
-                -> std::optional<support::DefPath> {
-              if (counted.name != hop.loop) return std::nullopt;
-              for (const hir::PublishedLoopBlock& block : counted.blocks) {
-                if (block.index == hop.resolved_index) {
-                  return counted.classes.at(block.class_at);
-                }
-              }
-              return std::nullopt;
-            }},
-        loops.Get(at));
-    if (class_path.has_value()) {
-      return PublishedLoopBlockAt{
-          .loop = at, .class_path = *std::move(class_path)};
+    if (loops.Get(at).name == hop.block->getParentScope()->asSymbol().name) {
+      return at;
     }
   }
   return std::nullopt;
 }
 
-// Where a scope published the one block a construct building at most one
-// holds: the construct, and the class the block was published as.
-struct PublishedChoiceAt {
-  hir::PublishedChoiceId choice;
-  support::DefPath class_path;
-};
-
-// A block that stands alone or was chosen by a conditional is found by where
-// the source wrote it, and is the one block its construct holds in the scope
-// the name stands in (LRM 27.5).
+// Where a scope published a construct building at most one block, found by
+// where the source wrote the construct (LRM 27.5).
 auto FindPublishedChoice(
     const base::Arena<hir::PublishedChoice, hir::PublishedChoiceId>& choices,
-    const ChosenBlockHop& hop) -> std::optional<PublishedChoiceAt> {
+    const ChosenBlockHop& hop) -> std::optional<hir::PublishedChoiceId> {
   for (const hir::PublishedChoiceId at : choices.Ids()) {
-    const hir::PublishedChoice& choice = choices.Get(at);
-    if (choice.construct != hop.construct) continue;
-    for (const hir::PublishedAlternative& block : choice.blocks) {
-      if (block.position == hop.position) {
-        return PublishedChoiceAt{.choice = at, .class_path = block.class_path};
-      }
-    }
+    if (choices.Get(at).construct == hop.block->constructIndex) return at;
   }
   return std::nullopt;
 }
@@ -1229,14 +1182,20 @@ auto UnitLowerer::DescendPublishedFrom(
   };
 
   // A hop into a generate block lands on the class that block was published
-  // as, which this unit records under the unit holding the block; the step
-  // names the block as the hop says.
-  const auto class_of_block = [&](const InPublishedScope& on,
-                                  const support::DefPath& class_path) {
-    const std::string unit_name =
-        unit_.scope_classes.KeyOf(on.scope_class).unit_name;
-    return ScopeClassOf(unit_name, class_path);
-  };
+  // as, which this unit records under the unit holding the block. Which block
+  // a construct built, and so its class, is each object's construction
+  // (LRM 27.4, 27.5), so the scope the hop stands on says nothing of it; the
+  // front end resolved the name to a block built where it is read, and that
+  // block says what it was published as.
+  const auto class_of_landing =
+      [&](const InPublishedScope& on,
+          const slang::ast::GenerateBlockSymbol& landed) {
+        const hir::ScopeClassKey& holder =
+            unit_.scope_classes.KeyOf(on.scope_class);
+        return ScopeClassOf(
+            holder.unit_name,
+            support::Extended(holder.class_path, Naming().BlockStepOf(landed)));
+      };
   const auto step_into_block = [&](hir::PublishedScopeRef names,
                                    hir::ScopeClassId result_class) {
     descended.open.clear();
@@ -1263,15 +1222,15 @@ auto UnitLowerer::DescendPublishedFrom(
             // of the blocks the object built that is (LRM 27.4).
             [&](const LoopBlockHop& block) {
               if (past_procedural) return false;
-              const auto found = FindPublishedLoopBlock(
+              const auto found = FindPublishedLoop(
                   unit_.scope_classes.Get(on->scope_class).loops, block);
               if (!found.has_value()) return false;
               const hir::ScopeClassId result_class =
-                  class_of_block(*on, found->class_path);
+                  class_of_landing(*on, *block.block);
               return step_into_block(
                   hir::PublishedGenerateLoopRef{
                       .scope_class = on->scope_class,
-                      .loop = found->loop,
+                      .loop = *found,
                       .position = block.position,
                       .result_class = result_class},
                   result_class);
@@ -1284,11 +1243,11 @@ auto UnitLowerer::DescendPublishedFrom(
                   unit_.scope_classes.Get(on->scope_class).choices, block);
               if (!found.has_value()) return false;
               const hir::ScopeClassId result_class =
-                  class_of_block(*on, found->class_path);
+                  class_of_landing(*on, *block.block);
               return step_into_block(
                   hir::PublishedGenerateBlockRef{
                       .scope_class = on->scope_class,
-                      .choice = found->choice,
+                      .choice = *found,
                       .result_class = result_class},
                   result_class);
             },

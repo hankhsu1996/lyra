@@ -430,11 +430,19 @@ class Grouping {
       }
     }
     const InstanceContext& context = keys_->ContextOf(inst);
+    const auto lands =
+        [&](const slang::ast::Scope& landed,
+            std::span<const slang::ast::Scope* const> blocks_passed) {
+          if (const auto* at = InstanceAt(landed)) found.push_back(at);
+          for (const slang::ast::Scope* passed : blocks_passed) {
+            if (const auto* at = InstanceAt(*passed)) found.push_back(at);
+          }
+        };
     for (const ClimbAnchor& climb : context.climbs) {
-      if (const auto* at = InstanceAt(*climb.scope)) found.push_back(at);
+      lands(*climb.scope, climb.blocks_passed);
     }
     for (const NameLandingBelow& name : context.names_below) {
-      if (const auto* at = InstanceAt(*name.scope)) found.push_back(at);
+      lands(*name.scope, name.blocks_passed);
     }
     const slang::ast::DefinitionSymbol& definition = inst.getDefinition();
     if (!IsLibraryCell(definition)) {

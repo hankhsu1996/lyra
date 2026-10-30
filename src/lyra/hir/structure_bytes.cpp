@@ -24,6 +24,7 @@
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::hir {
@@ -323,13 +324,9 @@ class Writer {
           m.storage);
     });
     Arena(scope.callables, [&](const SubroutinePrototype& p) { Prototype(p); });
-    Arena(scope.loops, [&](const PublishedLoop& loop) { Loop(loop); });
+    Arena(scope.loops, [&](const PublishedLoop& loop) { Text(loop.name); });
     Arena(scope.choices, [&](const PublishedChoice& choice) {
       Number(choice.construct);
-      List(choice.blocks, [&](const PublishedAlternative& a) {
-        Number(a.position);
-        OwnPath(a.class_path);
-      });
     });
     Arena(scope.disable_targets, [&](const PublishedDisableTarget& target) {
       OwnPath(target.path);
@@ -379,57 +376,22 @@ class Writer {
     });
   }
 
-  // A loop by the classes of its blocks. Blocks of one class are written as
-  // that class however the loop was published, since which blocks are alike
-  // is what the reference writes and not what the paths said.
-  void Loop(const PublishedLoop& loop) {
-    std::visit(
-        Overloaded{
-            [&](const PublishedLoopOfOneClass& one) {
-              Text(one.name);
-              Mark('1');
-              Optional(one.class_path, [&](const support::DefPath& path) {
-                OwnPath(path);
-              });
-            },
-            [&](const PublishedLoopByIndex& by_index) {
-              Text(by_index.name);
-              std::vector<std::string> classes;
-              classes.reserve(by_index.classes.size());
-              for (const support::DefPath& path : by_index.classes) {
-                classes.push_back((*reference_)(signature_->unit_name, path));
-              }
-              std::vector<std::string> distinct;
-              std::vector<std::uint32_t> taken;
-              for (const PublishedLoopBlock& block : by_index.blocks) {
-                const std::string& its = classes.at(block.class_at);
-                const auto known = std::ranges::find(distinct, its);
-                taken.push_back(
-                    static_cast<std::uint32_t>(known - distinct.begin()));
-                if (known == distinct.end()) distinct.push_back(its);
-              }
-              if (distinct.size() <= 1) {
-                Mark('1');
-                Optional(
-                    distinct.empty() ? std::nullopt
-                                     : std::optional{distinct.front()},
-                    [&](const std::string& path) { Text(path); });
-                return;
-              }
-              Mark('n');
-              List(distinct, [&](const std::string& path) { Text(path); });
-              Number(static_cast<std::int64_t>(by_index.blocks.size()));
-              for (std::size_t at = 0; at < by_index.blocks.size(); ++at) {
-                Number(by_index.blocks[at].index);
-                Number(taken[at]);
-              }
-            }},
-        loop);
+  // What the unit declares in the scope `declaring`: its types, its classes
+  // and its covergroups. Each is part of the structure of the scope it is
+  // declared in and of no other, so which blocks a construction built never
+  // reaches a scope holding them.
+  void DeclaredIn(const support::DefPath& declaring) {
+    Definitions(declaring);
+    ClassDeclarations(declaring);
+    Covergroups(declaring);
   }
 
-  void Definitions() {
+  void Definitions(const support::DefPath& declaring) {
     std::vector<std::pair<std::string, const TypeDefinition*>> definitions;
     for (const auto& [declaration, definition] : signature_->type_definitions) {
+      if (support::DeclaringScopeClassOf(declaration.path) != declaring) {
+        continue;
+      }
       definitions.emplace_back(
           (*reference_)(declaration.unit_name, declaration.path), &definition);
     }
@@ -469,7 +431,7 @@ class Writer {
     }
   }
 
-  void ClassDeclarations() {
+  void ClassDeclarations(const support::DefPath& declaring) {
     const auto properties = [&](const auto& of) {
       Arena(of, [&](const DeclaredProperty& p) {
         Text(p.name);
@@ -477,7 +439,14 @@ class Writer {
         Kind(p.random);
       });
     };
-    List(signature_->classes, [&](const ClassDeclaration& cls) {
+    std::vector<const ClassDeclaration*> declared;
+    for (const ClassDeclaration& cls : signature_->classes) {
+      if (support::DeclaringScopeClassOf(cls.class_path) == declaring) {
+        declared.push_back(&cls);
+      }
+    }
+    List(declared, [&](const ClassDeclaration* of) {
+      const ClassDeclaration& cls = *of;
       OwnPath(cls.class_path);
       Optional(cls.base, [&](ClassId base) { Class(base); });
       Number(cls.is_interface_class ? 1 : 0);
@@ -510,7 +479,7 @@ class Writer {
     });
   }
 
-  void Covergroups() {
+  void Covergroups(const support::DefPath& declaring) {
     const auto formals = [&](const std::vector<PublishedCovergroupFormal>& of) {
       List(of, [&](const PublishedCovergroupFormal& f) {
         Text(f.name);
@@ -518,7 +487,14 @@ class Writer {
         Kind(f.direction);
       });
     };
-    List(signature_->covergroups, [&](const PublishedCovergroup& covergroup) {
+    std::vector<const PublishedCovergroup*> declared;
+    for (const PublishedCovergroup& covergroup : signature_->covergroups) {
+      if (support::DeclaringScopeClassOf(covergroup.path) == declaring) {
+        declared.push_back(&covergroup);
+      }
+    }
+    List(declared, [&](const PublishedCovergroup* of) {
+      const PublishedCovergroup& covergroup = *of;
       OwnPath(covergroup.path);
       formals(covergroup.formals);
       formals(covergroup.sample_formals);
@@ -534,9 +510,7 @@ class Writer {
   }
 
   void Unit() {
-    Definitions();
-    ClassDeclarations();
-    Covergroups();
+    DeclaredIn(support::DefPath{});
     std::visit(
         Overloaded{
             [&](const PublishedDesignElement& element) {
@@ -599,6 +573,7 @@ auto BlockClassBytes(
     const UnitSignature& signature, const ScopeClassSignature& scope,
     const ReferenceBytes& reference) -> std::string {
   Writer writer(signature, reference);
+  writer.DeclaredIn(scope.class_path);
   writer.Scope(scope);
   return writer.Take();
 }

@@ -11,8 +11,6 @@
 format_items: [lir.types, mir.types]
 instance_array: [bytes]
 listed_operands: [lir.types, mir.types]
-loop_choosing_by_outer_index: [bytes]
-loop_counted_by_outer_index: [bytes]
 loop_of_children_sized_by_index:
   - lir.classes
   - lir.constants
@@ -35,7 +33,6 @@ loop_of_clocked_procedures_sized_by_index:
   - mir.closures
   - mir.constructors
   - mir.types
-loop_reaching_its_neighbour: [bytes]
 loop_sizing_by_index:
   - lir.classes
   - lir.constants

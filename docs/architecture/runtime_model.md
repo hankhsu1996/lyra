@@ -14,8 +14,9 @@ Read every SystemVerilog construct in a module as a piece of a C++ class:
 - `for (genvar i = 0; i < N; i = i + 1) begin : g child u(); end` is a `for` loop in the class
   constructor. It instantiates `N` children.
 - `if (N > 0) begin ... end` is an `if` in the class constructor. It picks which sub-tree to
-  instantiate. Which blocks were built is part of which class an instance is
-  (`compiling_a_design.md`), so the class holds only the alternatives its instances built.
+  instantiate. Which blocks were built is no part of which class an instance is
+  (`compiling_a_design.md`): the class holds every alternative the source wrote, each a child the
+  constructor may build.
 - `initial begin ... end` is a class method that the scheduler calls once at simulation time zero.
 - `always_ff @(posedge clk) begin ... end` is a class method registered with an event source and
   called by the scheduler on each matching event.
