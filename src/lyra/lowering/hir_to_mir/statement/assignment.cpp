@@ -6,8 +6,7 @@
 #include <utility>
 #include <variant>
 
-#include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -247,13 +246,30 @@ auto LowerExprStmt(
     }
   }
 
-  auto expr_or = process.LowerIgnoredExpr(inner, frame);
+  // The expression is an evaluation of its own, so what its lowering stages to
+  // carry it out -- an object read and then written, a value a deferred update
+  // keeps -- is a step of it and ends when it completes, as a C++
+  // full-expression's temporaries do, and keeps no object in use past the
+  // statement (LRM 8.29). Nothing reads its value, so where it staged anything
+  // it is a block of those steps and the expression, as a hand-written
+  // statement needing a local of its own is; where it staged nothing it is the
+  // expression alone, as clang's Sema wraps a full-expression only once it has
+  // cleanups.
+  BlockBuilder evaluation(frame);
+  auto expr_or = process.LowerIgnoredExpr(inner, evaluation.Frame());
   if (!expr_or) {
     return std::unexpected(std::move(expr_or.error()));
   }
+  const mir::ExprId value = evaluation.Body().exprs.Add(*std::move(expr_or));
+  if (!evaluation.Body().root_stmts.empty()) {
+    evaluation.Body().AppendStmt(mir::ExprStmt{.expr = value});
+    mir::Stmt stmt = evaluation.BuildStatement();
+    stmt.label = std::move(label);
+    return stmt;
+  }
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::ExprStmt{.expr = block.exprs.Add(*std::move(expr_or))}};
+      .data = mir::ExprStmt{.expr = block.exprs.Add(evaluation.Build(value))}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir
