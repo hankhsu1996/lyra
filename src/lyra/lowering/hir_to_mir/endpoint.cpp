@@ -106,6 +106,7 @@ auto BindEndpoint(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::RoutedValueRef& reference) -> BoundEndpoint {
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const RouteReach& reach = lowerer.ReachOf(reference.id);
   return std::visit(
       Overloaded{
           [&](const ClimbedRoute& climbed) -> BoundEndpoint {
@@ -127,7 +128,7 @@ auto BindEndpoint(
                                              .Get<mir::PointerType>()
                                              .pointee});
           }},
-      lowerer.ReachOf(reference.id));
+      reach);
 }
 
 auto EndpointCellExpr(

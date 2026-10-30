@@ -147,14 +147,13 @@ auto BuildCaseOverValues(
     if (auto built = dispatch_into(known); !built) {
       return std::unexpected(std::move(built.error()));
     }
-    chosen.AppendIfThen(
-        BuildConditionNot(
-            unit, chosen,
-            BuildValueOperation(
-                unit, chosen, support::BuiltinFn::kHasUnknown,
-                chosen.ReadLocal(subject, subject_type), {},
-                unit.builtins.machine_bool)),
-        std::move(known));
+    const mir::ExprId all_known = BuildConditionNot(
+        unit, chosen,
+        BuildValueOperation(
+            unit, chosen, support::BuiltinFn::kHasUnknown,
+            chosen.ReadLocal(subject, subject_type), {},
+            unit.builtins.machine_bool));
+    chosen.AppendIfThen(all_known, std::move(known));
   } else if (auto built = dispatch_into(chosen); !built) {
     return std::unexpected(std::move(built.error()));
   }

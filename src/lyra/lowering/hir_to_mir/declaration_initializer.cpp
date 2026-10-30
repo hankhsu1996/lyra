@@ -54,9 +54,10 @@ auto IntegrateStaticInitializer(
   if (decl.init.has_value()) {
     // The initializer is written in the scope declaring the variable, whose
     // name a construct in it reports (LRM 21.2.1.5), wherever it runs.
-    auto init_or = process.LowerExpr(
-        body.exprs.Get(*decl.init),
-        value_frame.WithScopeName(process.Scopes().Get(binding.scope).name));
+    const hir::Expr& initializer = body.exprs.Get(*decl.init);
+    const WalkFrame declaring_frame =
+        value_frame.WithScopeName(process.Scopes().Get(binding.scope).name);
+    auto init_or = process.LowerExpr(initializer, declaring_frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_value = value_block.exprs.Add(*std::move(init_or));
   } else {

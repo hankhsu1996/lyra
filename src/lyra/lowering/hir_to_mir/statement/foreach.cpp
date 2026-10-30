@@ -299,14 +299,15 @@ auto BuildLevelLoopStmt(
           // The key each step visits is left in the loop variable, which the
           // traversal writes (LRM 7.9.4).
           [&](const KeysHeld&) {
+            const auto iterated = [&](const WalkFrame& at) {
+              return IteratedValue(nest, at, depth);
+            };
+            const auto index_path = [&](const WalkFrame& at) {
+              return IndexPath(nest, at, level);
+            };
             return BuildKeyLoopStmt(
-                process.Owner(), frame,
-                [&](const WalkFrame& at) {
-                  return IteratedValue(nest, at, depth);
-                },
-                [&](const WalkFrame& at) { return IndexPath(nest, at, level); },
-                level.index_type, WalkOrder::kFromFirst, body_scope,
-                break_label);
+                process.Owner(), frame, iterated, index_path, level.index_type,
+                WalkOrder::kFromFirst, body_scope, break_label);
           }},
       level.indices);
 }
@@ -316,12 +317,12 @@ auto BuildLevelLoopStmt(
 auto LowerForeachStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForeachStmt& f) -> diag::Result<mir::Stmt> {
+  const auto pass = [&](const WalkFrame& at, BreakTarget& leaves) {
+    return LowerStmtIntoChildScope(
+        process, at.WithBreakLeaving(leaves), f.body);
+  };
   return LowerForeachLoops(
-      process, std::move(frame), std::move(label), f.array, f.loop_vars,
-      [&](const WalkFrame& at, BreakTarget& leaves) {
-        return LowerStmtIntoChildScope(
-            process, at.WithBreakLeaving(leaves), f.body);
-      });
+      process, std::move(frame), std::move(label), f.array, f.loop_vars, pass);
 }
 
 auto LowerForeachLoops(

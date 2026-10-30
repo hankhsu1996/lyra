@@ -164,10 +164,11 @@ auto BuildUniquenessReportBody(
                       .TakeText()});
   AppendReportEmit(unit, report, std::move(items), std::move(origin));
 
+  const mir::ExprId lhs = body.ReadLocal(count, int_type);
+  const mir::ExprId rhs = mir::BuildIntLiteral(unit, body, 1);
   const mir::ExprId violated = body.exprs.Add(
       mir::MakeBinary(
-          unit, body, mir::BinaryOp::kGreaterThan,
-          body.ReadLocal(count, int_type), mir::BuildIntLiteral(unit, body, 1),
+          unit, body, mir::BinaryOp::kGreaterThan, lhs, rhs,
           unit.builtins.bit1));
   body.AppendStmt(
       mir::IfStmt{
@@ -196,8 +197,8 @@ auto BuildTotalityReportScope(
   AppendReportEmit(
       unit_lowerer.Unit(), closure.Body(), std::move(items),
       diag::RuntimeOriginOf(span, unit_lowerer.SourceManager()));
-  KeepInObservedRegion(
-      unit_lowerer, frame.WithBlock(&scope), closure.BuildVoid());
+  const WalkFrame scope_frame = frame.WithBlock(&scope);
+  KeepInObservedRegion(unit_lowerer, scope_frame, closure.BuildVoid());
   return scope;
 }
 

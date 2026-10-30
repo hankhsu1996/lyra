@@ -176,11 +176,12 @@ auto Renderer::Join(const WalkFrame& frame, std::vector<mir::ExprId> parts)
 auto Renderer::SeparatorAfterFirst(const WalkFrame& frame, mir::LocalId ordinal)
     -> mir::ExprId {
   mir::Block& block = *frame.current_block;
+  const mir::ExprId lhs = frame.current_block->ReadLocal(ordinal, IntType());
+  const mir::ExprId rhs = mir::BuildIntLiteral(Unit(), block, 0);
   const mir::ExprId past_first = block.exprs.Add(
       mir::MakeBinary(
-          Unit(), block, mir::BinaryOp::kInequality,
-          frame.current_block->ReadLocal(ordinal, IntType()),
-          mir::BuildIntLiteral(Unit(), block, 0), Unit().builtins.bit1));
+          Unit(), block, mir::BinaryOp::kInequality, lhs, rhs,
+          Unit().builtins.bit1));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -195,11 +196,10 @@ auto Renderer::Advanced(
     const WalkFrame& frame, mir::LocalId counter, std::int64_t step)
     -> mir::ExprId {
   mir::Block& block = *frame.current_block;
+  const mir::ExprId lhs = frame.current_block->ReadLocal(counter, IntType());
+  const mir::ExprId rhs = mir::BuildIntLiteral(Unit(), block, step);
   return block.exprs.Add(
-      mir::MakeBinary(
-          Unit(), block, mir::BinaryOp::kAdd,
-          frame.current_block->ReadLocal(counter, IntType()),
-          mir::BuildIntLiteral(Unit(), block, step), IntType()));
+      mir::MakeBinary(Unit(), block, mir::BinaryOp::kAdd, lhs, rhs, IntType()));
 }
 
 auto Renderer::FormatLeaf(
@@ -239,11 +239,10 @@ auto Renderer::LiveMemberText(
     mir::Block taken;
     AssignLocal(
         Unit(), taken, live, member_text(frame.WithBlock(&taken), index));
-    block.AppendIfThen(
-        BuildHoldsMember(
-            Owner(), block, block.LocalPlace(value, mir_type), type, index,
-            hir::CaseKeyword::kCase),
-        std::move(taken));
+    const mir::ExprId holds = BuildHoldsMember(
+        Owner(), block, block.LocalPlace(value, mir_type), type, index,
+        hir::CaseKeyword::kCase);
+    block.AppendIfThen(holds, std::move(taken));
   }
   return block.ReadLocal(live, StringType());
 }
@@ -559,10 +558,12 @@ auto Renderer::BuildIndexedElements(
   const WalkFrame body_frame = frame.WithBlock(&loop_body);
   {
     const mir::ExprId separator = SeparatorAfterFirst(body_frame, ordinal);
+    const mir::ExprId container =
+        body_frame.current_block->LocalPlace(value, mir_type);
+    const mir::ExprId at =
+        body_frame.current_block->ReadLocal(index, IntType());
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
-        Owner(), loop_body,
-        body_frame.current_block->LocalPlace(value, mir_type), type,
-        body_frame.current_block->ReadLocal(index, IntType()), element_mir));
+        Owner(), loop_body, container, type, at, element_mir));
     const mir::ExprId grown = Join(
         body_frame, {body_frame.current_block->ReadLocal(text, StringType()),
                      separator, Render(body_frame, element, element_type)});
@@ -577,10 +578,12 @@ auto Renderer::BuildIndexedElements(
           Unit(), block, mir::BinaryOp::kLessThan,
           frame.current_block->ReadLocal(ordinal, IntType()), count,
           Unit().builtins.bit1));
+  const mir::ExprId advanced_ordinal = Advanced(frame, ordinal, 1);
   const mir::ExprId next_ordinal =
-      Assign(Unit(), frame, ordinal, IntType(), Advanced(frame, ordinal, 1));
-  const mir::ExprId next_index = Assign(
-      Unit(), frame, index, IntType(), Advanced(frame, index, index_step));
+      Assign(Unit(), frame, ordinal, IntType(), advanced_ordinal);
+  const mir::ExprId advanced_index = Advanced(frame, index, index_step);
+  const mir::ExprId next_index =
+      Assign(Unit(), frame, index, IntType(), advanced_index);
 
   std::vector<mir::ForInit> init;
   init.emplace_back(
@@ -608,11 +611,9 @@ auto Renderer::TraversalStep(
   BlockBuilder step(frame);
   const WalkFrame& inner = step.Frame();
   const mir::ExprId array = inner.current_block->LocalPlace(value, mir_type);
+  const mir::ExprId visited = inner.current_block->LocalPlace(key, key_type);
   return frame.current_block->exprs.Add(BuildAssociativeTraversal(
-      Owner(), step, entry, array,
-      AccessPath{
-          .owner = inner.current_block->LocalPlace(key, key_type),
-          .descent = {}},
+      Owner(), step, entry, array, AccessPath{.owner = visited, .descent = {}},
       key_type, IntType()));
 }
 
@@ -650,10 +651,11 @@ auto Renderer::BuildAssociativeEntries(
     const mir::ExprId index_text = Render(
         body_frame, body_frame.current_block->ReadLocal(key, key_type),
         array.key_type);
+    const mir::ExprId container =
+        body_frame.current_block->LocalPlace(value, mir_type);
+    const mir::ExprId at = body_frame.current_block->ReadLocal(key, key_type);
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
-        Owner(), loop_body,
-        body_frame.current_block->LocalPlace(value, mir_type), type,
-        body_frame.current_block->ReadLocal(key, key_type), element_mir));
+        Owner(), loop_body, container, type, at, element_mir));
     const mir::ExprId grown = Join(
         body_frame, {body_frame.current_block->ReadLocal(text, StringType()),
                      separator, index_text, Text(body_frame, kNameMark),
@@ -669,8 +671,9 @@ auto Renderer::BuildAssociativeEntries(
   const mir::ExprId next = TraversalStep(
       frame, value, mir_type, key, key_type, support::BuiltinFn::kAssocNext);
   const mir::ExprId next_more = Assign(Unit(), frame, more, IntType(), next);
+  const mir::ExprId advanced_ordinal = Advanced(frame, ordinal, 1);
   const mir::ExprId next_ordinal =
-      Assign(Unit(), frame, ordinal, IntType(), Advanced(frame, ordinal, 1));
+      Assign(Unit(), frame, ordinal, IntType(), advanced_ordinal);
 
   std::vector<mir::ForInit> init;
   init.emplace_back(mir::ForInitDecl{.induction_var = more, .init = first});

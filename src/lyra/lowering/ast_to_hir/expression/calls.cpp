@@ -503,8 +503,9 @@ auto LowerObjectSubroutineCall(
   if (!callable.has_value()) return unsupported();
   const hir::SubroutinePrototype& prototype =
       published.callables.Get(*callable);
+  const ScopeFrameId owner_frame = frame.Current();
   const hir::RoutedObjectRef receiver = unit_lowerer.MakeRoutedObjectRef(
-      frame.Current(), std::move(route),
+      owner_frame, std::move(route),
       unit_lowerer.ScopeClassTypeOf(scope_class));
   return hir::Expr{
       .type = prototype.result_type,

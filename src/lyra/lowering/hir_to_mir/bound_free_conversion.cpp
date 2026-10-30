@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/bound_free_conversion.hpp"
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -107,9 +108,9 @@ auto ConversionBody(
           AppendPushBack(lowerer, b, built, to, value);
           return {};
         }
-        const AccessPath into = DescendInto(
-            AccessPath{.owner = b.LocalPlace(built, to), .descent = {}},
-            StepToVisited(unit, b, entry.place, element));
+        AccessPath whole{.owner = b.LocalPlace(built, to), .descent = {}};
+        DescentStep step = StepToVisited(unit, b, entry.place, element);
+        const AccessPath into = DescendInto(std::move(whole), std::move(step));
         b.AppendStmt(
             mir::ExprStmt{
                 .expr = b.exprs.Add(BuildStoreExpr(unit, b, into, value))});
@@ -129,12 +130,13 @@ auto ConversionBody(
     const mir::ExprId absent = EntryCall(
         unit, given, support::BuiltinFn::kAssocAbsentValue,
         PathPlace(unit, given, NamedIn(walked.path, given)), {}, from_element);
+    const mir::ExprId held = given.ReadLocal(built, to);
+    const mir::ExprId converted = ConvertToType(unit, given, absent, element);
     AssignLocal(
         unit, given, built,
         EntryCall(
-            unit, given, support::BuiltinFn::kAssocWithDefault,
-            given.ReadLocal(built, to),
-            {ConvertToType(unit, given, absent, element)}, to));
+            unit, given, support::BuiltinFn::kAssocWithDefault, held,
+            {converted}, to));
     block.AppendIfThen(
         EntryCall(
             unit, block, support::BuiltinFn::kAssocHasStatedDefault,

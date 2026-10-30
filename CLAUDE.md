@@ -185,6 +185,11 @@ reads follows `docs/messages.md`.
   clause is what a catch-all switches off, so it takes three rules in
   `tools/policy/check_architecture.py`: A013 for the comparison, A020 for a `default:` arm, and A021
   for a visit arm that names no alternative.
+- **Two operands of one evaluation never both build IR** -- a call's arguments, an operator's
+  operands. C++ leaves their order to the compiler and clang and GCC choose opposite ones, so the
+  nodes would be made in the host compiler's order; bind each to a local first, or build them in a
+  braced initializer. `tools/policy/check_sequencing.py` reads for it
+  (`docs/decisions/what-lyra-writes-is-the-same-whichever-compiler-built-it.md`).
 - **One namespace per directory**; a sub-namespace with no corresponding folder is not one.
 - **ASCII only in source and docs**, enforced by `tools/policy/check_ascii.py`. In markdown,
   backtick underscored SV keywords (`always_comb` and friends) or Prettier mangles them and the

@@ -1580,8 +1580,7 @@ void VerifyConstruction(
               }
             }},
         scope.generates.Get(id).counting);
-    for (std::size_t at = 0; at < places.size(); ++at) {
-      const BlockConstruction& place = places[at];
+    for (const BlockConstruction& place : places) {
       if (!place.body.has_value()) continue;
       if (place.body->value >= unit.block_bodies.size()) {
         says("builds a body the unit does not hold");
@@ -1592,7 +1591,7 @@ void VerifyConstruction(
         says("builds a body handed other than its loop's index");
       }
       VerifyConstruction(
-          unit, unit.block_bodies.Get(*place.body).scope, place.built,
+          unit, body, place.built,
           std::format("block body {}", place.body->value), lines);
     }
   }

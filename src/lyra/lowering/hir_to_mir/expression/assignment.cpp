@@ -556,10 +556,12 @@ auto LowerHirIncDecExpr(
   const auto read = [&](mir::LocalId local) {
     return body.ReadLocal(local, result_type);
   };
+  const mir::ExprId lhs = read(before);
+  const mir::ExprId rhs = One(unit, body, result_type);
   const mir::LocalId after = steps.DeclareLocal(
-      result_type, body.exprs.Add(BuildMirBinaryExpr(
-                       unit, body, StepOperator(inc.op), read(before),
-                       One(unit, body, result_type), result_type)));
+      result_type,
+      body.exprs.Add(BuildMirBinaryExpr(
+          unit, body, StepOperator(inc.op), lhs, rhs, result_type)));
   body.AppendStmt(
       mir::ExprStmt{
           .expr = body.exprs.Add(

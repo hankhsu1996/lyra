@@ -609,27 +609,27 @@ auto LowerStreamWindow(
   // 7.10.1): the positions between the two ends, read as a count, none where
   // that is not positive, and x read as no position.
   const mir::TypeId position_type = mir::PositionType(unit.types);
+  const mir::ExprId lhs = block.exprs.Add(
+      mir::MakeBinary(
+          unit, block, mir::BinaryOp::kSub, ends->highest, ends->lowest,
+          position_type));
+  const mir::ExprId rhs = BuildConstantPosition(unit, block, 1);
   const mir::ExprId spanned = EvaluatedOnce(
       frame,
       BuildToInt64Call(
           unit, block,
           block.exprs.Add(
               mir::MakeBinary(
-                  unit, block, mir::BinaryOp::kAdd,
-                  block.exprs.Add(
-                      mir::MakeBinary(
-                          unit, block, mir::BinaryOp::kSub, ends->highest,
-                          ends->lowest, position_type)),
-                  BuildConstantPosition(unit, block, 1), position_type))));
+                  unit, block, mir::BinaryOp::kAdd, lhs, rhs, position_type))));
+  const mir::ExprId condition = mir::BuildMachineIntComparison(
+      unit, block, mir::BinaryOp::kLessEqual, spanned,
+      mir::BuildMachineIntLiteral(unit, block, 0));
+  const mir::ExprId none = mir::BuildMachineIntLiteral(unit, block, 0);
   return StreamWindow{
       .start = ends->lowest,
       .count = EvaluatedOnce(
           frame, mir::BuildMachineIntConditional(
-                     unit, block,
-                     mir::BuildMachineIntComparison(
-                         unit, block, mir::BinaryOp::kLessEqual, spanned,
-                         mir::BuildMachineIntLiteral(unit, block, 0)),
-                     mir::BuildMachineIntLiteral(unit, block, 0), spanned))};
+                     unit, block, condition, none, spanned))};
 }
 
 template <ExprLowerer Lowerer>
@@ -774,8 +774,9 @@ auto LowerHirElementSelectExpr(
     if (!queue) return std::unexpected(std::move(queue.error()));
     const mir::ExprId queue_id =
         PathAsPlace(unit_lowerer.Unit(), body, NamedIn(queue->path, body));
-    auto index = lowerer.LowerExpr(
-        exprs.Get(sel.index), steps.Frame().WithSelectedQueue(&queue->path));
+    const hir::Expr& index_expr = exprs.Get(sel.index);
+    const WalkFrame index_frame = steps.Frame().WithSelectedQueue(&queue->path);
+    auto index = lowerer.LowerExpr(index_expr, index_frame);
     if (!index) return std::unexpected(std::move(index.error()));
     const mir::ExprId index_id = body.exprs.Add(*std::move(index));
     const DescentStep element =
@@ -913,9 +914,10 @@ auto LowerHirElementSelectExprPath(
   if (!base) return std::unexpected(std::move(base.error()));
   const std::optional<SettledPath> queue =
       SettleSelectedQueue(unit_lowerer, frame, base_expr, *base);
-  auto idx_or = lowerer.LowerExpr(
-      lowerer.HirExprs().Get(sel.index),
-      queue.has_value() ? frame.WithSelectedQueue(&*queue) : frame);
+  const hir::Expr& index_expr = lowerer.HirExprs().Get(sel.index);
+  const WalkFrame index_frame =
+      queue.has_value() ? frame.WithSelectedQueue(&*queue) : frame;
+  auto idx_or = lowerer.LowerExpr(index_expr, index_frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
   return DescendInto(
@@ -1072,11 +1074,12 @@ auto LowerHirInterfaceMemberAccessExpr(
   if (!held) return std::unexpected(std::move(held.error()));
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::ExprId storage = ReportedPlace(unit, frame, *held);
+  const mir::ExprId pointer =
+      frame.current_block->DerefOperand(unit.types, storage);
   return mir::MakeDerefExpr(
-      frame.current_block->DerefOperand(unit.types, storage),
-      unit.types.Get(frame.current_block->exprs.Get(storage).type)
-          .template Get<mir::PointerType>()
-          .pointee);
+      pointer, unit.types.Get(frame.current_block->exprs.Get(storage).type)
+                   .template Get<mir::PointerType>()
+                   .pointee);
 }
 
 template <ExprLowerer Lowerer>

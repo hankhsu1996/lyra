@@ -41,12 +41,16 @@ namespace {
 // and answer the same.
 auto SameSignature(const mir::CallableCode& a, const mir::CallableCode& b)
     -> bool {
-  if (a.params.size() != b.params.size() || a.result_type != b.result_type ||
-      a.TakesReceiver() != b.TakesReceiver()) {
+  if (a.params.size() != b.params.size() || a.result_type != b.result_type) {
+    return false;
+  }
+  const bool a_takes_receiver = a.TakesReceiver();
+  if (a_takes_receiver != b.TakesReceiver()) {
     return false;
   }
   for (std::size_t i = 0; i < a.params.size(); ++i) {
-    if (a.locals.Get(a.params[i]).type != b.locals.Get(b.params[i]).type) {
+    const mir::TypeId a_type = a.locals.Get(a.params[i]).type;
+    if (a_type != b.locals.Get(b.params[i]).type) {
       return false;
     }
   }
@@ -326,22 +330,23 @@ void MoveCodeIntoBody(
     const mir::CallableCode& operation =
         unit_lowerer.ClassCodePrototypeOf(published, id, point);
     if (!SameSignature(code, operation)) {
+      const std::string point_text = std::visit(
+          Overloaded{
+              [](const ClassConstructorCode&) {
+                return std::string{"the constructor"};
+              },
+              [](const ClassCallableCode& callable) {
+                return std::format("callable {}", callable.callable.value);
+              }},
+          point);
+      const std::string code_text = SignatureText(code);
+      const std::string operation_text = SignatureText(operation);
       throw InternalError(
           std::format(
               "MoveCodeIntoBody: the code a body compiled for {} of class {} "
               "takes {} where the class's declaration states {} -- please "
               "report this as a bug",
-              std::visit(
-                  Overloaded{
-                      [](const ClassConstructorCode&) {
-                        return std::string{"the constructor"};
-                      },
-                      [](const ClassCallableCode& callable) {
-                        return std::format(
-                            "callable {}", callable.callable.value);
-                      }},
-                  point),
-              id.value, SignatureText(code), SignatureText(operation)));
+              point_text, id.value, code_text, operation_text));
     }
     const mir::LocalId self = code.AddLocal(body.self_pointer_type);
     code.params.insert(code.params.begin(), self);

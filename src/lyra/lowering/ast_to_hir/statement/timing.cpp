@@ -352,8 +352,9 @@ auto LowerIntraAssignmentStmt(
 
   auto rhs_or = proc.LowerExpr(as.right(), inner);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  statements.push_back(
-      store(held_ref(), inner.Exprs().Add(*std::move(rhs_or))));
+  const hir::ExprId held_lhs = held_ref();
+  const hir::ExprId rhs = inner.Exprs().Add(*std::move(rhs_or));
+  statements.push_back(store(held_lhs, rhs));
 
   // The assignment itself runs under the control, which is what LRM 10.4.1 asks
   // for: a left side that needs evaluating -- an index, a class handle, a
@@ -361,8 +362,9 @@ auto LowerIntraAssignmentStmt(
   // not where the statement is reached.
   auto lhs_or = proc.LowerExpr(as.left(), inner);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
-  const hir::StmtId assign =
-      store(inner.Exprs().Add(*std::move(lhs_or)), held_ref());
+  const hir::ExprId lhs = inner.Exprs().Add(*std::move(lhs_or));
+  const hir::ExprId held_rhs = held_ref();
+  const hir::StmtId assign = store(lhs, held_rhs);
 
   auto control = LowerDelayOrEventControl(proc, inner, *as.timingControl, span);
   if (!control) return std::unexpected(std::move(control.error()));

@@ -123,11 +123,12 @@ void GiveNewEvents(
                 unit.types.Get(unit_lowerer.TranslateType(type))
                     .As<mir::UnpackedArrayType>()
                     ->Size();
+            const mir::ExprId first = mir::BuildIntLiteral(unit, block, 0);
+            const mir::ExprId element_count = mir::BuildIntLiteral(
+                unit, block, static_cast<std::int64_t>(count));
             GiveElementsNewEvents(
-                unit_lowerer, frame, part, array.element_type,
-                mir::BuildIntLiteral(unit, block, 0),
-                mir::BuildIntLiteral(
-                    unit, block, static_cast<std::int64_t>(count)));
+                unit_lowerer, frame, part, array.element_type, first,
+                element_count);
           },
           [&](const hir::UnpackedStructType& declared) {
             const hir::UnpackedStructDefinition& structure =
@@ -140,16 +141,18 @@ void GiveNewEvents(
               GiveNewEvents(
                   unit_lowerer, frame,
                   [&, i](mir::Block& at) {
+                    AccessPath whole = part(at);
+                    const mir::TypeId member_type =
+                        unit_lowerer.TranslateType(member.type);
                     return DescendInto(
-                        part(at),
+                        std::move(whole),
                         DescentStep{
                             .to =
                                 StepToComponent{
                                     .position =
                                         base::ComponentIndex{
                                             static_cast<std::uint32_t>(i)}},
-                            .part_type =
-                                unit_lowerer.TranslateType(member.type)});
+                            .part_type = member_type});
                   },
                   member.type);
             }
@@ -194,15 +197,17 @@ void GiveElementsNewEvents(
   const mir::LocalId ordinal = frame.bindings->DeclareAnonymous(int_type);
   const mir::TypeId element_type = unit_lowerer.TranslateType(element);
   mir::Block body;
+  const WalkFrame body_frame = frame.WithBlock(&body);
   GiveNewEvents(
-      unit_lowerer, frame.WithBlock(&body),
+      unit_lowerer, body_frame,
       [&](mir::Block& at) {
+        const mir::ExprId lhs = at.ReadLocal(from, int_type);
+        const mir::ExprId rhs = at.ReadLocal(ordinal, int_type);
         const mir::ExprId position = at.exprs.Add(
-            mir::MakeBinary(
-                unit, at, mir::BinaryOp::kAdd, at.ReadLocal(from, int_type),
-                at.ReadLocal(ordinal, int_type), int_type));
+            mir::MakeBinary(unit, at, mir::BinaryOp::kAdd, lhs, rhs, int_type));
+        AccessPath whole = array(at);
         return DescendInto(
-            array(at),
+            std::move(whole),
             DescentStep{
                 .to =
                     StepToElement{

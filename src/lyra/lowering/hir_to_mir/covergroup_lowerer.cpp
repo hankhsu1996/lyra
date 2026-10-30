@@ -350,9 +350,9 @@ class Writer {
       mir::ExprId handle, hir::ClassId cls, std::string_view name) const
       -> AccessPath {
     const CoverageLibrary::Property property = library_->PropertyOf(cls, name);
-    return ObjectPropertyPath(
-        handle, LibraryField(*unit_lowerer_, property),
-        unit_lowerer_->TranslateType(property.type));
+    const mir::ClassFieldTarget field = LibraryField(*unit_lowerer_, property);
+    const mir::TypeId type = unit_lowerer_->TranslateType(property.type);
+    return ObjectPropertyPath(handle, field, type);
   }
 
   // `property` of the object `object` reaches, which is the handle holding it
@@ -373,10 +373,11 @@ class Writer {
   // body's own object.
   [[nodiscard]] auto Own(const CovergroupClass& cls, std::uint32_t index) const
       -> AccessPath {
-    return ObjectPropertyPath(
-        Block().exprs.Add(MakeSelfRefExpr(frame_)),
-        CovergroupPropertyTarget(*unit_lowerer_, cls, index),
-        CovergroupPropertyType(*unit_lowerer_, cls, index));
+    const mir::ExprId self = Block().exprs.Add(MakeSelfRefExpr(frame_));
+    const mir::ClassFieldTarget property =
+        CovergroupPropertyTarget(*unit_lowerer_, cls, index);
+    const mir::TypeId type = CovergroupPropertyType(*unit_lowerer_, cls, index);
+    return ObjectPropertyPath(self, property, type);
   }
 
   // The member `name` of the unpacked structure `path` names, whose type in
@@ -486,9 +487,9 @@ auto NewLibraryObject(
         hir::DeclaringInstanceReach{hir::StructuralHops{0}}));
   }
   for (std::size_t i = 0; i < values.size(); ++i) {
-    arguments.push_back(ConvertToType(
-        unit, block, block.AsValue(unit.types, values[i]),
-        e.Lowering().TranslateType(types.at(i))));
+    const mir::ExprId value = block.AsValue(unit.types, values[i]);
+    const mir::TypeId formal = e.Lowering().TranslateType(types.at(i));
+    arguments.push_back(ConvertToType(unit, block, value, formal));
   }
   arguments.push_back(BuildReportHandedOn(unit, e.Frame()));
   const mir::TypeId handle = HandleTo(e.Lowering(), cls);
@@ -791,10 +792,11 @@ class ClassWriter {
       -> mir::ExprId {
     std::vector<mir::ExprId> arguments;
     if (TakesDeclaringInstance(*u_, of)) arguments = InstanceArgument(e);
+    const mir::DirectTarget target = TypeMethod(*u_, of, kTypeRecord);
+    const mir::TypeId record = TypeRecordType(*u_, library_);
     return BuildFunctionCall(
-        Unit(), e.Frame(),
-        mir::Direct{.target = TypeMethod(*u_, of, kTypeRecord)},
-        std::move(arguments), TypeRecordType(*u_, library_));
+        Unit(), e.Frame(), mir::Direct{.target = target}, std::move(arguments),
+        record);
   }
 
   // A virtual method of the lineage, the first class's `behavior`, called on
@@ -832,10 +834,13 @@ class ClassWriter {
       if (formal.direction == hir::ParamDirection::kRef ||
           formal.direction == hir::ParamDirection::kConstRef) {
         const mir::TypeId type = *ParamTypeOf(unit, value, formal.direction);
-        const mir::ExprId held = block.exprs.Add(PropertyStorage(
-            unit, block, block.exprs.Add(MakeSelfRefExpr(e.Frame())),
-            CovergroupPropertyTarget(*u_, first_, index),
-            CovergroupPropertyType(*u_, first_, index)));
+        const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(e.Frame()));
+        const mir::ClassFieldTarget property =
+            CovergroupPropertyTarget(*u_, first_, index);
+        const mir::TypeId property_type =
+            CovergroupPropertyType(*u_, first_, index);
+        const mir::ExprId held = block.exprs.Add(
+            PropertyStorage(unit, block, self, property, property_type));
         const mir::ExprId reference = AtType(
             unit, block,
             PathReference(
@@ -848,9 +853,9 @@ class ClassWriter {
     }
     if (decl_->embedding.has_value()) {
       const std::uint32_t index = *own_.layout.embedding;
-      e.Bind(
-          *decl_->embedding, CovergroupPropertyType(*u_, own_, index),
-          e.Read(e.Own(own_, index)));
+      const mir::TypeId type = CovergroupPropertyType(*u_, own_, index);
+      const mir::ExprId embedding = e.Read(e.Own(own_, index));
+      e.Bind(*decl_->embedding, type, embedding);
     }
   }
 
@@ -951,19 +956,21 @@ class ClassWriter {
               return {};
             },
             [&](const hir::DefaultBins& bins) -> diag::Result<void> {
+              const mir::ExprId point_item = item(e);
+              const mir::ExprId per_value = e.Bit(bins.per_value);
               e.Do(e.Call(
-                  item(e), cls, "add_default_bin",
-                  {number, name, e.Bit(bins.per_value)}));
+                  point_item, cls, "add_default_bin",
+                  {number, name, per_value}));
               return {};
             },
             [&](const hir::TransitionBins& bins) -> diag::Result<void> {
+              const mir::ExprId point_item = item(e);
+              const mir::ExprId kind = e.LibraryEnum(
+                  cls, "begin_transition_bins", 2, LibraryKindOf(bin.kind));
+              const mir::ExprId per_sequence = e.Bit(bins.per_sequence);
               e.Do(e.Call(
-                  item(e), cls, "begin_transition_bins",
-                  {number, name,
-                   e.LibraryEnum(
-                       cls, "begin_transition_bins", 2,
-                       LibraryKindOf(bin.kind)),
-                   e.Bit(bins.per_sequence)}));
+                  point_item, cls, "begin_transition_bins",
+                  {number, name, kind, per_sequence}));
               for (const std::vector<hir::TransitionStep>& sequence :
                    bins.sequences) {
                 e.Do(e.Call(item(e), cls, "begin_sequence"));
@@ -997,12 +1004,14 @@ class ClassWriter {
                     }
                     most = *written;
                   }
+                  const mir::ExprId step_item = item(e);
+                  const mir::ExprId repetition = e.LibraryEnum(
+                      cls, "end_step", 0, LibraryRepetitionOf(step.repetition));
+                  const mir::ExprId least_kept =
+                      e.Block().ReadLocal(kept, count);
                   e.Do(e.Call(
-                      item(e), cls, "end_step",
-                      {e.LibraryEnum(
-                           cls, "end_step", 0,
-                           LibraryRepetitionOf(step.repetition)),
-                       e.Block().ReadLocal(kept, count), most}));
+                      step_item, cls, "end_step",
+                      {repetition, least_kept, most}));
                 }
                 e.Do(e.Call(item(e), cls, "end_sequence"));
               }
@@ -1019,13 +1028,14 @@ class ClassWriter {
                 }
                 count = *written;
               }
+              const mir::ExprId point_item = item(e);
+              const mir::ExprId kind =
+                  e.LibraryEnum(cls, "begin_bins", 2, LibraryKindOf(bin.kind));
+              const mir::ExprId array = e.LibraryEnum(
+                  cls, "begin_bins", 3, LibraryArrayOf(bins.array));
               e.Do(e.Call(
-                  item(e), cls, "begin_bins",
-                  {number, name,
-                   e.LibraryEnum(cls, "begin_bins", 2, LibraryKindOf(bin.kind)),
-                   e.LibraryEnum(
-                       cls, "begin_bins", 3, LibraryArrayOf(bins.array)),
-                   count}));
+                  point_item, cls, "begin_bins",
+                  {number, name, kind, array, count}));
               for (const hir::BinElement& element : bins.elements) {
                 if (auto r =
                         WriteElement(e, item(e), cls, bins.wildcard, element);
@@ -1063,8 +1073,10 @@ class ClassWriter {
                 const hir::BinFilter& filter = *bins.filter;
                 const mir::TypeId item_type = u_->TranslateType(
                     decl_->body.procedural_vars.Get(filter.item).type);
+                const mir::ExprId pending =
+                    e.Call(item(e), cls, "pending_values");
                 auto kept = e.ForEach(
-                    e.Call(item(e), cls, "pending_values"),
+                    pending,
                     [&](const Writer& at,
                         mir::ExprId value) -> diag::Result<void> {
                       const mir::LocalId held = DeclareLocal(
@@ -1077,9 +1089,11 @@ class ClassWriter {
                       if (!keeps) {
                         return std::unexpected(std::move(keeps.error()));
                       }
+                      const mir::ExprId point_item = item(at);
+                      const mir::ExprId candidate =
+                          at.Block().ReadLocal(held, item_type);
                       at.Do(at.Call(
-                          item(at), cls, "keep_value",
-                          {at.Block().ReadLocal(held, item_type), *keeps}));
+                          point_item, cls, "keep_value", {candidate, *keeps}));
                       return {};
                     });
                 if (!kept) return kept;
@@ -1124,6 +1138,7 @@ class ClassWriter {
       auto [path, found] = Item(at, name);
       return std::pair{at.Read(path), found.library_class};
     };
+    const auto& select = cross.selects.Get(id);
     return std::visit(
         Overloaded{
             [&](const hir::SelectAll&) -> diag::Result<mir::ExprId> {
@@ -1154,9 +1169,11 @@ class ClassWriter {
               while (cross.targets.at(dimension) != condition.point) {
                 ++dimension;
               }
+              const mir::ExprId cross_item = item(e);
+              const mir::ExprId position = e.Int(dimension);
               return e.Call(
-                  item(e), cross_class, "select_numbers",
-                  {e.Int(dimension), numbers});
+                  cross_item, cross_class, "select_numbers",
+                  {position, numbers});
             },
             [&](const hir::SelectNot& negated) -> diag::Result<mir::ExprId> {
               auto operand = WriteSelection(e, cross, negated.operand);
@@ -1184,8 +1201,10 @@ class ClassWriter {
               auto candidates = WriteSelection(e, cross, with.candidates);
               if (!candidates) return candidates;
               e.Do(e.Call(item(e), cross_class, "begin_filter", {*candidates}));
+              const mir::ExprId candidate_tuples =
+                  e.Call(item(e), cross_class, "candidate_tuples");
               auto offered = e.ForEach(
-                  e.Call(item(e), cross_class, "candidate_tuples"),
+                  candidate_tuples,
                   [&](const Writer& at,
                       mir::ExprId candidate) -> diag::Result<void> {
                     const mir::TypeId tuple_type =
@@ -1203,20 +1222,28 @@ class ClassWriter {
                         if (!filter) {
                           return std::unexpected(std::move(filter.error()));
                         }
+                        const mir::ExprId cross_item = item(in);
+                        const mir::ExprId offered_tuple =
+                            in.Block().ReadLocal(tuple, tuple_type);
                         in.Do(in.Call(
-                            item(in), cross_class, "offer",
-                            {in.Block().ReadLocal(tuple, tuple_type),
-                             *filter}));
+                            cross_item, cross_class, "offer",
+                            {offered_tuple, *filter}));
                         return {};
                       }
                       const auto [handle, library] =
                           point(in, cross.targets[d]);
+                      const mir::ExprId cross_item = item(in);
+                      const mir::ExprId held_tuple =
+                          in.Block().ReadLocal(tuple, tuple_type);
+                      const mir::ExprId dimension =
+                          in.Int(static_cast<std::int64_t>(d));
                       const mir::ExprId bin = in.Call(
-                          item(in), cross_class, "component",
-                          {in.Block().ReadLocal(tuple, tuple_type),
-                           in.Int(static_cast<std::int64_t>(d))});
+                          cross_item, cross_class, "component",
+                          {held_tuple, dimension});
+                      const mir::ExprId values =
+                          in.Call(handle, library, "values_in_bin", {bin});
                       return in.ForEach(
-                          in.Call(handle, library, "values_in_bin", {bin}),
+                          values,
                           [&](const Writer& inner,
                               mir::ExprId value) -> diag::Result<void> {
                             if (const auto& var = with.values.at(d)) {
@@ -1241,9 +1268,11 @@ class ClassWriter {
               // A queue of value tuples, evaluated as the instance is made,
               // each counted toward every tuple whose bins hold it (LRM
               // 19.6.1.4).
-              e.Do(e.Call(
-                  item(e), cross_class, "begin_filter",
-                  {e.Call(item(e), cross_class, "select_all")}));
+              const mir::ExprId filter_item = item(e);
+              const mir::ExprId all_item = item(e);
+              const mir::ExprId all =
+                  e.Call(all_item, cross_class, "select_all");
+              e.Do(e.Call(filter_item, cross_class, "begin_filter", {all}));
               auto tuples = e.Value(set.tuples);
               if (!tuples) return tuples;
               auto counted = e.ForEach(
@@ -1277,12 +1306,16 @@ class ClassWriter {
                                                         d)}},
                                     .part_type = fields[d]}}});
                       };
+                      const mir::ExprId cross_item = item(at);
+                      const mir::ExprId contained = field();
+                      const mir::ExprId numbers = at.Call(
+                          handle, library, "numbers_containing", {contained});
+                      const mir::ExprId named = field();
+                      const mir::ExprId text =
+                          at.Call(handle, library, "text_of", {named});
                       at.Do(at.Call(
-                          item(at), cross_class, "value_component",
-                          {at.Call(
-                               handle, library, "numbers_containing",
-                               {field()}),
-                           at.Call(handle, library, "text_of", {field()})}));
+                          cross_item, cross_class, "value_component",
+                          {numbers, text}));
                     }
                     at.Do(at.Call(item(at), cross_class, "end_value_tuple"));
                     return {};
@@ -1292,7 +1325,7 @@ class ClassWriter {
               if (!least) return least;
               return e.Call(item(e), cross_class, "end_filter", {*least});
             }},
-        cross.selects.Get(id));
+        select);
   }
 
   // The constructor (LRM 19.3): what `new` is given, the instance's record and
@@ -1398,9 +1431,10 @@ class ClassWriter {
       for (std::size_t i = 0; i < decl_->formals.size(); ++i) {
         const std::uint32_t index = own_.layout.formals.at(i);
         if (inputs[i].has_value()) {
-          e.Store(
-              e.Own(own_, index),
-              block.ReadLocal(inputs[i]->first, inputs[i]->second));
+          const AccessPath property = e.Own(own_, index);
+          const mir::ExprId input =
+              block.ReadLocal(inputs[i]->first, inputs[i]->second);
+          e.Store(property, input);
           continue;
         }
         // What a `ref` argument names is bound as the object is constructed.
@@ -1411,31 +1445,32 @@ class ClassWriter {
                 decl_->body.procedural_vars.Get(var).type, diag::SourceSpan{}),
             e.Frame());
         if (!named) return std::unexpected(std::move(named.error()));
+        const mir::ExprId object = BuildObjectDeref(
+            unit, block, block.exprs.Add(MakeSelfRefExpr(e.Frame())));
+        const mir::ClassFieldTarget property =
+            CovergroupPropertyTarget(*u_, own_, index);
+        const mir::TypeId property_type =
+            CovergroupPropertyType(*u_, own_, index);
         e.Do(
             mir::MakeCallExpr(
                 mir::Direct{.target = support::BuiltinFn::kBindReference},
                 {block.AsValue(
-                     unit.types,
-                     block.exprs.Add(
-                         mir::MakeFieldAccessExpr(
-                             BuildObjectDeref(
-                                 unit, block,
-                                 block.exprs.Add(MakeSelfRefExpr(e.Frame()))),
-                             CovergroupPropertyTarget(*u_, own_, index),
-                             CovergroupPropertyType(*u_, own_, index)))),
+                     unit.types, block.exprs.Add(
+                                     mir::MakeFieldAccessExpr(
+                                         object, property, property_type))),
                  PathReference(unit, block, *named)},
                 unit.builtins.void_type));
       }
-      e.Store(
-          Record(e),
-          CallVirtual(
-              e, kMakeRecordBehavior, {},
-              CovergroupPropertyType(*u_, first_, *first_.layout.record)));
+      const AccessPath record = Record(e);
+      const mir::TypeId record_type =
+          CovergroupPropertyType(*u_, first_, *first_.layout.record);
+      e.Store(record, CallVirtual(e, kMakeRecordBehavior, {}, record_type));
     }
     if (embedding.has_value()) {
-      e.Store(
-          e.Own(own_, *own_.layout.embedding),
-          block.ReadLocal(embedding->first, embedding->second));
+      const AccessPath property = e.Own(own_, *own_.layout.embedding);
+      const mir::ExprId embedded =
+          block.ReadLocal(embedding->first, embedding->second);
+      e.Store(property, embedded);
     }
 
     const auto [record_options, record_options_type] =
@@ -1451,12 +1486,12 @@ class ClassWriter {
       const hir::PublishedCoverpoint& counted_by =
           own_.published->coverpoints.at(p);
       hir::ClassId cls = counted_by.library_class;
-      e.Store(
-          e.Own(own_, own_.layout.coverpoints.at(p)),
-          NewLibraryObject(
-              e, cls,
-              {e.Read(Record(e)), e.String(point.name),
-               block.ReadLocal(counted.at(point.name), bit)}));
+      const AccessPath property = e.Own(own_, own_.layout.coverpoints.at(p));
+      const mir::ExprId made = NewLibraryObject(
+          e, cls,
+          {e.Read(Record(e)), e.String(point.name),
+           block.ReadLocal(counted.at(point.name), bit)});
+      e.Store(property, made);
       const mir::ExprId item =
           e.Read(e.Own(own_, own_.layout.coverpoints.at(p)));
       const auto [options, options_type] = OptionsOf(e, item, cls);
@@ -1491,12 +1526,12 @@ class ClassWriter {
     for (std::size_t c = 0; c < decl_->crosses.size(); ++c) {
       const hir::Cross& cross = decl_->crosses[c];
       hir::ClassId cls = Refs().cross;
-      e.Store(
-          e.Own(own_, own_.layout.crosses.at(c)),
-          NewLibraryObject(
-              e, cls,
-              {e.Read(Record(e)), e.String(cross.name),
-               block.ReadLocal(counted.at(cross.name), bit)}));
+      const AccessPath property = e.Own(own_, own_.layout.crosses.at(c));
+      const mir::ExprId made = NewLibraryObject(
+          e, cls,
+          {e.Read(Record(e)), e.String(cross.name),
+           block.ReadLocal(counted.at(cross.name), bit)});
+      e.Store(property, made);
       const mir::ExprId item = e.Read(e.Own(own_, own_.layout.crosses.at(c)));
       const auto [options, options_type] = OptionsOf(e, item, cls);
       if (auto r = WriteOptions(e, cross.options, false, options, options_type);
@@ -1545,9 +1580,10 @@ class ClassWriter {
       arguments = InstanceArgument(e);
     }
     if (published.embedding.has_value()) {
-      arguments.push_back(ConvertToType(
-          unit, block, block.ReadLocal(embedding->first, embedding->second),
-          HandleTo(*u_, *published.embedding)));
+      const mir::ExprId embedded =
+          block.ReadLocal(embedding->first, embedding->second);
+      const mir::TypeId handle = HandleTo(*u_, *published.embedding);
+      arguments.push_back(ConvertToType(unit, block, embedded, handle));
     }
     for (std::size_t i = 0; i < decl_->formals.size(); ++i) {
       const hir::SubroutineParam& formal = decl_->formals[i];
@@ -1676,30 +1712,30 @@ class ClassWriter {
     if (!waited) return std::unexpected(std::move(waited.error()));
     each.AppendStmt(*std::move(waited));
     if (sampler->strobes) {
+      const mir::ExprId is_strobed = round.Call(
+          round.Read(Record(round)), Refs().group_instance, "strobed");
       round.IfElse(
-          round.Call(
-              round.Read(Record(round)), Refs().group_instance, "strobed"),
+          is_strobed,
           [&](const Writer& strobed) {
-            strobed.If(
-                strobed.Call(
-                    strobed.Read(Record(strobed)), Refs().group_instance,
-                    "claim_strobe"),
-                [&](const Writer& claimed) {
-                  ClosureBuilder postponed(
-                      unit, claimed.Frame(), support::ClosureKind::kFn,
-                      CapturePolicy{});
-                  const Writer later = claimed.At(postponed.Frame());
-                  later.Do(later.Call(
-                      later.Read(Record(later)), Refs().group_instance,
-                      "strobe_taken"));
-                  sample(later);
-                  mir::Expr keeper = BuildRegionEffectsCallExpr(
-                      claimed.Lowering(), claimed.Block(),
-                      support::BuiltinFn::kPostponedEffects);
-                  claimed.Do(BuildEmplacedClosure(
-                      claimed.Lowering().Unit(), claimed.Frame(),
-                      std::move(keeper), postponed.BuildVoid()));
-                });
+            const mir::ExprId strobe_claimed = strobed.Call(
+                strobed.Read(Record(strobed)), Refs().group_instance,
+                "claim_strobe");
+            strobed.If(strobe_claimed, [&](const Writer& claimed) {
+              ClosureBuilder postponed(
+                  unit, claimed.Frame(), support::ClosureKind::kFn,
+                  CapturePolicy{});
+              const Writer later = claimed.At(postponed.Frame());
+              later.Do(later.Call(
+                  later.Read(Record(later)), Refs().group_instance,
+                  "strobe_taken"));
+              sample(later);
+              mir::Expr keeper = BuildRegionEffectsCallExpr(
+                  claimed.Lowering(), claimed.Block(),
+                  support::BuiltinFn::kPostponedEffects);
+              claimed.Do(BuildEmplacedClosure(
+                  claimed.Lowering().Unit(), claimed.Frame(), std::move(keeper),
+                  postponed.BuildVoid()));
+            });
           },
           sample);
     } else {
@@ -1750,10 +1786,11 @@ class ClassWriter {
     }
     BindKept(e);
     diag::Result<void> written;
-    e.If(
-        e.Read(e.LibraryProperty(
-            e.Read(Record(e)), Refs().group_instance, "collecting")),
-        [&](const Writer& collecting) { written = SampleItems(collecting); });
+    const mir::ExprId is_collecting = e.Read(e.LibraryProperty(
+        e.Read(Record(e)), Refs().group_instance, "collecting"));
+    e.If(is_collecting, [&](const Writer& collecting) {
+      written = SampleItems(collecting);
+    });
     if (!written) return written;
     cls_->callables.Define(
         kSample, mir::CallableDecl{
@@ -1774,9 +1811,9 @@ class ClassWriter {
         if (!constructs[i].iff.has_value()) continue;
         auto guard = e.Value(*constructs[i].iff);
         if (!guard) return std::unexpected(std::move(guard.error()));
-        e.Do(e.Call(
-            e.Read(Item(e, name).first), cls, "gate",
-            {e.Int(static_cast<std::int64_t>(i)), *guard}));
+        const mir::ExprId item = e.Read(Item(e, name).first);
+        const mir::ExprId construct = e.Int(static_cast<std::int64_t>(i));
+        e.Do(e.Call(item, cls, "gate", {construct, *guard}));
       }
       return {};
     };
@@ -1803,13 +1840,12 @@ class ClassWriter {
       auto guard = e.Value(*point.iff);
       if (!guard) return std::unexpected(std::move(guard.error()));
       diag::Result<void> counted;
-      e.IfElse(
-          *guard, [&](const Writer& at) { counted = count(at); },
-          [&](const Writer& at) {
-            at.Do(at.Call(
-                at.Read(at.Own(own_, own_.layout.coverpoints.at(p))), cls,
-                "skip"));
-          });
+      const auto counts = [&](const Writer& at) { counted = count(at); };
+      const auto skips = [&](const Writer& at) {
+        at.Do(at.Call(
+            at.Read(at.Own(own_, own_.layout.coverpoints.at(p))), cls, "skip"));
+      };
+      e.IfElse(*guard, counts, skips);
       if (!counted) return counted;
     }
     for (std::size_t c = 0; c < decl_->crosses.size(); ++c) {
@@ -1876,10 +1912,9 @@ class ClassWriter {
         unit, e.Block(), ReduceToCondition(unit, e.Block(), e.Read(declared)));
     mir::Block first;
     const Writer then = e.At(e.Frame().WithBlock(&first));
-    then.Store(
-        then.LibraryProperty(
-            first.ReadLocal(found, type), Refs().group_type, "declared"),
-        then.Bit(true));
+    const AccessPath now_declared = then.LibraryProperty(
+        first.ReadLocal(found, type), Refs().group_type, "declared");
+    then.Store(now_declared, then.Bit(true));
     std::vector<mir::ExprId> arguments = InstanceArgument(then);
     arguments.push_back(first.ReadLocal(found, type));
     then.Do(BuildFunctionCall(
@@ -1888,18 +1923,17 @@ class ClassWriter {
             .target =
                 mir::CallableTarget{.owner = class_id_, .slot = kDeclareType}},
         std::move(arguments), std::nullopt));
-    then.If(
-        then.Call(std::nullopt, Refs().registry, "claim_database_writing"),
-        [&](const Writer& claimed) {
-          ClosureBuilder at_end(
-              unit, claimed.Frame(), support::ClosureKind::kFn,
-              CapturePolicy{});
-          const Writer last = claimed.At(at_end.Frame());
-          last.Do(last.Call(std::nullopt, Refs().registry, "write_database"));
-          HandToRuntime(
-              claimed, support::BuiltinFn::kSubmitAtRunEnd,
-              BuildKeptClosure(unit, claimed.Block(), at_end.BuildVoid()));
-        });
+    const mir::ExprId writing_claimed =
+        then.Call(std::nullopt, Refs().registry, "claim_database_writing");
+    then.If(writing_claimed, [&](const Writer& claimed) {
+      ClosureBuilder at_end(
+          unit, claimed.Frame(), support::ClosureKind::kFn, CapturePolicy{});
+      const Writer last = claimed.At(at_end.Frame());
+      last.Do(last.Call(std::nullopt, Refs().registry, "write_database"));
+      HandToRuntime(
+          claimed, support::BuiltinFn::kSubmitAtRunEnd,
+          BuildKeptClosure(unit, claimed.Block(), at_end.BuildVoid()));
+    });
     e.Block().AppendIfThen(undeclared, std::move(first));
     cls_->callables.Define(
         kTypeRecord,
@@ -1933,14 +1967,14 @@ class ClassWriter {
           std::move(arguments), std::nullopt));
     }
     for (const hir::Coverpoint& point : decl_->coverpoints) {
-      e.Do(e.Call(
-          record(), Refs().group_type, "declare_coverpoint",
-          {e.String(point.name)}));
+      const mir::ExprId declaring = record();
+      const mir::ExprId name = e.String(point.name);
+      e.Do(e.Call(declaring, Refs().group_type, "declare_coverpoint", {name}));
     }
     for (const hir::Cross& cross : decl_->crosses) {
-      e.Do(e.Call(
-          record(), Refs().group_type, "declare_cross",
-          {e.String(cross.name)}));
+      const mir::ExprId declaring = record();
+      const mir::ExprId name = e.String(cross.name);
+      e.Do(e.Call(declaring, Refs().group_type, "declare_cross", {name}));
     }
     if (auto r = WriteOptions(
             e, decl_->options, true,
@@ -1953,9 +1987,12 @@ class ClassWriter {
     // keys.
     const auto item_options = [&](std::string_view table,
                                   const std::string& name) {
+      AccessPath options =
+          e.LibraryProperty(record(), Refs().group_type, table);
+      const mir::ExprId key = e.String(name);
       return ItemTypeOptions(
-          *u_, e.LibraryProperty(record(), Refs().group_type, table),
-          library_.PropertyOf(Refs().group_type, table).type, e.String(name));
+          *u_, std::move(options),
+          library_.PropertyOf(Refs().group_type, table).type, key);
     };
     for (const hir::Coverpoint& point : decl_->coverpoints) {
       const auto [options, options_type] =
@@ -2116,19 +2153,17 @@ auto CovergroupLowerer::PopulateBodies(
     mir::Block& install = *bring_up.install.current_block;
     const mir::TypeId cell_type =
         mir::ObservableCellOf(unit.types, unit.builtins.event);
+    const mir::ExprId cell = install.exprs.Add(BuildStaticStorageAccess(
+        unit, bring_up.install, *type_event_, cell_type, mir::EnclosingHops{}));
+    const mir::ExprId fresh_event = install.exprs.Add(
+        mir::MakeCallExpr(
+            mir::Direct{.target = support::BuiltinFn::kEventNew}, {},
+            unit.builtins.event));
     install.AppendStmt(
         mir::ExprStmt{
             .expr = install.exprs.Add(
                 mir::MakeCapabilityInstallCallExpr(
-                    install.exprs.Add(BuildStaticStorageAccess(
-                        unit, bring_up.install, *type_event_, cell_type,
-                        mir::EnclosingHops{})),
-                    install.exprs.Add(
-                        mir::MakeCallExpr(
-                            mir::Direct{
-                                .target = support::BuiltinFn::kEventNew},
-                            {}, unit.builtins.event)),
-                    support::BuiltinFn::kInitialize,
+                    cell, fresh_event, support::BuiltinFn::kInitialize,
                     unit.builtins.void_type))});
   }
 
@@ -2372,9 +2407,11 @@ auto LowerCovergroupFactory(
   if (TakesDeclaringInstance(unit_lowerer, self)) {
     arguments.push_back(DeclaringInstanceOf(unit, frame));
   }
-  arguments.push_back(ConvertToType(
-      unit, block, block.exprs.Add(BuildThisHandle(frame)),
-      HandleTo(unit_lowerer, *own.published->embedding)));
+  const mir::ExprId this_handle = block.exprs.Add(BuildThisHandle(frame));
+  const mir::TypeId embedding_handle =
+      HandleTo(unit_lowerer, *own.published->embedding);
+  arguments.push_back(
+      ConvertToType(unit, block, this_handle, embedding_handle));
   for (const hir::SubroutineParam& formal : decl.formals) {
     const mir::TypeId type = *ParamTypeOf(
         unit,
@@ -2485,23 +2522,28 @@ void AppendBlockEventTriggers(
               const mir::ExprId handle = holder(told);
               const auto [first, record] =
                   RecordOf(unit_lowerer, held.covergroup);
+              const mir::ClassFieldTarget record_property =
+                  CovergroupPropertyTarget(unit_lowerer, first, record);
+              const mir::TypeId record_type =
+                  CovergroupPropertyType(unit_lowerer, first, record);
               const mir::ExprId record_handle = told.AsValue(
                   unit.types,
                   told.exprs.Add(PropertyStorage(
-                      unit, told, handle,
-                      CovergroupPropertyTarget(unit_lowerer, first, record),
-                      CovergroupPropertyType(unit_lowerer, first, record))));
+                      unit, told, handle, record_property, record_type)));
               const CoverageLibrary library(unit_lowerer.Hir());
               const CoverageLibrary::Property event = library.PropertyOf(
                   library.Refs().group_instance, "block_event");
+              const mir::ClassFieldTarget event_property =
+                  LibraryField(unit_lowerer, event);
+              const mir::TypeId event_type =
+                  unit_lowerer.TranslateType(event.type);
               told.AppendStmt(
                   mir::ExprStmt{
                       .expr = told.exprs.Add(BuildTriggerCallExpr(
                           unit_lowerer, told,
                           told.exprs.Add(PropertyStorage(
-                              unit, told, record_handle,
-                              LibraryField(unit_lowerer, event),
-                              unit_lowerer.TranslateType(event.type)))))});
+                              unit, told, record_handle, event_property,
+                              event_type))))});
               block.AppendIfThen(holds, std::move(told));
             }},
         trigger);
@@ -2520,9 +2562,10 @@ auto BindCovergroupActuals(
     -> diag::Result<std::vector<mir::ExprId>> {
   std::vector<mir::ExprId> bound;
   for (std::size_t i = 0; i < formals.size(); ++i) {
-    auto actual = EmitBoundActual(
-        lowerer, frame, lowerer.HirExprs().Get(actuals[i]),
-        formals[i].direction, lowerer.Owner().TranslateType(formals[i].type));
+    const hir::Expr& written = lowerer.HirExprs().Get(actuals[i]);
+    const mir::TypeId type = lowerer.Owner().TranslateType(formals[i].type);
+    auto actual =
+        EmitBoundActual(lowerer, frame, written, formals[i].direction, type);
     if (!actual) return std::unexpected(std::move(actual.error()));
     bound.push_back(*actual);
   }
@@ -2541,10 +2584,12 @@ auto TypeRecordCall(
     arguments.push_back(BuildImplicitInstanceArgument(lowerer, frame, *reach));
   }
   const CoverageLibrary library(unit_lowerer.Hir());
+  const mir::DirectTarget target =
+      TypeMethod(unit_lowerer, covergroup, kTypeRecord);
+  const mir::TypeId record = TypeRecordType(unit_lowerer, library);
   return BuildFunctionCall(
-      unit_lowerer.Unit(), frame,
-      mir::Direct{.target = TypeMethod(unit_lowerer, covergroup, kTypeRecord)},
-      std::move(arguments), TypeRecordType(unit_lowerer, library));
+      unit_lowerer.Unit(), frame, mir::Direct{.target = target},
+      std::move(arguments), record);
 }
 
 // The instance `handle` holds, as an instance of `covergroup`. A use names
@@ -2576,12 +2621,14 @@ auto KeeperOf(
   mir::Block& block = *frame.current_block;
   const CoverageLibrary library(unit_lowerer.Hir());
   const auto read = [&](const CovergroupClass& owner, std::uint32_t property) {
+    const mir::ExprId object = ReportedObject(unit, frame, instance);
+    const mir::ClassFieldTarget target =
+        CovergroupPropertyTarget(unit_lowerer, owner, property);
+    const mir::TypeId type =
+        CovergroupPropertyType(unit_lowerer, owner, property);
     return block.AsValue(
         unit.types,
-        block.exprs.Add(PropertyStorage(
-            unit, block, ReportedObject(unit, frame, instance),
-            CovergroupPropertyTarget(unit_lowerer, owner, property),
-            CovergroupPropertyType(unit_lowerer, owner, property))));
+        block.exprs.Add(PropertyStorage(unit, block, object, target, type)));
   };
   if (item.has_value()) {
     const LineageItem found =
@@ -2607,9 +2654,10 @@ auto BindLibraryActuals(
   for (std::size_t i = 0; i < actuals.size(); ++i) {
     const hir::CalleeParam& formal =
         method.prototype.interface.params.at(leading + i);
-    auto actual = EmitBoundActual(
-        lowerer, frame, lowerer.HirExprs().Get(actuals[i]), formal.direction,
-        lowerer.Owner().TranslateType(formal.type));
+    const hir::Expr& written = lowerer.HirExprs().Get(actuals[i]);
+    const mir::TypeId type = lowerer.Owner().TranslateType(formal.type);
+    auto actual =
+        EmitBoundActual(lowerer, frame, written, formal.direction, type);
     if (!actual) return std::unexpected(std::move(actual.error()));
     bound.push_back(*actual);
   }
@@ -2693,10 +2741,11 @@ auto LowerCovergroupNewExpr(
     auto embedding =
         lowerer.LowerExpr(lowerer.HirExprs().Get(*created.embedding), frame);
     if (!embedding) return std::unexpected(std::move(embedding.error()));
-    arguments.push_back(ConvertToType(
-        unit, block,
-        block.AsValue(unit.types, block.exprs.Add(*std::move(embedding))),
-        HandleTo(unit_lowerer, *published.embedding)));
+    const mir::ExprId handle =
+        block.AsValue(unit.types, block.exprs.Add(*std::move(embedding)));
+    const mir::TypeId embedding_handle =
+        HandleTo(unit_lowerer, *published.embedding);
+    arguments.push_back(ConvertToType(unit, block, handle, embedding_handle));
   }
   const hir::CovergroupId lineage_first =
       FirstOf(unit_lowerer, created.covergroup);

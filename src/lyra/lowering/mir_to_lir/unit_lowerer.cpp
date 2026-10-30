@@ -478,9 +478,11 @@ auto UnitLowerer::EntryConstant(
         "mir_to_lir: a method of a class of this unit is reached through an "
         "entry the class does not have -- please report this as a bug");
   }
+  const std::string_view qualifier = ClassQualifier(owner);
+  lir::SymbolPart class_part = ClassPart(method.owner);
   return lir::ConstantExternalFunction{
       .symbol = lir::MethodEntrySymbol(
-          ClassQualifier(owner), ClassPart(method.owner),
+          qualifier, std::move(class_part),
           DispatchNamePart(mir::DispatchNameOf(*mir_, owner, method.slot))),
       .prototype = prototype};
 }
@@ -558,10 +560,9 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     if (!body.has_value()) {
       continue;
     }
-    auto fn = FunctionLowerer(
-                  *this, cls.callables.Get(cid).code,
-                  ClassBodySymbol(ClassPart(owner), cls, cid))
-                  .Run();
+    const mir::CallableCode& code = cls.callables.Get(cid).code;
+    std::string symbol = ClassBodySymbol(ClassPart(owner), cls, cid);
+    auto fn = FunctionLowerer(*this, code, std::move(symbol)).Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
@@ -590,7 +591,9 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
 
 auto UnitLowerer::DefinitionSymbolOf(mir::ClassId of) const -> std::string {
   const mir::Class& cls = mir_->GetClass(of);
-  return lir::ClassDefinitionSymbol(ClassQualifier(cls), ClassPart(of));
+  const std::string_view qualifier = ClassQualifier(cls);
+  lir::SymbolPart class_part = ClassPart(of);
+  return lir::ClassDefinitionSymbol(qualifier, std::move(class_part));
 }
 
 auto UnitLowerer::StaticVariableSymbolOf(mir::StaticVariableId variable) const
@@ -605,8 +608,10 @@ auto UnitLowerer::StaticVariableSymbolOf(mir::StaticVariableId variable) const
 auto UnitLowerer::StaticPropertySymbolOf(
     const mir::StaticPropertyRef& ref) const -> std::string {
   const mir::Class& cls = mir_->GetClass(ref.owner);
+  const std::string_view qualifier = ClassQualifier(cls);
+  lir::SymbolPart class_part = ClassPart(ref.owner);
   return lir::StaticPropertySymbol(
-      ClassQualifier(cls), ClassPart(ref.owner),
+      qualifier, std::move(class_part),
       lir::SymbolPartOf(
           mir::NameOf(cls.named_static_properties, ref.prop), ref.prop.value));
 }
@@ -934,9 +939,10 @@ auto UnitLowerer::ConstructorCallTarget(mir::ClassId cls) const
     return lir::CallTarget{
         lir::FunctionTarget{.function = ConstructorFunction(cls)}};
   }
+  const std::string_view qualifier = ClassQualifier(declared);
+  lir::SymbolPart class_part = ClassPart(cls);
   return lir::CallTarget{lir::SymbolTarget{
-      .symbol =
-          lir::ConstructorSymbol(ClassQualifier(declared), ClassPart(cls))}};
+      .symbol = lir::ConstructorSymbol(qualifier, std::move(class_part))}};
 }
 
 auto UnitLowerer::ConstructorFunction(mir::ClassId cls) const

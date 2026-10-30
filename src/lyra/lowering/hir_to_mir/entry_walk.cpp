@@ -78,14 +78,14 @@ auto BuildPositionLoopStmt(
               unit, body, array.declared, body.ReadLocal(position, int_type))});
   const EntryPlace place{
       .index = index, .index_type = int_type, .position = position};
+  AccessPath named = NamedIn(array.path, body);
+  DescentStep visited = StepToVisited(unit, body, place, element_type);
   auto ran = visit(
-      at, VisitedEntry{
-              .element = PathValue(
-                  unit, body,
-                  DescendInto(
-                      NamedIn(array.path, body),
-                      StepToVisited(unit, body, place, element_type))),
-              .place = place});
+      at,
+      VisitedEntry{
+          .element = PathValue(
+              unit, body, DescendInto(std::move(named), std::move(visited))),
+          .place = place});
   if (!ran) return std::unexpected(std::move(ran.error()));
 
   const mir::BlockId body_scope = block.child_scopes.Add(std::move(body));
@@ -116,29 +116,28 @@ auto BuildKeyedLoopStmt(
   const WalkFrame at = frame.WithBlock(&body).WithBreakLeaving(walk);
   const EntryPlace place{
       .index = key, .index_type = key_type, .position = std::nullopt};
+  AccessPath named = NamedIn(array.path, body);
+  DescentStep visited = StepToVisited(unit, body, place, keyed.element_type);
   auto ran = visit(
-      at, VisitedEntry{
-              .element = PathValue(
-                  unit, body,
-                  DescendInto(
-                      NamedIn(array.path, body),
-                      StepToVisited(unit, body, place, keyed.element_type))),
-              .place = place});
+      at,
+      VisitedEntry{
+          .element = PathValue(
+              unit, body, DescendInto(std::move(named), std::move(visited))),
+          .place = place});
   if (!ran) return std::unexpected(std::move(ran.error()));
   const mir::BlockId body_scope = block.child_scopes.Add(std::move(body));
 
+  const auto array_value = [&](const WalkFrame& in) {
+    mir::Block& steps = *in.current_block;
+    return PathValue(unit, steps, NamedIn(array.path, steps));
+  };
+  const auto key_place = [&](const WalkFrame& in) {
+    return AccessPath{
+        .owner = in.current_block->LocalPlace(key, key_type), .descent = {}};
+  };
   return BuildKeyLoopStmt(
-      unit_lowerer, frame,
-      [&](const WalkFrame& in) {
-        mir::Block& steps = *in.current_block;
-        return PathValue(unit, steps, NamedIn(array.path, steps));
-      },
-      [&](const WalkFrame& in) {
-        return AccessPath{
-            .owner = in.current_block->LocalPlace(key, key_type),
-            .descent = {}};
-      },
-      key_type, order, body_scope, walk.Label());
+      unit_lowerer, frame, array_value, key_place, key_type, order, body_scope,
+      walk.Label());
 }
 
 }  // namespace

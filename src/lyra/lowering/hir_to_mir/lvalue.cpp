@@ -108,11 +108,11 @@ auto DistributeUnpacked(
   mir::Block& block = *frame.current_block;
   // Each member is taken where it lies in what is distributed; a value that
   // lies nowhere is held in a local first, as a place is needed to step into.
-  const mir::ExprId held =
-      mir::IsReadablePlace(unit.types, block.exprs.Get(value))
-          ? value
-          : block.LocalPlace(
-                DeclareLocal(frame, value), block.exprs.Get(value).type);
+  mir::ExprId held = value;
+  if (!mir::IsReadablePlace(unit.types, block.exprs.Get(value))) {
+    const mir::LocalId local = DeclareLocal(frame, value);
+    held = block.LocalPlace(local, block.exprs.Get(value).type);
+  }
   for (std::size_t i = 0; i < join.members.size(); ++i) {
     const std::optional<DescentStep> step =
         PatternMemberStep(unit, block, lvalue.type, i);
@@ -260,8 +260,8 @@ auto AppendStores(
   // located, so a member written first changes nothing a later one is taken
   // from, even where the value was read out of a member's own storage (LRM
   // 10.9, 11.4.12).
-  const mir::ExprId held =
-      block.LocalPlace(DeclareLocal(frame, value), block.exprs.Get(value).type);
+  const mir::LocalId local = DeclareLocal(frame, value);
+  const mir::ExprId held = block.LocalPlace(local, block.exprs.Get(value).type);
   Lvalue located = lvalue;
   ForEachPlace(located, [&](AccessPath& place) {
     place = Settled(unit_lowerer, frame, std::move(place));

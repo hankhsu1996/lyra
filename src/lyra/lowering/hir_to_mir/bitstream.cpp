@@ -278,13 +278,13 @@ void AppendToRun(
       block.exprs.Get(part).type == unit.builtins.bit_vec
           ? support::BuiltinFn::kBitVecAppend
           : support::BuiltinFn::kBitVecExtend;
+  const mir::ExprId place = block.LocalPlace(run, unit.builtins.bit_vec);
+  const mir::ExprId value = block.AsValue(unit.types, part);
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeBuiltinCall(
-                  unit, block, entry,
-                  block.LocalPlace(run, unit.builtins.bit_vec),
-                  {block.AsValue(unit.types, part)},
+                  unit, block, entry, place, {value},
                   unit.builtins.void_type))});
 }
 
@@ -299,14 +299,14 @@ auto BuildRunOfZeros(
 void InsertIntoRun(
     const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId run,
     mir::ExprId at, mir::ExprId part) {
+  const mir::ExprId place = block.LocalPlace(run, unit.builtins.bit_vec);
+  const mir::ExprId value = block.AsValue(unit.types, part);
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeBuiltinCall(
-                  unit, block, support::BuiltinFn::kBitVecInsertBits,
-                  block.LocalPlace(run, unit.builtins.bit_vec),
-                  {at, block.AsValue(unit.types, part)},
-                  unit.builtins.void_type))});
+                  unit, block, support::BuiltinFn::kBitVecInsertBits, place,
+                  {at, value}, unit.builtins.void_type))});
 }
 
 auto BuildRunJoin(
@@ -394,14 +394,14 @@ auto BuildFromBitstream(
     // zeros carry no x or z, so the stream's own domain is the result's.
     const mir::TypeId widened =
         mir::PackedVectorOf(unit.types, target->width, stream.state_kind);
+    const mir::ExprId widened_bits =
+        ConvertToType(unit, block, bits_id, widened);
+    const mir::ExprId distance = mir::BuildIntLiteral(
+        unit, block, static_cast<std::int64_t>(target->width - stream_width));
     filled = block.exprs.Add(
         mir::MakeBuiltinCall(
-            unit, block, support::BuiltinFn::kShiftLeft,
-            ConvertToType(unit, block, bits_id, widened),
-            {mir::BuildIntLiteral(
-                unit, block,
-                static_cast<std::int64_t>(target->width - stream_width))},
-            widened));
+            unit, block, support::BuiltinFn::kShiftLeft, widened_bits,
+            {distance}, widened));
   }
   // A packed destination is those bits, at the signedness and state domain it
   // declares.
@@ -464,31 +464,34 @@ auto BuildFromStreamAssigned(
       frame, mir::BuildMachineIntBinary(
                  unit, block, mir::BinaryOp::kSub, past,
                  mir::BuildMachineCount(unit, block, fill.first_element)));
+  const mir::ExprId round_up =
+      mir::BuildMachineCount(unit, block, fill.multiplier - 1);
+  const mir::ExprId rounded = mir::BuildMachineIntBinary(
+      unit, block, mir::BinaryOp::kAdd, beyond, round_up);
+  const mir::ExprId divisor =
+      mir::BuildMachineCount(unit, block, fill.multiplier);
+  const mir::ExprId whole_steps = mir::BuildMachineIntBinary(
+      unit, block, mir::BinaryOp::kDiv, rounded, divisor);
+  const mir::ExprId step = mir::BuildMachineCount(unit, block, fill.multiplier);
   const mir::ExprId steps = mir::BuildMachineIntBinary(
-      unit, block, mir::BinaryOp::kMul,
-      mir::BuildMachineIntBinary(
-          unit, block, mir::BinaryOp::kDiv,
-          mir::BuildMachineIntBinary(
-              unit, block, mir::BinaryOp::kAdd, beyond,
-              mir::BuildMachineCount(unit, block, fill.multiplier - 1)),
-          mir::BuildMachineCount(unit, block, fill.multiplier)),
-      mir::BuildMachineCount(unit, block, fill.multiplier));
+      unit, block, mir::BinaryOp::kMul, whole_steps, step);
+  const mir::ExprId no_past = mir::BuildMachineCount(unit, block, 0);
+  const mir::ExprId within_empty = mir::BuildMachineIntComparison(
+      unit, block, mir::BinaryOp::kLessEqual, past, no_past);
+  const mir::ExprId empty_width =
+      mir::BuildMachineCount(unit, block, fill.empty_width);
+  const mir::ExprId first_width = mir::BuildMachineCount(
+      unit, block, fill.empty_width + fill.first_element);
+  const mir::ExprId no_beyond = mir::BuildMachineCount(unit, block, 0);
+  const mir::ExprId within_first = mir::BuildMachineIntComparison(
+      unit, block, mir::BinaryOp::kLessEqual, beyond, no_beyond);
+  const mir::ExprId no_steps = mir::BuildMachineCount(unit, block, 0);
+  const mir::ExprId added_steps = mir::BuildMachineIntConditional(
+      unit, block, within_first, no_steps, steps);
+  const mir::ExprId wider_width = mir::BuildMachineIntBinary(
+      unit, block, mir::BinaryOp::kAdd, first_width, added_steps);
   const mir::ExprId width = mir::BuildMachineIntConditional(
-      unit, block,
-      mir::BuildMachineIntComparison(
-          unit, block, mir::BinaryOp::kLessEqual, past,
-          mir::BuildMachineCount(unit, block, 0)),
-      mir::BuildMachineCount(unit, block, fill.empty_width),
-      mir::BuildMachineIntBinary(
-          unit, block, mir::BinaryOp::kAdd,
-          mir::BuildMachineCount(
-              unit, block, fill.empty_width + fill.first_element),
-          mir::BuildMachineIntConditional(
-              unit, block,
-              mir::BuildMachineIntComparison(
-                  unit, block, mir::BinaryOp::kLessEqual, beyond,
-                  mir::BuildMachineCount(unit, block, 0)),
-              mir::BuildMachineCount(unit, block, 0), steps)));
+      unit, block, within_empty, empty_width, wider_width);
   return BuildFromBitVec(
       unit, block, PaddedTo(unit, block, run, width), dst_type);
 }
@@ -508,12 +511,12 @@ auto BuildFromBitstreamCast(
   if (fixed.has_value()) {
     const mir::ExprId run =
         EvaluatedOnce(frame, block.AsValue(unit.types, bits_id));
+    const mir::ExprId length = BuildRunLength(unit, block, run);
+    const mir::ExprId width = mir::BuildMachineCount(unit, block, fixed->width);
     mir::AppendRunTimeCheck(
         unit, block,
         mir::BuildMachineIntComparison(
-            unit, block, mir::BinaryOp::kEquality,
-            BuildRunLength(unit, block, run),
-            mir::BuildMachineCount(unit, block, fixed->width)),
+            unit, block, mir::BinaryOp::kEquality, length, width),
         base::DiagMessage(
             "a bit-stream cast's operand does not hold as many bits as its "
             "type")

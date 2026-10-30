@@ -1400,8 +1400,9 @@ class HirDumper {
                 return b.has_value() ? std::format("Expr[{}]", b->value)
                                      : std::string{"$"};
               };
-              return std::format(
-                  "ValueRangeExpr lo={} hi={}", bound(r.lo), bound(r.hi));
+              const std::string lo = bound(r.lo);
+              const std::string hi = bound(r.hi);
+              return std::format("ValueRangeExpr lo={} hi={}", lo, hi);
             },
             [](const InsideExpr& in) -> std::string {
               return FormatInsideExprNode(in);
@@ -1814,7 +1815,9 @@ class HirDumper {
               return std::format("Expr[{}]", v.value.value);
             },
             [&](const BinRange& r) -> std::string {
-              return std::format("[{}:{}]", end(r.low), end(r.high));
+              const std::string low = end(r.low);
+              const std::string high = end(r.high);
+              return std::format("[{}:{}]", low, high);
             },
             [](const BinTolerance& r) -> std::string {
               return std::format(

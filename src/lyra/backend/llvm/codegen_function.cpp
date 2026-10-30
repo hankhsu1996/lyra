@@ -415,7 +415,7 @@ auto CodeGenFunction::StorageAtPlace(const lir::Place& place)
         "storage of type '{}' is not yet supported with '--backend llvm'",
         stated.KindName());
   }
-  return NamedStorage{.type = type, .storage = *storage, .at = *address};
+  return NamedStorage{.type = type, .storage = storage, .at = *address};
 }
 
 auto CodeGenFunction::LowerBeginStorage(const lir::BeginStorageInstr& begun)
@@ -510,8 +510,9 @@ void CodeGenFunction::OpenCoroutine() {
             &mod, llvm::Intrinsic::coro_size, {size_ty}),
         {});
   };
-  llvm::Value* memory =
-      builder_.CreateCall(module_->OperatorNew(), {frame_size()});
+  const llvm::FunctionCallee allocate = module_->OperatorNew();
+  llvm::Value* const allocated_size = frame_size();
+  llvm::Value* memory = builder_.CreateCall(allocate, {allocated_size});
   coro_handle_ = builder_.CreateCall(
       llvm::Intrinsic::getOrInsertDeclaration(
           &mod, llvm::Intrinsic::coro_begin),
@@ -525,7 +526,9 @@ void CodeGenFunction::OpenCoroutine() {
   llvm::Value* frame = builder_.CreateCall(
       llvm::Intrinsic::getOrInsertDeclaration(&mod, llvm::Intrinsic::coro_free),
       {coro_id_, coro_handle_});
-  builder_.CreateCall(module_->SizedOperatorDelete(), {frame, frame_size()});
+  const llvm::FunctionCallee release = module_->SizedOperatorDelete();
+  llvm::Value* const released_size = frame_size();
+  builder_.CreateCall(release, {frame, released_size});
   builder_.CreateBr(coro_end_);
 
   builder_.SetInsertPoint(coro_end_);
@@ -647,9 +650,10 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             // it leaves through its final suspension, as a return does. That
             // suspension is where releasing the frame finds it stopped.
             const std::array<llvm::Value*, 1> args{*departure};
+            llvm::Type* const result = builder_.getVoidTy();
             CallEntry(
-                RuntimeSymbol(RuntimeOp::kSettleDeparture),
-                builder_.getVoidTy(), Addresses(1), args);
+                RuntimeSymbol(RuntimeOp::kSettleDeparture), result,
+                Addresses(1), args);
             builder_.CreateBr(coro_final_);
             return {};
           },

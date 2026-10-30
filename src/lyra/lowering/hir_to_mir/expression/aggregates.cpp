@@ -116,11 +116,10 @@ auto BuildUnpackedConcatSteps(
       AppendPushBack(owner, body, appended, queue_type, value);
       continue;
     }
+    const WalkedArray array = WalkedArrayOf(
+        owner, steps.Frame(), value, DeclaredRangeOf(owner, part.type));
     auto walked = BuildEntryLoopStmt(
-        owner, steps.Frame(),
-        WalkedArrayOf(
-            owner, steps.Frame(), value, DeclaredRangeOf(owner, part.type)),
-        WalkOrder::kFromFirst, std::nullopt,
+        owner, steps.Frame(), array, WalkOrder::kFromFirst, std::nullopt,
         [&](const WalkFrame& at,
             const VisitedEntry& entry) -> diag::Result<void> {
           AppendPushBack(
@@ -553,13 +552,13 @@ auto LowerHirDynamicArrayNewExpr(
     source_type = block.exprs.Get(*source).type;
     held_source = DeclareLocal(frame, *source);
   }
-  const mir::LocalId array = DeclareLocal(
-      frame,
-      block.exprs.Add(made(
-          block.ReadLocal(held_size, size_type),
-          held_source.has_value() ? std::optional<mir::ExprId>{block.ReadLocal(
-                                        *held_source, source_type)}
-                                  : std::nullopt)));
+  const mir::ExprId read_size = block.ReadLocal(held_size, size_type);
+  std::optional<mir::ExprId> read_source;
+  if (held_source.has_value()) {
+    read_source = block.ReadLocal(*held_source, source_type);
+  }
+  const mir::LocalId array =
+      DeclareLocal(frame, block.exprs.Add(made(read_size, read_source)));
   const mir::LocalId given = DeclareLocal(
       frame, held_source.has_value()
                  ? block.exprs.Add(
@@ -570,15 +569,14 @@ auto LowerHirDynamicArrayNewExpr(
                                    block.LocalPlace(*held_source, source_type)},
                            {}, int_type))
                  : mir::BuildIntLiteral(unit, block, 0));
+  const mir::ExprId first = block.ReadLocal(given, int_type);
+  const mir::ExprId lhs = ConvertToType(
+      unit, block, block.ReadLocal(held_size, size_type), int_type);
+  const mir::ExprId rhs = block.ReadLocal(given, int_type);
+  const mir::ExprId count = block.exprs.Add(
+      mir::MakeBinary(unit, block, mir::BinaryOp::kSub, lhs, rhs, int_type));
   GiveElementsNewEvents(
-      unit_lowerer, frame, array, result_type, element,
-      block.ReadLocal(given, int_type),
-      block.exprs.Add(
-          mir::MakeBinary(
-              unit, block, mir::BinaryOp::kSub,
-              ConvertToType(
-                  unit, block, block.ReadLocal(held_size, size_type), int_type),
-              block.ReadLocal(given, int_type), int_type)));
+      unit_lowerer, frame, array, result_type, element, first, count);
   return block.exprs.Get(block.ReadLocal(array, result_type));
 }
 

@@ -159,9 +159,9 @@ auto KindOfPlace(const CompilationUnit& unit, const Block& block, ExprId place)
     -> PlaceKind {
   const ExprData& data = block.exprs.Get(place).data;
   if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
+    const PlaceKind receiver = KindOfPlace(unit, block, field->receiver);
     return Wider(
-        KindOfPlace(unit, block, field->receiver),
-        KindOfAPart(unit, block.exprs.Get(field->receiver).type));
+        receiver, KindOfAPart(unit, block.exprs.Get(field->receiver).type));
   }
   if (const auto* deref = std::get_if<DerefExpr>(&data)) {
     const mir::Type& pointer =

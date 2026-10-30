@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <functional>
 #include <optional>
 #include <utility>
 
@@ -113,14 +114,15 @@ class PlaneArithmetic {
   [[nodiscard]] auto Arithmetic(
       llvm::Instruction::BinaryOps op, Planes a, Planes b,
       bool holds_unknown) const -> Planes {
-    return AllXWhere(
-        AnySet(Or(a.unknown, b.unknown)),
-        Known(b_->CreateBinOp(op, a.value, b.value)), holds_unknown);
+    llvm::Value* const unknown = AnySet(Or(a.unknown, b.unknown));
+    llvm::Value* const answer = b_->CreateBinOp(op, a.value, b.value);
+    return AllXWhere(unknown, Known(answer), holds_unknown);
   }
 
   [[nodiscard]] auto Negated(Planes a, bool holds_unknown) const -> Planes {
-    return AllXWhere(
-        AnySet(a.unknown), Known(b_->CreateNeg(a.value)), holds_unknown);
+    llvm::Value* const unknown = AnySet(a.unknown);
+    llvm::Value* const negated = b_->CreateNeg(a.value);
+    return AllXWhere(unknown, Known(negated), holds_unknown);
   }
 
   // LRM 11.4.3: division truncates toward zero, a remainder takes the
@@ -131,8 +133,9 @@ class PlaneArithmetic {
       Planes a, Planes b, bool is_signed, bool remainder,
       bool holds_unknown) const -> Planes {
     llvm::Type* const type = a.value->getType();
-    llvm::Value* const no_answer =
-        Or(AnySet(Or(a.unknown, b.unknown)), b_->CreateIsNull(b.value));
+    llvm::Value* const any_unknown = AnySet(Or(a.unknown, b.unknown));
+    llvm::Value* const by_zero = b_->CreateIsNull(b.value);
+    llvm::Value* const no_answer = Or(any_unknown, by_zero);
     llvm::Value* a_negative = b_->getFalse();
     llvm::Value* b_negative = b_->getFalse();
     llvm::Value* a_magnitude = a.value;
@@ -165,8 +168,9 @@ class PlaneArithmetic {
   // position of an `&` is 0 where either operand is known 0, and otherwise x
   // where either is unknown; an `|` likewise around a known 1.
   [[nodiscard]] auto BitwiseAnd(Planes a, Planes b) const -> Planes {
-    llvm::Value* const value =
-        And(Or(a.value, a.unknown), Or(b.value, b.unknown));
+    llvm::Value* const a_maybe_one = Or(a.value, a.unknown);
+    llvm::Value* const b_maybe_one = Or(b.value, b.unknown);
+    llvm::Value* const value = And(a_maybe_one, b_maybe_one);
     return Planes{
         .value = value, .unknown = And(value, Or(a.unknown, b.unknown))};
   }
@@ -175,9 +179,9 @@ class PlaneArithmetic {
     llvm::Value* const either = Or(a.unknown, b.unknown);
     llvm::Value* unknown = either;
     if (!IsClear(either)) {
-      unknown = And(
-          either,
-          Not(Or(And(a.value, Not(a.unknown)), And(b.value, Not(b.unknown)))));
+      llvm::Value* const a_one = And(a.value, Not(a.unknown));
+      llvm::Value* const b_one = And(b.value, Not(b.unknown));
+      unknown = And(either, Not(Or(a_one, b_one)));
     }
     return Planes{
         .value = Or(Or(a.value, b.value), either), .unknown = unknown};
@@ -210,8 +214,8 @@ class PlaneArithmetic {
   // the answer to the unknown bits.
   [[nodiscard]] auto Equality(Planes a, Planes b) const -> Planes {
     llvm::Value* const unknown = Or(a.unknown, b.unknown);
-    llvm::Value* const agree =
-        b_->CreateIsNull(And(Xor(a.value, b.value), Not(unknown)));
+    llvm::Value* const differ = Xor(a.value, b.value);
+    llvm::Value* const agree = b_->CreateIsNull(And(differ, Not(unknown)));
     return Planes{.value = agree, .unknown = And(agree, AnySet(unknown))};
   }
 
@@ -226,17 +230,18 @@ class PlaneArithmetic {
 
   // LRM 11.4.5 case equality: both planes identical.
   [[nodiscard]] auto CaseEquality(Planes a, Planes b) const -> llvm::Value* {
-    return And(
-        b_->CreateICmpEQ(a.value, b.value),
-        b_->CreateICmpEQ(a.unknown, b.unknown));
+    llvm::Value* const values_equal = b_->CreateICmpEQ(a.value, b.value);
+    llvm::Value* const unknowns_equal = b_->CreateICmpEQ(a.unknown, b.unknown);
+    return And(values_equal, unknowns_equal);
   }
 
   // LRM 11.4.6: an x or z in `b` is a wildcard; one in `a` where `b` compares
   // leaves the answer unknown unless a known position already disagrees.
   [[nodiscard]] auto WildcardEquality(Planes a, Planes b) const -> Planes {
     llvm::Value* const compared = Not(b.unknown);
-    llvm::Value* const agree = b_->CreateIsNull(
-        And(And(Xor(a.value, b.value), Not(a.unknown)), compared));
+    llvm::Value* const differ = Xor(a.value, b.value);
+    llvm::Value* const agree =
+        b_->CreateIsNull(And(And(differ, Not(a.unknown)), compared));
     return Planes{
         .value = agree,
         .unknown = And(agree, AnySet(And(a.unknown, compared)))};
@@ -245,39 +250,45 @@ class PlaneArithmetic {
   // LRM 12.5.1 `casez`: z on either side is a wildcard, and every other
   // position matches exactly on both planes.
   [[nodiscard]] auto CasezMatch(Planes a, Planes b) const -> llvm::Value* {
-    llvm::Value* const wildcard =
-        Or(And(a.unknown, Not(a.value)), And(b.unknown, Not(b.value)));
-    return b_->CreateIsNull(And(
-        Or(Xor(a.value, b.value), Xor(a.unknown, b.unknown)), Not(wildcard)));
+    llvm::Value* const a_z = And(a.unknown, Not(a.value));
+    llvm::Value* const b_z = And(b.unknown, Not(b.value));
+    llvm::Value* const wildcard = Or(a_z, b_z);
+    llvm::Value* const values_differ = Xor(a.value, b.value);
+    llvm::Value* const unknowns_differ = Xor(a.unknown, b.unknown);
+    llvm::Value* const differ = Or(values_differ, unknowns_differ);
+    return b_->CreateIsNull(And(differ, Not(wildcard)));
   }
 
   // LRM 12.5.1 `casex`: x or z on either side is a wildcard.
   [[nodiscard]] auto CasexMatch(Planes a, Planes b) const -> llvm::Value* {
-    return b_->CreateIsNull(
-        And(Xor(a.value, b.value), Not(Or(a.unknown, b.unknown))));
+    llvm::Value* const differ = Xor(a.value, b.value);
+    return b_->CreateIsNull(And(differ, Not(Or(a.unknown, b.unknown))));
   }
 
   // LRM 11.4.7: a definitively-one bit settles the value as nonzero however
   // many unknown bits sit beside it.
   [[nodiscard]] auto TruthOf(Planes a) const -> Truth {
     llvm::Value* const nonzero = AnySet(And(a.value, Not(a.unknown)));
+    llvm::Value* const not_nonzero = Not(nonzero);
     return Truth{
-        .nonzero = nonzero, .unknown = And(Not(nonzero), AnySet(a.unknown))};
+        .nonzero = nonzero, .unknown = And(not_nonzero, AnySet(a.unknown))};
   }
 
   // LRM 11.4.7: the answer is unknown only where an operand's truth is and
   // the other operand does not settle it.
   [[nodiscard]] auto LogicalAnd(Truth a, Truth b) const -> Planes {
     llvm::Value* const one = And(a.nonzero, b.nonzero);
-    llvm::Value* const not_zero =
-        And(Or(a.nonzero, a.unknown), Or(b.nonzero, b.unknown));
+    llvm::Value* const a_not_zero = Or(a.nonzero, a.unknown);
+    llvm::Value* const b_not_zero = Or(b.nonzero, b.unknown);
+    llvm::Value* const not_zero = And(a_not_zero, b_not_zero);
     return Planes{.value = not_zero, .unknown = And(not_zero, Not(one))};
   }
 
   [[nodiscard]] auto LogicalOr(Truth a, Truth b) const -> Planes {
     llvm::Value* const one = Or(a.nonzero, b.nonzero);
-    llvm::Value* const not_zero =
-        Or(Or(a.nonzero, a.unknown), Or(b.nonzero, b.unknown));
+    llvm::Value* const a_not_zero = Or(a.nonzero, a.unknown);
+    llvm::Value* const b_not_zero = Or(b.nonzero, b.unknown);
+    llvm::Value* const not_zero = Or(a_not_zero, b_not_zero);
     return Planes{.value = not_zero, .unknown = And(not_zero, Not(one))};
   }
 
@@ -309,9 +320,9 @@ class PlaneArithmetic {
           .unknown = And(Not(any_one), any_unknown)};
     };
     const auto xor_bit = [&] {
-      llvm::Value* const parity = b_->CreateTrunc(
-          b_->CreateUnaryIntrinsic(llvm::Intrinsic::ctpop, And(a.value, known)),
-          b_->getInt1Ty());
+      llvm::Value* const ones =
+          b_->CreateUnaryIntrinsic(llvm::Intrinsic::ctpop, And(a.value, known));
+      llvm::Value* const parity = b_->CreateTrunc(ones, b_->getInt1Ty());
       return Planes{.value = Or(any_unknown, parity), .unknown = any_unknown};
     };
     switch (op) {
@@ -363,10 +374,9 @@ class PlaneArithmetic {
       };
     };
     const auto shifted = [&](auto plane) {
-      return AllXWhere(
-          AnySet(amount.unknown),
-          Planes{.value = plane(a.value), .unknown = plane(a.unknown)},
-          holds_unknown);
+      llvm::Value* const unknown = AnySet(amount.unknown);
+      const Planes moved{.value = plane(a.value), .unknown = plane(a.unknown)};
+      return AllXWhere(unknown, moved, holds_unknown);
     };
     switch (kind) {
       case ShiftKind::kLeft:
@@ -432,13 +442,11 @@ class PlaneArithmetic {
     }
     // An index no wider than this cannot hold a magnitude past the limit.
     if (shape.width > 32) {
-      named =
-          And(named, And(b_->CreateICmpSGE(
-                             at, llvm::ConstantInt::getSigned(
-                                     word, -value::kPositionLimit)),
-                         b_->CreateICmpSLE(
-                             at, llvm::ConstantInt::getSigned(
-                                     word, value::kPositionLimit))));
+      llvm::Value* const not_below = b_->CreateICmpSGE(
+          at, llvm::ConstantInt::getSigned(word, -value::kPositionLimit));
+      llvm::Value* const not_above = b_->CreateICmpSLE(
+          at, llvm::ConstantInt::getSigned(word, value::kPositionLimit));
+      named = And(named, And(not_below, not_above));
     }
     return NamedPosition{
         .at = at, .named = named, .can_be_negative = is_signed};
@@ -524,10 +532,10 @@ class PlaneArithmetic {
             type),
         Clear(type));
     const auto replaced = [&](llvm::Value* kept, llvm::Value* plane) {
-      return Or(
-          And(kept, Not(written)),
-          And(b_->CreateTrunc(placed(b_->CreateZExt(plane, wide)), type),
-              written));
+      llvm::Value* const kept_bits = And(kept, Not(written));
+      llvm::Value* const placed_bits =
+          b_->CreateTrunc(placed(b_->CreateZExt(plane, wide)), type);
+      return Or(kept_bits, And(placed_bits, written));
     };
     if (!holds_unknown) {
       return Known(replaced(target.value, KnownBits(bits)));
@@ -566,8 +574,9 @@ class PlaneArithmetic {
   // and every other position is x -- 0 in a type that holds none.
   [[nodiscard]] auto MergeConditional(
       Planes a, Planes b, bool holds_unknown) const -> Planes {
-    llvm::Value* const agreed =
-        And(Not(Xor(a.value, b.value)), Not(Or(a.unknown, b.unknown)));
+    llvm::Value* const values_agree = Not(Xor(a.value, b.value));
+    llvm::Value* const both_known = Not(Or(a.unknown, b.unknown));
+    llvm::Value* const agreed = And(values_agree, both_known);
     llvm::Value* const kept = And(a.value, agreed);
     if (!holds_unknown) {
       return Known(kept);
@@ -583,36 +592,47 @@ class PlaneArithmetic {
     llvm::Value* const a_z = And(Not(a.value), a.unknown);
     llvm::Value* const b_z = And(Not(b.value), b.unknown);
     llvm::Value* const take_a = And(Not(a_z), b_z);
-    llvm::Value* const both = And(Not(a_z), Not(b_z));
-    llvm::Value* const value = Or(And(a_z, b.value), And(take_a, a.value));
-    llvm::Value* const unknown =
-        Or(And(a_z, b.unknown), And(take_a, a.unknown));
+    llvm::Value* const a_drives = Not(a_z);
+    llvm::Value* const b_drives = Not(b_z);
+    llvm::Value* const both = And(a_drives, b_drives);
+    llvm::Value* const value_from_b = And(a_z, b.value);
+    llvm::Value* const value_from_a = And(take_a, a.value);
+    llvm::Value* const value = Or(value_from_b, value_from_a);
+    llvm::Value* const unknown_from_b = And(a_z, b.unknown);
+    llvm::Value* const unknown_from_a = And(take_a, a.unknown);
+    llvm::Value* const unknown = Or(unknown_from_b, unknown_from_a);
     const auto any_x = [&] {
-      return Or(And(a.value, a.unknown), And(b.value, b.unknown));
+      llvm::Value* const a_x = And(a.value, a.unknown);
+      llvm::Value* const b_x = And(b.value, b.unknown);
+      return Or(a_x, b_x);
     };
     switch (fold) {
       case value::NetResolution::kTriState: {
-        llvm::Value* const same = And(
-            both,
-            And(Not(Xor(a.value, b.value)), Not(Xor(a.unknown, b.unknown))));
+        llvm::Value* const values_agree = Not(Xor(a.value, b.value));
+        llvm::Value* const unknowns_agree = Not(Xor(a.unknown, b.unknown));
+        llvm::Value* const same = And(both, And(values_agree, unknowns_agree));
         llvm::Value* const conflict = And(both, Not(same));
         return Planes{
             .value = Or(value, Or(And(same, a.value), conflict)),
             .unknown = Or(unknown, Or(And(same, a.unknown), conflict))};
       }
       case value::NetResolution::kWiredAnd: {
-        llvm::Value* const any_zero =
-            Or(And(Not(a.value), Not(a.unknown)),
-               And(Not(b.value), Not(b.unknown)));
+        llvm::Value* const a_value_clear = Not(a.value);
+        llvm::Value* const a_zero = And(a_value_clear, Not(a.unknown));
+        llvm::Value* const b_value_clear = Not(b.value);
+        llvm::Value* const b_zero = And(b_value_clear, Not(b.unknown));
+        llvm::Value* const any_zero = Or(a_zero, b_zero);
         llvm::Value* const no_zero = And(both, Not(any_zero));
         return Planes{
             .value = Or(value, no_zero),
             .unknown = Or(unknown, And(no_zero, any_x()))};
       }
       case value::NetResolution::kWiredOr: {
-        llvm::Value* const any_one =
-            Or(And(a.value, Not(a.unknown)), And(b.value, Not(b.unknown)));
-        llvm::Value* const x_bits = And(And(both, Not(any_one)), any_x());
+        llvm::Value* const a_one = And(a.value, Not(a.unknown));
+        llvm::Value* const b_one = And(b.value, Not(b.unknown));
+        llvm::Value* const any_one = Or(a_one, b_one);
+        llvm::Value* const undecided = And(both, Not(any_one));
+        llvm::Value* const x_bits = And(undecided, any_x());
         return Planes{
             .value = Or(value, Or(And(both, any_one), x_bits)),
             .unknown = Or(unknown, x_bits)};
@@ -627,12 +647,13 @@ class PlaneArithmetic {
   [[nodiscard]] auto Dominating(Planes stronger, Planes weaker) const
       -> Planes {
     llvm::Value* const undriven = And(Not(stronger.value), stronger.unknown);
+    llvm::Value* const stronger_value = And(stronger.value, Not(undriven));
+    llvm::Value* const weaker_value = And(weaker.value, undriven);
+    llvm::Value* const value = Or(stronger_value, weaker_value);
+    llvm::Value* const stronger_unknown = And(stronger.unknown, Not(undriven));
+    llvm::Value* const weaker_unknown = And(weaker.unknown, undriven);
     return Planes{
-        .value =
-            Or(And(stronger.value, Not(undriven)), And(weaker.value, undriven)),
-        .unknown =
-            Or(And(stronger.unknown, Not(undriven)),
-               And(weaker.unknown, undriven))};
+        .value = value, .unknown = Or(stronger_unknown, weaker_unknown)};
   }
 
  private:
@@ -708,20 +729,20 @@ class PlaneArithmetic {
     }
     llvm::Type* const type = plane->getType();
     const auto within = [&](llvm::Value* by) {
-      return b_->CreateZExtOrTrunc(
-          b_->CreateSelect(
-              b_->CreateICmpULT(by, b_->getInt64(type->getIntegerBitWidth())),
-              by, b_->getInt64(0)),
-          type);
+      llvm::Value* const fits =
+          b_->CreateICmpULT(by, b_->getInt64(type->getIntegerBitWidth()));
+      llvm::Value* const amount = b_->CreateSelect(fits, by, b_->getInt64(0));
+      return b_->CreateZExtOrTrunc(amount, type);
     };
     llvm::Value* const forward =
         b_->CreateBinOp(toward, plane, within(position.at));
     if (!position.can_be_negative) {
       return forward;
     }
-    return b_->CreateSelect(
-        b_->CreateICmpSGE(position.at, b_->getInt64(0)), forward,
-        b_->CreateBinOp(back, plane, within(b_->CreateNeg(position.at))));
+    llvm::Value* const ahead = b_->CreateICmpSGE(position.at, b_->getInt64(0));
+    llvm::Value* const backward =
+        b_->CreateBinOp(back, plane, within(b_->CreateNeg(position.at)));
+    return b_->CreateSelect(ahead, forward, backward);
   }
 
   llvm::IRBuilderBase* b_;
@@ -756,9 +777,10 @@ auto LoadComparisonAnswer(
   }
   llvm::Value* const unknown =
       builder.CreateLoad(byte, UnknownPlaneOfOneBit(builder, at));
-  return builder.CreateOr(
-      builder.CreateShl(bit, value::kScalarValueBit),
-      builder.CreateShl(unknown, value::kScalarUnknownBit));
+  llvm::Value* const value_bit = builder.CreateShl(bit, value::kScalarValueBit);
+  llvm::Value* const unknown_bit =
+      builder.CreateShl(unknown, value::kScalarUnknownBit);
+  return builder.CreateOr(value_bit, unknown_bit);
 }
 
 void StoreComparisonAnswer(
@@ -777,12 +799,12 @@ void StoreComparisonAnswer(
     return;
   }
   const auto plane_bit = [&](unsigned position) {
-    return builder.CreateAnd(
-        builder.CreateLShr(scalar, position), builder.getInt8(1));
+    llvm::Value* const shifted = builder.CreateLShr(scalar, position);
+    return builder.CreateAnd(shifted, builder.getInt8(1));
   };
   builder.CreateStore(plane_bit(value::kScalarValueBit), at);
-  builder.CreateStore(
-      plane_bit(value::kScalarUnknownBit), UnknownPlaneOfOneBit(builder, at));
+  llvm::Value* const unknown_bit = plane_bit(value::kScalarUnknownBit);
+  builder.CreateStore(unknown_bit, UnknownPlaneOfOneBit(builder, at));
 }
 
 auto LowerOnPlanes(
@@ -827,27 +849,49 @@ auto LowerOnPlanes(
   const auto exact = [&] {
     return builder.getIntNTy(static_cast<unsigned>(answer_width()));
   };
+  // An operation of the two operands, loaded first to last.
+  const auto binary = [&](auto operation) {
+    const Planes lhs = load(0);
+    const Planes rhs = load(1);
+    return std::invoke(operation, words, lhs, rhs);
+  };
 
   const auto arithmetic = [&](llvm::Instruction::BinaryOps instruction) {
-    return words.Arithmetic(instruction, load(0), load(1), answers_unknown());
+    const Planes lhs = load(0);
+    const Planes rhs = load(1);
+    const bool holds_unknown = answers_unknown();
+    return words.Arithmetic(instruction, lhs, rhs, holds_unknown);
   };
   const auto divided = [&](bool remainder) {
+    const Planes dividend = load(0);
+    const Planes divisor = load(1);
+    const bool is_signed = reads_signed(0);
+    const bool holds_unknown = answers_unknown();
     return words.Divided(
-        load(0), load(1), reads_signed(0), remainder, answers_unknown());
+        dividend, divisor, is_signed, remainder, holds_unknown);
   };
   const auto relation = [&](llvm::CmpInst::Predicate as_signed,
                             llvm::CmpInst::Predicate as_unsigned) {
-    return answer_bit(words.Relation(
-        reads_signed(0) ? as_signed : as_unsigned, load(0), load(1)));
+    const llvm::CmpInst::Predicate predicate =
+        reads_signed(0) ? as_signed : as_unsigned;
+    const Planes lhs = load(0);
+    const Planes rhs = load(1);
+    return answer_bit(words.Relation(predicate, lhs, rhs));
   };
   const auto reduced = [&](value::ReductionOp reduction) {
     return answer_bit(words.Reduced(load(0), reduction));
   };
   const auto resolved = [&](value::NetResolution fold) {
-    return words.Resolved(load(0), load(1), fold);
+    const Planes lhs = load(0);
+    const Planes rhs = load(1);
+    return words.Resolved(lhs, rhs, fold);
   };
   const auto shifted = [&](ShiftKind kind) {
-    return words.Shifted(load(0), width(0), load(1), kind, answers_unknown());
+    const Planes operand = load(0);
+    const std::uint64_t operand_width = width(0);
+    const Planes amount = load(1);
+    const bool holds_unknown = answers_unknown();
+    return words.Shifted(operand, operand_width, amount, kind, holds_unknown);
   };
 
   switch (op) {
@@ -861,22 +905,25 @@ auto LowerOnPlanes(
       return divided(false);
     case IntegralOp::kModulo:
       return divided(true);
-    case IntegralOp::kNegate:
-      return words.Negated(load(0), answers_unknown());
+    case IntegralOp::kNegate: {
+      const Planes operand = load(0);
+      const bool holds_unknown = answers_unknown();
+      return words.Negated(operand, holds_unknown);
+    }
     case IntegralOp::kBitwiseAnd:
-      return words.BitwiseAnd(load(0), load(1));
+      return binary(&PlaneArithmetic::BitwiseAnd);
     case IntegralOp::kBitwiseOr:
-      return words.BitwiseOr(load(0), load(1));
+      return binary(&PlaneArithmetic::BitwiseOr);
     case IntegralOp::kBitwiseXor:
-      return words.BitwiseXor(load(0), load(1));
+      return binary(&PlaneArithmetic::BitwiseXor);
     case IntegralOp::kBitwiseXnor:
-      return words.BitwiseXnor(load(0), load(1));
+      return binary(&PlaneArithmetic::BitwiseXnor);
     case IntegralOp::kBitwiseNot:
       return words.BitwiseNot(load(0));
     case IntegralOp::kEqual:
-      return answer_bit(words.Equality(load(0), load(1)));
+      return answer_bit(binary(&PlaneArithmetic::Equality));
     case IntegralOp::kNotEqual:
-      return answer_bit(words.Inverted(words.Equality(load(0), load(1))));
+      return answer_bit(words.Inverted(binary(&PlaneArithmetic::Equality)));
     case IntegralOp::kLess:
       return relation(llvm::CmpInst::ICMP_SLT, llvm::CmpInst::ICMP_ULT);
     case IntegralOp::kLessEqual:
@@ -886,24 +933,30 @@ auto LowerOnPlanes(
     case IntegralOp::kGreaterEqual:
       return relation(llvm::CmpInst::ICMP_SGE, llvm::CmpInst::ICMP_UGE);
     case IntegralOp::kCaseEqual:
-      return Known(words.CaseEquality(load(0), load(1)));
+      return Known(binary(&PlaneArithmetic::CaseEquality));
     case IntegralOp::kWildcardEqual:
-      return answer_bit(words.WildcardEquality(load(0), load(1)));
+      return answer_bit(binary(&PlaneArithmetic::WildcardEquality));
     case IntegralOp::kCasezMatch:
-      return Known(words.CasezMatch(load(0), load(1)));
+      return Known(binary(&PlaneArithmetic::CasezMatch));
     case IntegralOp::kCasexMatch:
-      return Known(words.CasexMatch(load(0), load(1)));
-    case IntegralOp::kLogicalAnd:
-      return answer_bit(
-          words.LogicalAnd(words.TruthOf(load(0)), words.TruthOf(load(1))));
-    case IntegralOp::kLogicalOr:
-      return answer_bit(
-          words.LogicalOr(words.TruthOf(load(0)), words.TruthOf(load(1))));
+      return Known(binary(&PlaneArithmetic::CasexMatch));
+    case IntegralOp::kLogicalAnd: {
+      const Truth lhs = words.TruthOf(load(0));
+      const Truth rhs = words.TruthOf(load(1));
+      return answer_bit(words.LogicalAnd(lhs, rhs));
+    }
+    case IntegralOp::kLogicalOr: {
+      const Truth lhs = words.TruthOf(load(0));
+      const Truth rhs = words.TruthOf(load(1));
+      return answer_bit(words.LogicalOr(lhs, rhs));
+    }
     case IntegralOp::kLogicalNot:
       return answer_bit(words.LogicalNot(words.TruthOf(load(0))));
-    case IntegralOp::kLogicalEquivalence:
-      return answer_bit(words.LogicalEquivalence(
-          words.TruthOf(load(0)), words.TruthOf(load(1))));
+    case IntegralOp::kLogicalEquivalence: {
+      const Truth lhs = words.TruthOf(load(0));
+      const Truth rhs = words.TruthOf(load(1));
+      return answer_bit(words.LogicalEquivalence(lhs, rhs));
+    }
     // LRM 12.4: only a value with a bit that is definitely 1 holds as a
     // condition.
     case IntegralOp::kIsTrue:
@@ -930,43 +983,83 @@ auto LowerOnPlanes(
       return shifted(
           reads_signed(0) ? ShiftKind::kArithmeticRight
                           : ShiftKind::kLogicalRight);
-    case IntegralOp::kReplicate:
+    case IntegralOp::kReplicate: {
+      const Planes operand = load(0);
+      const std::uint64_t operand_width = width(0);
+      const std::uint64_t replicated_width = answer_width();
+      const bool holds_unknown = answers_unknown();
       return words.Replicated(
-          load(0), width(0), answer_width(), answers_unknown());
-    case IntegralOp::kSlice:
+          operand, operand_width, replicated_width, holds_unknown);
+    }
+    case IntegralOp::kSlice: {
+      const Planes source = load(0);
+      const std::uint64_t source_width = width(0);
+      const Planes index = load(1);
+      const value::IntegralShape& index_shape = shape(1);
+      const NamedPosition position = words.PositionNamed(index, index_shape);
+      const std::uint64_t part_width = answer_width();
+      const bool holds_unknown = answers_unknown();
       return words.Slice(
-          load(0), width(0), words.PositionNamed(load(1), shape(1)),
-          answer_width(), answers_unknown());
-    case IntegralOp::kWithSlice:
+          source, source_width, position, part_width, holds_unknown);
+    }
+    case IntegralOp::kWithSlice: {
+      const Planes target = load(0);
+      const std::uint64_t target_width = width(0);
+      const Planes index = load(1);
+      const value::IntegralShape& index_shape = shape(1);
+      const NamedPosition position = words.PositionNamed(index, index_shape);
+      const Planes bits = load(2);
+      const std::uint64_t bits_width = width(2);
+      const bool holds_unknown = answers_unknown();
       return words.WithSlice(
-          load(0), width(0), words.PositionNamed(load(1), shape(1)), load(2),
-          width(2), answers_unknown());
-    case IntegralOp::kConvert:
-      return words.Converted(
-          load(0), reads_signed(0), answer_width(), answers_unknown());
+          target, target_width, position, bits, bits_width, holds_unknown);
+    }
+    case IntegralOp::kConvert: {
+      const Planes source = load(0);
+      const bool is_signed = reads_signed(0);
+      const std::uint64_t converted_width = answer_width();
+      const bool holds_unknown = answers_unknown();
+      return words.Converted(source, is_signed, converted_width, holds_unknown);
+    }
     // LRM 11.6.1: a number carried into the answer's type keeps its low bits,
     // and its sign above them where the type is wider.
-    case IntegralOp::kFromInt:
-      return Known(builder.CreateSExtOrTrunc(machine(64), exact()));
-    case IntegralOp::kFromBool:
-      return Known(builder.CreateZExt(machine(1), exact()));
-    case IntegralOp::kToInt64:
-      return words.ToInt64(load(0), reads_signed(0));
+    case IntegralOp::kFromInt: {
+      llvm::Value* const number = machine(64);
+      llvm::Type* const type = exact();
+      return Known(builder.CreateSExtOrTrunc(number, type));
+    }
+    case IntegralOp::kFromBool: {
+      llvm::Value* const bit = machine(1);
+      llvm::Type* const type = exact();
+      return Known(builder.CreateZExt(bit, type));
+    }
+    case IntegralOp::kToInt64: {
+      const Planes operand = load(0);
+      const bool is_signed = reads_signed(0);
+      return words.ToInt64(operand, is_signed);
+    }
     // The position an index names, in the type position arithmetic is done
     // in: all x where it names none.
     case IntegralOp::kToPosition: {
-      const NamedPosition position = words.PositionNamed(load(0), shape(0));
-      return words.AllXWhere(
-          words.Not(position.named), Known(position.at), answers_unknown());
+      const Planes index = load(0);
+      const value::IntegralShape& index_shape = shape(0);
+      const NamedPosition position = words.PositionNamed(index, index_shape);
+      llvm::Value* const names_none = words.Not(position.named);
+      const bool holds_unknown = answers_unknown();
+      return words.AllXWhere(names_none, Known(position.at), holds_unknown);
     }
     case IntegralOp::kIsUnknown:
       return Known(words.AnySet(load(0).unknown));
     case IntegralOp::kHasUnknown:
       return words.AnySet(load(0).unknown);
     case IntegralOp::kBitIdentical:
-      return words.CaseEquality(load(0), load(1));
-    case IntegralOp::kMergeConditional:
-      return words.MergeConditional(load(0), load(1), answers_unknown());
+      return binary(&PlaneArithmetic::CaseEquality);
+    case IntegralOp::kMergeConditional: {
+      const Planes lhs = load(0);
+      const Planes rhs = load(1);
+      const bool holds_unknown = answers_unknown();
+      return words.MergeConditional(lhs, rhs, holds_unknown);
+    }
     case IntegralOp::kResolveTriState:
       return resolved(value::NetResolution::kTriState);
     case IntegralOp::kResolveWiredAnd:
@@ -974,7 +1067,7 @@ auto LowerOnPlanes(
     case IntegralOp::kResolveWiredOr:
       return resolved(value::NetResolution::kWiredOr);
     case IntegralOp::kDominate:
-      return words.Dominating(load(0), load(1));
+      return binary(&PlaneArithmetic::Dominating);
     // Long work at every width, which the library carries out: a power, a
     // count of bits, a logarithm, a reversal of blocks, and a value read out
     // of text or of what a foreign call left. The positions a procedural

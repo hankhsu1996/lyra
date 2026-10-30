@@ -705,12 +705,13 @@ auto FunctionLowerer::FrameEdge() -> lir::BlockId {
   frame_edge_ = edge;
   const lir::BlockId resumed = current_;
   SetCurrent(edge);
+  const lir::ValueId slot = ExceptionSlot();
+  const lir::TypeId unwinding = UnwindingType();
   Terminate(
       lir::UnwindResumeTerm{
           .exception = Load(
-              lir::Place{
-                  .base = lir::Use{.value = ExceptionSlot()}, .chain = {}},
-              UnwindingType())});
+              lir::Place{.base = lir::Use{.value = slot}, .chain = {}},
+              unwinding)});
   SetCurrent(resumed);
   return edge;
 }
@@ -718,12 +719,13 @@ auto FunctionLowerer::FrameEdge() -> lir::BlockId {
 auto FunctionLowerer::OpenHandler(const RegionScope& region)
     -> diag::Result<void> {
   SetCurrent(region.handler);
+  const lir::ValueId slot = ExceptionSlot();
+  const lir::TypeId unwinding = UnwindingType();
   EmitStatement(
       lir::BeginHandlingInstr{
           .exception = Load(
-              lir::Place{
-                  .base = lir::Use{.value = ExceptionSlot()}, .chain = {}},
-              UnwindingType())});
+              lir::Place{.base = lir::Use{.value = slot}, .chain = {}},
+              unwinding)});
   OpenScope(HandlingScope{});
   // What arrived is asked about inside the handling, because the asking is
   // itself a way out of it: what is not the design's goes on from there.
@@ -1758,11 +1760,13 @@ auto FunctionLowerer::LeaveCarrying(lir::Operand effect) -> diag::Result<void> {
 }
 
 auto FunctionLowerer::TakeDepartureIfDue() -> diag::Result<void> {
+  lir::Operand runtime = CurrentRuntime();
+  const lir::TypeId void_type =
+      unit_->TranslateType(unit_->Mir().builtins.void_type);
   auto taken = EmitCallTo(
       lir::ControlEffectTarget{
           .op = lir::ControlEffectTarget::Op::kTakeDepartureIfDue},
-      {CurrentRuntime()},
-      unit_->TranslateType(unit_->Mir().builtins.void_type));
+      {std::move(runtime)}, void_type);
   if (!taken) {
     return std::unexpected(std::move(taken.error()));
   }
@@ -3149,9 +3153,11 @@ auto FunctionLowerer::LowerCoroutineAwait(
   // that consumes no time has already settled when control comes back and
   // there is nothing left to wait for; the answer says which of the two
   // happened.
+  lir::Operand awaiting_runtime = CurrentRuntime();
+  const lir::TypeId answer_type = unit_->MachineBoolType();
   auto awaited = EmitCallTo(
       lir::CoroutineTarget{.op = lir::CoroutineTarget::Op::kAwait},
-      {CurrentRuntime(), *std::move(activation)}, unit_->MachineBoolType());
+      {std::move(awaiting_runtime), *std::move(activation)}, answer_type);
   if (!awaited) {
     return awaited;
   }
@@ -3169,10 +3175,12 @@ auto FunctionLowerer::LowerCoroutineAwait(
   // this one does: what runs next may await again, and a thread carries one
   // awaited execution at a time. What the awaited body raised is raised again
   // here, so this is a point the execution can leave from.
+  lir::Operand releasing_runtime = CurrentRuntime();
+  const lir::TypeId void_type =
+      unit_->TranslateType(unit_->Mir().builtins.void_type);
   auto released = EmitCallTo(
       lir::CoroutineTarget{.op = lir::CoroutineTarget::Op::kRelease},
-      {CurrentRuntime()},
-      unit_->TranslateType(unit_->Mir().builtins.void_type));
+      {std::move(releasing_runtime)}, void_type);
   if (!released) {
     return released;
   }

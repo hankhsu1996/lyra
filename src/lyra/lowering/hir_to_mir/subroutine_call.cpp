@@ -660,8 +660,8 @@ auto SeenAsAny(
       PathBoundReference(
           unit, block, place,
           [&](mir::ExprId leased) {
-            return block.LocalPlace(
-                DeclareLocal(frame, leased), block.exprs.Get(leased).type);
+            const mir::LocalId local = DeclareLocal(frame, leased);
+            return block.LocalPlace(local, block.exprs.Get(leased).type);
           }),
       *ParamTypeOf(unit, seen, hir::ParamDirection::kRef));
   const AccessPath variable{

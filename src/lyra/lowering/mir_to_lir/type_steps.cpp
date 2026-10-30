@@ -358,11 +358,12 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, lir::ValueStep step)
     body.Terminate(lir::BranchTerm{.target = test});
     body.SetCurrent(test);
     const lir::Operand index = body.Load(counter, position);
+    const lir::TypeId boolean = MachineBoolType();
+    const lir::Operand count = constant(array->size);
     const lir::Operand within = body.Emit(
-        MachineBoolType(), lir::BinaryInstr{
-                               .op = lir::BinaryOp::kLessThan,
-                               .lhs = index,
-                               .rhs = constant(array->size)});
+        boolean,
+        lir::BinaryInstr{
+            .op = lir::BinaryOp::kLessThan, .lhs = index, .rhs = count});
     body.Terminate(
         lir::CondBranchTerm{
             .condition = within, .if_true = each, .if_false = done});

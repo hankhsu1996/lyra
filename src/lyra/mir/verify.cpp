@@ -1335,6 +1335,10 @@ auto CodeEntered(const CompilationUnit& unit, const Direct& direct)
       direct.target);
 }
 
+auto TypeOf(const Block& in, ExprId id) -> TypeId {
+  return in.exprs.Get(id).type;
+}
+
 // Every value handed to something of a type it states is a value of that
 // type, as an assignment-like context converts its value to its target's type
 // (LRM 10.8): what an assignment writes and its target, what a whole write
@@ -1357,9 +1361,6 @@ void VerifyValuesMeetTheirTypes(
             describe(), what, DumpType(unit, handed),
             DumpType(unit, expected)));
   };
-  const auto type_of = [&](const Block& in, ExprId id) {
-    return in.exprs.Get(id).type;
-  };
   const Type& result = unit.types.Get(code.result_type);
   const auto* coroutine = result.As<CoroutineType>();
   const TypeId answered =
@@ -1367,8 +1368,8 @@ void VerifyValuesMeetTheirTypes(
   for (const Stmt& stmt : block.stmts) {
     if (const auto* decl = std::get_if<LocalDeclStmt>(&stmt.data)) {
       const TypeId declared = code.locals.Get(decl->target).type;
-      if (type_of(block, decl->init) != declared) {
-        refuse("a local's initializer", declared, type_of(block, decl->init));
+      if (TypeOf(block, decl->init) != declared) {
+        refuse("a local's initializer", declared, TypeOf(block, decl->init));
       }
     }
     if (const auto* returned = std::get_if<ReturnStmt>(&stmt.data)) {
@@ -1382,8 +1383,8 @@ void VerifyValuesMeetTheirTypes(
                 describe(), DumpType(unit, answered)));
       }
       if (returned->value.has_value() &&
-          type_of(block, *returned->value) != answered) {
-        refuse("what it answers", answered, type_of(block, *returned->value));
+          TypeOf(block, *returned->value) != answered) {
+        refuse("what it answers", answered, TypeOf(block, *returned->value));
       }
     }
   }
@@ -1392,56 +1393,56 @@ void VerifyValuesMeetTheirTypes(
     const auto* call = std::get_if<CallExpr>(&expr.data);
     if (const auto* write = std::get_if<AssignExpr>(&expr.data);
         write != nullptr &&
-        type_of(block, write->target) != type_of(block, write->value)) {
+        TypeOf(block, write->target) != TypeOf(block, write->value)) {
       refuse(
-          "an assignment's target", type_of(block, write->target),
-          type_of(block, write->value));
+          "an assignment's target", TypeOf(block, write->target),
+          TypeOf(block, write->value));
     }
     if (call != nullptr && DirectBuiltinFn(*call) == support::BuiltinFn::kSet) {
       const Type& through =
-          unit.types.Get(type_of(block, *CalleeReceiver(call->callee)));
+          unit.types.Get(TypeOf(block, *CalleeReceiver(call->callee)));
       const auto* bits = through.As<BitsReferenceType>();
       const TypeId held =
           bits != nullptr ? bits->bits : through.WrappedValueType();
-      if (type_of(block, call->arguments.at(0)) != held) {
+      if (TypeOf(block, call->arguments.at(0)) != held) {
         refuse(
             "a whole write's storage", held,
-            type_of(block, call->arguments.at(0)));
+            TypeOf(block, call->arguments.at(0)));
       }
     }
     if (const auto* cast = std::get_if<CastExpr>(&expr.data);
         cast != nullptr &&
         !CastReadsAsAnother(
-            unit.types, type_of(block, cast->operand), expr.type)) {
+            unit.types, TypeOf(block, cast->operand), expr.type)) {
       throw InternalError(
           std::format(
               "mir verify: {} casts a value of type {} to type {}, which a "
               "cast "
               "does not join -- please report this as a bug",
-              describe(), DumpType(unit, type_of(block, cast->operand)),
+              describe(), DumpType(unit, TypeOf(block, cast->operand)),
               DumpType(unit, expr.type)));
     }
     if (const auto* choice = std::get_if<ConditionalExpr>(&expr.data)) {
       for (const ExprId arm : {choice->then_value, choice->else_value}) {
-        if (type_of(block, arm) != expr.type) {
-          refuse("an arm of a choice", expr.type, type_of(block, arm));
+        if (TypeOf(block, arm) != expr.type) {
+          refuse("an arm of a choice", expr.type, TypeOf(block, arm));
         }
       }
     }
     if (const auto* steps = std::get_if<BlockExpr>(&expr.data)) {
       const Block& inner = block.child_scopes.Get(steps->scope);
-      if (type_of(inner, steps->value) != expr.type) {
+      if (TypeOf(inner, steps->value) != expr.type) {
         refuse(
             "the value a block ends with", expr.type,
-            type_of(inner, steps->value));
+            TypeOf(inner, steps->value));
       }
     }
     if (const auto* closure = std::get_if<ClosureExpr>(&expr.data)) {
       const ClosureDecl& decl = unit.GetClosure(closure->closure);
       for (const FieldInit& init : closure->field_inits) {
         const TypeId field = decl.fields.Get(init.target).type;
-        if (type_of(block, init.value) != field) {
-          refuse("a capture", field, type_of(block, init.value));
+        if (TypeOf(block, init.value) != field) {
+          refuse("a capture", field, TypeOf(block, init.value));
         }
       }
     }
@@ -1477,7 +1478,7 @@ void VerifyValuesMeetTheirTypes(
         }
       }
     } else if (const auto* indirect = std::get_if<Indirect>(&call->callee)) {
-      const Type& code_type = unit.types.Get(type_of(block, indirect->code));
+      const Type& code_type = unit.types.Get(TypeOf(block, indirect->code));
       if (!code_type.Is<MachineFunctionType>()) {
         continue;
       }
@@ -1494,10 +1495,10 @@ void VerifyValuesMeetTheirTypes(
               describe(), call->arguments.size(), parameters.size()));
     }
     for (std::size_t i = 0; i < parameters.size(); ++i) {
-      if (type_of(block, call->arguments[i]) != parameters[i]) {
+      if (TypeOf(block, call->arguments[i]) != parameters[i]) {
         refuse(
             "an argument of a callable", parameters[i],
-            type_of(block, call->arguments[i]));
+            TypeOf(block, call->arguments[i]));
       }
     }
   }

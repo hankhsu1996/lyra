@@ -54,23 +54,25 @@ auto BuildCombinedArms(
       type.IsIntegral() || type.Is<mir::UnpackedArrayType>() ||
       type.Is<mir::DynamicArrayType>() || type.Is<mir::QueueType>();
   if (combines_by_part) {
+    const mir::ExprId one_value = block.ReadLocal(one, result_type);
+    const mir::ExprId other_value = block.ReadLocal(other, result_type);
     return block.exprs.Add(
         mir::MakeBuiltinCall(
-            unit, block, support::BuiltinFn::kMergeConditional,
-            block.ReadLocal(one, result_type),
-            {block.ReadLocal(other, result_type)}, result_type));
+            unit, block, support::BuiltinFn::kMergeConditional, one_value,
+            {other_value}, result_type));
   }
   const std::array compared{result_type, result_type};
+  const mir::ExprId lhs = block.LocalPlace(one, result_type);
+  const mir::ExprId rhs = block.LocalPlace(other, result_type);
+  const mir::TypeId answer_type = OneBitAnswerType(unit, compared);
   const mir::ExprId equal = block.exprs.Add(BuildMirBinaryExpr(
-      unit, block, hir::BinaryOp::kEquality, block.LocalPlace(one, result_type),
-      block.LocalPlace(other, result_type), OneBitAnswerType(unit, compared)));
-  return BuildSelectionChain(
-      block,
-      std::array{SelectedValue{
-          .selected = ReduceToCondition(unit, block, equal),
-          .value = block.ReadLocal(one, result_type)}},
-      block.exprs.Add(BuildDefaultValueExpr(unit, block, result_type)),
-      result_type);
+      unit, block, hir::BinaryOp::kEquality, lhs, rhs, answer_type));
+  const std::array shared{SelectedValue{
+      .selected = ReduceToCondition(unit, block, equal),
+      .value = block.ReadLocal(one, result_type)}};
+  const mir::ExprId otherwise =
+      block.exprs.Add(BuildDefaultValueExpr(unit, block, result_type));
+  return BuildSelectionChain(block, shared, otherwise, result_type);
 }
 
 // Whether the truth `value` is known to be true, and whether it is known to be
@@ -160,21 +162,19 @@ auto BuildMergingSelection(
     const mir::LocalId held = DeclareLocal(at, *value_or);
     const mir::ExprId combined =
         BuildCombinedArms(unit, block, answer, held, result_type);
+    const std::array merged{SelectedValue{
+        .selected = block.ReadLocal(answered, boolean), .value = combined}};
+    const mir::ExprId held_value = block.ReadLocal(held, result_type);
     AssignLocal(
         unit, block, answer,
-        BuildSelectionChain(
-            block,
-            std::array{SelectedValue{
-                .selected = block.ReadLocal(answered, boolean),
-                .value = combined}},
-            block.ReadLocal(held, result_type), result_type));
+        BuildSelectionChain(block, merged, held_value, result_type));
     AssignLocal(unit, block, answered, BuildMachineBool(unit, block, true));
     return {};
   };
   const auto append_unless_ended = [&](mir::Block step) {
-    body.AppendIfThen(
-        BuildConditionNot(unit, body, body.ReadLocal(ended, boolean)),
-        std::move(step));
+    const mir::ExprId not_ended =
+        BuildConditionNot(unit, body, body.ReadLocal(ended, boolean));
+    body.AppendIfThen(not_ended, std::move(step));
   };
 
   for (const SelectionArm& arm : arms) {
@@ -192,12 +192,11 @@ auto BuildMergingSelection(
         unit, taken, ended,
         BuildIsKnownTrue(
             unit, taken, taken.ReadLocal(predicate, predicate_type)));
-    reached.AppendIfThen(
-        BuildConditionNot(
-            unit, reached,
-            BuildIsKnownFalse(
-                unit, reached, reached.ReadLocal(predicate, predicate_type))),
-        std::move(taken));
+    const mir::ExprId not_known_false = BuildConditionNot(
+        unit, reached,
+        BuildIsKnownFalse(
+            unit, reached, reached.ReadLocal(predicate, predicate_type)));
+    reached.AppendIfThen(not_known_false, std::move(taken));
     append_unless_ended(std::move(reached));
   }
   mir::Block last;
@@ -351,10 +350,11 @@ auto BuildSearchSteps(
     mir::Block step;
     auto term_or = term.evaluate(steps.Frame().WithBlock(&step));
     if (!term_or) return std::unexpected(std::move(term_or.error()));
-    AssignLocal(
-        unit, step, answer,
-        folded(step, step.ReadLocal(answer, type), truth(step, *term_or)));
-    body.AppendIfThen(is_open(body.ReadLocal(answer, type)), std::move(step));
+    const mir::ExprId so_far = step.ReadLocal(answer, type);
+    const mir::ExprId term_truth = truth(step, *term_or);
+    AssignLocal(unit, step, answer, folded(step, so_far, term_truth));
+    const mir::ExprId open = is_open(body.ReadLocal(answer, type));
+    body.AppendIfThen(open, std::move(step));
   }
   return frame.current_block->exprs.Add(
       steps.Build(body.ReadLocal(answer, type)));
@@ -376,9 +376,9 @@ auto AssignInOrder(
     if (!tested) return std::unexpected(std::move(tested.error()));
     AssignLocal(unit, tried, held, ReduceToCondition(unit, tried, *tested));
     const mir::ExprId read = block.ReadLocal(held, boolean);
-    block.AppendIfThen(
-        holding_settles ? BuildConditionNot(unit, block, read) : read,
-        std::move(tried));
+    const mir::ExprId unsettled =
+        holding_settles ? BuildConditionNot(unit, block, read) : read;
+    block.AppendIfThen(unsettled, std::move(tried));
   }
   return {};
 }

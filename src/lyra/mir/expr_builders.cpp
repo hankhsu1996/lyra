@@ -320,8 +320,9 @@ auto MakeSameRepresentationCast(
 auto MakeIntegralConversion(
     const CompilationUnit& unit, const Block& block, ExprId operand,
     TypeId type) -> Expr {
-  if (unit.types.Get(block.exprs.Get(operand).type).Integral() !=
-      unit.types.Get(type).Integral()) {
+  const IntegralType& from =
+      unit.types.Get(block.exprs.Get(operand).type).Integral();
+  if (from != unit.types.Get(type).Integral()) {
     return MakeBuiltinCall(
         unit, block, support::BuiltinFn::kIntegralConvert, std::nullopt,
         {operand}, type);

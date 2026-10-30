@@ -146,8 +146,8 @@ auto BuildEmplacedClosure(
   // `ref` binds -- is read by a call that makes its value.
   for (mir::FieldInit& init : effect.field_inits) {
     if (!mir::ValueLiesInStorage(unit, block, init.value)) {
-      init.value = block.ReadLocal(
-          DeclareLocal(frame, init.value), block.exprs.Get(init.value).type);
+      const mir::LocalId local = DeclareLocal(frame, init.value);
+      init.value = block.ReadLocal(local, block.exprs.Get(init.value).type);
     }
   }
 
@@ -166,17 +166,19 @@ auto BuildEmplacedClosure(
   const mir::LocalId held =
       DeclareLocal(frame, block.exprs.Add(std::move(keeper)));
   const mir::TypeId effect_type = closure.type;
+  const mir::ExprId closure_value = block.exprs.Add(std::move(closure));
+  const mir::ExprId keeper_value = block.ReadLocal(held, keeper_pointer);
+  const mir::TypeId effect_pointer = types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = effect_type,
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kMutable}});
   const mir::ExprId made = block.exprs.Add(
       mir::MakePlacementNewExpr(
-          block.exprs.Add(std::move(closure)),
+          closure_value,
           mir::PlacementAllocation{
-              .allocate = entries->allocate,
-              .arguments = {block.ReadLocal(held, keeper_pointer)}},
-          types.Intern(
-              mir::Type{mir::PointerType{
-                  .pointee = effect_type,
-                  .ownership = mir::PointerOwnership::kBorrowed,
-                  .mutability = mir::Mutability::kMutable}})));
+              .allocate = entries->allocate, .arguments = {keeper_value}},
+          effect_pointer));
   return mir::MakeCallExpr(
       mir::Direct{
           .target = entries->commit,
