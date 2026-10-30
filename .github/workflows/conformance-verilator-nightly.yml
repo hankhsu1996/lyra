@@ -1,4 +1,4 @@
-name: Conformance Suite on Verilator
+name: Conformance Suite on Verilator (Nightly)
 
 # The conformance suite is used against a simulator with nothing of Lyra built
 # or present: the runner is built alone and holds the machine's own Verilator
@@ -6,23 +6,20 @@ name: Conformance Suite on Verilator
 # prints a verdict per case and exits non-zero only where it could not hand a
 # case to the tool, so this asks that the suite works standing alone -- finding
 # its cases, its helpers and its runfiles -- and not that Verilator conforms.
+#
+# It runs on a schedule and never on a pull request: how long it takes is
+# Verilator's and the host compiler's, which no pull request should wait on.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'conformance/**'
-      - '.github/workflows/conformance-verilator.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'conformance/**'
-      - '.github/workflows/conformance-verilator.yml'
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
 
 jobs:
   verilator:
     name: Run the Suite on Verilator
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
