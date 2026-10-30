@@ -1,9 +1,9 @@
 #include "conformance/framework/execution.hpp"
 
-#include <expected>
+#include <chrono>
 #include <filesystem>
 #include <format>
-#include <string>
+#include <optional>
 #include <system_error>
 #include <utility>
 
@@ -14,18 +14,28 @@
 
 namespace conformance::framework {
 
-auto RunOneCase(const Case& test_case, const Reader& reader)
-    -> std::expected<CaseResult, std::string> {
-  const auto here = MakeScratchDir();
-  if (!here) {
-    return std::unexpected(
-        std::format("no directory to run the case in: {}", here.error()));
+auto RunOneCase(
+    const Case& test_case, const Reader& reader,
+    std::optional<std::chrono::seconds> time_limit) -> CaseResult {
+  const auto began = std::chrono::steady_clock::now();
+  std::optional<std::chrono::steady_clock::time_point> deadline;
+  if (time_limit) {
+    deadline = began + *time_limit;
   }
-  Observation seen = reader.Observe(test_case, *here);
+  Observation seen;
+  if (const auto here = MakeScratchDir(); !here) {
+    seen.end = HarnessFailed{
+        std::format("no directory to run the case in: {}", here.error())};
+  } else {
+    seen = reader.Observe(test_case, *here, deadline);
+    std::error_code ignored;
+    std::filesystem::remove_all(*here, ignored);
+  }
   Verdict verdict = JudgeCase(test_case, seen);
-  std::error_code ignored;
-  std::filesystem::remove_all(*here, ignored);
-  return CaseResult{.seen = std::move(seen), .verdict = std::move(verdict)};
+  return CaseResult{
+      .seen = std::move(seen),
+      .verdict = std::move(verdict),
+      .took = std::chrono::steady_clock::now() - began};
 }
 
 }  // namespace conformance::framework

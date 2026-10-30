@@ -31,22 +31,35 @@ using framework::MissingInput;
 using framework::Observation;
 using framework::ObservedReport;
 using framework::ProcessOutcome;
+using framework::Program;
 using framework::Ran;
 using framework::ReadDecimal;
 using framework::ReadMarkers;
 using framework::ReadOutputs;
-using framework::RecordCommand;
 using framework::Rejected;
 using framework::ReportKind;
 using framework::RunChildProcess;
 using framework::RunEnd;
+using framework::RunStep;
 using framework::ToolFailed;
+using framework::ToolIdentity;
 using framework::ToolLacks;
+using framework::VersionOf;
 namespace {
 
-// A guard against a build or a run that never ends. Verilator compiles every
-// case's C++ with the host compiler, which is the slow half.
-constexpr std::chrono::seconds kStuckAfter{600};
+// What Verilator's guide documents it reads from the environment, among what a
+// build and run of a case can reach: where it is installed and which binary it
+// runs, the make it builds with and that make's flags, a wrapper put in front
+// of the C++ compiler, the solver it randomizes with, and how its program
+// places threads.
+constexpr std::array<std::string_view, 7> kEnvironmentRead = {
+    "VERILATOR_ROOT",
+    "VERILATOR_BIN",
+    "MAKE",
+    "MAKEFLAGS",
+    "OBJCACHE",
+    "VERILATOR_SOLVER",
+    "VERILATOR_NUMA_STRATEGY"};
 
 // The line Verilator ends a refusal of the source with, which a failure to
 // build what it wrote from an accepted source never carries, and the words it
@@ -230,7 +243,8 @@ auto FindTool(
   // Where Verilator keeps what it ships, as it reports it, so the standard
   // header a DPI-C source includes is the one it was built against.
   const std::vector<std::string> ask{"--getenv", "VERILATOR_ROOT"};
-  const ProcessOutcome root = RunChildProcess(*exe, ask);
+  const ProcessOutcome root =
+      RunChildProcess(*exe, ask, framework::kQuestionAnsweredWithin);
   std::string_view root_text = root.stdout_text;
   while (root_text.ends_with('\n')) {
     root_text.remove_suffix(1);
@@ -246,21 +260,28 @@ auto FindTool(
           std::filesystem::path(root_text) / "include" / "vltstd"};
 }
 
-auto VersionOf(const Tool& tool) -> std::string {
-  const std::vector<std::string> ask{"--version"};
-  const ProcessOutcome version = RunChildProcess(tool.exe, ask);
-  std::string_view text = version.stdout_text;
-  while (text.ends_with('\n')) {
-    text.remove_suffix(1);
-  }
-  return std::string(text);
-}
-
 Reader::Reader(Tool tool) : tool_(std::move(tool)) {
 }
 
+auto Reader::Identity() const -> ToolIdentity {
+  return ToolIdentity{
+      .name = "verilator",
+      .programs =
+          {Program{
+               .role = "verilator",
+               .path = tool_.exe,
+               .version = VersionOf(tool_.exe)},
+           Program{
+               .role = "c compiler",
+               .path = tool_.c_compiler,
+               .version = VersionOf(tool_.c_compiler)}},
+      .options = {},
+      .environment_read = {kEnvironmentRead.begin(), kEnvironmentRead.end()}};
+}
+
 auto Reader::Observe(
-    const Case& test_case, const std::filesystem::path& directory) const
+    const Case& test_case, const std::filesystem::path& directory,
+    std::optional<std::chrono::steady_clock::time_point> deadline) const
     -> Observation {
   const Tool& tool = tool_;
   Observation seen;
@@ -311,8 +332,15 @@ auto Reader::Observe(
                                            "-I", tool.standard_headers.string(),
                                            "-o", object.string()};
     const ProcessOutcome compiled =
-        RunChildProcess(tool.c_compiler, compile, kStuckAfter, directory);
-    RecordCommand(seen, tool.c_compiler, compile, compiled);
+        RunStep(seen, tool.c_compiler, compile, directory, deadline);
+    // A compile stopped at a limit says nothing of the source, so it ends the
+    // case the way any stopped command does; only one that ran and failed
+    // says the source does not compile.
+    const RunEnd compile_end = EndOf(compiled, kOutOfMemory);
+    if (!std::holds_alternative<Ran>(compile_end)) {
+      seen.end = compile_end;
+      return seen;
+    }
     if (ExitCodeOf(compiled) != 0) {
       seen.end = HarnessFailed{std::format(
           "'{}' does not compile as C against the standard header",
@@ -323,8 +351,7 @@ auto Reader::Observe(
   }
 
   const ProcessOutcome built =
-      RunChildProcess(tool.exe, build, kStuckAfter, directory);
-  RecordCommand(seen, tool.exe, build, built);
+      RunStep(seen, tool.exe, build, directory, deadline);
   const RunEnd build_end = EndOf(built, kOutOfMemory);
   const auto* build_ran = std::get_if<Ran>(&build_end);
   if (build_ran == nullptr) {
@@ -338,8 +365,7 @@ auto Reader::Observe(
 
   const std::filesystem::path program = objects / "program";
   const ProcessOutcome run =
-      RunChildProcess(program, test_case.program_args, kStuckAfter, directory);
-  RecordCommand(seen, program, test_case.program_args, run);
+      RunStep(seen, program, test_case.program_args, directory, deadline);
   seen.end = EndOf(run, kOutOfMemory);
   ReadOutputs(test_case, directory, seen);
   ReadMarkers(run.stdout_text, seen);

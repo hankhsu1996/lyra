@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -83,12 +84,6 @@ auto EndOf(
     const ProcessOutcome& outcome,
     std::span<const std::string_view> out_of_memory) -> RunEnd;
 
-// What a run of one case on one tool showed, in terms no tool owns. Lines the
-// reader recognises as its tool's own report yet cannot place are kept apart
-// from the program's output, since a claim about reports cannot be decided
-// while one of them might be the report it asks about. What the tool and the
-// program wrote is kept apart from the commands that were run, which with it
-// are the evidence a verdict is read from without running the case again.
 // A file the case expects, as the run left it: its text, or nothing where the
 // run wrote no file of that name.
 struct WrittenOutput {
@@ -96,6 +91,14 @@ struct WrittenOutput {
   std::optional<std::string> text;
 };
 
+// What a run of one case on one tool showed, in terms no tool owns. Lines the
+// reader recognises as its tool's own report yet cannot place are kept apart
+// from the program's output, since a claim about reports cannot be decided
+// while one of them might be the report it asks about. The commands that were
+// run are kept with it, as the evidence a verdict is read from without running
+// the case again, each its own, because an exit of 1 from a C compiler, from
+// the tool refusing the source, and from the simulation are three different
+// facts.
 struct Observation {
   RunEnd end;
   bool checks_passed = false;
@@ -103,14 +106,24 @@ struct Observation {
   std::vector<ObservedReport> reports;
   std::vector<std::string> unplaced;
   std::vector<WrittenOutput> outputs;
-  std::string written;
-  std::string evidence;
+  std::vector<Step> steps;
 };
 
-// Adds a command a tool's reader ran, and what it wrote, to the observation.
-void RecordCommand(
+// Runs a command of the case in `directory`, ended at `deadline` where there
+// is one, and keeps it as one of the observation's steps, so no command a
+// reader runs escapes either the case's time or its evidence.
+auto RunStep(
     Observation& seen, const std::filesystem::path& exe,
-    std::span<const std::string> args, const ProcessOutcome& outcome);
+    std::span<const std::string> args, const std::filesystem::path& directory,
+    std::optional<std::chrono::steady_clock::time_point> deadline)
+    -> ProcessOutcome;
+
+// Everything the commands wrote, both streams of each, in the order they ran.
+auto WrittenBy(const Observation& seen) -> std::string;
+
+// The commands, as a person reads them: each one, how it ended, and what it
+// wrote.
+auto Evidence(const Observation& seen) -> std::string;
 
 // The files the case expects, read from the directory the run was made in.
 // What they mean is the judgement's to say; a reader only hands them over.

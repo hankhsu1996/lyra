@@ -27,24 +27,25 @@ using framework::MissingInput;
 using framework::Observation;
 using framework::ObservedReport;
 using framework::ProcessOutcome;
+using framework::Program;
 using framework::Ran;
 using framework::ReadDecimal;
 using framework::ReadMarkers;
 using framework::ReadOutputs;
-using framework::RecordCommand;
 using framework::Rejected;
 using framework::ReportKind;
-using framework::RunChildProcess;
 using framework::RunEnd;
+using framework::RunStep;
 using framework::ToolFailed;
+using framework::ToolIdentity;
+using framework::VersionOf;
 namespace {
 
-// How long one command may take before it is called stuck. It is a guard
-// against a run that never ends, not a budget for how fast a case builds: a
-// case builds its program with whatever compiler the executing machine has, and
-// one with no prepared header takes several times as long as one with, so the
-// guard sits well above the slowest honest build.
-constexpr std::chrono::seconds kStuckAfter{300};
+// What Lyra reads from the environment that can change a build it is handed
+// through a pipe: where its cache of kept builds is, which decides whether a
+// build is made again or taken as kept.
+constexpr std::array<std::string_view, 2> kEnvironmentRead = {
+    "XDG_CACHE_HOME", "HOME"};
 
 // How Lyra says a build ended without a program for a reason other than the
 // program being wrong: a construct it does not carry out yet, and a host tool
@@ -267,8 +268,18 @@ auto DesignArguments(const Case& test_case) -> std::vector<std::string> {
 Reader::Reader(Tool tool) : tool_(std::move(tool)) {
 }
 
+auto Reader::Identity() const -> ToolIdentity {
+  return ToolIdentity{
+      .name = "lyra",
+      .programs = {Program{
+          .role = "lyra", .path = tool_.exe, .version = VersionOf(tool_.exe)}},
+      .options = tool_.build_options,
+      .environment_read = {kEnvironmentRead.begin(), kEnvironmentRead.end()}};
+}
+
 auto Reader::Observe(
-    const Case& test_case, const std::filesystem::path& directory) const
+    const Case& test_case, const std::filesystem::path& directory,
+    std::optional<std::chrono::steady_clock::time_point> deadline) const
     -> Observation {
   const Tool& tool = tool_;
   Observation seen;
@@ -288,8 +299,7 @@ auto Reader::Observe(
   build.insert(build.end(), design.begin(), design.end());
 
   const ProcessOutcome built =
-      RunChildProcess(tool.exe, build, kStuckAfter, directory);
-  RecordCommand(seen, tool.exe, build, built);
+      RunStep(seen, tool.exe, build, directory, deadline);
   const RunEnd build_end = EndOf(built, kCompilerOutOfMemory);
   const auto* build_ran = std::get_if<Ran>(&build_end);
   if (build_ran == nullptr) {
@@ -306,8 +316,7 @@ auto Reader::Observe(
   }
 
   const ProcessOutcome run =
-      RunChildProcess(program, test_case.program_args, kStuckAfter, directory);
-  RecordCommand(seen, program, test_case.program_args, run);
+      RunStep(seen, program, test_case.program_args, directory, deadline);
   seen.end = EndOf(run, kSimulationOutOfMemory);
   ReadOutputs(test_case, directory, seen);
   ReadMarkers(run.stdout_text, seen);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <expected>
 #include <filesystem>
 #include <optional>
@@ -38,18 +39,17 @@ auto FindTool(
     std::optional<std::filesystem::path> c_compiler)
     -> std::expected<Tool, std::string>;
 
-// What Verilator says of its own version, on one line.
-auto VersionOf(const Tool& tool) -> std::string;
-
 // Builds a case's program with Verilator and runs it, reading both as an
 // observation.
 class Reader final : public framework::Reader {
  public:
   explicit Reader(Tool tool);
 
+  [[nodiscard]] auto Identity() const -> framework::ToolIdentity override;
+
   [[nodiscard]] auto Observe(
-      const framework::Case& test_case,
-      const std::filesystem::path& directory) const
+      const framework::Case& test_case, const std::filesystem::path& directory,
+      std::optional<std::chrono::steady_clock::time_point> deadline) const
       -> framework::Observation override;
 
  private:

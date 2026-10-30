@@ -1,6 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -45,9 +47,11 @@ class Reader final : public framework::Reader {
  public:
   explicit Reader(Tool tool);
 
+  [[nodiscard]] auto Identity() const -> framework::ToolIdentity override;
+
   [[nodiscard]] auto Observe(
-      const framework::Case& test_case,
-      const std::filesystem::path& directory) const
+      const framework::Case& test_case, const std::filesystem::path& directory,
+      std::optional<std::chrono::steady_clock::time_point> deadline) const
       -> framework::Observation override;
 
  private:

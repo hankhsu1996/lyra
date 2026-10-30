@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace conformance::framework {
 
@@ -47,6 +48,15 @@ struct ProcessOutcome {
   std::string stderr_text;
 };
 
+// One command that was run, as someone running it again needs it: what was run,
+// where, how it ended, and both streams.
+struct Step {
+  std::filesystem::path program;
+  std::vector<std::string> arguments;
+  std::filesystem::path directory;
+  ProcessOutcome outcome;
+};
+
 // The code the child exited with, where it exited at all.
 auto ExitCodeOf(const ProcessOutcome& outcome) -> std::optional<int>;
 
@@ -55,13 +65,27 @@ auto Describe(const ProcessEnd& end) -> std::string;
 
 // A command and everything it did: what was run, how it ended, and both
 // streams, as a reader who was not there needs them.
-auto Transcript(
-    const std::filesystem::path& exe, std::span<const std::string> args,
-    const ProcessOutcome& outcome) -> std::string;
+auto Transcript(const Step& step) -> std::string;
 
 // The program of that name as the shell that started this would find it, or
 // nothing where no directory on PATH holds one.
 auto FindOnPath(std::string_view name) -> std::optional<std::filesystem::path>;
+
+// How long a child started now may run to end by `deadline`: nothing where
+// there is no deadline, and none at all where it has passed.
+auto TimeLeft(std::optional<std::chrono::steady_clock::time_point> deadline)
+    -> std::optional<std::chrono::seconds>;
+
+// How long a program may take to answer a question about itself -- its
+// version, where it is installed -- which it does at once. It guards against
+// one that never answers, so a run does not wait on it before any case.
+inline constexpr std::chrono::seconds kQuestionAnsweredWithin{30};
+
+// The first line `program --version` prints, which is where a command-line
+// tool says what release it is, or nothing where it says nothing, fails, or
+// does not answer in time.
+auto VersionOf(const std::filesystem::path& program)
+    -> std::optional<std::string>;
 
 // A directory of the caller's own to run in. The name is drawn rather than
 // derived from anything, because a run that repeats must not inherit what an

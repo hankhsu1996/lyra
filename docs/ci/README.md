@@ -437,9 +437,11 @@ a design the suite gains is run without this file changing.
 `conformance-verilator-nightly.yml` builds the conformance suite's runner with nothing of Lyra and
 holds the runner machine's own Verilator to a few cases, the suite's check of its own helper among
 them. It **gates its own run** on the harness alone: the runner exits non-zero only where it could
-not hand a case to the tool, so red means the suite no longer finds its cases, helpers or runfiles
-when it stands alone, never that Verilator gave a verdict. It is a nightly and not a check on a pull
-request because how long it takes is Verilator's and the host compiler's, which no merge waits on.
+not hand a case to the tool or write the run's results, so red means the suite no longer finds its
+cases, helpers or runfiles when it stands alone, never that Verilator gave a verdict. The run's
+results, as JSON, are kept as an artifact of the workflow run. It is a nightly and not a check on a
+pull request because how long it takes is Verilator's and the host compiler's, which no merge waits
+on.
 
 `benchmark-nightly.yml` builds every case under `tests/benchmark/` on each backend and times it
 beside Verilator on the same sources, giving each tool the amount of work it needs to reach the same

@@ -33,9 +33,11 @@ using conformance::adapters::lyra::DesignArguments;
 using conformance::adapters::lyra::kInternalErrorReport;
 using conformance::adapters::lyra::Tool;
 using conformance::framework::Case;
+using conformance::framework::CaseResult;
 using conformance::framework::Conforms;
 using conformance::framework::Describe;
 using conformance::framework::DoesNotConform;
+using conformance::framework::Evidence;
 using conformance::framework::ExitCodeOf;
 using conformance::framework::HarnessFailed;
 using conformance::framework::Observation;
@@ -43,13 +45,20 @@ using conformance::framework::ProcessOutcome;
 using conformance::framework::RejectedBeforeRunning;
 using conformance::framework::RunChildProcess;
 using conformance::framework::RunOneCase;
+using conformance::framework::Step;
+using conformance::framework::ToolIdentity;
 using conformance::framework::Transcript;
 using conformance::framework::Verdict;
+using conformance::framework::WrittenBy;
 
 namespace {
 
-// How long elaborating a parked case may take before it is called stuck: a
-// guard against one that never ends, well above any honest elaboration.
+// How long one case, or the elaboration of a parked one, may take before it is
+// called stuck. It is a guard against a run that never ends, so one stuck case
+// does not hold up the rest of its shard, and not a budget for how fast a case
+// builds: a case builds its program with whatever compiler the executing
+// machine has, and one with no prepared header takes several times as long as
+// one with, so the guard sits well above the slowest honest build and run.
 constexpr std::chrono::seconds kStuckAfter{300};
 
 // What every build of a case on a path is given beyond the design: the path's
@@ -116,8 +125,13 @@ class AgainstGeneratedHeader final : public conformance::framework::Reader {
   explicit AgainstGeneratedHeader(Tool tool) : lyra_(std::move(tool)) {
   }
 
+  [[nodiscard]] auto Identity() const -> ToolIdentity override {
+    return lyra_.Identity();
+  }
+
   [[nodiscard]] auto Observe(
-      const Case& test_case, const std::filesystem::path& directory) const
+      const Case& test_case, const std::filesystem::path& directory,
+      std::optional<std::chrono::steady_clock::time_point> deadline) const
       -> Observation override {
     const auto checked = WithGeneratedHeader(test_case, directory);
     if (!checked) {
@@ -125,7 +139,7 @@ class AgainstGeneratedHeader final : public conformance::framework::Reader {
       seen.end = HarnessFailed{checked.error()};
       return seen;
     }
-    return lyra_.Observe(*checked, directory);
+    return lyra_.Observe(*checked, directory, deadline);
   }
 
  private:
@@ -219,11 +233,16 @@ auto CheckParkedCase(
   const std::vector<std::string> design = DesignArguments(test_case);
   argv.insert(argv.end(), design.begin(), design.end());
 
-  const ProcessOutcome outcome = RunChildProcess(lyra_exe, argv, kStuckAfter);
+  std::error_code no_directory;
+  const Step step{
+      .program = lyra_exe,
+      .arguments = argv,
+      .directory = std::filesystem::current_path(no_directory),
+      .outcome = RunChildProcess(lyra_exe, argv, kStuckAfter)};
+  const ProcessOutcome& outcome = step.outcome;
   const auto report = [&](std::string_view what) {
     return std::format(
-        "{}\n\ncase: {}\n\n{}", what, test_case.id,
-        Transcript(lyra_exe, argv, outcome));
+        "{}\n\ncase: {}\n\n{}", what, test_case.id, Transcript(step));
   };
 
   // A case the standard requires a tool to reject is parked the same way any
@@ -253,19 +272,17 @@ auto RunConformanceCase(
     -> std::optional<std::string> {
   const AgainstGeneratedHeader reader(
       Tool{.exe = lyra_exe, .build_options = BuildOptions(path)});
-  const auto result = RunOneCase(test_case, reader);
-  if (!result) {
-    return std::format("{}: {}", test_case.id, result.error());
-  }
-  const Observation& seen = result->seen;
-  const Verdict& verdict = result->verdict;
+  const CaseResult result = RunOneCase(test_case, reader, kStuckAfter);
+  const Observation& seen = result.seen;
+  const Verdict& verdict = result.verdict;
   const auto report = [&](std::string_view what) {
     return std::format(
         "{}\n\ncase: {}\npath: {}\nverdict: {}\n\n{}", what, test_case.id,
-        path.name, Describe(verdict), seen.evidence);
+        path.name, Describe(verdict), Evidence(seen));
   };
+  const std::string written = WrittenBy(seen);
   const auto mentions = [&](std::string_view text) {
-    return seen.written.find(text) != std::string::npos;
+    return written.find(text) != std::string::npos;
   };
 
   // A compiler bug is not a limitation and not a wrong answer, so it is neither

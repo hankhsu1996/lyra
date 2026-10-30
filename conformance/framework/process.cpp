@@ -14,7 +14,6 @@
 #include <filesystem>
 #include <format>
 #include <optional>
-#include <ostream>
 #include <poll.h>
 #include <span>
 #include <spawn.h>
@@ -24,7 +23,6 @@
 #include <sys/wait.h>
 #include <system_error>
 #include <unistd.h>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -333,9 +331,39 @@ auto FindOnPath(std::string_view name) -> std::optional<std::filesystem::path> {
   return std::nullopt;
 }
 
+auto TimeLeft(std::optional<std::chrono::steady_clock::time_point> deadline)
+    -> std::optional<std::chrono::seconds> {
+  if (!deadline) {
+    return std::nullopt;
+  }
+  const auto left = std::chrono::ceil<std::chrono::seconds>(
+      *deadline - std::chrono::steady_clock::now());
+  return std::max(left, std::chrono::seconds::zero());
+}
+
+auto VersionOf(const std::filesystem::path& program)
+    -> std::optional<std::string> {
+  const std::vector<std::string> ask{"--version"};
+  const ProcessOutcome answer =
+      RunChildProcess(program, ask, kQuestionAnsweredWithin);
+  const std::string_view text = answer.stdout_text;
+  const std::string_view first = text.substr(0, text.find('\n'));
+  if (ExitCodeOf(answer) != 0 || first.empty()) {
+    return std::nullopt;
+  }
+  return std::string(first);
+}
+
 auto MakeScratchDir() -> std::expected<std::filesystem::path, std::string> {
-  const auto base =
-      std::filesystem::temp_directory_path() / "conformance-XXXXXX";
+  std::error_code no_temporary;
+  const std::filesystem::path temporary =
+      std::filesystem::temp_directory_path(no_temporary);
+  if (no_temporary) {
+    return std::unexpected(
+        std::format(
+            "no directory for temporary files: {}", no_temporary.message()));
+  }
+  const auto base = temporary / "conformance-XXXXXX";
   std::string templ = base.string();
   if (mkdtemp(templ.data()) == nullptr) {
     return std::unexpected(
@@ -372,17 +400,16 @@ auto Describe(const ProcessEnd& end) -> std::string {
       end);
 }
 
-auto Transcript(
-    const std::filesystem::path& exe, std::span<const std::string> args,
-    const ProcessOutcome& outcome) -> std::string {
-  std::string command = exe.string();
-  for (const std::string& arg : args) {
+auto Transcript(const Step& step) -> std::string {
+  std::string command = step.program.string();
+  for (const std::string& arg : step.arguments) {
     command += ' ';
     command += arg;
   }
   return std::format(
-      "$ {}\n{}\nstdout:\n{}\nstderr:\n{}\n", command, Describe(outcome.end),
-      outcome.stdout_text, outcome.stderr_text);
+      "$ {}\n{}\nstdout:\n{}\nstderr:\n{}\n", command,
+      Describe(step.outcome.end), step.outcome.stdout_text,
+      step.outcome.stderr_text);
 }
 
 }  // namespace conformance::framework
