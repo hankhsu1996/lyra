@@ -211,11 +211,14 @@ That resolution is **checked, not asserted**. Which scope the foreign side estab
 the compiler can know: LRM 35.5.3 obliges the caller to reach an export only from its own scope and
 obliges `svSetScope` to name a scope that declares it, and neither obligation is enforceable on this
 side. The lookup is where that is settled -- a scope that publishes no entry under the name is
-reported, not proceeded past. What the lookup returns is generated code of the scope it was found
-on, so narrowing that scope to the entry's own instance type needs no second check: the pairing is
-what the table states. Every other typed recovery in the compiler rests on a compile-time proof -- a
-resolved reference, an explicit receiver parameter, a scope the runtime itself allocated -- and this
-one rests on a runtime lookup that has to succeed before any receiver exists.
+reported, not proceeded past. Before it, the handle is held to being a scope at all: foreign code
+holds a scope only as the C layer handed it out, so an address `svSetScope` is given that was never
+handed out is kept as no scope, and an export reached under it is reported rather than looked up
+through it. What the lookup returns is generated code of the scope it was found on, so narrowing
+that scope to the entry's own instance type needs no second check: the pairing is what the table
+states. Every other typed recovery in the compiler rests on a compile-time proof -- a resolved
+reference, an explicit receiver parameter, a scope the runtime itself allocated -- and this one
+rests on a runtime lookup that has to succeed before any receiver exists.
 
 Invariant: the DPI export context is valid only while a Lyra simulation engine is actively running
 on the current thread. Nested foreign entries (an import called from inside an export) push and pop

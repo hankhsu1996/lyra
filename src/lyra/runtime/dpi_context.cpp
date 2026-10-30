@@ -1,10 +1,12 @@
 #include "lyra/runtime/dpi_context.hpp"
 
 #include <cstdint>
+#include <variant>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
-#include "lyra/runtime/dpi_scope_registry.hpp"
+#include "lyra/runtime/dpi_scope_handles.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -28,15 +30,20 @@ void LeaveDpiScope(RuntimeEffects& effects) {
   }
 }
 
-auto CurrentDpiScope() -> Scope* {
+auto CurrentDpiScope() -> CurrentDpiHandle {
   RunningState* running = AmbientRunContext::Current().Effects().TryRunning();
-  return running == nullptr ? nullptr : running->import_calls.CurrentScope();
+  if (running == nullptr) {
+    return static_cast<Scope*>(nullptr);
+  }
+  return running->import_calls.Current();
 }
 
-auto ReplaceDpiScope(Scope* scope) -> Scope* {
+auto ReplaceDpiScope(CurrentDpiHandle handle) -> CurrentDpiHandle {
   RunningState* running = AmbientRunContext::Current().Effects().TryRunning();
-  return running == nullptr ? nullptr
-                            : running->import_calls.ReplaceScope(scope);
+  if (running == nullptr) {
+    return static_cast<Scope*>(nullptr);
+  }
+  return running->import_calls.Replace(handle);
 }
 
 auto HandStringToForeignCaller(
@@ -130,9 +137,25 @@ struct SvTimeVal {
 };
 constexpr std::int32_t kVpiSimTime = 2;
 
-// The scope directory answering the name and user-data queries.
-auto Directory() -> lyra::runtime::DpiScopeRegistry& {
-  return lyra::runtime::AmbientRunContext::Current().ScopeRegistry();
+// The scope handles this run has given foreign code, which answer the name and
+// user-data queries.
+auto Handles() -> lyra::runtime::DpiScopeHandles& {
+  return lyra::runtime::AmbientRunContext::Current().ScopeHandles();
+}
+
+// What foreign code is given for the handle an import call has current: a
+// scope, which it may pass back from then on, or the address it set, which
+// stays no scope.
+auto HandOut(const lyra::runtime::CurrentDpiHandle& handle) -> void* {
+  return std::visit(
+      lyra::Overloaded{
+          [](lyra::runtime::Scope* scope) -> void* {
+            return Handles().Issue(scope);
+          },
+          [](const lyra::runtime::UnissuedHandle& unissued) {
+            return unissued.address;
+          }},
+      handle);
 }
 
 // The run a time query reads its clock and its precision from.
@@ -141,8 +164,8 @@ auto Effects() -> lyra::runtime::RuntimeEffects& {
 }
 
 // Resolves a time-query scope handle: a null handle is legal (the query is at
-// the simulation level), a non-null handle must be registered. Returns false
-// for an unregistered non-null handle, which the query reports as an error.
+// the simulation level), a non-null one must have been handed out. Returns
+// false for any other, which the query reports as an error.
 auto ResolveTimeScope(void* scope, const lyra::runtime::Scope** resolved)
     -> bool {
   if (scope == nullptr) {
@@ -150,7 +173,7 @@ auto ResolveTimeScope(void* scope, const lyra::runtime::Scope** resolved)
     return true;
   }
   const auto* handle = static_cast<const lyra::runtime::Scope*>(scope);
-  if (!Directory().IsValidHandle(handle)) {
+  if (!Handles().IsIssued(handle)) {
     return false;
   }
   *resolved = handle;
@@ -184,39 +207,49 @@ auto EffectiveTimePowers(
 
 // The Annex H context, time and disable surface, linked into the simulation
 // binary and resolved against the user's C by name. `svScope` is `void*`; a
-// handle is a `runtime::Scope*`. The current scope is the innermost entry of
-// the running import call chain; the directory answers the name and user-data
-// queries; a time query reports the scope's effective unit or precision, or the
-// simulation-level value for a null scope; and the two disable entries are how
-// foreign code reads and answers the protocol of LRM 35.9. Errors follow the
-// svdpi contract -- a null handle, null out slot, or invalid handle yields the
+// handle is a `runtime::Scope*` the C layer handed out. The current scope is
+// the innermost entry of the running import call chain; the handles handed out
+// answer the name and user-data queries; a time query reports the scope's
+// effective unit or precision, or the simulation-level value for a null scope;
+// and the two disable entries are how foreign code reads and answers the
+// protocol of LRM 35.9. Every entry that answers a scope hands it out, which is
+// what makes it one foreign code may pass back. Errors follow the svdpi
+// contract -- a null handle, null out slot, or invalid handle yields the
 // documented null / -1 -- and nothing here throws across the C boundary.
 extern "C" {
 
 auto svGetScope() -> void* {
-  return lyra::runtime::CurrentDpiScope();
+  return HandOut(lyra::runtime::CurrentDpiScope());
 }
 
+// Whether the address is a scope is decided here, where it arrives, because
+// only a scope this run handed out is one (LRM Annex H.9.3).
 auto svSetScope(void* scope) -> void* {
-  return lyra::runtime::ReplaceDpiScope(
-      static_cast<lyra::runtime::Scope*>(scope));
+  auto* given = static_cast<lyra::runtime::Scope*>(scope);
+  const lyra::runtime::CurrentDpiHandle installed =
+      given == nullptr || Handles().IsIssued(given)
+          ? lyra::runtime::CurrentDpiHandle{given}
+          : lyra::runtime::CurrentDpiHandle{
+                lyra::runtime::UnissuedHandle{.address = scope}};
+  return HandOut(lyra::runtime::ReplaceDpiScope(installed));
 }
 
 auto svGetNameFromScope(void* scope) -> const char* {
-  return Directory().NameOf(static_cast<const lyra::runtime::Scope*>(scope));
+  return Handles().NameOf(static_cast<const lyra::runtime::Scope*>(scope));
 }
 
 auto svGetScopeFromName(const char* name) -> void* {
-  return name == nullptr ? nullptr : Directory().ScopeOfName(name);
+  return name == nullptr ? nullptr
+                         : Handles().Issue(Handles().ScopeOfName(name));
 }
 
 auto svPutUserData(void* scope, void* key, void* data) -> int {
-  return Directory().PutUserData(
+  return Handles().PutUserData(
       static_cast<const lyra::runtime::Scope*>(scope), key, data);
 }
 
 auto svGetUserData(void* scope, void* key) -> void* {
-  return Directory().GetUserData(
+  return Handles().GetUserData(
       static_cast<const lyra::runtime::Scope*>(scope), key);
 }
 

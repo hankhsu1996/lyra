@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <list>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/value/string.hpp"
@@ -10,13 +12,24 @@ namespace lyra::runtime {
 
 class Scope;
 
+// An address foreign code gave `svSetScope` that no DPI function returned, so
+// no scope (LRM Annex H.9.3). It is kept so that `svGetScope` reports what was
+// set, and is never read through.
+struct UnissuedHandle {
+  void* address;
+};
+
+// What an import call has current: a scope -- null where the import's
+// declaration sits in no instance -- or an address that is none.
+using CurrentDpiHandle = std::variant<Scope*, UnissuedHandle>;
+
 // The DPI-C import calls this execution is inside (LRM 35.5.3), innermost last.
 // A `context` import enters one for the duration of its foreign call and leaves
 // it however that call ends, so the chain is non-empty only inside one -- which
 // is why the clause states its properties over the chain rather than over any
 // one imported subroutine.
 //
-// An entry carries the scope the call made current, which an export the foreign
+// An entry carries the handle the call has current, which an export the foreign
 // side calls back resolves against, and whether the foreign frame has
 // acknowledged that this execution must stop (LRM 35.9 item c). Both are facts
 // of the call rather than of the execution: a call reached from inside another
@@ -34,7 +47,7 @@ class Scope;
 class ImportCallChain {
  public:
   void Enter(Scope* scope) {
-    calls_.push_back(ImportCall{.scope = scope, .kept_from = kept_.size()});
+    calls_.push_back(ImportCall{.current = scope, .kept_from = kept_.size()});
   }
 
   void Leave() {
@@ -50,20 +63,21 @@ class ImportCallChain {
 
   // `svGetScope`, which reports no scope where no foreign call is running
   // rather than faulting.
-  [[nodiscard]] auto CurrentScope() const -> Scope* {
-    return calls_.empty() ? nullptr : calls_.back().scope;
+  [[nodiscard]] auto Current() const -> CurrentDpiHandle {
+    if (calls_.empty()) {
+      return static_cast<Scope*>(nullptr);
+    }
+    return calls_.back().current;
   }
 
   // `svSetScope`: retarget the innermost entry, reporting the one replaced.
   // Outside any context import there is no entry to retarget, so it reports
-  // null rather than fabricating one with no boundary to leave it by.
-  auto ReplaceScope(Scope* scope) -> Scope* {
+  // no scope rather than fabricating one with no boundary to leave it by.
+  auto Replace(CurrentDpiHandle handle) -> CurrentDpiHandle {
     if (calls_.empty()) {
-      return nullptr;
+      return static_cast<Scope*>(nullptr);
     }
-    Scope* previous = calls_.back().scope;
-    calls_.back().scope = scope;
-    return previous;
+    return std::exchange(calls_.back().current, handle);
   }
 
   // `svAckDisabledState` (LRM 35.9 item c): the foreign frame now running says
@@ -92,7 +106,7 @@ class ImportCallChain {
 
  private:
   struct ImportCall {
-    Scope* scope;
+    CurrentDpiHandle current;
     bool acknowledged_stop = false;
     // How many strings were kept when the call was entered, which is how many
     // are left once it is left.

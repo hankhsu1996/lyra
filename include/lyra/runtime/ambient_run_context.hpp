@@ -1,7 +1,7 @@
 #pragma once
 
 #include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/dpi_scope_registry.hpp"
+#include "lyra/runtime/dpi_scope_handles.hpp"
 #include "lyra/runtime/foreign_execution.hpp"
 #include "lyra/runtime/scope_info.hpp"
 
@@ -15,8 +15,8 @@ class RuntimeEffects;
 // that queries the DPI scope surface (LRM 35.5.3, Annex H), reaches the runtime
 // with plain C arguments and no design pointer, so it has nothing to reach the
 // run from unless the runtime anchors it ambiently. This holds the run's
-// effects facade for the executing process and time queries, and the DPI scope
-// directory built from the design root.
+// effects facade for the executing process and time queries, and the scope
+// handles the run has given foreign code.
 //
 // It is an RAII guard over a thread-local slot: installed once around the
 // simulation run at the single run entry, and torn down when the run returns.
@@ -24,7 +24,7 @@ class RuntimeEffects;
 // thread; a callback on a different thread must install its own.
 class AmbientRunContext {
  public:
-  AmbientRunContext(Scope* root, RuntimeEffects& effects);
+  AmbientRunContext(Scope& root, RuntimeEffects& effects);
   ~AmbientRunContext();
   AmbientRunContext(const AmbientRunContext&) = delete;
   auto operator=(const AmbientRunContext&) -> AmbientRunContext& = delete;
@@ -35,15 +35,15 @@ class AmbientRunContext {
     return *effects_;
   }
 
-  [[nodiscard]] auto ScopeRegistry() -> DpiScopeRegistry& {
-    return scope_registry_;
+  [[nodiscard]] auto ScopeHandles() -> DpiScopeHandles& {
+    return scope_handles_;
   }
 
   static auto Current() -> AmbientRunContext&;
 
  private:
   RuntimeEffects* effects_;
-  DpiScopeRegistry scope_registry_;
+  DpiScopeHandles scope_handles_;
 };
 
 // The scope a module-scoped exported subroutine runs against: the current DPI
@@ -52,7 +52,9 @@ class AmbientRunContext {
 // scope, or one svSetScope redirected to -- and is the exported method's
 // receiver. Throws where no context import's call is running, or where one is
 // and no scope is current -- an import declared in a package with no
-// svSetScope -- both of which LRM 35.5.3 makes an error.
+// svSetScope -- both of which LRM 35.5.3 makes an error. It also throws where
+// svSetScope was given a handle the simulation never handed out, which is no
+// scope and cannot be read as one.
 auto CurrentExportScope() -> Scope*;
 
 // The entry `scope` publishes for the exported subroutine of this name, with

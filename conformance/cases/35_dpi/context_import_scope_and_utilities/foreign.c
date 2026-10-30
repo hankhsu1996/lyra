@@ -57,6 +57,37 @@ int32_t user_data_round_trip(int32_t token) {
   return (int32_t)(intptr_t)svGetUserData(scope, (void*)&user_key);
 }
 
+/* One bit per refusal: a handle the C layer never gave out is an invalid
+   svScope, for which storing and reading user data and asking the time all
+   report an error, and a name no scope carries finds nothing
+   (LRM Annex H.9.3, H.13). The address of a static C object is such a handle,
+   since nothing the C layer hands out points into the C code. */
+static const int64_t not_a_scope[8];
+
+int32_t invalid_scope_refusals(void) {
+  svScope invalid = (svScope)not_a_scope;
+  int32_t power = 0;
+  svTimeVal now;
+  now.type = sv_sim_time;
+  int32_t result = 0;
+  if (svPutUserData(invalid, (void*)&user_key, (void*)(intptr_t)1) == -1) {
+    result |= 1;
+  }
+  if (svGetUserData(invalid, (void*)&user_key) == NULL) {
+    result |= 2;
+  }
+  if (svGetTimeUnit(invalid, &power) == -1) {
+    result |= 4;
+  }
+  if (svGetTime(invalid, &now) == -1) {
+    result |= 8;
+  }
+  if (svGetScopeFromName("Top.absent") == NULL) {
+    result |= 16;
+  }
+  return result;
+}
+
 int32_t time_unit_power(void) {
   int32_t power = 0;
   if (svGetTimeUnit(svGetScope(), &power) != 0) {

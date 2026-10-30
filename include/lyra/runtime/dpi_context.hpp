@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -29,8 +30,8 @@ void LeaveDpiScope(RuntimeEffects& effects);
 // running is not a case of its own: such a query is one no imported subroutine
 // reached, which reports no scope exactly as a query from outside a context
 // import's call does.
-[[nodiscard]] auto CurrentDpiScope() -> Scope*;
-auto ReplaceDpiScope(Scope* scope) -> Scope*;
+[[nodiscard]] auto CurrentDpiScope() -> CurrentDpiHandle;
+auto ReplaceDpiScope(CurrentDpiHandle handle) -> CurrentDpiHandle;
 
 // A string an export hands to the foreign code that called it (LRM Annex
 // H.8.10), as characters the chain keeps until the import call that let that
