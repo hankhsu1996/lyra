@@ -7,6 +7,7 @@
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -46,6 +47,27 @@ using framework::ToolIdentity;
 using framework::ToolLacks;
 using framework::VersionOf;
 namespace {
+
+// The C++ compiler Verilator's build file sets for every build, written
+// `CXX = <name>` in `include/verilated.mk` under where Verilator is
+// installed, and found on PATH as make finds it.
+auto BuildCompilerOf(const std::filesystem::path& root)
+    -> std::optional<std::filesystem::path> {
+  std::ifstream build_file(root / "include" / "verilated.mk");
+  constexpr std::string_view kSetting = "CXX = ";
+  std::string line;
+  while (std::getline(build_file, line)) {
+    if (!line.starts_with(kSetting)) {
+      continue;
+    }
+    const std::string name = line.substr(kSetting.size());
+    if (std::filesystem::path(name).is_absolute()) {
+      return name;
+    }
+    return FindOnPath(name);
+  }
+  return std::nullopt;
+}
 
 // What Verilator's guide documents it reads from the environment, among what a
 // build and run of a case can reach: where it is installed and which binary it
@@ -229,7 +251,8 @@ void ReadReports(std::string_view stream, Observation& seen) {
 
 auto FindTool(
     std::optional<std::filesystem::path> exe,
-    std::optional<std::filesystem::path> c_compiler)
+    std::optional<std::filesystem::path> c_compiler,
+    std::vector<std::string> build_options)
     -> std::expected<Tool, std::string> {
   if (!exe) {
     exe = FindOnPath("verilator");
@@ -253,29 +276,39 @@ auto FindTool(
     return std::unexpected(
         std::format("'{}' did not say where it is installed", exe->string()));
   }
+  const std::filesystem::path installed(root_text);
   return Tool{
       .exe = *exe,
       .c_compiler = *c_compiler,
-      .standard_headers =
-          std::filesystem::path(root_text) / "include" / "vltstd"};
+      .standard_headers = installed / "include" / "vltstd",
+      .cxx = BuildCompilerOf(installed),
+      .build_options = std::move(build_options)};
 }
 
 Reader::Reader(Tool tool) : tool_(std::move(tool)) {
 }
 
 auto Reader::Identity() const -> ToolIdentity {
+  std::vector<Program> programs{
+      Program{
+          .role = "verilator",
+          .path = tool_.exe,
+          .version = VersionOf(tool_.exe)},
+      Program{
+          .role = "c compiler",
+          .path = tool_.c_compiler,
+          .version = VersionOf(tool_.c_compiler)}};
+  if (tool_.cxx) {
+    programs.push_back(
+        Program{
+            .role = "c++ compiler",
+            .path = *tool_.cxx,
+            .version = VersionOf(*tool_.cxx)});
+  }
   return ToolIdentity{
       .name = "verilator",
-      .programs =
-          {Program{
-               .role = "verilator",
-               .path = tool_.exe,
-               .version = VersionOf(tool_.exe)},
-           Program{
-               .role = "c compiler",
-               .path = tool_.c_compiler,
-               .version = VersionOf(tool_.c_compiler)}},
-      .options = {},
+      .programs = std::move(programs),
+      .options = tool_.build_options,
       .environment_read = {kEnvironmentRead.begin(), kEnvironmentRead.end()}};
 }
 
@@ -306,6 +339,8 @@ auto Reader::Observe(
                                  "--build-jobs",   "1",          "-Wno-fatal",
                                  "-Wno-lint",      "-Wno-style", "--Mdir",
                                  objects.string(), "-o",         "program"};
+  build.insert(
+      build.end(), tool.build_options.begin(), tool.build_options.end());
   if (test_case.tops.size() == 1) {
     build.emplace_back("--top-module");
     build.push_back(test_case.tops.front());

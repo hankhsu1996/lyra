@@ -1,11 +1,14 @@
 #include "conformance/adapters/lyra/reader.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <iterator>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -22,6 +25,7 @@ namespace conformance::adapters::lyra {
 using framework::Case;
 using framework::CompilationUnits;
 using framework::EndOf;
+using framework::FindOnPath;
 using framework::HarnessFailed;
 using framework::MissingInput;
 using framework::Observation;
@@ -46,6 +50,24 @@ namespace {
 // build is made again or taken as kept.
 constexpr std::array<std::string_view, 2> kEnvironmentRead = {
     "XDG_CACHE_HOME", "HOME"};
+
+// The C++ compiler Lyra builds and links every program with, found the way
+// Lyra finds it: the one the build options name with `--cxx`, else the first
+// of `clang++` and `c++` on PATH. A verdict can move with that compiler, so a
+// run names it beside Lyra.
+auto HostCompiler(std::span<const std::string> build_options)
+    -> std::optional<std::filesystem::path> {
+  const auto named = std::ranges::find(build_options, "--cxx");
+  if (named != build_options.end() && std::next(named) != build_options.end()) {
+    return std::filesystem::path(*std::next(named));
+  }
+  for (const std::string_view usual : {"clang++", "c++"}) {
+    if (auto found = FindOnPath(usual)) {
+      return found;
+    }
+  }
+  return std::nullopt;
+}
 
 // How Lyra says a build ended without a program for a reason other than the
 // program being wrong: a construct it does not carry out yet, and a host tool
@@ -269,10 +291,16 @@ Reader::Reader(Tool tool) : tool_(std::move(tool)) {
 }
 
 auto Reader::Identity() const -> ToolIdentity {
+  std::vector<Program> programs{Program{
+      .role = "lyra", .path = tool_.exe, .version = VersionOf(tool_.exe)}};
+  if (const auto cxx = HostCompiler(tool_.build_options)) {
+    programs.push_back(
+        Program{
+            .role = "c++ compiler", .path = *cxx, .version = VersionOf(*cxx)});
+  }
   return ToolIdentity{
       .name = "lyra",
-      .programs = {Program{
-          .role = "lyra", .path = tool_.exe, .version = VersionOf(tool_.exe)}},
+      .programs = std::move(programs),
       .options = tool_.build_options,
       .environment_read = {kEnvironmentRead.begin(), kEnvironmentRead.end()}};
 }

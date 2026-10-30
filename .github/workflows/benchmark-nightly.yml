@@ -25,8 +25,13 @@ jobs:
         with:
           tools: llvm
 
+      # The release the conformance nightly is held to as well, so the two
+      # nightlies' Verilator is one tool and its column moves only with this
+      # line.
       - name: Setup Verilator
         uses: veryl-lang/setup-verilator@v1
+        with:
+          version: '5.052'
 
       - name: Log tool versions
         run: |
