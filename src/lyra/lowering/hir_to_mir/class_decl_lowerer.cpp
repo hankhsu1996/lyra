@@ -83,7 +83,7 @@ class HookBody {
             make_frame(link_)
                 .WithBlock(&code_.Body())
                 .WithBindings(&bindings_)
-                .WithBodyCanWait(false),
+                .WithRunsAsFunctionCall(true),
             shape, CallableForm::kInstanceMember)),
         problem_(problem_type.transform([&](mir::TypeId type) {
           return Handed{
@@ -829,7 +829,7 @@ auto ClassDeclLowerer::PopulateBodies(
       BodyFrame(declaring_frame, mir_class, scope_link)
           .WithBlock(&ctor_block)
           .WithBindings(&ctor_bindings)
-          .WithBodyCanWait(false),
+          .WithRunsAsFunctionCall(true),
       shape, CallableForm::kConstructor);
   const WalkFrame& frame = bound.frame;
   std::vector<mir::LocalId> ctor_params = std::move(bound.params);

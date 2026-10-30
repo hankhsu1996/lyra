@@ -11,10 +11,10 @@ namespace lyra::lowering::hir_to_mir {
 auto DeclareVariable(
     mir::CompilationUnit& unit, CallableBindings& bindings, mir::Block& block,
     BindingOriginId origin, const std::optional<std::string>& name,
-    mir::TypeId value_type, bool body_can_wait) -> DeclaredVariable {
+    mir::TypeId value_type, bool runs_as_function_call) -> DeclaredVariable {
   const mir::TypeId held_as =
-      body_can_wait ? mir::ObservableCellOf(unit.types, value_type)
-                    : value_type;
+      runs_as_function_call ? value_type
+                            : mir::ObservableCellOf(unit.types, value_type);
   const mir::LocalId local = bindings.DeclareProcedural(origin, name, held_as);
   if (!unit.types.Get(held_as).Is<mir::ObservableType>()) {
     return DeclaredVariable{.local = local, .type = held_as};

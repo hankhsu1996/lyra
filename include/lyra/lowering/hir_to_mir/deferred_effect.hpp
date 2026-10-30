@@ -10,6 +10,7 @@
 #include "lyra/hir/timing.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -58,12 +59,15 @@ concept DeferredEffectPlan = requires(
 // trigger. Everything the effect needs is read where the statement is reached
 // and only the applying waits, and one statement's whole effect goes in one of
 // these, so a control it carries is read once however many places it writes.
+// Where the body runs as a function call, the statement first asks whether the
+// thread calling it may schedule past the call's return (LRM 13.4.4).
 template <typename Capture, typename Apply>
   requires DeferredEffectPlan<Capture, Apply>
 auto BuildDeferredEffect(
     ProcessLowerer& process, WalkFrame frame,
     const std::optional<hir::DelayOrEventControl>& control, Capture capture,
     Apply apply) -> diag::Result<mir::Expr> {
+  AppendScheduleAfterReturnRequirement(process.Owner(), frame);
   // An event control is the one form whose slot is not knowable here, so it is
   // the one that needs an execution of its own to find it, which takes the
   // closure over; every other form makes the closure where the region's effects

@@ -22,8 +22,9 @@ namespace lyra::lowering::hir_to_mir {
 // reach the variable may wait on it (LRM 9.4.2) -- the branches the body forks
 // and the subroutines it lends it to all can (LRM 6.21, 13.5.2) -- so it lives
 // in a cell that reports every write, as a design variable does. Where the
-// body cannot, or its type is one no wait observes, nothing is there to be
-// told, and it is the value itself.
+// body runs as a function call, which cannot wait (LRM 13.4), or its type is
+// one no wait observes, nothing is there to be told, and it is the value
+// itself.
 struct DeclaredVariable {
   mir::LocalId local;
   // The cell, or the value where nothing is told of a write to it.
@@ -36,7 +37,7 @@ struct DeclaredVariable {
 auto DeclareVariable(
     mir::CompilationUnit& unit, CallableBindings& bindings, mir::Block& block,
     BindingOriginId origin, const std::optional<std::string>& name,
-    mir::TypeId value_type, bool body_can_wait) -> DeclaredVariable;
+    mir::TypeId value_type, bool runs_as_function_call) -> DeclaredVariable;
 
 // Starts the variable at `value`. A declaration reached again begins the
 // variable afresh in the one cell, which is what initializing an installed cell

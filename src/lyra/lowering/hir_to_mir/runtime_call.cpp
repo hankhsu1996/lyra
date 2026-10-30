@@ -40,6 +40,14 @@ void AppendRuntimeEffectStmt(
                   .type = unit_lowerer.Unit().builtins.void_type})});
 }
 
+void AppendScheduleAfterReturnRequirement(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame) {
+  if (!frame.runs_as_function_call) return;
+  AppendRuntimeEffectStmt(
+      unit_lowerer, *frame.current_block,
+      support::BuiltinFn::kRequireCallerMayScheduleAfterReturn, {});
+}
+
 auto BuildWaitStmt(
     const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId park)
     -> mir::Stmt {

@@ -41,6 +41,15 @@ void AppendRuntimeEffectStmt(
     const UnitLowerer& unit_lowerer, mir::Block& block,
     support::BuiltinFn entry, std::vector<mir::ExprId> operands);
 
+// What a statement that schedules past its function's return -- a nonblocking
+// assignment or event trigger in every form, a fork-join_none -- asks first,
+// appended to `frame`'s block where the body runs as a function call. The
+// thread making the call has to have been created by an initial or always
+// procedure, or a fork of one (LRM 13.4.4). Where the body is not a function
+// call the statement schedules for the thread itself, and nothing is asked.
+void AppendScheduleAfterReturnRequirement(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame);
+
 // Builds the statement a call that may park its caller amounts to: a stop at a
 // wait, or a foreign task carried on a fiber. `park` is already interned into
 // `block` and answers whether the caller must give up control.

@@ -1268,7 +1268,7 @@ class ClassWriter {
         *u_,
         owner_.WithBlock(&code.Body())
             .WithBindings(&bindings)
-            .WithBodyCanWait(false),
+            .WithRunsAsFunctionCall(true),
         Shape(), CallableForm::kConstructor);
     std::vector<mir::LocalId> params = std::move(bound.params);
     mir::Block& block = code.Body();
@@ -1621,7 +1621,8 @@ class ClassWriter {
         unit, e.Frame(), support::ClosureKind::kFnOnce, CapturePolicy{});
     ProcessLowerer lowerer = Lowerer();
     const Writer inside(
-        *u_, library_, lowerer, *decl_, closure.Frame().WithBodyCanWait(true));
+        *u_, library_, lowerer, *decl_,
+        closure.Frame().WithRunsAsFunctionCall(false));
     BindKept(inside);
     mir::Block each;
     const Writer round = inside.At(inside.Frame().WithBlock(&each));

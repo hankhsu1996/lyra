@@ -1974,6 +1974,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSpawnAll:
     case support::BuiltinFn::kWaitFork:
     case support::BuiltinFn::kDisableFork:
+    case support::BuiltinFn::kRequireCallerMayScheduleAfterReturn:
     case support::BuiltinFn::kDisable:
     case support::BuiltinFn::kRegisterAlways:
     case support::BuiltinFn::kRegisterContinuousDriver:

@@ -982,6 +982,12 @@ enum class BuiltinFn : std::uint16_t {
   // executing process's, read at runtime. The caller does not block, so its
   // `void` result is never awaited.
   kDisableFork,
+  // LRM 13.4.4: what a statement that schedules what takes effect after its
+  // function returns -- a nonblocking assignment or event trigger, a
+  // fork-join_none -- asks first, where it runs during a function call. It is
+  // an error unless an initial or always procedure, or a fork of one, created
+  // the running thread. Takes only the runtime handle.
+  kRequireCallerMayScheduleAfterReturn,
   // LRM 9.6.2 `disable <named block or task>`. `kDisable` is the statement
   // itself: it invalidates the named target, wakes the executions blocked
   // inside it so each resumes past it, ends the activities enabled within it,

@@ -230,7 +230,7 @@ auto LowerActionArm(
 
   const WalkFrame frame =
       action.InRootScope(parent.WithBlock(&code.Body()).WithBindings(&bindings))
-          .WithBodyCanWait(true);
+          .WithRunsAsFunctionCall(false);
 
   auto appended = std::visit(
       Overloaded{

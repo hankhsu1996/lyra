@@ -307,6 +307,11 @@ auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches, void* out)
 auto lyra_rt_wait_fork(void* runtime, void* out) -> void*;
 void lyra_rt_disable_fork(void* runtime);
 
+// LRM 13.4.4: what a statement that schedules past its function's return asks
+// first, where it runs during a function call. Raises the design's error unless
+// an initial or always procedure, or a fork of one, created the running thread.
+void lyra_rt_require_caller_may_schedule_after_return(void* runtime);
+
 // LRM 9.7 process control. The receiver is a handle of the managed-reference
 // domain naming a process node; `self` builds one for the calling process,
 // which the engine already owns, so nothing is constructed here, and a null one
