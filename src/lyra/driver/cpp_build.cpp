@@ -337,25 +337,27 @@ auto JoinWords(std::span<const std::string> words) -> std::string {
   return out;
 }
 
-// Where a DPI-C source sits once copied into the project, relative to it. The
-// recipe and the copy read the location from here, so neither restates it.
-auto DpiSourceRelPath(const DpiLinkInput& input) -> std::string {
-  return std::format("{}/{}", kDpiSourceDir, input.source.filename().string());
+// Where a DPI-C link input sits once copied into the project, relative to
+// it. The recipe and the copy read the location from here, so neither restates
+// it.
+auto DpiCopyRelPath(const DpiLinkInput& input) -> std::string {
+  return std::format("{}/{}", kDpiInputDir, GatheredNameOf(input));
 }
 
 // Where a foreign source's object lands, relative to the project.
 auto DpiObjectRelPath(const DpiLinkInput& input) -> std::string {
   return std::format(
-      "{}/{}/{}.o", kObjectDir, kDpiSourceDir,
-      input.source.filename().string());
+      "{}/{}/{}.o", kObjectDir, kDpiInputDir, GatheredNameOf(input));
 }
 
 // The build recipe's DPI-C contribution (LRM 35), rendered from the already
-// classified link inputs so the script carries no language detection of its
-// own. Both halves are empty for a design with no foreign sources, which is why
-// the recipe needs no branch for that case. A foreign source compiles against
-// the one include path the project publishes its boundary on, which from the
-// recipe's own directory is `.`.
+// classified link inputs so the script carries no detection of its own. Both
+// halves are empty for a design with no foreign inputs, which is why the recipe
+// needs no branch for that case. A foreign source compiles against the one
+// include path the project publishes its boundary on, which from the recipe's
+// own directory is `.`. A shared library is linked from the project's copies
+// by the name the loader will look for, and the program looks for it among
+// them, beside wherever it is moved to.
 struct DpiRecipe {
   std::string compile_steps;
   std::string link_inputs;
@@ -365,14 +367,28 @@ auto RenderDpiRecipe(
     std::span<const DpiLinkInput> inputs, const HostBuild& host) -> DpiRecipe {
   DpiRecipe recipe;
   for (const DpiLinkInput& input : inputs) {
-    const std::string object = DpiObjectRelPath(input);
-    recipe.compile_steps += std::format(
-        "mkdir -p {}/{}\n\"$CXX\" {} -c {} -I . -o {}\n", kObjectDir,
-        kDpiSourceDir,
-        JoinWords(
-            ForeignCompileFlags(input, host.optimization, host.sanitizer)),
-        DpiSourceRelPath(input), object);
-    recipe.link_inputs += std::format(" {}", object);
+    std::visit(
+        Overloaded{
+            [&](const DpiSource& source) {
+              const std::string object = DpiObjectRelPath(input);
+              recipe.compile_steps += std::format(
+                  "mkdir -p {}/{}\n\"$CXX\" {} -c {} -I . -o {}\n", kObjectDir,
+                  kDpiInputDir,
+                  JoinWords(ForeignCompileFlags(
+                      source, host.optimization, host.sanitizer)),
+                  DpiCopyRelPath(input), object);
+              recipe.link_inputs += std::format(" {}", object);
+            },
+            [&](const DpiCompiledCode&) {
+              recipe.link_inputs += std::format(" {}", DpiCopyRelPath(input));
+            },
+            [&](const DpiSharedLibrary&) {
+              recipe.link_inputs += std::format(
+                  " -L{} -Wl,--push-state,--no-as-needed -l:{} "
+                  "-Wl,--pop-state '-Wl,-rpath,$ORIGIN/{}'",
+                  kDpiInputDir, GatheredNameOf(input), kDpiInputDir);
+            }},
+        input);
   }
   return recipe;
 }
@@ -521,14 +537,45 @@ auto FormatSources(
   return {};
 }
 
-// Copies the user's DPI-C sources into the project (LRM 35) so the directory
-// builds on another machine: the recipe reaches them by a project-relative
-// path, which an absolute path back to the originals could not survive.
-auto CopyDpiSources(
+// A program finds each shared library among the project's copies by the name
+// the library declares, so one whose soname holds a '/' -- which the dynamic
+// loader takes as a path from wherever the program runs -- cannot be carried.
+auto RefuseSonamesNamingAPath(std::span<const DpiLinkInput> inputs)
+    -> diag::Result<void> {
+  for (const DpiLinkInput& input : inputs) {
+    auto carried = std::visit(
+        Overloaded{
+            [](const DpiSource&) -> diag::Result<void> { return {}; },
+            [](const DpiCompiledCode&) -> diag::Result<void> { return {}; },
+            [](const DpiSharedLibrary& library) -> diag::Result<void> {
+              if (!library.soname || !library.soname->contains('/')) {
+                return {};
+              }
+              return diag::Fail(
+                  diag::DiagCode::kHostInvalidCliArgs,
+                  "shared library '{}' declares the soname '{}', which a "
+                  "program looks for as a path and not among the project's "
+                  "copies",
+                  library.path.string(), *library.soname);
+            }},
+        input);
+    if (!carried) {
+      return carried;
+    }
+  }
+  return {};
+}
+
+// Copies the user's DPI-C link inputs into the project (LRM 35) so the
+// directory builds on another machine: the recipe reaches them by a
+// project-relative path, which an absolute path back to the originals could
+// not survive.
+auto CopyDpiInputs(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& dir)
     -> diag::Result<void> {
   for (const DpiLinkInput& input : inputs) {
-    if (auto r = CopyFile(input.source, dir / DpiSourceRelPath(input)); !r) {
+    if (auto r = CopyFile(DpiInputPath(input), dir / DpiCopyRelPath(input));
+        !r) {
       return r;
     }
   }
@@ -956,13 +1003,11 @@ auto CompileRuntimeSources(
 }
 
 auto LinkProgram(
-    std::span<const std::filesystem::path> inputs,
-    std::span<const std::string> flags, const std::filesystem::path& program,
-    const std::filesystem::path& cxx) -> diag::Result<void> {
+    std::span<const std::string> inputs, std::span<const std::string> flags,
+    const std::filesystem::path& program, const std::filesystem::path& cxx)
+    -> diag::Result<void> {
   std::vector<std::string> args(flags.begin(), flags.end());
-  for (const std::filesystem::path& input : inputs) {
-    args.push_back(input.string());
-  }
+  args.insert(args.end(), inputs.begin(), inputs.end());
   args.emplace_back("-o");
   args.push_back(program.string());
   const status::Phase phase("Linking");
@@ -1131,10 +1176,13 @@ auto AssembleProject(
     const RuntimeLocation& runtime, const EmittedCppSources& sources,
     const std::filesystem::path& dir, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void> {
+  if (auto r = RefuseSonamesNamingAPath(dpi_inputs); !r) {
+    return r;
+  }
   if (auto r = WriteDpiSurface(runtime, sources.dpi_fragments, dir); !r) {
     return r;
   }
-  if (auto r = CopyDpiSources(dpi_inputs, dir); !r) {
+  if (auto r = CopyDpiInputs(dpi_inputs, dir); !r) {
     return r;
   }
 

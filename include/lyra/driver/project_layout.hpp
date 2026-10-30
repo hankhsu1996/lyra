@@ -205,8 +205,10 @@ inline constexpr std::string_view kPreparedHeaderSuffix = ".gch";
 // sit at the project root so one include path reaches them.
 inline constexpr std::string_view kDpiAbiHeader = "dpi.h";
 inline constexpr std::string_view kSvdpiHeader = "svdpi.h";
-// Where a portable project keeps its copies of the user's DPI-C sources, so the
-// directory builds on another machine without reaching back to their originals.
-inline constexpr std::string_view kDpiSourceDir = "dpi";
+// Where a portable project keeps its copies of the user's DPI-C link inputs,
+// so the directory builds on another machine without reaching back to their
+// originals, and where its program finds a shared library among them when it
+// runs.
+inline constexpr std::string_view kDpiInputDir = "dpi";
 
 }  // namespace lyra::driver

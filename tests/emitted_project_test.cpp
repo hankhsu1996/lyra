@@ -650,4 +650,72 @@ TEST(LyraEmittedProject, PortableProjectBuildsItsDpiSources) {
       << "stdout: " << run.stdout_text;
 }
 
+// A project carries foreign code handed over compiled as it carries a source:
+// copied in, so it builds after the originals are gone, and its program finds
+// each shared library among those copies, beside wherever it is moved to. A
+// library whose soname is a path, which a program would look for there rather
+// than among the copies, is refused before the project is written.
+TEST(LyraEmittedProject, PortableProjectCarriesForeignCodeHandedOverCompiled) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto given = *tmp_or / "given";
+  std::filesystem::create_directories(given);
+  const auto src = *tmp_or / "test.sv";
+  lyra::test::WriteForeignCodeDesign(src);
+  const auto compiled = lyra::test::CompileForeignCodeInto(given);
+  ASSERT_THAT(compiled, ExitedWithCode(0))
+      << compiled.stdout_text << compiled.stderr_text;
+  const auto out_dir = *tmp_or / "out";
+  auto sh_or = lyra::driver::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
+
+  const auto pathed = given / "libpathed.so";
+  const std::vector<std::string> make_pathed = {
+      "-c", "cc -shared -fPIC -Wl,-soname,sub/libpathed.so '" +
+                (given / "shared.c").string() + "' -o '" + pathed.string() +
+                "'"};
+  const auto made = RunChildProcess(*sh_or, make_pathed);
+  ASSERT_THAT(made, ExitedWithCode(0)) << made.stdout_text << made.stderr_text;
+  const std::vector<std::string> refused_args = {
+      "emit",           "cpp",        "--top",         "Test",      "-o",
+      out_dir.string(), "--dpi-link", pathed.string(), src.string()};
+  const auto refused = RunChildProcess(lyra, refused_args);
+  EXPECT_THAT(refused, ExitedWithCode(Ne(0))) << refused.stdout_text;
+  EXPECT_NE(
+      refused.stderr_text.find("declares the soname 'sub/libpathed.so'"),
+      std::string::npos)
+      << refused.stderr_text;
+  EXPECT_FALSE(std::filesystem::exists(out_dir / "dpi"));
+
+  const std::vector<std::string> args = {
+      "emit",       "cpp",
+      "--top",      "Test",
+      "-o",         out_dir.string(),
+      "--dpi-link", (given / "object.o").string(),
+      "--dpi-link", (given / "libarchive.a").string(),
+      "--dpi-link", (given / "shared/libshared.so.1").string(),
+      "-sv_root",   (given / "plain").string(),
+      "-sv_lib",    "libplain",
+      src.string()};
+  const auto emit = RunChildProcess(lyra, args);
+  ASSERT_THAT(emit, ExitedWithCode(0)) << emit.stdout_text << emit.stderr_text;
+  std::filesystem::remove_all(given);
+
+  const std::vector<std::string> build = {
+      "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
+  const auto built = RunChildProcess(*sh_or, build);
+  ASSERT_THAT(built, ExitedWithCode(0))
+      << built.stdout_text << built.stderr_text;
+
+  const auto moved = *tmp_or / "moved";
+  std::filesystem::rename(out_dir, moved);
+  const auto run =
+      RunChildProcess(moved / "program", {}, std::nullopt, *tmp_or);
+  EXPECT_THAT(run, ExitedWithCode(0)) << run.stdout_text << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("foreign 21 22 23 24"), std::string::npos)
+      << "stdout: " << run.stdout_text;
+}
+
 }  // namespace

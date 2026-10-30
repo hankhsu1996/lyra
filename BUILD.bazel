@@ -522,6 +522,8 @@ cc_library(
         ":status",
         ":support",
         "@bazel_tools//tools/cpp/runfiles",
+        "@llvm-project//llvm:BinaryFormat",
+        "@llvm-project//llvm:Object",
         "@llvm-project//llvm:Support",
     ],
 )

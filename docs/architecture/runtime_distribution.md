@@ -110,9 +110,10 @@ references. A foreign entry point is reached only from outside that language, so
 an unreferenced definition drops it from every artifact at once and the program fails to link. That
 is where the analogy to an inline function stops: the approach is the same, the linkage is not.
 
-A bundled project carries this surface, and a copy of every foreign source it was given, so it
-builds where neither Lyra nor the original foreign sources are reachable. The in-place path produces
-the same surface in its work directory, and copies nothing else.
+A bundled project carries this surface, and a copy of every foreign input it was given -- sources,
+objects, archives and shared libraries -- so it builds where neither Lyra nor the originals are
+reachable, and its program finds each shared library among those copies, beside wherever it is moved
+to. The in-place path produces the same surface in its work directory, and copies nothing else.
 
 ## Command output contract
 

@@ -2187,6 +2187,129 @@ TEST(LyraBuild, TheLlvmProgramRunsOnItsOwn) {
   }
 }
 
+// Foreign code handed over compiled is part of the program as a compiled
+// source is: an object, an archive and two shared libraries define the imports
+// and call the design's export back, named on the command line and by the
+// LRM Annex J switches, where a root applies only to the paths after it. The
+// program, moved and run from elsewhere, loads each library from where it was
+// named, and a library is part of what keeps a program: one changed is linked
+// again.
+TEST(LyraBuild, ForeignCodeHandedOverCompiledJoinsTheProgram) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  lyra::test::WriteForeignCodeDesign(src);
+  const auto compiled = lyra::test::CompileForeignCodeInto(*tmp_or);
+  ASSERT_THAT(compiled, ExitedWithCode(0))
+      << compiled.stdout_text << compiled.stderr_text;
+
+  const auto program = *tmp_or / "program";
+  const auto moved = *tmp_or / "elsewhere" / "program";
+  std::filesystem::create_directories(moved.parent_path());
+  const auto build = [&](const std::vector<std::string>& how) {
+    std::vector<std::string> args = {
+        "build",          "--backend",   "llvm",
+        "--top",          "Test",        "-o",
+        program.string(), "--cache-dir", (*tmp_or / "cache").string(),
+        "--dpi-link",     "object.o",    "--dpi-link",
+        "libarchive.a",   "-sv_lib",     "shared/libshared",
+        "-sv_root",       "plain",       "-sv_liblist",
+        "libraries"};
+    args.insert(args.end(), how.begin(), how.end());
+    args.push_back(src.string());
+    return RunChildProcess(lyra, args, std::nullopt, *tmp_or);
+  };
+  const auto run_moved = [&] {
+    std::filesystem::rename(program, moved);
+    return RunChildProcess(moved, {}, std::nullopt, moved.parent_path());
+  };
+  for (const std::vector<std::string>& how :
+       {std::vector<std::string>{}, std::vector<std::string>{"-O2", "--lto"}}) {
+    const std::string label = how.empty() ? "default" : "-O2 --lto";
+    const auto built = build(how);
+    ASSERT_THAT(built, ExitedWithCode(0))
+        << label << ": " << built.stdout_text << built.stderr_text;
+    const auto ran = run_moved();
+    EXPECT_THAT(ran, ExitedWithCode(0))
+        << label << ": " << ran.stdout_text << ran.stderr_text;
+    EXPECT_NE(ran.stdout_text.find("foreign 21 22 23 24"), std::string::npos)
+        << label << ": " << ran.stdout_text;
+  }
+
+  const auto changed = RunShellScript(
+      "cd \"$0\" && printf 'int twice(int x);\\nint from_archive(int x) { "
+      "return twice(x) + 5; }\\n' > archive.c && cc -c -fPIC archive.c -o "
+      "archive.o && rm libarchive.a && ar rcs libarchive.a archive.o",
+      std::vector<std::string>{tmp_or->string()});
+  ASSERT_THAT(changed, ExitedWithCode(0))
+      << changed.stdout_text << changed.stderr_text;
+  const auto rebuilt = build({});
+  ASSERT_THAT(rebuilt, ExitedWithCode(0))
+      << rebuilt.stdout_text << rebuilt.stderr_text;
+  const auto ran = run_moved();
+  EXPECT_NE(ran.stdout_text.find("foreign 21 25 23 24"), std::string::npos)
+      << ran.stdout_text;
+}
+
+// What the program could not take as it was named is refused before anything
+// is built: a file the linker would not read as code of its own -- one it
+// would read as a script, or an archive whose members lie elsewhere -- two
+// inputs known by one name, a library the switches name that is not there, and
+// a bootstrap file that is not one.
+TEST(LyraBuild, ForeignCodeThatCannotBeTakenAsNamedIsRefused) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  lyra::test::WriteForeignCodeDesign(src);
+  const auto compiled = lyra::test::CompileForeignCodeInto(*tmp_or);
+  ASSERT_THAT(compiled, ExitedWithCode(0))
+      << compiled.stdout_text << compiled.stderr_text;
+  const auto made = RunShellScript(
+      R"sh(set -e
+cd "$0"
+echo 'INPUT(object.o)' > script.ld
+ar rcsT libthin.a archive.o
+mkdir -p wrong
+printf 'SV_LIBRARIES\n  libplain\n' > wrong/no_header
+printf '#!SV_LIBRARIES\nlibplain\n' > wrong/no_blank
+)sh",
+      std::vector<std::string>{tmp_or->string()});
+  ASSERT_THAT(made, ExitedWithCode(0)) << made.stdout_text << made.stderr_text;
+
+  const std::vector<std::pair<std::vector<std::string>, std::string>> cases = {
+      {{"--dpi-link", "script.ld"},
+       "script.ld' is neither a C or C++ source nor an ELF object"},
+      {{"--dpi-link", "libthin.a"}, "libthin.a' is a thin archive"},
+      {{"--dpi-link", "plain/libplain.so", "--dpi-link", "shared/libplain.so"},
+       "two DPI-C link inputs are both known as 'libplain.so'"},
+      {{"-sv_lib", "plain/libabsent"}, "'-sv_lib plain/libabsent' names no"},
+      {{"-sv_liblist", "wrong/no_header"}, "wrong/no_header' is no bootstrap"},
+      {{"-sv_liblist", "wrong/no_blank"},
+       "wrong/no_blank' names a library with no blank before it"}};
+  for (const auto& [named, refusal] : cases) {
+    std::vector<std::string> args = {
+        "build",
+        "--backend",
+        "llvm",
+        "--top",
+        "Test",
+        "-o",
+        (*tmp_or / "program").string(),
+        "--cache-dir",
+        (*tmp_or / "cache").string()};
+    args.insert(args.end(), named.begin(), named.end());
+    args.push_back(src.string());
+    const auto refused = RunChildProcess(lyra, args, std::nullopt, *tmp_or);
+    EXPECT_THAT(refused, ExitedWithCode(Ne(0))) << refusal;
+    EXPECT_NE(refused.stderr_text.find(refusal), std::string::npos)
+        << refused.stderr_text;
+  }
+}
+
 // A program built to check its memory ends at the first read of storage that
 // has ended, and the report names where it was freed and where it was read.
 // Here the reader is the runtime, copying text a foreign function returns

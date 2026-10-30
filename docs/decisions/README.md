@@ -1049,10 +1049,11 @@ the detail lives in the entry itself.
   shape rides the ABI carrier rather than the type system.
 - [foreign-code-is-linked-not-loaded](foreign-code-is-linked-not-loaded.md) -- a program has one
   linker, so a design's foreign code is an artifact that linker takes rather than an environment
-  around it; a scope publishes what it answers per name space, and a foreign call that can suspend
-  is an execution of the process with a value store of its own. Publishing the design's symbols to
-  the system loader, handing the foreign side a pointer per export, and a second resolver for the
-  inward direction are rejected.
+  around it; foreign code handed over compiled (LRM Annex J) is linked as it is, each shared library
+  from where it was named; a scope publishes what it answers per name space, and a foreign call that
+  can suspend is an execution of the process with a value store of its own. Publishing the design's
+  symbols to the system loader, handing the foreign side a pointer per export, and a second resolver
+  for the inward direction are rejected.
 - [a-departure-stops-at-a-foreign-frame](a-departure-stops-at-a-foreign-frame.md) -- nothing that
   ends an execution crosses a frame this compiler did not emit; the boundary answers the standard's
   disable-active int instead, the departure is derived again where control comes back, and an
