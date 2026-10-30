@@ -45,6 +45,9 @@ jobs:
           disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
           repository-cache: true
 
+      # A source is read as it is compiled, against headers the build makes --
+      # the C++ library it builds, and what a dependency generates -- which a
+      # remote build leaves on the executor unless they are asked for by name.
       - name: Build
         if: steps.changed.outputs.count != '0'
         env:
@@ -54,7 +57,8 @@ jobs:
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
             RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
           fi
-          bazel build //:lyra $RBE_FLAGS
+          bazel build //:lyra $RBE_FLAGS \
+            --remote_download_regex='.*_include_search_directory.*|.*/bin/external/[^/]+/include.*'
 
       - name: Generate compile_commands.json
         if: steps.changed.outputs.count != '0'
