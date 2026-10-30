@@ -168,13 +168,19 @@ document least free to borrow. These belong to lower layers and never appear her
   every feature merge.
 - **SystemVerilog at the syntax level.** Naming a specific keyword or net type in the README is a
   detail-layer fact in the highest-level document. Write about what the tool is and what it handles
-  in categories; leave the constructs to the corpus.
+  in categories; leave the constructs to the corpus. The source a demonstration runs is the one
+  exception, since it is the input to a command and claims nothing about what is supported.
 - **A description of what a directory contains, when that directory has its own README.** Link to it
   and say why a reader would go there. Listing its contents duplicates a document whose whole job is
   to describe itself, and the copy is the one that goes stale.
 
-What does belong is what stays true across releases: what the project is, what it optimizes for, the
-shape of its pipeline, how to run it, and where to look next.
+What does belong is what stays true across releases, written for someone deciding whether to try the
+tool: what it is, how to build it, the first commands they run and what those print, what it reads,
+where to ask, and where to look next. What the project optimizes for and the shape of its pipeline
+are for someone working on it, and the README links them in the architecture docs rather than
+stating them. A tool with no site of its own has only its README for a front door, so it opens as a
+user's tool does (uv, Deno, Yosys), not as a toolchain whose README is a signpost to a site (LLVM,
+Rust).
 
 A diagram is held to the same rule. It shows structure, so it carries only what changes when the
 structure changes. A judgment about a component -- which one is the product, which is transitional,
@@ -184,11 +190,12 @@ one sentence is cheap to revise and a reader already expects an opinion. The sam
 boxes: group only when every box groups on one axis, since two taxonomies drawn as peers read as
 one.
 
-A demonstration is a fourth trap, and a tempting one. A worked example proves the tool runs, but it
-also tells the reader what level the project is at, and a small one says "toy" louder than any prose
-says otherwise. LLVM does not open with a C++ hello world. Where an example would be at the
-project's actual level it is too long for a README, and where it is short enough it undersells; the
-resolution is to point at `examples/` and let the reader pick their own depth.
+A demonstration shows the workflow, never the language: the commands a user runs on a design of
+their own, each with the output it really prints, taken from a run rather than written by hand. An
+example that is about the tool does not read as a toy at any size -- Deno's is three lines, uv's is
+a console session -- while one that teaches the input language would; so the source is as small as
+the workflow allows, and a design at the project's real level is linked in `examples/` rather than
+shown.
 
 ## Editing Discipline
 
