@@ -23,7 +23,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          find src include tests -name '*.cpp' -o -name '*.hpp' | xargs clang-format --dry-run --Werror
+          find src include tests conformance -name '*.cpp' -o -name '*.hpp' | xargs clang-format --dry-run --Werror
 
   policy:
     name: Check C++ style policy

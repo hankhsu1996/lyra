@@ -17,13 +17,14 @@
 #include <gtest/gtest.h>
 #include <string>
 
+#include "conformance/framework/process.hpp"
+#include "conformance/framework/process_matchers.hpp"
 #include "tests/framework/cli_fixture.hpp"
-#include "tests/framework/process.hpp"
 
 namespace {
 
-using lyra::test::ExitedWithCode;
-using lyra::test::MakeScratchDir;
+using conformance::framework::ExitedWithCode;
+using conformance::framework::MakeScratchDir;
 using lyra::test::ResolveLyra;
 using lyra::test::ResolveShippedExamples;
 using lyra::test::RunLyraFrom;

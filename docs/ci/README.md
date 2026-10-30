@@ -92,6 +92,7 @@ Each moment answers a different question, and the answers are not interchangeabl
 | nightly    | is the C++ path still correct   | `bazel test //... --config=nightly`          |
 | nightly    | is any of it reading freed bits | `bazel test //... --config=asan`             |
 | nightly    | how far does a real design get  | `bazel test //tests:external_design_tests`   |
+| nightly    | does the suite stand alone      | `bazel run //conformance/runner:conformance` |
 | each merge | how much more work does it make | `instruction-count.yml`, base against head   |
 
 Pre-commit and the merge gate run the same tests, and that is the whole point: a green run before
@@ -426,6 +427,13 @@ recorded as stopping is either further along, which is an entry to update, or a 
 newly stops at its check is read against the standard before it is called either, since the check is
 the suite's and was written for another simulator. The jobs are the cases the test itself lists, so
 a design the suite gains is run without this file changing.
+
+`conformance-verilator-nightly.yml` builds the conformance suite's runner with nothing of Lyra and
+holds the runner machine's own Verilator to a few cases, the suite's check of its own helper among
+them. It **gates its own run** on the harness alone: the runner exits non-zero only where it could
+not hand a case to the tool, so red means the suite no longer finds its cases, helpers or runfiles
+when it stands alone, never that Verilator gave a verdict. It is a nightly and not a check on a pull
+request because how long it takes is Verilator's and the host compiler's, which no merge waits on.
 
 `benchmark-nightly.yml` builds every case under `tests/benchmark/` on each backend and times it
 beside Verilator on the same sources, giving each tool the amount of work it needs to reach the same

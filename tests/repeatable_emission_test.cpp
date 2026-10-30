@@ -34,6 +34,7 @@
 
 #include <fmt/format.h>
 
+#include "conformance/framework/case.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
 #include "lyra/diag/sink.hpp"
@@ -41,13 +42,12 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir_transform/pass.hpp"
 #include "tests/compiled_twice.hpp"
-#include "tests/framework/conformance_case.hpp"
 #include "tests/framework/emitted_nesting.hpp"
 
 namespace {
 
+using conformance::framework::Case;
 using lyra::test::Compilation;
-using lyra::test::ConformanceCase;
 using lyra::test::DeepestNesting;
 using lyra::test::Elaborate;
 using lyra::test::FirstDifference;
@@ -157,8 +157,7 @@ auto Describe(
 
 class RepeatableEmissionTest : public testing::Test {
  public:
-  explicit RepeatableEmissionTest(const ConformanceCase& test_case)
-      : case_(&test_case) {
+  explicit RepeatableEmissionTest(const Case& test_case) : case_(&test_case) {
   }
 
   void TestBody() override {
@@ -187,7 +186,7 @@ class RepeatableEmissionTest : public testing::Test {
   }
 
  private:
-  const ConformanceCase* case_;
+  const Case* case_;
 };
 
 // The design written to show an ordering, held to the same claim and to one
@@ -197,7 +196,7 @@ class RepeatableEmissionTest : public testing::Test {
 // leave that silently untrue.
 TEST(RepeatableEmission, ADesignWrittenToShowAnOrderingWritesOneProgram) {
   const ScratchDirectory scratch("wide-sensitivity");
-  const ConformanceCase design =
+  const Case design =
       lyra::test::WriteWideSensitivityDesign(scratch.Under("source"));
 
   Compilation first = Elaborate(design);
@@ -220,7 +219,7 @@ TEST(RepeatableEmission, ADesignWrittenToShowAnOrderingWritesOneProgram) {
 auto main(int argc, char** argv) -> int {
   return lyra::test::RunOverCorpus(
       argc, argv, "a written program",
-      [](const ConformanceCase& test_case) -> std::unique_ptr<testing::Test> {
+      [](const Case& test_case) -> std::unique_ptr<testing::Test> {
         return std::make_unique<RepeatableEmissionTest>(test_case);
       });
 }

@@ -1,4 +1,4 @@
-#include "conformance_verdict.hpp"
+#include "conformance/framework/verdict.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -11,12 +11,12 @@
 #include <variant>
 #include <vector>
 
-#include "conformance_case.hpp"
-#include "conformance_observation.hpp"
-#include "lyra/base/overloaded.hpp"
-#include "value_change_dump.hpp"
+#include "conformance/framework/case.hpp"
+#include "conformance/framework/observation.hpp"
+#include "conformance/framework/overloaded.hpp"
+#include "conformance/framework/value_change_dump.hpp"
 
-namespace lyra::test {
+namespace conformance::framework {
 namespace {
 
 // A report at fatal severity is a report at error severity that also ends the
@@ -400,7 +400,7 @@ auto Judge(const Claim& claim, const Observation& observation) -> Verdict {
       observation.end);
 }
 
-auto JudgeCase(const ConformanceCase& test_case, const Observation& observation)
+auto JudgeCase(const Case& test_case, const Observation& observation)
     -> Verdict {
   Verdict verdict = Judge(test_case.claim, observation);
   if (!std::holds_alternative<Conforms>(verdict)) {
@@ -438,4 +438,4 @@ auto Describe(const Verdict& verdict) -> std::string {
       verdict);
 }
 
-}  // namespace lyra::test
+}  // namespace conformance::framework

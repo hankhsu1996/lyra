@@ -1,9 +1,6 @@
 #include "tests/framework/cli_fixture.hpp"
 
-#include <cerrno>
 #include <cstdlib>
-#include <cstring>
-#include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -15,11 +12,14 @@
 #include <string_view>
 #include <vector>
 
+#include "conformance/framework/process.hpp"
 #include "lyra/driver/subprocess.hpp"
-#include "tests/framework/process.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 namespace lyra::test {
+
+using conformance::framework::ProcessOutcome;
+using conformance::framework::RunShellScript;
 
 namespace {
 
@@ -37,17 +37,6 @@ auto ResolveDeclaredInput(std::string_view workspace_path)
 }
 
 }  // namespace
-
-auto MakeScratchDir() -> std::expected<std::filesystem::path, std::string> {
-  const auto base = std::filesystem::temp_directory_path() / "lyra-XXXXXX";
-  std::string templ = base.string();
-  if (mkdtemp(templ.data()) == nullptr) {
-    return std::unexpected(
-        std::format(
-            "mkdtemp('{}') failed: {}", base.string(), std::strerror(errno)));
-  }
-  return std::filesystem::path(templ);
-}
 
 auto ResolveLyra() -> std::filesystem::path {
   return ResolveDeclaredInput("lyra");

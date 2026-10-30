@@ -4,7 +4,7 @@
 #include <string>
 #include <string_view>
 
-namespace lyra::test {
+namespace conformance::framework {
 
 // Where a dump a run wrote differs from the one a case expects, read as the
 // standard reads a dump (LRM 21.7.2, 21.7.4): the scopes by kind and name, what
@@ -21,4 +21,4 @@ auto DumpDifference(std::string_view expected, std::string_view written)
 // not parse is a fault of the case and never of a tool.
 auto DumpUnreadable(std::string_view text) -> std::optional<std::string>;
 
-}  // namespace lyra::test
+}  // namespace conformance::framework

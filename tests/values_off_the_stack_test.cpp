@@ -14,16 +14,17 @@
 #include <string_view>
 #include <vector>
 
+#include "conformance/framework/process.hpp"
+#include "conformance/framework/process_matchers.hpp"
 #include "lyra/driver/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
-#include "tests/framework/process.hpp"
 
 namespace {
 
-using lyra::test::ExitedWithCode;
-using lyra::test::MakeScratchDir;
+using conformance::framework::ExitedWithCode;
+using conformance::framework::MakeScratchDir;
+using conformance::framework::RunChildProcess;
 using lyra::test::ResolveLyra;
-using lyra::test::RunChildProcess;
 
 // A design whose every value is twice the stack it is run on: one of each kind
 // a frame would otherwise keep or an operation make whole -- a sum, a shift, a

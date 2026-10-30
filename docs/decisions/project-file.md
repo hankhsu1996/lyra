@@ -606,7 +606,7 @@ is the split every package manager arrived at.
 - The manifest, once resolved, is a declared input of the compilation like any source file, so
   nothing about incremental reuse has to discover it a second time.
 - These are ordinary tests, not conformance cases: the command line is not an IEEE 1800 requirement,
-  which `conformance-case-shape.md` D9 already settles.
+  which the conformance suite's case-shape record (its D9) already settles.
 
 ## Naming
 
@@ -623,5 +623,6 @@ than on a case-insensitive one, for no benefit.
   become a declared input.
 - `unit-signature.md` -- the identity machinery one scale down, and what a cross-design reference
   would be built from.
-- `conformance-case-shape.md` -- D9, which puts command-line behaviour outside the corpus.
+- `../../conformance/docs/decisions/case-shape.md` -- D9, which puts command-line behaviour outside
+  the corpus.
 - `dpi-foreign-boundary.md` -- what a source set's `dpi` supplies symbols to.

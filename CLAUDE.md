@@ -118,10 +118,11 @@ code you are editing.
 
 ## Testing
 
-Nearly every test is a conformance case under `tests/conformance/`: a self-checking SystemVerilog
+Nearly every test is a conformance case under `conformance/cases/`: a self-checking SystemVerilog
 program stating what IEEE 1800 requires of it. The outer directory is the LRM clause, the inner one
-is the subject, and `main.sv` is the entry. `tests/conformance/README.md` is the contract every case
-answers to, and `docs/decisions/conformance-case-shape.md` records why it has that shape.
+is the subject, and `main.sv` is the entry. `conformance/README.md` is the contract every case
+answers to, and `conformance/docs/decisions/` records why it has that shape;
+`docs/decisions/lyra-is-held-to-the-conformance-suite.md` says what Lyra records of its answers.
 
 A case names no path. What a path currently refuses is recorded once for the path in
 `tests/paths/<path>.yaml`, and a case that starts passing fails until its entry is dropped, so the

@@ -1,4 +1,4 @@
-#include "process.hpp"
+#include "conformance/framework/process.hpp"
 
 #include <algorithm>
 #include <array>
@@ -6,13 +6,13 @@
 #include <charconv>
 #include <chrono>
 #include <csignal>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <expected>
 #include <fcntl.h>
 #include <filesystem>
 #include <format>
-#include <gmock/gmock.h>
 #include <optional>
 #include <ostream>
 #include <poll.h>
@@ -28,10 +28,9 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/overloaded.hpp"
-#include "lyra/driver/subprocess.hpp"
+#include "conformance/framework/overloaded.hpp"
 
-namespace lyra::test {
+namespace conformance::framework {
 namespace {
 
 auto DecodeWaitStatus(int status) -> ProcessEnd {
@@ -297,10 +296,10 @@ auto RunChildProcess(
 auto RunShellScript(
     std::string_view script, std::span<const std::string> positional,
     std::optional<std::chrono::seconds> timeout) -> ProcessOutcome {
-  const auto sh = driver::FindOnPath("sh");
+  const std::optional<std::filesystem::path> sh = FindOnPath("sh");
   if (!sh) {
     return {
-        .end = CouldNotRun{.reason = std::string{sh.error().Text()}},
+        .end = CouldNotRun{.reason = "no 'sh' on PATH"},
         .stdout_text = {},
         .stderr_text = {}};
   }
@@ -316,6 +315,34 @@ auto RunUnderAddressLimit(
   positional.insert(positional.end(), args.begin(), args.end());
   return RunShellScript(
       std::format(R"(ulimit -v {} && exec "$0" "$@")", kibibytes), positional);
+}
+
+auto FindOnPath(std::string_view name) -> std::optional<std::filesystem::path> {
+  const char* path = std::getenv("PATH");
+  std::string_view rest = path == nullptr ? "" : path;
+  while (!rest.empty()) {
+    const std::size_t colon = rest.find(':');
+    const std::filesystem::path candidate =
+        std::filesystem::path(rest.substr(0, colon)) / name;
+    if (std::filesystem::exists(candidate)) {
+      return candidate;
+    }
+    rest.remove_prefix(
+        colon == std::string_view::npos ? rest.size() : colon + 1);
+  }
+  return std::nullopt;
+}
+
+auto MakeScratchDir() -> std::expected<std::filesystem::path, std::string> {
+  const auto base =
+      std::filesystem::temp_directory_path() / "conformance-XXXXXX";
+  std::string templ = base.string();
+  if (mkdtemp(templ.data()) == nullptr) {
+    return std::unexpected(
+        std::format(
+            "mkdtemp('{}') failed: {}", base.string(), std::strerror(errno)));
+  }
+  return std::filesystem::path(templ);
 }
 
 auto ExitCodeOf(const ProcessOutcome& outcome) -> std::optional<int> {
@@ -358,46 +385,4 @@ auto Transcript(
       outcome.stdout_text, outcome.stderr_text);
 }
 
-void PrintTo(const ProcessOutcome& outcome, std::ostream* out) {
-  *out << "a child that " << Describe(outcome.end);
-}
-
-namespace {
-
-class ExitedWithCodeMatcher {
- public:
-  using is_gtest_matcher = void;
-
-  explicit ExitedWithCodeMatcher(testing::Matcher<int> code)
-      : code_(std::move(code)) {
-  }
-
-  auto MatchAndExplain(
-      const ProcessOutcome& outcome,
-      testing::MatchResultListener* listener) const -> bool {
-    const std::optional<int> code = ExitCodeOf(outcome);
-    return code && testing::ExplainMatchResult(code_, *code, listener);
-  }
-
-  void DescribeTo(std::ostream* out) const {
-    *out << "exited with a code that ";
-    code_.DescribeTo(out);
-  }
-
-  void DescribeNegationTo(std::ostream* out) const {
-    *out << "did not exit with a code that ";
-    code_.DescribeTo(out);
-  }
-
- private:
-  testing::Matcher<int> code_;
-};
-
-}  // namespace
-
-auto ExitedWithCode(const testing::Matcher<int>& code)
-    -> testing::Matcher<const ProcessOutcome&> {
-  return ExitedWithCodeMatcher(code);
-}
-
-}  // namespace lyra::test
+}  // namespace conformance::framework

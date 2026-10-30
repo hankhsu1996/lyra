@@ -1,4 +1,4 @@
-#include "conformance_observation.hpp"
+#include "conformance/framework/observation.hpp"
 
 #include <algorithm>
 #include <csignal>
@@ -15,14 +15,13 @@
 #include <variant>
 #include <vector>
 
-#include "conformance_case.hpp"
-#include "lyra/base/overloaded.hpp"
-#include "process.hpp"
+#include "conformance/framework/case.hpp"
+#include "conformance/framework/overloaded.hpp"
+#include "conformance/framework/process.hpp"
 
-namespace lyra::test {
+namespace conformance::framework {
 
-auto MissingInput(const ConformanceCase& test_case)
-    -> std::optional<HarnessFailed> {
+auto MissingInput(const Case& test_case) -> std::optional<HarnessFailed> {
   std::vector<std::filesystem::path> inputs = test_case.supporting_sources;
   inputs.push_back(test_case.entry);
   inputs.insert(
@@ -91,7 +90,7 @@ void RecordCommand(
 }
 
 void ReadOutputs(
-    const ConformanceCase& test_case, const std::filesystem::path& directory,
+    const Case& test_case, const std::filesystem::path& directory,
     Observation& seen) {
   for (const ExpectedOutput& expected : test_case.expected_outputs) {
     std::ifstream in(directory / expected.name, std::ios::binary);
@@ -114,4 +113,4 @@ void ReadMarkers(std::string_view program_output, Observation& seen) {
       program_output.find(kReadyForTheReport) != std::string_view::npos;
 }
 
-}  // namespace lyra::test
+}  // namespace conformance::framework

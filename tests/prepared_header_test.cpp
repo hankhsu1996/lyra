@@ -89,7 +89,7 @@ TEST_P(PreparedHeader, IsNamedByEveryFileItReads) {
 
   // A project of this test's own, so the headers it rewrites are copies and the
   // store it fills is not the one the developer is using.
-  auto project_or = lyra::test::MakeScratchDir();
+  auto project_or = conformance::framework::MakeScratchDir();
   ASSERT_TRUE(project_or) << project_or.error();
   const auto& project = *project_or;
   auto exported = lyra::driver::ExportRuntimeTree(
@@ -185,7 +185,7 @@ TEST_P(PreparedHeader, IsNamedByEveryFileItReads) {
 // compiler under test, one that warns of templates instantiated into a
 // prepared header and one that refuses to prepare any header.
 TEST_P(PreparedHeader, TakesEachFlagTheCompilerTakesAlone) {
-  auto dir_or = lyra::test::MakeScratchDir();
+  auto dir_or = conformance::framework::MakeScratchDir();
   ASSERT_TRUE(dir_or) << dir_or.error();
   const auto& dir = *dir_or;
   const auto wrap = [&](std::string_view name, std::string_view watched,

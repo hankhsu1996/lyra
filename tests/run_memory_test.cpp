@@ -16,16 +16,17 @@
 #include <string_view>
 #include <vector>
 
+#include "conformance/framework/process.hpp"
+#include "conformance/framework/process_matchers.hpp"
 #include "tests/framework/cli_fixture.hpp"
-#include "tests/framework/process.hpp"
 
 namespace {
 
-using lyra::test::ExitedWithCode;
-using lyra::test::MakeScratchDir;
+using conformance::framework::ExitedWithCode;
+using conformance::framework::MakeScratchDir;
+using conformance::framework::RunChildProcess;
+using conformance::framework::RunUnderAddressLimit;
 using lyra::test::ResolveLyra;
-using lyra::test::RunChildProcess;
-using lyra::test::RunUnderAddressLimit;
 
 // Eight thousand instances of a leaf that holds three procedures and is reached
 // through three ports, every procedure waiting on one signal for the whole run.

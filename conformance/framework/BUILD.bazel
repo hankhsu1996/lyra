@@ -1,0 +1,75 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("//tools/bazel:copts.bzl", "LYRA_COPTS")
+
+package(features = ["parse_headers"])
+
+# Running a child and reading how it ended, which every reader uses and so does
+# any test that drives a tool.
+cc_library(
+    name = "process",
+    srcs = ["process.cpp"],
+    hdrs = [
+        "overloaded.hpp",
+        "process.hpp",
+    ],
+    copts = LYRA_COPTS,
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "process_matchers",
+    srcs = ["process_matchers.cpp"],
+    hdrs = ["process_matchers.hpp"],
+    copts = LYRA_COPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":process",
+        "@googletest//:gtest",
+    ],
+)
+
+# What a case is, what a tool was seen to do with it, the verdict the standard
+# gives on the two, and running one case on a tool's reader, with no tool in it.
+cc_library(
+    name = "framework",
+    srcs = [
+        "case.cpp",
+        "execution.cpp",
+        "observation.cpp",
+        "value_change_dump.cpp",
+        "verdict.cpp",
+    ],
+    hdrs = [
+        "case.hpp",
+        "execution.hpp",
+        "observation.hpp",
+        "value_change_dump.hpp",
+        "verdict.hpp",
+    ],
+    copts = LYRA_COPTS,
+    visibility = ["//visibility:public"],
+    deps = [":process"],
+)
+
+cc_test(
+    name = "process_test",
+    srcs = ["process_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        ":process",
+        ":process_matchers",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "verdict_test",
+    srcs = ["verdict_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        ":framework",
+        ":process",
+        "@googletest//:gtest_main",
+    ],
+)

@@ -1,9 +1,10 @@
-#include "verilator_adapter.hpp"
+#include "conformance/adapters/verilator/reader.hpp"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <optional>
@@ -14,11 +15,33 @@
 #include <variant>
 #include <vector>
 
-#include "conformance_case.hpp"
-#include "conformance_observation.hpp"
-#include "process.hpp"
+#include "conformance/framework/case.hpp"
+#include "conformance/framework/observation.hpp"
+#include "conformance/framework/process.hpp"
 
-namespace lyra::test {
+namespace conformance::adapters::verilator {
+
+using framework::Case;
+using framework::CompilationUnits;
+using framework::EndOf;
+using framework::ExitCodeOf;
+using framework::FindOnPath;
+using framework::HarnessFailed;
+using framework::MissingInput;
+using framework::Observation;
+using framework::ObservedReport;
+using framework::ProcessOutcome;
+using framework::Ran;
+using framework::ReadDecimal;
+using framework::ReadMarkers;
+using framework::ReadOutputs;
+using framework::RecordCommand;
+using framework::Rejected;
+using framework::ReportKind;
+using framework::RunChildProcess;
+using framework::RunEnd;
+using framework::ToolFailed;
+using framework::ToolLacks;
 namespace {
 
 // A guard against a build or a run that never ends. Verilator compiles every
@@ -183,7 +206,7 @@ void ReadLine(std::string_view line, Observation& seen) {
 
 }  // namespace
 
-void ReadVerilatorReports(std::string_view stream, Observation& seen) {
+void ReadReports(std::string_view stream, Observation& seen) {
   std::istringstream lines{std::string(stream)};
   std::string line;
   while (std::getline(lines, line)) {
@@ -191,9 +214,55 @@ void ReadVerilatorReports(std::string_view stream, Observation& seen) {
   }
 }
 
-auto ObserveWithVerilator(
-    const VerilatorTool& tool, const ConformanceCase& test_case,
-    const std::filesystem::path& directory) -> Observation {
+auto FindTool(
+    std::optional<std::filesystem::path> exe,
+    std::optional<std::filesystem::path> c_compiler)
+    -> std::expected<Tool, std::string> {
+  if (!exe) {
+    exe = FindOnPath("verilator");
+  }
+  if (!c_compiler) {
+    c_compiler = FindOnPath("cc");
+  }
+  if (!exe || !c_compiler) {
+    return std::unexpected("this needs verilator and cc, named or on PATH");
+  }
+  // Where Verilator keeps what it ships, as it reports it, so the standard
+  // header a DPI-C source includes is the one it was built against.
+  const std::vector<std::string> ask{"--getenv", "VERILATOR_ROOT"};
+  const ProcessOutcome root = RunChildProcess(*exe, ask);
+  std::string_view root_text = root.stdout_text;
+  while (root_text.ends_with('\n')) {
+    root_text.remove_suffix(1);
+  }
+  if (ExitCodeOf(root) != 0 || root_text.empty()) {
+    return std::unexpected(
+        std::format("'{}' did not say where it is installed", exe->string()));
+  }
+  return Tool{
+      .exe = *exe,
+      .c_compiler = *c_compiler,
+      .standard_headers =
+          std::filesystem::path(root_text) / "include" / "vltstd"};
+}
+
+auto VersionOf(const Tool& tool) -> std::string {
+  const std::vector<std::string> ask{"--version"};
+  const ProcessOutcome version = RunChildProcess(tool.exe, ask);
+  std::string_view text = version.stdout_text;
+  while (text.ends_with('\n')) {
+    text.remove_suffix(1);
+  }
+  return std::string(text);
+}
+
+Reader::Reader(Tool tool) : tool_(std::move(tool)) {
+}
+
+auto Reader::Observe(
+    const Case& test_case, const std::filesystem::path& directory) const
+    -> Observation {
+  const Tool& tool = tool_;
   Observation seen;
   if (std::optional<HarnessFailed> missing = MissingInput(test_case)) {
     seen.end = std::move(*missing);
@@ -274,9 +343,9 @@ auto ObserveWithVerilator(
   seen.end = EndOf(run, kOutOfMemory);
   ReadOutputs(test_case, directory, seen);
   ReadMarkers(run.stdout_text, seen);
-  ReadVerilatorReports(run.stdout_text, seen);
-  ReadVerilatorReports(run.stderr_text, seen);
+  ReadReports(run.stdout_text, seen);
+  ReadReports(run.stderr_text, seen);
   return seen;
 }
 
-}  // namespace lyra::test
+}  // namespace conformance::adapters::verilator

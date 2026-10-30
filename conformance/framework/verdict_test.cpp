@@ -2,7 +2,7 @@
 // output into what it judges. Every verdict is checked both ways, since a judge
 // that only ever says "conforms" passes any corpus.
 
-#include "tests/framework/conformance_verdict.hpp"
+#include "conformance/framework/verdict.hpp"
 
 #include <array>
 #include <csignal>
@@ -13,14 +13,12 @@
 #include <string_view>
 #include <variant>
 
-#include "tests/framework/conformance_case.hpp"
-#include "tests/framework/conformance_observation.hpp"
-#include "tests/framework/lyra_adapter.hpp"
-#include "tests/framework/process.hpp"
-#include "tests/framework/value_change_dump.hpp"
-#include "tests/framework/verilator_adapter.hpp"
+#include "conformance/framework/case.hpp"
+#include "conformance/framework/observation.hpp"
+#include "conformance/framework/process.hpp"
+#include "conformance/framework/value_change_dump.hpp"
 
-namespace lyra::test {
+namespace conformance::framework {
 namespace {
 
 auto RanToItsSentinel(int exit_code = 0) -> Observation {
@@ -68,7 +66,7 @@ auto Is(const Verdict& verdict) -> bool {
   return std::holds_alternative<Expected>(verdict);
 }
 
-TEST(ConformanceVerdictTest, AProgramThatRunsReachesItsSentinelCleanly) {
+TEST(VerdictTest, AProgramThatRunsReachesItsSentinelCleanly) {
   EXPECT_TRUE(Is<Conforms>(Judge(RunsToItsChecks{}, RanToItsSentinel())));
 
   Observation unchecked = RanToItsSentinel();
@@ -88,7 +86,7 @@ TEST(ConformanceVerdictTest, AProgramThatRunsReachesItsSentinelCleanly) {
   EXPECT_TRUE(Is<DoesNotConform>(Judge(RunsToItsChecks{}, refused)));
 }
 
-TEST(ConformanceVerdictTest, ARejectionIsTheToolsAnswerAndNothingElse) {
+TEST(VerdictTest, ARejectionIsTheToolsAnswerAndNothingElse) {
   Observation refused;
   refused.end = Rejected{};
   EXPECT_TRUE(Is<Conforms>(Judge(RejectedBeforeRunning{}, refused)));
@@ -105,7 +103,7 @@ TEST(ConformanceVerdictTest, ARejectionIsTheToolsAnswerAndNothingElse) {
   EXPECT_TRUE(Is<DoesNotConform>(Judge(RejectedBeforeRunning{}, crashed)));
 }
 
-TEST(ConformanceVerdictTest, AReportClaimIsMetByItsKindAndWhatTheCaseNames) {
+TEST(VerdictTest, AReportClaimIsMetByItsKindAndWhatTheCaseNames) {
   ReportPattern asked = Asking(ReportKind::kInfo, 21);
   asked.time = 37;
   asked.scope = "Top.probe";
@@ -158,7 +156,7 @@ TEST(ConformanceVerdictTest, AReportClaimIsMetByItsKindAndWhatTheCaseNames) {
   EXPECT_TRUE(Is<Unresolved>(Judge(claim, unread)));
 }
 
-TEST(ConformanceVerdictTest, EachReportAskedForIsAnsweredByOneOfItsOwn) {
+TEST(VerdictTest, EachReportAskedForIsAnsweredByOneOfItsOwn) {
   const IssuesReports two{
       .reports = {
           Asking(ReportKind::kViolation), Asking(ReportKind::kViolation)}};
@@ -202,7 +200,7 @@ TEST(ConformanceVerdictTest, EachReportAskedForIsAnsweredByOneOfItsOwn) {
   EXPECT_TRUE(Is<DoesNotConform>(Judge(fatal, erred)));
 }
 
-TEST(ConformanceVerdictTest, AReportTiedToItsStatementIsCountedExactly) {
+TEST(VerdictTest, AReportTiedToItsStatementIsCountedExactly) {
   const IssuesReports two{
       .reports = {
           Asking(ReportKind::kError, 20), Asking(ReportKind::kError, 20)}};
@@ -255,7 +253,7 @@ TEST(ConformanceVerdictTest, AReportTiedToItsStatementIsCountedExactly) {
   EXPECT_TRUE(Is<DoesNotConform>(Judge(two, ended_over)));
 }
 
-TEST(ConformanceVerdictTest, TheLineTiesAReportToItsStatementAndNothingElse) {
+TEST(VerdictTest, TheLineTiesAReportToItsStatementAndNothingElse) {
   // A second report from the line asked about, carrying another message, is
   // that statement reporting once more than asked.
   ReportPattern saw_two = Asking(ReportKind::kError, 13);
@@ -307,7 +305,7 @@ TEST(ConformanceVerdictTest, TheLineTiesAReportToItsStatementAndNothingElse) {
   EXPECT_TRUE(Is<Conforms>(Judge(either, both)));
 }
 
-TEST(ConformanceVerdictTest, ARunEndsAtAReportOnlyWhereOneMayEndIt) {
+TEST(VerdictTest, ARunEndsAtAReportOnlyWhereOneMayEndIt) {
   // A warning does not end the run, so a run that stopped after one, short of
   // the error asked for, issued no error.
   const IssuesReports warning_then_error{
@@ -318,7 +316,7 @@ TEST(ConformanceVerdictTest, ARunEndsAtAReportOnlyWhereOneMayEndIt) {
   EXPECT_TRUE(Is<DoesNotConform>(Judge(warning_then_error, stopped)));
 }
 
-TEST(ConformanceVerdictTest, AStatusThatFailsIsNotHiddenByAnUnreadLine) {
+TEST(VerdictTest, AStatusThatFailsIsNotHiddenByAnUnreadLine) {
   const IssuesReports warning{.reports = {Asking(ReportKind::kWarning, 5)}};
   Observation failed = RanToItsSentinel(1);
   failed.reports.push_back(Report(ReportKind::kWarning, 5));
@@ -331,7 +329,7 @@ TEST(ConformanceVerdictTest, AStatusThatFailsIsNotHiddenByAnUnreadLine) {
   EXPECT_TRUE(Is<DoesNotConform>(Judge(none, silent_failed)));
 }
 
-TEST(ConformanceVerdictTest, AReportTheRunGoesOnPastIsHeldToItsStatus) {
+TEST(VerdictTest, AReportTheRunGoesOnPastIsHeldToItsStatus) {
   const IssuesReports warning{.reports = {Asking(ReportKind::kWarning)}};
   Observation clean = RanToItsSentinel();
   clean.reports.push_back(Report(ReportKind::kWarning));
@@ -341,7 +339,7 @@ TEST(ConformanceVerdictTest, AReportTheRunGoesOnPastIsHeldToItsStatus) {
   EXPECT_TRUE(Is<DoesNotConform>(Judge(warning, failed)));
 }
 
-TEST(ConformanceVerdictTest, AReportTheRunMayEndAtIsPrecededByReadiness) {
+TEST(VerdictTest, AReportTheRunMayEndAtIsPrecededByReadiness) {
   const IssuesReports violation{.reports = {Asking(ReportKind::kViolation)}};
 
   // Ready for the report is the marker such a case prints; the one a case
@@ -366,7 +364,7 @@ TEST(ConformanceVerdictTest, AReportTheRunMayEndAtIsPrecededByReadiness) {
   EXPECT_TRUE(Is<DoesNotConform>(Judge(violation, went_on)));
 }
 
-TEST(ConformanceVerdictTest, AnAbsenceIsOfOneKindOfReportOnly) {
+TEST(VerdictTest, AnAbsenceIsOfOneKindOfReportOnly) {
   const IssuesNoReportOf claim{
       .kinds = {ReportKind::kViolation, ReportKind::kError}};
 
@@ -388,7 +386,7 @@ TEST(ConformanceVerdictTest, AnAbsenceIsOfOneKindOfReportOnly) {
   EXPECT_TRUE(Is<Unresolved>(Judge(claim, unread)));
 }
 
-TEST(ConformanceVerdictTest, AUseModelIsAskedForAndNeverAssumed) {
+TEST(VerdictTest, AUseModelIsAskedForAndNeverAssumed) {
   Observation lacking;
   lacking.end = ToolLacks{.use_model = "a use model", .clause = "LRM 3.12.1"};
   EXPECT_TRUE(Is<DoesNotConform>(Judge(RunsToItsChecks{}, lacking)));
@@ -401,7 +399,7 @@ TEST(ConformanceVerdictTest, AUseModelIsAskedForAndNeverAssumed) {
 // A limit the caller set -- time, memory, or the machine's own -- says nothing
 // of the program, so a run stopped at one is never a failure of the tool,
 // while one the tool's own fault ended is.
-TEST(ConformanceVerdictTest, ARunStoppedAtALimitIsUnresolvedAndACrashIsNot) {
+TEST(VerdictTest, ARunStoppedAtALimitIsUnresolvedAndACrashIsNot) {
   const ProcessOutcome timed_out{
       .end = TimedOut{}, .stdout_text = {}, .stderr_text = {}};
   const ProcessOutcome killed{
@@ -446,7 +444,7 @@ TEST(ConformanceVerdictTest, ARunStoppedAtALimitIsUnresolvedAndACrashIsNot) {
 // extend to the left (LRM 21.7.2, 21.7.2.2); none of that is a difference.
 // What each name is declared as, in which scope, and the value it holds at
 // each simulated time are, the time read in the unit the dump states.
-TEST(ConformanceVerdictTest, DumpsAreComparedAsTheStandardReadsThem) {
+TEST(VerdictTest, DumpsAreComparedAsTheStandardReadsThem) {
   constexpr std::string_view kExpected =
       "$timescale 1ns $end\n"
       "$scope module Top $end\n"
@@ -529,7 +527,7 @@ TEST(ConformanceVerdictTest, DumpsAreComparedAsTheStandardReadsThem) {
 // section to list, so what a section records of one is no difference, while
 // its triggering is. A scope declaring nothing says nothing, so whether one is
 // written is too.
-TEST(ConformanceVerdictTest, ADumpIsReadForWhatItSaysAndNothingElse) {
+TEST(VerdictTest, ADumpIsReadForWhatItSaysAndNothingElse) {
   constexpr std::string_view kExpected =
       "$timescale 1ns $end\n"
       "$scope module Top $end $var reg 1 A a $end $var event 1 E e $end\n"
@@ -567,7 +565,7 @@ TEST(ConformanceVerdictTest, ADumpIsReadForWhatItSaysAndNothingElse) {
 
 // A declaration's size counts its bits, which a real and an event do not have,
 // so their size is the tool's while a vector's is not.
-TEST(ConformanceVerdictTest, OnlyAVariableWithBitsIsHeldToItsSize) {
+TEST(VerdictTest, OnlyAVariableWithBitsIsHeldToItsSize) {
   constexpr std::string_view kExpected =
       "$timescale 1ns $end "
       "$scope module Top $end $var real 64 R r $end $var reg 4 A a $end\n"
@@ -590,7 +588,7 @@ TEST(ConformanceVerdictTest, OnlyAVariableWithBitsIsHeldToItsSize) {
 
 // An extended dump's port value is its state characters and two strengths,
 // each told by itself (LRM 21.7.4.3).
-TEST(ConformanceVerdictTest, ExtendedDumpPortsAreComparedByStateAndStrength) {
+TEST(VerdictTest, ExtendedDumpPortsAreComparedByStateAndStrength) {
   constexpr std::string_view kExpected =
       "$timescale 1ns $end "
       "$scope module Top.u $end\n"
@@ -618,8 +616,8 @@ TEST(ConformanceVerdictTest, ExtendedDumpPortsAreComparedByStateAndStrength) {
 // A case is held to every file it expects as well as to its claim: one the run
 // did not write, or wrote otherwise, does not conform, and the claim's own
 // verdict stands where it is not a conforming one.
-TEST(ConformanceVerdictTest, ACaseIsHeldToTheFilesItExpects) {
-  ConformanceCase c;
+TEST(VerdictTest, ACaseIsHeldToTheFilesItExpects) {
+  Case c;
   c.claim = RunsToItsChecks{};
   c.expected_outputs.push_back(
       ExpectedOutput{
@@ -654,90 +652,11 @@ TEST(ConformanceVerdictTest, ACaseIsHeldToTheFilesItExpects) {
   EXPECT_TRUE(Is<Unresolved>(JudgeCase(c, stopped)));
 }
 
-TEST(ConformanceVerdictTest, ACaseNamedByARelativePathIsNotHandedToATool) {
-  ConformanceCase c;
-  c.entry = "tests/conformance/a/b/main.sv";
+TEST(VerdictTest, ACaseNamedByARelativePathIsNotHandedToATool) {
+  Case c;
+  c.entry = "conformance/cases/a/b/main.sv";
   EXPECT_TRUE(MissingInput(c).has_value());
 }
 
-TEST(ConformanceReaderTest, LyraReportsAreReadOffTheirOwnShape) {
-  Observation seen;
-  ReadLyraReports(
-      "main.sv:16:5: warning: 'unique' violation; no condition matched\n"
-      "note: at time 0\n"
-      "main.sv:21:7: info: a probe report\n"
-      "note: in 'Top.probe' at time 37\n"
-      "main.sv:9:5: note: '$finish' at time 12\n"
-      "main.sv:30:5: error: a message that says: info: inside it\n"
-      "something no report looks like\n"
-      "main.sv:31:5: error:  100% of it, spaced : \n"
-      "main.sv:32:5: error: a message on\n"
-      "two lines\n",
-      seen);
-  ASSERT_EQ(seen.reports.size(), 6U);
-  // The message is the program's text exactly, spaces and all; a line it runs
-  // on to is not placed, and $finish supplies no message of the program's.
-  EXPECT_EQ(seen.reports[3].message, "a message that says: info: inside it");
-  EXPECT_EQ(seen.reports[4].message, " 100% of it, spaced : ");
-  EXPECT_EQ(seen.reports[2].message, std::nullopt);
-  // The report's own word is the earliest in the line.
-  EXPECT_EQ(seen.reports[3].kind, ReportKind::kError);
-  EXPECT_EQ(seen.reports[3].line, 30U);
-  EXPECT_EQ(seen.reports[0].kind, ReportKind::kViolation);
-  EXPECT_EQ(seen.reports[0].message, std::nullopt);
-  EXPECT_EQ(seen.reports[0].line, 16U);
-  EXPECT_EQ(seen.reports[0].time, 0U);
-  EXPECT_EQ(seen.reports[1].kind, ReportKind::kInfo);
-  EXPECT_EQ(seen.reports[1].line, 21U);
-  EXPECT_EQ(seen.reports[1].scope, "Top.probe");
-  EXPECT_EQ(seen.reports[1].time, 37U);
-  EXPECT_EQ(seen.reports[1].message, "a probe report");
-  EXPECT_EQ(seen.reports[2].kind, ReportKind::kFinish);
-  EXPECT_EQ(seen.reports[2].time, 12U);
-  ASSERT_EQ(seen.unplaced.size(), 2U);
-}
-
-TEST(ConformanceReaderTest, VerilatorReportsAreReadAmongTheProgramsOutput) {
-  Observation seen;
-  ReadVerilatorReports(
-      "a line the program printed\n"
-      "[0] %Error: main.sv:18: Assertion failed in Top.unnamedblk1: 'unique "
-      "if' statement violated\n"
-      "%Error: /abs/main.sv:18: Verilog $stop\n"
-      "Aborting...\n"
-      "[37] -Info: main.sv:21: Top.probe: a probe report\n"
-      "[40] %Error: main.sv:16: Assertion failed in Top.unnamedblk1: priority "
-      "case, but non-match found for '3'h5'\n"
-      "[40] %Error: main.sv:18: Assertion failed in Top.unnamedblk1: unique0 "
-      "case, but multiple matches found for '3'h3'\n"
-      "[41] %Error: main.sv:30: Assertion failed in Top: a priority case, but "
-      "the program's own\n"
-      "- S i m u l a t i o n   R e p o r t: Verilator 5.045 devel\n"
-      "- Verilator: end at 37ps; walltime 0.000 s; speed 1.013 us/s\n"
-      "%Error: no place given\n",
-      seen);
-  ASSERT_EQ(seen.reports.size(), 6U);
-  EXPECT_EQ(seen.reports[0].kind, ReportKind::kViolation);
-  EXPECT_EQ(seen.reports[0].message, std::nullopt);
-  EXPECT_EQ(seen.reports[0].scope, "Top.unnamedblk1");
-  // A case statement's violation report names the statement and what it
-  // found, and a program's message that only begins with such words is the
-  // program's.
-  EXPECT_EQ(seen.reports[3].kind, ReportKind::kViolation);
-  EXPECT_EQ(seen.reports[3].message, std::nullopt);
-  EXPECT_EQ(seen.reports[3].line, 16U);
-  EXPECT_EQ(seen.reports[4].kind, ReportKind::kViolation);
-  EXPECT_EQ(seen.reports[5].kind, ReportKind::kError);
-  EXPECT_EQ(seen.reports[5].message, "a priority case, but the program's own");
-  EXPECT_EQ(seen.reports[0].line, 18U);
-  EXPECT_EQ(seen.reports[0].time, 0U);
-  EXPECT_EQ(seen.reports[1].kind, ReportKind::kStop);
-  EXPECT_EQ(seen.reports[1].message, std::nullopt);
-  EXPECT_EQ(seen.reports[2].kind, ReportKind::kInfo);
-  EXPECT_EQ(seen.reports[2].scope, "Top.probe");
-  EXPECT_EQ(seen.reports[2].message, "a probe report");
-  ASSERT_EQ(seen.unplaced.size(), 1U);
-}
-
 }  // namespace
-}  // namespace lyra::test
+}  // namespace conformance::framework

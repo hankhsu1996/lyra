@@ -195,7 +195,7 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
   ASSERT_FALSE(nm.empty());
   const auto lyra_exe = lyra::test::ResolveLyra();
   ASSERT_FALSE(lyra_exe.empty());
-  auto dir_or = lyra::test::MakeScratchDir();
+  auto dir_or = conformance::framework::MakeScratchDir();
   ASSERT_TRUE(dir_or) << dir_or.error();
 
   const auto design = *dir_or / "design.sv";

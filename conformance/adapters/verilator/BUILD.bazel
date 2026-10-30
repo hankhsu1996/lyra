@@ -1,0 +1,29 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("//tools/bazel:copts.bzl", "LYRA_COPTS")
+
+package(features = ["parse_headers"])
+
+# How Verilator is asked to build and run a case, and how what it wrote is read.
+cc_library(
+    name = "reader",
+    srcs = ["reader.cpp"],
+    hdrs = ["reader.hpp"],
+    copts = LYRA_COPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        "//conformance/framework",
+        "//conformance/framework:process",
+    ],
+)
+
+cc_test(
+    name = "reader_test",
+    srcs = ["reader_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        ":reader",
+        "//conformance/framework",
+        "@googletest//:gtest_main",
+    ],
+)

@@ -231,5 +231,5 @@ it better, which is why it is the decision the others hang from.
 
 ## Cross-references
 
-- `conformance-case-shape.md` -- the corpus this one borrows its directory, directive and naming
-  rules from, and the reasoning behind each.
+- `../../conformance/docs/decisions/case-shape.md` -- the corpus this one borrows its directory,
+  directive and naming rules from, and the reasoning behind each.

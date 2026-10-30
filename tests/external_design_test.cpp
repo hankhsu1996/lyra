@@ -40,23 +40,23 @@
 #include <variant>
 #include <vector>
 
+#include "conformance/framework/process.hpp"
 #include "tests/framework/cli_fixture.hpp"
-#include "tests/framework/process.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 using bazel::tools::cpp::runfiles::Runfiles;
+using conformance::framework::ExitCodeOf;
+using conformance::framework::MakeScratchDir;
+using conformance::framework::ProcessOutcome;
+using conformance::framework::RunShellScript;
+using conformance::framework::TestTimedOut;
+using conformance::framework::TimedOut;
 using lyra::test::DesignCase;
 using lyra::test::DesignCorpus;
 using lyra::test::DesignStep;
 using lyra::test::DesignStop;
-using lyra::test::ExitCodeOf;
 using lyra::test::LayOutDesign;
-using lyra::test::MakeScratchDir;
 using lyra::test::NameOf;
-using lyra::test::ProcessOutcome;
-using lyra::test::RunShellScript;
-using lyra::test::TestTimedOut;
-using lyra::test::TimedOut;
 using namespace std::chrono_literals;
 
 namespace {

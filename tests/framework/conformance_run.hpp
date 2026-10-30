@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "conformance_case.hpp"
+#include "conformance/framework/case.hpp"
 
 namespace lyra::test {
 
@@ -51,8 +51,9 @@ class CaseRecord {
 
   // Recorded ids matching no case in the corpus. An entry naming a case that
   // was renamed or deleted would otherwise sit unexamined forever.
-  [[nodiscard]] auto UnmatchedIds(const std::vector<ConformanceCase>& cases)
-      const -> std::vector<std::string>;
+  [[nodiscard]] auto UnmatchedIds(
+      const std::vector<conformance::framework::Case>& cases) const
+      -> std::vector<std::string>;
 
   // Every entry of this record and of `other`, which hold no id in common.
   [[nodiscard]] auto Joined(const CaseRecord& other) const -> CaseRecord;
@@ -78,7 +79,7 @@ struct PathRecords {
 // streams -- since a conformance failure is read without re-running it.
 auto RunConformanceCase(
     const std::filesystem::path& lyra_exe, const ConformancePath& path,
-    const ConformanceCase& test_case, const PathRecords& records)
+    const conformance::framework::Case& test_case, const PathRecords& records)
     -> std::optional<std::string>;
 
 // Elaborates a parked case without lowering or running it. Nothing runs a
@@ -87,7 +88,8 @@ auto RunConformanceCase(
 // holds it to the least a case must be, so that whoever restores it is reading
 // what was parked rather than what rotted since.
 auto CheckParkedCase(
-    const std::filesystem::path& lyra_exe, const ConformanceCase& test_case)
+    const std::filesystem::path& lyra_exe,
+    const conformance::framework::Case& test_case)
     -> std::optional<std::string>;
 
 }  // namespace lyra::test

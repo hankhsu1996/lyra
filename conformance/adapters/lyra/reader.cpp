@@ -1,4 +1,4 @@
-#include "lyra_adapter.hpp"
+#include "conformance/adapters/lyra/reader.hpp"
 
 #include <array>
 #include <chrono>
@@ -13,11 +13,30 @@
 #include <variant>
 #include <vector>
 
-#include "conformance_case.hpp"
-#include "conformance_observation.hpp"
-#include "process.hpp"
+#include "conformance/framework/case.hpp"
+#include "conformance/framework/observation.hpp"
+#include "conformance/framework/process.hpp"
 
-namespace lyra::test {
+namespace conformance::adapters::lyra {
+
+using framework::Case;
+using framework::CompilationUnits;
+using framework::EndOf;
+using framework::HarnessFailed;
+using framework::MissingInput;
+using framework::Observation;
+using framework::ObservedReport;
+using framework::ProcessOutcome;
+using framework::Ran;
+using framework::ReadDecimal;
+using framework::ReadMarkers;
+using framework::ReadOutputs;
+using framework::RecordCommand;
+using framework::Rejected;
+using framework::ReportKind;
+using framework::RunChildProcess;
+using framework::RunEnd;
+using framework::ToolFailed;
 namespace {
 
 // How long one command may take before it is called stuck. It is a guard
@@ -176,7 +195,7 @@ auto KindOfWord(std::string_view word) -> ReportKind {
 
 }  // namespace
 
-void ReadLyraReports(std::string_view stream, Observation& seen) {
+void ReadReports(std::string_view stream, Observation& seen) {
   std::istringstream lines{std::string(stream)};
   std::string line;
   // The report a note that follows it belongs to.
@@ -222,8 +241,7 @@ void ReadLyraReports(std::string_view stream, Observation& seen) {
   }
 }
 
-auto LyraDesignArguments(const ConformanceCase& test_case)
-    -> std::vector<std::string> {
+auto DesignArguments(const Case& test_case) -> std::vector<std::string> {
   std::vector<std::string> args;
   for (const std::string& top : test_case.tops) {
     args.emplace_back("--top");
@@ -246,9 +264,13 @@ auto LyraDesignArguments(const ConformanceCase& test_case)
   return args;
 }
 
-auto ObserveWithLyra(
-    const LyraTool& tool, const ConformanceCase& test_case,
-    const std::filesystem::path& directory) -> Observation {
+Reader::Reader(Tool tool) : tool_(std::move(tool)) {
+}
+
+auto Reader::Observe(
+    const Case& test_case, const std::filesystem::path& directory) const
+    -> Observation {
+  const Tool& tool = tool_;
   Observation seen;
   if (std::optional<HarnessFailed> missing = MissingInput(test_case)) {
     seen.end = std::move(*missing);
@@ -262,7 +284,7 @@ auto ObserveWithLyra(
     build.emplace_back("--dpi-link");
     build.push_back(native.string());
   }
-  const std::vector<std::string> design = LyraDesignArguments(test_case);
+  const std::vector<std::string> design = DesignArguments(test_case);
   build.insert(build.end(), design.begin(), design.end());
 
   const ProcessOutcome built =
@@ -289,8 +311,8 @@ auto ObserveWithLyra(
   seen.end = EndOf(run, kSimulationOutOfMemory);
   ReadOutputs(test_case, directory, seen);
   ReadMarkers(run.stdout_text, seen);
-  ReadLyraReports(run.stderr_text, seen);
+  ReadReports(run.stderr_text, seen);
   return seen;
 }
 
-}  // namespace lyra::test
+}  // namespace conformance::adapters::lyra

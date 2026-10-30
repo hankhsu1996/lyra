@@ -1,21 +1,14 @@
 #pragma once
 
-#include <expected>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
 
-#include "tests/framework/process.hpp"
+#include "conformance/framework/process.hpp"
 
 namespace lyra::test {
-
-// A directory of the caller's own to emit into. The name is drawn rather than
-// derived from the test's, because a test that reruns must not inherit what a
-// previous run left behind. Returns why it failed rather than throwing, so a
-// setup failure is reported as the test failing rather than as a crash.
-auto MakeScratchDir() -> std::expected<std::filesystem::path, std::string>;
 
 // Where the compiler under test is, as this run was given it.
 auto ResolveLyra() -> std::filesystem::path;
@@ -33,7 +26,7 @@ auto ResolveLlvmNm() -> std::filesystem::path;
 // argument can express.
 auto RunLyraFrom(
     const std::filesystem::path& lyra, const std::filesystem::path& dir,
-    std::string_view args) -> ProcessOutcome;
+    std::string_view args) -> conformance::framework::ProcessOutcome;
 
 // Clang, where this host has it. What a build costs is a fact about the
 // compiler that ran it, so a test measuring one asks for that compiler by name

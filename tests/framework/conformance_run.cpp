@@ -13,19 +13,39 @@
 #include <system_error>
 #include <tuple>
 #include <unordered_set>
+#include <utility>
 #include <variant>
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
 #include "cli_fixture.hpp"
-#include "conformance_case.hpp"
-#include "conformance_observation.hpp"
-#include "conformance_verdict.hpp"
+#include "conformance/adapters/lyra/reader.hpp"
+#include "conformance/framework/case.hpp"
+#include "conformance/framework/execution.hpp"
+#include "conformance/framework/observation.hpp"
+#include "conformance/framework/process.hpp"
+#include "conformance/framework/verdict.hpp"
 #include "lyra/driver/project_layout.hpp"
-#include "lyra_adapter.hpp"
-#include "process.hpp"
 
 namespace lyra::test {
+
+using conformance::adapters::lyra::DesignArguments;
+using conformance::adapters::lyra::kInternalErrorReport;
+using conformance::adapters::lyra::Tool;
+using conformance::framework::Case;
+using conformance::framework::Conforms;
+using conformance::framework::Describe;
+using conformance::framework::DoesNotConform;
+using conformance::framework::ExitCodeOf;
+using conformance::framework::HarnessFailed;
+using conformance::framework::Observation;
+using conformance::framework::ProcessOutcome;
+using conformance::framework::RejectedBeforeRunning;
+using conformance::framework::RunChildProcess;
+using conformance::framework::RunOneCase;
+using conformance::framework::Transcript;
+using conformance::framework::Verdict;
+
 namespace {
 
 // How long elaborating a parked case may take before it is called stuck: a
@@ -61,9 +81,9 @@ auto BuildOptions(const ConformancePath& path) -> std::vector<std::string> {
 // derives otherwise is a compile error of the case rather than a wrong value
 // read across the boundary.
 auto WithGeneratedHeader(
-    const ConformanceCase& test_case, const std::filesystem::path& directory)
-    -> std::expected<ConformanceCase, std::string> {
-  ConformanceCase checked = test_case;
+    const Case& test_case, const std::filesystem::path& directory)
+    -> std::expected<Case, std::string> {
+  Case checked = test_case;
   const std::filesystem::path wrappers = directory / "against_generated_header";
   std::error_code created;
   std::filesystem::create_directories(wrappers, created);
@@ -86,6 +106,31 @@ auto WithGeneratedHeader(
   }
   return checked;
 }
+
+// Lyra's reader, with each foreign source compiled after the header Lyra
+// generates. That header is Lyra's own and no part of the standard, so the
+// check is Lyra's: a reader of its own wrapping the suite's, which every other
+// tool is handed unwrapped.
+class AgainstGeneratedHeader final : public conformance::framework::Reader {
+ public:
+  explicit AgainstGeneratedHeader(Tool tool) : lyra_(std::move(tool)) {
+  }
+
+  [[nodiscard]] auto Observe(
+      const Case& test_case, const std::filesystem::path& directory) const
+      -> Observation override {
+    const auto checked = WithGeneratedHeader(test_case, directory);
+    if (!checked) {
+      Observation seen;
+      seen.end = HarnessFailed{checked.error()};
+      return seen;
+    }
+    return lyra_.Observe(*checked, directory);
+  }
+
+ private:
+  conformance::adapters::lyra::Reader lyra_;
+};
 
 }  // namespace
 
@@ -134,11 +179,11 @@ auto CaseRecord::Find(std::string_view case_id) const
   return found->second;
 }
 
-auto CaseRecord::UnmatchedIds(const std::vector<ConformanceCase>& cases) const
+auto CaseRecord::UnmatchedIds(const std::vector<Case>& cases) const
     -> std::vector<std::string> {
   std::unordered_set<std::string> known;
   known.reserve(cases.size());
-  for (const ConformanceCase& c : cases) {
+  for (const Case& c : cases) {
     known.insert(c.id);
   }
   std::vector<std::string> unmatched;
@@ -168,10 +213,10 @@ auto CaseRecord::SharedIds(const CaseRecord& other) const
 }
 
 auto CheckParkedCase(
-    const std::filesystem::path& lyra_exe, const ConformanceCase& test_case)
+    const std::filesystem::path& lyra_exe, const Case& test_case)
     -> std::optional<std::string> {
   std::vector<std::string> argv{"check", "--no-color"};
-  const std::vector<std::string> design = LyraDesignArguments(test_case);
+  const std::vector<std::string> design = DesignArguments(test_case);
   argv.insert(argv.end(), design.begin(), design.end());
 
   const ProcessOutcome outcome = RunChildProcess(lyra_exe, argv, kStuckAfter);
@@ -204,24 +249,16 @@ auto CheckParkedCase(
 // fails either way, so a record can only shrink.
 auto RunConformanceCase(
     const std::filesystem::path& lyra_exe, const ConformancePath& path,
-    const ConformanceCase& test_case, const PathRecords& records)
+    const Case& test_case, const PathRecords& records)
     -> std::optional<std::string> {
-  // A program opens files where it starts, under names another case may use
-  // too, and a shard runs several cases at once, so each case starts in a
-  // directory of its own.
-  const auto here = MakeScratchDir();
-  if (!here) {
-    return std::format(
-        "{}: no directory to run the case in: {}", test_case.id, here.error());
+  const AgainstGeneratedHeader reader(
+      Tool{.exe = lyra_exe, .build_options = BuildOptions(path)});
+  const auto result = RunOneCase(test_case, reader);
+  if (!result) {
+    return std::format("{}: {}", test_case.id, result.error());
   }
-  const auto built_against_header = WithGeneratedHeader(test_case, *here);
-  if (!built_against_header) {
-    return std::format("{}: {}", test_case.id, built_against_header.error());
-  }
-  const Observation seen = ObserveWithLyra(
-      LyraTool{.exe = lyra_exe, .build_options = BuildOptions(path)},
-      *built_against_header, *here);
-  const Verdict verdict = JudgeCase(test_case, seen);
+  const Observation& seen = result->seen;
+  const Verdict& verdict = result->verdict;
   const auto report = [&](std::string_view what) {
     return std::format(
         "{}\n\ncase: {}\npath: {}\nverdict: {}\n\n{}", what, test_case.id,

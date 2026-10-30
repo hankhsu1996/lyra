@@ -9,7 +9,7 @@ Rules:
   S001  No /*name=*/value parameter labels at call sites and no /*name*/
         commented-out unused parameter names. IDE inlay hints render
         parameter names; both forms rot when the parameter is renamed.
-        Scope: every .cpp/.hpp under src/, include/, tests/.
+        Scope: every .cpp/.hpp under src/, include/, tests/, conformance/.
 
   S002  No header files (.hpp/.h/.hh/.hxx) anywhere under src/. Headers
         live in include/, sources live in src/. The two trees mirror
@@ -30,7 +30,7 @@ Rules:
         quotes (`#include "lyra/..."`). 3rd-party libraries follow their
         upstream convention (e.g. fmt uses `<fmt/...>`) and are not
         policed by this rule.
-        Scope: every .cpp/.hpp under src/, include/, tests/.
+        Scope: every .cpp/.hpp under src/, include/, tests/, conformance/.
 
   S005  No cast-to-void of a bare name as a statement -- `(void)x;` or
         `static_cast<void>(x);` where `x` is a plain identifier. This is the
@@ -40,7 +40,7 @@ Rules:
         warning. Intentional discard of a call's return value (`(void)f();`)
         is spared: the identifier char class stops at `(`, so anything with a
         call does not match.
-        Scope: every .cpp/.hpp under src/, include/, tests/.
+        Scope: every .cpp/.hpp under src/, include/, tests/, conformance/.
 
   S006  No `[[maybe_unused]]` on a parameter or variable. Like `(void)x;`, it
         keeps something unused and silences the warning instead of fixing the
@@ -49,7 +49,7 @@ Rules:
         but the body cannot use, leave it unnamed (with a single-line
         `// NOLINT(readability-named-parameter)` only if that check then
         objects).
-        Scope: every .cpp/.hpp under src/, include/, tests/.
+        Scope: every .cpp/.hpp under src/, include/, tests/, conformance/.
 
   S007  No project-documentation references in comments. A comment that names
         a `docs/` path, a project `.md` file (architecture / decision /
@@ -177,7 +177,7 @@ ID_FROM_SIZE_PATTERN = re.compile(
 )
 
 
-def iter_cpp_files(repo_root: Path, roots=("src", "include", "tests")):
+def iter_cpp_files(repo_root: Path, roots=("src", "include", "tests", "conformance")):
     for root in roots:
         base = repo_root / root
         if not base.exists():

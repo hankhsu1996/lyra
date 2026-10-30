@@ -260,8 +260,8 @@ not whether the execution was in error.
 
 - [run-time-failure-is-not-an-outcome](run-time-failure-is-not-an-outcome.md) -- the outcome model
   this completes, and the tail it named as owed.
-- [conformance-diagnostic-claims](conformance-diagnostic-claims.md) -- how a requirement whose
-  observable is a report is stated in the corpus, which is what makes D7 testable.
+- [diagnostic-claims](../../conformance/docs/decisions/diagnostic-claims.md) -- how a requirement
+  whose observable is a report is stated in the corpus, which is what makes D7 testable.
 - `../architecture/scheduling.md` -- the engine that runs the tail.
 - `../architecture/nonlocal_control_flow.md` -- the region, the raise and the cleanup D4's departure
   is an instance of.

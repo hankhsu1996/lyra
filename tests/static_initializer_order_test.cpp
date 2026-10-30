@@ -36,12 +36,17 @@
 #include <slang/driver/Driver.h>
 #include <slang/text/SourceManager.h>
 
+#include "conformance/adapters/lyra/reader.hpp"
+#include "conformance/framework/case.hpp"
 #include "lyra/compiler/compile.hpp"
-#include "tests/framework/conformance_case.hpp"
-#include "tests/framework/lyra_adapter.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 namespace lyra::test {
+
+using conformance::adapters::lyra::DesignArguments;
+using conformance::framework::Case;
+using conformance::framework::LoadCases;
+
 namespace {
 
 auto IsStatic(const slang::ast::Symbol& symbol) -> bool {
@@ -202,12 +207,12 @@ const std::map<std::string, std::string, std::less<>> kReviewed = {
 
 // What the initializers of a design read, or nothing where it does not
 // elaborate -- a case the standard requires a tool to reject runs nothing.
-auto ReadsOfStaticInitializers(const ConformanceCase& test_case)
+auto ReadsOfStaticInitializers(const Case& test_case)
     -> std::optional<std::vector<std::string>> {
   slang::driver::Driver driver;
   driver.addStandardArgs();
   std::vector<std::string> args{"lyra"};
-  const std::vector<std::string> design = LyraDesignArguments(test_case);
+  const std::vector<std::string> design = DesignArguments(test_case);
   args.insert(args.end(), design.begin(), design.end());
   std::vector<const char*> argv;
   argv.reserve(args.size());
@@ -224,12 +229,11 @@ auto ReadsOfStaticInitializers(const ConformanceCase& test_case)
   return OrderDependentReads(every.found, driver.sourceManager);
 }
 
-auto DesignOf(const std::filesystem::path& dir, std::string_view text)
-    -> ConformanceCase {
+auto DesignOf(const std::filesystem::path& dir, std::string_view text) -> Case {
   std::filesystem::create_directories(dir);
   const std::filesystem::path path = dir / "main.sv";
   std::ofstream(path) << text;
-  ConformanceCase c;
+  Case c;
   c.id = dir.filename().string();
   c.directory = dir;
   c.entry = path;
@@ -320,11 +324,12 @@ TEST(StaticInitializerOrderTest, NoCaseLeansOnTheOrderOfItsInitializers) {
   const std::unique_ptr<bazel::tools::cpp::runfiles::Runfiles> runfiles(
       bazel::tools::cpp::runfiles::Runfiles::CreateForTest(&error));
   ASSERT_NE(runfiles, nullptr) << error;
-  const std::vector<ConformanceCase> corpus =
-      LoadConformanceCases(runfiles->Rlocation("_main/tests/conformance"));
+  const std::vector<Case> corpus = LoadCases(
+      runfiles->Rlocation("_main/conformance/cases"),
+      runfiles->Rlocation("_main/conformance/harness"));
   ASSERT_FALSE(corpus.empty());
   std::string report;
-  for (const ConformanceCase& c : corpus) {
+  for (const Case& c : corpus) {
     if (kReviewed.contains(c.id)) continue;
     const auto found = ReadsOfStaticInitializers(c);
     if (!found) continue;

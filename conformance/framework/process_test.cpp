@@ -1,7 +1,7 @@
 // How a test judges a child it ran: a child that did not exit by itself never
 // reads as one that succeeded, whatever ended it.
 
-#include "tests/framework/process.hpp"
+#include "conformance/framework/process.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -10,14 +10,16 @@
 #include <string>
 #include <variant>
 
+#include "conformance/framework/process_matchers.hpp"
+
 namespace {
 
-using lyra::test::Describe;
-using lyra::test::ExitedWithCode;
-using lyra::test::RunShellScript;
-using lyra::test::Signalled;
-using lyra::test::TestTimedOut;
-using lyra::test::TimedOut;
+using conformance::framework::Describe;
+using conformance::framework::ExitedWithCode;
+using conformance::framework::RunShellScript;
+using conformance::framework::Signalled;
+using conformance::framework::TestTimedOut;
+using conformance::framework::TimedOut;
 using testing::Not;
 using namespace std::chrono_literals;
 
