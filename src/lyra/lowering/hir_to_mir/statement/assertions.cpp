@@ -140,7 +140,7 @@ auto LowerDeferredCallInto(
       .operands = operands, .statement = &statement};
   auto lowered = process.LowerStmt(
       call_stmt,
-      body.Frame().WithBodyCanWait(true).WithArgumentsEvaluatedEarlier(
+      body.Frame().WithRunsAsFunctionCall(false).WithArgumentsEvaluatedEarlier(
           &arguments));
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   body.Body().AppendStmt(*std::move(lowered));

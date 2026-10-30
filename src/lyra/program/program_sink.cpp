@@ -118,6 +118,8 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_fork_wait_first", &lyra_rt_fork_wait_first);
   add("lyra_rt_wait_fork", &lyra_rt_wait_fork);
   add("lyra_rt_disable_fork", &lyra_rt_disable_fork);
+  add("lyra_rt_require_caller_may_schedule_after_return",
+      &lyra_rt_require_caller_may_schedule_after_return);
   add("lyra_rt_cancellation_for", &lyra_rt_cancellation_for);
   add("lyra_rt_is_cancelled", &lyra_rt_is_cancelled);
   add("lyra_rt_closure_box_end", &lyra_rt_closure_box_end);

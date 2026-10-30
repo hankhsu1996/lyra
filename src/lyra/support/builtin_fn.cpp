@@ -1533,6 +1533,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "disable_fork",
           .declaration = RuntimeFunction("DisableFork"),
           .takes_the_runtime_handle = true};
+    case BuiltinFn::kRequireCallerMayScheduleAfterReturn:
+      return {
+          .name = "require_caller_may_schedule_after_return",
+          .declaration = RuntimeFunction("RequireCallerMayScheduleAfterReturn"),
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kDisable:
       return {
           .name = "disable",

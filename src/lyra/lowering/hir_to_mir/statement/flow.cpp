@@ -97,7 +97,8 @@ auto LowerVarStart(
   mir::CompilationUnit& unit = process.Owner().Unit();
   const DeclaredVariable variable = DeclareVariable(
       unit, *frame.bindings, block, ProceduralOrigin{.var = var}, name,
-      process.Owner().TranslateType(hir_local.type), frame.body_can_wait);
+      process.Owner().TranslateType(hir_local.type),
+      frame.runs_as_function_call);
   process.MapProceduralVar(var, AutomaticVarBinding{.type = variable.type});
   return InitializeVariable(unit, block, variable, initial());
 }

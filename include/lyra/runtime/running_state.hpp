@@ -27,12 +27,10 @@ enum class WakePlacement : std::uint8_t {
 // control act on the thread (LRM 9.7) and before it lets a function the thread
 // calls schedule what takes effect after the call returns (LRM 13.4.4): both
 // are allowed only of a thread an initial or always procedure created, or a
-// fork of one. The final procedures are told apart from every other construct
-// because each of them is a function call (LRM 9.2.3), so everything their
-// thread runs is inside one.
+// fork of one. Static initialization runs on no thread, and counts as another
+// construct.
 enum class ThreadCreator : std::uint8_t {
   kInitialOrAlwaysProcedure,
-  kTheFinalProcedures,
   kAnotherConstruct,
 };
 
@@ -44,22 +42,6 @@ enum class ThreadCreator : std::uint8_t {
   switch (creator) {
     case ThreadCreator::kInitialOrAlwaysProcedure:
       return true;
-    case ThreadCreator::kTheFinalProcedures:
-    case ThreadCreator::kAnotherConstruct:
-      return false;
-  }
-  return false;
-}
-
-// Whether every statement the thread runs is inside a function call, which is
-// what lets the runtime see where LRM 13.4.4 applies without knowing how deep
-// in calls a statement is.
-[[nodiscard]] constexpr auto RunsOnlyInsideFunctionCalls(ThreadCreator creator)
-    -> bool {
-  switch (creator) {
-    case ThreadCreator::kTheFinalProcedures:
-      return true;
-    case ThreadCreator::kInitialOrAlwaysProcedure:
     case ThreadCreator::kAnotherConstruct:
       return false;
   }

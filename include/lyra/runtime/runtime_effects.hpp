@@ -293,6 +293,14 @@ class RuntimeEffects {
 void ReportRaisedError(
     RuntimeEffects& effects, const std::exception_ptr& raised);
 
+// LRM 13.4.4: a function may schedule what cannot become active until it has
+// returned -- a nonblocking assignment or event trigger, a fork-join_none --
+// only where the thread calling it was created by an initial or always
+// procedure, or a fork of one, and it is the design's error otherwise. Asked
+// where such a statement runs during a function call, which is known where the
+// statement is written; the running thread is what only the run knows.
+void RequireCallerMayScheduleAfterReturn(RuntimeEffects& effects);
+
 // The `RuntimeEffects` view of the Runtime attached to this thread. Reached
 // without a receiver, so every body kind -- module process, class method,
 // package function, class static method -- takes one uniform runtime-access

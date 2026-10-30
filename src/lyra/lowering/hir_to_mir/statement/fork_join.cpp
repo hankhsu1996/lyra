@@ -62,7 +62,9 @@ auto DispatchForJoinMode(hir::JoinMode mode) -> JoinDispatch {
 // array in its own spelling -- a fixed-length value on one, a
 // length-and-address pair on the other -- so neither spelling is stated here.
 // Every mode's call yields nothing, so the modes differ only in whether the
-// parent awaits it.
+// parent awaits it. In a body that runs as a function call, where only
+// `join_none` can be written, the block first asks whether the thread calling
+// it may schedule past the call's return (LRM 13.4.4).
 auto LowerForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
@@ -75,6 +77,7 @@ auto LowerForkStmt(
   const DeclaredScope& fork_scope = process.Scopes().Get(f.scope);
   const WalkFrame fork_frame =
       frame.WithBlock(&fork_block).WithScopeName(fork_scope.name);
+  AppendScheduleAfterReturnRequirement(process.Owner(), fork_frame);
 
   // A fork the source named is a target a `disable` can name (LRM 9.6.2), and
   // what it must reach is every process executing the block -- the thread that
@@ -124,8 +127,8 @@ auto LowerForkStmt(
     ClosureBuilder closure(
         process.Owner().Unit(), fork_frame, support::ClosureKind::kFnOnce,
         branch_policy);
-    auto lowered =
-        process.LowerStmt(branch, closure.Frame().WithBodyCanWait(true));
+    auto lowered = process.LowerStmt(
+        branch, closure.Frame().WithRunsAsFunctionCall(false));
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }

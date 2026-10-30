@@ -95,7 +95,6 @@
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/laid_out_value.hpp"
 #include "lyra/value/library_value_types.hpp"
-#include "lyra/value/managed_ref.hpp"
 #include "lyra/value/queue_type.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_array_ordering.hpp"
@@ -2444,6 +2443,11 @@ auto lyra_rt_wait_fork(void* runtime, void* out) -> void* {
 
 void lyra_rt_disable_fork(void* runtime) {
   lyra::runtime::DisableFork(*static_cast<RuntimeEffects*>(runtime));
+}
+
+void lyra_rt_require_caller_may_schedule_after_return(void* runtime) {
+  lyra::runtime::RequireCallerMayScheduleAfterReturn(
+      *static_cast<RuntimeEffects*>(runtime));
 }
 
 auto lyra_rt_process_self(void* runtime, void* out) -> void* {

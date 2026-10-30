@@ -33,7 +33,7 @@ SynthesizedFunction::SynthesizedFunction(
       unit_lowerer,
       owner.WithBlock(&code_.Body())
           .WithBindings(&bindings_)
-          .WithBodyCanWait(false),
+          .WithRunsAsFunctionCall(true),
       shape, form);
   frame_ = bound.frame;
   params_ = std::move(bound.params);

@@ -201,10 +201,10 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
 }
 
 // What the way a procedure that runs its statement once is executed decides of
-// its body.
+// its body. One that runs as a function call returns once its statement ends;
+// any other is the coroutine a thread runs.
 struct BodyOfExecution {
-  bool can_wait;
-  mir::TypeId result_type;
+  bool runs_as_function_call = false;
 };
 
 auto LowerStraightLineProcedure(
@@ -219,14 +219,16 @@ auto LowerStraightLineProcedure(
   const WalkFrame body_frame =
       process
           .InRootScope(parent.WithBlock(&code.Body()).WithBindings(&bindings))
-          .WithBodyCanWait(body.can_wait);
+          .WithRunsAsFunctionCall(body.runs_as_function_call);
   auto lowered = LowerStraightLineBodyInto(process, body_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   // A procedure completes by falling off its end, which is a real body
   // statement rather than an implicit exit (LRM 9.2). A process's coroutine
   // result type is what makes that return a coroutine completion.
   code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  code.result_type = body.result_type;
+  const auto& builtins = process.Owner().Unit().builtins;
+  code.result_type =
+      body.runs_as_function_call ? builtins.void_type : builtins.coroutine_void;
   return code;
 }
 
@@ -296,9 +298,10 @@ auto LowerImplicitListProcess(ProcessLowerer& process, const hir::Reads& reads)
 }
 
 // A formal that brings a value in: the parameter the call hands it through,
-// which the variable starts at. Where the body cannot wait the variable is the
-// parameter itself. A static subroutine's is the one variable every call shares
-// (LRM 13.3.2), and the call assigns it the value it hands in.
+// which the variable starts at. Where the body runs as a function call the
+// variable is the parameter itself. A static subroutine's is the one variable
+// every call shares (LRM 13.3.2), and the call assigns it the value it hands
+// in.
 auto DeclareParameterVar(
     ProcessLowerer& process, const WalkFrame& frame, hir::ProceduralVarId var,
     const hir::ProceduralVarDecl& decl) -> mir::LocalId {
@@ -307,7 +310,7 @@ auto DeclareParameterVar(
   mir::Block& body = *frame.current_block;
   const mir::TypeId value_type = unit_lowerer.TranslateType(decl.type);
   const bool is_static = decl.lifetime == hir::VariableLifetime::kStatic;
-  if (!is_static && !frame.body_can_wait && !decl.lifetime_extended) {
+  if (!is_static && frame.runs_as_function_call && !decl.lifetime_extended) {
     const mir::LocalId parameter = frame.bindings->DeclareProcedural(
         ProceduralOrigin{.var = var}, decl.name, value_type);
     process.MapProceduralVar(var, AutomaticVarBinding{.type = value_type});
@@ -345,18 +348,18 @@ auto DeclaredAhead(const hir::SubroutineDecl& decl)
   return declared;
 }
 
-// Whether a subroutine's body can wait, which a task's can and a function's
-// and a constraint block's cannot (LRM 13.4.4, 18.5).
-auto CanWait(hir::SubroutineKind kind) -> bool {
+// Whether a subroutine's body runs as a function call, which a function's and
+// a constraint block's do and a task's does not (LRM 13.4, 18.5).
+auto RunsAsFunctionCall(hir::SubroutineKind kind) -> bool {
   switch (kind) {
     case hir::SubroutineKind::kTask:
-      return true;
+      return false;
     case hir::SubroutineKind::kFunction:
     case hir::SubroutineKind::kConstraintBlock:
     case hir::SubroutineKind::kStaticConstraintBlock:
-      return false;
+      return true;
   }
-  throw InternalError("CanWait: unknown SubroutineKind");
+  throw InternalError("RunsAsFunctionCall: unknown SubroutineKind");
 }
 
 }  // namespace
@@ -364,24 +367,19 @@ auto CanWait(hir::SubroutineKind kind) -> bool {
 auto ProcessLowerer::Run(const hir::Process& src)
     -> diag::Result<mir::CallableCode> {
   const diag::FailureContext at(src.span);
-  const mir::CompilationUnit& unit = owner_->Unit();
   return std::visit(
       Overloaded{
           // An initial procedure is a process of its own (LRM 9.5), and its
           // body is the coroutine a thread runs.
           [&](const hir::InitialProcess&) {
             return LowerStraightLineProcedure(
-                *this, BodyOfExecution{
-                           .can_wait = true,
-                           .result_type = unit.builtins.coroutine_void});
+                *this, BodyOfExecution{.runs_as_function_call = false});
           },
           // The final procedures are function calls one process makes in turn
-          // (LRM 9.2.3), and a function cannot wait (LRM 13.4.4).
+          // (LRM 9.2.3).
           [&](const hir::FinalProcess&) {
             return LowerStraightLineProcedure(
-                *this,
-                BodyOfExecution{
-                    .can_wait = false, .result_type = unit.builtins.void_type});
+                *this, BodyOfExecution{.runs_as_function_call = true});
           },
           [&](const hir::AlwaysProcess&) { return LowerAlwaysProcess(*this); },
           [&](const hir::AlwaysFfProcess&) {
@@ -408,7 +406,7 @@ auto ProcessLowerer::EnterSubroutineBody(
   // class and takes nothing.
   const WalkFrame entry_frame =
       InRootScope(parent.WithBlock(&code.Body()).WithBindings(&bindings))
-          .WithBodyCanWait(CanWait(src.kind));
+          .WithRunsAsFunctionCall(RunsAsFunctionCall(src.kind));
   if (!member_form.has_value()) {
     return BoundImplicitParameters{.params = {}, .frame = entry_frame};
   }

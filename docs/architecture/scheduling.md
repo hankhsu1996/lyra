@@ -146,6 +146,18 @@ A covergroup sampled on its clocking event is a third (LRM 19.3): `new` starts i
 makes no process of it, and each occurrence of its event runs it in place, once every wait the
 occurrence reached has been asked and before the execution that made the event occur goes on.
 
+**What a function schedules past its return is checked where the statement is written, against the
+thread calling it.** A function may schedule what takes effect after it returns -- a deferred effect
+in any form, a fork-join_none -- only where the thread calling it was created by an initial or
+always procedure, or a fork of one, and it is an error otherwise (LRM 13.4.4); the final procedures'
+thread and static initialization are neither. Whether a statement runs during a function call is
+fixed by where it is written, and which thread calls the function only by the run. So the lowering
+states the question as an operation of its own ahead of each such statement in a body that runs as a
+function call, and the runtime answers it from what created the running thread. The submit itself
+asks nothing, because the same statement outside a function is never refused -- an assertion's
+action may write `x <= 1` directly -- and one thread runs both, with no record of how deep in calls
+it is.
+
 Yield-based alternatives are rejected because they would entangle the deferred effect's commit time
 with the process's resumption schedule. A process that does `q <= d; #5; ...` should not be forced
 to suspend before `#5` just because the NBA write has not yet committed; the write commits in the

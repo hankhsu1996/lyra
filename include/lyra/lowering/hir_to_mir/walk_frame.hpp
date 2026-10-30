@@ -161,12 +161,16 @@ struct WalkFrame {
   // boundary leaves it behind, since the report is a variable of this body.
   std::optional<mir::LocalId> reports_reached_to;
 
-  // Whether the body being lowered can wait. A function cannot (LRM 13.4.4),
-  // and nothing else can reach one of its variables while it runs -- a branch
-  // it forks outlives it and so holds what it names in storage of its own -- so
-  // a variable it declares has no one to report its writes to. Set where a
-  // callable's frame is built; a fork branch is a process and can.
-  bool body_can_wait = true;
+  // Whether the body being lowered runs as a function call, as a function, a
+  // constructor and a final procedure do (LRM 9.2.3). Such a body cannot wait
+  // (LRM 13.4), and nothing else can reach one of its variables while it runs
+  // -- a branch it forks outlives it and so holds what it names in storage of
+  // its own -- so a variable it declares has no one to report its writes to.
+  // What it schedules past its return is allowed only where the calling thread
+  // was created by an initial or always procedure, or a fork of one (LRM
+  // 13.4.4). Set where a callable's frame is built; a fork branch is a process
+  // of its own.
+  bool runs_as_function_call = false;
 
   // The binding-resolution context of the callable body being lowered: a
   // reference resolves to a binding through it, and entering a closure body
@@ -310,9 +314,10 @@ struct WalkFrame {
     return mir::EnclosingHops{hops - StructuralBaseHops()};
   }
 
-  [[nodiscard]] auto WithBodyCanWait(bool can_wait) const -> WalkFrame {
+  [[nodiscard]] auto WithRunsAsFunctionCall(bool as_function_call) const
+      -> WalkFrame {
     WalkFrame next = *this;
-    next.body_can_wait = can_wait;
+    next.runs_as_function_call = as_function_call;
     return next;
   }
 

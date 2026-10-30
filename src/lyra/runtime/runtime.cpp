@@ -591,7 +591,7 @@ void Runtime::ExecuteFinalProcedures() {
   auto thread = RuntimeProcess::Create(
       ExecutionContext{
           .procedure = {.seeds = &root.InitializationSeeds()},
-          .creator = ThreadCreator::kTheFinalProcedures},
+          .creator = ThreadCreator::kAnotherConstruct},
       CallingFinalProcedures(), root.InitializationSeeds().Split());
   Activation* const top = thread->TopActivation();
   AdoptProcess(std::move(thread));
