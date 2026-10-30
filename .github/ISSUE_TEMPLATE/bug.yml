@@ -1,0 +1,69 @@
+name: Bug report
+description: Lyra crashes or reports an internal error, or a program it builds answers wrongly.
+labels: ["type:bug"]
+projects: ["hankhsu1996/1"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Legal SystemVerilog that Lyra refuses as not yet supported is a feature request. A
+        vulnerability goes through the Security tab, never a public issue.
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before filing
+      options:
+        - label: I reproduced it on the current `main`.
+          required: true
+        - label: I cut the program down to the smallest one that still shows it.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Lyra version
+      description: The commit you built Lyra from (`git rev-parse HEAD` in your Lyra checkout).
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - llvm
+        - cpp
+        - both
+        - not known
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      placeholder: lyra run --top Test test.sv
+    validations:
+      required: true
+  - type: textarea
+    id: program
+    attributes:
+      label: Program
+      description: The smallest self-contained program that shows it.
+      render: systemverilog
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What Lyra printed or did, pasted as text rather than a screenshot.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: required
+    attributes:
+      label: What IEEE 1800-2023 requires
+      description: >-
+        The clause, and the sentence of it that decides the answer. For a crash or an internal
+        error, what the program should have done.
+    validations:
+      required: true

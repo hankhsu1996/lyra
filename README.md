@@ -22,7 +22,9 @@ this repository answers to that one.
 Coverage is measured rather than described. Every construct Lyra handles is claimed by a case under
 `conformance/` stating what IEEE 1800 requires of a program and checking itself against it, and what
 each path cannot yet do is recorded once for that path, so what works is a fact about the corpus and
-not a promise made here. `docs/progress/` carries the open frontier in SystemVerilog terms.
+not a promise made here. The open frontier is the
+[issues](https://github.com/hankhsu1996/lyra/issues), ordered on the
+[project board](https://github.com/users/hankhsu1996/projects/1).
 
 ## Getting started
 

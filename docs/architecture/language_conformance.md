@@ -670,6 +670,41 @@ Lyra reads the right-hand side first, and for a nonblocking assignment the left-
 well, then evaluates the delay expression, so a delay expression that writes what the statement
 reads reaches neither; `b` above is 5.
 
+#### What `%l` prints for text no module instance contains
+
+```systemverilog
+package p;
+  function void where(); $display("%l"); endfunction
+endpackage
+function void top_level(); $display("%l"); endfunction   // in the compilation-unit scope
+```
+
+33.7: "%l or %L shall print out the library.cell binding information for the module instance
+containing the display (or other textual output) command." Text in a package or in the
+compilation-unit scope has no module instance containing it, and the clause gives it no cell.
+
+Lyra prints the library and the scope the text is declared in, as `library.package` for a package
+and `library.$unit` for the compilation-unit scope, so `%l` names where the text came from wherever
+it is written. A module declared inside another prints the enclosing cell.
+
+#### A series of `&&&` clauses that reaches an unknown clause
+
+```systemverilog
+logic u = 1'bx;
+initial if (1'b1 &&& u &&& f()) ...   // is f called, and is the predicate false or unknown?
+```
+
+12.6.2: "The clauses represent a sequential conjunction from left to right (i.e., if any clause
+fails, the remaining clauses are not evaluated) and all of them shall succeed for the predicate to
+be true." Whether an unknown clause fails, ending the series, or leaves it open, the clause does not
+say.
+
+Lyra takes the series as one predicate whose answer is that of its first clause that is not true, so
+a series that reaches an unknown clause is unknown and evaluates no clause after it. An `if` does
+not take an unknown predicate, and a conditional operator answers one by combining both expressions
+(11.4.11). This is the reading the front end's constant evaluation takes, so the expression means
+the same at elaboration and at run time.
+
 ### Allowed
 
 #### An `always_comb` writing one constant key of an associative array

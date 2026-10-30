@@ -259,8 +259,8 @@ What a pass adds on top of the scope chain follows from what it does:
 The walk position thins as the pipeline descends: each pass that bakes a decision into the IR
 removes state a later pass would otherwise carry. HIR-to-MIR carries a fat frame because it is still
 deciding hops, captures, and callees; the C++ fold carries almost nothing because those decisions
-are now MIR nodes. The same force that let R12 / R16 / R17 strip render-time decisions is what thins
-the walk position.
+are now MIR nodes. The same force that moved observability, the receiver and selector and field
+access out of the render and into MIR is what thins the walk position.
 
 Two consequences for type structure:
 

@@ -183,9 +183,12 @@ only the external linkage is the backend's shell.
 The C name is a program-global symbol in the DPI name space and never a class member (LRM 35.4,
 35.7), while the subroutine behind it may be compiled once per specialization of the scope declaring
 it -- so the two are separated. A scope **publishes** an entry, taking the scope it runs against
-ahead of the C formals; the symbol resolves that entry against the scope in effect and calls it. A
-package subroutine has no receiver and a package has one form, so the two collapse: the package's
-own namespace defines the symbol directly.
+ahead of the C formals; the symbol resolves that entry against the scope in effect and calls it.
+That entry is an ordinary callable of the scope with no receiver, a static one, since the scope
+reaches it as a plain first argument rather than as the object it is entered on. The names a scope
+answers foreign callers with are a name table beside the one for its subroutines, and the one
+reference form that names any body names it too. A package subroutine has no receiver and a package
+has one form, so the two collapse: the package's own namespace defines the symbol directly.
 
 **Where that symbol is defined is settled by
 [program-facts-belong-after-compilation](program-facts-belong-after-compilation.md), which reverses

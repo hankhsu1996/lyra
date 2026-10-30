@@ -303,9 +303,9 @@ capabilities are a distinct optional field or a feature bit, not an overloaded n
   layout -- the layout work already required for the LLVM backend, not new work introduced here.
 - This revisits `callable-receiver`'s rejected "free functions, no class membership" alternative:
   that rejection rested on the runtime reaching instance methods through `Scope*` polymorphism,
-  which this decision replaces. The explicit-`self` static-body shape `callable-receiver` fixes is
-  retained and reinforced; the "on the class" realization detail is a backend-private choice, not a
-  runtime requirement.
+  which this decision replaces. The explicit `self` binding `callable-receiver` fixes is retained
+  and reinforced; the "on the class" realization detail is a backend-private choice, not a runtime
+  requirement.
 
 ### Constraints the realization must hold
 

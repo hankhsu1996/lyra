@@ -130,8 +130,9 @@ by which completion a solver happened to find.
 - Every class object holds the 32 bytes of its generator, as
   `a-generator-is-split-from-the-one-that-made-it.md` foresaw, and for an object `new` makes the
   generator that made it advances by four draws; a process's is its thread's, which nothing splits
-  again. It also holds a pointer to its modes, which are made the first time anything reads or sets
-  one.
+  again. Randomizing a process, which declares no random variable, draws nothing from that
+  generator, a choice the standard leaves to the tool. It also holds a pointer to its modes, which
+  are made the first time anything reads or sets one.
 - Each source class states three more bodies in its definition, whether or not it declares anything
   random, so a class of another unit can call its base's without knowing what the base declares.
 - A real random variable, an associative array declared random and an array of structures declared

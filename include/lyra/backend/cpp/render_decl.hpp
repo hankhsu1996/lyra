@@ -59,13 +59,14 @@ auto RenderUnitClasses(
     const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitClasses;
 
 // Every closure of the unit as a type of its own: its captures as members and
-// its one body. A body that returns is the call operator, run against the
-// closure it was called on; one that completes as a coroutine is started
-// through a static function taking the closure by value, so the captures live
-// in the coroutine's frame for as long as the execution does. Either way the
-// body's first local is the closure it reads its captures through. The types
-// are declared ahead of every body that builds one, and the bodies after every
-// class, since a body may use any of them.
+// its one body. A body that borrows its closure, as Rust's `Fn` and `FnMut`
+// take `&self` and `&mut self`, is the call operator, run against the closure
+// it was called on; one that takes over the box it was made in, as `FnOnce`
+// takes `self`, is a static function taking that box, so the captures live for
+// as long as the execution does. Either way the body's first local is the
+// closure it reads its captures through. The types are declared ahead of every
+// body that builds one, and the bodies after every class, since a body may use
+// any of them.
 struct UnitClosures {
   TargetText declarations;
   TargetText definitions;

@@ -1,0 +1,36 @@
+name: Tracking
+description: One line of work. Its items are its sub-issues.
+title: "[Tracking] "
+labels: ["tracking"]
+projects: ["hankhsu1996/1"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        A tracking issue states what its line covers and when it is finished, and nothing about
+        where it stands. Progress is its sub-issues, which GitHub counts, and their "blocked by"
+        relationships.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What this line of work covers.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: The end state the whole line reaches.
+    validations:
+      required: true
+  - type: textarea
+    id: records
+    attributes:
+      label: Records
+      description: The architecture or decision documents the line answers to.
+  - type: textarea
+    id: questions
+    attributes:
+      label: Unresolved questions
+      description: Questions the line still has to settle, each one issue where it can be.

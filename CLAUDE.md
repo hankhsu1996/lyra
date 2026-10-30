@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-Layer contracts live under `docs/architecture/`, settled choices under `docs/decisions/`, and gaps
-against those contracts under `docs/progress/`. `docs/README.md` indexes them; `docs/style.md`
-governs writing them.
+Layer contracts live under `docs/architecture/` and settled choices under `docs/decisions/`.
+`docs/README.md` indexes them, and `docs/style.md` governs writing them. Gaps against those
+contracts are GitHub issues, written and linked as `CONTRIBUTING.md` says.
 
 ## Commands
 

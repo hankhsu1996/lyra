@@ -128,6 +128,10 @@ legal program can express, so it is a compiler-invariant failure rather than a r
 
 - A randomization call is legal wherever the language allows an expression, with no position left
   that refuses.
+- `process::self()` in a static initializer answers a null handle. LRM 9.7 says it answers "the
+  process making the call" and says nothing of a call no process makes; no process runs there, and
+  what the initializer draws from is a generator rather than a process, so null is the one handle
+  that names none.
 - Two instances of one module see the same static-initializer draws, and a package's draws do not
   move when another package is added.
 - Each scope's static initialization consumes one seed from its instance ahead of that instance's

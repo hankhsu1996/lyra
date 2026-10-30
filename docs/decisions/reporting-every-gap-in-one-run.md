@@ -70,6 +70,11 @@ of any construct in it. So:
 - A gap standing behind another **inside the same body** is still unseen, because the body is
   abandoned at its first refusal. That boundary is the same one that makes the rest sound, and
   moving it would need a statement about what a half-lowered body is.
+- The C++ backend's render does go on inside a body. An entry with no form for a node reports it,
+  writes nothing for it, and the rest of the body is rendered, so one run reports every such node; a
+  unit that reported anything writes no file. That is sound there and not in the lowering, because a
+  render entry never reads another entry's text, so nothing after a refused node depends on what it
+  would have written.
 - The diagnostic subsystem needed nothing: the sink collects, the renderer already counts and
   pluralizes, and `diag::Make` already built a diagnostic for the report-and-continue path. Only the
   lowering was answering one at a time.
