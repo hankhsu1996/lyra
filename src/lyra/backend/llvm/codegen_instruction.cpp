@@ -91,6 +91,18 @@ auto CodeGenFunction::LowerInstrInto(const lir::Instr& instr)
           [&](const lir::EndVariableInstr& ended) -> Done {
             return done(LowerEndVariable(ended));
           },
+          [&](const lir::BeginStorageInstr& begun) -> Done {
+            return done(LowerBeginStorage(begun));
+          },
+          [&](const lir::EndStorageInstr& ended) -> Done {
+            return done(LowerEndStorage(ended));
+          },
+          [&](const lir::SetObjectClassInstr& set) -> Done {
+            return done(LowerSetObjectClass(set));
+          },
+          [&](const lir::EndAndReplaceInstr& replaced) -> Done {
+            return LowerEndAndReplaceInto(replaced);
+          },
           [&](const lir::BeginHandlingInstr& begun) -> Done {
             return done(LowerBeginHandling(begun));
           },
@@ -111,6 +123,29 @@ auto CodeGenFunction::LowerAssignInto(const lir::AssignInstr& assign)
     return std::unexpected(std::move(made.error()));
   }
   StoreInto(*destination, *made, builder_);
+  return {};
+}
+
+auto CodeGenFunction::LowerEndAndReplaceInto(
+    const lir::EndAndReplaceInstr& replaced) -> diag::Result<void> {
+  auto address = ResolvePlaceAddress(replaced.place, Access::kWrite);
+  if (!address) {
+    return std::unexpected(std::move(address.error()));
+  }
+  const PlaceRef place{
+      .address = *address,
+      .type = lir::PlaceType(module_->Unit(), *fn_, replaced.place)};
+  const std::array<llvm::Value*, 1> lies{place.address};
+  if (auto ended =
+          module_->EmitStep(builder_, place.type, lir::ValueStep::kEnd, lies);
+      !ended) {
+    return ended;
+  }
+  auto made = LowerRvalue(replaced.value, place);
+  if (!made) {
+    return std::unexpected(std::move(made.error()));
+  }
+  StoreInto(place, *made, builder_);
   return {};
 }
 
@@ -586,8 +621,16 @@ auto CodeGenFunction::ArrayElementAddress(
   llvm::Type* const ptr = module_->Types().Ptr();
   // A position names an element where none of its bits is unknown and its
   // number, read unsigned so that a negative one is past every count, counts
-  // one.
-  const Planes named = LoadPosition(position);
+  // one. A position held as a machine integer has no unknown bit.
+  const Planes named =
+      module_->Unit()
+              .types.Get(position.type)
+              .MachineIntegerSignedness()
+              .has_value()
+          ? Planes{.value = position.value,
+                   .unknown =
+                       llvm::ConstantInt::get(position.value->getType(), 0)}
+          : LoadPosition(position);
   llvm::Value* const names_one = builder_.CreateAnd(
       builder_.CreateIsNull(named.unknown),
       builder_.CreateICmpULT(
@@ -1221,8 +1264,8 @@ auto CodeGenFunction::LowerCall(
                 *integral, builtin, call, result_type,
                 EnsureDestination(destination));
           },
-          // Ending a value and copying one are steps of its life, which its
-          // type says how to carry out.
+          // Ending a value, copying one and moving one are steps of its life,
+          // which its type says how to carry out.
           [&](const lir::EndValueTarget&) -> Lowered {
             auto ended = LowerOperand(call.args.at(0));
             if (!ended) {
@@ -1241,6 +1284,14 @@ auto CodeGenFunction::LowerCall(
             }
             return CopyValue(
                 result_type, *copied, EnsureDestination(destination));
+          },
+          [&](const lir::MoveValueTarget&) -> Lowered {
+            auto moved = LowerOperand(call.args.at(0));
+            if (!moved) {
+              return std::unexpected(std::move(moved.error()));
+            }
+            return MoveValue(
+                result_type, *moved, EnsureDestination(destination));
           },
           // A cell whose value lies where the library states is read and
           // written there; only one keeping an object of the library's own is
@@ -1623,6 +1674,12 @@ auto CodeGenFunction::ResolveCallee(
               -> diag::Result<llvm::FunctionCallee> {
             throw InternalError(
                 "llvm codegen: copying a value is emitted where the call is "
+                "lowered, and names no callee -- please report this as a bug");
+          },
+          [&](const lir::MoveValueTarget&)
+              -> diag::Result<llvm::FunctionCallee> {
+            throw InternalError(
+                "llvm codegen: moving a value is emitted where the call is "
                 "lowered, and names no callee -- please report this as a bug");
           },
           [&](const lir::DynamicStorageTarget&)

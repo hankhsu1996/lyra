@@ -39,8 +39,9 @@ by the rules a structure's methods follow.
 - The call takes each value by reference, as a structure's method does. The C++ backend spells it as
   the library template's own member, `a.UnpackedArray<T, 4>::operator==(b)`, which the host compiler
   instantiates where the call is written, and renders none of the bodies, as it renders no element
-  default. The execution backend compiles every body and fills the type's table with them, and
-  generates the type's copy, move, assignment and ending, each taking every element's step.
+  default. The execution backend compiles every body and fills the type's table with them, and with
+  the type's copy, move, assignment and ending, each taking every element's step, which the lowering
+  to LIR states ([a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md)).
 - A tuple's table is generated the same way: its default is its declaration's method where it is a
   structure, and otherwise each component's type is asked for its part, as clearing above the widths
   asks each component's.

@@ -38,25 +38,20 @@ namespace lyra::backend::llvm_backend {
 
 class CodeGenModule;
 
-// The lifecycle of each type a module lays out whose operations the design
-// compiles, and the constant stating the type to the runtime: a product, a
-// value made of several components at once -- an unpacked structure (LRM 7.2),
-// or a tuple a lowering composes, such as a call's answer, its result together
-// with its `output` and `inout` arguments (LRM 13.5) -- a union or a tagged
-// union, one storage its members overlay (LRM 7.3), and a fixed-size unpacked
-// array (LRM 7.4.2). Each step of a product's life applies the same step to
-// every component, the way clang emits a class's implicit special members,
-// and an array's to every element;
-// a tagged union's applies it to the member its tag names, and an untagged
-// union's members own nothing, so its steps are its bytes'. The type is how
-// the runtime, compiled before any of these types existed, reaches what a
-// value it holds can do: the lifecycle compiled here, and every operation the
-// language defines on the whole value, which are the methods a record's
-// declaration states and the bodies a unit states for an array. Such
-// a value's bytes state nothing of it, so whatever hands one to the runtime
-// hands the type beside it. It is laid out as the record the library declares
-// for its kind, opening with the address of a table of this module's bodies,
-// one where the table's declaration lays out each function.
+// The constant stating to the runtime each type a module lays out whose
+// operations the design compiles: a product, a value made of several
+// components at once -- an unpacked structure (LRM 7.2), or a tuple a lowering
+// composes, such as a call's answer, its result together with its `output` and
+// `inout` arguments (LRM 13.5) -- a union or a tagged union, one storage its
+// members overlay (LRM 7.3), and a fixed-size unpacked array (LRM 7.4.2). The
+// type is how the runtime, compiled before any of these types existed, reaches
+// what a value it holds can do: the steps of its life the unit states for it,
+// and every operation the language defines on the whole value, which are the
+// methods a record's declaration states and the bodies a unit states for an
+// array. Such a value's bytes state nothing of it, so whatever hands one to the
+// runtime hands the type beside it. It is laid out as the record the library
+// declares for its kind, opening with the address of a table of this module's
+// bodies, one where the table's declaration lays out each function.
 //
 // The type of a struct or a union is its declaring unit's, one in the
 // program, which every other module refers to. An array's and an integral
@@ -67,8 +62,6 @@ class CodeGenValueTypes {
   CodeGenValueTypes(
       CodeGenModule& module, CodeGenTypes& types,
       const lir::CompilationUnit& unit);
-
-  auto Function(lir::TypeId type, LifecycleStep step) -> llvm::Function*;
 
   // At `b`, every position above an integral's width in the value of `type`
   // lying at `at` made clear: inline for an integral, and otherwise a call of
@@ -117,7 +110,6 @@ class CodeGenValueTypes {
   // The name a type has in every unit, which tells one type's code and
   // constants from another's.
   auto KeyOf(lir::TypeId type) -> const std::string&;
-  auto Emit(lir::TypeId type, LifecycleStep step, llvm::Function* fn) -> void;
   // A function of this unit answering one operation of the type, and the
   // operation it answers.
   struct OwnOperation {
@@ -231,7 +223,6 @@ class CodeGenValueTypes {
   CodeGenTypes* types_;
   const lir::CompilationUnit* unit_;
   std::unordered_map<lir::TypeId, std::string> keys_;
-  std::map<std::pair<std::string, LifecycleStep>, llvm::Function*> functions_;
   std::map<std::string, llvm::Function*> clear_functions_;
   std::map<std::string, llvm::GlobalVariable*> types_of_;
   std::map<std::string, llvm::GlobalVariable*> integral_types_;

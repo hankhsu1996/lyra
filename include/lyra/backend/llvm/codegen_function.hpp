@@ -66,6 +66,9 @@ class CodeGenFunction {
   auto LowerInstrInto(const lir::Instr& instr) -> diag::Result<void>;
   // An assignment: its value computed and put where its destination says.
   auto LowerAssignInto(const lir::AssignInstr& assign) -> diag::Result<void>;
+  // The value a place holds ended, and the one made in its stead put there.
+  auto LowerEndAndReplaceInto(const lir::EndAndReplaceInstr& replaced)
+      -> diag::Result<void>;
   // What this target makes of a LIR destination, named as rustc's codegen
   // names what it makes of a MIR place, operand or local (`PlaceRef`,
   // `OperandRef`, `LocalRef`): a transient whose value is not kept in storage,
@@ -132,21 +135,42 @@ class CodeGenFunction {
   auto BuildInto(
       std::string_view symbol, std::vector<ArgAbi> arranged,
       std::vector<llvm::Value*> args, llvm::Value* out) -> llvm::Value*;
-  // The lifecycle of an owned value. `EndValue` ends the value `value` names,
-  // where ending one has anything to do. `CopyValue` builds a second value
-  // equal to it in the unbuilt storage `out`, and answers `out`.
-  // `RelocateValue` moves it into the unbuilt storage `out` and ends what the
-  // move left behind, so the value lives in `out` and nowhere else.
-  // `AssignValue` writes it into the value already built at `out`, which goes
-  // on being that value. Each fails where the step is the library's to carry
-  // out and has to be handed a type the library does not realize.
+  // The steps of an owned value's life, each carried out as the unit says.
+  // `EndValue` ends the value `value` names. `CopyValue` builds a second value
+  // equal to it in the unbuilt storage `out`, and answers `out`. `MoveValue`
+  // builds it in `out` out of the one at `value`, which is still to be ended.
+  // `RelocateValue` moves it into `out` and ends what the move left behind, so
+  // the value lives in `out` and nowhere else. `AssignValue` writes it into the
+  // value already built at `out`, which goes on being that value. Each fails
+  // where the step is the library's to carry out and has to be handed a type
+  // the library does not realize.
   auto EndValue(lir::TypeId type, llvm::Value* value) -> diag::Result<void>;
   auto CopyValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
+      -> diag::Result<llvm::Value*>;
+  auto MoveValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   auto RelocateValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
       -> diag::Result<void>;
   auto AssignValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
       -> diag::Result<void>;
+  // Where the value `value` of `type` lies, which is what a step of it takes.
+  auto LocationOf(lir::TypeId type, llvm::Value* value) -> llvm::Value*;
+  // The storage a place names: its type, how a member of that type is held
+  // where the place lies -- nothing for the parts of an object, which its class
+  // begins and ends -- and where it lies.
+  struct NamedStorage {
+    lir::TypeId type;
+    std::optional<support::DeclaredMemberStorage> storage;
+    llvm::Value* at = nullptr;
+  };
+  auto StorageAtPlace(const lir::Place& place) -> diag::Result<NamedStorage>;
+  // Begins, or ends, the storage at the place a statement names.
+  auto LowerBeginStorage(const lir::BeginStorageInstr& begun)
+      -> diag::Result<llvm::Value*>;
+  auto LowerEndStorage(const lir::EndStorageInstr& ended)
+      -> diag::Result<llvm::Value*>;
+  auto LowerSetObjectClass(const lir::SetObjectClassInstr& set)
+      -> diag::Result<llvm::Value*>;
 
   // A value an operation is handed, with the type it is a value of.
   struct OperandRef {

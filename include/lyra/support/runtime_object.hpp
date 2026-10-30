@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string_view>
 #include <variant>
 
@@ -150,6 +151,12 @@ inline constexpr ObjectLayout kDpiLogicBufferStorage{
     .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kDpiOpenArrayStorage{
     .layout = {.size = 64, .align = 8}, .ends_with_nothing_to_do = false};
+
+// The storage stated above for an object of the library's own, and nothing
+// for one it is not: a value held as its bits or as the bytes its type lays
+// out, and an execution, which whoever drives it takes the moment it is made.
+auto StatedStorageOf(const RuntimeObject& object)
+    -> std::optional<ObjectLayout>;
 
 // The spelling the entries over an object carry, stated once for both sides.
 // A value domain's object is spelled as the domain is, so every entry over a

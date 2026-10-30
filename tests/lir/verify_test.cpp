@@ -129,6 +129,59 @@ TEST(LirVerifyTest, AValueIsNeverPutIntoAPartOfAHeldValue) {
       "already holds one");
 }
 
+// The return place holds nothing until the body makes its answer there, so the
+// answer may be built in it part by part, as rustc's clone shim builds `Self`.
+TEST(LirVerifyTest, AnAnswerIsBuiltPartByPartInItsReturnPlace) {
+  PairBody body;
+  body.fn.result_type = body.pair;
+  body.fn.return_place = body.slot;
+  Place first = PlaceOf(body.slot);
+  first.chain.emplace_back(
+      ComponentProjection{.index = base::ComponentIndex{.value = 0}});
+  EXPECT_NO_THROW(body.VerifyRunning(
+      Instr{
+          .data = AssignInstr{
+              .destination = std::move(first),
+              .value = UseInstr{.operand = Use{.value = body.x}}}}));
+}
+
+// What a parameter points at holds whatever its caller left there, so nothing
+// is initialized there; a value is built there anew only by ending the one it
+// holds in the same statement.
+TEST(LirVerifyTest, AValueIsBuiltWhereAParameterPointsOnlyInPlaceOfOne) {
+  const auto pointed = [](PairBody& body) {
+    const TypeId to_pair = body.unit.types.Intern(
+        Type{PointerType{
+            .pointee = body.pair,
+            .ownership = PointerOwnership::kBorrowed,
+            .mutability = Mutability::kMutable}});
+    const ValueId at = body.fn.values.Add(
+        Local{.name = "at", .type = to_pair, .kind = LocalKind::kParam});
+    body.fn.params.push_back(at);
+    return Place{.base = Use{.value = at}, .chain = {DerefProjection{}}};
+  };
+
+  PairBody initialized;
+  const Operand x = Use{.value = initialized.x};
+  const Place into = pointed(initialized);
+  ExpectRefused(
+      initialized,
+      Instr{
+          .data =
+              AssignInstr{
+                  .destination = into,
+                  .value = ProductInstr{.components = {x, x}}}},
+      "already holds one");
+
+  PairBody replaced;
+  const Operand y = Use{.value = replaced.x};
+  const Place over = pointed(replaced);
+  EXPECT_NO_THROW(replaced.VerifyRunning(
+      Instr{
+          .data = EndAndReplaceInstr{
+              .place = over, .value = ProductInstr{.components = {y, y}}}}));
+}
+
 // A union is built holding one of its own members, so a position past the last
 // names storage the type does not have.
 TEST(LirVerifyTest, AUnionIsBuiltOnlyHoldingAMemberItHas) {

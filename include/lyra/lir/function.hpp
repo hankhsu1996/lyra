@@ -347,18 +347,22 @@ struct DesignatedBitsTarget {
   std::vector<BitsPart> parts;
 };
 
-// The end of an owned value, and a second owned value equal to one the body
-// only reads. A value the body made ends where the lowering that made it says
-// -- at the end of the full-expression that made it, at the end of the block a
-// declaration bound it in, and on every way out of either. A copy is what a
-// body takes when a value it has to own, to store in a slot or hand back to its
-// caller, is one it was lent.
+// The end of an owned value, a second owned value equal to one the body only
+// reads, and a value built out of one whose holder still ends it afterwards.
+// A value the body made ends where the lowering that made it says -- at the end
+// of the full-expression that made it, at the end of the block a declaration
+// bound it in, and on every way out of either. A copy is what a body takes
+// when a value it has to own, to store in a slot or hand back to its caller, is
+// one it was lent. A move is a step of a body carrying out its type's own move
+// part by part. Each is carried out as the value's type says.
 //
 // LIR-only targets with no MIR twin: a target whose own language ends a value
 // at the end of its scope states none of this.
 struct EndValueTarget {};
 
 struct CopyValueTarget {};
+
+struct MoveValueTarget {};
 
 // Storage of dynamic duration for one value: allocating it, which answers a
 // borrowed pointer to storage holding no value yet, and giving back storage so
@@ -441,15 +445,16 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 // slot the receiving value's own class fills, a code address the program
 // computed, a value constructor named by the call's result type, the creation
 // of an object, a body of this program or a foreign symbol the host resolves, a
-// value-cell operation, the end or copy of an owned value, storage of dynamic
-// duration allocated or given back, a variable's cell built in such storage, a
-// control-effect operation, or an operation of the coroutine protocol.
+// value-cell operation, the end, copy or move of an owned value, storage of
+// dynamic duration allocated or given back, a variable's cell built in such
+// storage, a control-effect operation, or an operation of the coroutine
+// protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, InterfaceDispatchTarget,
     IndirectTarget, ConstructTarget, CreationTarget, SymbolTarget,
     ForeignTarget, ValueCellTarget, OpenWriteTarget, DesignatedBitsTarget,
-    EndValueTarget, CopyValueTarget, DynamicStorageTarget, BuildCellTarget,
-    ControlEffectTarget, CoroutineTarget>;
+    EndValueTarget, CopyValueTarget, MoveValueTarget, DynamicStorageTarget,
+    BuildCellTarget, ControlEffectTarget, CoroutineTarget>;
 
 // How a call to `target` ends, which is a property of the callee and never of
 // what it happens to do. The design's own code can depart, wherever it stands
@@ -751,6 +756,32 @@ struct EndVariableInstr {
   VariablePosition position;
 };
 
+// Begins the storage at `place`, holding nothing yet, and ends it with what it
+// holds, as the place's type says: a member's storage as the declaration it
+// lies in gives a member of its type -- a variable's cell, a net -- the part a
+// class of the library defines, and the parts an object of a class is built of,
+// by that class's own beginning and end, which is what lets a class extending
+// one of another unit begin and end that one's parts. The end is rustc's
+// `Drop` of a place, stated where the storage, and not only a value read out
+// of it, is what ends: a capture of a closure a body ends, the cell an owning
+// pointer points at, a member of an object.
+struct BeginStorageInstr {
+  Place place;
+};
+
+struct EndStorageInstr {
+  Place place;
+};
+
+// The object `object` points at is of the class `cls` from here, before any
+// constructor runs on it (LRM 8.17 NOTE 2), as Swift's `alloc_ref` gives an
+// object its class: what reaches the object asks it its class from here. Where
+// the class is kept in the object is the layout's to say.
+struct SetObjectClassInstr {
+  Operand object;
+  TypeId cls;
+};
+
 // The extent in which a handler of this frame handles `exception`, what a
 // landing took: begun where the handler starts, before it asks the runtime what
 // arrived, and ended on every way out of the handler -- falling off its end,
@@ -791,11 +822,28 @@ struct AssignInstr {
   Rvalue value;
 };
 
+// Ends the value `place` holds, as its type ends one, and makes `value` there
+// in its stead, with nothing between: the storage holds nothing only for the
+// span of this one statement, which is what lets a value whose new form need
+// not be its old one's -- a tagged union whose live member changes -- be
+// written over by ending it and building anew where it lies, as a C++ copy
+// assignment may destroy what `this` holds and construct there again. rustc's
+// MIR marks the drop a write is made after as a replacing one (`Drop`'s
+// `replace`); here the two are one statement, since a write into storage
+// holding nothing is a different statement from one into a value.
+struct EndAndReplaceInstr {
+  Place place;
+  Rvalue value;
+};
+
 // One step of a block: an assignment, or a statement that yields nothing --
 // a write into a value already there, a frame's bytes coming into or going out
-// of use, a variable ending, or a handler's extent beginning or ending.
+// of use, a variable ending, the storage at a place beginning or ending, an
+// object being given its class, a value ended and built anew where it lies, or
+// a handler's extent beginning or ending.
 using InstrData = std::variant<
     AssignInstr, StoreInstr, BitsStoreInstr, StorageInstr, EndVariableInstr,
+    BeginStorageInstr, EndStorageInstr, SetObjectClassInstr, EndAndReplaceInstr,
     BeginHandlingInstr, EndHandlingInstr>;
 
 struct Instr {

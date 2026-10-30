@@ -101,24 +101,13 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
     }
   }
   value_types_.EmitDeclared();
-  // Every class a value is built of builds and ends its own storage, which a
-  // class extending it calls, in this unit or another, and states its tables.
+  // Every class a value is built of states its tables.
   for (const lir::ClassId id : unit_->classes.Ids()) {
     const lir::Class& cls = unit_->classes.Get(id);
     // A class another unit defines is built and dispatched through there, and
     // an interface class holds no storage and no value is built of one.
     if (cls.defining_unit.has_value() || !cls.base.has_value()) continue;
-    const lir::TypeId type =
-        unit_->types.Intern(lir::Type{lir::ObjectType{.class_id = id}});
-    const Declared declared = DeclaredClass(id);
-    const lir::Linkage linkage = DeclaredLinkage(type);
-    if (auto ended = EmitDestructors(declared, linkage); !ended) {
-      return std::unexpected(std::move(ended.error()));
-    }
-    if (auto created = EmitCreations(type, declared, linkage); !created) {
-      return std::unexpected(std::move(created.error()));
-    }
-    EmitTables(cls, declared);
+    EmitTables(cls, DeclaredClass(id));
   }
   for (const lir::GlobalConstant& constant : unit_->constants) {
     DefineData(constant);
@@ -390,50 +379,6 @@ auto CodeGenModule::BuildCallArg(
       mode);
 }
 
-auto CodeGenModule::EndOwnedStorage(
-    llvm::IRBuilderBase& builder, lir::TypeId owner, llvm::Value* storage)
-    -> diag::Result<void> {
-  // A box holds a value its type lays out, and an object of a class is ended by
-  // its class.
-  const lir::TypeId pointee = *unit_->types.Get(owner).Pointee();
-  const lir::Type& pointed = unit_->types.Get(pointee);
-  // A closure of no known type is ended, and its storage given back, through
-  // the definition it opens with.
-  if (pointed.Is<lir::ErasedCallableType>()) {
-    builder.CreateCall(
-        RuntimeFunction(
-            RuntimeSymbol(RuntimeOp::kClosureBoxEnd),
-            CallArranger::Arrange(
-                {CallArranger::Direct(types_.Ptr())},
-                ReturnDirect{.type = types_.Void()})),
-        {storage});
-    return {};
-  }
-  // An object, held as its own class or as a class of the library it
-  // extends, is ended through its class's definition.
-  if (pointed.Is<lir::ObjectType>() || pointed.Is<lir::RuntimeClassType>()) {
-    EndObject(builder, storage);
-    return {};
-  }
-  // A variable's cell is ended as a body's variable is, by its storage.
-  if (pointed.Is<lir::ObservableType>()) {
-    const support::DeclaredMemberStorage cell = CellStorage(pointee);
-    if (!MemberLayout(pointee, cell).ends_with_nothing_to_do) {
-      builder.CreateCall(MemberStorageDestructor(cell), {storage});
-    }
-    return EmitDeleteCall(builder, pointee, storage);
-  }
-  if (!types_.LayoutOf(pointee).ends_with_nothing_to_do) {
-    const std::array<llvm::Value*, 1> args{storage};
-    if (auto ended =
-            EmitLifecycle(builder, pointee, LifecycleStep::kDestroy, args);
-        !ended) {
-      return ended;
-    }
-  }
-  return EmitDeleteCall(builder, pointee, storage);
-}
-
 auto CodeGenModule::EmitDeleteCall(
     llvm::IRBuilderBase& builder, lir::TypeId pointee, llvm::Value* storage)
     -> diag::Result<void> {
@@ -451,105 +396,93 @@ void CodeGenModule::EmitClearAboveWidths(
   value_types_.EmitClearAboveWidths(builder, type, at);
 }
 
-auto CodeGenModule::EmitLifecycle(
-    llvm::IRBuilderBase& builder, lir::TypeId type, LifecycleStep step,
+auto CodeGenModule::EmitStep(
+    llvm::IRBuilderBase& builder, lir::TypeId type, lir::ValueStep step,
     std::span<llvm::Value* const> args) -> diag::Result<void> {
-  const lir::Type& ty = unit_->types.Get(type);
-  const support::ObjectLayout storage = types_.LayoutOf(type);
-  // A value laid out by its type that owns something takes each part's step: a
-  // product each component's, an array each element's, and a union the step of
-  // the member its tag names; each is compiled once per type.
-  if (IsLaidOutByType(ty) && !storage.ends_with_nothing_to_do) {
-    builder.CreateCall(value_types_.Function(type, step), args);
-    return {};
-  }
-  // A pointer owning what it points at lies where it is held as that address,
-  // and has no copy.
-  if (ty.IsMoveOnly()) {
-    switch (step) {
-      case LifecycleStep::kDestroy:
-        return EndOwnedStorage(
-            builder, type, builder.CreateLoad(types_.Ptr(), args[0]));
-      case LifecycleStep::kMove:
-        builder.CreateStore(builder.CreateLoad(types_.Ptr(), args[0]), args[1]);
-        return {};
-      case LifecycleStep::kCopy:
-      case LifecycleStep::kAssign:
-        throw InternalError(
-            "llvm codegen: a value with no copy is copied -- please report "
-            "this as a bug");
-    }
-    throw InternalError("llvm codegen: unknown lifecycle step");
-  }
-  // An integral value, and a value laid out by its type that ends with nothing
-  // to do, is its bytes where it is held, so every step that has anything to do
-  // is a copy of them, as clang copies a trivially copyable aggregate.
-  if (types_.IntegralShapeOf(type).has_value() || IsLaidOutByType(ty)) {
-    const llvm::Align align(storage.layout.align);
-    switch (step) {
-      case LifecycleStep::kCopy:
-      case LifecycleStep::kMove:
-        builder.CreateMemCpy(
-            args[1], align, args[0], align, storage.layout.size);
-        return {};
-      case LifecycleStep::kAssign:
-        builder.CreateMemCpy(
-            args[0], align, args[1], align, storage.layout.size);
-        return {};
-      case LifecycleStep::kDestroy:
-        return {};
-    }
-    throw InternalError("llvm codegen: unknown lifecycle step");
-  }
-  // A closure is ended by the body its declaration states for ending its
-  // captures, and never moves or is copied: a coroutine body reads the captures
-  // where they lie.
-  if (const auto* closure = ty.As<lir::ClosureType>()) {
-    switch (step) {
-      case LifecycleStep::kDestroy:
-        builder.CreateCall(
-            ValueFunction(
-                lir::DestructorSymbol(
-                    lir::DefinitionSymbol(*unit_, closure->closure_id),
-                    lir::Destructor::kCompleteObject)),
-            args);
-        return {};
-      case LifecycleStep::kCopy:
-      case LifecycleStep::kMove:
-      case LifecycleStep::kAssign:
-        throw InternalError(
-            "llvm codegen: a closure is moved or copied -- please report this "
-            "as a bug");
-    }
-    throw InternalError("llvm codegen: unknown lifecycle step");
-  }
-  const std::optional<support::RuntimeObject> object = HeldObjectOf(ty);
-  if (!object.has_value()) {
-    throw InternalError(
-        "llvm codegen: a step of a value's life is asked of a type whose "
-        "values are not owned -- please report this as a bug");
-  }
-  // Every other value is carried through the step by the library's entry for
-  // what the value is held as. Ending a value takes it; assigning takes the
-  // one written into and then the one written; copying and moving take the
-  // source and build in storage handed last, which they answer with.
+  return std::visit(
+      Overloaded{
+          // A value that is its bytes is copied as them, as clang copies a
+          // trivially copyable aggregate, and ends with nothing to do.
+          [&](const lir::StepIsBytes&) -> diag::Result<void> {
+            const support::Layout layout = types_.LayoutOf(type).layout;
+            const llvm::Align align(layout.align);
+            switch (step) {
+              case lir::ValueStep::kCopy:
+              case lir::ValueStep::kMove:
+                builder.CreateMemCpy(
+                    args[1], align, args[0], align, layout.size);
+                return {};
+              case lir::ValueStep::kAssign:
+                builder.CreateMemCpy(
+                    args[0], align, args[1], align, layout.size);
+                return {};
+              case lir::ValueStep::kEnd:
+                return {};
+            }
+            throw InternalError("llvm codegen: unknown value step");
+          },
+          [&](const lir::StepByFunction&) -> diag::Result<void> {
+            builder.CreateCall(
+                UnitFunction(lir::StepFunctionOf(*unit_, type, step)), args);
+            return {};
+          },
+          // What only the definition a value opens with knows how to end is
+          // ended through it: an object as the class it was created as, a
+          // closure of no known type by the entry that reads its definition.
+          [&](const lir::StepThroughDefinition&) -> diag::Result<void> {
+            if (step != lir::ValueStep::kEnd) {
+              throw InternalError(
+                  "llvm codegen: a value ended through its definition is "
+                  "asked for another step -- please report this as a bug");
+            }
+            llvm::Value* const held = builder.CreateLoad(types_.Ptr(), args[0]);
+            if (unit_->types.Get(*unit_->types.Get(type).Pointee())
+                    .Is<lir::ErasedCallableType>()) {
+              builder.CreateCall(
+                  RuntimeFunction(
+                      RuntimeSymbol(RuntimeOp::kClosureBoxEnd),
+                      CallArranger::Arrange(
+                          {CallArranger::Direct(types_.Ptr())},
+                          ReturnDirect{.type = types_.Void()})),
+                  {held});
+              return {};
+            }
+            EndObject(builder, held);
+            return {};
+          },
+          [&](const lir::StepByLibrary& library) -> diag::Result<void> {
+            return EmitLibraryStep(builder, type, library.object, step, args);
+          },
+          [&](const lir::NoSuchStep&) -> diag::Result<void> {
+            throw InternalError(
+                std::format(
+                    "llvm codegen: a value with no {} step is asked for one -- "
+                    "please report this as a bug",
+                    lir::ValueStepName(step)));
+          }},
+      lir::StepOf(*unit_, type, step));
+}
+
+auto CodeGenModule::EmitLibraryStep(
+    llvm::IRBuilderBase& builder, lir::TypeId type,
+    const support::RuntimeObject& object, lir::ValueStep step,
+    std::span<llvm::Value* const> args) -> diag::Result<void> {
+  // Ending a value takes it; assigning takes the one written into and then
+  // the one written; copying and moving take the source and build in storage
+  // handed last, which they answer with.
   std::span<llvm::Value* const> operands = args;
   ReturnInfo ret = ReturnDirect{.type = types_.Void()};
   switch (step) {
-    case LifecycleStep::kDestroy:
-      if (storage.ends_with_nothing_to_do) {
-        return {};
-      }
+    case lir::ValueStep::kEnd:
+    case lir::ValueStep::kAssign:
       break;
-    case LifecycleStep::kAssign:
-      break;
-    case LifecycleStep::kCopy:
-    case LifecycleStep::kMove:
+    case lir::ValueStep::kCopy:
+    case lir::ValueStep::kMove:
       operands = args.first(1);
       ret = ReturnIndirect{.returned = types_.Ptr()};
       break;
   }
-  const RuntimeOp op = LifecycleOp(step);
+  const RuntimeOp op = RuntimeOpOf(step);
   // A value of the design crosses as the realization for its domain is told it
   // does, and an object that is no value of the design as the address it is.
   const std::optional<Realization> realization = std::visit(
@@ -560,7 +493,7 @@ auto CodeGenModule::EmitLifecycle(
           [](support::LibraryObject) -> std::optional<Realization> {
             return std::nullopt;
           }},
-      *object);
+      object);
   const std::vector<StatedOperand> stated(
       operands.size(), StatedOperand{ValueOperand{.type = type}});
   const FnAbi abi = FnAbiOf(*this, op, stated, realization, std::nullopt, ret);
@@ -570,8 +503,7 @@ auto CodeGenModule::EmitLifecycle(
   }
   const std::span<llvm::Value* const> built_in = args.subspan(operands.size());
   crossed->insert(crossed->end(), built_in.begin(), built_in.end());
-  builder.CreateCall(
-      RuntimeFunction(RuntimeSymbol(*object, op), abi), *crossed);
+  builder.CreateCall(RuntimeFunction(RuntimeSymbol(object, op), abi), *crossed);
   return {};
 }
 
@@ -804,17 +736,6 @@ auto CodeGenModule::DeclarationOf(lir::TypeId type) const -> Declared {
           named.KindName()));
 }
 
-auto CodeGenModule::DeclaredLinkage(lir::TypeId type) const -> lir::Linkage {
-  const lir::Type& declared = unit_->types.Get(type);
-  if (const auto* object = declared.As<lir::ObjectType>()) {
-    return unit_->classes.Get(object->class_id).linkage;
-  }
-  if (const lir::RecordId* record = lir::RecordOf(declared)) {
-    return unit_->records.Get(*record).linkage;
-  }
-  return lir::Linkage::kExternal;
-}
-
 auto CodeGenModule::DeclaredClass(lir::ClassId id) const -> Declared {
   const lir::Class& cls = unit_->classes.Get(id);
   return Declared{
@@ -1009,7 +930,7 @@ auto CodeGenModule::HoldsItsBytesInline(
   const lir::Type& held = unit_->types.Get(type);
   switch (storage.kind) {
     case support::MemberStorageKind::kInlineValue:
-      return IsLaidOutByType(held) || held.Is<lir::MachineIntType>() ||
+      return lir::IsLaidOutByItsType(held) || held.Is<lir::MachineIntType>() ||
              held.IsMoveOnly() || types_.IntegralShapeOf(type).has_value();
     case support::MemberStorageKind::kObservableCell:
     case support::MemberStorageKind::kResolvedNet:
@@ -1068,33 +989,28 @@ auto CodeGenModule::ValuesHeldByMember(lir::TypeId type) const
   return ValuesHeldBy(unit_->types.Get(type));
 }
 
-auto CodeGenModule::BeginMembers(
-    llvm::IRBuilderBase& builder, llvm::Value* value,
-    const PlacedMembers& placed) -> diag::Result<void> {
-  for (std::size_t i = 0; i < placed.storage.size(); ++i) {
-    auto built = BeginMember(builder, value, placed, i);
-    if (!built) {
-      return built;
-    }
-  }
-  return {};
-}
-
-// A value held as its bytes has none until one is copied in, which is how the
-// one value holding such members -- a closure's captures -- is filled, so
-// nothing builds it here.
 auto CodeGenModule::BeginMember(
     llvm::IRBuilderBase& builder, llvm::Value* value,
     const PlacedMembers& placed, std::size_t i) -> diag::Result<void> {
-  if (HoldsItsBytesInline(placed.types[i], placed.storage[i])) {
+  return BeginStorageAt(
+      builder, placed.types[i], placed.storage[i],
+      builder.CreateConstInBoundsGEP1_64(
+          builder.getInt8Ty(), value, placed.offsets[i]));
+}
+
+// Storage holding a value as its own bytes has no value until one is copied
+// in, which is how the one value holding such members -- a closure's captures
+// -- is filled, so nothing builds it; any other is the library's to build.
+auto CodeGenModule::BeginStorageAt(
+    llvm::IRBuilderBase& builder, lir::TypeId type,
+    support::DeclaredMemberStorage storage, llvm::Value* at)
+    -> diag::Result<void> {
+  if (HoldsItsBytesInline(type, storage)) {
     throw InternalError(
         "llvm codegen: a value held as its bytes is built by copying a value "
         "in, never default-built -- please report this as a bug");
   }
-  return BuildMemberStorage(
-      builder, placed.types[i], placed.storage[i],
-      builder.CreateConstInBoundsGEP1_64(
-          builder.getInt8Ty(), value, placed.offsets[i]));
+  return BuildMemberStorage(builder, type, storage, at);
 }
 
 // The entry building a member's storage takes where the storage is, after
@@ -1122,32 +1038,29 @@ auto CodeGenModule::BuildMemberStorage(
   return {};
 }
 
-auto CodeGenModule::EndMembers(
-    llvm::IRBuilderBase& builder, llvm::Value* value,
-    const PlacedMembers& placed) -> diag::Result<void> {
-  for (std::size_t i = placed.storage.size(); i-- > 0;) {
-    auto ended = EndMember(builder, value, placed, i);
-    if (!ended) {
-      return ended;
-    }
-  }
-  return {};
-}
-
 auto CodeGenModule::EndMember(
     llvm::IRBuilderBase& builder, llvm::Value* value,
     const PlacedMembers& placed, std::size_t i) -> diag::Result<void> {
-  if (MemberLayout(placed.types[i], placed.storage[i])
-          .ends_with_nothing_to_do) {
+  return EndStorageAt(
+      builder, placed.types[i], placed.storage[i],
+      builder.CreateConstInBoundsGEP1_64(
+          builder.getInt8Ty(), value, placed.offsets[i]));
+}
+
+// Storage holding a value as its own bytes ends as the value does; any other
+// is the library's, which ends it where ending it does anything.
+auto CodeGenModule::EndStorageAt(
+    llvm::IRBuilderBase& builder, lir::TypeId type,
+    support::DeclaredMemberStorage storage, llvm::Value* at)
+    -> diag::Result<void> {
+  const std::array<llvm::Value*, 1> args{at};
+  if (HoldsItsBytesInline(type, storage)) {
+    return EmitStep(builder, type, lir::ValueStep::kEnd, args);
+  }
+  if (MemberLayout(type, storage).ends_with_nothing_to_do) {
     return {};
   }
-  const std::array<llvm::Value*, 1> args{builder.CreateConstInBoundsGEP1_64(
-      builder.getInt8Ty(), value, placed.offsets[i])};
-  if (HoldsItsBytesInline(placed.types[i], placed.storage[i])) {
-    return EmitLifecycle(
-        builder, placed.types[i], LifecycleStep::kDestroy, args);
-  }
-  builder.CreateCall(MemberStorageDestructor(placed.storage[i]), args);
+  builder.CreateCall(MemberStorageDestructor(storage), args);
   return {};
 }
 
@@ -1180,10 +1093,10 @@ auto LibraryClassOf(const lir::TypePool& types, lir::TypeId type)
 
 }  // namespace
 
-void CodeGenModule::BeginBase(
-    llvm::IRBuilderBase& builder, lir::TypeId base, llvm::Value* value) {
+void CodeGenModule::BeginParts(
+    llvm::IRBuilderBase& builder, lir::TypeId cls, llvm::Value* value) {
   if (const std::optional<support::RuntimeClass> library =
-          LibraryClassOf(unit_->types, base)) {
+          LibraryClassOf(unit_->types, cls)) {
     builder.CreateCall(
         CreateRuntimeFunction(
             llvm::FunctionType::get(
@@ -1195,15 +1108,14 @@ void CodeGenModule::BeginBase(
   builder.CreateCall(
       ValueFunction(
           lir::CreationSymbol(
-              *lir::DefinitionSymbol(*unit_, base),
-              lir::Creation::kBaseObject)),
+              *lir::DefinitionSymbol(*unit_, cls), lir::Creation::kBaseObject)),
       {value});
 }
 
-void CodeGenModule::EndBase(
-    llvm::IRBuilderBase& builder, lir::TypeId base, llvm::Value* value) {
+void CodeGenModule::EndParts(
+    llvm::IRBuilderBase& builder, lir::TypeId cls, llvm::Value* value) {
   if (const std::optional<support::RuntimeClass> library =
-          LibraryClassOf(unit_->types, base)) {
+          LibraryClassOf(unit_->types, cls)) {
     builder.CreateCall(
         CreateRuntimeFunction(
             llvm::FunctionType::get(
@@ -1215,95 +1127,9 @@ void CodeGenModule::EndBase(
   builder.CreateCall(
       ValueFunction(
           lir::DestructorSymbol(
-              *lir::DefinitionSymbol(*unit_, base),
+              *lir::DefinitionSymbol(*unit_, cls),
               lir::Destructor::kBaseObject)),
       {value});
-}
-
-auto CodeGenModule::EmitCreations(
-    lir::TypeId type, const Declared& declared, lir::Linkage linkage)
-    -> diag::Result<void> {
-  auto own = LayOut(declared);
-  if (!own) {
-    return std::unexpected(std::move(own.error()));
-  }
-  const auto define = [&](lir::Creation which) {
-    llvm::Function* fn =
-        ValueFunction(lir::CreationSymbol(declared.definition, which));
-    fn->setLinkage(LinkageOf(linkage));
-    return fn;
-  };
-  llvm::Function* base_object = define(lir::Creation::kBaseObject);
-  {
-    llvm::IRBuilder<> builder(
-        llvm::BasicBlock::Create(*context_, "", base_object));
-    llvm::Value* value = base_object->getArg(0);
-    BeginBase(builder, *declared.base, value);
-    if (auto begun = BeginMembers(builder, value, *own); !begun) {
-      return begun;
-    }
-    builder.CreateRetVoid();
-  }
-  // How large an object of the class is, and so the storage it takes, is
-  // known where the class is defined, so a `new` in another unit reads
-  // nothing of its layout -- as Swift's allocating initializer is the
-  // defining module's, for a class whose layout its clients may not know.
-  auto* allocating = llvm::cast<llvm::Function>(
-      module_
-          ->getOrInsertFunction(
-              lir::CreationSymbol(
-                  declared.definition, lir::Creation::kAllocating),
-              llvm::FunctionType::get(types_.Ptr(), {}, false))
-          .getCallee());
-  allocating->setLinkage(LinkageOf(linkage));
-  llvm::IRBuilder<> builder(
-      llvm::BasicBlock::Create(*context_, "", allocating));
-  llvm::Value* value =
-      builder.CreateCall(OperatorNew(), {builder.getInt64(own->layout.size)});
-  builder.CreateCall(base_object, {value});
-  // The object is of its class from here, before any constructor runs on it
-  // (LRM 8.17 NOTE 2).
-  auto definition = DefinitionOf(type);
-  if (!definition) {
-    return std::unexpected(std::move(definition.error()));
-  }
-  builder.CreateStore(*definition, value);
-  builder.CreateRet(value);
-  return {};
-}
-
-auto CodeGenModule::EmitDestructors(
-    const Declared& declared, lir::Linkage linkage) -> diag::Result<void> {
-  auto own = LayOut(declared);
-  if (!own) {
-    return std::unexpected(std::move(own.error()));
-  }
-  const auto define = [&](lir::Destructor which) {
-    llvm::Function* fn =
-        ValueFunction(lir::DestructorSymbol(declared.definition, which));
-    fn->setLinkage(LinkageOf(linkage));
-    return fn;
-  };
-  llvm::Function* base_object = define(lir::Destructor::kBaseObject);
-  {
-    llvm::IRBuilder<> builder(
-        llvm::BasicBlock::Create(*context_, "", base_object));
-    llvm::Value* value = base_object->getArg(0);
-    if (auto ended = EndMembers(builder, value, *own); !ended) {
-      return ended;
-    }
-    EndBase(builder, *declared.base, value);
-    builder.CreateRetVoid();
-  }
-  llvm::Function* deleting = define(lir::Destructor::kDeleting);
-  llvm::IRBuilder<> builder(llvm::BasicBlock::Create(*context_, "", deleting));
-  llvm::Value* value = deleting->getArg(0);
-  builder.CreateCall(base_object, {value});
-  const std::array<llvm::Value*, 2> args{
-      value, builder.getInt64(own->layout.size)};
-  builder.CreateCall(SizedOperatorDelete(), args);
-  builder.CreateRetVoid();
-  return {};
 }
 
 auto CodeGenModule::EntryAddress(const std::optional<lir::TableBody>& body)
@@ -1418,20 +1244,12 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
   using runtime::ClosureCommonEntries;
   const lir::Closure& closure = unit_->closures.Get(id);
   const std::string symbol = lir::DefinitionSymbol(*unit_, id);
-  auto captures = PlacedMembersOf(
-      unit_->types.Intern(lir::Type{lir::ClosureType{.closure_id = id}}));
-  if (!captures) {
-    return std::unexpected(std::move(captures.error()));
-  }
-  llvm::Function* end = ValueFunction(
-      lir::DestructorSymbol(symbol, lir::Destructor::kCompleteObject));
-  {
-    llvm::IRBuilder<> ending(llvm::BasicBlock::Create(*context_, "", end));
-    if (auto ended = EndMembers(ending, end->getArg(0), **captures); !ended) {
-      return ended;
-    }
-    ending.CreateRetVoid();
-  }
+  // What ends a value of the closure is the function the unit states for it.
+  llvm::Function* end = UnitFunction(
+      lir::StepFunctionOf(
+          *unit_,
+          unit_->types.Intern(lir::Type{lir::ClosureType{.closure_id = id}}),
+          lir::ValueStep::kEnd));
 
   // A body taking its closure over is started where it is made rather than
   // called, so its definition is the common entries alone. Any other is called
@@ -1463,9 +1281,7 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
   if (!takes_closure_over) {
     out.Place(offsetof(CalledDefinition, call), UnitFunction(closure.invoke));
   }
-  // The definition and what ends the closure are named wherever the invoke
-  // is, and nowhere else.
-  end->setLinkage(LinkageOf(invoke.linkage));
+  // The definition is named wherever the invoke is, and nowhere else.
   DefineConstant(
       symbol, std::move(out).Build(), LinkageOf(invoke.linkage),
       llvm::Align(alignof(CalledDefinition)));

@@ -57,13 +57,15 @@ call, and so is every whole-value question a structure's own body asks of a memb
   the same bits and whether one holds an unknown bit. So is each of the net's three truth tables,
   for the reason a net's installation is one entry per resolution. `!=` and `$isunknown`'s bit are
   methods too, because the library asks them of every value it holds.
-- **A backend compiles those methods as it compiles any declared body**, lays the structure out, and
-  derives copying, moving, ending and assigning member by member. The C++ backend spells the
-  structure as a type of the declaring unit whose members are its methods, each named as the library
-  asks every value -- the operator, or the entry's own identifier -- and defined once, in that unit.
-  The execution backend's runtime was compiled before the type existed and holds values of it
-  erased, so the declaring unit also hands it a table whose operation slots are those methods, one
-  table in the program for the type.
+- **A backend compiles those methods as it compiles any declared body** and lays the structure out.
+  Copying, moving, ending and assigning one go member by member, which the C++ backend takes from
+  the host language and the execution backend from functions the lowering to LIR states
+  ([a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md), revising "a backend
+  derives" them). The C++ backend spells the structure as a type of the declaring unit whose members
+  are its methods, each named as the library asks every value -- the operator, or the entry's own
+  identifier -- and defined once, in that unit. The execution backend's runtime was compiled before
+  the type existed and holds values of it erased, so the declaring unit also hands it a table whose
+  operation slots are those methods, one table in the program for the type.
 
 ## Rejected
 

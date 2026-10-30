@@ -102,13 +102,15 @@ the object as the root and calls the body of the class on it; the entry ending a
 class's deleting destructor, handed the object's storage. The library's records state each entry at
 its prototype, so the C++ host compiler checks every one against the body it names, and nothing
 restores an entry the library calls to a type written by hand. So whoever holds an object holds it
-as the root, and no class an object is of has a virtual function. The execution backend gives each
-class a base object destructor, which ends the class's members and then its base's part, and a
+as the root, and no class an object is of has a virtual function. On the execution backend each
+class has a base object destructor, which ends the class's members and then its base's part, and a
 deleting destructor, which the definition names; and a base object creation, which begins the base's
 part and then the class's members, and an allocating creation, which takes the storage, runs that,
-and gives the object its class. On the execution backend a `new` in another unit calls the
-allocating creation, so it reads nothing of how large an object of the class is; the C++ backend
-reads the class's definition from its header, as any C++ `new` does. How an object is built is
+and gives the object its class. The lowering to LIR states the four
+([a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md), revised 2026-10-30). On the
+execution backend a `new` in another unit calls the allocating creation, so it reads nothing of how
+large an object of the class is; the C++ backend reads the class's definition from its header, as
+any C++ `new` does. How an object is built is
 [an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md)'s.
 
 **D6. The signature of a class a unit publishes states the class's declaration whole.** The

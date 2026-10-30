@@ -114,12 +114,12 @@ the detail lives in the entry itself.
   [a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md).
 - [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) -- on the execution backend
   a tuple has one form wherever it lies: its type's layout, carrying its type's operation table
-  beside it. The code generator compiles each tuple type's lifecycle, and the prebuilt runtime
-  reaches that and the type's operations through the table. Call-chain 1,032.0 M -> 851.3 M
-  instructions, a struct loop 278.7 M -> 236.3 M. A description the runtime walks and a tuple
-  converted where it crosses are rejected. The table in the bytes, and holding a tuple in storage of
-  the runtime's own, are superseded by the holder entry below, and the table's form as a vtable by
-  the record-both-sides-read entry.
+  beside it. Each step of a tuple's value -- copy, move, end, write over -- is a function the
+  lowering to LIR states, and the prebuilt runtime reaches that and the type's operations through
+  the table. Call-chain 1,032.0 M -> 851.3 M instructions, a struct loop 278.7 M -> 236.3 M. A
+  description the runtime walks and a tuple converted where it crosses are rejected. The table in
+  the bytes, and holding a tuple in storage of the runtime's own, are superseded by the holder entry
+  below, and the table's form as a vtable by the record-both-sides-read entry.
 - [a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
   -- on the execution backend a type reaches the prebuilt library as a C-layout record declared once
   and read by both the code generator and the library, opening with the address of a table of
@@ -194,10 +194,17 @@ the detail lives in the entry itself.
 - [a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)
   -- a fixed-size array, which has no declaration, has its whole-value operations stated as MIR
   bodies by each unit naming the type, built from its elements' operations, and a use calls one by
-  the type and the operation. The execution backend compiles them into the type's table and
-  generates the type's lifecycle; the C++ backend spells the call as its library template's member.
-  The library carrying them out from a description of the type, the code generator instantiating
-  them itself, and a union stated the same way are rejected.
+  the type and the operation. The execution backend compiles them into the type's table beside the
+  type's lifecycle the lowering to LIR states; the C++ backend spells the call as its library
+  template's member. The library carrying them out from a description of the type, the code
+  generator instantiating them itself, and a union stated the same way are rejected.
+- [a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md) -- what copying, moving,
+  writing over and ending a value of a type does, and how an object of a class is created and ended,
+  is stated once per type and per class in LIR by the lowering from MIR, as rustc builds drop glue
+  and clone shims; one query of LIR says how each step is carried out -- the bytes, the library's
+  entry, the unit's function, the definition a value opens with -- and whether an end does anything.
+  The code generator translates. Bodies in MIR, bodies in the code generator, and the table's ABI
+  adapters in LIR are rejected.
 - [slice-value-semantics](slice-value-semantics.md) -- a slice read materializes an owned value; the
   access model is value, not borrow.
 - [value-projection-write](value-projection-write.md) -- a value-aggregate interior write replaces

@@ -27,6 +27,7 @@
 #include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/linkage.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/lir/value_step.hpp"
 #include "lyra/support/layout.hpp"
 #include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/runtime_object.hpp"
@@ -143,20 +144,14 @@ class CodeGenModule {
   auto BuildCallArg(
       const PassMode& mode, llvm::Value* value, std::vector<llvm::Value*>& args)
       -> diag::Result<void>;
-  // Ends what the pointer `storage`, of the uniquely owning type `owner`,
-  // owns: the value where it lies, and then the storage, given back to the
-  // host's sized deallocation function, as Rust drops a `Box`.
-  auto EndOwnedStorage(
-      llvm::IRBuilderBase& builder, lir::TypeId owner, llvm::Value* storage)
-      -> diag::Result<void>;
   // One step of the life of a value of `type`, emitted where `builder`
-  // stands: a copy or a move takes the value and the storage it is built in,
-  // an assignment the storage written into and the value, an end the value.
-  // Which code carries a step out is the type's to say, and is said here for
-  // every owner of a value. A step the library carries out fails where a type
-  // it has to be handed is one it does not realize.
-  auto EmitLifecycle(
-      llvm::IRBuilderBase& builder, lir::TypeId type, LifecycleStep step,
+  // stands, as the unit says it is carried out: a copy or a move takes where
+  // the value lies and the storage it is built in, an assignment the storage
+  // written into and where the value lies, an end where the value lies. A step
+  // the library carries out fails where a type it has to be handed is one it
+  // does not realize.
+  auto EmitStep(
+      llvm::IRBuilderBase& builder, lir::TypeId type, lir::ValueStep step,
       std::span<llvm::Value* const> args) -> diag::Result<void>;
   // Defines the constant `value` under `symbol`, linked as `linkage` says and
   // kept at `align`, which every reference made to a declaration of that
@@ -240,38 +235,55 @@ class CodeGenModule {
   // it does in the introducer's own table, in every class extending that one.
   auto DispatchSlotOf(const lir::StatedDispatchRef& behavior) -> std::uint64_t;
 
-  // Building each member `placed` lays out, in the storage at `value`, and
-  // ending each of them, last placed first as a C++ class ends its members.
-  auto BeginMembers(
-      llvm::IRBuilderBase& builder, llvm::Value* value,
-      const PlacedMembers& placed) -> diag::Result<void>;
-  auto EndMembers(
-      llvm::IRBuilderBase& builder, llvm::Value* value,
-      const PlacedMembers& placed) -> diag::Result<void>;
-  // The same for the one member at `i` alone: a body's variable, begun where
-  // its declaration is reached and ended where its block is left.
+  // Building the member at `i` that `placed` lays out, in the storage at
+  // `value`, and ending it: a body's variable, begun where its declaration is
+  // reached and ended where its block is left.
   auto BeginMember(
       llvm::IRBuilderBase& builder, llvm::Value* value,
       const PlacedMembers& placed, std::size_t i) -> diag::Result<void>;
   auto EndMember(
       llvm::IRBuilderBase& builder, llvm::Value* value,
       const PlacedMembers& placed, std::size_t i) -> diag::Result<void>;
+  // Begins, and ends, the parts of the value at `value` that the class `cls`
+  // places -- its own and those of what it extends: by that class's own base
+  // object creation and destructor, or by the library where it is one of the
+  // library's classes.
+  void BeginParts(
+      llvm::IRBuilderBase& builder, lir::TypeId cls, llvm::Value* value);
+  void EndParts(
+      llvm::IRBuilderBase& builder, lir::TypeId cls, llvm::Value* value);
+  // Builds, at `at`, the storage a member of `type` is held as.
+  auto BuildMemberStorage(
+      llvm::IRBuilderBase& builder, lir::TypeId type,
+      support::DeclaredMemberStorage storage, llvm::Value* at)
+      -> diag::Result<void>;
+  // Begins the storage at `at`, a member of `type` held as `storage`, holding
+  // nothing yet.
+  auto BeginStorageAt(
+      llvm::IRBuilderBase& builder, lir::TypeId type,
+      support::DeclaredMemberStorage storage, llvm::Value* at)
+      -> diag::Result<void>;
+  // Ends what the storage at `at`, a member of `type` held as `storage`,
+  // holds, and the storage with it.
+  auto EndStorageAt(
+      llvm::IRBuilderBase& builder, lir::TypeId type,
+      support::DeclaredMemberStorage storage, llvm::Value* at)
+      -> diag::Result<void>;
 
   // The symbol of the allocating creation of `cls`, a class some unit
   // declares.
   [[nodiscard]] auto CreationSymbol(lir::TypeId cls) const -> std::string;
 
  private:
+  // A step the library carries out on a value of `type` it holds as `object`,
+  // taking where the values the step reads and writes lie, as every step does.
+  auto EmitLibraryStep(
+      llvm::IRBuilderBase& builder, lir::TypeId type,
+      const support::RuntimeObject& object, lir::ValueStep step,
+      std::span<llvm::Value* const> args) -> diag::Result<void>;
   // Ends the object at `object` through its class's definition, which ends it
   // as the class it was created as and gives its storage back.
   void EndObject(llvm::IRBuilderBase& builder, llvm::Value* object);
-  // Builds, and ends, the part of the value at `value` that the class
-  // `base` it extends places: by that class's own base object creation and
-  // destructor, or by the library where it is one of the library's classes.
-  void BeginBase(
-      llvm::IRBuilderBase& builder, lir::TypeId base, llvm::Value* value);
-  void EndBase(
-      llvm::IRBuilderBase& builder, lir::TypeId base, llvm::Value* value);
   // Whether a member of `type` held as `storage` is the bytes this backend lays
   // a value of the type out in -- a product's, a fixed-size unpacked array's,
   // an integral value's, a machine integer's -- rather than an object of the
@@ -290,11 +302,6 @@ class CodeGenModule {
   // one of its variables.
   [[nodiscard]] auto CellStorage(lir::TypeId cell) const
       -> support::DeclaredMemberStorage;
-  // Builds, at `at`, the storage a member of `type` is held as.
-  auto BuildMemberStorage(
-      llvm::IRBuilderBase& builder, lir::TypeId type,
-      support::DeclaredMemberStorage storage, llvm::Value* at)
-      -> diag::Result<void>;
   // The arguments that tell an entry how wide an integral type is, and whether
   // it is four-state.
   auto WidthArg(const value::IntegralShape& shape) -> llvm::Constant*;
@@ -355,9 +362,6 @@ class CodeGenModule {
     std::span<const lir::DispatchedBehavior> dispatch;
   };
   [[nodiscard]] auto DeclarationOf(lir::TypeId type) const -> Declared;
-  // How what this unit defines of the declaration `type` names is linked: as
-  // the class or struct states, and as this unit's own where it is neither.
-  [[nodiscard]] auto DeclaredLinkage(lir::TypeId type) const -> lir::Linkage;
   // Emits the tables an object of the class `cls` of this unit dispatches
   // through: its own, the body of each behavior in the order the class states
   // them, and one for each interface class it implements.
@@ -369,20 +373,6 @@ class CodeGenModule {
   auto LayOut(const Declared& declared) -> diag::Result<PlacedMembers>;
   // How a closure's captures are laid out, after the library's part of it.
   auto LayOutCaptures(lir::ClosureId id) -> diag::Result<PlacedMembers>;
-  // Emits the two creations of `declared`, as the JVM's `new` gives an object
-  // all its fields and its class before any constructor runs: the base object
-  // creation builds what it extends and then its own members, and the
-  // allocating creation takes the storage, does that, and then gives the value
-  // its class, once.
-  auto EmitCreations(
-      lir::TypeId type, const Declared& declared, lir::Linkage linkage)
-      -> diag::Result<void>;
-  // Emits the two ends of `declared`: the base object destructor ends its own
-  // members, last placed first, then what it extends; the deleting destructor
-  // ends the value and gives its storage back, which is what its class's
-  // definition holds as how its objects end.
-  auto EmitDestructors(const Declared& declared, lir::Linkage linkage)
-      -> diag::Result<void>;
   // The definition linked under `symbol`, or a declaration of it where nothing
   // has defined it yet.
   auto DefinitionGlobal(const std::string& symbol) -> llvm::GlobalVariable*;

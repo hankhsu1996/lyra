@@ -199,6 +199,17 @@ cc_test(
 )
 
 cc_test(
+    name = "lir_value_step_test",
+    srcs = ["lir/value_step_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:lir",
+        "//:support",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "mir_integral_constant_test",
     srcs = ["mir/integral_constant_test.cpp"],
     copts = LYRA_COPTS,

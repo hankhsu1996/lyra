@@ -591,18 +591,18 @@ auto ToldOfAnOperator(support::ValueDomain domain) -> Told {
   return ToldOfTheDomain(domain, std::nullopt);
 }
 
-auto LifecycleOp(LifecycleStep step) -> RuntimeOp {
+auto RuntimeOpOf(lir::ValueStep step) -> RuntimeOp {
   switch (step) {
-    case LifecycleStep::kCopy:
+    case lir::ValueStep::kCopy:
       return RuntimeOp::kCopy;
-    case LifecycleStep::kMove:
+    case lir::ValueStep::kMove:
       return RuntimeOp::kMove;
-    case LifecycleStep::kDestroy:
+    case lir::ValueStep::kEnd:
       return RuntimeOp::kDestroy;
-    case LifecycleStep::kAssign:
+    case lir::ValueStep::kAssign:
       return RuntimeOp::kAssign;
   }
-  throw InternalError("llvm codegen: unknown lifecycle step");
+  throw InternalError("llvm codegen: unknown value step");
 }
 
 auto IntegralOpOf(lir::BinaryOp op) -> support::IntegralOp {
@@ -731,19 +731,6 @@ auto HeldObjectOf(const lir::Type& type)
           },
           [](const lir::ClosureStorage&) -> Object { return std::nullopt; }},
       *held);
-}
-
-auto IsLaidOutByType(const lir::Type& type) -> bool {
-  const std::optional<support::RuntimeObject> held = HeldObjectOf(type);
-  if (!held.has_value()) {
-    return false;
-  }
-  const auto* domain = std::get_if<support::ValueDomain>(&*held);
-  return domain != nullptr && IsLaidOutByType(*domain);
-}
-
-auto IsLaidOutByType(support::ValueDomain domain) -> bool {
-  return kLaidOutByType.Holds(domain);
 }
 
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)

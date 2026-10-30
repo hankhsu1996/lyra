@@ -66,10 +66,22 @@ below LIR, at LIR-to-LLVM.
 - When the bytes a frame keeps for a value are in use: from where a slot's first value is stored or
   a value is made, to a point stated on every way out of the extent it belongs to.
 - Whether a write initializes or assigns: a value put into storage holding none -- a slot's first
-  value, or one whose value was ended before -- is an assignment naming that storage as its
-  destination, made there or moved in, and every other write is a store into the value already
-  there. Both are stated, so nothing below works out which a write is from the shape of its place,
-  as SIL states `store [init]` beside `store [assign]`.
+  value, one whose value was ended before, or a part of a body's return place, where an answer is
+  built part by part -- is an assignment naming that storage as its destination, made there or moved
+  in, and every other write is a store into the value already there. A value ended and built anew
+  where it lies -- a tagged union whose live member changes -- is one statement doing both, so the
+  storage holds nothing only within it. Both are stated, so nothing below works out which a write is
+  from the shape of its place, as SIL states `store [init]` beside `store [assign]`.
+- What each step of a value's life does for each type -- a copy into storage holding nothing, a move
+  out of a value whose holder still ends it, a write over a value already there, an end -- and
+  whether ending a value of a type does anything, answered once by one query: the value's bytes, the
+  library's entry for what it is held as, a function the unit states built from the type's parts (a
+  product's components in order, an array's elements, a tagged union's live member, a closure's
+  captures), or the definition a value opens with. And for each class the unit defines that a value
+  is built of, how the parts it places begin and end and how an object of it is created whole and
+  given its class, and ended. The step is stated as an operation -- a copy, a value built of parts,
+  a value put in storage -- and the query says what it does, as rustc's `Drop` names a type's drop
+  glue.
 - Who ends a value a pointer owns: a uniquely owning pointer is an owned value with no copy, moved
   wherever it is handed on -- into a slot, to a caller, to a callee -- and ended by its last holder,
   which ends what it points at and gives the storage back. Storage of dynamic duration for a value
