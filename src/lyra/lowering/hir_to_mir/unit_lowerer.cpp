@@ -162,7 +162,7 @@ auto PopulateNamespaceOwnStorage(
   // The package root scope is an ExprLowerer over its own expressions: a
   // variable initializer's operands are literals, operators, and by-name
   // package symbols, none of which reach a class or a `self`.
-  const StructuralScopeLowerer expr_lowerer(unit_lowerer, nullptr, scope);
+  const StructuralScopeLowerer expr_lowerer(unit_lowerer, scope);
 
   const auto make_cell = [&](mir::Block& block, mir::StaticVariableId variable,
                              mir::TypeId cell_type) -> mir::ExprId {
@@ -789,10 +789,9 @@ auto UnitLowerer::RunDesignRoot(DesignRootInputs design_root)
 
 auto UnitLowerer::PopulateModuleRoot(
     std::optional<DesignRootInputs> design_root) -> diag::Result<void> {
-  WalkFrame root_frame;
-  // The tree of scope lowerers is built first, each naming the class it is
-  // published as. What the design root brings up and states ride on the root
-  // scope's lowering, and a source module has neither.
+  // The scope lowerers are built first, each naming the class it is published
+  // as. What the design root brings up and states ride on the root scope's
+  // lowering, and a source module has neither.
   const StructuralScopeLowerer::Tree tree = StructuralScopeLowerer::ForRoot(
       *this, hir_->root_scope, std::move(design_root));
   StructuralScopeLowerer& root = *tree.root;
@@ -805,8 +804,19 @@ auto UnitLowerer::PopulateModuleRoot(
   // to the unit.
   auto top_r = root.DeclareShape();
   if (!top_r) return std::unexpected(std::move(top_r.error()));
-  auto body_r = root.PopulateBodies(root_frame);
-  if (!body_r) return std::unexpected(std::move(body_r.error()));
+  for (const std::unique_ptr<StructuralScopeLowerer>& block : tree.blocks) {
+    if (auto r = block->DeclareShape(); !r) {
+      return std::unexpected(std::move(r.error()));
+    }
+  }
+  if (auto r = root.PopulateBodies(); !r) {
+    return std::unexpected(std::move(r.error()));
+  }
+  for (const std::unique_ptr<StructuralScopeLowerer>& block : tree.blocks) {
+    if (auto r = block->PopulateBodies(); !r) {
+      return std::unexpected(std::move(r.error()));
+    }
+  }
   StructuralScopeLowerer::DefinePublishedClasses(*this);
 
   std::map<mir::CallableId, mir::BlockBodyOrdinal> block_entries;

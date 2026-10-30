@@ -7,7 +7,9 @@
 // interface sees nothing of it, even though both modules are the same design
 // element. The connection is made either by position or by name, and the port's
 // name inside the module is independent of the interface instance's name
-// outside it.
+// outside it. A generate block inside the module reaches the port the same way
+// its module does (LRM 27.4), however deep it stands, and two instances of one
+// module each reach the instance their own connection named.
 interface Bus;
   logic [7:0] addr;
   int hits;
@@ -36,6 +38,20 @@ module Reader (
   end
 endmodule
 
+module Tally #(
+    parameter int K = 0
+) (
+    Bus t
+);
+  int sums[2];
+
+  if (K > 0) begin : outer
+    for (genvar i = 0; i < 2; i++) begin : inner
+      initial #3 sums[i] = t.hits * K + i;
+    end
+  end
+endmodule
+
 module Top;
   Bus shared ();
   Bus other ();
@@ -43,6 +59,8 @@ module Top;
   Writer writer (.w(shared));
   Reader reader (.r(shared));
   Writer lonely (other);
+  Tally #(.K(1)) on_shared (.t(shared));
+  Tally #(.K(2)) on_other (.t(other));
 
   final begin
     if (shared.addr !== 8'ha5)
@@ -57,6 +75,12 @@ module Top;
       $fatal(1, "other.addr was %h, expected a5", other.addr);
     if (other.hits !== 1)
       $fatal(1, "other.hits was %0d, expected 1", other.hits);
+    if (on_shared.sums[0] !== 11 || on_shared.sums[1] !== 12)
+      $fatal(1, "on_shared.sums were %0d %0d, expected 11 12",
+             on_shared.sums[0], on_shared.sums[1]);
+    if (on_other.sums[0] !== 2 || on_other.sums[1] !== 3)
+      $fatal(1, "on_other.sums were %0d %0d, expected 2 3", on_other.sums[0],
+             on_other.sums[1]);
     $display("All checks passed");
   end
 endmodule

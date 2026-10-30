@@ -148,9 +148,9 @@ of a conditional are one body too. Which body stands at each place -- each alter
 wrote, each block a loop counts out -- is how the object holding them is built: it is stated in that
 object's construction table, and the object builds each block through the entry the table holds
 there, as it builds an instance. Each body is a realizing class extending the one published class,
-lowered inside the scope publishing the class its own class sits in, which is the same for every
-scope building it. A published subroutine is a virtual method the published class introduces and
-each realizing class overrides with its body, so a call reaches the body of the class the object is
+lowered against the classes the scopes around it published, which are the same for every scope
+building it. A published subroutine is a virtual method the published class introduces and each
+realizing class overrides with its body, so a call reaches the body of the class the object is
 however many realize it, as a virtual call does in C++ and a call through a trait object does in
 Rust. No referrer sees how many realizations there are, so a body edit that changes the count
 changes no header.

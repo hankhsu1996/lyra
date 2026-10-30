@@ -59,7 +59,8 @@ struct ArgumentsEvaluatedEarlier {
 // the scope that built it in, which is how a walk climbs out of it, and
 // `published` is the pointer to that published class a walk climbing to this
 // one answers with: what a body reaches of a scope enclosing it is what that
-// scope published, whichever body it is.
+// scope published, whichever body it is. So a scope the walk only climbs to is
+// known by its published class alone, and holds no declaration in `cls`.
 struct EnclosingClass {
   mir::Class* cls = nullptr;
   mir::ClassId id{};
@@ -250,6 +251,17 @@ struct WalkFrame {
     return next;
   }
 
+  // Starts the walk of a structural scope's bodies on `cls`, standing inside
+  // the scopes `around` chains, the nearest first.
+  [[nodiscard]] auto WithinScopes(
+      const EnclosingClass& cls, const ScopeChainNode* around) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.current_class = cls;
+    next.outer_classes = around;
+    return next;
+  }
+
   // Enters a scope the construct lowered below is written in.
   [[nodiscard]] auto WithScopeName(const hir::FixedName& name) const
       -> WalkFrame {
@@ -276,7 +288,7 @@ struct WalkFrame {
     for (std::uint32_t step = 1; step < hops.value && node != nullptr; ++step) {
       node = node->parent;
     }
-    if (node == nullptr || node->outer.cls == nullptr) {
+    if (node == nullptr) {
       throw InternalError(
           "WalkFrame::EnclosingClassAtHops: hops exceed chain depth");
     }

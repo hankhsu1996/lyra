@@ -3256,15 +3256,12 @@ source, or not yet tried.
       rustc builds drop glue and clone shims per type, and the code generator only translates them;
       the C++ backend keeps the host compiler's own rule, which is the same rule. Not blocked.
 
-- [ ] R260 -- A unit's name answered two questions at once: which declaration and specialization it
-      is, and what another unit may compile against. A specialization is now its definition and
-      everything the design fixed for it, and a unit is the specializations whose published
-      structure reads alike, found by comparing what each publishes once every specialization has
-      declared and before any body lowers; the front end's record of which parameters each constant
-      evaluation read, the prediction it fed and the throwing comparison it was checked by are gone.
-      What is left: a block's body is still lowered inside the first body publishing the class
-      around its own, which is sound because every scope publishing one class publishes alike, where
-      layout and public field identity should come from the signature. Not blocked.
+- [x] R260 -- A unit's name answered two questions at once: which declaration and specialization it
+      is, and what another unit may compile against. Target: a specialization is its definition and
+      everything the design fixed for it, a unit is the specializations whose published structure
+      reads alike, found by comparing what each publishes before any body lowers, and a block body
+      is lowered against the classes the scopes around it published -- every reach above its own
+      scope standing on one of them -- and against no other body's lowering.
 
 - [ ] R261 -- A class the lowering builds for its own use -- what realizes a scope of the design
       hierarchy, and a node of a procedural block's storage -- is named by its place among those of
@@ -3310,13 +3307,21 @@ source, or not yet tried.
       compiled into the element's code and named by the element's class, so two specializations of
       the element that publish alike but compile to different code would give one method two
       definitions. So such an element is a class of its own for each specialization, and such a
-      block one for each place it stands, though their layout is one. Target: a method's
-      implementation belongs to the body that compiled it and is named by that body; a call states
-      which method it calls (a non-virtual call still selects statically, LRM 8.14) and finds the
-      implementation through what the object, or for a static method and a construction the
-      declaring instance, is bound to; and both rules above go, so these scopes group by what they
-      publish as every other scope does. Its acceptance cases are one published class with two
-      bodies, and one class and one body standing for two SV types. Not blocked.
+      block one for each place it stands, though their layout is one. Target: a class declares what
+      operations exist, the body of the scope declaring it implements them, and the object's
+      declaring instance selects which implementation runs. The unit holds one declaration per class
+      -- its layout, its methods and the slots every entry point takes, fixed by the declaration and
+      never by what a body synthesizes -- and each scope body holds the code of the classes it
+      declares (methods, constructor, constraints, a covergroup's bodies), compared with the rest of
+      that body, so two bodies differing only there are two bodies. An implementation keeps the
+      class object as its first binding and is reached through the declaring instance's body; a
+      non-virtual call still selects the method statically (LRM 8.14), and a construction or a
+      static call whose declaring instance is the caller's own scope calls this body's
+      implementation directly. Both rules above go, and so does reading a parameter as a constant in
+      a class's code, so these scopes group by what they publish as every other scope does. Its
+      acceptance cases are one published class with two bodies (called from the declaring body, from
+      another unit, and from a class of another unit extending it), one class and one body standing
+      for two SV types, and a loop's blocks declaring a covergroup building one class. Not blocked.
 
 - [x] R265 -- `process` is a class (LRM 9.7) and has the methods every class has -- `randomize()`
       with or without an inline constraint, the two hooks, the mode methods and the generator's

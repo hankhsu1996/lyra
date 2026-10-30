@@ -23,7 +23,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
-#include "lyra/hir/enclosing_scopes.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/scope_instantiations.hpp"
@@ -866,18 +865,17 @@ auto BuildRouteAnchor(
 
   return std::visit(
       Overloaded{
+          // Above the reader's own scope a route stands on what each scope
+          // published, so only the reader's own scope is read in its layout.
           [&](const hir::InUnitBase& ib) {
-            return ReachedPlace{
-                .expr = BuildEnclosingScopeReceiver(
-                    frame, unit, mir::EnclosingHops{.value = ib.hops.value}),
-                .place = InOwnScope{&lowerer.EnclosingScopeAtHops(ib.hops)}};
+            const mir::ExprId expr = BuildEnclosingScopeReceiver(
+                frame, unit, mir::EnclosingHops{.value = ib.hops.value});
+            if (ib.hops.value > 0) {
+              return ReachedPlace{.expr = expr, .place = InPublishedScope{}};
+            }
+            return ReachedPlace{.expr = expr, .place = InOwnScope{&lowerer}};
           },
           [&](const hir::EnclosingScopeBase& eb) {
-            std::uint32_t to_unit_object = 0;
-            for (const StructuralScopeLowerer* at = &lowerer;
-                 at->Parent() != nullptr; at = at->Parent()) {
-              ++to_unit_object;
-            }
             const mir::ExprId found = block.exprs.Add(
                 mir::Expr{
                     .data =
@@ -890,8 +888,7 @@ auto BuildRouteAnchor(
                                         unit, block,
                                         BuildEnclosingScopeReceiver(
                                             frame, unit,
-                                            mir::EnclosingHops{
-                                                .value = to_unit_object}))},
+                                            frame.HopsToUnitRoot()))},
                             .arguments = {BuildDefinitionRead(
                                 unit, block,
                                 unit_lowerer.ScopeClassIdentity(
@@ -959,8 +956,8 @@ auto StepThroughInterfacePort(
       OwnScopeOf(from, "StepThroughInterfacePort");
   return ReachedPlace{
       .expr = SelectedMember(
-          unit_lowerer, block, from,
-          scope.TranslateInterfacePort(hir::StructuralHops{0}, port), selects),
+          unit_lowerer, block, from, scope.TranslateInterfacePort(port),
+          selects),
       .place = InPublishedScope{}};
 }
 
@@ -994,9 +991,7 @@ auto MaterializeLeaf(
                 OwnScopeOf(reached, "MaterializeLeaf");
             return AddressTypedLeaf(
                 unit_lowerer, block, reached,
-                scope.TranslateStructuralDataObject(
-                    hir::StructuralHops{0}, l.object),
-                pointer_type);
+                scope.TranslateStructuralDataObject(l.object), pointer_type);
           },
           [&](const hir::ProceduralStaticLeaf& l) {
             const StructuralScopeLowerer& scope =
@@ -1909,8 +1904,7 @@ auto LowerRepeatedGenerate(
   const mir::TypeId index_type = unit_lowerer.TranslateType(
       hir_scope.structural_data_objects.Get(repeat.variable).type);
   const mir::ClassFieldTarget index_field =
-      lowerer.TranslateStructuralDataObject(
-          hir::StructuralHops{0}, repeat.variable);
+      lowerer.TranslateStructuralDataObject(repeat.variable);
   const mir::ClassFieldTarget& blocks = lowerer.GenerateHandle(generate);
 
   BlockBuilder steps(frame);
@@ -2362,12 +2356,11 @@ auto StructuralScopeLowerer::RouteEnd(
 }
 
 auto StructuralScopeLowerer::LoweringOf(
-    UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-    const hir::StructuralScope& hir_scope,
+    UnitLowerer& unit_lowerer, const hir::StructuralScope& hir_scope,
     std::optional<DesignRootInputs> design_root)
     -> std::unique_ptr<StructuralScopeLowerer> {
   auto lowerer = std::make_unique<StructuralScopeLowerer>(
-      unit_lowerer, parent, hir_scope, std::move(design_root));
+      unit_lowerer, hir_scope, std::move(design_root));
   lowerer->published_class_id_ =
       unit_lowerer.ScopeClassIdentity(hir_scope.published.scope_class);
   return lowerer;
@@ -2377,31 +2370,42 @@ auto StructuralScopeLowerer::ForRoot(
     UnitLowerer& unit_lowerer, const hir::StructuralScope& root_scope,
     std::optional<DesignRootInputs> design_root) -> Tree {
   Tree tree{
-      .root =
-          LoweringOf(unit_lowerer, nullptr, root_scope, std::move(design_root)),
+      .root = LoweringOf(unit_lowerer, root_scope, std::move(design_root)),
       .blocks = {}};
   const hir::CompilationUnit& unit = unit_lowerer.Hir();
-  const std::vector<std::optional<hir::BlockBodyId>> enclosing =
-      hir::EnclosingScopesOf(unit);
-  tree.blocks.assign(unit.block_bodies.size(), nullptr);
-  // A body is read inside the scope standing around it, so that scope's
-  // lowering is made first.
-  const auto lowering_of = [&](const auto& self,
-                               hir::BlockBodyId id) -> StructuralScopeLowerer* {
-    StructuralScopeLowerer*& lowering = tree.blocks[id.value];
-    if (lowering != nullptr) return lowering;
-    StructuralScopeLowerer* around = enclosing[id.value].has_value()
-                                         ? self(self, *enclosing[id.value])
-                                         : tree.root.get();
-    lowering = around->block_children_
-                   .emplace_back(LoweringOf(
-                       unit_lowerer, around, unit.block_bodies.Get(id).scope,
-                       std::nullopt))
-                   .get();
-    return lowering;
-  };
+  // Every scope publishing one class publishes the same class, so the class a
+  // path names is read off any scope standing there; the unit's own scope is
+  // the one a path leads out of last.
+  std::map<support::DefPath, mir::ClassId> published_at;
+  published_at.emplace(support::DefPath{}, tree.root->published_class_id_);
+  tree.blocks.reserve(unit.block_bodies.size());
   for (const hir::BlockBodyId id : unit.block_bodies.Ids()) {
-    lowering_of(lowering_of, id);
+    std::unique_ptr<StructuralScopeLowerer>& lowering =
+        tree.blocks.emplace_back(LoweringOf(
+            unit_lowerer, unit.block_bodies.Get(id).scope, std::nullopt));
+    published_at.emplace(
+        lowering->hir_scope_->published.signature.class_path,
+        lowering->published_class_id_);
+  }
+  // A block body stands inside the scope its class's path leads out of, and
+  // that one inside the next, up to the unit's own scope.
+  for (std::unique_ptr<StructuralScopeLowerer>& block : tree.blocks) {
+    const support::DefPath& path =
+        block->hir_scope_->published.signature.class_path;
+    for (std::size_t length = 0; length < path.data.size(); ++length) {
+      const support::DefPath around{
+          .data = {
+              path.data.begin(),
+              path.data.begin() + static_cast<std::ptrdiff_t>(length)}};
+      const auto found = published_at.find(around);
+      if (found == published_at.end()) {
+        throw InternalError(
+            "StructuralScopeLowerer::ForRoot: a block body is published inside "
+            "a class no scope of its unit publishes -- please report this as "
+            "a bug");
+      }
+      block->published_around_.push_back(found->second);
+    }
   }
   return tree;
 }
@@ -2427,8 +2431,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   shape.self_pointer_type = self_pointer_type;
   shape.time_resolution = hir_scope.time_resolution;
   shape.execution = unit_lowerer.ScopeExecution();
-  shape.dumped_as = parent_ == nullptr ? support::DumpScopeKind::kModule
-                                       : support::DumpScopeKind::kBegin;
+  shape.dumped_as = published_around_.empty() ? support::DumpScopeKind::kModule
+                                              : support::DumpScopeKind::kBegin;
 
   AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape);
   // What construction supplies is what distinguishes one built scope from
@@ -2618,10 +2622,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // Every generate construct is published, so what it built is held in the
   // field its publication was given.
   generate_handles_ = {hir_scope.generates.size(), settled(generate_handles)};
-  for (const std::unique_ptr<StructuralScopeLowerer>& child : block_children_) {
-    auto child_r = child->DeclareShape();
-    if (!child_r) return std::unexpected(std::move(child_r.error()));
-  }
 
   // The covergroups this scope replicates settle their shapes against this
   // one for the reason its classes do. One sampled where a block of the
@@ -2840,8 +2840,7 @@ auto IsOwnedChildOrReferenceSlot(const mir::Type& type) -> bool {
 
 }  // namespace
 
-auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
-    -> diag::Result<void> {
+auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::StructuralScope& hir_scope = *hir_scope_;
 
@@ -2850,7 +2849,32 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
 
   const mir::TypeId void_type = unit_lowerer.Unit().builtins.void_type;
   const mir::TypeId self_ptr_type = mir_class.self_pointer_type;
-  ScopeChainNode outer_scope_link{};
+  // The scopes around this one are climbed to through what each published,
+  // whichever body built it, so each is known here by its published class and
+  // the link that class keeps to the scope around it.
+  std::vector<ScopeChainNode> around(published_around_.size());
+  const ScopeChainNode* outer = nullptr;
+  for (std::size_t at = 0; at < published_around_.size(); ++at) {
+    const mir::ClassId published = published_around_[at];
+    const auto settled = unit_lowerer.PublishedScopes().find(published);
+    if (settled == unit_lowerer.PublishedScopes().end()) {
+      throw InternalError(
+          "StructuralScopeLowerer::PopulateBodies: every class the unit "
+          "published of a scope is laid out before any body lowers");
+    }
+    const std::optional<mir::FieldId>& link =
+        settled->second.layout.published.enclosing;
+    around[at] = ScopeChainNode{
+        .outer =
+            {.cls = nullptr,
+             .id = published,
+             .enclosing = link.transform([&](mir::FieldId slot) {
+               return mir::ClassFieldTarget{.owner = published, .slot = slot};
+             }),
+             .published = BorrowedPointerTo(unit_lowerer.Unit(), published)},
+        .parent = outer};
+    outer = &around[at];
+  }
   const auto seed_self = [&](CallableBindings& bindings) -> mir::LocalId {
     return bindings.Declare(ReceiverOrigin{}, self_ptr_type);
   };
@@ -2872,14 +2896,14 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   }
   // Every body of the scope is the instance its outward references count from.
   const WalkFrame scope_frame =
-      parent_frame
-          .WithClass(
+      WalkFrame{}
+          .WithinScopes(
               {.cls = &mir_class,
                .id = class_id_,
                .enclosing = enclosing_,
                .published =
                    BorrowedPointerTo(unit_lowerer.Unit(), published_class_id_)},
-              outer_scope_link)
+              outer)
           .WithStructuralBase(ScopeIsSelf{})
           .WithScopeName(unit_lowerer.Hir().fixed_name);
   mir::Block& ctor_block = ctor_code.Body();
@@ -2967,8 +2991,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   const auto install_in_constructor =
       [&](hir::StructuralDataObjectId id) -> mir::ExprId {
     const auto& d = hir_scope.structural_data_objects.Get(id);
-    const mir::ClassFieldTarget field =
-        TranslateStructuralDataObject(hir::StructuralHops{0}, id);
+    const mir::ClassFieldTarget field = TranslateStructuralDataObject(id);
     const mir::ExprId target = ctor_block.exprs.Add(
         mir::MakeFieldAccessExpr(
             self_object(), field, FieldTypeOf(unit_lowerer, field)));
@@ -2992,8 +3015,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // Stores `value` into the cell `id` declares, as a statement of `block`.
   const auto store_into = [&](mir::Block& block, const WalkFrame& at,
                               hir::StructuralDataObjectId id, mir::Expr value) {
-    const mir::ClassFieldTarget field =
-        TranslateStructuralDataObject(hir::StructuralHops{0}, id);
+    const mir::ClassFieldTarget field = TranslateStructuralDataObject(id);
     const mir::ExprId target = block.exprs.Add(
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(
@@ -3091,8 +3113,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   for (const hir::StructuralDataObjectId hir_id :
        hir_scope.structural_data_objects.Ids()) {
     const auto& d = hir_scope.structural_data_objects.Get(hir_id);
-    const mir::ClassFieldTarget cell =
-        TranslateStructuralDataObject(hir::StructuralHops{0}, hir_id);
+    const mir::ClassFieldTarget cell = TranslateStructuralDataObject(hir_id);
     const mir::TypeId mir_field_type = FieldTypeOf(unit_lowerer, cell);
     const mir::TypeId mir_value_type = unit_lowerer.TranslateType(d.type);
     const auto* net = std::get_if<hir::StructuralNetDecl>(&d.kind);
@@ -3417,14 +3438,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           support::BuiltinFn::kRegisterAlways, assertion.span);
     }
     installed_assertions.emplace_back(id, *installed);
-  }
-
-  // Recurse into descendants. Every class's shape is already published, so a
-  // body that names a peer's member resolves through the existing identity
-  // model regardless of which sibling lowers next.
-  for (const std::unique_ptr<StructuralScopeLowerer>& child : block_children_) {
-    auto child_r = child->PopulateBodies(ctor_frame);
-    if (!child_r) return std::unexpected(std::move(child_r.error()));
   }
 
   for (const hir::GenerateId gen : hir_scope.generates.Ids()) {

@@ -826,13 +826,32 @@ auto UnitLowerer::ReachOfPort(
         "UnitLowerer::ReachOfPort: an interface port is a member of a scope "
         "enclosing every reader of it");
   }
+  // A port of a scope enclosing the reader's own is reached through what that
+  // scope published, as every name meeting the reader above its own scope is.
+  hir::PathStep step{.names = binding->port, .selects = {}};
+  if (hops->value > 0) {
+    const hir::ScopeClassId holder = PublishedClassOf(*port.getParentScope());
+    const hir::ScopeClassSignature& published = unit_.scope_classes.Get(holder);
+    const auto member = published.FindMember(port.name, published.class_path);
+    if (!member.has_value()) {
+      throw InternalError(
+          "UnitLowerer::ReachOfPort: a scope publishes every interface port "
+          "it declares -- please report this as a bug");
+    }
+    step = hir::AsPathStep(
+        hir::PublishedStep{
+            .names =
+                hir::PublishedMemberRef{
+                    .scope_class = holder, .member = *member},
+            .selects = {}});
+  }
   // The hop lands on the port itself, so every object it stands for is still
   // in play; a name that picks one out of them says so in a coordinate the
   // caller adds to it, and settles the place again once it has.
   return PortReach{
       .base = hir::InUnitBase{.hops = *hops},
       .hop = DeclaredHop{
-          .step = hir::PathStep{.names = binding->port, .selects = {}},
+          .step = std::move(step),
           .place = PlaceThroughPort(port, {}),
           .dims = InterfacePortObjects(port).ranges}};
 }
