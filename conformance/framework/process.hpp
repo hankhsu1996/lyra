@@ -71,6 +71,12 @@ auto Transcript(const Step& step) -> std::string;
 // nothing where no directory on PATH holds one.
 auto FindOnPath(std::string_view name) -> std::optional<std::filesystem::path>;
 
+// A path written on this program's command line, as its caller meant it.
+// `bazel run` starts a program inside its runfiles and says where it was
+// started from, so a relative path is taken from there rather than from where
+// the program runs.
+auto ResolveCallerPath(std::string_view written) -> std::filesystem::path;
+
 // How long a child started now may run to end by `deadline`: nothing where
 // there is no deadline, and none at all where it has passed.
 auto TimeLeft(std::optional<std::chrono::steady_clock::time_point> deadline)

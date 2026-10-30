@@ -12,7 +12,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <expected>
 #include <filesystem>
 #include <fstream>
@@ -38,6 +37,7 @@
 #include "conformance/framework/case.hpp"
 #include "conformance/framework/execution.hpp"
 #include "conformance/framework/observation.hpp"
+#include "conformance/framework/process.hpp"
 #include "conformance/framework/results.hpp"
 #include "conformance/framework/verdict.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
@@ -52,7 +52,7 @@ constexpr std::string_view kUsage =
     "usage: {} --tool lyra --lyra <binary>\n"
     "       {} --tool verilator [--verilator <binary>] [--cc <compiler>]\n"
     "  common: [--jobs N] [--time-limit SECONDS] [--address-limit MiB]\n"
-    "          [--build-option ARG]... [--output FILE]\n"
+    "          [--build-option ARG]... [--output FILE] [--configuration NAME]\n"
     "          [--suite-revision REV] [--tool-revision REV] [case id...]\n";
 
 // How the run is to go, from the command line. `--tool` names the tool, and
@@ -66,11 +66,13 @@ constexpr std::string_view kUsage =
 // run beside it. `--build-option ARG`, given once per argument, is an option
 // every case's build is given, as a tool's own command line takes it -- which
 // path Lyra takes, say -- so one tool held under two such sets is two
-// configurations, each with its own record. `--output FILE` is where the whole
-// run is written as JSON. The two revisions are what the caller knows of the
-// suite's text and the tool's build, which neither this program nor the tool
-// can say of itself; each is written as unknown where it is not given. The rest
-// are the ids of the cases to judge, every case where none is named.
+// configurations, each with its own record, and `--configuration NAME` is
+// the name the record gives that tool and those options together. `--output
+// FILE` is where the whole run is written as JSON. The two revisions are what
+// the caller knows of the suite's text and the tool's build, which neither this
+// program nor the tool can say of itself; each is written as unknown where it
+// is not given. The rest are the ids of the cases to judge, every case where
+// none is named.
 struct Request {
   std::string tool;
   std::optional<std::filesystem::path> lyra;
@@ -81,6 +83,7 @@ struct Request {
   std::optional<std::uint64_t> address_limit_mib;
   std::vector<std::string> build_options;
   std::optional<std::filesystem::path> output;
+  std::optional<std::string> configuration;
   std::optional<std::string> suite_revision;
   std::optional<std::string> tool_revision;
   std::vector<std::string> ids;
@@ -96,21 +99,6 @@ auto ReadCount(std::string_view text) -> std::optional<std::uint64_t> {
   return value;
 }
 
-// A path the caller wrote, as the caller meant it. `bazel run` starts the
-// program inside its runfiles and says where it was started from, so a
-// relative path is taken from there rather than from where the program runs.
-auto ResolveCallerPath(std::string_view written) -> std::filesystem::path {
-  const std::filesystem::path path(written);
-  if (path.is_absolute()) {
-    return path.lexically_normal();
-  }
-  const char* started_in = std::getenv("BUILD_WORKING_DIRECTORY");
-  if (started_in != nullptr && *started_in != '\0') {
-    return (std::filesystem::path(started_in) / path).lexically_normal();
-  }
-  return std::filesystem::absolute(path).lexically_normal();
-}
-
 auto ReadRequest(std::span<char* const> args) -> std::optional<Request> {
   Request request;
   for (std::size_t i = 1; i < args.size(); ++i) {
@@ -120,7 +108,8 @@ auto ReadRequest(std::span<char* const> args) -> std::optional<Request> {
         arg == "--cc" || arg == "--jobs" || arg == "-j" ||
         arg == "--time-limit" || arg == "--address-limit" ||
         arg == "--build-option" || arg == "--output" ||
-        arg == "--suite-revision" || arg == "--tool-revision";
+        arg == "--configuration" || arg == "--suite-revision" ||
+        arg == "--tool-revision";
     if (!takes_value) {
       request.ids.emplace_back(arg);
       continue;
@@ -132,15 +121,17 @@ auto ReadRequest(std::span<char* const> args) -> std::optional<Request> {
     if (arg == "--tool") {
       request.tool = value;
     } else if (arg == "--lyra") {
-      request.lyra = ResolveCallerPath(value);
+      request.lyra = framework::ResolveCallerPath(value);
     } else if (arg == "--verilator") {
-      request.verilator = ResolveCallerPath(value);
+      request.verilator = framework::ResolveCallerPath(value);
     } else if (arg == "--cc") {
-      request.c_compiler = ResolveCallerPath(value);
+      request.c_compiler = framework::ResolveCallerPath(value);
     } else if (arg == "--build-option") {
       request.build_options.emplace_back(value);
     } else if (arg == "--output") {
-      request.output = ResolveCallerPath(value);
+      request.output = framework::ResolveCallerPath(value);
+    } else if (arg == "--configuration") {
+      request.configuration = value;
     } else if (arg == "--suite-revision") {
       request.suite_revision = value;
     } else if (arg == "--tool-revision") {
@@ -291,20 +282,15 @@ auto main(int argc, char** argv) -> int {
     return 1;
   }
   // Each case is built in a directory of its own, so the corpus is named from
-  // the root rather than from wherever this was started. The suite's checks of
-  // its own helpers are run beside the cases, since a tool failing one shows
-  // the helper wrong rather than the tool.
+  // the root rather than from wherever this was started.
   const std::filesystem::path suite =
       std::filesystem::absolute(runfiles->Rlocation("_main/conformance"))
           .lexically_normal();
-  std::vector<framework::Case> corpus;
-  for (const std::string_view root : {"cases", "selftest"}) {
-    std::vector<framework::Case> found =
-        framework::LoadCases(suite / root, suite / "harness");
-    corpus.insert(
-        corpus.end(), std::make_move_iterator(found.begin()),
-        std::make_move_iterator(found.end()));
-  }
+  framework::Suite loaded = framework::LoadSuite(suite);
+  std::vector<framework::Case> corpus = std::move(loaded.cases);
+  corpus.insert(
+      corpus.end(), std::make_move_iterator(loaded.helper_checks.begin()),
+      std::make_move_iterator(loaded.helper_checks.end()));
   // A suite with no case is one whose cases were not found where they were
   // looked for, and a name that is no case would otherwise be passed over;
   // either way the run would stand as an account of what was asked for while
@@ -333,6 +319,7 @@ auto main(int argc, char** argv) -> int {
   framework::Results results{
       .suite_revision = request->suite_revision,
       .suite_directory = suite,
+      .configuration = request->configuration,
       .tool_revision = request->tool_revision,
       .tool = std::move(tool),
       .environment = std::move(environment),

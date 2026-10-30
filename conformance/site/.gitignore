@@ -1,0 +1,6 @@
+# What a build writes, and what the publisher writes into public/ for a
+# local preview; only the publisher writes the site's data.
+dist/
+public/summary.json
+public/cases/
+public/records/

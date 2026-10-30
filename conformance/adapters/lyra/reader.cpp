@@ -86,14 +86,14 @@ constexpr std::array<std::string_view, 1> kSimulationOutOfMemory = {
 // being refused.
 auto BuildFailure(std::string_view diagnostics) -> std::optional<ToolFailed> {
   if (diagnostics.find(kInternalErrorReport) != std::string_view::npos) {
-    return ToolFailed{"the compiler reported a bug of its own"};
+    return ToolFailed{std::string(framework::kToolInternalError)};
   }
   if (diagnostics.find(kNotYetSupported) != std::string_view::npos) {
-    return ToolFailed{"the compiler refused a construct it does not carry out"};
+    return ToolFailed{std::string(framework::kToolUnsupportedConstruct)};
   }
   for (const std::string_view failure : kHostToolFailures) {
     if (diagnostics.find(failure) != std::string_view::npos) {
-      return ToolFailed{"the compiler did not build a program from its output"};
+      return ToolFailed{std::string(framework::kToolGeneratedCodeDidNotBuild)};
     }
   }
   return std::nullopt;

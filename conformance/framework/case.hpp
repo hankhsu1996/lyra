@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -79,6 +80,11 @@ struct ReportPattern {
   auto operator==(const ReportPattern&) const -> bool = default;
 };
 
+// `count` equal reports in words, as a reader who has not seen the case is
+// told of them: "an error from line 12", "2 warnings in Top".
+auto DescribeReport(const ReportPattern& report, std::size_t count)
+    -> std::string;
+
 // What a case claims the standard requires of its run, which is one of four
 // things. A program that runs reaches its sentinel having passed every check.
 // One the standard forbids is refused before it runs. One whose requirement is
@@ -102,6 +108,10 @@ struct IssuesNoReportOf {
 
 using Claim = std::variant<
     RunsToItsChecks, RejectedBeforeRunning, IssuesReports, IssuesNoReportOf>;
+
+// What the claim requires of a tool, as one sentence a reader who has not seen
+// the case can follow.
+auto Describe(const Claim& claim) -> std::string;
 
 // The two use models every tool shall offer for which files form a
 // compilation unit (LRM 3.12.1). Which one a tool takes when asked for neither
@@ -166,5 +176,17 @@ auto ReadDecimal(std::string_view text) -> std::optional<std::uint64_t>;
 auto LoadCases(
     const std::filesystem::path& corpus_root,
     const std::filesystem::path& harness) -> std::vector<Case>;
+
+// The whole suite under `directory`: its cases, each stating what the standard
+// requires, and the checks of the helpers those cases include, which have the
+// same shape and are run beside them, since a tool failing one shows the
+// helper wrong rather than the tool. A check says nothing of whether a tool
+// conforms, so the two are kept apart wherever verdicts are counted.
+struct Suite {
+  std::vector<Case> cases;
+  std::vector<Case> helper_checks;
+};
+
+auto LoadSuite(const std::filesystem::path& directory) -> Suite;
 
 }  // namespace conformance::framework

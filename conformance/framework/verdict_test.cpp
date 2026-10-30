@@ -99,7 +99,9 @@ TEST(VerdictTest, ARejectionIsTheToolsAnswerAndNothingElse) {
   unstarted.end = HarnessFailed{"no such file"};
   EXPECT_TRUE(Is<NotRun>(Judge(RejectedBeforeRunning{}, unstarted)));
   Observation crashed;
-  crashed.end = ToolFailed{"ended by signal 11"};
+  crashed.end = ToolFailed{
+      "a program the tool started was ended by signal 11 (an invalid memory "
+      "access)"};
   EXPECT_TRUE(Is<DoesNotConform>(Judge(RejectedBeforeRunning{}, crashed)));
 }
 
@@ -209,7 +211,8 @@ TEST(VerdictTest, AReportTiedToItsStatementIsCountedExactly) {
   const Verdict short_one = Judge(two, went_on);
   ASSERT_TRUE(Is<DoesNotConform>(short_one));
   EXPECT_NE(
-      std::get<DoesNotConform>(short_one).why.find("2 times, and 1 was read"),
+      std::get<DoesNotConform>(short_one).why.find(
+          "2 times, and the run issued it once"),
       std::string::npos);
 
   went_on.reports.push_back(Report(ReportKind::kError, 20));
@@ -234,7 +237,7 @@ TEST(VerdictTest, AReportTiedToItsStatementIsCountedExactly) {
   ASSERT_TRUE(Is<DoesNotConform>(one_over));
   EXPECT_NE(
       std::get<DoesNotConform>(one_over).why.find(
-          "2 error reports from line 20 here, and the run issued 3"),
+          "allows 2 error reports from line 20, and the run issued 3"),
       std::string::npos);
 
   // One from another line answers nothing asked and is no one's surplus.
@@ -392,7 +395,7 @@ TEST(VerdictTest, AUseModelIsAskedForAndNeverAssumed) {
   EXPECT_TRUE(Is<DoesNotConform>(Judge(RunsToItsChecks{}, lacking)));
 
   Observation stuck;
-  stuck.end = StoppedAtALimit{"the time it was given"};
+  stuck.end = StoppedAtALimit{"its time limit"};
   EXPECT_TRUE(Is<Unresolved>(Judge(RunsToItsChecks{}, stuck)));
 }
 
@@ -648,7 +651,7 @@ TEST(VerdictTest, ACaseIsHeldToTheFilesItExpects) {
   EXPECT_TRUE(Is<DoesNotConform>(JudgeCase(c, wrote_nothing)));
 
   Observation stopped = wrote;
-  stopped.end = StoppedAtALimit{"the time it was given"};
+  stopped.end = StoppedAtALimit{"its time limit"};
   EXPECT_TRUE(Is<Unresolved>(JudgeCase(c, stopped)));
 }
 

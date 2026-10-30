@@ -27,6 +27,9 @@ struct Tool {
   // as its installed build file names it, or nothing where that file names
   // none.
   std::optional<std::filesystem::path> cxx;
+  // The solver a program Verilator built runs to randomize, or nothing where
+  // none is found, and then a case that randomizes cannot run.
+  std::optional<std::filesystem::path> solver;
   // Options every case's build is given beyond what the reader asks for
   // itself.
   std::vector<std::string> build_options;
@@ -40,9 +43,10 @@ void ReadReports(std::string_view stream, framework::Observation& seen);
 
 // Verilator and the C compiler named, or the ones on PATH where a name is not
 // given, with the directory of the standard header that Verilator says it
-// ships and the C++ compiler its build file names, building every case with
-// `build_options`. They are the machine's own installs and never build inputs.
-// Why it could not be found where it could not.
+// ships, the C++ compiler its build file names and the solver its programs
+// randomize with, building every case with `build_options`. They are the
+// machine's own installs and never build inputs. Why it could not be found
+// where it could not.
 auto FindTool(
     std::optional<std::filesystem::path> exe,
     std::optional<std::filesystem::path> c_compiler,

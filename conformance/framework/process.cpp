@@ -331,6 +331,18 @@ auto FindOnPath(std::string_view name) -> std::optional<std::filesystem::path> {
   return std::nullopt;
 }
 
+auto ResolveCallerPath(std::string_view written) -> std::filesystem::path {
+  const std::filesystem::path path(written);
+  if (path.is_absolute()) {
+    return path.lexically_normal();
+  }
+  const char* started_in = std::getenv("BUILD_WORKING_DIRECTORY");
+  if (started_in != nullptr && *started_in != '\0') {
+    return (std::filesystem::path(started_in) / path).lexically_normal();
+  }
+  return std::filesystem::absolute(path).lexically_normal();
+}
+
 auto TimeLeft(std::optional<std::chrono::steady_clock::time_point> deadline)
     -> std::optional<std::chrono::seconds> {
   if (!deadline) {

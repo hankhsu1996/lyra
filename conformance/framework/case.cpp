@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <format>
@@ -15,8 +16,10 @@
 #include <system_error>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "conformance/framework/overloaded.hpp"
 #include "conformance/framework/value_change_dump.hpp"
 
 namespace conformance::framework {
@@ -402,6 +405,105 @@ auto ReadDecimal(std::string_view text) -> std::optional<std::uint64_t> {
   return number;
 }
 
+namespace {
+
+// A kind of report as a reader is told of it, one of them or several.
+auto ReportNamed(ReportKind kind, std::size_t count) -> std::string {
+  const auto named = [&](std::string_view one, std::string_view many) {
+    return count == 1 ? std::string(one) : std::format("{} {}", count, many);
+  };
+  switch (kind) {
+    case ReportKind::kInfo:
+      return named("an info report", "info reports");
+    case ReportKind::kWarning:
+      return named("a warning", "warnings");
+    case ReportKind::kError:
+      return named("an error", "errors");
+    case ReportKind::kFatal:
+      return named("a fatal error", "fatal errors");
+    case ReportKind::kViolation:
+      return named("a violation report", "violation reports");
+    case ReportKind::kFinish:
+      return named("the message $finish prints", "messages of $finish");
+    case ReportKind::kStop:
+      return named("the message $stop prints", "messages of $stop");
+  }
+  return named("a report", "reports");
+}
+
+}  // namespace
+
+auto DescribeReport(const ReportPattern& report, std::size_t count)
+    -> std::string {
+  std::string text = ReportNamed(report.kind, count);
+  if (report.line) {
+    text += std::format(" from line {}", *report.line);
+  }
+  if (report.scope) {
+    text += std::format(" in {}", *report.scope);
+  }
+  if (report.time) {
+    text += std::format(" at time {}", *report.time);
+  }
+  if (report.message) {
+    text += std::format(" with the message \"{}\"", *report.message);
+  }
+  return text;
+}
+
+namespace {
+
+auto Joined(const std::vector<std::string>& parts, std::string_view last)
+    -> std::string {
+  std::string text;
+  for (std::size_t i = 0; i < parts.size(); ++i) {
+    if (i > 0) {
+      text += i + 1 == parts.size() ? std::format(" {} ", last) : ", ";
+    }
+    text += parts[i];
+  }
+  return text;
+}
+
+}  // namespace
+
+auto Describe(const Claim& claim) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const RunsToItsChecks&) -> std::string {
+            return "The program must run and pass every check it makes.";
+          },
+          [](const RejectedBeforeRunning&) -> std::string {
+            return "A tool must refuse this program before it runs.";
+          },
+          [](const IssuesReports& required) -> std::string {
+            // Equal reports are named once with how many, in the order the
+            // case first asks for each.
+            std::vector<std::string> reports;
+            for (auto it = required.reports.begin();
+                 it != required.reports.end(); ++it) {
+              if (std::ranges::find(required.reports.begin(), it, *it) != it) {
+                continue;
+              }
+              reports.push_back(DescribeReport(
+                  *it, static_cast<std::size_t>(
+                           std::ranges::count(required.reports, *it))));
+            }
+            return std::format(
+                "The program must issue {}.", Joined(reports, "and"));
+          },
+          [](const IssuesNoReportOf& forbidden) -> std::string {
+            std::vector<std::string> kinds;
+            for (const ReportKind kind : forbidden.kinds) {
+              kinds.push_back(ReportNamed(kind, 1));
+            }
+            return std::format(
+                "The program must pass every check without issuing {}.",
+                Joined(kinds, "or"));
+          }},
+      claim);
+}
+
 auto SpellingOf(ReportKind kind) -> std::string_view {
   switch (kind) {
     case ReportKind::kInfo:
@@ -457,6 +559,13 @@ auto LoadCases(
   }
   std::ranges::sort(cases, {}, &Case::id);
   return cases;
+}
+
+auto LoadSuite(const std::filesystem::path& directory) -> Suite {
+  const std::filesystem::path harness = directory / "harness";
+  return Suite{
+      .cases = LoadCases(directory / "cases", harness),
+      .helper_checks = LoadCases(directory / "selftest", harness)};
 }
 
 }  // namespace conformance::framework

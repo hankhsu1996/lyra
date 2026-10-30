@@ -1,0 +1,52 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("//tools/bazel:copts.bzl", "LYRA_COPTS")
+
+package(features = ["parse_headers"])
+
+# Whether a night's records may be published, and what a published night
+# leaves for the site.
+cc_library(
+    name = "publish",
+    srcs = ["publish.cpp"],
+    hdrs = ["publish.hpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//conformance/framework",
+        "//conformance/framework:results",
+        "@nlohmann_json//:json",
+    ],
+)
+
+# Publishes a night's records against the suite it is built with, so the
+# revision a record names is held to the cases it was judged on:
+# `bazel run //conformance/publish:publish_records -- --revision REV --site DIR
+# record...`.
+cc_binary(
+    name = "publish_records",
+    srcs = ["main.cpp"],
+    copts = LYRA_COPTS,
+    data = [
+        "//conformance:corpus",
+        "//conformance:selftest",
+    ],
+    deps = [
+        ":publish",
+        "//conformance/framework:process",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@fmt",
+    ],
+)
+
+cc_test(
+    name = "publish_test",
+    srcs = ["publish_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        ":publish",
+        "//conformance/framework:process",
+        "@googletest//:gtest_main",
+        "@nlohmann_json//:json",
+    ],
+)

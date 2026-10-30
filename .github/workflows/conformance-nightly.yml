@@ -2,10 +2,11 @@ name: Conformance Suite (Nightly)
 
 # Every case of the conformance suite, judged on each configuration a record is
 # published for: Lyra on each of its two paths, and Verilator. Each job writes
-# the run as a JSON record and keeps it as an artifact of the workflow run, so
-# what each configuration answers can be read and compared without running it
-# again. A configuration is a tool and the options every case's build is
-# given, so Lyra's two paths are two records and never one pass rate.
+# the run as a JSON record and keeps it as an artifact of the workflow run, and
+# the last job publishes the night to the suite's site, so what each
+# configuration answers can be read and compared without running it again. A
+# configuration is a tool and the options every case's build is given, so
+# Lyra's two paths are two records and never one pass rate.
 #
 # The runner prints a verdict per case and exits non-zero only where it could
 # not hand a case to the tool or could not write the run's results, so a red
@@ -41,8 +42,10 @@ jobs:
       matrix:
         include:
           - path: cpp
-            options: ''
+            name: 'Lyra, C++ backend'
+            options: '--build-option --backend --build-option cpp'
           - path: llvm
+            name: 'Lyra, LLVM backend'
             options: '--build-option --backend --build-option llvm'
     steps:
       - name: Checkout code
@@ -76,7 +79,7 @@ jobs:
           bazel build //:lyra //conformance/runner:conformance $REMOTE_FLAGS
           bazel run //conformance/runner:conformance $REMOTE_FLAGS -- \
             --tool lyra --lyra "$GITHUB_WORKSPACE/bazel-bin/lyra" \
-            ${{ matrix.options }} \
+            ${{ matrix.options }} --configuration '${{ matrix.name }}' \
             --jobs 4 --time-limit 300 --address-limit 4096 \
             --output "$GITHUB_WORKSPACE/conformance-results.json" \
             --suite-revision "$GITHUB_SHA" --tool-revision "$GITHUB_SHA"
@@ -112,6 +115,11 @@ jobs:
         with:
           version: '5.052'
 
+      # A program Verilator built randomizes by running a solver, z3 unless
+      # told otherwise, which the runner image does not have.
+      - name: Setup the constraint solver
+        run: sudo apt-get install -y --no-install-recommends z3
+
       # `dev` runs the actions remotely and brings the runner back, since it
       # is run here; a checkout with no key builds it on the runner instead.
       # The limits are the Lyra jobs', for the same reasons.
@@ -124,7 +132,7 @@ jobs:
             REMOTE_FLAGS="--config=dev --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
           fi
           bazel run //conformance/runner:conformance $REMOTE_FLAGS -- \
-            --tool verilator --jobs 4 --time-limit 300 --address-limit 4096 \
+            --tool verilator --configuration 'Verilator' --jobs 4 --time-limit 300 --address-limit 4096 \
             --output "$GITHUB_WORKSPACE/conformance-results.json" \
             --suite-revision "$GITHUB_SHA"
 
@@ -135,3 +143,77 @@ jobs:
           name: conformance-results-verilator
           path: conformance-results.json
           if-no-files-found: warn
+
+  # The night is published only where every configuration judged every case,
+  # which is what every job above succeeding says; otherwise the site keeps the
+  # last night that did. The publisher holds each record to the suite at this
+  # commit, and the site is deployed from what it wrote.
+  publish:
+    name: Publish the Night
+    needs: [lyra, verilator]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: conformance-publish
+      cancel-in-progress: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ github.job }}-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: Download the records
+        uses: actions/download-artifact@v8
+        with:
+          pattern: conformance-results-*
+          path: records
+
+      # The publisher writes the night into the site's own directory, and the
+      # site is then built from it, every page read from what was written.
+      - name: Publish
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          REMOTE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            REMOTE_FLAGS="--config=dev --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel run //conformance/publish:publish_records $REMOTE_FLAGS -- \
+            --revision "$GITHUB_SHA" \
+            --repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --site "$GITHUB_WORKSPACE/conformance/site/public" \
+            records/*/conformance-results.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: conformance/site/package-lock.json
+
+      - name: Build the site
+        working-directory: conformance/site
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: conformance/site/dist
+
+      - name: Deploy the site
+        id: deploy
+        uses: actions/deploy-pages@v5

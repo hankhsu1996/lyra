@@ -50,6 +50,10 @@ struct Results {
   // command names a case's files under it, so with the revision it says which
   // file of the suite each path is.
   std::filesystem::path suite_directory;
+  // The name the caller gives the configuration this run is of -- the tool and
+  // the options every case's build is given -- which a reader is shown in
+  // place of either, and by which two runs of one configuration are matched.
+  std::optional<std::string> configuration;
   std::optional<std::string> tool_revision;
   ToolIdentity tool;
   std::vector<EnvironmentVariable> environment;
