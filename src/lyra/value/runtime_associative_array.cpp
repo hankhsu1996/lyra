@@ -105,6 +105,14 @@ auto RuntimeAssociativeArray::WithDefault(const void* stated_default) const
   return RuntimeAssociativeArray(Installed().WithDefault(stated_default));
 }
 
+auto RuntimeAssociativeArray::HasStatedDefault() const -> bool {
+  return Installed().HasStatedDefault();
+}
+
+void RuntimeAssociativeArray::AbsentValue(void* out) const {
+  Installed().AbsentValue(out);
+}
+
 auto RuntimeAssociativeArray::Count() const -> std::size_t {
   return core_.has_value() ? core_->Count() : 0;
 }

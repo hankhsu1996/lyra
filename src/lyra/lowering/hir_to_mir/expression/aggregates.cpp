@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
+#include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/queue_building.hpp"
@@ -38,14 +39,16 @@ namespace {
 
 // LRM 10.10: an unpacked concatenation part that contributes its elements in
 // order rather than contributing itself as one element. The array being built
-// is what settles it: a part of the element type is one element however
-// array-shaped that type is, and any other container spreads. Where the
+// is what settles it: a part of a type equivalent to the element type is one
+// element however array-shaped that type is -- a queue's bound is no part of
+// equivalence (LRM 6.22.2 e) -- and any other container spreads. Where the
 // element type is itself a container, both readings fit the part's own type
 // and only the destination tells them apart.
 auto ContributesItsElements(
     const mir::CompilationUnit& unit, mir::TypeId part, mir::TypeId element)
     -> bool {
-  if (part == element) {
+  if (WithoutQueueBounds(unit.types, part) ==
+      WithoutQueueBounds(unit.types, element)) {
     return false;
   }
   return unit.types.Get(part).ContainerElementType().has_value();
@@ -262,7 +265,12 @@ auto BuildPositionalAggregate(
     return BuildArrayConstructionCall(
         unit, block, result_type, std::move(elements));
   }
-  if (mir::ProductElements(unit, result_type).has_value()) {
+  if (const std::optional<std::span<const mir::TypeId>> components =
+          mir::ProductElements(unit, result_type)) {
+    // Each item is assigned to the member it lands in (LRM 10.8, 10.9.2).
+    for (std::size_t i = 0; i < elements.size(); ++i) {
+      elements[i] = AtType(unit, block, elements[i], (*components)[i]);
+    }
     return mir::Expr{
         .data = mir::CompositeExpr{.parts = std::move(elements)},
         .type = result_type};
@@ -507,7 +515,10 @@ auto LowerHirDynamicArrayNewExpr(
     auto init_or =
         lowerer.LowerExpr(lowerer.HirExprs().Get(*n.initializer), frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    source = block.exprs.Add(*std::move(init_or));
+    // The new array's elements are assigned the source's (LRM 7.5.1), so the
+    // source is brought to its type.
+    source = ConvertToType(
+        unit, block, block.exprs.Add(*std::move(init_or)), result_type);
   }
   const auto made = [&](mir::ExprId count, std::optional<mir::ExprId> from) {
     std::vector<mir::ExprId> args{BuildToInt64Call(unit, block, count)};

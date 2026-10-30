@@ -6,6 +6,7 @@
 #include <optional>
 #include <span>
 #include <utility>
+#include <vector>
 
 #include "lyra/value/array_ordering.hpp"
 #include "lyra/value/basic_queue.hpp"
@@ -88,12 +89,12 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
     core_.Assign(detail::ReplicatedAddresses(unit, count));
   }
 
-  // LRM 7.6: a queue assigned an array of any of the three unpacked kinds is
-  // resized to the source's element count and takes its elements in
-  // left-to-right order, held to the bound as any other write is. The clause
-  // admits the assignment only where the element types are equivalent, so
-  // each element crosses as it stands. Named because the argument list cannot
-  // tell it from building over an element list.
+  // LRM 7.6: a queue assigned an array of any of the three unpacked kinds --
+  // another queue, of whatever bound, among them -- is resized to the source's
+  // element count and takes its elements in left-to-right order, held to the
+  // bound as any other write is (LRM 7.10.5). The elements cross as they are,
+  // so the source's element type is `T`. Named because the argument list
+  // cannot tell it from building over an element list.
   template <OrdinalElements C>
   [[nodiscard]] static auto FromArray(const C& source) -> Queue {
     Queue result;
@@ -101,13 +102,25 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
     return result;
   }
 
-  // LRM 7.10.5: a queue of another bound assigned to one of this type keeps
-  // only what this bound admits. The bound is the destination's, so the two
-  // types never convert without being asked to.
-  template <std::int64_t kFrom>
-  [[nodiscard]] static auto ConformBound(const Queue<T, kFrom>& source)
+  // LRM 7.6, 7.10.5: a queue of this type built out of a queue whose elements
+  // differ from `T` only in their own queues' bounds. The bound is applied to
+  // the source as it stands first, so what it discards is never built, and
+  // each element kept is then built afresh as a `T`.
+  template <typename U, std::int64_t kFrom>
+  [[nodiscard]] static auto FromBoundFree(const Queue<U, kFrom>& source)
       -> Queue {
-    return FromArray(source);
+    const std::vector<T> kept =
+        detail::ElementsAs<T>(Queue<U, kBound>::FromArray(source));
+    Queue result;
+    result.core_.Assign(
+        detail::ReplicatedAddresses(std::span<const T>(kept), 1));
+    return result;
+  }
+
+  // This queue as a value of `R`, the same queue with no bound anywhere in it.
+  template <typename R>
+  [[nodiscard]] auto ToBoundFree() const -> R {
+    return R::FromBoundFree(*this);
   }
 
   Queue(const Queue&) = default;

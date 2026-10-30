@@ -51,13 +51,6 @@ namespace lyra::lowering::hir_to_mir {
     const hir::UnpackedStructDefinition& source, mir::TypeId structure)
     -> mir::Expr;
 
-// Whether an assignment between the two types crosses from one array container
-// kind to another -- unpacked, dynamic, or queue. Two containers of one kind
-// hold their elements the same way, so a value crosses between them as it
-// stands.
-[[nodiscard]] auto CrossesArrayContainerKinds(
-    const mir::Type& source, const mir::Type& destination) -> bool;
-
 // A container's element type, for a caller whose own construction guarantees
 // there is one. Which types hold a sequence of elements is the type's own
 // question and is answered there; this adds only what an absent answer means

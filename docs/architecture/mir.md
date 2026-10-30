@@ -102,6 +102,12 @@ what the construct means.
   a use calls by the type and the operation, handing each value by reference as a record's method
   takes it. Each unit naming the type states them, as each translation unit instantiates a template
   it names.
+- For an array of any kind holding a bounded queue below its outermost dimension, a value of it
+  taken into the form of its type with no queue bounded, and a value of that form built as one of
+  it, each element built afresh. Every type equivalent to it has that form (a bound is no part of
+  equivalence), so a value is assigned across two such types by passing through it, each queue
+  keeping what its own bound admits. Each unit naming the type states the two, as it states a
+  fixed-size array's operations.
 - What a value of a type is before anything is written to it, for every type the unit holds an array
   of: the code that builds it, stated once for the type, because the source's declaration decides it
   -- a structure member's own initializer is part of it (LRM 7.2.2, 7.4.5) -- and nothing below this

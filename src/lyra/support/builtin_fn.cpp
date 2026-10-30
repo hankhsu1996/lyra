@@ -363,6 +363,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "assoc_with_default",
           .declaration = Method{"WithDefault"},
           .operands = {kMachine, kHeld}};
+    case BuiltinFn::kAssocHasStatedDefault:
+      return {
+          .name = "assoc_has_stated_default",
+          .declaration = Method{"HasStatedDefault"}};
+    case BuiltinFn::kAssocAbsentValue:
+      return {
+          .name = "assoc_absent_value", .declaration = Method{"AbsentValue"}};
     case BuiltinFn::kGetc:
       return {
           .name = "getc",
@@ -618,6 +625,15 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "declared_default",
           .declaration = StaticFactory{"DeclaredDefault"}};
+    case BuiltinFn::kToBoundFree:
+      return {
+          .name = "to_bound_free",
+          .declaration = Method{"ToBoundFree"},
+          .takes_a_type_argument = true};
+    case BuiltinFn::kFromBoundFree:
+      return {
+          .name = "from_bound_free",
+          .declaration = StaticFactory{"FromBoundFree"}};
     case BuiltinFn::kFilledLike:
       return {
           .name = "filled_like",
@@ -2140,11 +2156,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "queue_from_array",
           .declaration = StaticFactory{"FromArray"},
-          .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kConformBound:
-      return {
-          .name = "conform_bound",
-          .declaration = StaticFactory{"ConformBound"},
           .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kMakeDynamicArrayNew:
       return {

@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/array_iterator_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
@@ -284,15 +285,20 @@ auto LowerSystemSubroutineCall(
 
 // An operand as the entry reads it. One read as a position is an ordinal the
 // source wrote in a type of its own (LRM 6.16.2, 7.10.2), so it is brought to
-// the position type here, where it is written; every other operand is stated
-// as it stands.
+// the position type here, where it is written. One the entry holds as an
+// element of the array it acts on is passed into that element as an input is
+// passed into its formal (LRM 7.10.2, 13.5.1), so it is brought to the element
+// type. Every other operand is stated as it stands.
 auto StatedAsRead(
     mir::CompilationUnit& unit, mir::Block& block,
-    support::OperandReading reading, mir::ExprId operand) -> mir::ExprId {
+    support::OperandReading reading, std::optional<mir::TypeId> element,
+    mir::ExprId operand) -> mir::ExprId {
   switch (reading) {
     case support::OperandReading::kPosition:
       return BuildOrdinalPosition(unit, block, operand);
     case support::OperandReading::kHeld:
+      return element.has_value() ? AtType(unit, block, operand, *element)
+                                 : operand;
     case support::OperandReading::kBits:
     case support::OperandReading::kNumber:
     case support::OperandReading::kTyped:
@@ -335,6 +341,13 @@ auto LowerBuiltinMethodCall(
   // calling it where it states what it reaches there, then these.
   const std::size_t leading = (b.receiver.has_value() ? 1 : 0) +
                               (entry.takes_the_runtime_handle ? 1 : 0);
+  // The element type of the array the method acts on, where it acts on one.
+  const std::optional<mir::TypeId> element =
+      b.receiver.has_value() ? unit.types
+                                   .Get(unit_lowerer.TranslateType(
+                                       hir_exprs.Get(*b.receiver).type))
+                                   .ContainerElementType()
+                             : std::nullopt;
   const auto lower_operands =
       [&](WalkFrame at) -> diag::Result<std::vector<mir::ExprId>> {
     mir::Block& into = *at.current_block;
@@ -354,7 +367,8 @@ auto LowerBuiltinMethodCall(
         lowered = into.AsValue(unit.types, lowered);
       }
       args.push_back(StatedAsRead(
-          unit, into, entry.operands.At(leading + args.size()), lowered));
+          unit, into, entry.operands.At(leading + args.size()), element,
+          lowered));
     }
     return args;
   };
@@ -488,7 +502,8 @@ auto LowerLibraryHookCall(
   return BuildBuiltinMethodCall(
       unit_lowerer, block, fn, std::nullopt,
       {StatedAsRead(
-          unit, block, support::RuntimeEntryOf(fn).operands.At(0), *object)},
+          unit, block, support::RuntimeEntryOf(fn).operands.At(0), std::nullopt,
+          *object)},
       result_type);
 }
 

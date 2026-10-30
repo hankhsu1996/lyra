@@ -9,6 +9,7 @@
 #include <span>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
@@ -182,6 +183,22 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   template <IntegralValue Bits>
   [[nodiscard]] static auto FromIntegral(const Bits& bits) -> UnpackedArray {
     return OfBytes(BytesOf(bits.AsWords().View()));
+  }
+
+  // LRM 7.6, 7.10.5: an array of this type built out of one of as many
+  // elements whose elements differ from `T` only in their queues' bounds, each
+  // element built afresh as a `T`.
+  template <typename U>
+  [[nodiscard]] static auto FromBoundFree(const UnpackedArray<U, N>& source)
+      -> UnpackedArray {
+    const std::vector<T> elements = detail::ElementsAs<T>(source);
+    return Gathered([&](std::size_t i) -> const T& { return elements[i]; });
+  }
+
+  // This array as a value of `R`, the same array with no queue in it bounded.
+  template <typename R>
+  [[nodiscard]] auto ToBoundFree() const -> R {
+    return R::FromBoundFree(*this);
   }
 
   // LRM 7.6: a fixed-size unpacked array assigned an array of another unpacked
@@ -365,21 +382,29 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
 
   // Net resolution under each of the three truth tables (LRM 6.6), and what a
   // stronger contribution leaves a weaker one (LRM 28.12.1), element by
-  // element.
+  // element, for an array whose elements a net resolves (LRM 6.7.1).
   [[nodiscard]] auto ResolveTriState(const UnpackedArray& other) const
-      -> UnpackedArray {
+      -> UnpackedArray
+    requires NetResolvable<T>
+  {
     return Resolved(NetResolution::kTriState, other);
   }
   [[nodiscard]] auto ResolveWiredAnd(const UnpackedArray& other) const
-      -> UnpackedArray {
+      -> UnpackedArray
+    requires NetResolvable<T>
+  {
     return Resolved(NetResolution::kWiredAnd, other);
   }
   [[nodiscard]] auto ResolveWiredOr(const UnpackedArray& other) const
-      -> UnpackedArray {
+      -> UnpackedArray
+    requires NetResolvable<T>
+  {
     return Resolved(NetResolution::kWiredOr, other);
   }
   [[nodiscard]] auto Dominating(const UnpackedArray& weaker) const
-      -> UnpackedArray {
+      -> UnpackedArray
+    requires NetResolvable<T>
+  {
     return Built([&](UnpackedArray& out) {
       for (std::size_t i = 0; i < N; ++i) {
         out.Items()[i] = RawAt(i).Dominating(weaker.RawAt(i));

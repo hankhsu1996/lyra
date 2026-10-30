@@ -70,11 +70,14 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
    and an empty `{}` cannot recover an element shape from its parts. It therefore lowers to a call
    against the queue builder whose element-default and bound arguments are produced by lowering --
    the same channel every other shaped container construction uses -- ahead of the concatenation
-   parts; the backend derives element-vs-spread from each part's type (an unpacked-container part is
-   spliced, anything else is one element), so the call needs no per-part tag. Carrying the element
-   shape as a payload field on the shared concatenation node was rejected: the element default is
-   ordinary construction data the result type already implies, supplied through the call's
-   arguments, not a field only one result type reads.
+   parts; the lowering settles element-vs-spread from each part's type against the element type (a
+   part of a type equivalent to the element type is one element, a queue's bound being no part of
+   equivalence, and any other container spreads), so the call needs no per-part tag. Revised
+   2026-10-30: this said the backend decided it, and that only an unpacked-container part spreads,
+   so a queue item of the element's type but another bound was spread element by element. Carrying
+   the element shape as a payload field on the shared concatenation node was rejected: the element
+   default is ordinary construction data the result type already implies, supplied through the
+   call's arguments, not a field only one result type reads.
 
 4. **A queue's element shape and bound are declared-type properties the store boundary conforms to,
    not a shape-preserving assignment.** A queue's element shape (its out-of-bounds shield slot, see
@@ -88,6 +91,17 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
    boundary. This keeps the "the cell owns the declared type, the store converts to it" discipline
    uniform with every other value family, rather than letting a queue's assignment operator silently
    keep the destination's shape.
+
+   Revised 2026-10-30: the conversion applied the outermost queue's bound only. A queue held inside
+   an array -- of any kind, at any depth -- was copied as it stood, because an array assignment's
+   elements were taken to need no conversion wherever the element types are equivalent, and a bound
+   is no part of equivalence (LRM 6.22.2 e). So an array of bounded queues assigned another kept
+   elements its bound forbids, or stopped the build. An array assignment assigns each element (LRM
+   7.6), so a bound below the outermost dimension is applied too: the value passes through the form
+   of its type with no queue bounded, which every equivalent type shares, and each queue keeps what
+   its own bound admits on the way out. The same holds wherever a value is assigned to a type of its
+   own -- an argument, a returned value, a pattern's item, a value a queue method inserts -- since
+   the front end states no conversion between two equivalent types.
 
 5. **`$` is a leaf, and the select it stands in holds the queue.** Slang models `$` as an unbounded
    literal with no value of its own; it means "the last index" of the queue being indexed. HIR keeps

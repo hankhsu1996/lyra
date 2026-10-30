@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/basic_dynamic_array.hpp"
@@ -70,16 +71,35 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
 
   // LRM 7.6: a dynamic array assigned an array of any of the three unpacked
   // kinds is resized to the source's element count and takes its elements in
-  // left-to-right order. The clause admits the assignment only where the
-  // element types are equivalent, so each element crosses as it stands. Named
-  // rather than left a constructor because an argument list of one operand
-  // does not say which of the run-time-sized forms it is, and a target with no
-  // overload resolution has nothing else to read.
+  // left-to-right order. The elements cross as they are, so the source's
+  // element type is `T`. Named rather than left a constructor because an
+  // argument list of one operand does not say which of the run-time-sized
+  // forms it is, and a target with no overload resolution has nothing else to
+  // read.
   template <OrdinalElements C>
   [[nodiscard]] static auto FromArray(const C& source) -> DynamicArray {
     DynamicArray result;
     result.core_ = result.core_.Extended(detail::OrdinalAddresses(source));
     return result;
+  }
+
+  // LRM 7.6, 7.10.5: a dynamic array of this type built out of one whose
+  // elements differ from `T` only in their queues' bounds, each element built
+  // afresh as a `T`.
+  template <typename U>
+  [[nodiscard]] static auto FromBoundFree(const DynamicArray<U>& source)
+      -> DynamicArray {
+    const std::vector<T> elements = detail::ElementsAs<T>(source);
+    DynamicArray result;
+    result.core_ = result.core_.Extended(
+        detail::ReplicatedAddresses(std::span<const T>(elements), 1));
+    return result;
+  }
+
+  // This array as a value of `R`, the same array with no queue in it bounded.
+  template <typename R>
+  [[nodiscard]] auto ToBoundFree() const -> R {
+    return R::FromBoundFree(*this);
   }
 
   DynamicArray(const DynamicArray&) = default;

@@ -1836,17 +1836,17 @@ void lyra_rt_laidout_driver_set(void* driver, const void* value);
 // and owning its elements by value. A queue is built over an element list,
 // empty or not, at the queue type it is told, which states its element type
 // and its bound (LRM 7.10.5), so a construction is handed no bound of its own.
-// The bound is the type's, so `conform_bound` is what a semantic store into a
-// queue of another type passes its right-hand side through, trimming it to
-// that type's bound. A slice and a concatenation answer a queue of the
-// receiver's type. An element write appends when its index is the queue's
-// size and is discarded at any other invalid index (LRM 7.10.1); an element
-// write, a push, an insert and a delete each change the queue where it lies.
+// The bound is the type's, so a queue built from another array's elements --
+// another queue's among them -- keeps what that type's bound admits. A slice
+// and a concatenation answer a queue of the receiver's type. An element write
+// appends when its index is the queue's size and is discarded at any other
+// invalid index (LRM 7.10.1); an element write, a push, an insert and a
+// delete each change the queue where it lies.
 auto lyra_rt_queue_from_literal(
     LyraSpan unit, std::int64_t count, const void* answer_type, void* out)
     -> void*;
-auto lyra_rt_queue_conform_bound(
-    const void* queue, const void* answer_type, void* out) -> void*;
+auto lyra_rt_queue_queue_from_array(
+    const void* source, const void* answer_type, void* out) -> void*;
 auto lyra_rt_laidout_queue_from_array(
     const void* source, const void* source_type, const void* answer_type,
     void* out) -> void*;
@@ -1919,6 +1919,12 @@ auto lyra_rt_assocarray_from_entries_wildcard(
     void* out) -> void*;
 auto lyra_rt_assocarray_assoc_with_default(
     const void* array, const void* stated_default, void* out) -> void*;
+// Whether the array was given a value of its own for an absent index, and the
+// value such an index reads, which an array built out of this one's entries
+// is given in turn.
+auto lyra_rt_assocarray_assoc_has_stated_default(const void* array) -> bool;
+auto lyra_rt_assocarray_assoc_absent_value(const void* array, void* out)
+    -> void*;
 auto lyra_rt_assocarray_element(
     const void* array, const void* index, const void* index_type) -> const
     void*;

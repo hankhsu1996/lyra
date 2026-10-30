@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -92,6 +93,31 @@ template <typename C>
     addresses.push_back(&source.RawAt(i));
   }
   return addresses;
+}
+
+// `value` as an element of type `E`, assigned as an element of an array
+// assignment is (LRM 7.6): a value of `E` itself as it is, and a value of a
+// type equivalent to `E` that differs only in its queues' bounds built afresh
+// as an `E`, so each queue in it keeps what its own bound admits (LRM 7.10.5).
+template <typename E, typename U>
+[[nodiscard]] auto ElementAs(const U& value) -> E {
+  if constexpr (std::same_as<E, U>) {
+    return value;
+  } else {
+    return E::FromBoundFree(value);
+  }
+}
+
+// Each element of `source`, read by storage ordinal, as an element of type
+// `E` (LRM 7.6).
+template <typename E, typename C>
+[[nodiscard]] auto ElementsAs(const C& source) -> std::vector<E> {
+  std::vector<E> elements;
+  elements.reserve(source.RawSize());
+  for (std::size_t i = 0; i < source.RawSize(); ++i) {
+    elements.push_back(ElementAs<E>(source.RawAt(i)));
+  }
+  return elements;
 }
 
 // LRM 9.4.2 update event predicate: element-wise bit identity, a size

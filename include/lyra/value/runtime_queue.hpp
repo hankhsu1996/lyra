@@ -58,10 +58,6 @@ class RuntimeQueue {
   // this one's elements is built with in turn.
   [[nodiscard]] auto ElementType() const -> const value::ElementType&;
 
-  // LRM 7.10.5: this queue's elements as a queue of `type`, which keeps only
-  // what its own bound admits.
-  [[nodiscard]] auto ConformBound(const QueueType& type) const -> RuntimeQueue;
-
   // LRM 7.10.2.1: the current element count, and as an SV `int`.
   [[nodiscard]] auto Count() const -> std::size_t;
   [[nodiscard]] auto Size() const -> Int;
