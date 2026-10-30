@@ -7,14 +7,15 @@ reading is wanted depends on who is reading. This is two of those readings.
 
 `summary` prints one run: the stages that ran alone with their time and peak
 memory, the time each per-unit stage took summed over units with the slowest
-unit, the units by what they left behind, and how long each tool the build ran
-took.
+unit, the units by what they left behind, how often each kind of work ran, and
+how long each tool the build ran took.
 
 `compare` holds a run against a base and exits with the number of regressions,
-so a check can be built on it. Counts -- units, files per unit, and how many
-of each kind of thing a unit holds in each of its forms -- are exact and any
-growth is a regression. A size or a peak regresses only past both a
-percentage and an absolute floor, so noise on a small number is not reported.
+so a check can be built on it. Counts -- units, files per unit, how many of
+each kind of thing a unit holds in each of its forms, and how often each kind
+of work ran -- are exact and any growth is a regression. A size or a peak
+regresses only past both a percentage and an absolute floor, so noise on a
+small number is not reported.
 Time is not compared: it moves with the machine, and a regression in it is
 found by measuring instructions outside the run.
 
@@ -127,6 +128,12 @@ def summary(args):
             f"   {made} made"
         )
 
+    if stats.get("work"):
+        print()
+        print("work")
+        for kind, count in stats["work"].items():
+            print(f"  {kind:<40}{count:>12}")
+
     if stats["children"]:
         print()
         print("tools the build ran")
@@ -174,6 +181,13 @@ def compare(args):
                     regressions.append(
                         f"{name}: {form} {kind} {held_before} -> {count}"
                     )
+
+    # A kind of work only one side reports is nothing to compare.
+    work_before = base.get("work", {})
+    for kind, count in now.get("work", {}).items():
+        before = work_before.get(kind)
+        if before is not None and count > before:
+            regressions.append(f"work {kind}: {before} -> {count}")
 
     # A stage carries no peak on a platform that offers no reading of one, and
     # a peak only one side has is nothing to compare.

@@ -8,7 +8,10 @@
 # of its own. Neither N nor twice it equals a number the design fixes, such as
 # how many bits an element of an array streams as: a unit keeps one constant
 # per distinct value, so a coincidence at one size and not the other reads as
-# a constant the size added.
+# a constant the size added. And it is large enough that the few bytes in which
+# a file carries the size it was compiled at stay under one byte a step, or one
+# bit a step where the size is a width, which is what the bytes a run leaves
+# beyond the smaller run are held under.
 array_pattern_elements: 512
 call_arguments: 256
 case_items: 256

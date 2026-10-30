@@ -68,7 +68,13 @@ out, 500 when not given, which is clang's default.
 `--stats-file <file>` writes JSON holding what a span cannot: how many units ran at once, each stage
 that runs alone with its peak resident memory, each unit with every file it left behind and whether
 this run made it or took it from the store, each unit with how many of each kind of thing it holds
-in each form it passed through, and each tool the build ran with its wall time and CPU time.
+in each form it passed through, how many times each kind of work ran over the whole run, and each
+tool the build ran with its wall time and CPU time.
+
+A count of work is taken where the work is done, as LLVM's `STATISTIC` is (`Statistic.h`), and for
+the run rather than a unit, whichever unit it was done for, since one unit may do it several times.
+It is the number a span would only stand for: a span says how long, which moves with the machine,
+and counting spans by name counts nothing once a path does the work without one.
 
 A unit's counts are one per pool of the form, taken by a function that names every member of the
 unit, so a member added to a form does not build until it is said what kind of thing it is. What a
