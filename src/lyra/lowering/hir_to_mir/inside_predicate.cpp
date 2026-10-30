@@ -99,11 +99,12 @@ auto BuildMatchAnywhereIn(
             unit_lowerer, at, b.ReadLocal(compared, left_type), entry.element,
             *element_type);
         if (!matched) return std::unexpected(std::move(matched.error()));
+        const mir::ExprId lhs = b.ReadLocal(any, bit);
+        const mir::ExprId rhs = ConvertToType(unit, b, *matched, bit);
         AssignLocal(
             unit, b, any,
             b.exprs.Add(BuildMirBinaryExpr(
-                unit, b, hir::BinaryOp::kBitwiseOr, b.ReadLocal(any, bit),
-                ConvertToType(unit, b, *matched, bit), bit)));
+                unit, b, hir::BinaryOp::kBitwiseOr, lhs, rhs, bit)));
         return {};
       });
   if (!walked) return std::unexpected(std::move(walked.error()));

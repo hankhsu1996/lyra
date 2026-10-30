@@ -386,8 +386,9 @@ auto CodeGenModule::EmitDeleteCall(
   if (!layout) {
     return std::unexpected(std::move(layout.error()));
   }
-  builder.CreateCall(
-      SizedOperatorDelete(), {storage, builder.getInt64(layout->size)});
+  const llvm::FunctionCallee release = SizedOperatorDelete();
+  llvm::Value* const size = builder.getInt64(layout->size);
+  builder.CreateCall(release, {storage, size});
   return {};
 }
 
@@ -438,12 +439,14 @@ auto CodeGenModule::EmitStep(
             llvm::Value* const held = builder.CreateLoad(types_.Ptr(), args[0]);
             if (unit_->types.Get(*unit_->types.Get(type).Pointee())
                     .Is<lir::ErasedCallableType>()) {
+              llvm::Type* const box = types_.Ptr();
+              llvm::Type* const result = types_.Void();
               builder.CreateCall(
                   RuntimeFunction(
                       RuntimeSymbol(RuntimeOp::kClosureBoxEnd),
                       CallArranger::Arrange(
-                          {CallArranger::Direct(types_.Ptr())},
-                          ReturnDirect{.type = types_.Void()})),
+                          {CallArranger::Direct(box)},
+                          ReturnDirect{.type = result})),
                   {held});
               return {};
             }
@@ -542,10 +545,11 @@ auto CodeGenModule::OperatorNew() -> llvm::FunctionCallee {
 }
 
 auto CodeGenModule::SizedOperatorDelete() -> llvm::FunctionCallee {
+  llvm::Type* const result = types_.Void();
+  llvm::Type* const storage = types_.Ptr();
   return CreateRuntimeFunction(
       llvm::FunctionType::get(
-          types_.Void(), {types_.Ptr(), llvm::Type::getInt64Ty(*context_)},
-          false),
+          result, {storage, llvm::Type::getInt64Ty(*context_)}, false),
       "_ZdlPvm");
 }
 
@@ -1043,12 +1047,14 @@ auto CodeGenModule::BuildMemberStorage(
     -> diag::Result<void> {
   const std::array<StatedOperand, 1> stated{
       MachineOperand{.type = types_.Ptr()}};
+  const std::optional<Realization> realization =
+      ValuesHeldByMember(type).transform([&](lir::TypeId held) {
+        return Realization{.told = ToldBuilding(storage), .of = held};
+      });
+  llvm::Type* const result = types_.Void();
   const FnAbi abi = ArrangeCall(
       *this, support::OperandReadings{support::OperandReading::kMachine},
-      stated, ValuesHeldByMember(type).transform([&](lir::TypeId held) {
-        return Realization{.told = ToldBuilding(storage), .of = held};
-      }),
-      std::nullopt, {}, ReturnDirect{.type = types_.Void()});
+      stated, realization, std::nullopt, {}, ReturnDirect{.type = result});
   const std::array<llvm::Value*, 1> operands{at};
   auto args = BuildCallArgs(abi, operands);
   if (!args) {
@@ -1093,11 +1099,12 @@ auto CodeGenModule::CreationSymbol(lir::TypeId cls) const -> std::string {
 
 auto CodeGenModule::ValueFunction(const std::string& symbol)
     -> llvm::Function* {
+  llvm::Type* const result = types_.Void();
+  llvm::Type* const object = types_.Ptr();
   return llvm::cast<llvm::Function>(
       module_
           ->getOrInsertFunction(
-              symbol,
-              llvm::FunctionType::get(types_.Void(), {types_.Ptr()}, false))
+              symbol, llvm::FunctionType::get(result, {object}, false))
           .getCallee());
 }
 
@@ -1119,12 +1126,15 @@ void CodeGenModule::BeginParts(
     llvm::IRBuilderBase& builder, lir::TypeId cls, llvm::Value* value) {
   if (const std::optional<support::RuntimeClass> library =
           LibraryClassOf(unit_->types, cls)) {
-    builder.CreateCall(
-        CreateRuntimeFunction(
-            llvm::FunctionType::get(
-                types_.Void(), {builder.getInt8Ty(), types_.Ptr()}, false),
-            RuntimeSymbol(RuntimeOp::kBeginLibraryPart)),
-        {builder.getInt8(static_cast<std::uint8_t>(*library)), value});
+    llvm::Type* const result = types_.Void();
+    llvm::Type* const kind = builder.getInt8Ty();
+    llvm::Type* const object = types_.Ptr();
+    const llvm::FunctionCallee part = CreateRuntimeFunction(
+        llvm::FunctionType::get(result, {kind, object}, false),
+        RuntimeSymbol(RuntimeOp::kBeginLibraryPart));
+    llvm::Value* const which =
+        builder.getInt8(static_cast<std::uint8_t>(*library));
+    builder.CreateCall(part, {which, value});
     return;
   }
   builder.CreateCall(
@@ -1138,12 +1148,15 @@ void CodeGenModule::EndParts(
     llvm::IRBuilderBase& builder, lir::TypeId cls, llvm::Value* value) {
   if (const std::optional<support::RuntimeClass> library =
           LibraryClassOf(unit_->types, cls)) {
-    builder.CreateCall(
-        CreateRuntimeFunction(
-            llvm::FunctionType::get(
-                types_.Void(), {builder.getInt8Ty(), types_.Ptr()}, false),
-            RuntimeSymbol(RuntimeOp::kEndLibraryPart)),
-        {builder.getInt8(static_cast<std::uint8_t>(*library)), value});
+    llvm::Type* const result = types_.Void();
+    llvm::Type* const kind = builder.getInt8Ty();
+    llvm::Type* const object = types_.Ptr();
+    const llvm::FunctionCallee part = CreateRuntimeFunction(
+        llvm::FunctionType::get(result, {kind, object}, false),
+        RuntimeSymbol(RuntimeOp::kEndLibraryPart));
+    llvm::Value* const which =
+        builder.getInt8(static_cast<std::uint8_t>(*library));
+    builder.CreateCall(part, {which, value});
     return;
   }
   builder.CreateCall(

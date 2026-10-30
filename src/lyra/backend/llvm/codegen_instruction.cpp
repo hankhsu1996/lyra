@@ -275,8 +275,9 @@ auto CodeGenFunction::HeldAt(
                   return at(lies.offset);
                 },
                 [&](const runtime::ContentsIndirectAt& kept) -> llvm::Value* {
-                  return builder_.CreateLoad(
-                      module_->Types().Ptr(), at(kept.offset));
+                  llvm::PointerType* const pointer = module_->Types().Ptr();
+                  llvm::Value* const keeping = at(kept.offset);
+                  return builder_.CreateLoad(pointer, keeping);
                 }},
             contents);
       });
@@ -310,9 +311,10 @@ auto CodeGenFunction::ContentsOf(
       break;
   }
   const std::array<llvm::Value*, 1> args{wrapper};
+  llvm::Type* const result = module_->Types().Ptr();
   return CallEntry(
-      RuntimeSymbol(domain, kind, support::BuiltinFn::kGet),
-      module_->Types().Ptr(), Addresses(1), args);
+      RuntimeSymbol(domain, kind, support::BuiltinFn::kGet), result,
+      Addresses(1), args);
 }
 
 auto CodeGenFunction::ValueCellContents(
@@ -323,9 +325,10 @@ auto CodeGenFunction::ValueCellContents(
     return *held;
   }
   const std::array<llvm::Value*, 1> args{cell};
+  llvm::Type* const result = module_->Types().Ptr();
   return CallEntry(
-      RuntimeSymbol(domain, lir::ValueCellTarget::Op::kLoad),
-      module_->Types().Ptr(), Addresses(1), args);
+      RuntimeSymbol(domain, lir::ValueCellTarget::Op::kLoad), result,
+      Addresses(1), args);
 }
 
 // Writing a place mirrors reading one, and a write through a wrapper is what
@@ -631,11 +634,11 @@ auto CodeGenFunction::ArrayElementAddress(
                    .unknown =
                        llvm::ConstantInt::get(position.value->getType(), 0)}
           : LoadPosition(position);
-  llvm::Value* const names_one = builder_.CreateAnd(
-      builder_.CreateIsNull(named.unknown),
-      builder_.CreateICmpULT(
-          named.value,
-          llvm::ConstantInt::get(named.value->getType(), layout.count)));
+  llvm::Value* const known = builder_.CreateIsNull(named.unknown);
+  llvm::Value* const counted = builder_.CreateICmpULT(
+      named.value,
+      llvm::ConstantInt::get(named.value->getType(), layout.count));
+  llvm::Value* const names_one = builder_.CreateAnd(known, counted);
 
   llvm::Function* const fn = builder_.GetInsertBlock()->getParent();
   llvm::LLVMContext& context = builder_.getContext();
@@ -648,11 +651,12 @@ auto CodeGenFunction::ArrayElementAddress(
   builder_.CreateCondBr(names_one, there, nowhere);
 
   builder_.SetInsertPoint(there);
-  llvm::Value* const lying = builder_.CreateInBoundsGEP(
-      builder_.getInt8Ty(), array,
-      builder_.CreateMul(
-          builder_.CreateZExtOrTrunc(named.value, builder_.getInt64Ty()),
-          builder_.getInt64(layout.stride)));
+  llvm::Type* const byte = builder_.getInt8Ty();
+  llvm::Value* const number =
+      builder_.CreateZExtOrTrunc(named.value, builder_.getInt64Ty());
+  llvm::Value* const offset =
+      builder_.CreateMul(number, builder_.getInt64(layout.stride));
+  llvm::Value* const lying = builder_.CreateInBoundsGEP(byte, array, offset);
   builder_.CreateBr(joined);
 
   // What a position naming no element reaches is the element type's to answer,
@@ -745,7 +749,8 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
     return reference;
   }
   const std::array<llvm::Value*, 1> args{reference};
-  return CallEntry(*opening, module_->Types().Ptr(), Addresses(1), args);
+  llvm::Type* const result = module_->Types().Ptr();
+  return CallEntry(*opening, result, Addresses(1), args);
 }
 
 auto CodeGenFunction::AccessGranted(lir::TypeId address_type) const -> Access {
@@ -1112,11 +1117,10 @@ auto CodeGenFunction::LowerBeginHandling(const lir::BeginHandlingInstr& begun)
   if (!exception) {
     return std::unexpected(std::move(exception.error()));
   }
+  llvm::PointerType* const ptr = module_->Types().Ptr();
   llvm::CallInst* const call = builder_.CreateCall(
       module_->Module().getOrInsertFunction(
-          "__cxa_begin_catch",
-          llvm::FunctionType::get(
-              module_->Types().Ptr(), {module_->Types().Ptr()}, false)),
+          "__cxa_begin_catch", llvm::FunctionType::get(ptr, {ptr}, false)),
       {*exception});
   call->setDoesNotThrow();
   return call;
@@ -1132,7 +1136,9 @@ auto CodeGenFunction::LowerEndHandling() -> llvm::Value* {
 }
 
 auto CodeGenFunction::LandingPadType() -> llvm::StructType* {
-  return llvm::StructType::get(module_->Types().Ptr(), builder_.getInt32Ty());
+  llvm::PointerType* const exception = module_->Types().Ptr();
+  llvm::IntegerType* const selector = builder_.getInt32Ty();
+  return llvm::StructType::get(exception, selector);
 }
 
 auto CodeGenFunction::ResolveCall(
@@ -1365,8 +1371,9 @@ auto CodeGenFunction::LowerCall(
                 if (!layout) {
                   return std::unexpected(std::move(layout.error()));
                 }
+                const llvm::FunctionCallee allocate = module_->OperatorNew();
                 return builder_.CreateCall(
-                    module_->OperatorNew(), {builder_.getInt64(layout->size)});
+                    allocate, {builder_.getInt64(layout->size)});
               }
               case lir::DynamicStorageTarget::Op::kDeallocate: {
                 auto given = LowerOperand(call.args.at(0));
@@ -1450,10 +1457,9 @@ auto CodeGenFunction::OuterBitsParts(std::span<const BitsPartRef> parts)
         builder_.CreateConstInBoundsGEP2_64(all, storage, 0, i);
     builder_.CreateStore(
         part.start.value, builder_.CreateStructGEP(crossing, slot, 0));
-    builder_.CreateStore(
-        llvm::ConstantInt::get(
-            count, module_->Types().RequiredIntegralShapeOf(part.type).width),
-        builder_.CreateStructGEP(crossing, slot, 1));
+    llvm::Value* const width = llvm::ConstantInt::get(
+        count, module_->Types().RequiredIntegralShapeOf(part.type).width);
+    builder_.CreateStore(width, builder_.CreateStructGEP(crossing, slot, 1));
   }
   return ViewOver(storage, parts.size());
 }
@@ -1586,9 +1592,11 @@ auto CodeGenFunction::ResolveCallee(
                 ptr_ty, builder_.CreateConstInBoundsGEP1_64(
                             builder_.getInt8Ty(), definition,
                             runtime::DefinitionLayoutOf().methods));
-            return llvm::FunctionCallee(
-                module_->Types().GetFunctionType(abi),
-                BodyAt(table, module_->DispatchSlotOf(t.method)));
+            llvm::FunctionType* const signature =
+                module_->Types().GetFunctionType(abi);
+            llvm::Value* const body =
+                BodyAt(table, module_->DispatchSlotOf(t.method));
+            return llvm::FunctionCallee(signature, body);
           },
           // The table the value's class gives the interface class is found
           // among those its definition lists (LRM 8.26.5), and holds the body
@@ -1605,12 +1613,15 @@ auto CodeGenFunction::ResolveCallee(
               return std::unexpected(std::move(iface.error()));
             }
             const std::array<llvm::Value*, 2> found{args[0], *iface};
+            llvm::Type* const result = module_->Types().Ptr();
             llvm::Value* table = CallEntry(
-                RuntimeSymbol(RuntimeOp::kInterfaceTable),
-                module_->Types().Ptr(), Addresses(2), found);
-            return llvm::FunctionCallee(
-                module_->Types().GetFunctionType(abi),
-                BodyAt(table, t.requirement.ordinal.value));
+                RuntimeSymbol(RuntimeOp::kInterfaceTable), result, Addresses(2),
+                found);
+            llvm::FunctionType* const signature =
+                module_->Types().GetFunctionType(abi);
+            llvm::Value* const body =
+                BodyAt(table, t.requirement.ordinal.value);
+            return llvm::FunctionCallee(signature, body);
           },
           [&](const lir::ConstructTarget&)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1843,8 +1854,9 @@ auto CodeGenFunction::LowerVectorGet(const lir::VectorGetInstr& get)
     return std::unexpected(std::move(index.error()));
   }
   const std::array<llvm::Value*, 2> args{*vector, *index};
+  llvm::Type* const result = module_->Types().Ptr();
   return CallEntry(
-      RuntimeSymbol(RuntimeOp::kSequenceElement), module_->Types().Ptr(),
+      RuntimeSymbol(RuntimeOp::kSequenceElement), result,
       {CallArranger::Direct(module_->Types().Ptr()),
        CallArranger::Direct(module_->Types().Map(OperandType(get.index)))},
       args);
@@ -1866,10 +1878,11 @@ auto CodeGenFunction::LowerUnion(
     return copied;
   }
   if (layout.tag.has_value()) {
+    llvm::Value* const tag =
+        builder_.getIntN(8 * layout.tag->bytes, built.member.value);
     builder_.CreateStore(
-        builder_.getIntN(8 * layout.tag->bytes, built.member.value),
-        builder_.CreateConstInBoundsGEP1_64(
-            builder_.getInt8Ty(), out, layout.tag->offset));
+        tag, builder_.CreateConstInBoundsGEP1_64(
+                 builder_.getInt8Ty(), out, layout.tag->offset));
   }
   return out;
 }
@@ -1885,10 +1898,10 @@ auto CodeGenFunction::LowerDiscriminant(
     return std::unexpected(std::move(address.error()));
   }
   const value::TagPlacement placed = module_->Types().TagOf(tagged);
+  llvm::IntegerType* const tag_type = builder_.getIntNTy(8 * placed.bytes);
   llvm::Value* const tag = builder_.CreateLoad(
-      builder_.getIntNTy(8 * placed.bytes),
-      builder_.CreateConstInBoundsGEP1_64(
-          builder_.getInt8Ty(), *address, placed.offset));
+      tag_type, builder_.CreateConstInBoundsGEP1_64(
+                    builder_.getInt8Ty(), *address, placed.offset));
   return builder_.CreateZExt(tag, module_->Types().Map(result_type));
 }
 

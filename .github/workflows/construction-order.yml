@@ -1,0 +1,65 @@
+name: Construction Order
+
+# What Lyra writes has to be the same whichever compiler built Lyra, and C++
+# lets the compiler choose the order of a call's arguments. So two operands
+# that each build IR may not stand in one evaluation (tools/policy/
+# check_sequencing.py). A pull request is held to that over the sources it
+# changes; the nightly in host-compiler-nightly.yml reads every source, which
+# covers a header's inline code and a change to the reading itself.
+on:
+  pull_request:
+
+jobs:
+  check:
+    name: Check that IR is built in a stated order
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Find the changed sources
+        id: changed
+        run: |
+          git diff --name-only --diff-filter=d \
+            "origin/${{ github.base_ref }}...HEAD" -- 'src/lyra/**.cpp' > changed.txt
+          echo "count=$(wc -l < changed.txt)" >> "$GITHUB_OUTPUT"
+          cat changed.txt
+
+      - name: Setup Clang
+        uses: ./.github/actions/setup-clang
+        with:
+          tools: clang-tools
+
+      # The reading is held to cases it must and must not report before it is
+      # trusted with anything else, whether or not a source changed.
+      - name: Check the reading itself
+        run: python3 tools/policy/check_sequencing.py --self-test
+
+      - name: Setup Bazel
+        if: steps.changed.outputs.count != '0'
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: Build
+        if: steps.changed.outputs.count != '0'
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          RBE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel build //:lyra $RBE_FLAGS
+
+      - name: Generate compile_commands.json
+        if: steps.changed.outputs.count != '0'
+        run: bazel run //:refresh_compile_commands
+
+      - name: Check the changed sources
+        if: steps.changed.outputs.count != '0'
+        run: xargs python3 tools/policy/check_sequencing.py < changed.txt

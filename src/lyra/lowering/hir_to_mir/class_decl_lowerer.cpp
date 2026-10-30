@@ -280,9 +280,9 @@ auto LowerStaticStorageInto(
   for (const hir::StaticPropertyInit& init : hir_class.static_property_inits) {
     // The initializer is written in the class, whose name a construct in it
     // reports (LRM 21.2.1.5).
-    auto value_or = lowerer.LowerExpr(
-        hir_class.static_init.exprs.Get(init.value),
-        frame.WithScopeName(hir_class.fixed_name));
+    const hir::Expr& value = hir_class.static_init.exprs.Get(init.value);
+    const WalkFrame named = frame.WithScopeName(hir_class.fixed_name);
+    auto value_or = lowerer.LowerExpr(value, named);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
     const mir::ExprId target = block.exprs.Add(BuildStaticStorageAccess(
@@ -787,16 +787,18 @@ void ClassDeclLowerer::DefineRandomizationHooks(
                 .has_value()) {
           arguments.push_back(BuildReportHandedOn(body.Unit(), body.Frame()));
         }
+        const mir::ExprId receiver =
+            BuildObjectDeref(body.Unit(), body.Block(), body.Self());
+        const mir::TypeId call_type =
+            SubroutineCallTypeOf(unit_lowerer, hir_class.methods.Get(method));
         const mir::ExprId called = body.Call(
             mir::Direct{
                 .target =
                     mir::CallableTarget{
                         .owner = class_id_,
                         .slot = mir::CallableId{method.value}},
-                .receiver =
-                    BuildObjectDeref(body.Unit(), body.Block(), body.Self())},
-            std::move(arguments),
-            SubroutineCallTypeOf(unit_lowerer, hir_class.methods.Get(method)));
+                .receiver = receiver},
+            std::move(arguments), call_type);
         body.Block().AppendStmt(mir::ExprStmt{.expr = called});
         mir_class.callables.Define(hook->body, body.Finish());
       };
@@ -925,9 +927,11 @@ auto ClassDeclLowerer::PopulateBodies(
   const auto store = [&](hir::FieldId property, mir::ExprId value_id) {
     const mir::FieldId slot{property.value};
     const mir::ExprId self_ref = ctor_block.exprs.Add(MakeSelfRefExpr(frame));
+    const mir::ExprId self_object =
+        BuildObjectDeref(unit_lowerer.Unit(), ctor_block, self_ref);
     const mir::ExprId target = ctor_block.exprs.Add(
         mir::MakeFieldAccessExpr(
-            BuildObjectDeref(unit_lowerer.Unit(), ctor_block, self_ref),
+            self_object,
             mir::ClassFieldTarget{.owner = class_id_, .slot = slot},
             mir_class.fields.Get(slot).type));
     ctor_block.AppendStmt(
@@ -1005,10 +1009,12 @@ auto ClassDeclLowerer::PopulateBodies(
     return {};
   };
   for (const hir::MethodId method_id : hir_class.methods.Ids()) {
+    const hir::SubroutineDecl& method = hir_class.methods.Get(method_id);
+    const CallableForm form =
+        CallableFormOf(declared.methods.Get(method_id).dispatch);
+    const StaticVarBindings& statics = method_statics_.Get(method_id);
     if (auto lowered = lower_method(
-            hir_class.methods.Get(method_id),
-            CallableFormOf(declared.methods.Get(method_id).dispatch),
-            mir::CallableId{method_id.value}, method_statics_.Get(method_id));
+            method, form, mir::CallableId{method_id.value}, statics);
         !lowered) {
       return std::unexpected(std::move(lowered.error()));
     }

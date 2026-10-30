@@ -799,7 +799,9 @@ auto SelectTerm(
           }},
       sel.bounds);
   if (!least) return least;
-  return PartTerm(w, *whole, IndexPosition(w, dim, *least), WidthOf(w, id));
+  const mir::ExprId position = IndexPosition(w, dim, *least);
+  const std::int64_t width = WidthOf(w, id);
+  return PartTerm(w, *whole, position, width);
 }
 
 auto UnaryTerm(const ConstraintWriter& w, const hir::UnaryExpr& e)
@@ -856,16 +858,14 @@ auto PowerTerm(
     const mir::ExprId times = w.Term(
         BuiltinFn::kConstraintMultiply,
         {w.ReadTerm(result), w.ReadTerm(square)});
+    const mir::ExprId target =
+        w.Block().LocalPlace(result, w.Unit().builtins.machine_int64);
+    const mir::ExprId selected =
+        w.Term(BuiltinFn::kConstraintSelect, {bit, times, w.ReadTerm(result)});
     w.Block().AppendStmt(
         mir::ExprStmt{
             .expr = w.Block().exprs.Add(
-                mir::MakeAssignExpr(
-                    w.Unit().builtins,
-                    w.Block().LocalPlace(
-                        result, w.Unit().builtins.machine_int64),
-                    w.Term(
-                        BuiltinFn::kConstraintSelect,
-                        {bit, times, w.ReadTerm(result)})))});
+                mir::MakeAssignExpr(w.Unit().builtins, target, selected))});
     square = w.Bind(
         w.Unit().builtins.machine_int64,
         w.Term(
@@ -903,8 +903,11 @@ auto BinaryTerm(
       return signed_two(BuiltinFn::kConstraintDivide, *a, *b);
     case hir::BinaryOp::kMod:
       return signed_two(BuiltinFn::kConstraintRemainder, *a, *b);
-    case hir::BinaryOp::kPower:
-      return PowerTerm(w, *a, *b, WidthOf(w, id), WidthOf(w, e.rhs));
+    case hir::BinaryOp::kPower: {
+      const std::int64_t width = WidthOf(w, id);
+      const std::int64_t exponent_width = WidthOf(w, e.rhs);
+      return PowerTerm(w, *a, *b, width, exponent_width);
+    }
     case hir::BinaryOp::kBitwiseAnd:
       return two(BuiltinFn::kConstraintBitwiseAnd, *a, *b);
     case hir::BinaryOp::kBitwiseOr:
@@ -939,11 +942,11 @@ auto BinaryTerm(
       return two(BuiltinFn::kConstraintLogicalOr, *a, *b);
     case hir::BinaryOp::kLogicalImplication:
       return two(BuiltinFn::kConstraintLogicalOr, negate(*a), *b);
-    case hir::BinaryOp::kLogicalEquivalence:
-      return two(
-          BuiltinFn::kConstraintEqual,
-          w.Term(BuiltinFn::kConstraintReduceOr, {*a}),
-          w.Term(BuiltinFn::kConstraintReduceOr, {*b}));
+    case hir::BinaryOp::kLogicalEquivalence: {
+      const mir::ExprId lhs = w.Term(BuiltinFn::kConstraintReduceOr, {*a});
+      const mir::ExprId rhs = w.Term(BuiltinFn::kConstraintReduceOr, {*b});
+      return two(BuiltinFn::kConstraintEqual, lhs, rhs);
+    }
     case hir::BinaryOp::kLogicalShiftLeft:
     case hir::BinaryOp::kArithmeticShiftLeft:
       return two(BuiltinFn::kConstraintShiftLeft, *a, *b);
@@ -1035,8 +1038,9 @@ auto InsideTerm(const ConstraintWriter& w, const hir::InsideExpr& e)
               w.Lowerer().Owner().Hir().types, HirExpr(w, item).type)));
       const bool element_signed =
           element.Integral().signedness == mir::Signedness::kSigned;
+      const mir::ExprId none = NumberTerm(w, 0);
       auto found = FoldElements(
-          w, item, NumberTerm(w, 0),
+          w, item, none,
           [&](const FoldedElement& e) -> diag::Result<mir::ExprId> {
             const mir::ExprId value = e.writer->Term(
                 BuiltinFn::kConstraintResize,
@@ -1147,10 +1151,10 @@ auto Term(const ConstraintWriter& w, hir::ExprId id)
             if (!whole) return whole;
             auto index = PositionTerm(w, e.index);
             if (!index) return index;
-            return PartTerm(
-                w, *whole,
-                IndexPosition(w, DimensionOfSelected(w, e.base_value), *index),
-                WidthOf(w, id));
+            const mir::ExprId position =
+                IndexPosition(w, DimensionOfSelected(w, e.base_value), *index);
+            const std::int64_t width = WidthOf(w, id);
+            return PartTerm(w, *whole, position, width);
           },
           [&](const hir::RangeSelectExpr& e) { return SelectTerm(w, id, e); },
           // LRM 18.5.11: a function is called before the constraints its
@@ -1191,7 +1195,9 @@ auto Term(const ConstraintWriter& w, hir::ExprId id)
             }
             auto whole = Term(w, e.base_value);
             if (!whole) return whole;
-            return PartTerm(w, *whole, NumberTerm(w, offset), WidthOf(w, id));
+            const mir::ExprId position = NumberTerm(w, offset);
+            const std::int64_t width = WidthOf(w, id);
+            return PartTerm(w, *whole, position, width);
           },
           // A name, a constant and a property are either a variable of the
           // problem or a value the constraint reads, which are answered above.
@@ -1380,11 +1386,11 @@ auto FoldElements(
       at.bindings->DeclareAnonymous(unit.builtins.int_type);
   pass.AppendStmt(mir::LocalDeclStmt{.target = index_local, .init = index});
   const mir::TypeId element_type = unit_lowerer.TranslateType(*element);
-  const AccessPath element_path = DescendInto(
-      NamedIn(settled, pass),
-      ElementStep(
-          unit_lowerer, pass, array.type,
-          pass.ReadLocal(index_local, unit.builtins.int_type), element_type));
+  const AccessPath array_path = NamedIn(settled, pass);
+  const DescentStep to_element = ElementStep(
+      unit_lowerer, pass, array.type,
+      pass.ReadLocal(index_local, unit.builtins.int_type), element_type);
+  const AccessPath element_path = DescendInto(array_path, to_element);
   const ConstraintWriter in_pass(w.Lowerer(), at);
   const mir::TypeId reference_type =
       *ParamTypeOf(unit, element_type, hir::ParamDirection::kRef);

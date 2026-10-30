@@ -563,15 +563,14 @@ auto BuildAlternative(
        alternative.assignments) {
     handed.push_back(assigned.type);
   }
+  const mir::ExprId lhs = mir::BuildIntLiteral(
+      unit, block, hir::InstantiationIndexOf(lowerer.HirScope(), id).value);
+  const mir::ExprId rhs = RowMajorPosition(unit, block, member, coords);
   const mir::ExprId entry_at = BuildToInt64Call(
       unit, block,
       block.exprs.Add(
           mir::MakeBinary(
-              unit, block, mir::BinaryOp::kAdd,
-              mir::BuildIntLiteral(
-                  unit, block,
-                  hir::InstantiationIndexOf(lowerer.HirScope(), id).value),
-              RowMajorPosition(unit, block, member, coords),
+              unit, block, mir::BinaryOp::kAdd, lhs, rhs,
               unit.builtins.int_type)));
   const mir::ExprId built = BuildOwnedInstance(
       unit_lowerer, frame, parent_self, member.instance_name, entry_at,
@@ -653,11 +652,9 @@ auto AppendElement(
   if (auto kept = kept_in(last, otherwise); !kept) {
     return std::unexpected(std::move(kept.error()));
   }
-  auto choice = BuildValueSwitch(
-      frame,
-      BuildToInt64Call(
-          unit, block, RowMajorPosition(unit, block, member, coords)),
-      arms, std::move(last));
+  const mir::ExprId position = BuildToInt64Call(
+      unit, block, RowMajorPosition(unit, block, member, coords));
+  auto choice = BuildValueSwitch(frame, position, arms, std::move(last));
   if (!choice) return std::unexpected(std::move(choice.error()));
   block.AppendStmt(*std::move(choice));
   return {};
@@ -980,10 +977,11 @@ auto StepThroughInterfacePort(
 auto AddressTypedLeaf(
     UnitLowerer& unit_lowerer, mir::Block& block, const ReachedPlace& from,
     const mir::ClassFieldTarget& field, mir::TypeId slot_type) -> mir::ExprId {
-  const mir::ExprId access = block.exprs.Add(
-      mir::MakeFieldAccessExpr(
-          BuildObjectDeref(unit_lowerer.Unit(), block, from.expr), field,
-          FieldTypeOf(unit_lowerer, field)));
+  const mir::ExprId object =
+      BuildObjectDeref(unit_lowerer.Unit(), block, from.expr);
+  const mir::TypeId field_type = FieldTypeOf(unit_lowerer, field);
+  const mir::ExprId access =
+      block.exprs.Add(mir::MakeFieldAccessExpr(object, field, field_type));
   return block.exprs.Add(
       mir::Expr{
           .data = mir::AddressOfExpr{.operand = access}, .type = slot_type});
@@ -1141,6 +1139,7 @@ auto InstallStoredRoutes(
     const StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame,
     const base::Arena<hir::Route<Leaf>, Id>& routes) -> diag::Result<void> {
   for (const Id hir_id : routes.Ids()) {
+    const RouteReach& reach = lowerer.ReachOf(hir_id);
     auto installed = std::visit(
         Overloaded{
             [](const ClimbedRoute&) -> diag::Result<void> { return {}; },
@@ -1152,7 +1151,7 @@ auto InstallStoredRoutes(
                   lowerer.Owner().Unit(), resolve_frame, stored.slot, *value);
               return {};
             }},
-        lowerer.ReachOf(hir_id));
+        reach);
     if (!installed) return installed;
   }
   return {};
@@ -1301,11 +1300,13 @@ void WrapInScopeStaticInitExtent(
     const UnitLowerer& unit_lowerer, const WalkFrame& init_frame,
     mir::CallableCode& code) {
   mir::Block extent;
+  const WalkFrame in_extent = init_frame.WithBlock(&extent);
+  const mir::EnclosingHops hops = init_frame.HopsToUnitRoot();
+  const mir::ExprId receiver =
+      BuildEnclosingScopeReceiver(in_extent, unit_lowerer.Unit(), hops);
   AppendRuntimeEffectStmt(
       unit_lowerer, extent, support::BuiltinFn::kEnterScopeStaticInit,
-      {BuildEnclosingScopeReceiver(
-          init_frame.WithBlock(&extent), unit_lowerer.Unit(),
-          init_frame.HopsToUnitRoot())});
+      {receiver});
 
   mir::Block cleanup;
   AppendRuntimeEffectStmt(
@@ -1507,18 +1508,21 @@ auto BuildNetJoinStmt(
       mir::Type{mir::PointerType{
           .pointee = block.exprs.Get(other).type,
           .ownership = mir::PointerOwnership::kBorrowed}});
+  const mir::ExprId here = OwnerPlace(coupling.here->part);
+  const mir::ExprId there =
+      block.exprs.Add(mir::MakeAddressOfExpr(other, net_ptr_type));
+  const mir::ExprId here_position =
+      PositionWithinNet(unit, block, *coupling.here, coupling.here_offset);
+  const mir::ExprId there_position =
+      PositionWithinNet(unit, block, *coupling.there, coupling.there_offset);
+  const mir::ExprId width =
+      mir::BuildMachineIntLiteral(unit, block, coupling.width);
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeNetJoinCallExpr(
-                  OwnerPlace(coupling.here->part),
-                  block.exprs.Add(mir::MakeAddressOfExpr(other, net_ptr_type)),
-                  PositionWithinNet(
-                      unit, block, *coupling.here, coupling.here_offset),
-                  PositionWithinNet(
-                      unit, block, *coupling.there, coupling.there_offset),
-                  mir::BuildMachineIntLiteral(unit, block, coupling.width),
+                  here, there, here_position, there_position, width,
                   unit.builtins.void_type))}};
 }
 
@@ -1665,10 +1669,10 @@ auto BindInputPort(
       },
       source, support::StrengthLevel::kStrong, std::nullopt, data.sensitivity);
   if (!drive) return std::unexpected(std::move(drive.error()));
+  const mir::ExprId runs_as = CreatingInstance(unit_lowerer, activate_frame);
+  const mir::CallableId body = mir_class.callables.Add(*std::move(drive));
   AppendDriverRegistration(
-      unit_lowerer, activate_frame,
-      CreatingInstance(unit_lowerer, activate_frame),
-      mir_class.callables.Add(*std::move(drive)), source.span);
+      unit_lowerer, activate_frame, runs_as, body, source.span);
   return {};
 }
 
@@ -1888,11 +1892,11 @@ void HoldBuiltBlock(
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Block& block = *frame.current_block;
   const mir::ClassFieldTarget& handle = lowerer.GenerateHandle(generate);
-  const mir::ExprId member = block.exprs.Add(
-      mir::MakeFieldAccessExpr(
-          BuildObjectDeref(
-              unit, block, block.exprs.Add(MakeSelfRefExpr(frame))),
-          handle, FieldTypeOf(lowerer.Owner(), handle)));
+  const mir::ExprId object =
+      BuildObjectDeref(unit, block, block.exprs.Add(MakeSelfRefExpr(frame)));
+  const mir::TypeId field_type = FieldTypeOf(lowerer.Owner(), handle);
+  const mir::ExprId member =
+      block.exprs.Add(mir::MakeFieldAccessExpr(object, handle, field_type));
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
@@ -1924,11 +1928,11 @@ auto LowerRepeatedGenerate(
   const WalkFrame body_frame = steps.Frame();
 
   const auto index_place = [&](mir::Block& in) -> mir::ExprId {
+    const mir::ExprId object = BuildObjectDeref(
+        unit, in, in.exprs.Add(MakeSelfRefExpr(frame.WithBlock(&in))));
+    const mir::TypeId field_type = FieldTypeOf(unit_lowerer, index_field);
     return in.exprs.Add(
-        mir::MakeFieldAccessExpr(
-            BuildObjectDeref(
-                unit, in, in.exprs.Add(MakeSelfRefExpr(frame.WithBlock(&in)))),
-            index_field, FieldTypeOf(unit_lowerer, index_field)));
+        mir::MakeFieldAccessExpr(object, index_field, field_type));
   };
   const auto index_read = [&](mir::Block& in) -> mir::ExprId {
     return in.Read(in.exprs.Add(
@@ -1941,12 +1945,13 @@ auto LowerRepeatedGenerate(
   auto initial_or =
       lowerer.LowerExpr(hir_scope.exprs.Get(repeat.initial), body_frame);
   if (!initial_or) return std::unexpected(std::move(initial_or.error()));
+  const mir::ExprId index_owner = index_place(body);
+  const mir::ExprId initial = body.exprs.Add(*std::move(initial_or));
   body.AppendStmt(
       mir::ExprStmt{
           .expr = body.exprs.Add(BuildStoreExpr(
               unit_lowerer.Unit(), body,
-              AccessPath{.owner = index_place(body), .descent = {}},
-              body.exprs.Add(*std::move(initial_or))))});
+              AccessPath{.owner = index_owner, .descent = {}}, initial))});
   const mir::TypeId place_type = unit.builtins.int_type;
   const mir::LocalId place = steps.Bindings().DeclareAnonymous(place_type);
   body.AppendStmt(
@@ -1963,12 +1968,11 @@ auto LowerRepeatedGenerate(
       lowerer, loop_frame, generate,
       BuildToInt64Call(unit, loop_body, loop_body.ReadLocal(place, place_type)),
       *std::move(index));
-  const mir::ExprId member = loop_body.exprs.Add(
-      mir::MakeFieldAccessExpr(
-          BuildObjectDeref(
-              unit, loop_body,
-              loop_body.exprs.Add(MakeSelfRefExpr(loop_frame))),
-          blocks, FieldTypeOf(unit_lowerer, blocks)));
+  const mir::ExprId object = BuildObjectDeref(
+      unit, loop_body, loop_body.exprs.Add(MakeSelfRefExpr(loop_frame)));
+  const mir::TypeId field_type = FieldTypeOf(unit_lowerer, blocks);
+  const mir::ExprId member =
+      loop_body.exprs.Add(mir::MakeFieldAccessExpr(object, blocks, field_type));
   loop_body.AppendStmt(
       mir::ExprStmt{
           .expr = loop_body.exprs.Add(
@@ -1981,20 +1985,19 @@ auto LowerRepeatedGenerate(
                                   .receiver = member},
                           .arguments = {number, built}},
                   .type = unit.builtins.void_type})});
+  const mir::ExprId place_target = loop_body.LocalPlace(place, place_type);
+  const mir::ExprId next_place = loop_body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kAdd,
+                  .lhs = loop_body.ReadLocal(place, place_type),
+                  .rhs = mir::BuildIntLiteral(unit, loop_body, 1)},
+          .type = place_type});
   loop_body.AppendStmt(
       mir::ExprStmt{
           .expr = loop_body.exprs.Add(
-              mir::MakeAssignExpr(
-                  unit.builtins, loop_body.LocalPlace(place, place_type),
-                  loop_body.exprs.Add(
-                      mir::Expr{
-                          .data =
-                              mir::BinaryExpr{
-                                  .op = mir::BinaryOp::kAdd,
-                                  .lhs = loop_body.ReadLocal(place, place_type),
-                                  .rhs =
-                                      mir::BuildIntLiteral(unit, loop_body, 1)},
-                          .type = place_type})))});
+              mir::MakeAssignExpr(unit.builtins, place_target, next_place))});
   // The step is the expression the source wrote, and it reaches the next
   // index by writing the loop's own, so it is placed for its effect and its
   // value is dropped -- every form LRM 27.4 admits for it says where the index
@@ -2225,6 +2228,7 @@ auto LowerSingleBlockGenerate(
 auto LowerGenerateAsStmt(
     StructuralScopeLowerer& lowerer, WalkFrame frame, hir::GenerateId generate)
     -> diag::Result<mir::Stmt> {
+  const hir::Generate& declared = lowerer.HirScope().generates.Get(generate);
   return std::visit(
       Overloaded{
           [&](const hir::SingleBlock&) {
@@ -2236,7 +2240,7 @@ auto LowerGenerateAsStmt(
           [&](const hir::BlocksChoose& chosen) {
             return LowerChosenGenerate(lowerer, frame, generate, chosen);
           }},
-      lowerer.HirScope().generates.Get(generate).counting);
+      declared.counting);
 }
 
 // Describes, as statements of `frame`'s block, what a value dump records of
@@ -2357,14 +2361,18 @@ auto EndAlong(
 
 auto StructuralScopeLowerer::RouteEnd(
     const WalkFrame& frame, hir::RoutedObjectRefId id) const -> mir::ExprId {
-  return EndAlong(*this, frame, HirScope().routes.objects.Get(id), ReachOf(id));
+  const hir::ObjectRoute& route = HirScope().routes.objects.Get(id);
+  const RouteReach& reach = ReachOf(id);
+  return EndAlong(*this, frame, route, reach);
 }
 
 auto StructuralScopeLowerer::RouteEnd(
     const WalkFrame& frame, hir::RoutedDisableTargetRefId id) const
     -> mir::ExprId {
-  return EndAlong(
-      *this, frame, HirScope().routes.disable_targets.Get(id), ReachOf(id));
+  const hir::DisableTargetRoute& route =
+      HirScope().routes.disable_targets.Get(id);
+  const RouteReach& reach = ReachOf(id);
+  return EndAlong(*this, frame, route, reach);
 }
 
 auto StructuralScopeLowerer::LoweringOf(
@@ -2770,9 +2778,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // instance, so what it places has to land while the shape is still open.
   class_lowerers_.reserve(hir_scope.replicated_classes.size());
   for (const hir::ReplicatedClass& replicated : hir_scope.replicated_classes) {
+    const mir::ClassId identity = unit_lowerer.ClassIdentity(replicated.id);
+    const mir::TypeId pointee = unit_lowerer.ClassPointee(replicated.id);
     class_lowerers_.emplace_back(
-        unit_lowerer, replicated, unit_lowerer.ClassIdentity(replicated.id),
-        unit_lowerer.ClassPointee(replicated.id), hir_scope, this);
+        unit_lowerer, replicated, identity, pointee, hir_scope, this);
   }
   for (auto&& [class_lowerer, replicated] :
        std::views::zip(class_lowerers_, hir_scope.replicated_classes)) {
@@ -3004,9 +3013,10 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
       [&](hir::StructuralDataObjectId id) -> mir::ExprId {
     const auto& d = hir_scope.structural_data_objects.Get(id);
     const mir::ClassFieldTarget field = TranslateStructuralDataObject(id);
+    const mir::ExprId object = self_object();
+    const mir::TypeId field_type = FieldTypeOf(unit_lowerer, field);
     const mir::ExprId target = ctor_block.exprs.Add(
-        mir::MakeFieldAccessExpr(
-            self_object(), field, FieldTypeOf(unit_lowerer, field)));
+        mir::MakeFieldAccessExpr(object, field, field_type));
     ctor_block.AppendStmt(
         mir::ExprStmt{
             .expr = ctor_block.exprs.Add(
@@ -3028,12 +3038,11 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   const auto store_into = [&](mir::Block& block, const WalkFrame& at,
                               hir::StructuralDataObjectId id, mir::Expr value) {
     const mir::ClassFieldTarget field = TranslateStructuralDataObject(id);
-    const mir::ExprId target = block.exprs.Add(
-        mir::MakeFieldAccessExpr(
-            BuildObjectDeref(
-                unit_lowerer.Unit(), block,
-                block.exprs.Add(MakeSelfRefExpr(at))),
-            field, FieldTypeOf(unit_lowerer, field)));
+    const mir::ExprId object = BuildObjectDeref(
+        unit_lowerer.Unit(), block, block.exprs.Add(MakeSelfRefExpr(at)));
+    const mir::TypeId field_type = FieldTypeOf(unit_lowerer, field);
+    const mir::ExprId target =
+        block.exprs.Add(mir::MakeFieldAccessExpr(object, field, field_type));
     block.AppendStmt(
         mir::ExprStmt{
             .expr = block.exprs.Add(BuildStoreExpr(
@@ -3491,9 +3500,10 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   for (const hir::SampledHistoryId id : hir_scope.sampled_histories.Ids()) {
     const hir::SampledHistoryDecl& history =
         hir_scope.sampled_histories.Get(id);
-    auto subject_or = LowerExpr(
-        hir_scope.exprs.Get(history.subject),
-        activate_frame.WithReadsAsOf(ReadsAsOf::kPreponed));
+    const hir::Expr& subject = hir_scope.exprs.Get(history.subject);
+    const WalkFrame sampled =
+        activate_frame.WithReadsAsOf(ReadsAsOf::kPreponed);
+    auto subject_or = LowerExpr(subject, sampled);
     if (!subject_or) return std::unexpected(std::move(subject_or.error()));
     const mir::ExprId value = activate_block.exprs.Add(*std::move(subject_or));
     auto depth_or =

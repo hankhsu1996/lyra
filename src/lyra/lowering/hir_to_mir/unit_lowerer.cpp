@@ -57,6 +57,7 @@
 #include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -592,11 +593,12 @@ auto UnitLowerer::SettlePublishedScope(
       }
     }
     for (const auto& [method, form] : ReportingFormsOf(hir_class)) {
+      const std::string operation = std::format(
+          "{} reporting", declared.methods.Get(method).prototype.name);
+      const mir::CallableCode prototype =
+          ClassMethodPrototype(*this, hir_class, method);
       introduce(
-          cls, path, ClassCallableCode{.callable = form},
-          std::format(
-              "{} reporting", declared.methods.Get(method).prototype.name),
-          ClassMethodPrototype(*this, hir_class, method));
+          cls, path, ClassCallableCode{.callable = form}, operation, prototype);
     }
   }
   // A covergroup's class has four operations besides its constructor, each
@@ -891,15 +893,16 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   }
   for (const hir::ClassId own : hir_->classes.OwnIds()) {
     if (!compiled_classes.contains(own)) {
-      unit_.DefineClass(
-          ClassIdentity(own), StateClassFromDeclaration(*this, own));
+      const mir::ClassId id = ClassIdentity(own);
+      mir::Class stated = StateClassFromDeclaration(*this, own);
+      unit_.DefineClass(id, std::move(stated));
     }
   }
   for (const hir::CovergroupId own : hir_->covergroups.OwnIds()) {
     if (!compiled_covergroups.contains(own)) {
-      unit_.DefineClass(
-          CovergroupClassIdentity(own),
-          StateCovergroupClassFromDeclaration(*this, own));
+      const mir::ClassId id = CovergroupClassIdentity(own);
+      mir::Class stated = StateCovergroupClassFromDeclaration(*this, own);
+      unit_.DefineClass(id, std::move(stated));
     }
   }
 
@@ -1053,11 +1056,12 @@ auto UnitLowerer::PopulateModuleRoot(
     block_entries.emplace(
         tree.blocks[id.value]->PublishBlockEntry(), BlockBodyOrdinalOf(id));
   }
+  const mir::ClassId published = root.PublishedClassId();
+  const std::span<const ConstructionValue> handed = root.ConstructionValues();
   unit_.content = mir::RootedTree{
       .root = *top_r,
       .object_entry = PublishObjectEntry(
-          unit_, *top_r, root.PublishedClassId(), root.ConstructionValues(),
-          root.ConstructionTable()),
+          unit_, *top_r, published, handed, root.ConstructionTable()),
       .block_entries = std::move(block_entries)};
   PublishTypeOperations();
   StateObjectDefinitions(unit_);
@@ -1165,9 +1169,10 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   std::vector<ClassDeclLowerer> class_lowerers;
   class_lowerers.reserve(scope.replicated_classes.size());
   for (const hir::ReplicatedClass& replicated : scope.replicated_classes) {
+    const mir::ClassId identity = ClassIdentity(replicated.id);
+    const mir::TypeId pointee = ClassPointee(replicated.id);
     class_lowerers.emplace_back(
-        *this, replicated, ClassIdentity(replicated.id),
-        ClassPointee(replicated.id), scope, nullptr);
+        *this, replicated, identity, pointee, scope, nullptr);
   }
   for (ClassDeclLowerer& class_lowerer : class_lowerers) {
     if (auto r = class_lowerer.DeclareShape(nullptr, {}); !r) {
@@ -1500,9 +1505,12 @@ auto UnitLowerer::StateDeclaredLayout(hir::ClassId cls, mir::Class& stated)
 auto UnitLowerer::PublishedFieldsOf(const hir::ScopeClassSignature& signature)
     const -> std::vector<PublishedField> {
   std::vector<PublishedField> fields;
+  const std::size_t member_count = signature.members.size();
+  const std::size_t loop_count = signature.loops.size();
+  const std::size_t choice_count = signature.choices.size();
+  const std::size_t disable_target_count = signature.disable_targets.size();
   fields.reserve(
-      signature.members.size() + signature.loops.size() +
-      signature.choices.size() + signature.disable_targets.size());
+      member_count + loop_count + choice_count + disable_target_count);
   for (const hir::PublishedMember& member : signature.members) {
     fields.push_back(
         PublishedField{

@@ -330,12 +330,13 @@ auto LowerContinuousAssign(
                                  ? support::BuiltinFn::kScalarPropagationDelay
                                  : support::BuiltinFn::kVectorPropagationDelay};
   }
+  const hir::Expr& hir_rhs = hir_scope.exprs.Get(src.rhs);
   return LowerContinuousDrive(
       lowerer, ctor_frame, resolve_frame, init_frame,
       [&](const WalkFrame& frame) {
         return LowerLvalue(lowerer, hir_lhs, frame);
       },
-      hir_scope.exprs.Get(src.rhs), src.strength, delay, src.sensitivity_list);
+      hir_rhs, src.strength, delay, src.sensitivity_list);
 }
 
 auto LowerContinuousDrive(
@@ -412,15 +413,16 @@ auto LowerContinuousDrive(
               .pointee = resolve_block.exprs.Get(place).type,
               .ownership = mir::PointerOwnership::kBorrowed}});
       carrying = drivers.front();
+      const mir::ExprId driver =
+          FieldOfSelf(unit, resolve_frame, resolve_block, *carrying);
+      const mir::ExprId object_address =
+          resolve_block.exprs.Add(mir::MakeAddressOfExpr(place, pointer_type));
       resolve_block.AppendStmt(
           mir::ExprStmt{
               .expr = resolve_block.exprs.Add(
                   mir::MakeDriveFromCallExpr(
-                      FieldOfSelf(
-                          unit, resolve_frame, resolve_block, *carrying),
-                      resolve_block.exprs.Add(
-                          mir::MakeAddressOfExpr(place, pointer_type)),
-                      *carried, unit.builtins.void_type))});
+                      driver, object_address, *carried,
+                      unit.builtins.void_type))});
     }
   }
 
@@ -556,21 +558,22 @@ auto LowerContinuousDrive(
     // A value differs from the one scheduled where its bits do -- an unknown
     // bit matching only the same unknown, a real its own pattern -- which is
     // what decides whether a write changes a variable, too (LRM 4.3).
+    const mir::ExprId changed_value =
+        body_block.ReadLocal(changed_to, value_type);
+    const mir::ExprId scheduled_value = body_block.AsValue(
+        unit.types, FieldOfSelf(unit, body_frame, body_block, scheduled));
     const mir::ExprId differs = BuildConditionNot(
         unit, body_block,
         BuildValueOperation(
-            unit, body_block, support::BuiltinFn::kBitIdentical,
-            body_block.ReadLocal(changed_to, value_type),
-            {body_block.AsValue(
-                unit.types,
-                FieldOfSelf(unit, body_frame, body_block, scheduled))},
-            unit.builtins.machine_bool));
+            unit, body_block, support::BuiltinFn::kBitIdentical, changed_value,
+            {scheduled_value}, unit.builtins.machine_bool));
     mir::Block rescheduled;
     const WalkFrame rescheduled_frame = body_frame.WithBlock(&rescheduled);
-    AppendAssign(
-        unit, rescheduled,
-        FieldOfSelf(unit, rescheduled_frame, rescheduled, scheduled),
-        rescheduled.ReadLocal(changed_to, value_type));
+    const mir::ExprId rescheduled_target =
+        FieldOfSelf(unit, rescheduled_frame, rescheduled, scheduled);
+    const mir::ExprId rescheduled_value =
+        rescheduled.ReadLocal(changed_to, value_type);
+    AppendAssign(unit, rescheduled, rescheduled_target, rescheduled_value);
     if (auto armed = AppendArm(
             lowerer, rescheduled_frame, *delay, timer,
             rescheduled.ReadLocal(changed_to, value_type));

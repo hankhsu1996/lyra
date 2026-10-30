@@ -297,9 +297,10 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                 ">");
           },
           [&](const mir::AssociativeArrayType& a) {
+            const CppType key = type(a.key_type);
+            const CppType element = type(a.element_type);
             Write(
-                out, "lyra::value::AssociativeArray<", type(a.key_type), ", ",
-                type(a.element_type), ">");
+                out, "lyra::value::AssociativeArray<", key, ", ", element, ">");
           },
           [&](const mir::WildcardIndexType&) {
             out += "lyra::value::WildcardKey";

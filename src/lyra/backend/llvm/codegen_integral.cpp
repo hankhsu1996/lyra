@@ -134,11 +134,11 @@ auto CodeGenFunction::IntegralEmitter::EntryOf(IntegralOp op) -> llvm::Value* {
   llvm::Constant* const table = module_->Module().getOrInsertGlobal(
       runtime::kIntegralEntriesSymbol, table_type);
   llvm::cast<llvm::GlobalVariable>(table)->setConstant(true);
+  llvm::PointerType* const entry = module_->Types().Ptr();
+  llvm::Value* const slot = builder_->CreateConstInBoundsGEP2_64(
+      table_type, table, 0, std::to_underlying(op));
   return builder_->CreateLoad(
-      module_->Types().Ptr(),
-      builder_->CreateConstInBoundsGEP2_64(
-          table_type, table, 0, std::to_underlying(op)),
-      std::format("integral.{}", IntegralOperationOf(op).name));
+      entry, slot, std::format("integral.{}", IntegralOperationOf(op).name));
 }
 
 auto CodeGenFunction::IntegralEmitter::ResolveEntryCall(

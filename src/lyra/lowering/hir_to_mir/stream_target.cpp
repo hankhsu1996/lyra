@@ -281,7 +281,9 @@ auto DistributeRun(
   };
   // The most of `n` bits that whole elements `each` bits wide cover.
   const auto whole_steps = [&](mir::ExprId n, std::uint64_t each) {
-    return mul(div(n, count(each)), count(each));
+    const mir::ExprId steps = div(n, count(each));
+    const mir::ExprId width = count(each);
+    return mul(steps, width);
   };
 
   // LRM 11.4.14.4: the bits the members are given where every one whose width
@@ -321,10 +323,15 @@ auto DistributeRun(
   const mir::ExprId length =
       EvaluatedOnce(frame, BuildRunLength(unit, block, whole));
   require_enough(compare(mir::BinaryOp::kGreaterEqual, length, count(empty)));
-  const mir::ExprId usable = EvaluatedOnce(
-      frame, step == 0 ? count(empty)
-                       : add(count(empty),
-                             whole_steps(sub(length, count(empty)), step)));
+  mir::ExprId usable_bits{};
+  if (step == 0) {
+    usable_bits = count(empty);
+  } else {
+    const mir::ExprId empty_bits = count(empty);
+    const mir::ExprId beyond_empty = sub(length, count(empty));
+    usable_bits = add(empty_bits, whole_steps(beyond_empty, step));
+  }
+  const mir::ExprId usable = EvaluatedOnce(frame, usable_bits);
   const mir::ExprId run =
       block_bits == 0
           ? whole
@@ -338,13 +345,13 @@ auto DistributeRun(
   const mir::LocalId at = DeclareLocal(frame, count(0));
   const auto at_now = [&] { return block.ReadLocal(at, count_type); };
   const auto move_at = [&](mir::ExprId given) {
+    const mir::ExprId position = block.LocalPlace(at, count_type);
+    const mir::ExprId moved = add(at_now(), given);
     block.AppendStmt(
         mir::ExprStmt{
             .expr = block.exprs.Add(BuildStoreExpr(
-                unit, block,
-                AccessPath{
-                    .owner = block.LocalPlace(at, count_type), .descent = {}},
-                add(at_now(), given)))});
+                unit, block, AccessPath{.owner = position, .descent = {}},
+                moved))});
   };
 
   for (std::size_t i = 0; i < segments.size(); ++i) {
@@ -388,25 +395,33 @@ auto DistributeRun(
               // left after the members behind it has to hold. The first is
               // also given, where that room holds its first element, that
               // element and as many whole steps as fit after it.
-              const mir::ExprId past = EvaluatedOnce(
-                  frame, sub(sub(usable, at_now()),
-                             count(after[i] + r.fill.empty_width)));
+              const mir::ExprId left = sub(usable, at_now());
+              const mir::ExprId kept_back =
+                  count(after[i] + r.fill.empty_width);
+              const mir::ExprId past =
+                  EvaluatedOnce(frame, sub(left, kept_back));
               require_enough(
                   compare(mir::BinaryOp::kGreaterEqual, past, count(0)));
               const auto whole_elements_past = [&] {
                 const mir::ExprId beyond = EvaluatedOnce(
                     frame, sub(past, count(r.fill.first_element)));
+                const mir::ExprId short_of_first =
+                    compare(mir::BinaryOp::kLessThan, beyond, count(0));
+                const mir::ExprId none = count(0);
+                const mir::ExprId first = count(r.fill.first_element);
+                const mir::ExprId elements =
+                    add(first, whole_steps(beyond, r.fill.multiplier));
                 return mir::BuildMachineIntConditional(
-                    unit, block,
-                    compare(mir::BinaryOp::kLessThan, beyond, count(0)),
-                    count(0),
-                    add(count(r.fill.first_element),
-                        whole_steps(beyond, r.fill.multiplier)));
+                    unit, block, short_of_first, none, elements);
               };
-              const mir::ExprId given = EvaluatedOnce(
-                  frame, greedy == i ? add(count(r.fill.empty_width),
-                                           whole_elements_past())
-                                     : count(r.fill.empty_width));
+              mir::ExprId given_bits{};
+              if (greedy == i) {
+                const mir::ExprId empty_bits = count(r.fill.empty_width);
+                given_bits = add(empty_bits, whole_elements_past());
+              } else {
+                given_bits = count(r.fill.empty_width);
+              }
+              const mir::ExprId given = EvaluatedOnce(frame, given_bits);
               const mir::ExprId bits = EvaluatedOnce(
                   frame, BuildRunExtract(unit, block, run, at_now(), given));
               move_at(given);

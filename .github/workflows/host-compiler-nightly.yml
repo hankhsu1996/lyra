@@ -1,0 +1,103 @@
+name: Host Compiler Independence (Nightly)
+
+# What Lyra writes for a design is a function of the design and of Lyra's own
+# source, whichever compiler built Lyra. Two things hold it to that.
+#
+# The reading of every source for two operands of one evaluation that each
+# build IR, whose order C++ leaves to the compiler. A pull request reads only
+# the sources it changes (construction-order.yml), so this is what reaches a
+# header's inline code and a change to the reading itself.
+#
+# The measurement: Lyra built by clang and Lyra built by GCC, which order a
+# call's arguments oppositely, are handed every case of the conformance corpus,
+# and every form they write is compared byte for byte. It sees what the reading
+# does not model, and only what the corpus reaches, and its time grows with the
+# corpus, which is why it is not on a pull request.
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+jobs:
+  read:
+    name: Check that every source builds IR in a stated order
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Clang
+        uses: ./.github/actions/setup-clang
+        with:
+          tools: clang-tools
+
+      - name: Check the reading itself
+        run: python3 tools/policy/check_sequencing.py --self-test
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-read-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: Build
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          RBE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel build //:lyra $RBE_FLAGS
+
+      - name: Generate compile_commands.json
+        run: bazel run //:refresh_compile_commands
+
+      - name: Check every source
+        run: python3 tools/policy/check_sequencing.py --jobs "$(nproc)"
+
+  compare:
+    name: Compare what Lyra built by clang and by GCC writes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-compare-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      # GCC is the remote image's, so a checkout with no key has no GCC build
+      # to compare against, and the job says so rather than passing silently.
+      - name: Build Lyra both ways
+        id: built
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          if [[ -z "$BUILDBUDDY_API_KEY" ]]; then
+            echo "::notice::No remote execution key, so nothing here is built by GCC."
+            echo "compared=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          KEY="--remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          bazel build //:lyra --config=rbe --remote_download_toplevel $KEY
+          mkdir -p built/clang built/gcc
+          cp -L bazel-bin/lyra built/clang/lyra
+          cp -rL bazel-bin/lyra.runfiles built/clang/lyra.runfiles
+          bazel build //:lyra --config=gcc --remote_download_toplevel $KEY
+          cp -L bazel-bin/lyra built/gcc/lyra
+          cp -rL bazel-bin/lyra.runfiles built/gcc/lyra.runfiles
+          echo "compared=true" >> "$GITHUB_OUTPUT"
+
+      - name: Compare every case
+        if: steps.built.outputs.compared == 'true'
+        run: |
+          python3 tools/reproducibility/compare_builds.py \
+            built/clang/lyra built/gcc/lyra \
+            --runfiles built/clang/lyra.runfiles \
+            --other-runfiles built/gcc/lyra.runfiles \
+            --jobs "$(nproc)"

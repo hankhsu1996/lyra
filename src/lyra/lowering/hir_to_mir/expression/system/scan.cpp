@@ -331,12 +331,12 @@ auto LowerScanSystemSubroutineCall(
         AppendStores(process.Owner(), then_frame, *lvalue_or, parsed_id);
     if (!stored) return std::unexpected(std::move(stored.error()));
 
-    scan_body.AppendIfThen(
-        ReduceToCondition(unit, scan_body, cond_id), std::move(then_body));
+    const mir::ExprId matched = ReduceToCondition(unit, scan_body, cond_id);
+    scan_body.AppendIfThen(matched, std::move(then_body));
   }
 
-  body.AppendIfThen(
-      ReduceToCondition(unit, body, known_id), std::move(scan_body));
+  const mir::ExprId all_known = ReduceToCondition(unit, body, known_id);
+  body.AppendIfThen(all_known, std::move(scan_body));
 
   const mir::ExprId count_id = body.LocalPlace(count_var, integer_t);
   return steps.Build(count_id);

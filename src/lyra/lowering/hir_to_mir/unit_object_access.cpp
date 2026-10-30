@@ -150,8 +150,10 @@ auto StepThroughPublished(
                 });
             auto position = evaluate_select(loop.position);
             if (!position) return std::unexpected(std::move(position.error()));
+            const mir::ExprId reached =
+                ReachLoopBlock(unit_lowerer, block, blocks, *position);
             return ObjectAs(
-                block, ReachLoopBlock(unit_lowerer, block, blocks, *position),
+                block, reached,
                 ObjectPointerOf(unit_lowerer, loop.result_class));
           },
           // What a construct building at most one block built holds the base

@@ -123,7 +123,9 @@ auto SymbolPartOf(const support::DefPath& path) -> SymbolPart {
               return part + bound(block.arguments);
             },
             [&](const support::ClassStep& cls) {
-              return named('c', cls.name) + bound(cls.arguments);
+              const std::string name = named('c', cls.name);
+              const std::string arguments = bound(cls.arguments);
+              return name + arguments;
             },
             [&](const support::SubroutineStep& subroutine) {
               return named('s', subroutine.name);

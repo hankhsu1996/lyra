@@ -108,10 +108,11 @@ auto AnyOf(
   const mir::TypeId type = unit.builtins.machine_word;
   mir::ExprId combined = Word(block, type, 0);
   for (std::size_t word = 0; word < words.size(); ++word) {
-    combined = Op(
-        unit, block, type, mir::BinaryOp::kBitwiseOr, combined,
-        Op(unit, block, type, mir::BinaryOp::kBitwiseAnd,
-           block.ReadLocal(words[word], type), Word(block, type, mask[word])));
+    const mir::ExprId lhs = block.ReadLocal(words[word], type);
+    const mir::ExprId rhs = Word(block, type, mask[word]);
+    combined =
+        Op(unit, block, type, mir::BinaryOp::kBitwiseOr, combined,
+           Op(unit, block, type, mir::BinaryOp::kBitwiseAnd, lhs, rhs));
   }
   return Op(
       unit, block, unit.builtins.machine_bool, mir::BinaryOp::kInequality,
@@ -123,10 +124,11 @@ void OrInto(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
     const std::vector<mir::LocalId>& words, const PositionSet& mask) {
   for (std::size_t word = 0; word < words.size(); ++word) {
+    const mir::ExprId lhs = block.ReadLocal(words[word], type);
+    const mir::ExprId rhs = Word(block, type, mask[word]);
     Assign(
         unit, block, words[word], type,
-        Op(unit, block, type, mir::BinaryOp::kBitwiseOr,
-           block.ReadLocal(words[word], type), Word(block, type, mask[word])));
+        Op(unit, block, type, mir::BinaryOp::kBitwiseOr, lhs, rhs));
   }
 }
 
@@ -295,11 +297,14 @@ auto BuildPartAnswer(
   };
   const auto extreme = [&](mir::BinaryOp keeps_lhs, mir::LocalId lhs,
                            mir::LocalId rhs) {
-    return Choose(
-        block, type,
-        Op(unit, block, unit.builtins.machine_bool, keeps_lhs,
-           block.ReadLocal(lhs, type), block.ReadLocal(rhs, type)),
-        block.ReadLocal(lhs, type), block.ReadLocal(rhs, type));
+    const mir::ExprId compared_lhs = block.ReadLocal(lhs, type);
+    const mir::ExprId compared_rhs = block.ReadLocal(rhs, type);
+    const mir::ExprId condition =
+        Op(unit, block, unit.builtins.machine_bool, keeps_lhs, compared_lhs,
+           compared_rhs);
+    const mir::ExprId kept_lhs = block.ReadLocal(lhs, type);
+    const mir::ExprId kept_rhs = block.ReadLocal(rhs, type);
+    return Choose(block, type, condition, kept_lhs, kept_rhs);
   };
   const auto answer = [&](support::PropertyAnswer value) {
     return AnswerWord(block, type, value);
@@ -315,19 +320,22 @@ auto BuildPartAnswer(
                   sequence.strength == hir::SequenceStrength::kWeak
                       ? support::PropertyAnswer::kHolds
                       : support::PropertyAnswer::kPending;
-              return Choose(
-                  block, type, AnyOf(block, unit, bits, sequence.kept),
-                  answer(support::PropertyAnswer::kHoldsStrongly),
-                  Choose(
-                      block, type, AnyOf(block, unit, bits, sequence.live),
-                      answer(while_live),
-                      answer(support::PropertyAnswer::kFails)));
+              const mir::ExprId kept = AnyOf(block, unit, bits, sequence.kept);
+              const mir::ExprId holds_strongly =
+                  answer(support::PropertyAnswer::kHoldsStrongly);
+              const mir::ExprId live = AnyOf(block, unit, bits, sequence.live);
+              const mir::ExprId live_answer = answer(while_live);
+              const mir::ExprId fails = answer(support::PropertyAnswer::kFails);
+              const mir::ExprId otherwise =
+                  Choose(block, type, live, live_answer, fails);
+              return Choose(block, type, kept, holds_strongly, otherwise);
             },
             [&](const NegatedTerm& negated) {
-              return Op(
-                  unit, block, type, mir::BinaryOp::kSub,
-                  answer(support::PropertyAnswer::kHoldsStrongly),
-                  block.ReadLocal(held[negated.operand], type));
+              const mir::ExprId lhs =
+                  answer(support::PropertyAnswer::kHoldsStrongly);
+              const mir::ExprId rhs =
+                  block.ReadLocal(held[negated.operand], type);
+              return Op(unit, block, type, mir::BinaryOp::kSub, lhs, rhs);
             },
             [&](const LeastTerm& least) {
               return extreme(
@@ -339,10 +347,13 @@ auto BuildPartAnswer(
                   held[greatest.rhs]);
             },
             [&](const ImplicationTerm& implication) {
-              const mir::LocalId antecedent = hold(Choose(
-                  block, type, AnyOf(block, unit, bits, implication.antecedent),
-                  answer(support::PropertyAnswer::kHolds),
-                  answer(support::PropertyAnswer::kHoldsStrongly)));
+              const mir::ExprId matched =
+                  AnyOf(block, unit, bits, implication.antecedent);
+              const mir::ExprId holds = answer(support::PropertyAnswer::kHolds);
+              const mir::ExprId holds_strongly =
+                  answer(support::PropertyAnswer::kHoldsStrongly);
+              const mir::LocalId antecedent =
+                  hold(Choose(block, type, matched, holds, holds_strongly));
               const mir::LocalId instances =
                   hold(implication_answer(block, implication.implication));
               return extreme(mir::BinaryOp::kLessThan, antecedent, instances);
@@ -442,7 +453,8 @@ auto LowerTick(
   for (const ImplicationSeed& seed : automaton.seeds) {
     mir::Block reached;
     OrInto(unit, reached, word_type, need, StartsOf(seed, automaton));
-    AppendIf(body, AnyOf(body, unit, need, seed.matches), std::move(reached));
+    const mir::ExprId condition = AnyOf(body, unit, need, seed.matches);
+    AppendIf(body, condition, std::move(reached));
   }
 
   // The design's own Boolean expressions, as of the Preponed region of this
@@ -476,10 +488,11 @@ auto LowerTick(
     // its bit is set whenever it is reached.
     mir::Block held;
     OrInto(unit, held, word_type, hold, at);
-    AppendIf(
-        reached, reached.ReadLocal(all_hold, unit.builtins.machine_bool),
-        std::move(held));
-    AppendIf(body, AnyOf(body, unit, need, at), std::move(reached));
+    const mir::ExprId all_held =
+        reached.ReadLocal(all_hold, unit.builtins.machine_bool);
+    AppendIf(reached, all_held, std::move(held));
+    const mir::ExprId condition = AnyOf(body, unit, need, at);
+    AppendIf(body, condition, std::move(reached));
   }
 
   // Every evaluation this tick has not stepped, including the ones seeded
@@ -507,11 +520,11 @@ auto LowerTick(
   const std::vector<mir::LocalId> matched =
       DeclareWords(bindings, sweep, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
+    const mir::ExprId lhs = sweep.ReadLocal(bits[word], word_type);
+    const mir::ExprId rhs = sweep.ReadLocal(hold[word], word_type);
     Assign(
         unit, sweep, matched[word], word_type,
-        Op(unit, sweep, word_type, mir::BinaryOp::kBitwiseAnd,
-           sweep.ReadLocal(bits[word], word_type),
-           sweep.ReadLocal(hold[word], word_type)));
+        Op(unit, sweep, word_type, mir::BinaryOp::kBitwiseAnd, lhs, rhs));
   }
   const std::vector<mir::LocalId> next =
       DeclareWords(bindings, sweep, word_type, empty);
@@ -519,9 +532,8 @@ auto LowerTick(
        ++position) {
     mir::Block advanced;
     OrInto(unit, advanced, word_type, next, automaton.follow[position]);
-    AppendIf(
-        sweep, AnyOf(sweep, unit, matched, bit_at(position)),
-        std::move(advanced));
+    const mir::ExprId condition = AnyOf(sweep, unit, matched, bit_at(position));
+    AppendIf(sweep, condition, std::move(advanced));
   }
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     call_stmt(
@@ -610,11 +622,13 @@ auto LowerTick(
                         auto written = lower_sampled(tried, label);
                         if (!written) return written;
                         mir::Block& block = *tried.current_block;
+                        const mir::ExprId held_subject =
+                            block.LocalPlace(subject_local, subject_type);
+                        const mir::ExprId label_value = OperandAtHandleType(
+                            unit, block, *written, subject_type);
                         return BuildCaseComparison(
-                            unit, block, hir::CaseKeyword::kCase,
-                            block.LocalPlace(subject_local, subject_type),
-                            OperandAtHandleType(
-                                unit, block, *written, subject_type));
+                            unit, block, hir::CaseKeyword::kCase, held_subject,
+                            label_value);
                       });
                 }
                 items.push_back(std::move(arm));
@@ -633,34 +647,33 @@ auto LowerTick(
             }},
         seed.starts);
     if (!filled) return std::unexpected(std::move(filled.error()));
-    AppendIf(
-        sweep, AnyOf(sweep, unit, matched, seed.matches), std::move(seeded));
+    const mir::ExprId condition = AnyOf(sweep, unit, matched, seed.matches);
+    AppendIf(sweep, condition, std::move(seeded));
   }
   Assign(
       unit, sweep, cursor, index_type,
       call(
           sweep, support::BuiltinFn::kEvaluationAttemptsNextUnstepped, {},
           index_type));
+  const mir::ExprId unstepped = body.ReadLocal(cursor, index_type);
+  const mir::ExprId first_index = Word(body, index_type, 0);
   body.AppendStmt(
       mir::WhileStmt{
           .condition =
               Op(unit, body, unit.builtins.machine_bool,
-                 mir::BinaryOp::kGreaterEqual,
-                 body.ReadLocal(cursor, index_type), Word(body, index_type, 0)),
+                 mir::BinaryOp::kGreaterEqual, unstepped, first_index),
           .scope = body.child_scopes.Add(std::move(sweep))});
 
   // Every evaluation answers, from the last back, so the instances of an
   // implication have answered before the evaluation holding it does.
   const mir::LocalId answering = bindings.DeclareAnonymous(index_type);
+  const mir::ExprId count =
+      call(body, support::BuiltinFn::kEvaluationAttemptsCount, {}, index_type);
+  const mir::ExprId one = Word(body, index_type, 1);
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = answering,
-          .init =
-              Op(unit, body, index_type, mir::BinaryOp::kSub,
-                 call(
-                     body, support::BuiltinFn::kEvaluationAttemptsCount, {},
-                     index_type),
-                 Word(body, index_type, 1))});
+          .init = Op(unit, body, index_type, mir::BinaryOp::kSub, count, one)});
   mir::Block resolve;
   const WalkFrame resolve_frame = frame.WithBlock(&resolve);
   const std::vector<mir::LocalId> stepped =
@@ -708,17 +721,18 @@ auto LowerTick(
       arms, std::nullopt);
   if (!dispatched) return std::unexpected(std::move(dispatched.error()));
   resolve.AppendStmt(*std::move(dispatched));
+  const mir::ExprId lhs = resolve.ReadLocal(answering, index_type);
+  const mir::ExprId rhs = Word(resolve, index_type, 1);
   Assign(
       unit, resolve, answering, index_type,
-      Op(unit, resolve, index_type, mir::BinaryOp::kSub,
-         resolve.ReadLocal(answering, index_type),
-         Word(resolve, index_type, 1)));
+      Op(unit, resolve, index_type, mir::BinaryOp::kSub, lhs, rhs));
+  const mir::ExprId unanswered = body.ReadLocal(answering, index_type);
+  const mir::ExprId lowest_index = Word(body, index_type, 0);
   body.AppendStmt(
       mir::WhileStmt{
-          .condition = Op(
-              unit, body, unit.builtins.machine_bool,
-              mir::BinaryOp::kGreaterEqual,
-              body.ReadLocal(answering, index_type), Word(body, index_type, 0)),
+          .condition =
+              Op(unit, body, unit.builtins.machine_bool,
+                 mir::BinaryOp::kGreaterEqual, unanswered, lowest_index),
           .scope = body.child_scopes.Add(std::move(resolve))});
 
   call_stmt(
@@ -741,11 +755,11 @@ void AppendOpenAttempt(
   const mir::TypeId word_type = unit.builtins.machine_word;
   const mir::TypeId void_type = unit.builtins.void_type;
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
+    const mir::ExprId place = attempts(body);
     body.AppendStmt(
         mir::ExprStmt{
             .expr = AttemptsCall(
-                body, support::BuiltinFn::kEvaluationAttemptsSeedWord,
-                attempts(body),
+                body, support::BuiltinFn::kEvaluationAttemptsSeedWord, place,
                 {Word(body, word_type, word),
                  Word(body, word_type, automaton.parts.front().start[word])},
                 void_type)});
@@ -953,9 +967,11 @@ auto BuildEvaluationAttemptsExpr(
     -> mir::ExprId {
   const mir::FieldId field = lowerer.TranslateConcurrentAssertion(id);
   const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
+  const mir::ExprId object =
+      BuildObjectDeref(lowerer.Owner().Unit(), block, self);
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
-          BuildObjectDeref(lowerer.Owner().Unit(), block, self),
+          object,
           mir::ClassFieldTarget{.owner = frame.current_class.id, .slot = field},
           frame.current_class.cls->fields.Get(field).type));
 }
@@ -1185,12 +1201,14 @@ auto LowerExpectStmt(
   scope.AppendStmt(BuildParkStmt(process.Owner(), scope, wait));
 
   const auto answer_is = [&](mir::Block& block, support::AttemptAnswer answer) {
+    const mir::ExprId lhs = AttemptsCall(
+        block, support::BuiltinFn::kEvaluationAttemptsAnswer,
+        attempts_at(attempts_held)(block), {}, word_type);
+    const mir::ExprId rhs =
+        Word(block, word_type, static_cast<std::uint64_t>(answer));
     return Op(
-        unit, block, unit.builtins.machine_bool, mir::BinaryOp::kEquality,
-        AttemptsCall(
-            block, support::BuiltinFn::kEvaluationAttemptsAnswer,
-            attempts_at(attempts_held)(block), {}, word_type),
-        Word(block, word_type, static_cast<std::uint64_t>(answer)));
+        unit, block, unit.builtins.machine_bool, mir::BinaryOp::kEquality, lhs,
+        rhs);
   };
   auto pass = HasRealArm(process.HirBody(), expect.pass_stmt)
                   ? LowerStmtIntoChildScope(process, inner, *expect.pass_stmt)
@@ -1239,11 +1257,12 @@ void AppendConcurrentAssertionInstall(
     return BuildKeptClosure(unit, block, closure.BuildVoid());
   };
 
+  const mir::ExprId attempts =
+      BuildEvaluationAttemptsExpr(block, activate_frame, lowerer, id);
   block.AppendStmt(
       mir::ExprStmt{
           .expr = AttemptsCall(
-              block, support::BuiltinFn::kEvaluationAttemptsInstall,
-              BuildEvaluationAttemptsExpr(block, activate_frame, lowerer, id),
+              block, support::BuiltinFn::kEvaluationAttemptsInstall, attempts,
               {block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())),
                Word(block, unit.builtins.machine_word, installed.words),
                arm(installed.pass_action), arm(installed.fail_action)},

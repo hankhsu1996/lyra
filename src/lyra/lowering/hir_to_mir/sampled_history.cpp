@@ -88,9 +88,11 @@ auto BuildSampledHistoryExpr(
     -> mir::ExprId {
   const mir::FieldId field = lowerer.TranslateSampledHistory(id);
   const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
+  const mir::ExprId object =
+      BuildObjectDeref(lowerer.Owner().Unit(), block, self);
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
-          BuildObjectDeref(lowerer.Owner().Unit(), block, self),
+          object,
           mir::ClassFieldTarget{.owner = frame.current_class.id, .slot = field},
           frame.current_class.cls->fields.Get(field).type));
 }
@@ -127,9 +129,10 @@ auto LowerSampledHistorySampler(
   // (LRM 16.5.1), read here rather than where the answer is used: a call in the
   // expression is called on the arguments this tick sampled, and calling it
   // again later would be a different call.
-  auto settled_or = lowerer.LowerExpr(
-      hir_scope.exprs.Get(history.subject),
-      body_frame.WithReadsAsOf(ReadsAsOf::kPreponed));
+  const hir::Expr& subject = hir_scope.exprs.Get(history.subject);
+  const WalkFrame sampled_frame =
+      body_frame.WithReadsAsOf(ReadsAsOf::kPreponed);
+  auto settled_or = lowerer.LowerExpr(subject, sampled_frame);
   if (!settled_or) return std::unexpected(std::move(settled_or.error()));
   const mir::ExprId settled = body_block.exprs.Add(*std::move(settled_or));
 
@@ -214,9 +217,9 @@ auto LowerValueChangeCall(
 
   // The current side is the sampled value of this time step, which is what
   // `$sampled` answers with and is read the same way (LRM 16.9.3, 16.5.1).
-  auto current_or = lowerer.LowerExpr(
-      lowerer.HirExprs().Get(*call.arguments.front()),
-      frame.WithReadsAsOf(ReadsAsOf::kPreponed));
+  const hir::Expr& argument = lowerer.HirExprs().Get(*call.arguments.front());
+  const WalkFrame sampled_frame = frame.WithReadsAsOf(ReadsAsOf::kPreponed);
+  auto current_or = lowerer.LowerExpr(argument, sampled_frame);
   if (!current_or) return std::unexpected(std::move(current_or.error()));
   const mir::ExprId current = block.exprs.Add(*std::move(current_or));
 

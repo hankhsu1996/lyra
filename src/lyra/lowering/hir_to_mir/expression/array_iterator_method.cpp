@@ -10,6 +10,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
@@ -192,9 +193,10 @@ auto WalkedOperand(
   const hir::Expr& operand = lowerer.HirExprs().Get(ArrayOperand(c));
   auto object = lowerer.LowerAsPlace(operand, frame);
   if (!object) return std::unexpected(std::move(object.error()));
-  return WalkedArrayOf(
-      lowerer.Owner(), frame, block.exprs.Add(*object),
-      DeclaredRangeOf(lowerer.Owner(), operand.type));
+  const mir::ExprId array = block.exprs.Add(*object);
+  const std::optional<hir::UnpackedRange> declared =
+      DeclaredRangeOf(lowerer.Owner(), operand.type);
+  return WalkedArrayOf(lowerer.Owner(), frame, array, declared);
 }
 
 // LRM 7.12.3: the keys folded by `op`, the first seeding the fold, at the type
@@ -219,9 +221,10 @@ auto LowerReduction(
         mir::Block& b = *at.current_block;
         const mir::LocalId held =
             DeclareLocal(at, ConvertToType(unit, b, key.key, result_type));
-        const mir::ExprId combined = b.exprs.Add(BuildMirBinaryExpr(
-            unit, b, op, b.ReadLocal(folded, result_type),
-            b.ReadLocal(held, result_type), result_type));
+        const mir::ExprId lhs = b.ReadLocal(folded, result_type);
+        const mir::ExprId rhs = b.ReadLocal(held, result_type);
+        const mir::ExprId combined =
+            b.exprs.Add(BuildMirBinaryExpr(unit, b, op, lhs, rhs, result_type));
         AssignLocal(
             unit, b, folded,
             b.exprs.Add(
@@ -329,12 +332,13 @@ auto LowerMinMax(
         const mir::LocalId held =
             DeclareLocal(at, ConvertToType(unit, b, key.key, key_type));
         const std::array compared{key_type, key_type};
+        const mir::ExprId lhs = b.ReadLocal(held, key_type);
+        const mir::ExprId rhs = b.ReadLocal(best, key_type);
+        const mir::TypeId answer_type = OneBitAnswerType(unit, compared);
         const mir::ExprId comes_first = ReduceToCondition(
             unit, b,
             b.exprs.Add(BuildMirBinaryExpr(
-                unit, b, comparison, b.ReadLocal(held, key_type),
-                b.ReadLocal(best, key_type),
-                OneBitAnswerType(unit, compared))));
+                unit, b, comparison, lhs, rhs, answer_type)));
         const std::array better{
             BuildConditionNot(unit, b, b.ReadLocal(seen, boolean)),
             comes_first};
@@ -346,7 +350,8 @@ auto LowerMinMax(
                 unit, taken, taken.ReadLocal(key.item, key.item_type),
                 item_type));
         AssignLocal(unit, taken, seen, BuildMachineBool(unit, taken, true));
-        b.AppendIfThen(AnyHolds(unit, b, better), std::move(taken));
+        const mir::ExprId condition = AnyHolds(unit, b, better);
+        b.AppendIfThen(condition, std::move(taken));
         return {};
       });
   if (!walked) return std::unexpected(std::move(walked.error()));
@@ -354,7 +359,8 @@ auto LowerMinMax(
   AppendPushBack(
       unit_lowerer, answered, found, result_type,
       answered.ReadLocal(best_item, item_type));
-  body.AppendIfThen(body.ReadLocal(seen, boolean), std::move(answered));
+  const mir::ExprId any_seen = body.ReadLocal(seen, boolean);
+  body.AppendIfThen(any_seen, std::move(answered));
   return steps.Build(body.ReadLocal(found, result_type));
 }
 
@@ -396,10 +402,9 @@ auto LowerUnique(
                   unit, same, repeated, BuildMachineBool(unit, same, true));
               same.AppendStmt(
                   mir::BreakStmt{.target = in.break_leaves->Name()});
-              ib.AppendIfThen(
-                  BuildBitIdentity(
-                      unit, ib, ib.ReadLocal(held, key_type), earlier.element),
-                  std::move(same));
+              const mir::ExprId identical = BuildBitIdentity(
+                  unit, ib, ib.ReadLocal(held, key_type), earlier.element);
+              ib.AppendIfThen(identical, std::move(same));
               return {};
             });
         if (!searched) return std::unexpected(std::move(searched.error()));
@@ -411,9 +416,9 @@ auto LowerUnique(
         AppendPushBack(
             unit_lowerer, first, found, result_type,
             CollectedOf(first, key, entry, collected));
-        b.AppendIfThen(
-            BuildConditionNot(unit, b, b.ReadLocal(repeated, boolean)),
-            std::move(first));
+        const mir::ExprId unseen =
+            BuildConditionNot(unit, b, b.ReadLocal(repeated, boolean));
+        b.AppendIfThen(unseen, std::move(first));
         return {};
       });
   if (!walked) return std::unexpected(std::move(walked.error()));
@@ -475,10 +480,11 @@ auto LowerMap(
           AppendPushBack(unit_lowerer, b, mapped, result_type, value);
           return {};
         }
-        const AccessPath into = DescendInto(
-            AccessPath{
-                .owner = b.LocalPlace(mapped, result_type), .descent = {}},
-            StepToVisited(unit, b, entry.place, *mapped_element));
+        const mir::ExprId owner = b.LocalPlace(mapped, result_type);
+        const DescentStep step =
+            StepToVisited(unit, b, entry.place, *mapped_element);
+        const AccessPath into =
+            DescendInto(AccessPath{.owner = owner, .descent = {}}, step);
         b.AppendStmt(
             mir::ExprStmt{
                 .expr = b.exprs.Add(BuildStoreExpr(unit, b, into, value))});
@@ -526,11 +532,13 @@ auto BuildIsLess(
   const mir::LocalId first = is_less.AddParam(position);
   const mir::LocalId second = is_less.AddParam(position);
   const std::array compared{entry_type, entry_type};
+  const mir::ExprId lhs = entry_at(first);
+  const mir::ExprId rhs = entry_at(second);
+  const mir::TypeId answer_type = OneBitAnswerType(unit, compared);
   const mir::ExprId before = ReduceToCondition(
       unit, body,
-      body.exprs.Add(BuildMirBinaryExpr(
-          unit, body, comparison, entry_at(first), entry_at(second),
-          OneBitAnswerType(unit, compared))));
+      body.exprs.Add(
+          BuildMirBinaryExpr(unit, body, comparison, lhs, rhs, answer_type)));
   const mir::ExprId made = block.exprs.Add(is_less.Build(before));
   const mir::TypeId closure_type = block.exprs.Get(made).type;
   return BuildBorrowedClosure(

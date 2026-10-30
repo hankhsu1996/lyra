@@ -465,8 +465,9 @@ auto CodeGenValueTypes::StreamWriteBody(
       llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
   const value::IntegralShape stream =
       types_->RequiredIntegralShapeOf(unit_->functions.Get(method).result_type);
+  llvm::Type* const answers = b.getInt64Ty();
   b.CreateRet(ForwardToEntry(
-      b, RuntimeOp::kStreamWrite, b.getInt64Ty(),
+      b, RuntimeOp::kStreamWrite, answers,
       {owner_->UnitFunction(method), body->getArg(1), b.getInt64(stream.width),
        b.getInt1(stream.IsFourState()), body->getArg(2), body->getArg(3)}));
   return body;
@@ -481,8 +482,9 @@ auto CodeGenValueTypes::StreamReadBody(
       llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
   const value::IntegralShape stream =
       types_->RequiredIntegralShapeOf(ParamReferent(method, 0));
+  llvm::Type* const answers = b.getInt64Ty();
   b.CreateRet(ForwardToEntry(
-      b, RuntimeOp::kStreamBuild, b.getInt64Ty(),
+      b, RuntimeOp::kStreamBuild, answers,
       {owner_->UnitFunction(method), body->getArg(1), body->getArg(2),
        b.getInt64(stream.width), b.getInt1(stream.IsFourState()),
        body->getArg(4)}));
@@ -496,8 +498,9 @@ auto CodeGenValueTypes::RunWriteBody(
   llvm::Function* const body = DeclareBody(type, witness, stands_in_for);
   llvm::IRBuilder<> b(
       llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
+  llvm::Type* const answers = b.getInt64Ty();
   b.CreateRet(ForwardToEntry(
-      b, RuntimeOp::kRunWrite, b.getInt64Ty(),
+      b, RuntimeOp::kRunWrite, answers,
       {owner_->UnitFunction(method), body->getArg(1), body->getArg(2),
        body->getArg(3)}));
   return body;
@@ -510,8 +513,9 @@ auto CodeGenValueTypes::RunBuildBody(
   llvm::Function* const body = DeclareBody(type, witness, stands_in_for);
   llvm::IRBuilder<> b(
       llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
+  llvm::Type* const answers = b.getInt64Ty();
   b.CreateRet(ForwardToEntry(
-      b, RuntimeOp::kRunBuild, b.getInt64Ty(),
+      b, RuntimeOp::kRunBuild, answers,
       {owner_->UnitFunction(method), body->getArg(1), body->getArg(2),
        body->getArg(3), body->getArg(4)}));
   return body;
@@ -666,10 +670,10 @@ void CodeGenValueTypes::ForEachElement(
   b.SetInsertPoint(loop);
   llvm::PHINode* const position = b.CreatePHI(b.getInt64Ty(), 2);
   position->addIncoming(b.getInt64(0), before);
-  each(
-      b, b.CreateInBoundsGEP(
-             b.getInt8Ty(), value,
-             b.CreateMul(position, b.getInt64(laid.stride))));
+  llvm::Type* const byte = b.getInt8Ty();
+  llvm::Value* const offset = b.CreateMul(position, b.getInt64(laid.stride));
+  llvm::Value* const element = b.CreateInBoundsGEP(byte, value, offset);
+  each(b, element);
   llvm::Value* const next = b.CreateAdd(position, b.getInt64(1));
   position->addIncoming(next, b.GetInsertBlock());
   b.CreateCondBr(b.CreateICmpULT(next, b.getInt64(laid.count)), loop, done);
@@ -969,9 +973,10 @@ auto CodeGenValueTypes::GetAddrOfIntegralType(lir::TypeId type)
   using value::IntegralValueType;
   const std::size_t shape_at = IntegralValueType::ShapeStatedAt();
   ConstantRecord out(owner_->Module().getContext(), sizeof(IntegralValueType));
-  PlaceValueType(
-      out, owner_->LibraryData(kIntegralValueWitnessTableSymbol),
-      types_->LayoutOf(type), value::ValueTypeKind::kIntegral);
+  llvm::Constant* const witnesses =
+      owner_->LibraryData(kIntegralValueWitnessTableSymbol);
+  const support::ObjectLayout storage = types_->LayoutOf(type);
+  PlaceValueType(out, witnesses, storage, value::ValueTypeKind::kIntegral);
   out.PlaceInteger(
       {.offset = shape_at + offsetof(IntegralShape, width),
        .bytes = sizeof(IntegralShape::width)},

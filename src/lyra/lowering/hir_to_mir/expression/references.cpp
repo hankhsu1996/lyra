@@ -183,6 +183,7 @@ auto LowerIterationBindingRefExpr(
 auto LowerProceduralVarRefExpr(
     ProcessLowerer& process, const WalkFrame& frame, hir::ProceduralVarId var)
     -> mir::Expr {
+  const ProceduralVarBinding& var_binding = process.LookupProceduralVar(var);
   return std::visit(
       Overloaded{
           // Storage that outlives every activation (LRM 6.21) sits wherever the
@@ -211,7 +212,7 @@ auto LowerProceduralVarRefExpr(
                 frame.bindings->EnsureCarrier(ProceduralOrigin{.var = var});
             return frame.bindings->MakeBindingPlace(ref, *frame.current_block);
           }},
-      process.LookupProceduralVar(var));
+      var_binding);
 }
 
 // A variable of a unit's namespace (LRM 26.2) is reached without a `self`-based

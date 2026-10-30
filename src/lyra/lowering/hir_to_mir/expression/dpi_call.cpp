@@ -1519,9 +1519,10 @@ auto SynthesizeForeignExportEntry(
             [&](const InoutFormal& inout) {
               mir::Block changed;
               write_back(changed, k, inout.param_index);
-              const mir::ExprId same = BuildBitIdentity(
-                  unit, body, component_value(body, k),
-                  body.ReadLocal(inout.held_before, components[k].sv_type));
+              const mir::ExprId lhs = component_value(body, k);
+              const mir::ExprId rhs =
+                  body.ReadLocal(inout.held_before, components[k].sv_type);
+              const mir::ExprId same = BuildBitIdentity(unit, body, lhs, rhs);
               body.AppendStmt(
                   mir::IfStmt{
                       .condition = BuildConditionNot(unit, body, same),

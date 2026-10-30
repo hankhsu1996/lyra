@@ -56,9 +56,9 @@ auto BuildOrdinalPosition(
 auto BuildPositionSum(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId base,
     mir::ExprId offset) -> mir::ExprId {
-  return Arithmetic(
-      unit, block, mir::BinaryOp::kAdd, BuildOrdinalPosition(unit, block, base),
-      BuildOrdinalPosition(unit, block, offset));
+  const mir::ExprId lhs = BuildOrdinalPosition(unit, block, base);
+  const mir::ExprId rhs = BuildOrdinalPosition(unit, block, offset);
+  return Arithmetic(unit, block, mir::BinaryOp::kAdd, lhs, rhs);
 }
 
 auto PositionMapOf(const UnitLowerer& unit_lowerer, hir::TypeId receiver)
@@ -191,10 +191,10 @@ auto BuildSpanEnd(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId start,
     mir::ExprId count, bool up) -> mir::ExprId {
   const mir::ExprId from = BuildOrdinalPosition(unit, block, start);
-  const mir::ExprId extent = Arithmetic(
-      unit, block, mir::BinaryOp::kSub,
-      BuildOrdinalPosition(unit, block, count),
-      BuildConstantPosition(unit, block, 1));
+  const mir::ExprId lhs = BuildOrdinalPosition(unit, block, count);
+  const mir::ExprId rhs = BuildConstantPosition(unit, block, 1);
+  const mir::ExprId extent =
+      Arithmetic(unit, block, mir::BinaryOp::kSub, lhs, rhs);
   return Arithmetic(
       unit, block, up ? mir::BinaryOp::kAdd : mir::BinaryOp::kSub, from,
       extent);

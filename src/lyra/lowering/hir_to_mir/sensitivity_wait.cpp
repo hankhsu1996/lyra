@@ -69,8 +69,9 @@ auto BodyVariableSource(
     mir::CompilationUnit& unit = lowerer.Owner().Unit();
     const hir::ProceduralVarDecl& decl =
         lowerer.HirBody().procedural_vars.Get(var.var);
+    const WalkFrame block_frame = frame.WithBlock(&block);
     auto lowered = LowerHirPrimaryExprProc(
-        lowerer, frame.WithBlock(&block), hir::Primary{var},
+        lowerer, block_frame, hir::Primary{var},
         lowerer.Owner().TranslateType(decl.type));
     if (!lowered) {
       throw InternalError(
@@ -259,8 +260,9 @@ auto LeafPartOf(
             return WholePlace(unit, block);
           },
           [&](const hir::WatchedSelect& select) -> diag::Result<LeafPart> {
-            auto part = lowerer.LowerAccessPath(
-                lowerer.HirExprs().Get(select.prefix), frame.WithBlock(&block));
+            const hir::Expr& prefix = lowerer.HirExprs().Get(select.prefix);
+            const WalkFrame block_frame = frame.WithBlock(&block);
+            auto part = lowerer.LowerAccessPath(prefix, block_frame);
             if (!part) return std::unexpected(std::move(part.error()));
             NamedPart named = PartNamedBy(unit, block, *part);
             const mir::ExprId steps =
@@ -412,8 +414,8 @@ auto Reported(
   const mir::LocalId report = *frame.reports_reached_to;
   mir::Block reporting;
   state(reporting, report, named_in(reporting));
-  block.AppendIfThen(
-      BuildReportHanded(unit, block, report), std::move(reporting));
+  const mir::ExprId handed = BuildReportHanded(unit, block, report);
+  block.AppendIfThen(handed, std::move(reporting));
   return named_in(block);
 }
 
@@ -422,14 +424,14 @@ auto Reported(
 auto BuildReportHanded(
     const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report)
     -> mir::ExprId {
+  const mir::ExprId lhs =
+      block.ReadLocal(report, unit.builtins.read_report_ptr);
+  const mir::ExprId rhs = block.exprs.Add(
+      mir::Expr{
+          .data = mir::NullLiteral{}, .type = unit.builtins.read_report_ptr});
   return block.exprs.Add(
       mir::MakeBinary(
-          unit, block, mir::BinaryOp::kInequality,
-          block.ReadLocal(report, unit.builtins.read_report_ptr),
-          block.exprs.Add(
-              mir::Expr{
-                  .data = mir::NullLiteral{},
-                  .type = unit.builtins.read_report_ptr}),
+          unit, block, mir::BinaryOp::kInequality, lhs, rhs,
           unit.builtins.machine_bool));
 }
 
@@ -525,12 +527,12 @@ auto DeclareObservation(
     const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
     support::BuiltinFn entry, std::vector<mir::ExprId> arguments)
     -> mir::LocalId {
+  const WalkFrame block_frame = frame.WithBlock(&block);
   return DeclareLocal(
-      frame.WithBlock(&block),
-      block.exprs.Add(
-          mir::MakeCallExpr(
-              mir::Direct{.target = entry}, std::move(arguments),
-              unit.builtins.observation)));
+      block_frame, block.exprs.Add(
+                       mir::MakeCallExpr(
+                           mir::Direct{.target = entry}, std::move(arguments),
+                           unit.builtins.observation)));
 }
 
 auto WaitStorageBlock(

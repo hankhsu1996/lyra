@@ -98,9 +98,11 @@ auto TakeoverPart(
     if (!unit.types.Get(within).Is<mir::UnpackedArrayType>()) {
       return dynamic();
     }
+    const mir::ExprId lhs = BuildToInt64Call(unit, block, start);
+    const mir::ExprId rhs =
+        mir::BuildMachineCount(unit, block, PositionCountOf(unit, element));
     return mir::BuildMachineIntBinary(
-        unit, block, mir::BinaryOp::kMul, BuildToInt64Call(unit, block, start),
-        mir::BuildMachineCount(unit, block, PositionCountOf(unit, element)));
+        unit, block, mir::BinaryOp::kMul, lhs, rhs);
   };
   mir::TypeId within = OwnerValueType(unit, block, place.owner);
   mir::ExprId first = mir::BuildMachineIntLiteral(unit, block, 0);
@@ -256,14 +258,16 @@ auto LowerProceduralContinuousAssignStmt(
   owned.reserve(shares->size());
   for (std::size_t i = 0; i < shares->size(); ++i) {
     const Share& share = (*shares)[i];
+    const mir::ExprId level = LevelOperand(unit, driving, pca.level);
+    const mir::ExprId generation =
+        driving.ReadLocal(generations[i], builtins.machine_int64);
+    const mir::ExprId value = DrivenValue(unit, pass, share);
     owned.push_back(pass.DeclareLocal(
         builtins.machine_bool,
         driving.exprs.Add(
             mir::MakeDriveTakeoverCallExpr(
-                TakeoverHolder(share.place),
-                LevelOperand(unit, driving, pca.level),
-                driving.ReadLocal(generations[i], builtins.machine_int64),
-                DrivenValue(unit, pass, share), builtins.machine_bool))));
+                TakeoverHolder(share.place), level, generation, value,
+                builtins.machine_bool))));
   }
   const auto read_owned = [&](mir::LocalId local) {
     return driving.ReadLocal(local, builtins.machine_bool);

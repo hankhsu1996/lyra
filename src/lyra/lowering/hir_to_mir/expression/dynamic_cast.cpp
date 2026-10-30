@@ -155,14 +155,15 @@ auto LowerHirDynamicCastExpr(
         const mir::ExprId is_of_class =
             ReduceToCondition(unit, body, read_value(body));
         mir::Block belongs;
+        const mir::ExprId object = BuildObjectDeref(
+            unit, belongs,
+            BuildObjectPointer(unit, belongs, read_value(belongs)));
+        const mir::FieldId slot =
+            owner.DeclaringInstanceFieldOf(destination_class);
         const mir::ExprId kept = belongs.Read(belongs.exprs.Add(
             mir::MakeFieldAccessExpr(
-                BuildObjectDeref(
-                    unit, belongs,
-                    BuildObjectPointer(unit, belongs, read_value(belongs))),
-                mir::ClassFieldTarget{
-                    .owner = destination_class,
-                    .slot = owner.DeclaringInstanceFieldOf(destination_class)},
+                object,
+                mir::ClassFieldTarget{.owner = destination_class, .slot = slot},
                 unit.builtins.scope_ptr)));
         const mir::ExprId expected = BuildImplicitInstanceArgument(
             lowerer, steps.Frame().WithBlock(&belongs),

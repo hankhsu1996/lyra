@@ -149,10 +149,11 @@ void CollectPatternTests(
                   }
                   const mir::ExprId constant =
                       block.exprs.Add(*std::move(constant_or));
+                  const mir::ExprId subject_value = Read(owner, block, subject);
                   return BuildCaseComparison(
                       unit, block, keyword,
                       AtType(
-                          unit, block, Read(owner, block, subject),
+                          unit, block, subject_value,
                           block.exprs.Get(constant).type),
                       constant);
                 });
@@ -214,13 +215,13 @@ void BindPatternIdentifiers(
                     .target = local,
                     .init = declared.exprs.Add(
                         BuildDefaultValueExpr(owner.Unit(), declared, type))});
+            const mir::ExprId target = assigned.LocalPlace(local, type);
+            const mir::ExprId value = Read(owner, assigned, subject);
             assigned.AppendStmt(
                 mir::ExprStmt{
                     .expr = assigned.exprs.Add(
                         mir::MakeAssignExpr(
-                            owner.Unit().builtins,
-                            assigned.LocalPlace(local, type),
-                            Read(owner, assigned, subject)))});
+                            owner.Unit().builtins, target, value))});
           },
           [&](const hir::TaggedPattern& tagged) {
             if (!tagged.value_pattern.has_value()) return;
@@ -289,7 +290,8 @@ auto PatternPredicate(
         BindPatternIdentifiers(
             lowerer, declared_in, steps.Frame().WithBlock(&bound), whole,
             pattern);
-        body.AppendIfThen(read_matched(), std::move(bound));
+        const mir::ExprId holds = read_matched();
+        body.AppendIfThen(holds, std::move(bound));
         return at.current_block->exprs.Add(
             steps.Build(ConditionAsBit(unit, body, read_matched())));
       }};

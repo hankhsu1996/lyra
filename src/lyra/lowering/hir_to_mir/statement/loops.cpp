@@ -212,10 +212,10 @@ auto BuildIndexLoopStmt(
           unit, block, goes_on_while, read(), bound, unit.builtins.bit1));
   const mir::ExprId cond_id = ReduceToCondition(unit, block, goes_on);
 
+  const mir::ExprId lhs = read();
+  const mir::ExprId rhs = mir::BuildIntLiteral(unit, block, 1);
   const mir::ExprId next = block.exprs.Add(
-      mir::MakeBinary(
-          unit, block, advance, read(), mir::BuildIntLiteral(unit, block, 1),
-          unit.builtins.int_type));
+      mir::MakeBinary(unit, block, advance, lhs, rhs, unit.builtins.int_type));
 
   std::vector<mir::ForInit> for_init;
   for_init.push_back(std::move(init));
@@ -302,11 +302,12 @@ auto BuildPositionWalkStmt(
       return BuildCountingLoopStmt(
           unit, frame, block, count, position, body_scope, break_label);
     case WalkOrder::kFromLast: {
+      const mir::ExprId lhs = SampledCount(unit, frame, block, count);
+      const mir::ExprId rhs = mir::BuildIntLiteral(unit, block, 1);
       const mir::ExprId last = block.exprs.Add(
           mir::MakeBinary(
-              unit, block, mir::BinaryOp::kSub,
-              SampledCount(unit, frame, block, count),
-              mir::BuildIntLiteral(unit, block, 1), unit.builtins.int_type));
+              unit, block, mir::BinaryOp::kSub, lhs, rhs,
+              unit.builtins.int_type));
       return BuildDeclaredIndexLoopStmt(
           unit, block, position, last, mir::BinaryOp::kGreaterEqual,
           mir::BuildIntLiteral(unit, block, 0), mir::BinaryOp::kSub, body_scope,
@@ -332,11 +333,12 @@ auto BuildRangeLoopStmt(
     std::int64_t left, std::int64_t right, mir::BlockId body_scope,
     std::optional<mir::LabelId> break_label) -> mir::Stmt {
   const bool ascending = left <= right;
+  const mir::ExprId first = mir::BuildIntLiteral(unit, block, left);
+  const mir::ExprId bound = mir::BuildIntLiteral(unit, block, right);
   return BuildStoredIndexLoopStmt(
-      unit, block, index, mir::BuildIntLiteral(unit, block, left),
+      unit, block, index, first,
       ascending ? mir::BinaryOp::kLessEqual : mir::BinaryOp::kGreaterEqual,
-      mir::BuildIntLiteral(unit, block, right),
-      ascending ? mir::BinaryOp::kAdd : mir::BinaryOp::kSub, body_scope,
+      bound, ascending ? mir::BinaryOp::kAdd : mir::BinaryOp::kSub, body_scope,
       break_label);
 }
 

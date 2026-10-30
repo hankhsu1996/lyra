@@ -22,13 +22,13 @@ void AppendPushBack(
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::TypeId element =
       unit.types.Get(queue_type).Get<mir::QueueType>().element_type;
+  const mir::ExprId receiver = block.LocalPlace(queue, queue_type);
+  const mir::ExprId pushed = ConvertToType(unit, block, value, element);
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(BuildBuiltinMethodCall(
-              unit_lowerer, block, support::BuiltinFn::kPushBack,
-              block.LocalPlace(queue, queue_type),
-              {ConvertToType(unit, block, value, element)},
-              unit.builtins.void_type))});
+              unit_lowerer, block, support::BuiltinFn::kPushBack, receiver,
+              {pushed}, unit.builtins.void_type))});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

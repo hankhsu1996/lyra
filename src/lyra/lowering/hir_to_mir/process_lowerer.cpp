@@ -712,8 +712,8 @@ auto ProcessLowerer::BuildConstructionReport(
   mir::Block asked;
   auto reported = ReportCellsRead(frame.WithBlock(&asked), reads, report);
   if (!reported) return std::unexpected(std::move(reported.error()));
-  block.AppendIfThen(
-      BuildReportHanded(owner_->Unit(), block, report), std::move(asked));
+  const mir::ExprId handed = BuildReportHanded(owner_->Unit(), block, report);
+  block.AppendIfThen(handed, std::move(asked));
   return {};
 }
 
@@ -741,13 +741,12 @@ auto ProcessLowerer::BuildRecordingPrologue(
     const mir::ExprId entered_at = BuildReportCall(
         unit, collecting, report, support::BuiltinFn::kReadReportEnter, {},
         unit.builtins.machine_int64);
-    collecting.AppendIfThen(
-        collecting.exprs.Add(
-            mir::MakeBinary(
-                unit, collecting, mir::BinaryOp::kInequality, entered_at,
-                mir::BuildMachineIntLiteral(unit, collecting, 0),
-                unit.builtins.machine_bool)),
-        std::move(entered));
+    const mir::ExprId enters = collecting.exprs.Add(
+        mir::MakeBinary(
+            unit, collecting, mir::BinaryOp::kInequality, entered_at,
+            mir::BuildMachineIntLiteral(unit, collecting, 0),
+            unit.builtins.machine_bool));
+    collecting.AppendIfThen(enters, std::move(entered));
     collecting.AppendStmt(
         mir::ReturnStmt{
             .value = BuildReturnPayload(
@@ -755,13 +754,12 @@ auto ProcessLowerer::BuildRecordingPrologue(
     const mir::ExprId runs_the_body = BuildReportCall(
         unit, block, report, support::BuiltinFn::kReadReportRunsTheBody, {},
         unit.builtins.machine_int64);
-    block.AppendIfThen(
-        block.exprs.Add(
-            mir::MakeBinary(
-                unit, block, mir::BinaryOp::kEquality, runs_the_body,
-                mir::BuildMachineIntLiteral(unit, block, 0),
-                unit.builtins.machine_bool)),
-        std::move(collecting));
+    const mir::ExprId collects = block.exprs.Add(
+        mir::MakeBinary(
+            unit, block, mir::BinaryOp::kEquality, runs_the_body,
+            mir::BuildMachineIntLiteral(unit, block, 0),
+            unit.builtins.machine_bool));
+    block.AppendIfThen(collects, std::move(collecting));
   }
 
   // A waited evaluation runs the function, since it needs its value, and the
@@ -799,8 +797,8 @@ void ProcessLowerer::ForwardToRecording(
   } else {
     forwarding.AppendStmt(mir::ReturnStmt{.value = call});
   }
-  block.AppendIfThen(
-      BuildReportHanded(unit, block, report), std::move(forwarding));
+  const mir::ExprId handed = BuildReportHanded(unit, block, report);
+  block.AppendIfThen(handed, std::move(forwarding));
 }
 
 auto ProcessLowerer::BuildReturnPayload(

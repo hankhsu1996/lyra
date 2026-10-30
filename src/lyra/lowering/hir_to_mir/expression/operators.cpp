@@ -256,8 +256,9 @@ auto BuildMirBinaryExpr(
     return block.exprs.Get(ConvertToType(unit, block, answer, result_type));
   };
   const auto apply = [&](mir::BinaryOp value_op) {
-    return mir::MakeBinary(
-        unit, block, value_op, lhs_value(), rhs_value(), result_type);
+    const mir::ExprId lhs = lhs_value();
+    const mir::ExprId rhs = rhs_value();
+    return mir::MakeBinary(unit, block, value_op, lhs, rhs, result_type);
   };
   // The entry that performs an operator a target cannot apply to two values of
   // one type. Three reasons put one here: its operands are not two values of
@@ -266,17 +267,19 @@ auto BuildMirBinaryExpr(
   // x and z as themselves, LRM 11.4.6); or it composes several operations into
   // one (power, xnor).
   const auto library = [&](support::BuiltinFn entry) {
-    return mir::MakeBuiltinCall(
-        unit, block, entry, lhs_value(), {rhs_value()}, result_type);
+    const mir::ExprId lhs = lhs_value();
+    const mir::ExprId rhs = rhs_value();
+    return mir::MakeBuiltinCall(unit, block, entry, lhs, {rhs}, result_type);
   };
   // LRM 11.4.6 `==?`: the answer can be unknown exactly where an operand can,
   // so it is stated at the one-bit type of the operands' own state domain, and
   // a context wanting another representation takes the conversion.
   const auto wildcard_equality = [&] {
+    const mir::ExprId lhs = lhs_value();
+    const mir::ExprId rhs = rhs_value();
     return block.exprs.Add(
         mir::MakeBuiltinCall(
-            unit, block, support::BuiltinFn::kWildcardEquals, lhs_value(),
-            {rhs_value()},
+            unit, block, support::BuiltinFn::kWildcardEquals, lhs, {rhs},
             OneBitAnswerType(unit, std::array{lhs_type, rhs_type})));
   };
 
@@ -352,13 +355,14 @@ auto BuildMirBinaryExpr(
       return library(support::BuiltinFn::kBitwiseXnor);
     // LRM 11.4.7 evaluates both operands of `<->` exactly once and compares
     // their truths, and the answer can be unknown exactly where an operand can.
-    case hir::BinaryOp::kLogicalEquivalence:
+    case hir::BinaryOp::kLogicalEquivalence: {
+      const mir::ExprId lhs = BuildLogicalOperand(unit, block, lhs_value());
+      const mir::ExprId rhs = BuildLogicalOperand(unit, block, rhs_value());
       return at_result_type(block.exprs.Add(
           mir::MakeBuiltinCall(
-              unit, block, support::BuiltinFn::kLogicalEquivalence,
-              BuildLogicalOperand(unit, block, lhs_value()),
-              {BuildLogicalOperand(unit, block, rhs_value())},
+              unit, block, support::BuiltinFn::kLogicalEquivalence, lhs, {rhs},
               OneBitAnswerType(unit, std::array{lhs_type, rhs_type}))));
+    }
     case hir::BinaryOp::kLogicalAnd:
     case hir::BinaryOp::kLogicalOr:
     case hir::BinaryOp::kLogicalImplication:

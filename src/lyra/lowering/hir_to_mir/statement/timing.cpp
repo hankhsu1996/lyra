@@ -100,10 +100,10 @@ auto BuildEventOccurred(
     support::EventEdge edge, mir::LocalId before, mir::LocalId now,
     mir::TypeId type) -> mir::ExprId {
   const auto is = [&](mir::LocalId bit, bool one) {
-    return BuildBitIdentity(
-        unit, block, block.ReadLocal(bit, type),
-        ConvertToType(
-            unit, block, mir::BuildBit1Literal(unit, block, one), type));
+    const mir::ExprId read = block.ReadLocal(bit, type);
+    const mir::ExprId literal = ConvertToType(
+        unit, block, mir::BuildBit1Literal(unit, block, one), type);
+    return BuildBitIdentity(unit, block, read, literal);
   };
   const auto leaves = [&](bool one) {
     const std::array left{
@@ -115,12 +115,12 @@ auto BuildEventOccurred(
     return AnyHolds(unit, block, either);
   };
   switch (edge) {
-    case support::EventEdge::kAnyChange:
+    case support::EventEdge::kAnyChange: {
+      const mir::ExprId was = block.ReadLocal(before, type);
+      const mir::ExprId is_now = block.ReadLocal(now, type);
       return BuildConditionNot(
-          unit, block,
-          BuildBitIdentity(
-              unit, block, block.ReadLocal(before, type),
-              block.ReadLocal(now, type)));
+          unit, block, BuildBitIdentity(unit, block, was, is_now));
+    }
     case support::EventEdge::kPosedge:
       return leaves(false);
     case support::EventEdge::kNegedge:
@@ -279,15 +279,16 @@ auto ReadingOfValueChange(
         .occurred_between =
             [unit = &unit, weak, type](
                 mir::Block& at, mir::LocalId before, mir::LocalId now) {
+              const mir::ExprId kept = at.ReadLocal(before, weak);
+              const mir::ExprId current = at.ReadLocal(now, type);
               return BuildConditionNot(
                   *unit, at,
                   at.exprs.Add(
                       mir::MakeCallExpr(
                           mir::Direct{
                               .target = support::BuiltinFn::kWeakRefersTo,
-                              .receiver = at.ReadLocal(before, weak)},
-                          {at.ReadLocal(now, type)},
-                          unit->builtins.machine_bool)));
+                              .receiver = kept},
+                          {current}, unit->builtins.machine_bool)));
             },
     };
   }
@@ -322,24 +323,27 @@ auto ReadingOfHeldEvent(
       block.ReadLocal(handle, unit.builtins.event));
   mir::Block& body = closure.Body();
   const mir::TypeId count = unit.builtins.machine_int64;
+  const mir::ExprId receiver =
+      body.exprs.Add(closure.Bindings().MakeBindingPlace(held, body));
+  const mir::ExprId report = BuildReportHandedOn(unit, evaluation);
   return EntryReading{
       .watches = HeldEvent{.handle = handle},
       .now = body.exprs.Add(
           mir::MakeCallExpr(
               mir::Direct{
                   .target = support::BuiltinFn::kEventOccurrences,
-                  .receiver = body.exprs.Add(
-                      closure.Bindings().MakeBindingPlace(held, body))},
-              {BuildReportHandedOn(unit, evaluation)}, count)),
+                  .receiver = receiver},
+              {report}, count)),
       .kept_first = mir::BuildMachineIntLiteral(unit, block, 0),
       .kept_of = kKeepsTheValue,
       .occurred_between =
           [unit = &unit, count](
               mir::Block& at, mir::LocalId before, mir::LocalId now) {
+            const mir::ExprId lhs = at.ReadLocal(now, count);
+            const mir::ExprId rhs = at.ReadLocal(before, count);
             return at.exprs.Add(
                 mir::MakeBinary(
-                    *unit, at, mir::BinaryOp::kInequality,
-                    at.ReadLocal(now, count), at.ReadLocal(before, count),
+                    *unit, at, mir::BinaryOp::kInequality, lhs, rhs,
                     unit->builtins.machine_bool));
           },
   };
@@ -416,14 +420,14 @@ auto ArmOccurrence(
                       .else_value =
                           reading->occurred_between(body, before, now)},
               .type = unit.builtins.machine_bool}));
+  const mir::ExprId kept_place =
+      body.exprs.Add(closure.Bindings().MakeBindingPlace(previous, body));
+  const mir::ExprId kept_value =
+      reading->kept_of(body, body.ReadLocal(now, watched));
   body.AppendStmt(
       mir::ExprStmt{
           .expr = body.exprs.Add(
-              mir::MakeAssignExpr(
-                  unit.builtins,
-                  body.exprs.Add(
-                      closure.Bindings().MakeBindingPlace(previous, body)),
-                  reading->kept_of(body, body.ReadLocal(now, watched))))});
+              mir::MakeAssignExpr(unit.builtins, kept_place, kept_value))});
 
   std::vector<mir::ExprId> arguments{BuildKeptClosure(
       unit, block,

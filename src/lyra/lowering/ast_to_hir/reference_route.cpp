@@ -1441,9 +1441,10 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
         unit_.scope_classes.Get(on->scope_class)
             .FindMember(prop.name, unit_.classes.PathOf(*owner));
     if (!member.has_value()) return refuse();
+    hir::ScopeRoutes& routes = RoutesOf(frame.Current());
     return hir::ValueTarget{hir::RoutedValueRef{
         .id = MapOrGetRoute(
-            RoutesOf(frame.Current()).values,
+            routes.values,
             hir::ValueRoute{
                 .base = std::move(route->base),
                 .steps = std::move(route->steps),
@@ -1500,10 +1501,11 @@ auto UnitLowerer::WholeMembersAlong(
   std::vector<hir::SensitivityEntry> watched;
   watched.reserve(members.size());
   for (const hir::PublishedMemberId id : members) {
+    const ScopeFrameId owner_frame = frame.Current();
     watched.push_back(
         hir::SensitivityEntry{
             .cell = RoutedMemberCell(
-                frame.Current(),
+                owner_frame,
                 hir::ValueRoute{
                     .base = route.base,
                     .steps = route.steps,
@@ -1547,6 +1549,9 @@ auto UnitLowerer::PublishedClockingEntries(
   // What the scope evaluates for the block, asked of the object the route
   // reaches.
   const auto evaluated = [&](hir::PublishedCallableId callable) {
+    const ScopeFrameId owner_frame = frame.Current();
+    const hir::RoutedObjectRef receiver =
+        MakeRoutedObjectRef(owner_frame, route, ScopeClassTypeOf(scope_class));
     return frame.Exprs().Add(
         hir::Expr{
             .type = declaring.callables.Get(callable).result_type,
@@ -1554,9 +1559,7 @@ auto UnitLowerer::PublishedClockingEntries(
                 hir::CallExpr{
                     .callee =
                         hir::PublishedScopeMethodRef{
-                            .receiver = MakeRoutedObjectRef(
-                                frame.Current(), route,
-                                ScopeClassTypeOf(scope_class)),
+                            .receiver = receiver,
                             .scope_class = scope_class,
                             .callable = callable},
                     .arguments = {}},
