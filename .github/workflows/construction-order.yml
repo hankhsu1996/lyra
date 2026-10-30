@@ -57,7 +57,7 @@ jobs:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-            printf 'build --config=dev\nbuild --remote_header=x-buildbuddy-api-key=%s\n' \
+            printf 'build --config=dev\nbuild --remote_header=x-buildbuddy-api-key=%s\nbuild --remote_download_regex=.*\\.(h|hpp|inc|def)$\n' \
               "$BUILDBUDDY_API_KEY" > .bazelrc.user
           fi
           bazel build //:lyra \
