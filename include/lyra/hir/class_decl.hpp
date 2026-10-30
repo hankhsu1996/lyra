@@ -69,20 +69,6 @@ struct BaseCall {
   auto operator==(const BaseCall&) const -> bool = default;
 };
 
-// One behavior of an interface class a class answers (LRM 8.26.2), and the
-// behavior of the class's own lineage that answers it. The front end requires
-// the implementation to be virtual, so it is a behavior of the lineage, and a
-// class extending this one that overrides that behavior answers the
-// interface's with its own body too. Both are named the way an override names a
-// behavior. Nothing answers it where the class is abstract and leaves the
-// implementation to a class extending it.
-struct ConformingBehavior {
-  ClassMethodTarget interface_behavior;
-  std::optional<ClassMethodTarget> answered_by;
-
-  auto operator==(const ConformingBehavior&) const -> bool = default;
-};
-
 // The bodies of a class this unit declares (LRM 8): what lowering the class
 // compiles, beside what the class declares, which every unit reading it asks
 // about and which the class's declaration states -- what it extends and
@@ -99,12 +85,6 @@ struct ConformingBehavior {
 // declaration gives it, so the declaration and the bodies are read with one
 // coordinate: a property's is where the class places it, and a method's is its
 // position among the methods the class declares.
-//
-// `conforming` states, for every behavior of every interface class a value of
-// this class is also a value of (LRM 8.26.5) -- the ones it names, the ones
-// those extend, and the ones the class it extends is (LRM 8.26) -- which
-// behavior of this class's lineage answers it. An interface class answers
-// nothing and states none.
 //
 // `constructor` is the class's `new` (LRM 8.7). Every regular class has
 // one: the user-written `function new` when the source declares it,
@@ -152,7 +132,6 @@ struct ConformingBehavior {
 // processes', so a body reaches its scope tree the same way wherever it was
 // declared.
 struct ClassDecl {
-  std::vector<ConformingBehavior> conforming;
   base::Registry<SubroutineDecl, MethodId> methods;
   SubroutineDecl constructor;
   BaseCall base_call;

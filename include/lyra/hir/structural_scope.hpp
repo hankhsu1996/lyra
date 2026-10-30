@@ -16,9 +16,11 @@
 #include "lyra/base/registry.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/base/translation.hpp"
+#include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/continuous_assign.hpp"
+#include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/expr.hpp"
@@ -33,7 +35,7 @@
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/published_scope_ref.hpp"
 #include "lyra/hir/sampled_history.hpp"
-#include "lyra/hir/scope_class.hpp"
+#include "lyra/hir/scope_class_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -621,6 +623,28 @@ struct Generate {
   auto operator==(const Generate&) const -> bool = default;
 };
 
+// A class a scope replicates, with the code this scope compiles for it. What
+// the class declares is the unit's, one answer wherever its text was
+// elaborated, since that is what every referrer compiles against; what its
+// operations do is the code of the scope declaring it, compiled from that
+// scope's own copy of the text (LRM 8.25), so two bodies of one scope differing
+// only there are two bodies.
+struct ReplicatedClass {
+  ClassId id;
+  ClassDecl code;
+
+  auto operator==(const ReplicatedClass&) const -> bool = default;
+};
+
+// A covergroup a scope replicates, with the code this scope compiles for it,
+// as a class is.
+struct ReplicatedCovergroup {
+  CovergroupId id;
+  CovergroupDecl code;
+
+  auto operator==(const ReplicatedCovergroup&) const -> bool = default;
+};
+
 struct StructuralScope {
   // The label of a generate child as a hierarchical name writes it (LRM 23.6,
   // 27.6), escaped where such a name has to escape it; empty for a block the
@@ -675,13 +699,16 @@ struct StructuralScope {
   // a generic on such a type (LRM 8.25). An object of one belongs to the one
   // instance it was created in and its bodies reach that instance; stating the
   // relation on the scope is what lets the instance be supplied where it is
-  // known. Every class a unit holds is named by exactly one scope, the
-  // namespace unit's root scope included, so nothing is reached by elimination.
-  std::vector<ClassId> replicated_classes;
+  // known. Every class declared in a scope the body's construction built is
+  // named by one of its scopes, the namespace unit's root scope included, with
+  // the code that body compiled; one declared in a block the construction did
+  // not build (LRM 27.5) is named by none of them and has no code in the body.
+  std::vector<ReplicatedClass> replicated_classes;
   // The covergroups that are types of this scope's instance in the same sense
   // (LRM 19.3), a class's embedded ones among them (LRM 19.4): each is made
-  // into a class replicated with this scope.
-  std::vector<CovergroupId> replicated_covergroups;
+  // into a class replicated with this scope, and one declared in a block the
+  // construction did not build is named by none.
+  std::vector<ReplicatedCovergroup> replicated_covergroups;
   std::vector<ForeignExportDecl> foreign_exports;
   // Every scope's identity is minted before any body is lowered, so a `disable`
   // naming one (LRM 9.6.2) -- possibly from another process lowered first --
@@ -711,5 +738,31 @@ struct BlockBody {
 
   auto operator==(const BlockBody&) const -> bool = default;
 };
+
+// The code `scope` compiles for the class `id` it replicates.
+[[nodiscard]] inline auto CodeOf(const StructuralScope& scope, ClassId id)
+    -> const ClassDecl& {
+  const auto found =
+      std::ranges::find(scope.replicated_classes, id, &ReplicatedClass::id);
+  if (found == scope.replicated_classes.end()) {
+    throw InternalError(
+        "hir::CodeOf: the scope replicates no such class -- please report "
+        "this as a bug");
+  }
+  return found->code;
+}
+
+// The code `scope` compiles for the covergroup `id` it replicates.
+[[nodiscard]] inline auto CodeOf(const StructuralScope& scope, CovergroupId id)
+    -> const CovergroupDecl& {
+  const auto found = std::ranges::find(
+      scope.replicated_covergroups, id, &ReplicatedCovergroup::id);
+  if (found == scope.replicated_covergroups.end()) {
+    throw InternalError(
+        "hir::CodeOf: the scope replicates no such covergroup -- please "
+        "report this as a bug");
+  }
+  return found->code;
+}
 
 }  // namespace lyra::hir

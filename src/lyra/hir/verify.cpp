@@ -1178,8 +1178,10 @@ void VerifySubroutine(
 }
 
 void VerifyClass(
-    const CompilationUnit& unit, ClassId id, std::vector<std::string>& lines) {
-  const ClassDecl& cls = unit.classes.Get(id);
+    const CompilationUnit& unit, const ReplicatedClass& replicated,
+    std::vector<std::string>& lines) {
+  const ClassId id = replicated.id;
+  const ClassDecl& cls = replicated.code;
   const auto owner = [&] {
     return std::format(
         "class '{}' in unit '{}'", support::DisplayOf(unit.classes.PathOf(id)),
@@ -1312,9 +1314,10 @@ void ReachCross(const Cross& cross, const auto& reach) {
 // A covergroup holds every expression it evaluates in its own body, outside any
 // statement: what it samples, its bins, its options and its sampling event.
 void VerifyCovergroup(
-    const CompilationUnit& unit, CovergroupId id,
+    const CompilationUnit& unit, const ReplicatedCovergroup& replicated,
     std::vector<std::string>& lines) {
-  const CovergroupDecl& group = unit.covergroups.Get(id);
+  const CovergroupId id = replicated.id;
+  const CovergroupDecl& group = replicated.code;
   VerifyBody(
       group.body, {},
       [&](ArenaReaches& reaches) {
@@ -1774,11 +1777,18 @@ void Verify(
   VerifyConstruction(
       unit, unit.root_scope, construction,
       std::format("the root scope of unit '{}'", unit.name), lines);
-  for (const ClassId id : unit.classes.OwnIds()) {
-    VerifyClass(unit, id, lines);
-  }
-  for (const CovergroupId id : unit.covergroups.OwnIds()) {
-    VerifyCovergroup(unit, id, lines);
+  const auto verify_replicated = [&](const StructuralScope& scope) {
+    for (const ReplicatedClass& cls : scope.replicated_classes) {
+      VerifyClass(unit, cls, lines);
+    }
+    for (const ReplicatedCovergroup& covergroup :
+         scope.replicated_covergroups) {
+      VerifyCovergroup(unit, covergroup, lines);
+    }
+  };
+  verify_replicated(unit.root_scope);
+  for (const BlockBodyId id : unit.block_bodies.Ids()) {
+    verify_replicated(unit.block_bodies.Get(id).scope);
   }
   std::string report;
   for (const std::string& line : lines) {

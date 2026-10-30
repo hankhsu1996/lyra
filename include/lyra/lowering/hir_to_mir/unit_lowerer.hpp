@@ -1,5 +1,6 @@
 #pragma once
 
+#include <compare>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -7,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -188,14 +190,52 @@ struct PublishedSubroutine {
   mir::CallableCode prototype;
 };
 
+// Which of a class's operations some code is: its constructor (LRM 8.7), or
+// the callable the class took for it at a position.
+struct ClassConstructorCode {
+  auto operator<=>(const ClassConstructorCode&) const
+      -> std::strong_ordering = default;
+};
+struct ClassCallableCode {
+  mir::CallableId callable;
+
+  auto operator<=>(const ClassCallableCode&) const
+      -> std::strong_ordering = default;
+};
+using ClassCodePoint = std::variant<ClassConstructorCode, ClassCallableCode>;
+
+// The virtual method a scope's published class introduces for one operation of
+// a class the scope declares, or of the class a covergroup it declares is
+// written as (LRM 6.22, 8.25, 19.3). What the operation does is the
+// code of the body realizing the scope, so each body overrides the method with
+// the code it compiled, and the class reaches it by dispatching on the
+// instance its object belongs to. Which methods there are follows from the
+// class's declaration alone, so every body of the unit states them alike.
+struct ClassCodeSlot {
+  mir::ClassId cls;
+  ClassCodePoint point;
+  mir::CallableId slot;
+  // What the method is called, which names it where it is dispatched: the
+  // class's path as an identity, since two classes of one scope may read alike
+  // (LRM 5.6.1), and the operation, apart by a space, which no identifier
+  // holds, so no subroutine the scope published shares it.
+  std::string name;
+  // What the operation's code takes and answers, read off the declaration;
+  // the method takes the scope's object, then that.
+  mir::CallableCode operation;
+};
+
 // A class this unit published of its scopes. Several scopes may be published
 // as one class -- the bodies a generate block came out as at its several
 // places (LRM 27.3) -- so what the signature fixes is held once: where it
 // placed what was published, and each subroutine it published, in the order
-// the signature gave them.
+// the signature gave them; then what each class the scopes declare is given
+// alike in every body -- the cells of the static properties the scope does not
+// publish, and a method per operation.
 struct PublishedScope {
   ScopeClassLayout layout;
   base::Translation<hir::PublishedCallableId, PublishedSubroutine> subroutines;
+  std::vector<ClassCodeSlot> class_code;
 };
 
 // Lowers one HIR compilation unit into one MIR compilation unit, holding that
@@ -307,6 +347,29 @@ class UnitLowerer {
     return published_scopes_;
   }
 
+  // The class the unit published of its scope `scope`, whichever blocks this
+  // body's construction built.
+  [[nodiscard]] auto PublishedClassOf(const support::DefPath& scope) const
+      -> mir::ClassId;
+
+  // The scope whose instance the class the covergroup `covergroup` of this
+  // unit is written as belongs to (LRM 6.22, 19.3): that of the class
+  // embedding it (LRM 19.4), or else the scope declaring it; nothing where the
+  // class embedding it belongs to no instance.
+  [[nodiscard]] auto InstanceScopeOf(hir::CovergroupId covergroup) const
+      -> std::optional<support::DefPath>;
+
+  // The virtual method the class `published` introduces for the code at
+  // `point` of the class `cls` its scopes declare.
+  [[nodiscard]] auto ClassCodeSlotOf(
+      mir::ClassId published, mir::ClassId cls, ClassCodePoint point) const
+      -> mir::CallableId;
+
+  // What the code of that operation takes and answers.
+  [[nodiscard]] auto ClassCodePrototypeOf(
+      mir::ClassId published, mir::ClassId cls, ClassCodePoint point) const
+      -> const mir::CallableCode&;
+
   // What this unit knows of the scope class `hir_id` records: of one of its
   // own, where that scope's shape placed what was published; of another
   // unit's, the declaration this unit took of it, laid out where the object
@@ -314,6 +377,13 @@ class UnitLowerer {
   // one finds it.
   [[nodiscard]] auto ScopeClassLayoutOf(hir::ScopeClassId hir_id) const
       -> const ScopeClassLayout&;
+
+  // What every unit states of the class `cls` from its declaration alone into
+  // `stated`: whether it is an interface class, what it extends and
+  // implements, and the fields of an object of it, answering the member that
+  // records the instance the object belongs to where it has one.
+  auto StateDeclaredLayout(hir::ClassId cls, mir::Class& stated) const
+      -> std::optional<DeclaringInstance>;
 
   // The fields of an object of the class `declared` describes.
   [[nodiscard]] auto ClassFieldsOf(const hir::ClassDeclaration& declared) const
@@ -358,6 +428,20 @@ class UnitLowerer {
       throw InternalError(
           "UnitLowerer::RandomizationHooksOf: only a class this unit declares "
           "takes randomization bodies -- please report this as a bug");
+    }
+    return it->second;
+  }
+
+  // The callable each function the class `owner` this unit declares is
+  // compiled to in the form a waited evaluation calls (LRM 9.4.2), by the
+  // method it is a form of, in method order.
+  [[nodiscard]] auto ReportingFormsOf(hir::ClassId owner) const
+      -> const std::vector<std::pair<hir::MethodId, mir::CallableId>>& {
+    const auto it = reporting_forms_.find(owner);
+    if (it == reporting_forms_.end()) {
+      throw InternalError(
+          "UnitLowerer::ReportingFormsOf: only a class this unit declares "
+          "takes reporting forms -- please report this as a bug");
     }
     return it->second;
   }
@@ -440,6 +524,12 @@ class UnitLowerer {
   [[nodiscard]] auto VirtualSlotOf(const hir::ClassMethodTarget& behavior) const
       -> mir::VirtualSlot;
 
+  // What answers each behavior of every interface class a value of the class
+  // `cls` is also a value of (LRM 8.26.5), as its declaration states it, each
+  // named as a call names it.
+  [[nodiscard]] auto ConformanceOf(hir::ClassId cls) const
+      -> std::vector<mir::ConformingBehavior>;
+
   // Receiver-less callable of a unit's namespace (LRM 26.3 package function or
   // task). A body of that same unit names the position its declaration sits at,
   // because it holds the arena; a body outside it has only the identifier the
@@ -483,6 +573,13 @@ class UnitLowerer {
 
   [[nodiscard]] auto GetClassShape(mir::ClassId id) const -> const ClassShape& {
     return declarations_.Get(id);
+  }
+
+  // Whether the class `id` has its declaration settled already. Two bodies of
+  // the unit may declare one class (LRM 27.3), and what it declares is one
+  // answer, so whichever is lowered first settles it.
+  [[nodiscard]] auto HasClassShape(mir::ClassId id) const -> bool {
+    return declarations_.Find(id) != nullptr;
   }
 
   // What the class `id` extends, read while bodies lower: off the shape this
@@ -561,6 +658,13 @@ class UnitLowerer {
   auto TakeRandomizationHooks(hir::ClassId cls)
       -> std::optional<RandomizationHooks>;
 
+  // The callables a class this unit declares has after its hooks: the form a
+  // waited evaluation calls of each function it compiles (LRM 9.4.2), every
+  // method with a body that a call hands a report. Fixed by the declaration,
+  // so a body defines each where the class reserved it.
+  auto TakeReportingForms(hir::ClassId cls)
+      -> std::vector<std::pair<hir::MethodId, mir::CallableId>>;
+
   // Publishes everything the unit declares before any root-scope body lowers:
   // every class identity and body, every interned type and the functions each
   // structure type answers a whole-value operation with, the default of each
@@ -599,6 +703,18 @@ class UnitLowerer {
   [[nodiscard]] auto UnionMemberTypes(const hir::UnpackedUnionDefinition& src)
       -> std::vector<mir::TypeId>;
 
+  // The classes the unit declares in the scope `scope` that belong to its
+  // instance (LRM 6.22), ordered by path: read off the unit's declarations,
+  // so every body of the unit lists them alike whichever blocks its
+  // construction built (LRM 27.5).
+  [[nodiscard]] auto InstanceClassesOf(const support::DefPath& scope) const
+      -> std::vector<hir::ClassId>;
+
+  // The covergroups the unit declares in that scope (LRM 19.3), ordered by
+  // path, as its classes are.
+  [[nodiscard]] auto InstanceCovergroupsOf(const support::DefPath& scope) const
+      -> std::vector<hir::CovergroupId>;
+
   // Defines the record `id` the struct or the union `source` names: its kind,
   // its members, and the unit declaring it where that is another, which a
   // value of it then depends on.
@@ -619,6 +735,8 @@ class UnitLowerer {
   base::Translation<hir::ClassId, mir::ClassId> class_identities_;
   std::map<hir::ClassId, std::optional<RandomizationHooks>>
       randomization_hooks_;
+  std::map<hir::ClassId, std::vector<std::pair<hir::MethodId, mir::CallableId>>>
+      reporting_forms_;
   // The callable and the cell each member of a unit's namespace this unit names
   // is, by that unit and the name the member was published under.
   std::map<std::pair<std::string, std::string>, mir::CallableId>

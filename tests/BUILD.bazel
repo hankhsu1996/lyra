@@ -283,9 +283,13 @@ cc_test(
     srcs = ["artifact_count_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
+        "//:base",
         "//:compiler",
         "//:diag",
         "//:hir",
+        "//:mir",
+        "//:mir_transform",
+        "//:support",
         "@googletest//:gtest_main",
         "@slang",
     ],

@@ -27,9 +27,10 @@ reads changes the code.
 
 D4 and D7 revised 2026-10-28 by
 [a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md):
-a block's class is what it publishes, found by comparing, not what its declarations spell; a block
-declaring a class is one per place because its methods are named by its class, not because it is
-named by its index.
+a block's class is what it publishes, found by comparing, not what its declarations spell. D7 and
+its Limit revised 2026-10-30 by
+[class-declared-in-a-structural-scope](class-declared-in-a-structural-scope.md) Decision 5: a block
+declaring a class is grouped as any other, the class declared once and its code each body's.
 
 D2 and D4 revised 2026-10-29 by the same record: what a block built is no part of the class holding
 it or of its unit, so D4's "every alternative ... whether or not it was built" holds again, now for
@@ -164,14 +165,17 @@ is the nearest enclosing scope of the class of that scope, an instance or a bloc
 tells the unit apart. A child naming the block that holds it therefore carries no index: every block
 instance of the application is of one class, so the child is one unit.
 
-**D7. A type a block declares is a type of the block's application, and a block declaring a class is
-an application of its own at every index.** A struct is named by the applications between it and its
-unit. A class or a covergroup each block of a loop declares is a type of that block alone (fact 4),
-and an object's class is what a cast asks of it, so the blocks' classes are compiled apart: a block
-declaring one, or holding a scope that does, is named by its index, and has a body per index. This
-replaced "one class of the application however many bodies realize it", which had a loop whose
-declarations read no index declare one class for every block, so a cast in one block took another
-block's object as its own.
+**D7. A type a block declares is a type of the block's application.** A struct is named by the
+applications between it and its unit. A class or a covergroup each block of a loop declares is a
+type of that block alone (fact 4): the blocks share one declaration of it, an object records the
+block instance it belongs to and a cast asks that
+([a-dynamic-cast-asks-the-type-or-the-object](a-dynamic-cast-asks-the-type-or-the-object.md)), and
+what its methods do is the code of each block's body
+([class-declared-in-a-structural-scope](class-declared-in-a-structural-scope.md) Decision 5). A
+class whose declaration differs between blocks makes the blocks publish differently, so they are
+classes of their own. The first reading here, "one class of the application however many bodies
+realize it", had a cast in one block take another block's object as its own, because the cast asked
+the class alone.
 
 **D8. A declaration of a unit is identified by a path of steps, each a kind and what tells it from
 its siblings, and a target spells it.** Every identifier has a unique hierarchical path name (LRM
@@ -203,8 +207,6 @@ every scope extends, so no header needs another unit's scope class and none is n
 
 ## Limits, each with its cause
 
-- A loop whose blocks declare a class is an application per index, its methods included: each
-  block's class is a type of its own (D7), and nothing shares the code of two classes yet.
 - Every block is built through its object's table, an entry read and called indirectly, once per
   block at construction (D5).
 - An application or a specialization with arguments is told apart by a digest of them, as a unit is,

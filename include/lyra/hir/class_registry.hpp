@@ -9,25 +9,24 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/arena.hpp"
 #include "lyra/base/id_range.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
-#include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/declared_method.hpp"
 #include "lyra/hir/keyed_identities.hpp"
 #include "lyra/hir/method_id.hpp"
-#include "lyra/hir/subroutine.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
 
 // Every class one compilation unit names: the ones it declares and the ones it
-// reaches in other units, each under one identity.
+// reaches in other units, each under one identity and with what it declares.
+// What a class's operations do is not here: it is the code of the scope
+// replicating the class, held by that scope.
 //
 // A class variable may be declared before the class itself is, which is how two
 // classes each hold a handle to the other and how one holds a handle to itself
@@ -76,11 +75,6 @@ class ClassRegistry {
     return identities_.Find(key);
   }
 
-  void Define(ClassId id, ClassDecl decl) {
-    RequireOwn(id, "Define");
-    decls_.Define(id, std::move(decl));
-  }
-
   // What the class declares: for a class of this unit, computed where it is
   // interned; for one of another unit, what that unit published, read back.
   void SetDeclaration(ClassId id, ClassDeclaration declaration) {
@@ -102,12 +96,6 @@ class ClassRegistry {
   // Whether this unit declares the class, rather than reaching it in another.
   [[nodiscard]] auto IsOwn(ClassId id) const -> bool {
     return identities_.IsOwn(id);
-  }
-
-  // The bodies of a class this unit declares.
-  [[nodiscard]] auto Get(ClassId id) const -> const ClassDecl& {
-    RequireOwn(id, "Get");
-    return decls_.Get(id);
   }
 
   // What the class declares, whichever unit declares it: the one answer to
@@ -143,16 +131,18 @@ class ClassRegistry {
             },
             [&](const OverridesVirtual& overriding)
                 -> std::optional<ClassMethodTarget> {
-              return IntroducedBy(overriding.introducer, overriding.name);
+              return IntroducedBy(overriding.overridden);
             }},
         Declaration(method.owner).methods.Get(method.method).dispatch);
   }
 
-  // The method of the class `introducer` declared under `name`, which
-  // introduced a behavior (LRM 8.20). A class declares at most one member under
-  // a name, so the name finds it.
-  [[nodiscard]] auto IntroducedBy(
-      ClassId introducer, std::string_view name) const -> ClassMethodTarget {
+  // The method declaring the behavior `behavior` names (LRM 8.20), in the
+  // class that introduced it. A class declares at most one member under a
+  // name, so the name finds it.
+  [[nodiscard]] auto IntroducedBy(const NamedBehavior& behavior) const
+      -> ClassMethodTarget {
+    const ClassId introducer = behavior.introducer;
+    const std::string_view name = behavior.name;
     const std::optional<MethodId> method =
         FindMethod(Declaration(introducer).methods, name);
     if (!method.has_value()) {
@@ -164,11 +154,6 @@ class ClassRegistry {
               KeyOf(introducer).unit_name, name));
     }
     return ClassMethodTarget{.owner = introducer, .method = *method};
-  }
-
-  // Whether the bodies of a class this unit declares are settled here.
-  [[nodiscard]] auto HasBodies(ClassId id) const -> bool {
-    return decls_.IsDefined(id);
   }
 
   [[nodiscard]] auto Ids() const -> base::IdRange<ClassId> {
@@ -191,29 +176,15 @@ class ClassRegistry {
   auto operator==(const ClassRegistry&) const -> bool = default;
 
  private:
-  // Every identity has a slot in both pools: every class gets a declaration,
-  // and only a class this unit declares gets bodies.
   auto Enter(ClassKey key) -> ClassId {
     const auto [id, entered] = identities_.Enter(std::move(key));
     if (entered) {
-      decls_.Declare();
       declarations_.Declare();
     }
     return id;
   }
 
-  void RequireOwn(ClassId id, std::string_view asked) const {
-    if (IsOwn(id)) return;
-    throw InternalError(
-        std::format(
-            "hir::ClassRegistry::{}: class '{}' of unit '{}' is not one unit "
-            "'{}' declares -- please report this as a bug",
-            asked, support::DisplayOf(PathOf(id)), KeyOf(id).unit_name,
-            identities_.UnitName()));
-  }
-
   KeyedIdentities<ClassKey, ClassId> identities_;
-  base::Registry<ClassDecl, ClassId> decls_;
   base::Registry<ClassDeclaration, ClassId> declarations_;
 };
 

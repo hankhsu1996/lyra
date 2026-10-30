@@ -8,6 +8,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -208,6 +209,52 @@ struct DefPath {
         step);
   }
   return text;
+}
+
+// A declaration's path in its unit as an identity: each step as its kind and
+// then the length of its name and the name, or the position it stands at and a
+// terminator, and after a name whatever else tells the step from its siblings,
+// each behind a mark no kind is written with. So two paths that differ anywhere
+// never answer alike whatever characters a name holds (LRM 5.6.1).
+[[nodiscard]] inline auto DefPathIdentity(const DefPath& path) -> std::string {
+  const auto named = [](char kind, std::string_view name) {
+    return std::format("{}{}:{}", kind, name.size(), name);
+  };
+  const auto placed = [](char kind, std::uint32_t position) {
+    return std::format("{}{};", kind, position);
+  };
+  const auto bound = [](const std::optional<std::uint64_t>& arguments) {
+    return arguments.has_value() ? std::format("#{:016x};", *arguments)
+                                 : std::string{};
+  };
+  std::string out;
+  for (const DefPathData& step : path.data) {
+    out += std::visit(
+        Overloaded{
+            [&](const GenerateBlockStep& block) {
+              std::string step = named('b', block.label);
+              if (block.disambiguator != 0) {
+                step += std::format("~{};", block.disambiguator);
+              }
+              return step + bound(block.arguments);
+            },
+            [&](const ClassStep& cls) {
+              return named('c', cls.name) + bound(cls.arguments);
+            },
+            [&](const SubroutineStep& subroutine) {
+              return named('s', subroutine.name);
+            },
+            [&](const NamedBlockStep& block) { return named('n', block.name); },
+            [&](const UnnamedBlockStep& block) {
+              return placed('u', block.position);
+            },
+            [&](const TypeStep& type) { return named('t', type.name); },
+            [&](const UnnamedTypeStep& type) {
+              return placed('a', type.position);
+            }},
+        step);
+  }
+  return out;
 }
 
 }  // namespace lyra::support

@@ -4,6 +4,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -465,11 +466,11 @@ struct InstanceHop {
   std::vector<std::uint32_t> indices;
 };
 struct LoopBlockHop {
-  const slang::ast::GenerateBlockSymbol* block;
+  const slang::ast::GenerateBlockSymbol* block = nullptr;
   hir::ExprId position;
 };
 struct ChosenBlockHop {
-  const slang::ast::GenerateBlockSymbol* block;
+  const slang::ast::GenerateBlockSymbol* block = nullptr;
 };
 struct ProceduralHop {
   support::DefPathData step;
@@ -766,8 +767,10 @@ class UnitLowerer {
   }
 
   // What a declared type this unit names declares: its own, as it defined it,
-  // and another unit's, as that unit published it, taken the first time it is
-  // asked for, which is after every unit has published.
+  // and one it did not define -- another unit's, or one a block only another
+  // specialization of this unit built declares -- as its unit published it,
+  // taken the first time it is asked for, which is after every unit has
+  // published.
   auto TypeDefinitionOf(const hir::TypeDeclarationRef& declaration)
       -> const hir::TypeDefinition&;
   auto DefinitionOf(const hir::EnumType& type) -> const hir::EnumDefinition& {
@@ -986,22 +989,20 @@ class UnitLowerer {
       -> diag::Result<hir::DeclaredMethod>;
 
   // Records what each other unit published about every covergroup of its that
-  // a type of this unit names, once the bodies have lowered.
-  void ReadSignaturesOfNamedCovergroups();
+  // a type of this unit names, once the bodies have lowered, and names the
+  // coverage library those covergroups are written over.
+  auto ReadSignaturesOfNamedCovergroups() -> diag::Result<void>;
 
   // What this unit publishes about its own covergroup `covergroup`.
   auto PublishedCovergroupOf(
       const slang::ast::CovergroupType& covergroup, diag::SourceSpan span)
       -> diag::Result<hir::PublishedCovergroup>;
 
-  // Hands a structural scope the covergroups it replicates, once.
-  [[nodiscard]] auto TakeReplicatedCovergroups(const slang::ast::Scope& scope)
-      -> std::vector<hir::CovergroupId>;
-
   // Lowers every covergroup `scope` replicates, where a process of the scope
-  // is lowered, so its expressions reach what a body of the scope reaches.
+  // is lowered, so its expressions reach what a body of the scope reaches, and
+  // hands the scope each with its code.
   auto PopulateCovergroupsReplicatedBy(const slang::ast::Scope& scope)
-      -> diag::Result<void>;
+      -> diag::Result<std::vector<hir::ReplicatedCovergroup>>;
 
   // The classes of the coverage library this unit names, recorded once
   // anything of this unit is a covergroup or reads one's coverage (LRM 19).
@@ -1033,27 +1034,6 @@ class UnitLowerer {
   auto ResolveClassType(const slang::ast::Type& type, diag::SourceSpan span)
       -> diag::Result<hir::ClassId>;
 
-  // What a class's declaration names beside itself: the class it extends, and
-  // the interface classes it implements or, for an interface class, extends
-  // (LRM 8.26.2), in the order written.
-  struct ClassParents {
-    std::optional<hir::ClassId> base;
-    std::vector<hir::ClassId> implements;
-  };
-  auto ParentsOf(hir::ClassId cls) -> ClassParents;
-
-  // Appends the interface class `iface`, then every interface class it extends
-  // (LRM 8.26.2), skipping one already in `reached`: an interface class is one
-  // however many ways it is arrived at (LRM 8.26.6.3). What each extends is
-  // read where that class states it, so one of another unit is its signature
-  // consumed.
-  void ReachInterface(hir::ClassId iface, std::vector<hir::ClassId>& reached);
-
-  // Every interface class a value of `cls` is also a value of (LRM 8.26.5):
-  // the ones the class it extends is (LRM 8.26), then the ones `cls` names and
-  // the ones those extend.
-  auto AllInterfacesOf(hir::ClassId cls) -> std::vector<hir::ClassId>;
-
   // What the class of `method` declares of it, or nothing for a method the
   // front end supplies every class (LRM 18.6, 18.8), which no declaration
   // lists.
@@ -1066,22 +1046,6 @@ class UnitLowerer {
   auto IsTypeAssociatedMethod(
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
       -> diag::Result<bool>;
-
-  // For a class that is not an interface class, states which behavior of its
-  // lineage answers each behavior of every interface class it is also a value
-  // of. The answer is found by looking the behavior's name up in the class,
-  // which is how the language finds it (LRM 8.26.2).
-  auto StateConformance(
-      const slang::ast::ClassType& cls, diag::SourceSpan span,
-      hir::ClassDecl& decl) -> diag::Result<void>;
-
-  // The behavior `method` is part of -- a method, or a constraint block, which
-  // is overridden as one (LRM 18.5.2) -- named by the member that introduced
-  // it, whichever unit declares that member's class: what a member overriding
-  // it overrides, and what an interface class's behavior is answered by.
-  auto IntroducingMethodTarget(
-      const slang::ast::Symbol& method, diag::SourceSpan span)
-      -> diag::Result<hir::ClassMethodTarget>;
 
   // The interface a subroutine's own declaration states: its call protocol and
   // each formal's direction and type (LRM 13.5), in this unit's types. It is
@@ -1416,12 +1380,6 @@ class UnitLowerer {
   [[nodiscard]] auto TakePublication(const slang::ast::Scope& scope)
       -> hir::ScopePublication;
 
-  // Hands a structural scope the classes it replicates, once. Every class the
-  // unit holds is named by exactly one scope, so a scope that replicates none
-  // takes the empty list rather than being absent from the relation.
-  [[nodiscard]] auto TakeReplicatedClasses(const slang::ast::Scope& scope)
-      -> std::vector<hir::ClassId>;
-
   // Records the identity a declaration scope minted for one of its procedural
   // scopes, keyed by the symbol slang records the scope as.
   void DeclareProceduralScope(
@@ -1507,24 +1465,27 @@ class UnitLowerer {
     const slang::ast::SubroutineSymbol* constructor_sym = nullptr;
   };
 
-  // Lowers the body half of every class `scope` replicates: each method, the
-  // constructor, and every property initializer. Called while that scope is
-  // lowered, so a class body has the reach a process of the scope has.
+  // Lowers the code of every class `scope` replicates -- each method, the
+  // constructor, and every property initializer -- and hands the scope each
+  // class with its code. Called while that scope is lowered, so a class body
+  // has the reach a process of the scope has.
   auto PopulateClassBodiesReplicatedBy(const slang::ast::Scope& scope)
-      -> diag::Result<void>;
-  auto PopulateClassBody(PendingClassBody& pending) -> diag::Result<void>;
+      -> diag::Result<std::vector<hir::ReplicatedClass>>;
+  auto PopulateClassBody(PendingClassBody& pending)
+      -> diag::Result<hir::ClassDecl>;
 
-  // Requires every class the unit holds to be defined once its scopes are
-  // lowered. Each class is replicated by a structural scope the unit lowers,
-  // which lowers the class's body; a block instance no body was lowered from
-  // replicates only classes the block it shares a body with defined.
+  // Requires every class this specialization elaborated to have its code in
+  // a scope once its scopes are lowered. Each is replicated by a structural
+  // scope, which lowers its code; a block instance no body was lowered from
+  // replicates only classes the block it shares a body with holds the code of.
   void RequireEveryClassBodyLowered() const;
 
   // Marks the class `cls` as one this unit reads, not only names: the
   // declaration phase meets classes whose objects the unit makes and whose
-  // methods it calls -- the coverage library's -- while other units'
-  // signatures are not yet reachable, so their declarations are read once every
-  // body has lowered.
+  // methods it calls -- the coverage library's -- and the classes its own
+  // extend and implement, off which what answers an interface class's
+  // behaviors is read (LRM 8.26.5), while other units' signatures are not yet
+  // reachable, so their declarations are read once every body has lowered.
   void ReadDeclarationLater(hir::ClassId cls);
   void ReadPendingDeclarations();
   // Takes what each declared type this unit names declares, which a later
@@ -1535,6 +1496,12 @@ class UnitLowerer {
   // included: which blocks a construction built is no part of the unit, so
   // every body of it states every one of its classes alike.
   void RecordPublishedScopeClasses();
+  // Declares every class, covergroup and type the unit publishes, those a
+  // block only another specialization of the unit built declares included, as
+  // the unit published them: a construction never elaborates a block it did
+  // not build (LRM 27.5), and what the unit declares is one thing to every
+  // body of it.
+  auto ReadOwnUnitDeclarations() -> diag::Result<void>;
 
   // Builds a HIR Expr referring to the data `route` navigates to.
   // `owner_frame` is the frame whose routes hold it.
@@ -2053,8 +2020,6 @@ class UnitLowerer {
   };
   std::unordered_map<const slang::ast::Scope*, std::vector<PendingCovergroup>>
       pending_covergroups_;
-  std::unordered_map<const slang::ast::Scope*, std::vector<hir::CovergroupId>>
-      covergroups_by_scope_;
   std::unordered_map<const slang::ast::Scope*, std::vector<PendingClassBody>>
       pending_class_bodies_;
   StructuralDataObjectBindings structural_data_object_bindings_;
@@ -2083,8 +2048,8 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::PatternVarSymbol*, hir::PatternId>
       pattern_var_bindings_;
   std::unordered_map<const slang::ast::Scope*, ScopeFrameId> scope_frames_;
-  std::unordered_map<const slang::ast::Scope*, std::vector<hir::ClassId>>
-      classes_by_scope_;
+  // The classes some lowered scope holds the code of.
+  std::set<hir::ClassId> classes_with_code_;
   std::map<ScopeFrameId, hir::ScopeRoutes> routes_by_frame_;
   std::map<ScopeFrameId, ScopeUnderConstruction> scopes_under_construction_;
   std::uint32_t next_scope_frame_ = 0;

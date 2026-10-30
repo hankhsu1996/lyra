@@ -72,51 +72,6 @@ auto WithDigest(std::string name, const std::optional<std::uint64_t>& digest)
 
 }  // namespace
 
-auto DefPathIdentity(const support::DefPath& path) -> std::string {
-  const auto named = [](char kind, std::string_view name) {
-    return std::format("{}{}:{}", kind, name.size(), name);
-  };
-  const auto placed = [](char kind, std::uint32_t position) {
-    return std::format("{}{};", kind, position);
-  };
-  const auto bound = [](const std::optional<std::uint64_t>& arguments) {
-    return arguments.has_value() ? std::format("#{:016x};", *arguments)
-                                 : std::string{};
-  };
-  std::string out;
-  for (const support::DefPathData& step : path.data) {
-    out += std::visit(
-        Overloaded{
-            [&](const support::GenerateBlockStep& block) {
-              std::string step = named('b', block.label);
-              if (block.disambiguator != 0) {
-                step += std::format("~{};", block.disambiguator);
-              }
-              return step + bound(block.arguments);
-            },
-            [&](const support::ClassStep& cls) {
-              return named('c', cls.name) + bound(cls.arguments);
-            },
-            [&](const support::SubroutineStep& subroutine) {
-              return named('s', subroutine.name);
-            },
-            [&](const support::NamedBlockStep& block) {
-              return named('n', block.name);
-            },
-            [&](const support::UnnamedBlockStep& block) {
-              return placed('u', block.position);
-            },
-            [&](const support::TypeStep& type) {
-              return named('t', type.name);
-            },
-            [&](const support::UnnamedTypeStep& type) {
-              return placed('a', type.position);
-            }},
-        step);
-  }
-  return out;
-}
-
 namespace {
 
 // Whether `type` is one the source declares -- a class, a covergroup, an
@@ -172,7 +127,7 @@ auto TypeIdentity(const slang::ast::Type& type, const UnitNamingPolicy& policy)
     const std::string unit = UnitWhileNaming(UnitHomeOf(canonical), policy);
     return std::format(
         "declared {}:{} {}", unit.size(), unit,
-        DefPathIdentity(DefPathOf(canonical, policy)));
+        support::DefPathIdentity(DefPathOf(canonical, policy)));
   }
 
   switch (canonical.kind) {
@@ -413,11 +368,13 @@ auto KeyBytes(const UnitKey& key) -> std::string {
             [](const LandsIn& v) {
               return std::format(
                   "<in {}:{} {}{}>", v.specialization.size(), v.specialization,
-                  DefPathIdentity(v.scope), ConstantReadIdentity(v.reads));
+                  support::DefPathIdentity(v.scope),
+                  ConstantReadIdentity(v.reads));
             },
             [](const LandsBack& v) {
               return std::format(
-                  "<back {} {}{}>", v.levels, DefPathIdentity(v.blocks),
+                  "<back {} {}{}>", v.levels,
+                  support::DefPathIdentity(v.blocks),
                   ConstantReadIdentity(v.reads));
             },
             [](const BindInstantiation& v) {
@@ -778,26 +735,6 @@ auto Specializations::ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn {
   return [this](const slang::ast::InstanceSymbol& inst) {
     return HasBodyOfItsOwn(inst);
   };
-}
-
-auto DeclaresAClass(const slang::ast::Scope& scope) -> bool {
-  for (const slang::ast::Symbol& member : scope.members()) {
-    if (member.kind == slang::ast::SymbolKind::ClassType ||
-        member.kind == slang::ast::SymbolKind::GenericClassDef ||
-        member.kind == slang::ast::SymbolKind::CovergroupType) {
-      return true;
-    }
-    if (const auto* block = member.as_if<slang::ast::GenerateBlockSymbol>()) {
-      if (!block->isUninstantiated && DeclaresAClass(*block)) return true;
-    } else if (
-        const auto* array =
-            member.as_if<slang::ast::GenerateBlockArraySymbol>()) {
-      for (const slang::ast::GenerateBlockSymbol* entry : array->entries) {
-        if (DeclaresAClass(*entry)) return true;
-      }
-    }
-  }
-  return false;
 }
 
 auto ArgumentsDigest(const UnitKey& key) -> std::optional<std::uint64_t> {

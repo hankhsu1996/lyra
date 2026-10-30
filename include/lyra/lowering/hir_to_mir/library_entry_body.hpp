@@ -26,4 +26,11 @@ auto EntryOf(
     const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
     mir::CallableId callable, mir::TypeId object) -> mir::CallableId;
 
+// Ends `body` with `call`, a call resulting in `result`, completing as that
+// call does. A call completing as a coroutine is awaited, which completes the
+// body as a coroutine too, with what that one completed with.
+void CompleteWith(
+    const mir::CompilationUnit& unit, mir::Block& body, mir::ExprId call,
+    mir::TypeId result);
+
 }  // namespace lyra::lowering::hir_to_mir

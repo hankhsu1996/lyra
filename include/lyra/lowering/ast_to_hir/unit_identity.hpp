@@ -70,24 +70,12 @@ enum class ParameterValueSource {
 [[nodiscard]] auto InstanceHolding(const slang::ast::Scope& scope)
     -> const slang::ast::InstanceSymbol&;
 
-// Whether `scope`, or a generate block it builds, declares a class or a
-// covergroup (LRM 8.3, 19.2, 27.3), each a type of the scope declaring it
-// alone. A child instance's body is the child's, so it is not reached.
-[[nodiscard]] auto DeclaresAClass(const slang::ast::Scope& scope) -> bool;
-
 // The digest a name carries of `bytes`: the first 64 bits of their stable
 // fingerprint, so producer and consumer agree on the name across separately
 // compiled units and across sessions. Whoever names by it holds the name
 // against what it was folded from, which is where two folding to one digest is
 // caught.
 [[nodiscard]] auto NameDigest(std::string_view bytes) -> std::uint64_t;
-
-// A declaration's path in its unit as an identity: each step as its kind and
-// then the length of its name and the name, or the position it stands at and a
-// terminator, and after a name whatever else tells the step from its siblings,
-// each behind a mark no kind is written with. So two paths that differ anywhere
-// never answer alike whatever characters a name holds (LRM 5.6.1).
-[[nodiscard]] auto DefPathIdentity(const support::DefPath& path) -> std::string;
 
 // A value as an identity: every bit of it, unknowns included, so two values
 // that differ anywhere never answer alike. The front end's own rendering is

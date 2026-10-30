@@ -79,7 +79,7 @@ auto CoverageLibrary::ConstructorParamTypes(hir::ClassId cls) const
 }
 
 auto CoverageLibrary::TakesDeclaringInstance(hir::ClassId cls) const -> bool {
-  return unit_->classes.Declaration(cls).takes_declaring_instance;
+  return unit_->classes.Declaration(cls).instance_scope.has_value();
 }
 
 auto CoverageLibrary::EnumeratorOf(hir::TypeId type, std::string_view name)

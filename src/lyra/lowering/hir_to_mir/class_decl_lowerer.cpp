@@ -25,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/class_code.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
@@ -336,8 +337,8 @@ auto ClassDeclLowerer::Declared() const -> const hir::ClassDeclaration& {
 }
 
 auto ClassDeclLowerer::DeclareShape(
-    ClassShape* declaring_shape,
-    std::span<const PlacedProperty> published_statics) -> diag::Result<void> {
+    ClassShape* declaring_shape, std::span<const PlacedProperty> placed_statics)
+    -> diag::Result<void> {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::ClassDecl& hir_class = *hir_class_;
   const hir::ClassDeclaration& declared = Declared();
@@ -433,11 +434,11 @@ auto ClassDeclLowerer::DeclareShape(
     const hir::DeclaredProperty& sp = declared.static_properties.Get(id);
     const mir::TypeId cell_type = mir::ObservableCellOf(
         unit_lowerer.Unit().types, unit_lowerer.TranslateType(sp.type));
-    const auto published =
-        std::ranges::find(published_statics, id, &PlacedProperty::property);
+    const auto placed =
+        std::ranges::find(placed_statics, id, &PlacedProperty::property);
     const StaticStorageHome home =
-        published != published_statics.end()
-            ? StaticStorageHome{InstanceFieldHome{.field = published->field}}
+        placed != placed_statics.end()
+            ? StaticStorageHome{InstanceFieldHome{.field = placed->field}}
             : DeclareStaticCell(class_storage, cell_type);
     // The class answers the identifier the source declared only where the class
     // owns the cell. Where a structural scope replicates the class the cell is
@@ -500,6 +501,9 @@ auto ClassDeclLowerer::DeclareShape(
           mir::LibraryCallbackBody{.callback = callback, .body = id});
     }
   }
+  // Then the form a waited evaluation calls of each function (LRM 9.4.2).
+  callable_count += unit_lowerer.ReportingFormsOf(hir_class_id_).size();
+  signatures.resize(callable_count);
   shape.callable_signatures = {callable_count, std::move(signatures)};
   method_statics_ = {hir_class.methods.size(), std::move(method_statics)};
   ctor_static_bindings_ = bind_statics(hir_class.constructor);
@@ -515,7 +519,8 @@ auto ClassDeclLowerer::DeclareShape(
   // A block of a method a covergroup the class embeds is sampled at triggers
   // the event of the record of each instance the object holds (LRM 19.3).
   BlockEventTriggers block_events;
-  AddEmbeddedBlockEvents(unit_lowerer, hir_class_id_, block_events);
+  AddEmbeddedBlockEvents(
+      unit_lowerer, hir_class_id_, *replicating_, block_events);
   scopes_ = ScopesOwningDisableTargets(
       hir_class.procedural_scopes, hir_class.fixed_name, class_storage,
       unit_lowerer.Unit().types.Intern(
@@ -523,7 +528,9 @@ auto ClassDeclLowerer::DeclareShape(
               .kind = mir::RuntimeLibraryKind::kCancellationTarget}}),
       block_events);
 
-  unit_lowerer.DefineClassShape(class_id_, std::move(shape));
+  if (!unit_lowerer.HasClassShape(class_id_)) {
+    unit_lowerer.DefineClassShape(class_id_, std::move(shape));
+  }
   return {};
 }
 
@@ -806,16 +813,7 @@ auto ClassDeclLowerer::PopulateBodies(
   const ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
 
   mir::Class mir_class = shape.OpenClass();
-  for (const hir::ConformingBehavior& answered : hir_class.conforming) {
-    mir_class.conforming.push_back(
-        mir::ConformingBehavior{
-            .interface_behavior =
-                unit_lowerer.VirtualSlotOf(answered.interface_behavior),
-            .answered_by = answered.answered_by.transform(
-                [&](const hir::ClassMethodTarget& behavior) {
-                  return unit_lowerer.VirtualSlotOf(behavior);
-                })});
-  }
+  mir_class.conforming = unit_lowerer.ConformanceOf(hir_class_id_);
 
   mir::CallableCode ctor_code = mir::CallableCode::Defined();
   CallableBindings ctor_bindings(unit_lowerer.Unit(), ctor_code);
@@ -987,7 +985,14 @@ auto ClassDeclLowerer::PopulateBodies(
     ProcessLowerer method_lowerer(
         unit_lowerer, declaring_scope_, mir_class.time_resolution, method.body,
         method.root_stmt, method_owner_frame, scopes_, statics);
-    auto method_code_or = method_lowerer.Run(method, form);
+    // A function's form a waited evaluation calls goes where the class
+    // reserved it.
+    std::optional<mir::CallableId> reporting;
+    for (const auto& [of, form_id] :
+         unit_lowerer.ReportingFormsOf(hir_class_id_)) {
+      if (of.value == callable.value) reporting = form_id;
+    }
+    auto method_code_or = method_lowerer.Run(method, form, reporting);
     if (!method_code_or) {
       return std::unexpected(std::move(method_code_or.error()));
     }
@@ -1022,7 +1027,7 @@ auto ClassDeclLowerer::PopulateBodies(
     ScopeChainNode factory_link{};
     auto factory = LowerCovergroupFactory(
         unit_lowerer, BodyFrame(declaring_frame, mir_class, factory_link),
-        shape, covergroup);
+        shape, covergroup, hir::CodeOf(*replicating_, covergroup));
     if (!factory) return std::unexpected(std::move(factory.error()));
     mir_class.named_callables.push_back(
         mir::NamedCallable{
@@ -1087,7 +1092,22 @@ auto ClassDeclLowerer::PopulateBodies(
     return std::unexpected(std::move(r.error()));
   }
 
-  unit_lowerer.Unit().DefineClass(class_id_, std::move(mir_class));
+  // A class a design element's unit declares keeps its code in the body
+  // realizing the scope its object's instance is, and is itself what every
+  // body of the unit states alike.
+  if (hir::RootsAnObject(unit_lowerer.Hir().role)) {
+    MoveCodeIntoBody(
+        unit_lowerer, class_id_, mir_class, declaring_frame,
+        declaring_scope_->PublishedClassId());
+    if (!unit_lowerer.Unit().classes.IsDefined(class_id_)) {
+      unit_lowerer.Unit().DefineClass(
+          class_id_, StateClassFromDeclaration(unit_lowerer, hir_class_id_));
+    }
+    return {};
+  }
+  if (!unit_lowerer.Unit().classes.IsDefined(class_id_)) {
+    unit_lowerer.Unit().DefineClass(class_id_, std::move(mir_class));
+  }
   return {};
 }
 

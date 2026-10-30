@@ -44,16 +44,19 @@ class StructuralScopeLowerer;
 // body's cross-class reference always resolves against a settled shape.
 class ClassDeclLowerer {
  public:
+  // `replicating` is the HIR scope holding the class's code, and the code of
+  // every covergroup the class embeds.
   ClassDeclLowerer(
-      UnitLowerer& unit_lowerer, hir::ClassId hir_class_id,
+      UnitLowerer& unit_lowerer, const hir::ReplicatedClass& replicated,
       mir::ClassId class_id, mir::TypeId object_type,
-      const hir::ClassDecl& hir_class,
+      const hir::StructuralScope& replicating,
       const StructuralScopeLowerer* declaring_scope)
       : owner_(&unit_lowerer),
-        hir_class_id_(hir_class_id),
+        hir_class_id_(replicated.id),
         class_id_(class_id),
         object_type_(object_type),
-        hir_class_(&hir_class),
+        hir_class_(&replicated.code),
+        replicating_(&replicating),
         declaring_scope_(declaring_scope) {
   }
 
@@ -65,11 +68,11 @@ class ClassDeclLowerer {
   // the class, which takes everything the class keeps for itself once that
   // scope replicates it. Null where no scope declares the class, which is a
   // namespace unit's, since nothing replicates it and it keeps its own cells.
-  // `published_statics` are the cells of the static properties that scope
-  // published, already placed where its publication put them.
+  // `placed_statics` are the cells that scope's published class gives the
+  // static properties, alike in every body realizing it.
   auto DeclareShape(
       ClassShape* declaring_shape,
-      std::span<const PlacedProperty> published_statics) -> diag::Result<void>;
+      std::span<const PlacedProperty> placed_statics) -> diag::Result<void>;
 
   // Composes the class from the already-published shape plus every body,
   // and commits it to the compilation unit. Any cross-class query the
@@ -107,6 +110,7 @@ class ClassDeclLowerer {
   mir::ClassId class_id_;
   mir::TypeId object_type_;
   const hir::ClassDecl* hir_class_;
+  const hir::StructuralScope* replicating_;
   const StructuralScopeLowerer* declaring_scope_;
 
   // The cells each method's static-lifetime variables took, in the order the

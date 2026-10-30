@@ -636,15 +636,14 @@ struct CompilationUnit {
 // a program holds one of them whichever of the bodies it links: what the
 // unit's declarations alone build, rather than what one body's code adds.
 //
-// That is what a scope of the design hierarchy published -- an instance's
-// class, or a generate block's. A class the source declared reaches the scope
-// declaring it as that scope's body compiled it, and a scope declaring one has
-// one body.
+// That is every class another unit can name of a unit compiled to several
+// bodies, a design element: what it published of its scopes -- an instance's
+// class, a generate block's -- and each class and covergroup it declares, whose
+// operations enter the code of the body the object's instance is. A namespace
+// unit is compiled to one body, so nothing of it is stated by another.
 [[nodiscard]] inline auto IsStatedByEveryBody(
     const CompilationUnit& unit, ClassId id) -> bool {
-  const Class& cls = unit.GetClass(id);
-  return support::PathOf(cls.identity) != nullptr && cls.base.has_value() &&
-         std::holds_alternative<ObjectTreeRootRef>(*cls.base);
+  return IsPublished(unit, id) && RootedTreeOf(unit) != nullptr;
 }
 
 // The class some unit declares that `cls` extends, where it extends one -- the

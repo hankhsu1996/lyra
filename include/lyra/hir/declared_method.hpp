@@ -4,6 +4,7 @@
 #include <string>
 #include <variant>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/randomization_hook.hpp"
@@ -34,6 +35,16 @@ struct IntroducesVirtual {
   auto operator==(const IntroducesVirtual&) const -> bool = default;
 };
 
+// A behavior (LRM 8.20) as anything outside the class introducing it names it:
+// by that class and the name it was introduced under. Its position is found
+// where that class's declaration is read.
+struct NamedBehavior {
+  ClassId introducer;
+  std::string name;
+
+  auto operator==(const NamedBehavior&) const -> bool = default;
+};
+
 // A method overriding a virtual method of a class this one extends, whether or
 // not the source wrote `virtual` (LRM 8.20), naming the behavior it overrides
 // by the class that introduced it and the name it was introduced under: the
@@ -47,8 +58,7 @@ struct IntroducesVirtual {
 // extended put there.
 struct OverridesVirtual {
   bool is_pure = false;
-  ClassId introducer;
-  std::string name;
+  NamedBehavior overridden;
 
   auto operator==(const OverridesVirtual&) const -> bool = default;
 };
@@ -60,6 +70,21 @@ struct OverridesVirtual {
 // front end sees.
 using MethodDispatch = std::variant<
     TypeAssociated, NotVirtual, IntroducesVirtual, OverridesVirtual>;
+
+// Whether the method leaves its behavior to a class extending this one (LRM
+// 8.21), and so has no body.
+[[nodiscard]] inline auto IsLeftAbstract(const MethodDispatch& dispatch)
+    -> bool {
+  return std::visit(
+      Overloaded{
+          [](const TypeAssociated&) { return false; },
+          [](const NotVirtual&) { return false; },
+          [](const IntroducesVirtual& introduces) {
+            return introduces.is_pure;
+          },
+          [](const OverridesVirtual& overrides) { return overrides.is_pure; }},
+      dispatch);
+}
 
 // One method a class declares, as every unit naming the class reads it.
 // The prototype is what a call to the method is made through -- its name, the

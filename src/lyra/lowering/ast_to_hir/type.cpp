@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <format>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <utility>
@@ -930,86 +931,6 @@ auto UnitLowerer::ResolveClassType(
       type.getCanonicalType().as<slang::ast::ClassType>(), span);
 }
 
-auto UnitLowerer::ParentsOf(hir::ClassId cls) -> ClassParents {
-  const hir::ClassDeclaration& declared = DeclarationOf(cls);
-  return ClassParents{.base = declared.base, .implements = declared.implements};
-}
-
-void UnitLowerer::ReachInterface(
-    hir::ClassId iface, std::vector<hir::ClassId>& reached) {
-  if (std::ranges::find(reached, iface) != reached.end()) return;
-  reached.push_back(iface);
-  for (const hir::ClassId extended : ParentsOf(iface).implements) {
-    ReachInterface(extended, reached);
-  }
-}
-
-auto UnitLowerer::AllInterfacesOf(hir::ClassId cls)
-    -> std::vector<hir::ClassId> {
-  const ClassParents parents = ParentsOf(cls);
-  std::vector<hir::ClassId> interfaces;
-  if (parents.base.has_value()) {
-    interfaces = AllInterfacesOf(*parents.base);
-  }
-  for (const hir::ClassId named : parents.implements) {
-    ReachInterface(named, interfaces);
-  }
-  return interfaces;
-}
-
-auto UnitLowerer::StateConformance(
-    const slang::ast::ClassType& cls, diag::SourceSpan span,
-    hir::ClassDecl& decl) -> diag::Result<void> {
-  // An interface class answers none of what it extends; a class answering it
-  // states the answers.
-  if (cls.isInterface) {
-    return {};
-  }
-  const auto answer_of = [&](std::string_view name)
-      -> diag::Result<std::optional<hir::ClassMethodTarget>> {
-    const slang::ast::SubroutineSymbol* method = ImplementationOf(cls, name);
-    if (method == nullptr) return std::nullopt;
-    auto answer = IntroducingMethodTarget(*method, span);
-    if (!answer) return std::unexpected(std::move(answer.error()));
-    return std::optional{*std::move(answer)};
-  };
-  auto self = ResolveClass(cls, span);
-  if (!self) return std::unexpected(std::move(self.error()));
-  // Every behavior an interface class introduces is stated where it was
-  // introduced, so a restatement of one an interface class it extends
-  // introduced is not stated again.
-  for (const hir::ClassId iface : AllInterfacesOf(*self)) {
-    const hir::DeclaredMethods& methods = DeclarationOf(iface).methods;
-    for (const hir::MethodId method : methods.Ids()) {
-      const hir::DeclaredMethod& declared = methods.Get(method);
-      if (!std::holds_alternative<hir::IntroducesVirtual>(declared.dispatch)) {
-        continue;
-      }
-      auto answered_by = answer_of(declared.prototype.name);
-      if (!answered_by) return std::unexpected(std::move(answered_by.error()));
-      decl.conforming.emplace_back(
-          hir::ClassMethodTarget{.owner = iface, .method = method},
-          *std::move(answered_by));
-    }
-  }
-  return {};
-}
-
-auto UnitLowerer::IntroducingMethodTarget(
-    const slang::ast::Symbol& method, diag::SourceSpan span)
-    -> diag::Result<hir::ClassMethodTarget> {
-  // A behavior is named by the member that introduced it, which the front end
-  // finds along the lineage; the class introducing it may be another unit's,
-  // or this unit's own, which a lineage another unit published passes back
-  // through.
-  const slang::ast::Symbol& introducing = IntroducingOf(method);
-  auto introducer = ResolveClass(OwningClassOf(introducing), span);
-  if (!introducer) return std::unexpected(std::move(introducer.error()));
-  return hir::ClassMethodTarget{
-      .owner = *introducer,
-      .method = MethodPositionOf(*introducer, introducing.name)};
-}
-
 auto UnitLowerer::MakeCalleeInterface(
     const slang::ast::SubroutineSymbol& sym, diag::SourceSpan span)
     -> diag::Result<hir::CalleeInterface> {
@@ -1110,8 +1031,9 @@ auto UnitLowerer::InternOwnClass(
   // A class is one declaration of its unit wherever its text was elaborated: a
   // class an instance declares is a type of that instance's own (LRM 8.25),
   // and each block of a loop builds its own copy, yet every such copy at one
-  // path is the same text compiled once. So a copy at a path already declared
-  // is that class, built again here so what it names is named alike.
+  // path declares the same thing. So a copy at a path already declared is that
+  // class, built again here so what it names is named alike; its code is the
+  // replicating scope's, lowered with that scope.
   const hir::ClassId id = unit_.classes.DeclareOwn(DefPathOf(cls, Naming()));
   class_cache_.emplace(&cls, id);
 
@@ -1129,7 +1051,6 @@ auto UnitLowerer::InternOwnClass(
   // instance is what they name it against: each instance has a type of its own
   // (LRM 6.22), and a specialization on such a type is one too (LRM 8.25).
   const slang::ast::Scope& replicating = ReplicatingScope(cls);
-  classes_by_scope_[&replicating].push_back(id);
   DeclareClassStatics(cls, replicating);
   const WalkFrame class_frame =
       WalkFrame{}
@@ -1147,6 +1068,7 @@ auto UnitLowerer::InternOwnClass(
         base_type->getCanonicalType().as<slang::ast::ClassType>();
     auto base_id = ResolveClass(base_class, span);
     if (!base_id) return std::unexpected(std::move(base_id.error()));
+    ReadDeclarationLater(*base_id);
     base = *base_id;
   }
 
@@ -1163,6 +1085,7 @@ auto UnitLowerer::InternOwnClass(
         iface_type->getCanonicalType().as<slang::ast::ClassType>();
     auto iface_id = ResolveClass(iface_class, span);
     if (!iface_id) return std::unexpected(std::move(iface_id.error()));
+    ReadDeclarationLater(*iface_id);
     implements.push_back(*iface_id);
   }
   hir::DeclaredProperties declared_properties;
@@ -1318,7 +1241,11 @@ auto UnitLowerer::InternOwnClass(
       .static_properties = std::move(declared_statics),
       .constructor = std::nullopt,
       .methods = {},
-      .takes_declaring_instance = BelongsToAnInstance(cls) && !cls.isInterface};
+      .instance_scope =
+          BelongsToAnInstance(cls) && !cls.isInterface
+              ? std::optional{scope_publications_.at(&replicating).class_path}
+              : std::nullopt,
+      .conforming = {}};
   // A class that declares no `new` has the implicit one, which takes nothing
   // (LRM 8.7).
   if (!cls.isInterface) {
@@ -1331,18 +1258,78 @@ auto UnitLowerer::InternOwnClass(
     }
     declaration.constructor = std::move(entered);
   }
+  // Which behavior of the lineage answers each behavior of every interface
+  // class a value of the class is also a value of, as the front end resolves
+  // the behavior's name in the class (LRM 8.26.2), found here once and
+  // published; each is named as an override names what it overrides. A
+  // behavior an interface class restates from one it extends is stated where
+  // it was introduced.
+  const auto named = [&](const slang::ast::Symbol& introducing)
+      -> diag::Result<hir::NamedBehavior> {
+    auto introducer = ResolveClass(OwningClassOf(introducing), span);
+    if (!introducer) return std::unexpected(std::move(introducer.error()));
+    return hir::NamedBehavior{
+        .introducer = *introducer, .name = std::string{introducing.name}};
+  };
+  // The front end lists, of each class, what it names and what those extend;
+  // what the classes it extends implement is theirs, so the lineage is walked
+  // from its root, each interface class taken once.
+  std::vector<const slang::ast::ClassType*> interfaces;
+  if (!cls.isInterface) {
+    std::vector<const slang::ast::ClassType*> lineage;
+    for (const slang::ast::ClassType* at = &cls; at != nullptr;) {
+      lineage.push_back(at);
+      const slang::ast::Type* base = at->getBaseClass();
+      at = base == nullptr
+               ? nullptr
+               : &base->getCanonicalType().as<slang::ast::ClassType>();
+    }
+    for (const slang::ast::ClassType* of : std::views::reverse(lineage)) {
+      for (const slang::ast::Type* iface_type :
+           of->getImplementedInterfaces()) {
+        const auto* iface =
+            &iface_type->getCanonicalType().as<slang::ast::ClassType>();
+        if (!std::ranges::contains(interfaces, iface)) {
+          interfaces.push_back(iface);
+        }
+      }
+    }
+  }
+  for (const slang::ast::ClassType* iface : interfaces) {
+    for (const auto& proto :
+         iface->membersOfType<slang::ast::MethodPrototypeSymbol>()) {
+      const slang::ast::SubroutineSymbol* behavior = proto.getSubroutine();
+      if (behavior == nullptr ||
+          IntroducingMethod(*iface, *behavior) != nullptr) {
+        continue;
+      }
+      auto stated = named(*behavior);
+      if (!stated) return std::unexpected(std::move(stated.error()));
+      std::optional<hir::NamedBehavior> answered_by;
+      if (const slang::ast::SubroutineSymbol* answer =
+              ImplementationOf(cls, behavior->name)) {
+        auto answering = named(IntroducingOf(*answer));
+        if (!answering) {
+          return std::unexpected(std::move(answering.error()));
+        }
+        answered_by = *std::move(answering);
+      }
+      declaration.conforming.push_back(
+          hir::ConformingBehavior{
+              .interface_behavior = *std::move(stated),
+              .answered_by = std::move(answered_by)});
+    }
+  }
   // Which class introduced the behavior an overriding member overrides is
   // found here, once, along this class's own lineage as the front end resolved
   // it, and published; a unit reading the member reads the answer.
   const auto overriding =
       [&](const slang::ast::Symbol& introducing,
           bool is_pure) -> diag::Result<hir::MethodDispatch> {
-    auto introducer = ResolveClass(OwningClassOf(introducing), span);
-    if (!introducer) return std::unexpected(std::move(introducer.error()));
+    auto overridden = named(introducing);
+    if (!overridden) return std::unexpected(std::move(overridden.error()));
     return hir::OverridesVirtual{
-        .is_pure = is_pure,
-        .introducer = *introducer,
-        .name = std::string{introducing.name}};
+        .is_pure = is_pure, .overridden = *std::move(overridden)};
   };
   const auto dispatch_of =
       [&](const slang::ast::SubroutineSymbol& method,
@@ -1459,7 +1446,7 @@ auto UnitLowerer::InternOwnClass(
     declaration.methods.Add(*std::move(factory));
   }
   // A copy at a path already declared declares the same class, which its first
-  // copy has already stated, as its body is defined once below.
+  // copy has already stated.
   if (!unit_.classes.HasDeclaration(id)) {
     unit_.classes.SetDeclaration(id, std::move(declaration));
   } else if (!(unit_.classes.Declaration(id) == declaration)) {
@@ -1486,7 +1473,8 @@ auto UnitLowerer::InternOwnClass(
 }
 
 auto UnitLowerer::PopulateClassBodiesReplicatedBy(
-    const slang::ast::Scope& scope) -> diag::Result<void> {
+    const slang::ast::Scope& scope)
+    -> diag::Result<std::vector<hir::ReplicatedClass>> {
   // A class body reaches the declarations of the scope that replicates it and
   // records its routes against that scope's frame, so it lowers while that
   // scope is being lowered -- with the same reach a process of the scope has,
@@ -1495,19 +1483,23 @@ auto UnitLowerer::PopulateClassBodiesReplicatedBy(
   if (pending == pending_class_bodies_.end()) return {};
   std::vector<PendingClassBody> batch = std::move(pending->second);
   pending_class_bodies_.erase(pending);
+  std::vector<hir::ReplicatedClass> replicated;
+  replicated.reserve(batch.size());
   for (PendingClassBody& body : batch) {
-    if (auto r = PopulateClassBody(body); !r) {
-      return std::unexpected(std::move(r.error()));
-    }
+    auto code = PopulateClassBody(body);
+    if (!code) return std::unexpected(std::move(code.error()));
+    classes_with_code_.insert(body.id);
+    replicated.push_back(
+        hir::ReplicatedClass{.id = body.id, .code = *std::move(code)});
   }
-  return {};
+  return replicated;
 }
 
 void UnitLowerer::RequireEveryClassBodyLowered() const {
   std::string left;
   for (const auto& [scope, bodies] : pending_class_bodies_) {
     for (const PendingClassBody& body : bodies) {
-      if (unit_.classes.HasBodies(body.id)) continue;
+      if (classes_with_code_.contains(body.id)) continue;
       left += std::format(
           "{}'{}' in '{}'", left.empty() ? "" : ", ",
           UnitName(*body.cls, Naming()), scope->asSymbol().name);
@@ -1516,9 +1508,10 @@ void UnitLowerer::RequireEveryClassBodyLowered() const {
   if (left.empty()) return;
   throw InternalError(
       std::format(
-          "UnitLowerer::RequireEveryClassBodyLowered: every class this unit "
-          "holds is replicated by a structural scope of it, and every scope "
-          "lowered lowers the classes it replicates; left: {}",
+          "UnitLowerer::RequireEveryClassBodyLowered: every class this "
+          "specialization elaborated is replicated by a structural scope of "
+          "it, and every scope lowered lowers the classes it replicates; "
+          "left: {}",
           left));
 }
 
@@ -1535,7 +1528,7 @@ void UnitLowerer::ReadPendingDeclarations() {
 }
 
 auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
-    -> diag::Result<void> {
+    -> diag::Result<hir::ClassDecl> {
   const slang::ast::ClassType& cls = *pending.cls;
   const diag::SourceSpan span = pending.span;
   hir::ClassDecl& decl = *pending.decl;
@@ -1614,10 +1607,6 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
     user_constructor = std::move(ctor_or->constructor);
     base_arguments = std::move(ctor_or->base_arguments);
-  }
-
-  if (auto conformed = StateConformance(cls, span, decl); !conformed) {
-    return std::unexpected(std::move(conformed.error()));
   }
 
   hir::SubroutineDecl constructor =
@@ -1722,23 +1711,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   constructor.reads = ReadsOfConstruction(
       init_lowerer, init_frame, cls, constructor_sym, base_clause);
   decl.constructor = std::move(constructor);
-
-  // Where the compile checks itself, every application of the unit builds the
-  // class at its path, each from its own copy of the text (LRM 8.25), and they
-  // agree on everything the class holds for the same reason their scopes
-  // agree: the lowering reads a value only through the unit's identity or as
-  // one the object is built with.
-  if (!unit_.classes.HasBodies(pending.id)) {
-    unit_.classes.Define(pending.id, std::move(*pending.decl));
-  } else if (!(unit_.classes.Get(pending.id) == *pending.decl)) {
-    throw InternalError(
-        std::format(
-            "UnitLowerer::PopulateClassBody: two applications of unit '{}' "
-            "build the class '{}' differently, so the lowering read a value "
-            "the unit's identity does not hold -- please report this as a bug",
-            unit_.name, support::DisplayOf(unit_.classes.PathOf(pending.id))));
-  }
-  return {};
+  return std::move(*pending.decl);
 }
 
 auto UnitLowerer::AddComposedType(hir::Type type) const -> hir::TypeId {

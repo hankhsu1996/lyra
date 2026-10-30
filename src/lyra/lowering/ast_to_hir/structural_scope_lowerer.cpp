@@ -465,9 +465,6 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   scope.instance_members = std::move(declarations.instance_members);
   construction_.instances.resize(scope.instance_members.size());
   scope.procedural_scopes = std::move(declarations.procedural_scopes);
-  scope.replicated_classes = owner_->TakeReplicatedClasses(*slang_scope_);
-  scope.replicated_covergroups =
-      owner_->TakeReplicatedCovergroups(*slang_scope_);
   const WalkFrame frame =
       parent_frame.WithStructuralFrame(frame_, slang_scope_, &scope)
           .WithProceduralScopeOwner(slang_scope_, &scope.procedural_scopes);
@@ -501,8 +498,10 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   // takes them.
   auto classes = owner_->PopulateClassBodiesReplicatedBy(*slang_scope_);
   if (!classes) return std::unexpected(std::move(classes.error()));
+  scope.replicated_classes = *std::move(classes);
   auto covergroups = owner_->PopulateCovergroupsReplicatedBy(*slang_scope_);
   if (!covergroups) return std::unexpected(std::move(covergroups.error()));
+  scope.replicated_covergroups = *std::move(covergroups);
 
   for (const auto& member : slang_scope_->members()) {
     if (!owner_->Owns(member) ||

@@ -68,7 +68,14 @@ integral expression is the library's integral coverpoint specialized at the cove
 
 **D3. The record outlives the instance, and the options are fields of it.** The library keeps each
 instance's record, items and counts, and each type's record with every instance ever made of it, so
-the type's coverage and the database read instances already gone. The front end's `option` and
+the type's coverage and the database read instances already gone. A covergroup is a user-defined
+type (LRM 19.3), and one declared inside an instance of the design hierarchy is a type of that
+instance (LRM 6.22), so a module's or a generate block's covergroup is a type per instance of the
+scope declaring it: its type record, which `get_coverage()` reads (LRM 19.11) and the database
+names, is the instance's, named by the covergroup's hierarchical name (LRM 23.6), while the class it
+is written as is one for every instance. One a package or `$unit` declares is one type, named by its
+declaration. Revised 2026-10-30: the record was named by the declaration everywhere, which merged
+the covergroups of every instance of a module into one type. The front end's `option` and
 `type_option` structures are the library's typedefs, so `g.option.weight` is a field of the record
 read and written in place.
 

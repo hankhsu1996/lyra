@@ -33,6 +33,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/class_code.hpp"
 #include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
@@ -201,6 +202,17 @@ auto BuildPublishedClass(
                 .defining_unit = std::nullopt});
     cls.named_callables.push_back(
         mir::NamedCallable{.name = subroutine.name, .body = id});
+  }
+  for (const ClassCodeSlot& code : published.class_code) {
+    cls.callables.Define(
+        code.slot,
+        mir::CallableDecl{
+            .code = SlotPrototype(code.operation, shape.self_pointer_type),
+            .foreign = std::nullopt,
+            .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true},
+            .defining_unit = std::nullopt});
+    cls.named_callables.push_back(
+        mir::NamedCallable{.name = code.name, .body = code.slot});
   }
 
   return BuiltPublishedClass{
@@ -2465,8 +2477,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       hir_scope.processes.size());
   std::vector<std::vector<PlacedStatic>> placed_subroutine_statics(
       hir_scope.structural_subroutines.size());
-  // The cells of the published static properties of the classes this scope
-  // declares, keyed by the class, which takes them over.
+  // The cells of the static properties of the classes this scope declares,
+  // keyed by the class, which takes them over: the scope publishes every one
+  // (LRM 8.9, 23.6), so each is where the publication put it.
   std::map<hir::ClassId, std::vector<PlacedProperty>> placed_class_statics;
   std::map<hir::CovergroupId, mir::ClassFieldTarget> covergroup_events;
   // What each published generate construct built, and what each published
@@ -2530,7 +2543,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     disable_cells[id.value] = on_published(layout.disable_targets.Get(
         hir::PublishedDisableTargetId{published_disable_target++}));
   }
-
   // A data object nothing outside the scope may name is the one member the
   // scope publishes nothing of, so it alone is placed in this scope's own
   // class, in the order it was declared.
@@ -2628,10 +2640,11 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // instance begins or ends waits on the event the instance keeps for its
   // type, which those blocks trigger.
   BlockEventTriggers block_events;
-  for (const hir::CovergroupId covergroup : hir_scope.replicated_covergroups) {
+  for (const hir::ReplicatedCovergroup& covergroup :
+       hir_scope.replicated_covergroups) {
     CovergroupLowerer& lowerer =
         covergroup_lowerers_.emplace_back(unit_lowerer, covergroup, this);
-    const auto event = covergroup_events.find(covergroup);
+    const auto event = covergroup_events.find(covergroup.id);
     lowerer.DeclareShape(
         &shape, event == covergroup_events.end()
                     ? std::nullopt
@@ -2756,16 +2769,15 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // before it is published: such a class keeps its cells here, as fields of the
   // instance, so what it places has to land while the shape is still open.
   class_lowerers_.reserve(hir_scope.replicated_classes.size());
-  for (const hir::ClassId hir_class : hir_scope.replicated_classes) {
+  for (const hir::ReplicatedClass& replicated : hir_scope.replicated_classes) {
     class_lowerers_.emplace_back(
-        unit_lowerer, hir_class, unit_lowerer.ClassIdentity(hir_class),
-        unit_lowerer.ClassPointee(hir_class),
-        unit_lowerer.Hir().classes.Get(hir_class), this);
+        unit_lowerer, replicated, unit_lowerer.ClassIdentity(replicated.id),
+        unit_lowerer.ClassPointee(replicated.id), hir_scope, this);
   }
-  for (auto&& [class_lowerer, hir_class] :
+  for (auto&& [class_lowerer, replicated] :
        std::views::zip(class_lowerers_, hir_scope.replicated_classes)) {
-    if (auto r =
-            class_lowerer.DeclareShape(&shape, placed_class_statics[hir_class]);
+    if (auto r = class_lowerer.DeclareShape(
+            &shape, placed_class_statics[replicated.id]);
         !r) {
       return std::unexpected(std::move(r.error()));
     }
@@ -3246,7 +3258,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     ProcessLowerer subroutine_lowerer(
         unit_lowerer, this, hir_scope.time_resolution, src.body, src.root_stmt,
         ctor_frame, scopes_, declared.statics);
-    auto code_or = subroutine_lowerer.Run(src, CallableForm::kInstanceMember);
+    auto code_or = subroutine_lowerer.Run(
+        src, CallableForm::kInstanceMember, std::nullopt);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     mir_class.callables.Define(
         declared.callable,

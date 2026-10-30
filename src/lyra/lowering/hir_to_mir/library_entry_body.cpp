@@ -26,29 +26,6 @@ auto AddBody(mir::Class& cls, mir::CallableCode code) -> mir::CallableId {
           .defining_unit = std::nullopt});
 }
 
-// Ends `body` with `call`, a call resulting in `result`, completing as that
-// call does. A call completing as a coroutine is awaited, which completes the
-// body as a coroutine too, with what that one completed with.
-void CompleteWith(
-    const mir::CompilationUnit& unit, mir::Block& body, mir::ExprId call,
-    mir::TypeId result) {
-  const auto* coroutine = unit.types.Get(result).As<mir::CoroutineType>();
-  const mir::TypeId completion =
-      coroutine != nullptr ? coroutine->payload : result;
-  const mir::ExprId completed =
-      coroutine != nullptr ? body.exprs.Add(
-                                 mir::Expr{
-                                     .data = mir::AwaitExpr{.execution = call},
-                                     .type = completion})
-                           : call;
-  if (completion == unit.builtins.void_type) {
-    body.AppendStmt(mir::ExprStmt{.expr = completed});
-    body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  } else {
-    body.AppendStmt(mir::ReturnStmt{.value = completed});
-  }
-}
-
 // The entry calling `callable` of class `id` on the object, and no other body
 // in its place: handed the object as `object`, it views it as the class and
 // passes on what it takes after the object.
@@ -93,6 +70,26 @@ auto EntryBody(
 }
 
 }  // namespace
+
+void CompleteWith(
+    const mir::CompilationUnit& unit, mir::Block& body, mir::ExprId call,
+    mir::TypeId result) {
+  const auto* coroutine = unit.types.Get(result).As<mir::CoroutineType>();
+  const mir::TypeId completion =
+      coroutine != nullptr ? coroutine->payload : result;
+  const mir::ExprId completed =
+      coroutine != nullptr ? body.exprs.Add(
+                                 mir::Expr{
+                                     .data = mir::AwaitExpr{.execution = call},
+                                     .type = completion})
+                           : call;
+  if (completion == unit.builtins.void_type) {
+    body.AppendStmt(mir::ExprStmt{.expr = completed});
+    body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  } else {
+    body.AppendStmt(mir::ReturnStmt{.value = completed});
+  }
+}
 
 auto EntryOf(
     const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,

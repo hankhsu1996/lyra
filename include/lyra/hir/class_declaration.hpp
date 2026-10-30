@@ -89,6 +89,17 @@ template <typename Id>
   return embedded;
 }
 
+// One behavior of an interface class a value of a class is also a value of
+// (LRM 8.26.5), and the behavior of the class's own lineage answering it, as
+// the front end resolved its name there (LRM 8.26.2). Nothing answers it where
+// the class is abstract and leaves the implementation to a class extending it.
+struct ConformingBehavior {
+  NamedBehavior interface_behavior;
+  std::optional<NamedBehavior> answered_by;
+
+  auto operator==(const ConformingBehavior&) const -> bool = default;
+};
+
 // What a class declares (LRM 8), as the front end elaborated it and as every
 // unit asks about it: the one answer to every question about a class, whether
 // the unit asking declares it or reaches it in another unit. The unit declaring
@@ -106,7 +117,10 @@ template <typename Id>
 // A class states what it declares and nothing that follows from another class's
 // declaration -- no property or method of a class it extends, and no interface
 // class it is only by way of one it names -- so a referrer reads each of those
-// off the class that declares it.
+// off the class that declares it. The one exception is what answers each
+// behavior of the interface classes a value of it is also a value of, which the
+// front end resolves along the whole lineage (LRM 8.26.2) and a referrer reads
+// rather than resolves again.
 struct ClassDeclaration {
   support::DefPath class_path;
   // The class this one extends, absent where it extends nothing. A referrer
@@ -135,10 +149,16 @@ struct ClassDeclaration {
   std::optional<CalleeInterface> constructor;
   // Every method the class declares, as the class places them.
   DeclaredMethods methods;
-  // Whether a construction of the class and a call of a method of the class
-  // itself are handed the instance the class belongs to (LRM 6.22), as the
-  // class's own declaration states it.
-  bool takes_declaring_instance = false;
+  // The scope of the design hierarchy whose instance the class belongs to
+  // (LRM 6.22): the one declaring it, or for a specialization of a generic
+  // class on a type of such a scope, that scope (LRM 8.25). A construction of
+  // the class and a call of a method of the class itself are handed that
+  // instance, and its code is the code of the body realizing the scope. Absent
+  // where the class belongs to no instance.
+  std::optional<support::DefPath> instance_scope;
+  // Which behavior answers each behavior of every interface class a value of
+  // the class is also a value of; none for an interface class.
+  std::vector<ConformingBehavior> conforming;
 
   auto operator==(const ClassDeclaration&) const -> bool = default;
 };

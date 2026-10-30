@@ -534,7 +534,8 @@ auto ProcessLowerer::LowerSubroutine(
 }
 
 auto ProcessLowerer::Run(
-    const hir::SubroutineDecl& src, std::optional<CallableForm> member_form)
+    const hir::SubroutineDecl& src, std::optional<CallableForm> member_form,
+    std::optional<mir::CallableId> reporting_at)
     -> diag::Result<mir::CallableCode> {
   switch (src.kind) {
     case hir::SubroutineKind::kTask:
@@ -611,9 +612,15 @@ auto ProcessLowerer::Run(
   mir::DirectTarget recording;
   if (mir::Class* declaring = owner_ctor_frame_.current_class.cls;
       declaring != nullptr) {
+    mir::CallableId slot{};
+    if (reporting_at.has_value()) {
+      slot = *reporting_at;
+      declaring->callables.Define(slot, std::move(recording_decl));
+    } else {
+      slot = declaring->callables.Add(std::move(recording_decl));
+    }
     recording = mir::CallableTarget{
-        .owner = owner_ctor_frame_.current_class.id,
-        .slot = declaring->callables.Add(std::move(recording_decl))};
+        .owner = owner_ctor_frame_.current_class.id, .slot = slot};
   } else {
     recording = mir::UnitCallableTarget{
         .slot = owner_->Unit().callables.Add(std::move(recording_decl))};

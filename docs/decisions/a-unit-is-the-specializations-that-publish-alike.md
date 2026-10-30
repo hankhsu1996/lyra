@@ -30,6 +30,11 @@ one unit published, throwing where they differed. This record replaces the predi
 comparison: what referrers compile against is what a specialization publishes, so the class it is
 belongs to every specialization publishing alike.
 
+2026-10-30: D5 was a limit of how a class's methods were named, and stated as one. A class's code
+now belongs to the body that compiled it and is reached through the instance its object belongs to
+([class-declared-in-a-structural-scope](class-declared-in-a-structural-scope.md)), so D5, its Limit
+and D7's clause on a class's code are gone, and a scope declaring a class is grouped as any other.
+
 ## Requirement
 
 What another unit compiles against a part of the design is decided by what that unit can see of it,
@@ -53,8 +58,10 @@ which of an instance's values will matter.
    alternative stands is chosen from values handed at construction, as a C++ constructor's `if`
    chooses, and unlike `if constexpr`, whose discarded arm is never instantiated because its
    condition is a template argument (clang `TreeTransform::TransformIfStmt`).
-5. A class declared inside a design element or one of its generate blocks has its methods compiled
-   into the element's code and named by the element's class, and another unit calls them by name.
+5. A class declared inside a design element or one of its generate blocks is declared once by the
+   unit, and another unit calls its methods and extends it through that declaration. What its
+   methods do is the code of the body that compiled it, reached through the instance the object
+   belongs to.
 6. The front end has already folded every position where the language requires a constant; what is
    left of a parameter in the bound tree is a read a lowering evaluates.
 
@@ -102,13 +109,10 @@ alternatives are one class, and specializations of one unit that built different
 unit, publishing every block class any of them built. A name reaching a block takes its class from
 the block the front end resolved it to, which is built where the name is read.
 
-**D5. A design element declaring a class is a class of its own for each specialization, and a
-generate block declaring one for each place it stands.** Two specializations publishing alike may
-still compile to different code, and the class's methods, named by the class, would then be defined
-twice (fact 5). Anything in a key can change that code, so nothing short of the whole key keeps them
-apart. This is a limit of how methods are named, not of what a class is, and it goes once a method's
-implementation belongs to the body that compiled it and a call finds it through what the object, or
-the declaring instance, is bound to.
+**D5. A design element or a generate block declaring a class is grouped as any other scope.** What
+the class declares is part of what the scope publishes, and what its methods do is the code of each
+body (fact 5), so two specializations that publish alike and compile the class's methods differently
+are one class compiled to two bodies, as any two whose code differs are.
 
 **D6. A body is found by comparing HIR whole within one class, and is named for the first
 specialization in the design's order that came out as it.** Only the design root's construction
@@ -122,8 +126,9 @@ nothing at run time.** Which parameters the code reads is read off the bound tre
 name of one in an expression of the body, in a generate construct's scheme, and in a value an
 instantiation assigns a child. One an object is handed is supplied when it is built; a local one
 written from such a value is worked out when the object is built, and every such value must equal
-what the front end settled it to. A parameter a class declares, one a nested definition reads, and
-one the code of a scope declaring a class reads hold the value this elaboration settled.
+what the front end settled it to. A parameter a class declares and one a nested definition reads
+hold the value this elaboration settled; one a class's methods read is read as the scope's own code
+reads it.
 
 **D8. Every specialization lowered, and in a compile that checks itself every specialization, is
 declared again under the class's naming and must publish alike everything the class does.** It may
@@ -152,8 +157,6 @@ is built as.
 
 ## Limits, each with its cause
 
-- A design element declaring a class compiles a class per specialization, and a loop's blocks
-  declaring one a class per index (D5). Cause: a method is named by its class (fact 5).
 - A specialization handed a value its code only reads is lowered alone, and found to be one body
   with the others only by comparing what they lowered to (D6, D9). Cause: a value handed in is still
   folded wherever the front end folds it -- a width, a type query, a range -- and which of those
@@ -239,5 +242,4 @@ is built as.
   D1 and D4: which blocks were built is neither an input to a name nor part of what a scope
   publishes, and a value deciding what a child builds names nothing of the scope handing it.
 - [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D4 and D7: a
-  block's class is what it publishes, not what its declarations spell, and a block declaring a class
-  is one per place for the reason D5 gives, not because it is named by its index.
+  block's class is what it publishes, not what its declarations spell, whatever the block declares.

@@ -86,16 +86,18 @@ around it, both read off the signature. Revised 2026-10-29: the body used to be 
 first block body publishing the class around its own, which was sound for the same reason and still
 made one body's lowering stand on another's.
 
-**D6. One reach still names another scope's own identity, where only one scope can stand.** A
-class's static is kept by the scope declaring the class, and a block declaring a class is named by
-its index, as is every block holding one, so its body is the only one of its class. Revised
-2026-10-29: an interface port of the unit's own scope, reached from a block inside it, was the
-other, on the ground that one implementation holds the unit's scope once; it is now reached through
-what that scope published, as D1 says of every reach leaving the reader's own scope.
+**D6. No reach names another scope's own identity.** Revised 2026-10-29: an interface port of the
+unit's own scope, reached from a block inside it, was one such reach, on the ground that one
+implementation holds the unit's scope once; it is now reached through what that scope published, as
+D1 says of every reach leaving the reader's own scope. Revised 2026-10-30: a class's static, kept by
+the scope declaring the class, was the other, on the ground that a block declaring a class was named
+by its index and so the only body of its class; the static is now a field of the class the scope
+published, placed from the class's declaration
+([class-declared-in-a-structural-scope](class-declared-in-a-structural-scope.md) Decision 3), and a
+block declaring a class is grouped as any other.
 
 ## Limits
 
-- A block declaring a class compiles per index, since each block's class is a type of its own.
 - A call to a subroutine of an enclosing scope goes through a slot even where only one body realizes
   that scope (D2); removing it is a pass over the program once every body is known.
 - Blocks that reach, each by its own index, blocks of a different shape are a body per index, since

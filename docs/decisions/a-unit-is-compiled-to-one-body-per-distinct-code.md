@@ -30,11 +30,11 @@ specializations whose code comes out alike are one body, as a linker folds ident
 D1, D4 and D5 revised 2026-10-28 by
 [a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md):
 a unit is the specializations whose published structure reads alike, found by comparing what each
-publishes, so no parameter's value is predicted to name it; a design element declaring a class is a
-class per specialization, for the reason that record's D5 gives; and a value handed to a child names
-nothing of the scope handing it, whose published member already names the child's class; and the
-design root's tables are stated by what a specialization is built as, not by the specialization
-(that record's D9). D2, D3 and D6 stand.
+publishes, so no parameter's value is predicted to name it; a design element declaring a class is
+grouped as any other, its class's code being each body's (that record's D5, revised 2026-10-30); and
+a value handed to a child names nothing of the scope handing it, whose published member already
+names the child's class; and the design root's tables are stated by what a specialization is built
+as, not by the specialization (that record's D9). D2, D3 and D6 stand.
 
 ## Requirement
 
@@ -128,10 +128,12 @@ which the project keeps one copy of. What only a body states -- the classes real
 its closures, the functions nothing else names -- is named by the body: under its name on the
 execution backend, and in the namespace with no name on the C++ backend.
 
-**D4. A scope declaring a class has one body per value its code relies on.** A class reaches the
-object of the scope declaring it as that scope's body compiled it (fact 5), so a parameter the code
-of a scope that declares a class relies on, anywhere inside it, is an argument of the scope's name
-instead. This holds for a unit and for a generate block alike.
+**D4. A scope declaring a class is one body per distinct code, as any other.** A class reaches the
+object of the scope declaring it as that scope's body compiled it (fact 5), and that code is the
+body's: the class is declared once by the unit and reaches it through the object's instance
+([class-declared-in-a-structural-scope](class-declared-in-a-structural-scope.md) Decision 5). The
+2026-10-13 shape made a parameter that code relies on an argument of the scope's name instead, which
+held only while a class's methods were named by the class; revised 2026-10-30.
 
 **D5. A parameter handed to a child's argument is an argument of the scope building the child where
 it names the child's unit.** One handed to an argument of what the child declares is an argument of
@@ -156,7 +158,6 @@ entry of its own.
 - A body is named for the first specialization, in the design's order, that came out as it, so an
   edit that changes which specialization is first renames it, and what named it is compiled again
   (D3).
-- A unit or a block declaring a class is a unit per value its code relies on (D4).
 - Every body compiles the published classes' constructor, destructor and definition again; the link
   keeps one (D3).
 - An automatic local whose width a supplied value fixes is counted as declared, because the front
@@ -215,4 +216,4 @@ what every body restates instead is what a header-defined class restates.
   an instance is handed enters its specialization's. D4: a parameter is read as its settled value
   only where it is an argument of the unit.
 - [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D5 and D7: a
-  unit is realized as a block is, one level out, and a scope declaring a class has one body.
+  unit is realized as a block is, one level out.
