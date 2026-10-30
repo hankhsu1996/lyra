@@ -139,6 +139,11 @@ def clang_query() -> str:
 
 REPORTED = re.compile(r"^(.+?):(\d+):\d+: note: \"root\" binds here")
 
+# clang-query still answers, and exits 0, for a source it could not compile --
+# a header missing stops the parse early -- and what it answers then is that
+# nothing matched. So any error is a source not read, never a source in order.
+UNREAD = re.compile(r": (fatal )?error: ")
+
 
 def run(
     paths: list[Path], within: str, extra: list[str], jobs: int
@@ -157,8 +162,10 @@ def run(
     try:
         with ThreadPoolExecutor(max_workers=jobs) as pool:
             for path, result in pool.map(one, paths):
-                if result.returncode != 0:
-                    failed.append(f"{path}:\n{result.stderr}")
+                said = result.stdout + result.stderr
+                if result.returncode != 0 or UNREAD.search(said):
+                    errors = [line for line in said.splitlines() if UNREAD.search(line)]
+                    failed.append(f"{path}:\n" + "\n".join(errors[:5] or [result.stderr]))
                     continue
                 for line in result.stdout.splitlines():
                     reported = REPORTED.match(line)
