@@ -69,7 +69,7 @@ auto RunSimulation(Runtime& runtime) -> int {
     // run lasts -- which starts at the first thing a run does, initializing
     // state, since a context import can already be reached from there (LRM
     // 10.5, 35.5.3).
-    const AmbientRunContext run_context{&runtime.DesignRoot(), runtime};
+    const AmbientRunContext run_context{runtime.DesignRoot(), runtime};
     const InterruptReport interrupt_report{runtime};
     const BoundOverflowReport bound_overflow_report;
     return runtime.Run();

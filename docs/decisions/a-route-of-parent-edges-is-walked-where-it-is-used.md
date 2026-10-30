@@ -103,17 +103,17 @@ pair says the walk costs nothing measurable.
   ([class-declared-in-a-structural-scope](class-declared-in-a-structural-scope.md)), because what
   its unit publishes of it may name no class the instance keeps to itself.
 - So the edge is held twice: the runtime's tree keeps every scope's parent for what only the runtime
-  answers by walking the tree -- a scope's name (`%m`, a dump, the DPI scope registry) and where an
-  upward name searched by class starts (LRM 23.8) -- and a block keeps the same scope as its own
-  class for the names it reaches. Both are written once, while the block is constructed, from the
-  one value its builder hands, and nothing writes either again, so they cannot come apart. Which
-  scope owns a built scope is not a third statement of it either: attaching a scope to the tree
-  files it under the parent it was placed under, as SystemC files an object under the parent it was
-  made in, so owner and parent are one fact. Holding the edge once was weighed and rejected. In the
-  runtime's base alone, the design's code would have to read a prebuilt library's private layout and
-  cast down, or call it, which is what this removed. In the design's classes alone, the runtime
-  would ask each scope for its parent through a virtual every scope class overrides, which moves the
-  upward half of the tree out of the runtime that owns, names and walks the tree, to save a pointer
-  per block. Clang keeps a declaration's semantic and lexical contexts in one slot where they agree
-  because both are one generic pointer type; here the two sides of the library boundary hold
-  different types.
+  answers by walking the tree -- a scope's name (`%m`, a dump, `svGetNameFromScope`), the scope a
+  name finds (`svGetScopeFromName`) and where an upward name searched by class starts (LRM 23.8) --
+  and a block keeps the same scope as its own class for the names it reaches. Both are written once,
+  while the block is constructed, from the one value its builder hands, and nothing writes either
+  again, so they cannot come apart. Which scope owns a built scope is not a third statement of it
+  either: attaching a scope to the tree files it under the parent it was placed under, as SystemC
+  files an object under the parent it was made in, so owner and parent are one fact. Holding the
+  edge once was weighed and rejected. In the runtime's base alone, the design's code would have to
+  read a prebuilt library's private layout and cast down, or call it, which is what this removed. In
+  the design's classes alone, the runtime would ask each scope for its parent through a virtual
+  every scope class overrides, which moves the upward half of the tree out of the runtime that owns,
+  names and walks the tree, to save a pointer per block. Clang keeps a declaration's semantic and
+  lexical contexts in one slot where they agree because both are one generic pointer type; here the
+  two sides of the library boundary hold different types.
