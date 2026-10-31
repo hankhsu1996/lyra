@@ -1,12 +1,14 @@
 #include "lyra/mir/frame_size.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <ranges>
 #include <span>
 #include <variant>
 #include <vector>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -87,6 +89,7 @@ auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> support::Layout {
     case RuntimeLibraryKind::kScopeCallable:
     case RuntimeLibraryKind::kClassObjectInfo:
     case RuntimeLibraryKind::kInterfaceRow:
+    case RuntimeLibraryKind::kScopeMetadata:
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
     case RuntimeLibraryKind::kGeneratePlaces:
@@ -145,6 +148,13 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
           },
           [&](const MachineArrayType& t) {
             return Sequence(part, t.element, t.size);
+          },
+          // Where the first entry is and how many there are, whatever the
+          // entries.
+          [](const MachineSpanType&) {
+            return support::Layout{
+                .size = sizeof(abi::ConstantSpan<std::byte>),
+                .align = alignof(abi::ConstantSpan<std::byte>)};
           },
           [&](const TupleType& t) { return Product(part, t.elements); },
           // A structure's members side by side, a union's each at the start

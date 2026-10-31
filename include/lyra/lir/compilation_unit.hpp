@@ -94,7 +94,8 @@ struct ConstantAddress {
 };
 
 // A structure of the runtime library, its members given in the order the
-// library declares them, a nested structure's members standing where it does.
+// library declares them, a member that is a structure of its own given as a
+// record of its own.
 struct ConstantRecord {
   RuntimeLibraryKind kind;
   std::vector<Constant> parts;
@@ -105,14 +106,22 @@ struct ConstantArray {
   std::vector<Constant> elements;
 };
 
+// A view of the `count` entries of the array linked under `symbol`: where the
+// first is and how many there are.
+struct ConstantSpan {
+  std::string symbol;
+  std::uint64_t count = 0;
+};
+
 // A value fixed where the unit is compiled and built from nothing that runs --
-// literals, addresses, and structures and arrays of them -- so a target emits
-// it as data.
+// literals, addresses, and structures, arrays and views of them -- so a target
+// emits it as data.
 struct Constant {
   std::variant<
       ConstantInt, ConstantNull, ConstantDestructor, ConstantDispatchTable,
       ConstantInterfaceTable, ConstantString, ConstantFunction,
-      ConstantExternalFunction, ConstantAddress, ConstantRecord, ConstantArray>
+      ConstantExternalFunction, ConstantAddress, ConstantRecord, ConstantArray,
+      ConstantSpan>
       value;
 };
 

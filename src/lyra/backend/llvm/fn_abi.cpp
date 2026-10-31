@@ -867,6 +867,7 @@ auto CallArranger::ConstructionOf(
               case lir::RuntimeLibraryKind::kScopeCallable:
               case lir::RuntimeLibraryKind::kClassObjectInfo:
               case lir::RuntimeLibraryKind::kInterfaceRow:
+              case lir::RuntimeLibraryKind::kScopeMetadata:
               case lir::RuntimeLibraryKind::kConstructionTable:
               case lir::RuntimeLibraryKind::kInstantiation:
               case lir::RuntimeLibraryKind::kGeneratePlaces:
@@ -982,6 +983,7 @@ auto CallArranger::ConstructionOf(
           // Aggregates this layer lays out itself, and the code address of a
           // body.
           [&](const lir::MachineArrayType&) -> Built { return no_construct(); },
+          [&](const lir::MachineSpanType&) -> Built { return no_construct(); },
           [&](const lir::TupleType&) -> Built { return no_construct(); },
           // A record's value is made by the instruction that composes it --
           // a structure's from its members, a union's from the member it

@@ -76,6 +76,7 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           // A sequence of machine values is held as a view over where they
           // lie.
           [&](const lir::MachineArrayType&) -> llvm::Type* { return span_ty_; },
+          [&](const lir::MachineSpanType&) -> llvm::Type* { return span_ty_; },
           [&](const lir::MachineCStringType& t) { return address(t); },
           // The machine family's callable axis. The signature it carries is
           // what a call made through it is compiled against, not part of the

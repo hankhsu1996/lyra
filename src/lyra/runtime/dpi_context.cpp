@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <variant>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
@@ -11,7 +12,6 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
-#include "lyra/runtime/scope_info.hpp"
 #include "lyra/runtime/sim_time.hpp"
 
 namespace lyra::runtime {
@@ -192,8 +192,8 @@ struct TimePowers {
 auto EffectiveTimePowers(
     const lyra::runtime::Scope* scope, std::int8_t global_power) -> TimePowers {
   const auto effective = [global_power](std::int8_t declared) {
-    return declared == lyra::runtime::kUnspecifiedTimePower ? global_power
-                                                            : declared;
+    return declared == lyra::abi::kUnspecifiedTimePower ? global_power
+                                                        : declared;
   };
   if (scope == nullptr) {
     return TimePowers{.unit = global_power, .precision = global_power};

@@ -39,7 +39,7 @@ struct GcObject::Watchers {
 GcObject::GcObject() : creators_share_(this, EndHandedOver{}) {
 }
 
-GcObject::GcObject(const ObjectDefinition& definition)
+GcObject::GcObject(const abi::ObjectDefinition& definition)
     : ObjectHeader{.definition = &definition},
       creators_share_(this, EndHandedOver{}) {
 }

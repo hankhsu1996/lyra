@@ -52,6 +52,7 @@ auto KeeperEntriesOf(const TypePool& types, TypeId keeper)
     case RuntimeLibraryKind::kScopeCallable:
     case RuntimeLibraryKind::kClassObjectInfo:
     case RuntimeLibraryKind::kInterfaceRow:
+    case RuntimeLibraryKind::kScopeMetadata:
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
     case RuntimeLibraryKind::kGeneratePlaces:

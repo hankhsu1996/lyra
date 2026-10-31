@@ -82,27 +82,27 @@ auto Scope::HierarchicalPathOf(const lyra::value::String& below) const
   return lyra::value::String(std::move(out));
 }
 
-void Scope::Enter(ScopePhase ScopeInfo::* phase) {
+void Scope::Enter(abi::ScopePhase abi::ScopeInfo::* phase) {
   (Info().*phase)(this);
 }
 
 void Scope::Resolve() {
-  Enter(&ScopeInfo::resolve);
+  Enter(&abi::ScopeInfo::resolve);
 }
 
 void Scope::Initialize() {
-  Enter(&ScopeInfo::initialize);
+  Enter(&abi::ScopeInfo::initialize);
 }
 
 void Scope::CreateProcesses() {
-  Enter(&ScopeInfo::create_processes);
+  Enter(&abi::ScopeInfo::create_processes);
 }
 
 void Scope::Describe() {
-  Enter(&ScopeInfo::describe);
+  Enter(&abi::ScopeInfo::describe);
 }
 
-auto Scope::EnclosingScope(const ObjectDefinition* cls) -> Scope* {
+auto Scope::EnclosingScope(const abi::ObjectDefinition* cls) -> Scope* {
   for (Scope* level = parent_; level != nullptr; level = level->parent_) {
     if (IsOfClass(level->definition, cls)) return level;
     if (level->parent_ != nullptr) continue;

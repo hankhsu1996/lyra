@@ -14,7 +14,7 @@
 
 namespace lyra::runtime {
 
-const ObjectDefinition SynchronizationObject::kDefinition =
+const abi::ObjectDefinition SynchronizationObject::kDefinition =
     LibraryObjectDefinition<SynchronizationObject>();
 
 SynchronizationObject::SynchronizationObject() : GcObject(kDefinition) {

@@ -37,7 +37,7 @@ class GcObject : public ObjectHeader,
   // anything of the design runs on it.
   GcObject();
   // An object of a class of this library, which states its own definition.
-  explicit GcObject(const ObjectDefinition& definition);
+  explicit GcObject(const abi::ObjectDefinition& definition);
   ~GcObject();
   GcObject(const GcObject&);
   auto operator=(const GcObject&) -> GcObject&;
@@ -114,7 +114,7 @@ auto RefToObject(std::shared_ptr<T> owned) -> value::ObjectRef {
 // makes answers for `T` (LRM 8.17).
 template <std::derived_from<GcObject> T, typename... Params, typename... Args>
 auto CreateObject(
-    const ObjectDefinition* definition, void (T::*construct)(Params...),
+    const abi::ObjectDefinition* definition, void (T::*construct)(Params...),
     Args&&... args) -> value::ObjectRef {
   auto created = std::make_unique<T>();
   created->definition = definition;
@@ -141,7 +141,7 @@ auto Dispatch(GcObject& self, Args&&... args) -> decltype(auto) {
 // `Interface` (LRM 8.26.5): the same, read off the table the class of `self`
 // gives that interface class.
 template <
-    typename Table, auto Slot, const ObjectDefinition* Interface,
+    typename Table, auto Slot, const abi::ObjectDefinition* Interface,
     typename... Args>
 auto InterfaceDispatch(GcObject& self, Args&&... args) -> decltype(auto) {
   const auto* table =
@@ -160,8 +160,8 @@ void EndObjectOf(void* object) noexcept {
 // The definition of a class of this library whose objects the library itself
 // creates: one extending nothing a design names, whose objects end as `T`'s.
 template <std::derived_from<GcObject> T>
-auto LibraryObjectDefinition() -> ObjectDefinition {
-  return ObjectDefinition{
+auto LibraryObjectDefinition() -> abi::ObjectDefinition {
+  return abi::ObjectDefinition{
       .base = nullptr,
       .scope = nullptr,
       .class_object = nullptr,
@@ -184,7 +184,7 @@ using OwnedObject = std::unique_ptr<T, EndOwnedObject>;
 // The same as `CreateObject` for an object one owner holds alone.
 template <std::derived_from<GcObject> T, typename... Params, typename... Args>
 auto CreateOwned(
-    const ObjectDefinition* definition, void (T::*construct)(Params...),
+    const abi::ObjectDefinition* definition, void (T::*construct)(Params...),
     Args&&... args) -> OwnedObject<T> {
   auto created = std::make_unique<T>();
   created->definition = definition;

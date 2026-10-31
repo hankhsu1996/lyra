@@ -46,7 +46,6 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
-#include "lyra/lowering/hir_to_mir/library_entry_body.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/path_select.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
@@ -3325,10 +3324,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     // A foreign caller hands the entry the scope every instance is.
     exports.push_back(
         mir::NamedCallable{
-            .name = std::move(entry.linkage.foreign_name),
-            .body = EntryOf(
-                unit_lowerer.Unit(), class_id_, mir_class, entry_id,
-                unit_lowerer.Unit().builtins.scope_ptr)});
+            .name = std::move(entry.linkage.foreign_name), .body = entry_id});
   }
 
   for (const hir::ProcessId id : hir_scope.processes.Ids()) {

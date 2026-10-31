@@ -137,6 +137,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             HashId(seed, t.element);
             HashField(seed, t.size);
           },
+          [&](const MachineSpanType& t) { HashId(seed, t.element); },
           [&](const MachineFunctionType& t) {
             HashIds(seed, t.params);
             HashId(seed, t.result);
@@ -264,6 +265,7 @@ auto IsReachedByAddress(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kScopeCallable:
     case RuntimeLibraryKind::kClassObjectInfo:
     case RuntimeLibraryKind::kInterfaceRow:
+    case RuntimeLibraryKind::kScopeMetadata:
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
     case RuntimeLibraryKind::kGeneratePlaces:
@@ -310,6 +312,7 @@ auto IsLibraryValue(RuntimeLibraryKind kind) -> bool {
     case RuntimeLibraryKind::kScopeCallable:
     case RuntimeLibraryKind::kClassObjectInfo:
     case RuntimeLibraryKind::kInterfaceRow:
+    case RuntimeLibraryKind::kScopeMetadata:
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
     case RuntimeLibraryKind::kGeneratePlaces:
@@ -357,6 +360,7 @@ auto LibraryValueMovability(RuntimeLibraryKind kind) -> Movability {
     case RuntimeLibraryKind::kScopeCallable:
     case RuntimeLibraryKind::kClassObjectInfo:
     case RuntimeLibraryKind::kInterfaceRow:
+    case RuntimeLibraryKind::kScopeMetadata:
     case RuntimeLibraryKind::kConstructionTable:
     case RuntimeLibraryKind::kInstantiation:
     case RuntimeLibraryKind::kGeneratePlaces:
@@ -405,6 +409,7 @@ auto Type::IsAddressOnly() const -> bool {
           [](const MachineIntType&) { return false; },
           [](const MachineFloatType&) { return false; },
           [](const MachineArrayType&) { return false; },
+          [](const MachineSpanType&) { return false; },
           [](const MachineFunctionType&) { return false; },
           [](const RealType&) { return false; },
           [](const ShortRealType&) { return false; },
@@ -522,6 +527,7 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const MachineIntType&) { return false; },
           [](const MachineFloatType&) { return false; },
           [](const MachineArrayType&) { return false; },
+          [](const MachineSpanType&) { return false; },
           [](const MachineFunctionType&) { return false; },
 
           // An address whose value is the address: what it names lives for its
@@ -592,6 +598,9 @@ auto Type::ValueMovability() const -> Movability {
           [](const MachineIntType&) { return Movability::kCopyable; },
           [](const MachineFloatType&) { return Movability::kCopyable; },
           [](const MachineFunctionType&) { return Movability::kCopyable; },
+          // Where entries kept elsewhere begin and how many there are, which
+          // owns none of them.
+          [](const MachineSpanType&) { return Movability::kCopyable; },
           // The address of a string's characters, which lasts as long as the
           // string does.
           [](const MachineCStringType&) { return Movability::kCopyable; },
@@ -674,6 +683,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // lowering builds them to carry something, where a container is a
           // type a declaration named.
           [](const MachineArrayType&) -> Element { return std::nullopt; },
+          [](const MachineSpanType&) -> Element { return std::nullopt; },
           [](const VectorType&) -> Element { return std::nullopt; },
 
           // One vector of bits, under a set of names or not: what looks like

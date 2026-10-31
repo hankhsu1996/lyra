@@ -5,21 +5,21 @@
 #include <memory>
 #include <tuple>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/runtime/class_definition.hpp"
-#include "lyra/runtime/scope_info.hpp"
 
 namespace {
 
+using lyra::abi::ConstantSpan;
+using lyra::abi::InterfaceRow;
+using lyra::abi::ObjectDefinition;
 using lyra::runtime::AdoptObject;
-using lyra::runtime::ConstantSpan;
 using lyra::runtime::Dispatch;
 using lyra::runtime::DynamicCast;
 using lyra::runtime::EndObjectOf;
 using lyra::runtime::GcObject;
 using lyra::runtime::InterfaceDispatch;
-using lyra::runtime::InterfaceRow;
 using lyra::runtime::IsOfClass;
-using lyra::runtime::ObjectDefinition;
 using lyra::runtime::SelfHandle;
 using lyra::value::ObjectRef;
 
@@ -254,11 +254,9 @@ constexpr std::array kHeirRows{
     InterfaceRow{.of = &kRanked, .table = &kRankedMethods}};
 
 const ObjectDefinition kBase = DefinitionOf<Base>(
-    nullptr, {.data = kBaseRows.data(), .size = kBaseRows.size()},
-    &kBaseMethods);
+    nullptr, ConstantSpan<InterfaceRow>(&kBaseRows), &kBaseMethods);
 const ObjectDefinition kHeir = DefinitionOf<Heir>(
-    &kBase, {.data = kHeirRows.data(), .size = kHeirRows.size()},
-    &kHeirMethods);
+    &kBase, ConstantSpan<InterfaceRow>(&kHeirRows), &kHeirMethods);
 const ObjectDefinition kUnrelated = DefinitionOf<Unrelated>(nullptr);
 
 // An object is of its own class, of every class its class extends, and of

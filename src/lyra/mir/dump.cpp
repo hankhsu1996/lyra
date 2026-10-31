@@ -385,6 +385,9 @@ class MirDumper {
                   "MachineArray(elem=Type[{}], size={})", m.element.value,
                   m.size);
             },
+            [](const MachineSpanType& m) -> std::string {
+              return std::format("MachineSpan(elem=Type[{}])", m.element.value);
+            },
             [](const MachineFunctionType& m) -> std::string {
               std::string params;
               for (std::size_t i = 0; i < m.params.size(); ++i) {
@@ -478,6 +481,8 @@ class MirDumper {
                   return "RuntimeLibrary(ClassObjectInfo)";
                 case RuntimeLibraryKind::kInterfaceRow:
                   return "RuntimeLibrary(InterfaceRow)";
+                case RuntimeLibraryKind::kScopeMetadata:
+                  return "RuntimeLibrary(ScopeMetadata)";
                 case RuntimeLibraryKind::kDumpEntry:
                   return "RuntimeLibrary(DumpEntry)";
                 case RuntimeLibraryKind::kDumpBlock:

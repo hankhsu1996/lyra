@@ -468,11 +468,10 @@ auto UnitLowerer::EntryConstant(
     -> lir::TableBody {
   const mir::Class& owner = mir_->GetClass(method.owner);
   if (!owner.defining_unit.has_value()) {
-    for (const mir::MethodEntry& entry : owner.entries) {
-      if (entry.method == method.slot) {
-        return lir::ConstantFunction{
-            .function = MethodFunction(method.owner, entry.entry)};
-      }
+    if (const std::optional<mir::CallableId> entry =
+            owner.EntryOf(method.slot)) {
+      return lir::ConstantFunction{
+          .function = MethodFunction(method.owner, *entry)};
     }
     throw InternalError(
         "mir_to_lir: a method of a class of this unit is reached through an "
@@ -829,7 +828,29 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
           },
           [&](const mir::BlockExpr&) { return not_data("a block"); },
           [&](const mir::AssignExpr&) { return not_data("an assignment"); },
-          [&](const mir::CallExpr&) { return not_data("a call"); },
+          // Constructing a view is the one call that is data: the view is built
+          // from the address of the array it views, and holds as many entries
+          // as that array's type says it has.
+          [&](const mir::CallExpr& c) -> lir::Constant {
+            if (!std::holds_alternative<mir::Construct>(c.callee) ||
+                !mir_->types.Get(expr.type).Is<mir::MachineSpanType>()) {
+              return not_data("a call");
+            }
+            const mir::ExprId array = c.arguments.at(0);
+            lir::Constant entries = LowerConstant(build, array);
+            auto* address = std::get_if<lir::ConstantAddress>(&entries.value);
+            if (address == nullptr) {
+              return not_data("a view of an array no symbol names");
+            }
+            const mir::TypeId viewed =
+                mir_->types.Get(build.body.exprs.Get(array).type)
+                    .Get<mir::PointerType>()
+                    .pointee;
+            return {lir::ConstantSpan{
+                .symbol = std::move(address->symbol),
+                .count =
+                    mir_->types.Get(viewed).Get<mir::MachineArrayType>().size}};
+          },
           [&](const mir::NewExpr&) { return not_data("an allocation"); },
           [&](const mir::DerefExpr&) { return not_data("a dereference"); },
           [&](const mir::BorrowExpr&) { return not_data("a reference"); },

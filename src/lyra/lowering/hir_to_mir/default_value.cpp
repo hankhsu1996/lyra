@@ -355,6 +355,9 @@ auto DefaultValueOf(
           [&](const mir::MachineArrayType&) -> Answer {
             return holds_no_declared_value("a machine array of operands");
           },
+          [&](const mir::MachineSpanType&) -> Answer {
+            return holds_no_declared_value("a machine span of entries");
+          },
           [&](const mir::MachineFunctionType&) -> Answer {
             return holds_no_declared_value("a machine function address");
           },

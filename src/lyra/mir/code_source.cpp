@@ -29,6 +29,8 @@ auto BodyLabel(std::optional<std::string_view> name, CallableId slot)
                           : std::format("body {}", slot.value);
 }
 
+}  // namespace
+
 auto DescribeClass(const CompilationUnit& unit, ClassId owner) -> std::string {
   const Class& cls = unit.GetClass(owner);
   const support::DefPath* path = support::PathOf(cls.identity);
@@ -37,8 +39,6 @@ auto DescribeClass(const CompilationUnit& unit, ClassId owner) -> std::string {
                                support::DisplayOf(*path), unit.name)
                          : std::format("a scope of unit '{}'", unit.name);
 }
-
-}  // namespace
 
 auto Describe(const CompilationUnit& unit, const CodeSource& at)
     -> std::string {

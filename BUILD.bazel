@@ -15,6 +15,7 @@ package(features = ["parse_headers"])
 filegroup(
     name = "runtime_headers",
     srcs = glob([
+        "include/lyra/abi/*.hpp",
         "include/lyra/runtime/*.hpp",
         "include/lyra/value/*.hpp",
         "include/lyra/support/*.hpp",
@@ -158,6 +159,20 @@ cc_library(
     ],
 )
 
+# The structures the runtime reads out of a compiled design's constants,
+# declared once for the runtime and for the compiler that states them.
+cc_library(
+    name = "abi",
+    hdrs = glob(["include/lyra/abi/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":support",
+        ":value",
+    ],
+)
+
 cc_library(
     name = "runtime",
     srcs = glob(["src/lyra/runtime/*.cpp"]) + [":third_party_licenses_text"],
@@ -166,6 +181,7 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
+        ":abi",
         ":base",
         ":support",
         ":value",
@@ -280,6 +296,7 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
+        ":abi",
         ":support",
         ":value",
     ],
@@ -356,6 +373,7 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
+        ":abi",
         ":diag",
         ":hir",
         ":mir",
@@ -417,6 +435,7 @@ cc_library(
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
+        ":abi",
         ":lir",
         ":profiling",
         ":runtime",

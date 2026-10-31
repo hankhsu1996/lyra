@@ -207,8 +207,8 @@ struct MachineFloatType {
 // simulation values, and this is the plain-data aggregate of them, distinct
 // from `UnpackedArrayType`, which is a simulation value reached through a value
 // wrapper. Its element is itself plain machine data -- a machine scalar, a
-// pointer, or a runtime-library record -- so a table the runtime reads as raw
-// storage is stated here rather than being assembled by each backend.
+// pointer, or a runtime-library record -- so the entries of a table the runtime
+// reads are stated here rather than being assembled by each backend.
 struct MachineArrayType {
   TypeId element;
   std::uint32_t size;
@@ -216,13 +216,24 @@ struct MachineArrayType {
   auto operator==(const MachineArrayType&) const -> bool = default;
 };
 
+// A read-only view of a run of plain machine data that something else owns
+// (Rust `&[T]`, C++ `std::span<const T>`): which entries, and how many. It is
+// made from a machine array, whose type says how many there are, so a view
+// and the entries it counts cannot disagree. A table a runtime record names is
+// one, and every target lays one out as the runtime lays out its own view.
+struct MachineSpanType {
+  TypeId element;
+
+  auto operator==(const MachineSpanType&) const -> bool = default;
+};
+
 // A pointer to code (the generic-language `fn(A, B) -> R`, C++ `R (*)(A, B)`).
 // It completes the machine family on the callable axis: the machine scalars are
-// plain data, the machine array is the plain-data aggregate of them, and this
-// is the plain code address. Distinct from a callable declaration, which is a
-// named body this unit owns and calls by name; this is the type an address has
-// when code is a value -- held in a table, handed to a runtime that calls back
-// through it.
+// plain data, the machine array is the plain-data aggregate of them, the
+// machine span a view of one, and this is the plain code address. Distinct from
+// a callable declaration, which is a named body this unit owns and calls by
+// name; this is the type an address has when code is a value -- held in a
+// table, handed to a runtime that calls back through it.
 struct MachineFunctionType {
   std::vector<TypeId> params;
   TypeId result;
@@ -290,7 +301,8 @@ struct DiagnosticType {
 // built and reached through the library's calls, and MIR decides nothing about
 // what it holds. The one exception is a structure a unit states as a constant
 // -- a class's definition and what it is made of, a construction table, a dump
-// entry -- which MIR composes in the order the library declares its members.
+// entry -- whose members the unit declares, each at the type the library's own
+// declaration gives it, and which MIR composes from a part for each member.
 // The branch selects which library type, and the backend maps the branch to the
 // concrete library name. An object-model handle is a different thing --
 // receiver semantics reason about one. One that reads a value where it lies --
@@ -419,31 +431,32 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kViolationReportKeeper,
   // What every object of one class carries, so the object answers what its
   // class extends and what a class of the design hierarchy states of its
-  // instances: `lyra::runtime::ObjectDefinition`. The class's unit emits it as
+  // instances: `lyra::abi::ObjectDefinition`. The class's unit emits it as
   // a constant, which every unit naming the class reaches by its symbol.
   kObjectDefinition,
   // The parts a definition is made of, each a structure of the library a unit
-  // states as a constant: `lyra::runtime::ScopeInfo` is what a class of the
-  // design hierarchy states of its instances, `ScopeCallable` a DPI-C
-  // export's C name with its body (LRM 35.5.3), `ClassObjectInfo` what
-  // `randomize()` asks of an object of a class (LRM 18.6), and
-  // `InterfaceRow` one interface class the class implements with the bodies
-  // answering what it declares (LRM 8.26).
+  // states as a constant: `lyra::abi::ScopeInfo` is what a class of the
+  // design hierarchy states of its instances, its `ScopeMetadata` its
+  // timescale and how it runs, `ScopeCallable` a DPI-C export's C name with
+  // its body (LRM 35.5.3), `ClassObjectInfo` what `randomize()` asks of an
+  // object of a class (LRM 18.6), and `InterfaceRow` one interface class the
+  // class implements with the bodies answering what it declares (LRM 8.26).
   kScopeInfo,
+  kScopeMetadata,
   kScopeCallable,
   kClassObjectInfo,
   kInterfaceRow,
   // What a constructor of the design hierarchy is handed, how the object at one
   // of its instantiations or at one place of one of its generates is made, and
-  // the places of one generate: `lyra::runtime::ConstructionTable`,
-  // `lyra::runtime::Instantiation` and `lyra::runtime::GeneratePlaces`,
+  // the places of one generate: `lyra::abi::ConstructionTable`,
+  // `lyra::abi::Instantiation` and `lyra::abi::GeneratePlaces`,
   // constants the design's root unit states, which the library reads.
   kConstructionTable,
   kInstantiation,
   kGeneratePlaces,
   // What a class of the design hierarchy states of each thing a value dump may
   // record of an instance, and of each named block, task or function around
-  // such things (LRM 21.7.1.2): `lyra::runtime::DumpEntry` and `DumpBlock`,
+  // such things (LRM 21.7.1.2): `lyra::abi::DumpEntry` and `DumpBlock`,
   // constants the class's unit states, which an instance describing itself
   // names.
   kDumpEntry,
@@ -814,15 +827,15 @@ class Type {
       IntegralType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
       AssociativeArrayType, WildcardIndexType, StringType, AnyType,
       ErasedValueType, MachineCStringType, MachineBoolType, MachineIntType,
-      MachineFloatType, MachineArrayType, MachineFunctionType, RealType,
-      ShortRealType, ChandleType, VoidType, ObjectType, RuntimeClassType,
-      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
-      CoroutineType, VariableRefType, ReferenceWrapperType, PointerType,
-      ReferenceType, ManagedRefType, WeakManagedRefType, VectorType, TupleType,
-      EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
-      DesignationType, BitsReferenceType, ObjectWriteType, SampledHistoryType,
-      EvaluationAttemptsType, LoopBlocksType, RecordType, ClosureType,
-      ErasedCallableType>;
+      MachineFloatType, MachineArrayType, MachineSpanType, MachineFunctionType,
+      RealType, ShortRealType, ChandleType, VoidType, ObjectType,
+      RuntimeClassType, RuntimeEffectsType, FilesType, DiagnosticType,
+      RuntimeLibraryType, CoroutineType, VariableRefType, ReferenceWrapperType,
+      PointerType, ReferenceType, ManagedRefType, WeakManagedRefType,
+      VectorType, TupleType, EmptyType, ObservableType, ResolvedType,
+      DriverType, OpenWriteType, DesignationType, BitsReferenceType,
+      ObjectWriteType, SampledHistoryType, EvaluationAttemptsType,
+      LoopBlocksType, RecordType, ClosureType, ErasedCallableType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

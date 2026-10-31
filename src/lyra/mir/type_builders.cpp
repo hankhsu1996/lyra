@@ -4,10 +4,14 @@
 #include <cstdint>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/runtime_class.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_fwd.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -129,6 +133,29 @@ auto ClassDefinitionPointer(const TypePool& types) -> TypeId {
           .mutability = Mutability::kReadOnly}});
 }
 
+auto FunctionTypeOf(const TypePool& types, const CallableCode& code) -> TypeId {
+  std::vector<TypeId> params;
+  params.reserve(code.params.size());
+  for (const LocalId param : code.params) {
+    params.push_back(code.locals.Get(param).type);
+  }
+  return types.Intern(
+      Type{MachineFunctionType{
+          .params = std::move(params), .result = code.result_type}});
+}
+
+auto ObjectRootType(const TypePool& types) -> TypeId {
+  return types.Intern(
+      Type{RuntimeClassType{.which = support::RuntimeClass::kObject}});
+}
+
+auto ObjectRootPointer(const TypePool& types) -> TypeId {
+  return types.Intern(
+      Type{PointerType{
+          .pointee = ObjectRootType(types),
+          .ownership = PointerOwnership::kBorrowed}});
+}
+
 auto ConstructionTableType(const TypePool& types) -> TypeId {
   return types.Intern(
       Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kConstructionTable}});
@@ -201,6 +228,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const MachineIntType&) { return bare(); },
           [&](const MachineFloatType&) { return bare(); },
           [&](const MachineArrayType&) { return bare(); },
+          [&](const MachineSpanType&) { return bare(); },
           [&](const MachineFunctionType&) { return bare(); },
           [&](const VoidType&) { return bare(); },
           [&](const ObjectType&) { return bare(); },

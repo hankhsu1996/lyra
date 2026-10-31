@@ -4,7 +4,8 @@ Date: 2026-09-29 Status: accepted; D4 and D5 revised and D9 added 2026-10-02, D7
 how an object is built (D7, D9's last clause) superseded 2026-10-22 by
 [an-object-is-created-whole-then-constructed](an-object-is-created-whole-then-constructed.md); D1,
 D2, D3, D5 and D9 rewritten 2026-10-25, when the layout stopped following the C++ ABI (see "What the
-2026-10-25 revision found" under Why)
+2026-10-25 revision found" under Why); D4 extended 2026-10-30 to the types of the library's
+structures' members
 
 **D8 is reversed by
 [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**, and
@@ -80,12 +81,17 @@ unit names another unit's class's constant by symbol, which its signature alread
 dependency. Nothing is declared to the library at run time, and the library composes no record. The
 constant is a value MIR states like any other: the class holds it, and the arrays its tables point
 at, as constants whose values are ordinary expressions -- a structure composed from its members, an
-array from its elements, a name, an address, a body named as code. A table is the address of its
-array and a count, as a table is in C and a slice is in Rust. A body the library enters is a body of
+array from its elements, a name, an address, a body named as code. A table is a read-only view of
+its array, a value of its own type -- where the first entry lies and how many there are, as a slice
+is in Rust and a `std::span` in C++ -- built from the array's address, which is all it is built
+from, since how many entries there are is the array's type. A body the library enters is a body of
 the class that takes no receiver, stated in MIR too. So a backend translates the constant with what
 it translates every expression with and writes nothing of its own; the execution backend emits it as
 data, each member at the offset the library's structure gives it, which is read off the structure
-itself where the compiler is built rather than restated.
+itself where the compiler is built rather than restated. The type of each member is read off the
+same declaration, and a unit holds it as it holds its builtin types, so each part is built at its
+member's type and the unit's verification holds it there as it holds a tuple's components. A member
+that is a structure of the library is composed as one.
 
 **D5. The compiler does not link a C++ front end.** The only C++ a program meets is the library Lyra
 ships and is built with, so every fact generated code needs about it is a fact of that library read
@@ -299,9 +305,20 @@ structure the two read differently is not one the build can produce. It also rej
 record's contents in MIR, on the ground that MIR would then hold a library structure's shape. MIR
 names the structure and gives its members in the order the library declares them, which is what
 naming any library type and constructing it already is; the offsets stay the backend's, read off the
-library. The same record rejected flattening a lineage's table at compile time because where an
-introducer's positions begin is stated by another unit; D6 makes every promise state the behaviors
-its class introduces and overrides, so that count is in hand where the extending class is compiled.
+library. Revised 2026-10-30: the members' types are MIR's too, because until then a part was checked
+against its member only by the host C++ compiler on one backend and, on the other, only for whether
+it was an integer or an address, while the lowering kept the members' order and its entries'
+prototypes in lists of its own. A member's type is its declaration and not where it lies, so stating
+it restates nothing of the layout; it is read off the library's declaration as the offsets are, as
+Go's compiler builds its type for a structure its runtime declares (`cmd/compile/internal/rttype`).
+A member that is a view of entries is MIR's view type, and the library's structure for a view is how
+that type is laid out, as a Rust slice is a pointer and a length. Until then a table was two parts
+of the structure holding it, an untyped address and a count the lowering kept beside the array, so
+any address passed as a table's and nothing tied the count to the array; a view takes its count from
+the array's type, as rustc builds a slice from an array by an unsizing coercion. The same record
+rejected flattening a lineage's table at compile time because where an introducer's positions begin
+is stated by another unit; D6 makes every promise state the behaviors its class introduces and
+overrides, so that count is in hand where the extending class is compiled.
 
 **A construction is entered typed, because only a constant's own consumer needs an erased entry.**
 The library entered an instance's construction through its class's definition, so every class's

@@ -527,6 +527,16 @@ cc_test(
 )
 
 cc_test(
+    name = "abi_records_test",
+    srcs = ["abi/records_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:abi",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "runtime_class_definition_test",
     srcs = ["runtime/class_definition_test.cpp"],
     copts = LYRA_COPTS,

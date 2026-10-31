@@ -1,9 +1,9 @@
 #pragma once
 
+#include "lyra/abi/records.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/dpi_scope_handles.hpp"
 #include "lyra/runtime/foreign_execution.hpp"
-#include "lyra/runtime/scope_info.hpp"
 
 namespace lyra::runtime {
 
@@ -62,7 +62,7 @@ auto CurrentExportScope() -> Scope*;
 // an export be called directly only from an import declared in the same scope,
 // and lets svSetScope redirect only to a scope that declares it, and both are
 // obligations on the foreign side that nothing on this side can establish.
-auto FindExportEntry(Scope* scope, const char* subroutine) -> ErasedEntry;
+auto FindExportEntry(Scope* scope, const char* subroutine) -> abi::ErasedEntry;
 
 // Runs an exported SV task's body to completion and hands back its completion
 // payload. A foreign C caller of an exported task (LRM 35.8) is not a

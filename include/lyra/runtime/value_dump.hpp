@@ -95,13 +95,14 @@ class Describer {
   virtual ~Describer();
 
   virtual void Var(
-      const DumpEntry& entry, std::unique_ptr<DumpProbe> probe) = 0;
-  void BeginBlock(const DumpBlock& block);
+      const abi::DumpEntry& entry, std::unique_ptr<DumpProbe> probe) = 0;
+  void BeginBlock(const abi::DumpBlock& block);
   void EndBlock();
 
  protected:
   // The named scopes around what is being described, outermost first.
-  [[nodiscard]] auto Enclosing() const -> std::span<const DumpBlock* const> {
+  [[nodiscard]] auto Enclosing() const
+      -> std::span<const abi::DumpBlock* const> {
     return enclosing_;
   }
 
@@ -114,7 +115,7 @@ class Describer {
   virtual void Leaving() {
   }
 
-  std::vector<const DumpBlock*> enclosing_;
+  std::vector<const abi::DumpBlock*> enclosing_;
 };
 
 // One thing a running dump records: enrolled on its place for as long as the

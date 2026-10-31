@@ -15,9 +15,9 @@
 
 namespace {
 
+using lyra::abi::DumpEntry;
 using lyra::runtime::DumpCheckpoint;
 using lyra::runtime::DumpCode;
-using lyra::runtime::DumpEntry;
 using lyra::runtime::DumpTriggered;
 using lyra::runtime::DumpUnknown;
 using lyra::runtime::DumpWriter;

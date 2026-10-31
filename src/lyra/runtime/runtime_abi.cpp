@@ -1947,6 +1947,10 @@ auto Compared(const R& answer) -> std::uint8_t {
 
 }  // namespace lyra::runtime
 
+using lyra::abi::ConstructionTable;
+using lyra::abi::DumpBlock;
+using lyra::abi::DumpEntry;
+using lyra::abi::ObjectDefinition;
 using lyra::runtime::Activation;
 using lyra::runtime::AdoptClosure;
 using lyra::runtime::AdoptObject;
@@ -1978,7 +1982,6 @@ using lyra::runtime::ChannelCancellation;
 using lyra::runtime::ClassObject;
 using lyra::runtime::ClosureValue;
 using lyra::runtime::Compared;
-using lyra::runtime::ConstructionTable;
 using lyra::runtime::ControlEffect;
 using lyra::runtime::Coroutine;
 using lyra::runtime::current_runtime;
@@ -2002,8 +2005,6 @@ using lyra::runtime::DriveFromVariable;
 using lyra::runtime::DriveOnForeignStack;
 using lyra::runtime::DriverOf;
 using lyra::runtime::DumpAll;
-using lyra::runtime::DumpBlock;
-using lyra::runtime::DumpEntry;
 using lyra::runtime::DumpFile;
 using lyra::runtime::DumpFlush;
 using lyra::runtime::DumpLimit;
@@ -2063,7 +2064,6 @@ using lyra::runtime::MakeSharedCell;
 using lyra::runtime::NetOf;
 using lyra::runtime::NetReportsTo;
 using lyra::runtime::NumberAt;
-using lyra::runtime::ObjectDefinition;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
 using lyra::runtime::ObservationHandles;

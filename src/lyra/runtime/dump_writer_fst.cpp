@@ -107,7 +107,7 @@ class FstWriter final : public DumpWriter {
     fstWriterSetUpscope(context_);
   }
 
-  void Var(DumpCode code, const DumpEntry& entry) override {
+  void Var(DumpCode code, const abi::DumpEntry& entry) override {
     if (things_.size() <= code.value) {
       things_.resize(code.value + 1);
     }
@@ -117,7 +117,7 @@ class FstWriter final : public DumpWriter {
         .form = support::DumpValueFormOf(entry.Kind())};
   }
 
-  void Alias(DumpCode code, const DumpEntry& entry) override {
+  void Alias(DumpCode code, const abi::DumpEntry& entry) override {
     Create(entry, things_.at(code.value).handle);
   }
 
@@ -189,7 +189,7 @@ class FstWriter final : public DumpWriter {
 
  private:
   // The name the FST hierarchy records is the reference a VCD `$var` writes.
-  auto Create(const DumpEntry& entry, fstHandle alias) -> fstHandle {
+  auto Create(const abi::DumpEntry& entry, fstHandle alias) -> fstHandle {
     const std::string name = DumpReference(entry);
     return fstWriterCreateVar(
         context_, FstVarType(entry.Kind()), FST_VD_IMPLICIT, entry.width,

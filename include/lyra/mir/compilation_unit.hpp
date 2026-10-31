@@ -28,6 +28,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/library_records.hpp"
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
@@ -328,6 +329,10 @@ struct CompilationUnit {
   IntegralConstantPool integral_constants;
   EnumTablePool enum_tables;
   BuiltinMirTypes builtins;
+  // Every structure of the runtime library a constant may be stated as, with
+  // the type of each member, read off the library's own declarations when the
+  // unit is made; nothing else declares one.
+  std::vector<LibraryRecordDecl> library_records;
   // Every class this unit names, owned here exactly once and reached by its
   // identity, with a declare-then-define lifecycle so a class can be named
   // before its body is built: the classes it defines, and those of another
@@ -537,7 +542,8 @@ struct CompilationUnit {
                     .ownership = PointerOwnership::kBorrowed}}),
             .coroutine_void = TypeId{},
             .wildcard_index = types.Intern(Type{WildcardIndexType{}}),
-        } {
+        },
+        library_records(DeclareLibraryRecords(types)) {
     // `Coroutine<void>` is the completion type of a process or void task, a
     // pointer to a read report is what a function is handed, and a pointer to a
     // wait is what a stop is handed. Each is built in the constructor body
@@ -556,6 +562,19 @@ struct CompilationUnit {
         mir::Type{mir::PointerType{
             .pointee = builtins.wait,
             .ownership = mir::PointerOwnership::kBorrowed}});
+  }
+
+  // The types of the members of the library's structure `kind` names, in the
+  // order the library declares them; none for a type of the library no
+  // constant is stated as.
+  [[nodiscard]] auto LibraryRecordMembers(RuntimeLibraryKind kind) const
+      -> std::optional<std::span<const TypeId>> {
+    for (const LibraryRecordDecl& record : library_records) {
+      if (record.kind == kind) {
+        return record.members;
+      }
+    }
+    return std::nullopt;
   }
 
   [[nodiscard]] auto GetClass(ClassId id) const -> const Class& {

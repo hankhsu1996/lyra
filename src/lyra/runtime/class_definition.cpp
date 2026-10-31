@@ -10,8 +10,8 @@ namespace {
 
 // The definition, checked before anything is read from it, because a reference
 // to a class with no definition is a linkage failure rather than a value.
-auto RequireDefinition(const ObjectDefinition* definition)
-    -> const ObjectDefinition* {
+auto RequireDefinition(const abi::ObjectDefinition* definition)
+    -> const abi::ObjectDefinition* {
   if (definition == nullptr) {
     throw InternalError("class definition: the value has no definition");
   }
@@ -22,9 +22,10 @@ auto RequireDefinition(const ObjectDefinition* definition)
 // none where it does not implement it. A class implements a handful at most,
 // so a search is what finds one, as Swift's runtime searches a type's
 // conformances.
-auto RowOf(const ObjectDefinition* object_class, const ObjectDefinition* iface)
-    -> const InterfaceRow* {
-  for (const InterfaceRow& row : object_class->interfaces.Entries()) {
+auto RowOf(
+    const abi::ObjectDefinition* object_class,
+    const abi::ObjectDefinition* iface) -> const abi::InterfaceRow* {
+  for (const abi::InterfaceRow& row : object_class->interfaces.Entries()) {
     if (row.of == iface) {
       return &row;
     }
@@ -35,8 +36,9 @@ auto RowOf(const ObjectDefinition* object_class, const ObjectDefinition* iface)
 }  // namespace
 
 auto IsOfClass(
-    const ObjectDefinition* object_class, const ObjectDefinition* cls) -> bool {
-  for (const ObjectDefinition* at = RequireDefinition(object_class);
+    const abi::ObjectDefinition* object_class, const abi::ObjectDefinition* cls)
+    -> bool {
+  for (const abi::ObjectDefinition* at = RequireDefinition(object_class);
        at != nullptr; at = at->base) {
     if (at == cls) {
       return true;
@@ -45,7 +47,7 @@ auto IsOfClass(
   return RowOf(object_class, cls) != nullptr;
 }
 
-auto DynamicCast(const value::ObjectRef& ref, const ObjectDefinition* cls)
+auto DynamicCast(const value::ObjectRef& ref, const abi::ObjectDefinition* cls)
     -> value::ObjectRef {
   const GcObject* object = ObjectRootOf(ref);
   if (object == nullptr || !IsOfClass(object->definition, cls)) {
@@ -55,9 +57,9 @@ auto DynamicCast(const value::ObjectRef& ref, const ObjectDefinition* cls)
 }
 
 auto InterfaceTableOf(
-    const ObjectDefinition* object_class, const ObjectDefinition* iface)
-    -> const void* {
-  const InterfaceRow* row = RowOf(RequireDefinition(object_class), iface);
+    const abi::ObjectDefinition* object_class,
+    const abi::ObjectDefinition* iface) -> const void* {
+  const abi::InterfaceRow* row = RowOf(RequireDefinition(object_class), iface);
   if (row == nullptr) {
     throw InternalError(
         "class definition: a method of an interface class is called on an "
@@ -71,8 +73,8 @@ void EndObject(GcObject* object) noexcept {
   object->definition->end(object);
 }
 
-auto RequireScopeClass(const ObjectDefinition* definition)
-    -> const ObjectDefinition* {
+auto RequireScopeClass(const abi::ObjectDefinition* definition)
+    -> const abi::ObjectDefinition* {
   if (RequireDefinition(definition)->scope == nullptr) {
     throw InternalError(
         "class definition: an instance of the design hierarchy is built of a "

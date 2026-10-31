@@ -115,6 +115,8 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "class object info";
     case RuntimeLibraryKind::kInterfaceRow:
       return "interface row";
+    case RuntimeLibraryKind::kScopeMetadata:
+      return "scope metadata";
     case RuntimeLibraryKind::kConstructionTable:
       return "construction table";
     case RuntimeLibraryKind::kInstantiation:
@@ -179,6 +181,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             Combine(seed, t.element);
             Combine(seed, t.size);
           },
+          [&](const MachineSpanType& t) { Combine(seed, t.element); },
           [&](const MachineFunctionType& t) {
             for (const TypeId param : t.params) {
               Combine(seed, param);
@@ -248,6 +251,7 @@ auto Type::KindName() const -> std::string_view {
           [](const MachineIntType&) { return "machine integer"; },
           [](const MachineFloatType&) { return "machine float"; },
           [](const MachineArrayType&) { return "machine array"; },
+          [](const MachineSpanType&) { return "machine span"; },
           [](const MachineFunctionType&) { return "machine function"; },
           [](const RealType&) { return "real"; },
           [](const ShortRealType&) { return "shortreal"; },
@@ -322,6 +326,7 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const MachineIntType&) { return names_none(); },
           [&](const MachineFloatType&) { return names_none(); },
           [&](const MachineArrayType&) { return names_none(); },
+          [&](const MachineSpanType&) { return names_none(); },
           [&](const MachineFunctionType&) { return names_none(); },
           [&](const ErasedCallableType&) { return names_none(); },
 
@@ -368,6 +373,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // lowering builds them to carry something, where a container is a
           // type a declaration named.
           [](const MachineArrayType&) -> Element { return std::nullopt; },
+          [](const MachineSpanType&) -> Element { return std::nullopt; },
           [](const VectorType&) -> Element { return std::nullopt; },
 
           // One vector of bits: what looks like an element is bits of that
@@ -494,6 +500,7 @@ auto Type::IsAddressOnly() const -> bool {
       case RuntimeLibraryKind::kScopeCallable:
       case RuntimeLibraryKind::kClassObjectInfo:
       case RuntimeLibraryKind::kInterfaceRow:
+      case RuntimeLibraryKind::kScopeMetadata:
       case RuntimeLibraryKind::kConstructionTable:
       case RuntimeLibraryKind::kInstantiation:
       case RuntimeLibraryKind::kGeneratePlaces:
@@ -646,6 +653,7 @@ auto Type::HeldAs() const -> std::optional<Holding> {
               case RuntimeLibraryKind::kScopeCallable:
               case RuntimeLibraryKind::kClassObjectInfo:
               case RuntimeLibraryKind::kInterfaceRow:
+              case RuntimeLibraryKind::kScopeMetadata:
               case RuntimeLibraryKind::kDumpEntry:
               case RuntimeLibraryKind::kDumpBlock:
                 return std::nullopt;
@@ -659,6 +667,7 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           [](const MachineIntType&) -> Held { return std::nullopt; },
           [](const MachineFloatType&) -> Held { return std::nullopt; },
           [](const MachineArrayType&) -> Held { return std::nullopt; },
+          [](const MachineSpanType&) -> Held { return std::nullopt; },
           [](const MachineFunctionType&) -> Held { return std::nullopt; },
           // Only ever behind a box or a borrow, never held as itself.
           [](const ErasedCallableType&) -> Held { return std::nullopt; },

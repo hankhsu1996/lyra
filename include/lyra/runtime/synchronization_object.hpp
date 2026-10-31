@@ -38,7 +38,7 @@ class SynchronizationObject final : public GcObject {
   ~SynchronizationObject();
 
   // The definition every object of this class is created with.
-  static const ObjectDefinition kDefinition;
+  static const abi::ObjectDefinition kDefinition;
 
   // LRM 15.5.1: records the time it occurred and asks every wait put on this
   // object.

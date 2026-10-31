@@ -220,6 +220,9 @@ class LirDumper {
             },
             [&](const ConstantArray& c) {
               return std::format("[{}]", list(c.elements));
+            },
+            [](const ConstantSpan& c) {
+              return std::format("span(&{}, {})", c.symbol, c.count);
             }},
         constant.value);
   }

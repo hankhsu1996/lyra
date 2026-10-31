@@ -1274,15 +1274,9 @@ auto SynthesizeForeignExportEntry(
 
   // The prototype the program-global symbol publishes, which is the entry's own
   // formals and result. An entry reached through a scope leads with that scope,
-  // which the symbol supplies and the prototype never mentions.
-  std::vector<mir::TypeId> prototype_params;
-  prototype_params.reserve(params.size());
-  for (const mir::LocalId param : params) {
-    prototype_params.push_back(code.locals.Get(param).type);
-  }
-  const mir::TypeId signature = unit.types.Intern(
-      mir::Type{mir::MachineFunctionType{
-          .params = std::move(prototype_params), .result = code.result_type}});
+  // which the symbol supplies and the prototype never mentions, so this is read
+  // before the scope joins the formals.
+  const mir::TypeId signature = mir::FunctionTypeOf(unit.types, code);
 
   code.body.emplace();
   CallableBindings bindings(unit, code);

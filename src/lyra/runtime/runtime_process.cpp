@@ -26,9 +26,9 @@ namespace {
 // What `randomize()` asks of a process (LRM 18.6): it declares no random
 // variable and states no constraint, and its hooks do nothing, as a class
 // extending nothing that declares none of them has (LRM 9.7, 18.6.2).
-constexpr ClassObjectInfo kProcessRandomization{};
+constexpr abi::ClassObjectInfo kProcessRandomization{};
 
-const ObjectDefinition kProcessDefinition{
+const abi::ObjectDefinition kProcessDefinition{
     .base = nullptr,
     .scope = nullptr,
     .class_object = &kProcessRandomization,
