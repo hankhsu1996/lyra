@@ -140,18 +140,24 @@ No issue states where it stands in its text. That is what its fields are for.
 - **Open or closed.** A pull request whose description says `Closes #N` closes the issue when it
   merges; one that does part of it says `Part of #N`.
 - **Parent.** An item is a sub-issue of the tracking issue for its line.
-- **Blocked by.** Set only where an item cannot start before another lands. An order that is only
-  better goes in the project's ordering.
+- **Blocked by.** Set where an item cannot start before another lands, and on a bug whose cause is
+  another item. Such a bug is fixed by that item, not on top of it. An order that is only better
+  goes in the project's Rank.
 - **Labels.** One `type:` label, one or two `area:` labels naming the parts of Lyra it changes,
   `tracking` on a tracking issue, and `good first issue` on an item a newcomer can take.
 - **Assignee.** Whoever is working on it now. Unassign yourself when you stop.
-- **Project.** Every issue is on the project board, and its Tier field orders the work, worst first.
-  - `crash or wrong answer` -- Lyra crashes, or a program it builds answers wrongly. A regression is
-    one.
-  - `cannot build` -- Lyra refuses legal SystemVerilog.
-  - `cost` -- build time, run time or memory that stands between a design and its use.
-  - `design` -- a debt in the architecture that no user meets.
-  - `owed` -- a check or a measurement a merged change left to do.
+- **Project.** Every issue is on the project board, with two fields.
+  - **Tier** says how bad the problem is. An item that blocks others takes the worst Tier among
+    them, so the cause of a crash ranks as a crash.
+    - `crash or wrong answer` -- Lyra crashes, or a program it builds answers wrongly. A regression
+      is one.
+    - `cannot build` -- Lyra refuses legal SystemVerilog.
+    - `cost` -- build time, run time or memory that stands between a design and its use.
+    - `design` -- a debt in the architecture that no user meets.
+    - `owed` -- a check or a measurement a merged change left to do.
+  - **Rank** is the order the work is taken in, lowest first. It sorts by Tier, then by how many
+    items an item blocks, then by age, and it puts every item after the items blocking it. An issue
+    with no Rank has not been placed yet.
 - **Status.** The board sets it from the issue, never by hand. An issue is Todo when it is added, In
   Progress once a pull request links it, and Done when it closes.
 
