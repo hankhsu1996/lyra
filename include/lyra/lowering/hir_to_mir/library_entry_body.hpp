@@ -1,7 +1,7 @@
 #pragma once
 
-#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/builder.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
