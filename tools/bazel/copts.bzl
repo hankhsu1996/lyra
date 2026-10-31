@@ -27,25 +27,10 @@ its own warning policy.
 # runtime ships as a static archive linked into the program -- so the
 # assumption only costs. Clang already makes the opposite one by default, so
 # stating it keeps the two compilers building the same code.
-#
-# -Wno-maybe-uninitialized, under GCC with the address sanitizer only: there
-# GCC reports a value as possibly uninitialized on paths the instrumentation
-# adds, in code that is clean without it -- an empty `std::optional` returned
-# from a function, and the standard library's own `std::function` and
-# `std::vector`. The same sources are held to that warning by every GCC build
-# without the sanitizer, where its answers are about the code; that build asks
-# what a run does with memory, and every other warning is as fatal in it as
-# anywhere. Clang has no warning of that name and refuses the option.
 LYRA_COPTS = [
     "-Wall",
     "-Wextra",
     "-Werror",
     "-Wno-unused-command-line-argument",
     "-fno-semantic-interposition",
-] + select({
-    "//tools/bazel:clang_under_address_sanitizer": [],
-    "//tools/bazel:under_address_sanitizer": [
-        "-Wno-maybe-uninitialized",
-    ],
-    "//conditions:default": [],
-})
+]

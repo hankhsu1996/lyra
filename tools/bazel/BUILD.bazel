@@ -22,13 +22,3 @@ config_setting(
     values = {"copt": "-fsanitize=address"},
     visibility = ["//visibility:public"],
 )
-
-# The same build where clang is the compiler. Lyra is built by GCC and by clang,
-# and the pinned clang's toolchain is the one of the two that names its
-# compiler, since the remote image's GCC states no name a setting could match.
-config_setting(
-    name = "clang_under_address_sanitizer",
-    flag_values = {"@bazel_tools//tools/cpp:compiler": "clang"},
-    values = {"copt": "-fsanitize=address"},
-    visibility = ["//visibility:public"],
-)

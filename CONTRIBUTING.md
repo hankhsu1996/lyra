@@ -93,9 +93,6 @@ clang-tidy -p . <files>
   - `std::array` over C arrays
   - `std::optional`, `std::expected` for error handling
   - Structured bindings, range-based for loops
-- Never let two operands of one call or operator both build IR. C++ leaves their order to the
-  compiler, so what Lyra writes would depend on which compiler built it; bind each to a local first.
-  `python3 tools/policy/check_sequencing.py <files>` checks it, and a pull request is held to it.
 
 ## Pull Requests
 

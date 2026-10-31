@@ -78,7 +78,8 @@ the user's library.
 
 `--config=gcc` builds Lyra with the remote image's GCC and its own library, because every warning is
 fatal and each compiler warns of things the other does not. The runtime library is compiled by the
-clang of D2 there too, as its bitcode has to be that release's.
+clang of D2 there too, as its bitcode has to be that release's. That build is not a Lyra anyone runs
+([the-pinned-clang-builds-the-lyra-that-is-run](the-pinned-clang-builds-the-lyra-that-is-run.md)).
 
 ## Rejected
 
