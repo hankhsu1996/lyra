@@ -31,6 +31,7 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -120,7 +121,7 @@ template <ExprLowerer Lowerer>
 auto BuildPrintValueItem(
     Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg, FormatSpec spec)
     -> diag::Result<RuntimePrintItem> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto lowered_or = LowerFormatOperand(lowerer, frame, hir_arg);
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
@@ -147,7 +148,7 @@ auto BuildPrintValueItem(
   // byte array is not directly formattable, so it lifts to a string value
   // here.
   if (spec.kind == value::FormatKind::kString && !is_string && !is_integral) {
-    const mir::ExprId inner = block.exprs.Add(std::move(lowered));
+    const mir::ExprId inner = block.Add(std::move(lowered));
     lowered = BuildValueConversion(
         lowerer.Owner().Unit(), block, inner,
         lowerer.Owner().Unit().builtins.string);
@@ -166,7 +167,7 @@ auto BuildPrintValueItem(
     }
   }
 
-  const mir::ExprId value = block.exprs.Add(std::move(lowered));
+  const mir::ExprId value = block.Add(std::move(lowered));
 
   // A type that names how a value of it reads (LRM 21.2.1.6) is rendered where
   // that type is still in hand, and what reaches the runtime is the text --
@@ -204,7 +205,7 @@ auto BuildRuntimeFormatOperand(
     Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg)
     -> diag::Result<mir::ExprId> {
   auto& unit = lowerer.Owner().Unit();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const hir::Expr& source = lowerer.HirExprs().Get(hir_arg);
 
   auto lowered_or = LowerFormatOperand(lowerer, frame, hir_arg);
@@ -213,12 +214,12 @@ auto BuildRuntimeFormatOperand(
   const mir::LocalId value = frame.bindings->DeclareAnonymous(value_type);
   block.AppendStmt(
       mir::LocalDeclStmt{
-          .target = value, .init = block.exprs.Add(*std::move(lowered_or))});
+          .target = value, .init = block.Add(*std::move(lowered_or))});
   const auto read_value = [&] { return block.ReadLocal(value, value_type); };
 
   const auto make_arg = [&](mir::Callee callee,
                             std::vector<mir::ExprId> parts) {
-    return block.exprs.Add(
+    return block.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -278,7 +279,7 @@ auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
         "name is known for");
   }
   auto& unit = lowerer.Owner().Unit();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   return std::visit(
       Overloaded{
           [&](const hir::WholeName& name) {
@@ -289,7 +290,7 @@ auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
                 frame, unit, mir::EnclosingHops{name.scopes_out});
             const mir::ExprId below =
                 BuildStringValueExpr(unit, block, name.text);
-            return block.exprs.Add(
+            return block.Add(
                 mir::Expr{
                     .data =
                         mir::CallExpr{
@@ -312,7 +313,7 @@ template <ExprLowerer Lowerer>
 auto BuildLibraryBindingExpr(Lowerer& lowerer, const WalkFrame& frame)
     -> mir::ExprId {
   return BuildStringValueExpr(
-      lowerer.Owner().Unit(), *frame.current_block,
+      lowerer.Owner().Unit(), frame.Builder(),
       lowerer.Owner().Hir().library_binding);
 }
 
@@ -403,7 +404,7 @@ auto TryGetHirStringLiteral(
 // only at lowering -- so its power is materialized here as the spec's sixth
 // field rather than read from the directive like the others.
 auto BuildFormatSpecExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const FormatSpec& spec,
+    mir::CompilationUnit& unit, mir::Builder block, const FormatSpec& spec,
     std::int64_t time_unit_power) -> mir::Expr {
   const bool is_time = spec.kind == value::FormatKind::kTime;
   std::vector<mir::ExprId> args;
@@ -419,16 +420,16 @@ auto BuildFormatSpecExpr(
 }
 
 auto BuildPrintItemExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const RuntimePrintItem& item,
-    std::int64_t time_unit_power) -> mir::Expr {
+    mir::CompilationUnit& unit, mir::Builder block,
+    const RuntimePrintItem& item, std::int64_t time_unit_power) -> mir::Expr {
   return std::visit(
       Overloaded{
           [&](const RuntimePrintLiteral& lit) -> mir::Expr {
-            const mir::ExprId text_lit = block.exprs.Add(
+            const mir::ExprId text_lit = block.Add(
                 mir::Expr{
                     .data = mir::StringLiteral{.value = lit.text},
                     .type = unit.builtins.string});
-            const mir::ExprId text = block.exprs.Add(
+            const mir::ExprId text = block.Add(
                 mir::Expr{
                     .data =
                         mir::CallExpr{
@@ -446,7 +447,7 @@ auto BuildPrintItemExpr(
                 .type = unit.builtins.print_item};
           },
           [&](const RuntimePrintValue& v) -> mir::Expr {
-            const mir::ExprId spec = block.exprs.Add(
+            const mir::ExprId spec = block.Add(
                 BuildFormatSpecExpr(unit, block, v.spec, time_unit_power));
             return mir::Expr{
                 .data =
@@ -559,14 +560,14 @@ auto BuildRuntimeFormatCallExpr(
   // written -- including inside an arm the design may not take.
   BlockBuilder steps(frame);
   const WalkFrame& step_frame = steps.Frame();
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
 
   // An integral or unpacked-byte-array format string carries its text as bytes
   // (LRM 21.3.3), so it reaches the parse as a string value through the same
   // conversion any other bits-to-text operand takes.
   auto format_or = LowerFormatOperand(lowerer, step_frame, args[arg_offset]);
   if (!format_or) return std::unexpected(std::move(format_or.error()));
-  const mir::ExprId lowered_format = body.exprs.Add(*std::move(format_or));
+  const mir::ExprId lowered_format = body.Add(*std::move(format_or));
   const mir::ExprId format_id =
       ConvertToType(unit, body, lowered_format, unit.builtins.string);
 
@@ -579,7 +580,7 @@ auto BuildRuntimeFormatCallExpr(
   }
   const mir::TypeId operands_type = mir::MachineArrayOf(
       unit.types, unit.builtins.format_arg, operands.size());
-  const mir::ExprId operands_array = body.exprs.Add(
+  const mir::ExprId operands_array = body.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(operands)},
           .type = operands_type});
@@ -591,8 +592,8 @@ auto BuildRuntimeFormatCallExpr(
   const mir::ExprId binding_id = BuildLibraryBindingExpr(lowerer, step_frame);
 
   const mir::ExprId runtime_id =
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  const mir::ExprId time_format_id = body.exprs.Add(
+      body.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+  const mir::ExprId time_format_id = body.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -605,7 +606,7 @@ auto BuildRuntimeFormatCallExpr(
   const mir::ExprId time_unit_power = mir::BuildMachineIntLiteral(
       unit, body, static_cast<std::int64_t>(lowerer.Resolution().unit_power));
 
-  const mir::ExprId formatted = body.exprs.Add(
+  const mir::ExprId formatted = body.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -621,14 +622,14 @@ auto BuildRuntimeFormatCallExpr(
 }  // namespace
 
 auto BuildPrintItemsArray(
-    mir::CompilationUnit& unit, mir::Block& block,
+    mir::CompilationUnit& unit, mir::Builder block,
     const std::vector<RuntimePrintItem>& items, std::int64_t time_unit_power)
     -> mir::Expr {
   std::vector<mir::ExprId> elements;
   elements.reserve(items.size());
   for (const RuntimePrintItem& item : items) {
-    elements.push_back(block.exprs.Add(
-        BuildPrintItemExpr(unit, block, item, time_unit_power)));
+    elements.push_back(
+        block.Add(BuildPrintItemExpr(unit, block, item, time_unit_power)));
   }
   const mir::TypeId array_type =
       mir::MachineArrayOf(unit.types, unit.builtins.print_item, items.size());
@@ -667,8 +668,8 @@ auto BuildFormatStringTextExpr(
           lowerer, frame, parsed, arguments, next_argument);
       if (!items) return std::unexpected(std::move(items.error()));
       auto& unit = lowerer.Owner().Unit();
-      auto& block = *frame.current_block;
-      const mir::ExprId items_array = block.exprs.Add(BuildPrintItemsArray(
+      mir::Builder block = frame.Builder();
+      const mir::ExprId items_array = block.Add(BuildPrintItemsArray(
           unit, block, *items,
           static_cast<std::int64_t>(lowerer.Resolution().unit_power)));
       return BuildFormatCallExpr(unit, block, items_array);

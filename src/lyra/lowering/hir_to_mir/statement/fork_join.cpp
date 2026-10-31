@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -70,6 +71,7 @@ auto LowerForkStmt(
     const hir::ForkStmt& f) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::Block fork_block;
+  mir::Builder fork_block_builder(fork_block, frame.span);
   // A fork the source named is part of the hierarchical name of everything
   // lexically inside it (LRM 23.9 lists a fork-join block among the constructs
   // that define a scope) -- the block items, which run in this execution
@@ -108,12 +110,12 @@ auto LowerForkStmt(
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    fork_block.AppendStmt(*std::move(lowered));
+    fork_block_builder.AppendStmt(*std::move(lowered));
   }
 
   const auto& builtins = process.Owner().Unit().builtins;
   const mir::ExprId runtime_id =
-      fork_block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      fork_block_builder.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
 
   std::vector<mir::ExprId> branches;
   branches.reserve(f.branches.size());
@@ -133,18 +135,18 @@ auto LowerForkStmt(
       return std::unexpected(std::move(lowered.error()));
     }
     closure.Body().AppendStmt(*std::move(lowered));
-    branches.push_back(fork_block.exprs.Add(closure.BuildCallOnce()));
+    branches.push_back(fork_block_builder.Add(closure.BuildCallOnce()));
   }
 
   const mir::TypeId branches_type = mir::MachineArrayOf(
       process.Owner().Unit().types, builtins.coroutine_void, branches.size());
-  const mir::ExprId branches_id = fork_block.exprs.Add(
+  const mir::ExprId branches_id = fork_block_builder.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(branches)},
           .type = branches_type});
 
   const JoinDispatch dispatch = DispatchForJoinMode(f.mode);
-  const mir::ExprId call_id = fork_block.exprs.Add(
+  const mir::ExprId call_id = fork_block_builder.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -153,9 +155,10 @@ auto LowerForkStmt(
           .type = dispatch.parent_waits ? builtins.wait : builtins.void_type});
 
   if (dispatch.parent_waits) {
-    fork_block.AppendStmt(BuildStopStmt(process.Owner(), fork_frame, call_id));
+    fork_block_builder.AppendStmt(
+        BuildStopStmt(process.Owner(), fork_frame, call_id));
   } else {
-    fork_block.AppendStmt(mir::ExprStmt{.expr = call_id});
+    fork_block_builder.AppendStmt(mir::ExprStmt{.expr = call_id});
   }
 
   // The extent sits where the fork sits, not inside it: an execution the
@@ -167,8 +170,7 @@ auto LowerForkStmt(
         .data = BuildTargetExtent(
             process, frame, std::move(fork_block), *disable_target)};
   }
-  const mir::BlockId scope_id =
-      frame.current_block->child_scopes.Add(std::move(fork_block));
+  const mir::BlockId scope_id = frame.Builder().AddScope(std::move(fork_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -180,11 +182,11 @@ auto LowerForkStmt(
 auto LowerWaitForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label)
     -> diag::Result<mir::Stmt> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto& builtins = process.Owner().Unit().builtins;
   const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId wait_id = block.exprs.Add(
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+  const mir::ExprId wait_id = block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -205,11 +207,11 @@ auto LowerWaitForkStmt(
 auto LowerDisableForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label)
     -> diag::Result<mir::Stmt> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto& builtins = process.Owner().Unit().builtins;
   const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId call_id = block.exprs.Add(
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+  const mir::ExprId call_id = block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{

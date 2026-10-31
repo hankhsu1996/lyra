@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -25,34 +26,34 @@ namespace lyra::mir {
 // runtime entry's count, size, and index operands are in: they are not
 // SystemVerilog values, so they carry no declared type.
 [[nodiscard]] auto BuildMachineIntLiteral(
-    const CompilationUnit& unit, Block& block, std::int64_t value) -> ExprId;
+    const CompilationUnit& unit, Builder block, std::int64_t value) -> ExprId;
 
 // A count the lowering holds -- a number of bits, of elements -- written as
 // such a literal.
 [[nodiscard]] auto BuildMachineCount(
-    const CompilationUnit& unit, Block& block, std::uint64_t count) -> ExprId;
+    const CompilationUnit& unit, Builder block, std::uint64_t count) -> ExprId;
 
 // A machine integer `op` makes of two machine integers.
 [[nodiscard]] auto BuildMachineIntBinary(
-    const CompilationUnit& unit, Block& block, BinaryOp op, ExprId lhs,
+    const CompilationUnit& unit, Builder block, BinaryOp op, ExprId lhs,
     ExprId rhs) -> ExprId;
 
 // A statement raising `message` as a run-time error of the simulated program
 // unless the machine boolean `holds` does, after what `block` holds.
 void AppendRunTimeCheck(
-    const CompilationUnit& unit, Block& block, ExprId holds,
+    const CompilationUnit& unit, Builder block, ExprId holds,
     std::string message);
 
 // Whether the comparison `op` holds of two machine integers, as a machine
 // boolean.
 [[nodiscard]] auto BuildMachineIntComparison(
-    const CompilationUnit& unit, Block& block, BinaryOp op, ExprId lhs,
+    const CompilationUnit& unit, Builder block, BinaryOp op, ExprId lhs,
     ExprId rhs) -> ExprId;
 
 // `then_value` where the machine boolean `condition` holds and `else_value`
 // otherwise, both machine integers.
 [[nodiscard]] auto BuildMachineIntConditional(
-    const CompilationUnit& unit, Block& block, ExprId condition,
+    const CompilationUnit& unit, Builder block, ExprId condition,
     ExprId then_value, ExprId else_value) -> ExprId;
 
 // A declared range as whichever layer states one: its left bound and its
@@ -70,7 +71,8 @@ concept DeclaredRange = requires(const Range& range) {
 template <std::ranges::sized_range Ranges>
   requires DeclaredRange<std::ranges::range_value_t<Ranges>>
 [[nodiscard]] auto BuildDeclaredRanges(
-    const CompilationUnit& unit, Block& block, const Ranges& ranges) -> ExprId {
+    const CompilationUnit& unit, Builder block, const Ranges& ranges)
+    -> ExprId {
   std::vector<ExprId> bounds;
   bounds.reserve(2 * std::ranges::size(ranges));
   for (const auto& range : ranges) {
@@ -79,7 +81,7 @@ template <std::ranges::sized_range Ranges>
   }
   const TypeId type =
       MachineArrayOf(unit.types, unit.builtins.machine_int64, bounds.size());
-  return block.exprs.Add(
+  return block.Add(
       Expr{.data = CompositeExpr{.parts = std::move(bounds)}, .type = type});
 }
 
@@ -103,7 +105,7 @@ template <std::ranges::sized_range Ranges>
 // or, where the type is too large for a frame and the value is one scalar
 // above a few bits, the extension of the constant those bits are.
 [[nodiscard]] auto BuildIntegralLiteral(
-    const CompilationUnit& unit, Block& block, TypeId type,
+    const CompilationUnit& unit, Builder block, TypeId type,
     const IntegralConstant& value) -> ExprId;
 
 // The entry that carries `entry` out over a value of type `over`. An entry the
@@ -158,16 +160,16 @@ template <std::ranges::sized_range Ranges>
 
 // 2-state signed 32-bit constant, typed `int` (LRM 6.11.1).
 [[nodiscard]] auto BuildIntLiteral(
-    const CompilationUnit& unit, Block& block, std::int64_t value) -> ExprId;
+    const CompilationUnit& unit, Builder block, std::int64_t value) -> ExprId;
 
 // 4-state signed 32-bit constant, typed `integer` (LRM 6.11.1), for an operand
 // that meets an `integer` value and has to share its state domain.
 [[nodiscard]] auto BuildIntegerLiteral(
-    const CompilationUnit& unit, Block& block, std::int64_t value) -> ExprId;
+    const CompilationUnit& unit, Builder block, std::int64_t value) -> ExprId;
 
 // 1-bit unsigned 2-state constant. The value a boolean fold yields when it has
 // nothing to fold, and the constant a synthesized flag is seeded with.
 [[nodiscard]] auto BuildBit1Literal(
-    const CompilationUnit& unit, Block& block, bool value) -> ExprId;
+    const CompilationUnit& unit, Builder block, bool value) -> ExprId;
 
 }  // namespace lyra::mir

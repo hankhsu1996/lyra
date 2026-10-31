@@ -12,6 +12,7 @@
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -33,7 +34,7 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp;
 // unevaluated, so they are built before both operands are lowered and never
 // reach this.
 auto BuildMirBinaryExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, hir::BinaryOp op,
+    const mir::CompilationUnit& unit, mir::Builder block, hir::BinaryOp op,
     mir::ExprId lhs_named, mir::ExprId rhs_named, mir::TypeId result_type)
     -> mir::Expr;
 
@@ -44,10 +45,10 @@ auto BuildMirBinaryExpr(
 // condition search instead. Having nothing to fold is not a case for the caller
 // to branch on: it is the empty fold, whose value is the operator's identity.
 auto BuildMirLogicalAnd(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type,
     std::span<const mir::ExprId> tests) -> mir::ExprId;
 auto BuildMirLogicalOr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type,
     std::span<const mir::ExprId> tests) -> mir::ExprId;
 
 // `terms` folded by `op` over a list as long as the source makes it -- a
@@ -57,16 +58,16 @@ auto BuildMirLogicalOr(
 // folding it in, so the statements stand beside each other however many there
 // are. Answers with the read of `held`.
 auto AccumulateMirBinary(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::BinaryOp op,
     mir::ExprId identity, mir::LocalId held, mir::TypeId type,
     std::span<const mir::ExprId> terms) -> mir::ExprId;
 
 // The same for the logical folds, from the operator's own identity.
 auto AccumulateMirLogicalAnd(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId held,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId held,
     mir::TypeId type, std::span<const mir::ExprId> tests) -> mir::ExprId;
 auto AccumulateMirLogicalOr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId held,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId held,
     mir::TypeId type, std::span<const mir::ExprId> tests) -> mir::ExprId;
 
 // An operator's meaning is independent of the enclosing scope, so one template

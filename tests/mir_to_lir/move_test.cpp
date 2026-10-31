@@ -7,10 +7,12 @@
 #include <variant>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/verify.hpp"
 #include "lyra/lowering/mir_to_lir/lower.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -25,7 +27,7 @@ namespace lyra::lowering::mir_to_lir {
 namespace {
 
 auto AddEmptyBody(mir::CompilationUnit& unit) -> mir::CallableId {
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
   return unit.callables.Add(
       mir::CallableDecl{
@@ -47,7 +49,7 @@ auto UnitTakingASharedPointer(bool moved) -> mir::CompilationUnit {
   unit.content = mir::BroughtUpNamespace{
       .install_storage = AddEmptyBody(unit),
       .initialize_storage = AddEmptyBody(unit)};
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
   const mir::TypeId shared = unit.types.Intern(
       mir::Type{mir::PointerType{
@@ -55,24 +57,23 @@ auto UnitTakingASharedPointer(bool moved) -> mir::CompilationUnit {
           .ownership = mir::PointerOwnership::kShared}});
   const mir::LocalId source = code.locals.Add(mir::LocalDecl{.type = shared});
   const mir::LocalId taker = code.locals.Add(mir::LocalDecl{.type = shared});
-  mir::Block& body = code.Body();
-  const mir::ExprId zero = body.exprs.Add(
+  mir::Builder body(code.Body(), diag::SourceSpan{});
+  const mir::ExprId zero = body.Add(
       mir::Expr{
           .data = mir::MachineIntLiteral{.value = 0},
           .type = unit.builtins.int_type});
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = source,
-          .init = body.exprs.Add(
+          .init = body.Add(
               mir::Expr{
                   .data = mir::NewExpr{.initializer = zero}, .type = shared})});
-  const mir::ExprId named =
-      body.exprs.Add(mir::MakeLocalRefExpr(source, shared));
+  const mir::ExprId named = body.Add(mir::MakeLocalRefExpr(source, shared));
   const mir::ExprId taken =
-      moved ? body.exprs.Add(
+      moved ? body.Add(
                   mir::Expr{
                       .data = mir::MoveExpr{.operand = named}, .type = shared})
-            : body.exprs.Add(mir::MakeCopyExpr(named, shared));
+            : body.Add(mir::MakeCopyExpr(named, shared));
   body.AppendStmt(mir::LocalDeclStmt{.target = taker, .init = taken});
   const mir::CallableId id = unit.callables.Add(
       mir::CallableDecl{

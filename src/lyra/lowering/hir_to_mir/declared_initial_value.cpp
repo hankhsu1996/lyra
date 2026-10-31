@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -90,7 +91,7 @@ namespace {
 
 // The part a statement of the block it is handed writes, named in that block,
 // since what names a part is a node of the block it stands in.
-using PartIn = std::function<AccessPath(mir::Block&)>;
+using PartIn = std::function<AccessPath(mir::Builder)>;
 
 void GiveElementsNewEvents(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const PartIn& array,
@@ -104,18 +105,18 @@ void GiveNewEvents(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const PartIn& part,
     hir::TypeId type) {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const hir::CompilationUnit& hir = unit_lowerer.Hir();
   hir.types.Get(type).Visit(
       Overloaded{
           [&](const hir::EventType&) {
-            const mir::ExprId made = block.exprs.Add(
+            const mir::ExprId made = block.Add(
                 mir::MakeCallExpr(
                     mir::Direct{.target = support::BuiltinFn::kEventNew}, {},
                     unit.builtins.event));
             block.AppendStmt(
                 mir::ExprStmt{
-                    .expr = block.exprs.Add(
+                    .expr = block.Add(
                         BuildStoreExpr(unit, block, part(block), made))});
           },
           [&](const hir::UnpackedArrayType& array) {
@@ -140,7 +141,7 @@ void GiveNewEvents(
               }
               GiveNewEvents(
                   unit_lowerer, frame,
-                  [&, i](mir::Block& at) {
+                  [&, i](mir::Builder at) {
                     AccessPath whole = part(at);
                     const mir::TypeId member_type =
                         unit_lowerer.TranslateType(member.type);
@@ -191,7 +192,7 @@ void GiveElementsNewEvents(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const PartIn& array,
     hir::TypeId element, mir::ExprId first, mir::ExprId count) {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::TypeId int_type = unit.builtins.int_type;
   const mir::LocalId from = DeclareLocal(frame, first);
   const mir::LocalId ordinal = frame.bindings->DeclareAnonymous(int_type);
@@ -200,11 +201,12 @@ void GiveElementsNewEvents(
   const WalkFrame body_frame = frame.WithBlock(&body);
   GiveNewEvents(
       unit_lowerer, body_frame,
-      [&](mir::Block& at) {
+      [&](mir::Builder at) {
         const mir::ExprId lhs = at.ReadLocal(from, int_type);
         const mir::ExprId rhs = at.ReadLocal(ordinal, int_type);
-        const mir::ExprId position = at.exprs.Add(
-            mir::MakeBinary(unit, at, mir::BinaryOp::kAdd, lhs, rhs, int_type));
+        const mir::ExprId position = at.Add(
+            mir::MakeBinary(
+                unit, at.Body(), mir::BinaryOp::kAdd, lhs, rhs, int_type));
         AccessPath whole = array(at);
         return DescendInto(
             std::move(whole),
@@ -216,8 +218,7 @@ void GiveElementsNewEvents(
       },
       element);
   block.AppendStmt(BuildCountingLoopStmt(
-      unit, frame, block, count, ordinal,
-      block.child_scopes.Add(std::move(body))));
+      unit, frame, block, count, ordinal, block.AddScope(std::move(body))));
 }
 
 }  // namespace
@@ -226,17 +227,17 @@ auto BuildDeclaredInitialValue(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, hir::TypeId type)
     -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::TypeId value_type = unit_lowerer.TranslateType(type);
   const mir::ExprId default_value =
-      block.exprs.Add(BuildDefaultValueExpr(unit, block, value_type));
+      block.Add(BuildDefaultValueExpr(unit, block, value_type));
   if (!HoldsADeclaredEvent(unit_lowerer.Hir(), type)) {
     return default_value;
   }
   const mir::LocalId held = DeclareLocal(frame, default_value);
   GiveNewEvents(
       unit_lowerer, frame,
-      [&](mir::Block& at) {
+      [&](mir::Builder at) {
         return AccessPath{
             .owner = at.LocalPlace(held, value_type), .descent = {}};
       },
@@ -250,7 +251,7 @@ void GiveElementsNewEvents(
     mir::ExprId count) {
   GiveElementsNewEvents(
       unit_lowerer, frame,
-      [&](mir::Block& at) {
+      [&](mir::Builder at) {
         return AccessPath{
             .owner = at.LocalPlace(array, array_type), .descent = {}};
       },

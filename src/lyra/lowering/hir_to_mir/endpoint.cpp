@@ -8,6 +8,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -91,10 +92,10 @@ auto MemberExpr(
           },
           [&](const MemberThroughSlot& through) {
             const mir::ExprId pointer =
-                frame.current_block->exprs.Add(BuildStructuralFieldAccessExpr(
+                frame.Builder().Add(BuildStructuralFieldAccessExpr(
                     frame, unit, mir::EnclosingHops{0}, through.slot));
             return mir::MakeDerefExpr(
-                frame.current_block->DerefOperand(unit.types, pointer),
+                frame.Builder().DerefOperand(unit.types, pointer),
                 through.member_type);
           }},
       place);
@@ -142,43 +143,43 @@ auto EndpointCellExpr(
 }
 
 auto EndpointObservablePtr(
-    mir::Block& block, const WalkFrame& frame, const mir::CompilationUnit& unit,
-    const BoundEndpoint& endpoint) -> mir::ExprId {
+    mir::Builder block, const WalkFrame& frame,
+    const mir::CompilationUnit& unit, const BoundEndpoint& endpoint)
+    -> mir::ExprId {
   const auto address_of = [&](mir::ExprId cell) {
     const mir::TypeId ptr_type = unit.types.Intern(
         mir::Type{mir::PointerType{
-            .pointee = block.exprs.Get(cell).type,
+            .pointee = block.Get(cell).type,
             .ownership = mir::PointerOwnership::kBorrowed,
             .mutability = mir::Mutability::kMutable}});
-    return block.exprs.Add(mir::MakeAddressOfExpr(cell, ptr_type));
+    return block.Add(mir::MakeAddressOfExpr(cell, ptr_type));
   };
-  const WalkFrame at_block = frame.WithBlock(&block);
+  const WalkFrame at_block = frame.WithBlock(&block.Body());
   switch (endpoint.kind) {
     case MemberKind::kCell:
       return std::visit(
           Overloaded{
               [&](const MemberAtHops&) {
-                return address_of(block.exprs.Add(
-                    MemberExpr(at_block, unit, endpoint.place)));
+                return address_of(
+                    block.Add(MemberExpr(at_block, unit, endpoint.place)));
               },
               // The slot already holds the cell's address.
               [&](const MemberThroughSlot& through) {
-                return block.exprs.Add(BuildStructuralFieldAccessExpr(
+                return block.Add(BuildStructuralFieldAccessExpr(
                     at_block, unit, mir::EnclosingHops{0}, through.slot));
               }},
           endpoint.place);
     case MemberKind::kReference:
       return ReferenceReportsTo(
-          unit, block,
-          block.exprs.Add(MemberExpr(at_block, unit, endpoint.place)));
+          unit, block, block.Add(MemberExpr(at_block, unit, endpoint.place)));
   }
   throw InternalError("EndpointObservablePtr: unknown member kind");
 }
 
 auto ReferenceReportsTo(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reference)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId reference)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{

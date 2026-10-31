@@ -7,6 +7,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -38,7 +39,7 @@ namespace lyra::lowering::hir_to_mir {
 // already interned into `block`. Both ends of an extent are one of these --
 // what entering it does, and what leaving it gives back.
 void AppendRuntimeEffectStmt(
-    const UnitLowerer& unit_lowerer, mir::Block& block,
+    const UnitLowerer& unit_lowerer, mir::Builder block,
     support::BuiltinFn entry, std::vector<mir::ExprId> operands);
 
 // What a statement that schedules past its function's return -- a nonblocking
@@ -54,14 +55,14 @@ void AppendScheduleAfterReturnRequirement(
 // wait, or a foreign task carried on a fiber. `park` is already interned into
 // `block` and answers whether the caller must give up control.
 [[nodiscard]] auto BuildWaitStmt(
-    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId park)
+    const UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId park)
     -> mir::Stmt;
 
 // The stop at the wait the local `wait` holds, in `block`. Every timing control
 // (LRM 9.4) is a wait the body holds and a stop at it, wherever the wait was
 // built.
 [[nodiscard]] auto BuildParkStmt(
-    const UnitLowerer& unit_lowerer, mir::Block& block, mir::LocalId wait)
+    const UnitLowerer& unit_lowerer, mir::Builder block, mir::LocalId wait)
     -> mir::Stmt;
 
 // A wait built at its stop, because what it waits for is known only there --
@@ -75,7 +76,7 @@ void AppendScheduleAfterReturnRequirement(
 // Builds the statement enabling a task amounts to where nothing reads what it
 // completes with: awaiting the execution `execution` evaluates to (LRM 13.3).
 [[nodiscard]] auto BuildAwaitStmt(
-    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId execution)
+    const UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId execution)
     -> mir::Stmt;
 
 // Materializes compile-time text as a `value::String` operand and interns it:
@@ -84,7 +85,7 @@ void AppendScheduleAfterReturnRequirement(
 // Every synthesized operand that crosses as text -- a diagnostic's origin tag,
 // the text of a report the tool writes itself -- is built here.
 [[nodiscard]] auto BuildStringValueExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, std::string text)
+    const mir::CompilationUnit& unit, mir::Builder block, std::string text)
     -> mir::ExprId;
 
 // Builds the file-IO broker expression `current_runtime().Files()`: a
@@ -94,7 +95,7 @@ void AppendScheduleAfterReturnRequirement(
 // file-IO ops and LRM 21.2.1 / 21.3.1 sink writes thread the resulting
 // handle as the receiver of their FileTable methods.
 [[nodiscard]] auto BuildFilesCallExpr(
-    const UnitLowerer& unit_lowerer, mir::Block& block) -> mir::Expr;
+    const UnitLowerer& unit_lowerer, mir::Builder block) -> mir::Expr;
 
 // Builds `current_runtime().<entry>(arguments...)`, the deferred effects of
 // the region `entry` answers -- this slot's or a delayed slot's NBA region, or
@@ -102,7 +103,7 @@ void AppendScheduleAfterReturnRequirement(
 // emplaced into. Returns the call detached; the engine handle is interned into
 // `block` as a child.
 [[nodiscard]] auto BuildRegionEffectsCallExpr(
-    const UnitLowerer& unit_lowerer, mir::Block& block,
+    const UnitLowerer& unit_lowerer, mir::Builder block,
     support::BuiltinFn entry, std::vector<mir::ExprId> arguments = {})
     -> mir::Expr;
 
@@ -110,7 +111,7 @@ void AppendScheduleAfterReturnRequirement(
 // is emplaced into, which keeps it in the Observed region unless the process
 // that made it is flushed first. Returns the call detached, as above.
 [[nodiscard]] auto BuildViolationReportsCallExpr(
-    const UnitLowerer& unit_lowerer, mir::Block& block) -> mir::Expr;
+    const UnitLowerer& unit_lowerer, mir::Builder block) -> mir::Expr;
 
 // Builds the diagnostic broker expression `current_runtime().Diagnostic()`:
 // a `Diagnostic` method call on the engine handle, typed as the unit's
@@ -120,7 +121,7 @@ void AppendScheduleAfterReturnRequirement(
 // the receiver of their severity-fixed Emit methods, and so does the report a
 // tool issues on its own behalf.
 [[nodiscard]] auto BuildDiagnosticCallExpr(
-    const mir::CompilationUnit& unit, mir::Block& block) -> mir::Expr;
+    const mir::CompilationUnit& unit, mir::Builder block) -> mir::Expr;
 
 // The call handing one report to the diagnostic broker at `severity` (LRM
 // 20.10): the origin the dispatcher attributes and rate-limits by, and the text
@@ -141,7 +142,7 @@ void AppendScheduleAfterReturnRequirement(
 // assignment a destination's type did not admit -- because what separates them
 // is the severity and the words and nothing else.
 void AppendToolReportStmt(
-    const UnitLowerer& unit_lowerer, mir::Block& block,
+    const UnitLowerer& unit_lowerer, mir::Builder block,
     support::BuiltinFn severity, base::DiagMessage text, diag::SourceSpan span);
 
 // Builds the format-text expression `value::Format(items,
@@ -153,7 +154,7 @@ void AppendToolReportStmt(
 // `$info`, and `$sformat` families and the deferred-check cascade all format
 // through this one path.
 [[nodiscard]] auto BuildFormatCallExpr(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     mir::ExprId items_array) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

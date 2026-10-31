@@ -18,10 +18,12 @@ namespace lyra::diag {
 //
 // What is said is one of two things. A place is a piece of source being worked
 // on -- a declaration, a statement, an expression -- and a failure is reported
-// at the innermost one, the rest only being wider views of the same spot. A
-// name is what the source cannot show: which unit, since one module may be
-// compiled as several, or which function once the source is behind. Every name
-// is kept and the report carries them on its one line.
+// at the innermost one, the rest only being wider views of the same spot. Work
+// on what was lowered from no source says no place, which leaves the failure
+// standing where the work around it does. A name is what the source cannot
+// show: which unit, since one module may be compiled as several, or which
+// function, since what was lowered from no source has no place to stand at.
+// Every name is kept and the report carries them on its one line.
 //
 // One of these lives on the stack for as long as the work it names. When an
 // exception leaves the work through it, it adds what it said to its thread's
@@ -59,6 +61,34 @@ class FailureContext {
 
   Said said_;
   int exceptions_in_flight_;
+};
+
+// While a node naming a piece of source is worked on, `current` -- what the
+// work builds and refuses stands at -- is that piece, and a failure meanwhile
+// stands there too, as clang's `ApplyDebugLocation` sets the location code is
+// generated at for one construct. A node naming none leaves both to the node
+// around it.
+class ApplySourceSpan {
+ public:
+  ApplySourceSpan(SourceSpan& current, SourceSpan span)
+      : current_(&current), around_(current), at_(span) {
+    if (span != SourceSpan{}) {
+      current = span;
+    }
+  }
+  ~ApplySourceSpan() {
+    *current_ = around_;
+  }
+
+  ApplySourceSpan(const ApplySourceSpan&) = delete;
+  auto operator=(const ApplySourceSpan&) -> ApplySourceSpan& = delete;
+  ApplySourceSpan(ApplySourceSpan&&) = delete;
+  auto operator=(ApplySourceSpan&&) -> ApplySourceSpan& = delete;
+
+ private:
+  SourceSpan* current_;
+  SourceSpan around_;
+  FailureContext at_;
 };
 
 // The compiler's own failure as a report: what `failure` says and the names the

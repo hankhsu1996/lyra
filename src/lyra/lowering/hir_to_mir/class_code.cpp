@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/library_entry_body.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -185,13 +186,13 @@ auto EntryOf(
       unit_lowerer.ClassCodePrototypeOf(published, id, point);
   const mir::CallableId slot =
       unit_lowerer.ClassCodeSlotOf(published, id, point);
-  mir::CallableCode entry = mir::CallableCode::Defined();
+  mir::CallableCode entry = mir::CallableCode::Defined(diag::SourceSpan{});
   for (const mir::LocalId param : operation.params) {
     entry.params.push_back(entry.AddLocal(operation.locals.Get(param).type));
   }
   if (operation.TakesReceiver()) entry.receiver = entry.params.front();
   entry.result_type = operation.result_type;
-  mir::Block& block = entry.Body();
+  mir::Builder block(entry.Body(), diag::SourceSpan{});
   const auto read = [&](mir::LocalId param) {
     return block.ReadLocal(param, entry.locals.Get(param).type);
   };
@@ -204,7 +205,7 @@ auto EntryOf(
             if (!entry.receiver.has_value()) {
               return read(entry.params.front());
             }
-            return block.Read(block.exprs.Add(
+            return block.Read(block.Add(
                 mir::MakeFieldAccessExpr(
                     BuildObjectDeref(unit, block, read(*entry.receiver)),
                     mir::ClassFieldTarget{.owner = id, .slot = instance.member},
@@ -216,7 +217,7 @@ auto EntryOf(
   for (const mir::LocalId param : entry.params) {
     arguments.push_back(read(param));
   }
-  const mir::ExprId call = block.exprs.Add(
+  const mir::ExprId call = block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{

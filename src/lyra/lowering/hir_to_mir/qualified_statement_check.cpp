@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -68,21 +69,21 @@ auto KeywordOf(hir::UniquePriorityCheck check) -> std::string_view {
 // statement's own location, so the dispatcher attributes and rate-limits by
 // where the statement is written rather than by where the report matured.
 void AppendReportEmit(
-    mir::CompilationUnit& unit, mir::Block& block,
+    mir::CompilationUnit& unit, mir::Builder block,
     std::vector<RuntimePrintItem> items, std::string origin) {
   // The text is fixed-format decimal, so no %t directive is possible and the
   // time-unit power is unread.
   const mir::ExprId items_array =
-      block.exprs.Add(BuildPrintItemsArray(unit, block, items, 0));
+      block.Add(BuildPrintItemsArray(unit, block, items, 0));
   const mir::ExprId text_id =
-      block.exprs.Add(BuildFormatCallExpr(unit, block, items_array));
+      block.Add(BuildFormatCallExpr(unit, block, items_array));
   const mir::ExprId diagnostic_id =
-      block.exprs.Add(BuildDiagnosticCallExpr(unit, block));
+      block.Add(BuildDiagnosticCallExpr(unit, block));
   const mir::ExprId origin_id =
       BuildStringValueExpr(unit, block, std::move(origin));
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.exprs.Add(BuildReportCallExpr(
+          .expr = block.Add(BuildReportCallExpr(
               unit, support::BuiltinFn::kEmitWarning, diagnostic_id, origin_id,
               text_id))});
 }
@@ -95,9 +96,9 @@ void AppendReportEmit(
 // `frame`'s block is the one the report's captures were read in.
 void KeepInObservedRegion(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Expr body) {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   mir::Expr keeper = BuildViolationReportsCallExpr(unit_lowerer, block);
-  const mir::ExprId kept = block.exprs.Add(BuildEmplacedClosure(
+  const mir::ExprId kept = block.Add(BuildEmplacedClosure(
       unit_lowerer.Unit(), frame, std::move(keeper), std::move(body)));
   block.AppendStmt(mir::ExprStmt{.expr = kept});
 }
@@ -121,10 +122,10 @@ auto BuildUniquenessReportBody(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::TypeId int_type = unit.builtins.int_type;
   ClosureBuilder closure(unit, frame, support::ClosureKind::kFn);
-  mir::Block& body = closure.Body();
+  mir::Builder body = closure.Body();
 
   const mir::LocalId count = closure.Bindings().DeclareAnonymous(int_type);
-  const auto count_place = [&](mir::Block& block) {
+  const auto count_place = [&](mir::Builder block) {
     return block.LocalPlace(count, int_type);
   };
   body.AppendStmt(
@@ -132,9 +133,9 @@ auto BuildUniquenessReportBody(
           .target = count, .init = mir::BuildIntLiteral(unit, body, 0)});
   for (const HeldArm& arm : arms) {
     const mir::ExprId held =
-        body.Read(body.exprs.Add(closure.Bindings().MakeBindingPlace(
+        body.Read(body.Add(closure.Bindings().MakeBindingPlace(
             closure.Bindings().EnsureCarrier(arm.origin), body)));
-    const mir::ExprId one_if_held = body.exprs.Add(
+    const mir::ExprId one_if_held = body.Add(
         mir::Expr{
             .data =
                 mir::ConditionalExpr{
@@ -142,13 +143,13 @@ auto BuildUniquenessReportBody(
                     .then_value = mir::BuildIntLiteral(unit, body, 1),
                     .else_value = mir::BuildIntLiteral(unit, body, 0)},
             .type = int_type});
-    const mir::ExprId counted = body.exprs.Add(
+    const mir::ExprId counted = body.Add(
         mir::MakeBinary(
-            unit, body, mir::BinaryOp::kAdd, body.ReadLocal(count, int_type),
-            one_if_held, int_type));
+            unit, body.Body(), mir::BinaryOp::kAdd,
+            body.ReadLocal(count, int_type), one_if_held, int_type));
     body.AppendStmt(
         mir::ExprStmt{
-            .expr = body.exprs.Add(
+            .expr = body.Add(
                 mir::MakeAssignExpr(
                     unit.builtins, count_place(body), counted))});
   }
@@ -161,18 +162,19 @@ auto BuildUniquenessReportBody(
                       "'{}' violation; more than one of the {} {} matched",
                       KeywordOf(check), arms.size(), NounFor(arm_kind).many)
                       .TakeText()});
-  AppendReportEmit(unit, report, std::move(items), std::move(origin));
+  AppendReportEmit(
+      unit, body.Into(report), std::move(items), std::move(origin));
 
   const mir::ExprId lhs = body.ReadLocal(count, int_type);
   const mir::ExprId rhs = mir::BuildIntLiteral(unit, body, 1);
-  const mir::ExprId violated = body.exprs.Add(
+  const mir::ExprId violated = body.Add(
       mir::MakeBinary(
-          unit, body, mir::BinaryOp::kGreaterThan, lhs, rhs,
+          unit, body.Body(), mir::BinaryOp::kGreaterThan, lhs, rhs,
           unit.builtins.bit1));
   body.AppendStmt(
       mir::IfStmt{
           .condition = ReduceToCondition(unit, body, violated),
-          .then_scope = body.child_scopes.Add(std::move(report)),
+          .then_scope = body.AddScope(std::move(report)),
           .else_scope = std::nullopt});
   return closure.BuildVoid();
 }
@@ -238,7 +240,7 @@ auto BuildUniquenessCheck(
     QualifiedArmKind arm_kind, diag::SourceSpan span)
     -> std::vector<mir::LocalId> {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   std::vector<HeldArm> arms;
   std::vector<mir::LocalId> locals;

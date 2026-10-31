@@ -28,6 +28,7 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -86,8 +87,8 @@ auto LiftStringSource(
         "string, integral, or an unpacked array of byte");
   }
 
-  return frame.current_block->exprs.Add(BuildValueConversion(
-      unit_lowerer.Unit(), *frame.current_block, source_id,
+  return frame.Builder().Add(BuildValueConversion(
+      unit_lowerer.Unit(), frame.Builder(), source_id,
       unit_lowerer.Unit().builtins.string));
 }
 
@@ -103,8 +104,8 @@ auto LiftStringFormat(
         "LiftStringFormat: a scan format reached lowering that is not string "
         "or integral");
   }
-  return frame.current_block->exprs.Add(BuildValueConversion(
-      unit_lowerer.Unit(), *frame.current_block, format_id,
+  return frame.Builder().Add(BuildValueConversion(
+      unit_lowerer.Unit(), frame.Builder(), format_id,
       unit_lowerer.Unit().builtins.string));
 }
 
@@ -114,11 +115,11 @@ auto LiftStringFormat(
 // unknown bit, a `string` among them, is known by that type and is asked
 // nothing.
 auto EmitScanOperandsKnown(
-    const mir::CompilationUnit& unit, mir::Block& body, mir::TypeId bit_t,
+    const mir::CompilationUnit& unit, mir::Builder body, mir::TypeId bit_t,
     std::span<const mir::ExprId> operands) -> mir::ExprId {
   std::vector<mir::ExprId> known;
   for (const mir::ExprId operand : operands) {
-    if (!CarriesUnknowns(unit, body.exprs.Get(operand).type)) continue;
+    if (!CarriesUnknowns(unit, body.Get(operand).type)) continue;
     const mir::ExprId unknown_id =
         ConvertToType(unit, body, BuildUnknownTest(unit, body, operand), bit_t);
     known.push_back(BuildLogicalNot(unit, body, unknown_id));
@@ -176,7 +177,7 @@ auto LowerScanSystemSubroutineCall(
   // values to the call's output lvalues; both effects are steps of one block
   // expression, so the call sits in expression position.
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   const WalkFrame& step_frame = steps.Frame();
 
   // Each operand the source wrote is evaluated once, in the order it was
@@ -192,8 +193,7 @@ auto LowerScanSystemSubroutineCall(
       steps.Bindings().DeclareAnonymous(raw_source_type);
   body.AppendStmt(
       mir::LocalDeclStmt{
-          .target = source_var,
-          .init = body.exprs.Add(*std::move(raw_source_or))});
+          .target = source_var, .init = body.Add(*std::move(raw_source_or))});
 
   auto format_or =
       process.LowerExpr(hir_proc.exprs.Get(operands[1]), step_frame);
@@ -203,7 +203,7 @@ auto LowerScanSystemSubroutineCall(
       steps.Bindings().DeclareAnonymous(format_type);
   body.AppendStmt(
       mir::LocalDeclStmt{
-          .target = format_var, .init = body.exprs.Add(*std::move(format_or))});
+          .target = format_var, .init = body.Add(*std::move(format_or))});
 
   // The answer until a conversion settles it (LRM 21.3.4.3).
   const mir::LocalId count_var = steps.Bindings().DeclareAnonymous(integer_t);
@@ -224,6 +224,7 @@ auto LowerScanSystemSubroutineCall(
       EmitScanOperandsKnown(unit, body, bit_t, rule_operands);
 
   mir::Block scan_body;
+  mir::Builder scan_body_builder = body.Into(scan_body);
   const WalkFrame scan_frame = step_frame.WithBlock(&scan_body);
 
   // `$fscanf` reads the stream the descriptor names, so the call is made on
@@ -240,8 +241,8 @@ auto LowerScanSystemSubroutineCall(
           "LowerScanSystemSubroutineCall: $fscanf fd is not packed-integer");
     }
     const mir::ExprId runtime_id =
-        scan_body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-    const mir::ExprId files_id = scan_body.exprs.Add(
+        scan_body_builder.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+    const mir::ExprId files_id = scan_body_builder.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -254,17 +255,18 @@ auto LowerScanSystemSubroutineCall(
     parse_fn = mir::Direct{
         .target = support::BuiltinFn::kFileScan, .receiver = files_id};
     source_id = BuildToInt64Call(
-        unit, scan_body, scan_body.ReadLocal(source_var, raw_source_type));
+        unit, scan_body_builder,
+        scan_body_builder.ReadLocal(source_var, raw_source_type));
   } else {
     parse_fn = mir::Direct{.target = support::BuiltinFn::kScanString};
     source_id = LiftStringSource(
         unit_lowerer, scan_frame, raw_source_type,
-        scan_body.ReadLocal(source_var, raw_source_type));
+        scan_body_builder.ReadLocal(source_var, raw_source_type));
   }
 
   const mir::ExprId format_id = LiftStringFormat(
       unit_lowerer, scan_frame, format_type,
-      scan_body.ReadLocal(format_var, format_type));
+      scan_body_builder.ReadLocal(format_var, format_type));
 
   // One prototype per conversion. It states the shape that conversion parses
   // into, which nothing else on the call states, and it is what the completion
@@ -272,10 +274,10 @@ auto LowerScanSystemSubroutineCall(
   std::vector<mir::ExprId> prototypes;
   prototypes.reserve(target_types.size());
   for (const mir::TypeId target_type : target_types) {
-    prototypes.push_back(scan_body.exprs.Add(
-        BuildDefaultValueExpr(unit_lowerer.Unit(), scan_body, target_type)));
+    prototypes.push_back(scan_body_builder.Add(BuildDefaultValueExpr(
+        unit_lowerer.Unit(), scan_body_builder, target_type)));
   }
-  const mir::ExprId prototypes_id = scan_body.exprs.Add(
+  const mir::ExprId prototypes_id = scan_body_builder.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(prototypes)},
           .type = unit.types.Intern(
@@ -283,7 +285,7 @@ auto LowerScanSystemSubroutineCall(
 
   const mir::TypeId payload_type = CompletionPayloadType(
       unit, ScanCompletionComponents(integer_t, target_types));
-  const mir::ExprId parse_call_id = scan_body.exprs.Add(
+  const mir::ExprId parse_call_id = scan_body_builder.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -292,31 +294,33 @@ auto LowerScanSystemSubroutineCall(
           .type = payload_type});
   const mir::LocalId completion =
       steps.Bindings().DeclareAnonymous(payload_type);
-  scan_body.AppendStmt(
+  scan_body_builder.AppendStmt(
       mir::LocalDeclStmt{.target = completion, .init = parse_call_id});
 
-  const mir::ExprId count_target = scan_body.LocalPlace(count_var, integer_t);
-  scan_body.AppendStmt(
+  const mir::ExprId count_target =
+      scan_body_builder.LocalPlace(count_var, integer_t);
+  scan_body_builder.AppendStmt(
       mir::ExprStmt{
-          .expr = scan_body.exprs.Add(
+          .expr = scan_body_builder.Add(
               mir::MakeAssignExpr(
                   unit.builtins, count_target,
                   ProjectCompletionComponent(
-                      scan_body, completion, payload_type, kScanMatched,
+                      scan_body_builder, completion, payload_type, kScanMatched,
                       integer_t)))});
 
   // LRM 21.3.4.3: the k-th output lvalue is only written when at least
   // k+1 matches were made, so the commit is gated on the matched count.
   for (std::size_t k = 0; k < target_types.size(); ++k) {
-    const mir::ExprId count_read_id = scan_body.ReadLocal(count_var, integer_t);
+    const mir::ExprId count_read_id =
+        scan_body_builder.ReadLocal(count_var, integer_t);
     const mir::ExprId k_lit_id = mir::BuildIntegerLiteral(
-        unit, scan_body, static_cast<std::int64_t>(k + 1));
+        unit, scan_body_builder, static_cast<std::int64_t>(k + 1));
     // The count is an `integer`, so the comparison answers a bit that can be
     // unknown (LRM 11.4.4), and the condition reads its truth.
-    const mir::ExprId cond_id = scan_body.exprs.Add(
+    const mir::ExprId cond_id = scan_body_builder.Add(
         mir::MakeBinary(
-            unit, scan_body, mir::BinaryOp::kGreaterEqual, count_read_id,
-            k_lit_id,
+            unit, scan_body_builder.Body(), mir::BinaryOp::kGreaterEqual,
+            count_read_id, k_lit_id,
             OneBitAnswerType(unit, std::array{integer_t, integer_t})));
 
     mir::Block then_body;
@@ -325,14 +329,15 @@ auto LowerScanSystemSubroutineCall(
         LowerLvalue(process, hir_proc.exprs.Get(operands[k + 2]), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
     const mir::ExprId parsed_id = ProjectCompletionComponent(
-        then_body, completion, payload_type, ScanParsedValue(k),
+        then_frame.Builder(), completion, payload_type, ScanParsedValue(k),
         target_types[k]);
     auto stored =
         AppendStores(process.Owner(), then_frame, *lvalue_or, parsed_id);
     if (!stored) return std::unexpected(std::move(stored.error()));
 
-    const mir::ExprId matched = ReduceToCondition(unit, scan_body, cond_id);
-    scan_body.AppendIfThen(matched, std::move(then_body));
+    const mir::ExprId matched =
+        ReduceToCondition(unit, scan_body_builder, cond_id);
+    scan_body_builder.AppendIfThen(matched, std::move(then_body));
   }
 
   const mir::ExprId all_known = ReduceToCondition(unit, body, known_id);

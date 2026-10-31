@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -26,8 +27,8 @@ namespace lyra::lowering::hir_to_mir {
 // `block` is the destination scope for any intermediate `ExprId` the helper
 // interns when a conversion nests another call.
 [[nodiscard]] auto BuildValueConversion(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId dst_type) -> mir::Expr;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId dst_type) -> mir::Expr;
 
 // The conversion LRM 11.8.2 puts on a context-determined operand, which differs
 // from every other context in what fixes the fill above the operand's width:
@@ -35,8 +36,8 @@ namespace lyra::lowering::hir_to_mir {
 // signedness decides whether the widening replicates the sign bit, where an
 // assignment's right-hand side is extended by its own signedness (LRM 11.8.3).
 [[nodiscard]] auto BuildPropagatedConversion(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId dst_type) -> mir::Expr;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId dst_type) -> mir::Expr;
 
 // Returns `operand_id` already at `dst_type`: the operand unchanged when its
 // type already matches, otherwise the converted expression interned into
@@ -48,22 +49,22 @@ namespace lyra::lowering::hir_to_mir {
 // two equivalent types, which may still differ in their queues' bounds (LRM
 // 6.22.2 e).
 [[nodiscard]] auto ConvertToType(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId dst_type) -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId dst_type) -> mir::ExprId;
 
 // `operand_id` at `type` for an operation that settles how it takes it: the
 // operand as it stands, a place or a value, where it is already of `type`,
 // and otherwise its value converted.
 [[nodiscard]] auto AtType(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId type) -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId type) -> mir::ExprId;
 
 // The same through the conversion LRM 11.8.2 puts on a context-determined
 // operand: `operand_id` unchanged when it is already at the propagated type
 // `dst_type`, otherwise that conversion interned into `block`.
 [[nodiscard]] auto ConvertToPropagatedType(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId dst_type) -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId dst_type) -> mir::ExprId;
 
 // Returns `operand_id` at the type a comparison against `compared_with`
 // happens at, which is that type whenever it is a handle and the operand's own
@@ -73,8 +74,8 @@ namespace lyra::lowering::hir_to_mir {
 // other family reach their common type by rules this is not (LRM 11.8.1,
 // 12.5).
 [[nodiscard]] auto OperandAtHandleType(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId compared_with) -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId compared_with) -> mir::ExprId;
 
 // Reads a simulation value out as the widest machine integer -- the scalar a
 // runtime signature takes where it wants a count, an index, or a bit pattern
@@ -83,7 +84,7 @@ namespace lyra::lowering::hir_to_mir {
 // instead of at each site that needs a value as a number. A constant reads out
 // as a constant, so the answer is then a literal of that machine integer.
 [[nodiscard]] auto BuildToInt64Call(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id)
-    -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

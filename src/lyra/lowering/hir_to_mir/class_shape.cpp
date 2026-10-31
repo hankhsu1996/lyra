@@ -9,6 +9,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
@@ -31,12 +32,12 @@ auto CanonicalVirtualSlot(
 }
 
 auto AsIntroducer(
-    const mir::TypePool& types, mir::Block& block, mir::ExprId receiver,
+    const mir::TypePool& types, mir::Builder block, mir::ExprId receiver,
     const mir::VirtualSlot& slot) -> mir::ExprId {
   const mir::TypeId introducer =
       types.Intern(mir::Type{mir::ObjectType{.of = slot.owner_class}});
   const auto& held =
-      types.Get(block.exprs.Get(receiver).type).Get<mir::PointerType>();
+      types.Get(block.Get(receiver).type).Get<mir::PointerType>();
   return ObjectAs(
       block, receiver,
       types.Intern(

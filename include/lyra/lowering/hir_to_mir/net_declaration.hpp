@@ -3,6 +3,7 @@
 #include <variant>
 
 #include "lyra/hir/structural_data_object.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -28,14 +29,14 @@ using NetData = std::variant<IntegralNetData, AggregateNetData>;
 // resolution, as the scalar the net shows where nothing drives it and the
 // strength it holds that scalar at (LRM 6.6.5, 6.6.6, 6.7.1).
 [[nodiscard]] auto BuildNetInstall(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     const hir::StructuralNetDecl& net, mir::ExprId target, const NetData& data,
     mir::TypeId void_type) -> mir::Expr;
 
 // A strength as the operand a net install or a driver attach carries: the level
 // on the scale LRM Table 28-7 numbers, written as a machine integer.
 [[nodiscard]] auto BuildStrengthOperand(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::StrengthLevel level) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

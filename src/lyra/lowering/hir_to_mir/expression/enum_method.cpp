@@ -12,6 +12,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enum_table.hpp"
 #include "lyra/mir/expr.hpp"
@@ -27,7 +28,7 @@ namespace {
 // A question put to an enumeration's member list about a value, and any
 // operand the question takes after it.
 auto AskMembers(
-    UnitLowerer& unit_lowerer, mir::Block& block, support::BuiltinFn question,
+    UnitLowerer& unit_lowerer, mir::Builder block, support::BuiltinFn question,
     hir::TypeId enum_type, std::vector<mir::ExprId> operands,
     mir::TypeId answer_type) -> mir::Expr {
   const mir::ExprId members = mir::BuildEnumTableRef(
@@ -75,16 +76,15 @@ auto LowerStepCall(
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto value_or = lowerer.LowerExpr(lowerer.HirExprs().Get(bearer), frame);
   if (!value_or) return std::unexpected(std::move(value_or.error()));
-  mir::Block& block = *frame.current_block;
-  const mir::ExprId value = block.exprs.Add(*std::move(value_or));
+  mir::Builder block = frame.Builder();
+  const mir::ExprId value = block.Add(*std::move(value_or));
 
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::ExprId count{};
   if (const std::optional<hir::ExprId> step = OptionalOperand(c, 1)) {
     auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*step), frame);
     if (!count_or) return std::unexpected(std::move(count_or.error()));
-    count =
-        BuildToInt64Call(unit, block, block.exprs.Add(*std::move(count_or)));
+    count = BuildToInt64Call(unit, block, block.Add(*std::move(count_or)));
   } else {
     count = mir::BuildMachineIntLiteral(unit, block, 1);
   }
@@ -95,7 +95,7 @@ auto LowerStepCall(
 }  // namespace
 
 auto BuildEnumNameCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId value_id,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId value_id,
     hir::TypeId enum_type) -> mir::Expr {
   return AskMembers(
       unit_lowerer, block, support::BuiltinFn::kEnumerationName, enum_type,
@@ -103,7 +103,7 @@ auto BuildEnumNameCallExpr(
 }
 
 auto BuildEnumMembershipCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId value_id,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId value_id,
     hir::TypeId enum_type) -> mir::Expr {
   return AskMembers(
       unit_lowerer, block, support::BuiltinFn::kEnumerationHas, enum_type,
@@ -118,28 +118,28 @@ auto LowerEnumMethod(
   const hir::ExprId bearer = BearerOf(c);
   const hir::TypeId enum_type = lowerer.HirExprs().Get(bearer).type;
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   switch (ref.method) {
     case hir::EnumMethod::kNum:
-      return block.exprs.Get(
+      return block.Get(
           mir::BuildIntLiteral(
               unit, block,
               static_cast<std::int64_t>(
                   MembersOf(lowerer.Owner(), enum_type).size())));
     case hir::EnumMethod::kFirst:
-      return block.exprs.Get(
+      return block.Get(
           mir::BuildIntegralLiteral(
               unit, block, result_type,
               MembersOf(lowerer.Owner(), enum_type).front().value));
     case hir::EnumMethod::kLast:
-      return block.exprs.Get(
+      return block.Get(
           mir::BuildIntegralLiteral(
               unit, block, result_type,
               MembersOf(lowerer.Owner(), enum_type).back().value));
     case hir::EnumMethod::kName: {
       auto value_or = lowerer.LowerExpr(lowerer.HirExprs().Get(bearer), frame);
       if (!value_or) return std::unexpected(std::move(value_or.error()));
-      const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
+      const mir::ExprId value_id = block.Add(*std::move(value_or));
       return BuildEnumNameCallExpr(lowerer.Owner(), block, value_id, enum_type);
     }
     case hir::EnumMethod::kNext:

@@ -5,7 +5,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enum_table_id.hpp"
@@ -22,6 +24,9 @@ namespace lyra::backend::cpp {
 // it, so the named ones are the ones the unit's code file defines.
 struct UnitRenderReport {
   diag::DiagnosticSink* refusals;
+  // The piece of source the innermost node being written was lowered from,
+  // which a refusal naming none of its own stands at.
+  diag::SourceSpan span{};
   std::set<mir::IntegralConstantId> constants_named;
   std::set<mir::EnumTableId> enum_tables_named;
 };
@@ -82,7 +87,14 @@ class ScopeView {
   // another's text, so nothing written after it depends on what this one did
   // not write, and a unit that reported anything is not built.
   void Refuse(diag::Diagnostic refusal) const {
-    report_->refusals->Report(std::move(refusal));
+    report_->refusals->Report(
+        diag::PlacedAt(std::move(refusal), report_->span));
+  }
+
+  // Writes `span`'s node: what is refused or fails meanwhile stands there.
+  [[nodiscard]] auto WritingFrom(diag::SourceSpan span) const
+      -> diag::ApplySourceSpan {
+    return {report_->span, span};
   }
 
   // Reports that the text being written names `constant`.

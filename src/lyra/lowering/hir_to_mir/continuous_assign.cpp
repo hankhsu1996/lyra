@@ -31,6 +31,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
@@ -63,10 +64,10 @@ auto AddField(mir::Class& mir_class, mir::TypeId type) -> ClassField {
 
 // The access reaching `field` of the object `frame`'s body runs on.
 auto FieldOfSelf(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
-    const ClassField& field) -> mir::ExprId {
-  const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
-  return block.exprs.Add(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::Builder block, const ClassField& field) -> mir::ExprId {
+  const mir::ExprId self = block.Add(MakeSelfRefExpr(frame));
+  return block.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit, block, self),
           mir::ClassFieldTarget{
@@ -76,12 +77,12 @@ auto FieldOfSelf(
 
 // `target = value`, appended to `block`.
 void AppendAssign(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId target,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId target,
     mir::ExprId value) {
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.exprs.Add(
-              mir::MakeAssignExpr(unit.builtins, target, value))});
+          .expr =
+              block.Add(mir::MakeAssignExpr(unit.builtins, target, value))});
 }
 
 // Each place `lvalue` is made of, in the order the source wrote them.
@@ -97,14 +98,14 @@ auto PlacesOf(const Lvalue& lvalue) -> std::vector<AccessPath> {
 // so the variable is named by a reference to the whole of it; storage no
 // variable holds takes the statement and has nothing to be told.
 auto StateContinuousDriver(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& place)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& place)
     -> mir::Stmt {
   const mir::ExprId whole = PathReference(
       unit, block, AccessPath{.owner = place.owner, .descent = {}});
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::ExprStmt{
-          .expr = block.exprs.Add(
+          .expr = block.Add(
               mir::MakeCallExpr(
                   mir::Direct{
                       .target = support::BuiltinFn::kDrivesContinuously},
@@ -168,12 +169,11 @@ auto DelayTicksOf(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     hir::ExprId amount) -> diag::Result<mir::ExprId> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto lowered = lowerer.LowerExpr(lowerer.HirScope().exprs.Get(amount), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  mir::ExprId amount_id = block.exprs.Add(*std::move(lowered));
-  const mir::Type& amount_type =
-      unit.types.Get(block.exprs.Get(amount_id).type);
+  mir::ExprId amount_id = block.Add(*std::move(lowered));
+  const mir::Type& amount_type = unit.types.Get(block.Get(amount_id).type);
   const bool is_real = amount_type.IsRealFamily();
   if (amount_type.Is<mir::ShortRealType>()) {
     // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
@@ -185,7 +185,7 @@ auto DelayTicksOf(
       unit, block, std::int64_t{resolution.unit_power});
   const mir::ExprId precision_power = mir::BuildMachineIntLiteral(
       unit, block, std::int64_t{resolution.precision_power});
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeCallExpr(
           mir::Direct{
               .target = is_real ? support::BuiltinFn::kDelayTicksReal
@@ -203,7 +203,7 @@ auto PropagationDelayOf(
     const DriveDelay& delay, mir::ExprId changed_to)
     -> diag::Result<mir::ExprId> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto ticks = [&](hir::ExprId amount) -> diag::Result<mir::ExprId> {
     auto lowered = DelayTicksOf(lowerer, frame, amount);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
@@ -211,7 +211,7 @@ auto PropagationDelayOf(
   };
   const auto pick = [&](mir::ExprId rise, mir::ExprId fall,
                         mir::ExprId turn_off) -> mir::ExprId {
-    return block.exprs.Add(
+    return block.Add(
         mir::MakeCallExpr(
             mir::Direct{.target = delay.propagation_delay},
             {changed_to, rise, fall, turn_off}, unit.builtins.machine_word));
@@ -226,7 +226,7 @@ auto PropagationDelayOf(
             if (!rise) return std::unexpected(std::move(rise.error()));
             auto fall = ticks(d.fall);
             if (!fall) return std::unexpected(std::move(fall.error()));
-            const mir::ExprId rise_is_lesser = block.exprs.Add(
+            const mir::ExprId rise_is_lesser = block.Add(
                 mir::Expr{
                     .data =
                         mir::BinaryExpr{
@@ -234,7 +234,7 @@ auto PropagationDelayOf(
                             .lhs = *rise,
                             .rhs = *fall},
                     .type = unit.builtins.machine_bool});
-            const mir::ExprId lesser = block.exprs.Add(
+            const mir::ExprId lesser = block.Add(
                 mir::Expr{
                     .data =
                         mir::ConditionalExpr{
@@ -263,17 +263,17 @@ auto AppendArm(
     const DriveDelay& delay, const ClassField& timer, mir::ExprId changed_to)
     -> diag::Result<void> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto ticks = PropagationDelayOf(lowerer, frame, delay, changed_to);
   if (!ticks) return std::unexpected(std::move(ticks.error()));
   const mir::ExprId runtime =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+      block.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
   const mir::ExprId precision_power = mir::BuildMachineIntLiteral(
       unit, block,
       std::int64_t{lowerer.HirScope().time_resolution.precision_power});
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.exprs.Add(
+          .expr = block.Add(
               mir::MakeCallExpr(
                   mir::Direct{
                       .target = support::BuiltinFn::kTimerArm,
@@ -362,18 +362,17 @@ auto LowerContinuousDrive(
   // net shows that object.
   std::optional<ClassField> carrying;
   {
-    mir::Block& resolve_block = *resolve_frame.current_block;
+    mir::Builder resolve_block = resolve_frame.Builder();
     auto named = destination(resolve_frame);
     if (!named) return std::unexpected(std::move(named.error()));
     ForEachPlace(*named, [&](const AccessPath& place_path) {
       // A property of an object is a variable's storage, never a net's, so
       // only a place can be a net.
       const auto* place = std::get_if<mir::ExprId>(&place_path.owner);
-      const auto* net =
-          place == nullptr
-              ? nullptr
-              : unit.types.Get(resolve_block.exprs.Get(*place).type)
-                    .As<mir::ResolvedType>();
+      const auto* net = place == nullptr
+                            ? nullptr
+                            : unit.types.Get(resolve_block.Get(*place).type)
+                                  .As<mir::ResolvedType>();
       if (net == nullptr) {
         drivers.emplace_back(std::nullopt);
         return;
@@ -384,7 +383,7 @@ auto LowerContinuousDrive(
           unit.types.Intern(mir::Type{mir::DriverType{.value = net->value}}));
       const mir::ExprId strength =
           BuildStrengthOperand(unit, resolve_block, drive_strength);
-      const mir::ExprId attach = resolve_block.exprs.Add(
+      const mir::ExprId attach = resolve_block.Add(
           mir::MakeNetAttachDriverCallExpr(cell, strength, driver.type));
       AppendAssign(
           unit, resolve_block,
@@ -410,16 +409,16 @@ auto LowerContinuousDrive(
       const mir::ExprId place = OwnerPlace(*object);
       const mir::TypeId pointer_type = unit.types.Intern(
           mir::Type{mir::PointerType{
-              .pointee = resolve_block.exprs.Get(place).type,
+              .pointee = resolve_block.Get(place).type,
               .ownership = mir::PointerOwnership::kBorrowed}});
       carrying = drivers.front();
       const mir::ExprId driver =
           FieldOfSelf(unit, resolve_frame, resolve_block, *carrying);
       const mir::ExprId object_address =
-          resolve_block.exprs.Add(mir::MakeAddressOfExpr(place, pointer_type));
+          resolve_block.Add(mir::MakeAddressOfExpr(place, pointer_type));
       resolve_block.AppendStmt(
           mir::ExprStmt{
-              .expr = resolve_block.exprs.Add(
+              .expr = resolve_block.Add(
                   mir::MakeDriveFromCallExpr(
                       driver, object_address, *carried,
                       unit.builtins.void_type))});
@@ -430,7 +429,7 @@ auto LowerContinuousDrive(
   // net's re-rooted onto its driver's contribution.
   const auto store = [&](const WalkFrame& frame,
                          mir::ExprId value) -> diag::Result<void> {
-    mir::Block& block = *frame.current_block;
+    mir::Builder block = frame.Builder();
     auto named = destination(frame);
     if (!named) return std::unexpected(std::move(named.error()));
     auto shares = Shares(lowerer.Owner(), frame, *named, value);
@@ -443,7 +442,7 @@ auto LowerContinuousDrive(
       }
       block.AppendStmt(
           mir::ExprStmt{
-              .expr = block.exprs.Add(
+              .expr = block.Add(
                   BuildStoreExpr(unit, block, share.place, share.value))});
     }
     return {};
@@ -453,8 +452,8 @@ auto LowerContinuousDrive(
       [&](const WalkFrame& frame) -> diag::Result<mir::ExprId> {
     auto value = lowerer.LowerExpr(source, frame);
     if (!value) return std::unexpected(std::move(value.error()));
-    mir::Block& block = *frame.current_block;
-    return block.AsValue(unit.types, block.exprs.Add(*std::move(value)));
+    mir::Builder block = frame.Builder();
+    return block.AsValue(unit.types, block.Add(*std::move(value)));
   };
 
   // A variable shows, once nothing overrides it, what its continuous driver
@@ -463,7 +462,7 @@ auto LowerContinuousDrive(
   // place may be reached through is bound. A net keeps each driver's
   // contribution by itself.
   {
-    mir::Block& init_block = *init_frame.current_block;
+    mir::Builder init_block = init_frame.Builder();
     auto named = destination(init_frame);
     if (!named) return std::unexpected(std::move(named.error()));
     const std::vector<AccessPath> places = PlacesOf(*named);
@@ -473,7 +472,7 @@ auto LowerContinuousDrive(
     }
   }
 
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(ctor_frame.span);
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id =
       bindings.Declare(ReceiverOrigin{}, self_ptr_type);
@@ -481,6 +480,7 @@ auto LowerContinuousDrive(
       ctor_frame.WithBindings(&bindings).WithBlock(&code.Body());
 
   mir::Block body_block;
+  mir::Builder body_block_builder = entry_frame.Builder().Into(body_block);
   const WalkFrame body_frame = entry_frame.WithBlock(&body_block);
 
   if (!delay.has_value()) {
@@ -489,10 +489,10 @@ auto LowerContinuousDrive(
     if (auto stored = store(body_frame, *value); !stored) {
       return std::unexpected(std::move(stored.error()));
     }
-    auto waited =
-        BuildValueChangeWaitStmt(body_block, body_frame, lowerer, sensitivity);
+    auto waited = BuildValueChangeWaitStmt(
+        body_block_builder, body_frame, lowerer, sensitivity);
     if (!waited) return std::unexpected(std::move(waited.error()));
-    body_block.AppendStmt(*std::move(waited));
+    body_block_builder.AppendStmt(*std::move(waited));
   } else {
     // LRM 10.3.3: each value computed reaches the target the delay it takes
     // later, unless a different one is computed first. The value last
@@ -501,12 +501,11 @@ auto LowerContinuousDrive(
     // nothing off. The timer's firing writes the kept value, which is always
     // the pending one's, so it is bound once rather than handed a value per
     // change.
-    mir::Block& entry = code.Body();
+    mir::Builder entry = entry_frame.Builder();
     auto first = evaluate(entry_frame);
     if (!first) return std::unexpected(std::move(first.error()));
     mir::Class& mir_class = *ctor_frame.current_class.cls;
-    const ClassField scheduled =
-        AddField(mir_class, entry.exprs.Get(*first).type);
+    const ClassField scheduled = AddField(mir_class, entry.Get(*first).type);
     const ClassField timer = AddField(
         mir_class, unit.types.Intern(
                        mir::Type{mir::RuntimeLibraryType{
@@ -526,7 +525,7 @@ auto LowerContinuousDrive(
         BuildKeptClosure(unit, entry, propagation.BuildVoid());
     entry.AppendStmt(
         mir::ExprStmt{
-            .expr = entry.exprs.Add(
+            .expr = entry.Add(
                 mir::MakeCallExpr(
                     mir::Direct{
                         .target = support::BuiltinFn::kTimerBind,
@@ -547,10 +546,10 @@ auto LowerContinuousDrive(
       return std::unexpected(std::move(armed.error()));
     }
 
-    auto waited =
-        BuildValueChangeWaitStmt(body_block, body_frame, lowerer, sensitivity);
+    auto waited = BuildValueChangeWaitStmt(
+        body_block_builder, body_frame, lowerer, sensitivity);
     if (!waited) return std::unexpected(std::move(waited.error()));
-    body_block.AppendStmt(*std::move(waited));
+    body_block_builder.AppendStmt(*std::move(waited));
     auto value = evaluate(body_frame);
     if (!value) return std::unexpected(std::move(value.error()));
     const mir::TypeId value_type = scheduled.type;
@@ -559,60 +558,65 @@ auto LowerContinuousDrive(
     // bit matching only the same unknown, a real its own pattern -- which is
     // what decides whether a write changes a variable, too (LRM 4.3).
     const mir::ExprId changed_value =
-        body_block.ReadLocal(changed_to, value_type);
-    const mir::ExprId scheduled_value = body_block.AsValue(
-        unit.types, FieldOfSelf(unit, body_frame, body_block, scheduled));
+        body_block_builder.ReadLocal(changed_to, value_type);
+    const mir::ExprId scheduled_value = body_block_builder.AsValue(
+        unit.types,
+        FieldOfSelf(unit, body_frame, body_block_builder, scheduled));
     const mir::ExprId differs = BuildConditionNot(
-        unit, body_block,
+        unit, body_block_builder,
         BuildValueOperation(
-            unit, body_block, support::BuiltinFn::kBitIdentical, changed_value,
-            {scheduled_value}, unit.builtins.machine_bool));
+            unit, body_block_builder, support::BuiltinFn::kBitIdentical,
+            changed_value, {scheduled_value}, unit.builtins.machine_bool));
     mir::Block rescheduled;
+    mir::Builder rescheduled_builder = entry.Into(rescheduled);
     const WalkFrame rescheduled_frame = body_frame.WithBlock(&rescheduled);
     const mir::ExprId rescheduled_target =
-        FieldOfSelf(unit, rescheduled_frame, rescheduled, scheduled);
+        FieldOfSelf(unit, rescheduled_frame, rescheduled_builder, scheduled);
     const mir::ExprId rescheduled_value =
-        rescheduled.ReadLocal(changed_to, value_type);
-    AppendAssign(unit, rescheduled, rescheduled_target, rescheduled_value);
+        rescheduled_builder.ReadLocal(changed_to, value_type);
+    AppendAssign(
+        unit, rescheduled_builder, rescheduled_target, rescheduled_value);
     if (auto armed = AppendArm(
             lowerer, rescheduled_frame, *delay, timer,
-            rescheduled.ReadLocal(changed_to, value_type));
+            rescheduled_builder.ReadLocal(changed_to, value_type));
         !armed) {
       return std::unexpected(std::move(armed.error()));
     }
-    body_block.AppendStmt(
+    body_block_builder.AppendStmt(
         mir::IfStmt{
             .condition = differs,
-            .then_scope = body_block.child_scopes.Add(std::move(rescheduled)),
+            .then_scope = body_block_builder.AddScope(std::move(rescheduled)),
             .else_scope = std::nullopt});
   }
 
   // A drive carrying the whole of an object first asks, at its turn, whether
   // its net now shows that object, which leaves it nothing to do.
   if (carrying.has_value()) {
-    mir::Block& entry = code.Body();
+    mir::Builder entry = entry_frame.Builder();
     mir::Block leave;
-    leave.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-    const mir::ExprId shows = entry.exprs.Add(
+    mir::Builder leave_builder = entry.Into(leave);
+    leave_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+    const mir::ExprId shows = entry.Add(
         mir::MakeShowSourceCallExpr(
             FieldOfSelf(unit, entry_frame, entry, *carrying),
             unit.builtins.machine_bool));
     entry.AppendStmt(
         mir::IfStmt{
             .condition = shows,
-            .then_scope = entry.child_scopes.Add(std::move(leave)),
+            .then_scope = entry.AddScope(std::move(leave)),
             .else_scope = std::nullopt});
   }
 
+  mir::Builder entry_builder = entry_frame.Builder();
   const mir::BlockId body_scope_id =
-      code.Body().child_scopes.Add(std::move(body_block));
-  code.Body().AppendStmt(
+      entry_builder.AddScope(std::move(body_block));
+  entry_builder.AppendStmt(
       mir::ForStmt{
           .init = {},
           .condition = std::nullopt,
           .step = {},
           .scope = body_scope_id});
-  code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  entry_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
   return mir::CallableDecl{

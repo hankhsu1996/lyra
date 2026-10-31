@@ -24,6 +24,7 @@
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/expr.hpp"
@@ -573,6 +574,7 @@ void WriteCommaSeparated(
 void RenderExpr(
     const ScopeView& view, const mir::Expr& expr, Precedence at_least,
     TargetText& out) {
+  const diag::ApplySourceSpan at = view.WritingFrom(expr.span);
   std::visit(
       Overloaded{
           [&](const mir::StringLiteral& s) {

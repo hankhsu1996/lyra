@@ -25,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -37,7 +38,7 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 auto LevelOperand(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::TakeoverLevel level) -> mir::ExprId {
   return mir::BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(level));
@@ -79,7 +80,7 @@ auto TakeoverHolder(const AccessPath& place) -> mir::ExprId {
 // member of a union, which is one storage its members read differently (LRM
 // 7.3), lie at no position of a fixed numbering.
 auto TakeoverPart(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& place,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& place,
     diag::SourceSpan span) -> diag::Result<TakenPart> {
   const auto dynamic = [&]() -> diag::Result<mir::ExprId> {
     return diag::Fail(
@@ -104,7 +105,7 @@ auto TakeoverPart(
     return mir::BuildMachineIntBinary(
         unit, block, mir::BinaryOp::kMul, lhs, rhs);
   };
-  mir::TypeId within = OwnerValueType(unit, block, place.owner);
+  mir::TypeId within = OwnerValueType(unit, block.Body(), place.owner);
   mir::ExprId first = mir::BuildMachineIntLiteral(unit, block, 0);
   for (const DescentStep& step : place.descent) {
     auto before = std::visit(
@@ -173,7 +174,7 @@ auto TakeoverParts(
   std::vector<TakenPart> parts;
   parts.reserve(named.size());
   for (const AccessPath& place : named) {
-    auto part = TakeoverPart(unit, *frame.current_block, place, target.span);
+    auto part = TakeoverPart(unit, frame.Builder(), place, target.span);
     if (!part) return std::unexpected(std::move(part.error()));
     parts.push_back(*part);
   }
@@ -190,13 +191,14 @@ auto DrivenValue(
   if (share.place.descent.empty()) {
     return share.value;
   }
-  mir::Block& block = pass.Body();
-  const mir::TypeId held = OwnerValueType(unit, block, share.place.owner);
+  mir::Builder block = pass.Body();
+  const mir::TypeId held =
+      OwnerValueType(unit, block.Body(), share.place.owner);
   const mir::LocalId built = pass.DeclareLocal(
-      held, block.exprs.Add(BuildDefaultValueExpr(unit, block, held)));
+      held, block.Add(BuildDefaultValueExpr(unit, block, held)));
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.exprs.Add(BuildStoreExpr(
+          .expr = block.Add(BuildStoreExpr(
               unit, block,
               AccessPath{
                   .owner = block.LocalPlace(built, held),
@@ -217,6 +219,7 @@ auto LowerProceduralContinuousAssignStmt(
   const hir::Expr& hir_target = hir_proc.exprs.Get(pca.target);
 
   mir::Block wrapper;
+  mir::Builder wrapper_builder(wrapper, frame.span);
   const WalkFrame outer = frame.WithBlock(&wrapper);
   ClosureBuilder closure(unit, outer, support::ClosureKind::kFnOnce);
 
@@ -229,10 +232,10 @@ auto LowerProceduralContinuousAssignStmt(
   std::vector<mir::LocalId> generations;
   generations.reserve(outer_parts->size());
   for (const TakenPart& part : *outer_parts) {
-    const mir::ExprId begin = wrapper.exprs.Add(
+    const mir::ExprId begin = wrapper_builder.Add(
         mir::MakeBeginTakeoverCallExpr(
-            part.holder, LevelOperand(unit, wrapper, pca.level), part.first,
-            part.count, builtins.machine_int64));
+            part.holder, LevelOperand(unit, wrapper_builder, pca.level),
+            part.first, part.count, builtins.machine_int64));
     generations.push_back(DeclareLocal(
         closure.Frame(),
         SnapshotValueIntoClosure(unit_lowerer, outer, closure, begin)));
@@ -244,7 +247,7 @@ auto LowerProceduralContinuousAssignStmt(
   // recursion brings across. What it answers is whether the takeover of any
   // place still holds a position, every place having been driven.
   BlockBuilder pass(closure.Frame());
-  mir::Block& driving = pass.Body();
+  mir::Builder driving = pass.Body();
   auto source_or =
       process.LowerExpr(hir_proc.exprs.Get(pca.source), pass.Frame());
   if (!source_or) return std::unexpected(std::move(source_or.error()));
@@ -252,7 +255,7 @@ auto LowerProceduralContinuousAssignStmt(
   if (!inner_target) return std::unexpected(std::move(inner_target.error()));
   auto shares = Shares(
       unit_lowerer, pass.Frame(), *inner_target,
-      driving.exprs.Add(*std::move(source_or)));
+      driving.Add(*std::move(source_or)));
   if (!shares) return std::unexpected(std::move(shares.error()));
   std::vector<mir::LocalId> owned;
   owned.reserve(shares->size());
@@ -264,7 +267,7 @@ auto LowerProceduralContinuousAssignStmt(
     const mir::ExprId value = DrivenValue(unit, pass, share);
     owned.push_back(pass.DeclareLocal(
         builtins.machine_bool,
-        driving.exprs.Add(
+        driving.Add(
             mir::MakeDriveTakeoverCallExpr(
                 TakeoverHolder(share.place), level, generation, value,
                 builtins.machine_bool))));
@@ -274,20 +277,20 @@ auto LowerProceduralContinuousAssignStmt(
   };
   mir::ExprId any_owned = read_owned(owned.back());
   for (std::size_t i = owned.size() - 1; i-- > 0;) {
-    any_owned = driving.exprs.Add(
+    any_owned = driving.Add(
         mir::Expr{
             .data =
                 mir::ConditionalExpr{
                     .condition = read_owned(owned[i]),
-                    .then_value = driving.exprs.Add(
+                    .then_value = driving.Add(
                         mir::Expr{
                             .data = mir::MachineBoolLiteral{.value = true},
                             .type = builtins.machine_bool}),
                     .else_value = any_owned},
             .type = builtins.machine_bool});
   }
-  mir::Block& body = closure.Body();
-  const mir::ExprId drive = body.exprs.Add(pass.Build(any_owned));
+  mir::Builder body = closure.Body();
+  const mir::ExprId drive = body.Add(pass.Build(any_owned));
 
   // An evaluation whose source nothing can change has no second pass to make,
   // so what is emitted is one drive. A takeover is created per execution of
@@ -296,13 +299,13 @@ auto LowerProceduralContinuousAssignStmt(
     body.AppendStmt(mir::ExprStmt{.expr = drive});
   } else {
     mir::Block wait_block;
+    mir::Builder wait_block_builder = body.Into(wait_block);
     auto waited = BuildValueChangeWaitStmt(
-        wait_block, closure.Frame().WithBlock(&wait_block), process,
+        wait_block_builder, closure.Frame().WithBlock(&wait_block), process,
         pca.sensitivity_list);
     if (!waited) return std::unexpected(std::move(waited.error()));
-    wait_block.AppendStmt(*std::move(waited));
-    const mir::BlockId wait_scope =
-        body.child_scopes.Add(std::move(wait_block));
+    wait_block_builder.AppendStmt(*std::move(waited));
+    const mir::BlockId wait_scope = body.AddScope(std::move(wait_block));
     // Evaluating and driving is the loop's own condition, so the source is
     // re-read on every pass and the evaluation stops the moment no place's
     // takeover holds a position any longer.
@@ -311,13 +314,12 @@ auto LowerProceduralContinuousAssignStmt(
             .init = {}, .condition = drive, .step = {}, .scope = wait_scope});
   }
 
-  wrapper.AppendStmt(
+  wrapper_builder.AppendStmt(
       mir::ExprStmt{
-          .expr = wrapper.exprs.Add(
+          .expr = wrapper_builder.Add(
               RunCarrierDetached(process, outer, closure.BuildCallOnce()))});
 
-  const mir::BlockId scope_id =
-      frame.current_block->child_scopes.Add(std::move(wrapper));
+  const mir::BlockId scope_id = frame.Builder().AddScope(std::move(wrapper));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -330,14 +332,14 @@ auto LowerProceduralContinuousEndStmt(
 
   // One end per part the target names, so the statement is a block of them.
   BlockBuilder steps(frame);
-  mir::Block& block = steps.Body();
+  mir::Builder block = steps.Body();
   auto parts =
       TakeoverParts(process, steps.Frame(), hir_proc.exprs.Get(pce.target));
   if (!parts) return std::unexpected(std::move(parts.error()));
   for (const TakenPart& part : *parts) {
     block.AppendStmt(
         mir::ExprStmt{
-            .expr = block.exprs.Add(
+            .expr = block.Add(
                 mir::MakeEndTakeoverCallExpr(
                     part.holder, LevelOperand(unit, block, pce.level),
                     part.first, part.count, unit.builtins.void_type))});

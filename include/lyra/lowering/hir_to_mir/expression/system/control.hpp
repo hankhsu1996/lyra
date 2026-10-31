@@ -5,6 +5,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -24,7 +25,7 @@ auto LowerTerminationSystemSubroutineCall(
 // handle carrying where the call was written, which a call it ignores reports;
 // the program it ends is the one the running thread originates in.
 auto LowerProgramControlSystemSubroutineCall(
-    const ProcessLowerer& process, mir::Block& block, diag::SourceSpan span)
+    const ProcessLowerer& process, mir::Builder block, diag::SourceSpan span)
     -> mir::Expr;
 
 // The finish number of a call to `$finish`, `$stop` or `$fatal`, which selects
@@ -42,7 +43,7 @@ auto BuildFinishNumber(
 // handle, where the call was written, and the finish number. It departs from
 // the calling execution rather than returning, so it answers nothing.
 auto BuildEndRunCall(
-    const ProcessLowerer& process, mir::Block& block, support::BuiltinFn entry,
+    const ProcessLowerer& process, mir::Builder block, support::BuiltinFn entry,
     mir::ExprId finish_number, diag::SourceSpan span) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

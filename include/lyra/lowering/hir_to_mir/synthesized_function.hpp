@@ -52,8 +52,8 @@ class SynthesizedFunction {
     return bindings_;
   }
 
-  [[nodiscard]] auto Body() -> mir::Block& {
-    return code_.Body();
+  [[nodiscard]] auto Body() const -> mir::Builder {
+    return frame_.Builder();
   }
 
   // The function, its body ending in the return of `result`, a value in the
@@ -63,7 +63,7 @@ class SynthesizedFunction {
 
  private:
   UnitLowerer* unit_lowerer_;
-  mir::CallableCode code_ = mir::CallableCode::Defined();
+  mir::CallableCode code_ = mir::CallableCode::Defined(diag::SourceSpan{});
   CallableBindings bindings_;
   WalkFrame frame_;
   std::vector<mir::LocalId> params_;

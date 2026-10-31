@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
@@ -695,6 +696,10 @@ class FunctionLowerer {
 
   std::vector<OpenBlock> blocks_;
   lir::BlockId current_{};
+  // The piece of source the innermost node being lowered names, which every
+  // instruction and terminator emitted meanwhile is lowered from: the body's
+  // own outside every statement of it.
+  diag::SourceSpan span_;
   std::vector<BreakableScope> breakable_scopes_;
   std::vector<UnwindScope> scopes_;
   // Where unwinding goes once it has passed every scope, built the first time

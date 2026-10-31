@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -36,20 +37,21 @@ auto ValueOfLabel(
     const Evaluation& label, mir::TypeId type)
     -> diag::Result<std::optional<std::int64_t>> {
   mir::Block probe;
+  mir::Builder probe_builder(probe, frame.span);
   auto lowered = label(frame.WithBlock(&probe));
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  const mir::ExprId value = probe.AsValue(unit.types, *lowered);
+  const mir::ExprId value = probe_builder.AsValue(unit.types, *lowered);
   if (!probe.root_stmts.empty() || probe.exprs.Get(value).type != type) {
     return std::nullopt;
   }
   const auto* unknown = std::get_if<mir::MachineBoolLiteral>(
       &probe.exprs
            .Get(BuildValueOperation(
-               unit, probe, support::BuiltinFn::kHasUnknown, value, {},
+               unit, probe_builder, support::BuiltinFn::kHasUnknown, value, {},
                unit.builtins.machine_bool))
            .data);
   const auto* number = std::get_if<mir::MachineIntLiteral>(
-      &probe.exprs.Get(BuildToInt64Call(unit, probe, value)).data);
+      &probe.exprs.Get(BuildToInt64Call(unit, probe_builder, value)).data);
   if (unknown == nullptr || unknown->value || number == nullptr) {
     return std::nullopt;
   }
@@ -87,7 +89,7 @@ auto BuildValueSwitch(
     const WalkFrame& frame, mir::ExprId discriminant,
     std::span<const ValueArm> arms, std::optional<mir::Block> default_body)
     -> diag::Result<mir::SwitchStmt> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   mir::SwitchStmt built{
       .discriminant = discriminant, .cases = {}, .default_body = std::nullopt};
   built.cases.reserve(arms.size());
@@ -101,11 +103,11 @@ auto BuildValueSwitch(
     }
     auto body = arm.body(frame);
     if (!body) return std::unexpected(std::move(body.error()));
-    selected.body = block.child_scopes.Add(*std::move(body));
+    selected.body = block.AddScope(*std::move(body));
     built.cases.push_back(std::move(selected));
   }
   if (default_body.has_value()) {
-    built.default_body = block.child_scopes.Add(*std::move(default_body));
+    built.default_body = block.AddScope(*std::move(default_body));
   }
   return built;
 }
@@ -126,44 +128,47 @@ auto BuildCaseOverValues(
                      &leaves](const WalkFrame& at) -> diag::Result<mir::Block> {
               auto body = item.body(at);
               if (!body) return body;
-              body->AppendStmt(mir::BreakStmt{.target = leaves.Name()});
+              mir::Builder(*body, at.span)
+                  .AppendStmt(mir::BreakStmt{.target = leaves.Name()});
               return body;
             }});
   }
 
   mir::Block chosen;
+  mir::Builder chosen_builder(chosen, frame.span);
   const WalkFrame chosen_frame = frame.WithBlock(&chosen);
-  const auto dispatch_into = [&](mir::Block& in) -> diag::Result<void> {
+  const auto dispatch_into = [&](mir::Builder in) -> diag::Result<void> {
     const mir::ExprId discriminant =
         BuildToInt64Call(unit, in, in.ReadLocal(subject, subject_type));
     auto dispatch = BuildValueSwitch(
-        chosen_frame.WithBlock(&in), discriminant, leaving, std::nullopt);
+        chosen_frame.WithBlock(&in.Body()), discriminant, leaving,
+        std::nullopt);
     if (!dispatch) return std::unexpected(std::move(dispatch.error()));
     in.AppendStmt(*std::move(dispatch));
     return {};
   };
   if (CarriesUnknowns(unit, subject_type)) {
     mir::Block known;
-    if (auto built = dispatch_into(known); !built) {
+    if (auto built = dispatch_into(chosen_builder.Into(known)); !built) {
       return std::unexpected(std::move(built.error()));
     }
     const mir::ExprId all_known = BuildConditionNot(
-        unit, chosen,
+        unit, chosen_builder,
         BuildValueOperation(
-            unit, chosen, support::BuiltinFn::kHasUnknown,
-            chosen.ReadLocal(subject, subject_type), {},
+            unit, chosen_builder, support::BuiltinFn::kHasUnknown,
+            chosen_builder.ReadLocal(subject, subject_type), {},
             unit.builtins.machine_bool));
-    chosen.AppendIfThen(all_known, std::move(known));
-  } else if (auto built = dispatch_into(chosen); !built) {
+    chosen_builder.AppendIfThen(all_known, std::move(known));
+  } else if (auto built = dispatch_into(chosen_builder); !built) {
     return std::unexpected(std::move(built.error()));
   }
   if (default_body.has_value()) {
-    chosen.AppendStmt(
+    chosen_builder.AppendStmt(
         mir::BlockStmt{
-            .scope = chosen.child_scopes.Add(*std::move(default_body))});
+            .scope = chosen_builder.AddScope(*std::move(default_body))});
   }
   return mir::BlockStmt{
-      .scope = frame.current_block->child_scopes.Add(std::move(chosen)),
+      .scope = frame.Builder().AddScope(std::move(chosen)),
       .break_label = leaves.Label()};
 }
 
@@ -185,9 +190,10 @@ auto BuildArmSearch(
   const mir::TypeId boolean = unit.builtins.machine_bool;
   BreakTarget leaves(*frame.bindings);
   mir::Block search;
+  mir::Builder search_builder(search, frame.span);
   const WalkFrame at = frame.WithBlock(&search);
   const mir::LocalId held =
-      DeclareLocal(at, BuildMachineBool(unit, search, false));
+      DeclareLocal(at, BuildMachineBool(unit, search_builder, false));
 
   for (const SearchedArm& arm : arms) {
     if (auto assigned = AssignAnyHoldsInOrder(unit, at, held, arm.conditions);
@@ -196,16 +202,18 @@ auto BuildArmSearch(
     }
     auto body = arm.body(at);
     if (!body) return std::unexpected(std::move(body.error()));
-    body->AppendStmt(mir::BreakStmt{.target = leaves.Name()});
-    search.AppendIfThen(search.ReadLocal(held, boolean), *std::move(body));
+    mir::Builder(*body, at.span)
+        .AppendStmt(mir::BreakStmt{.target = leaves.Name()});
+    search_builder.AppendIfThen(
+        search_builder.ReadLocal(held, boolean), *std::move(body));
   }
   if (default_body.has_value()) {
-    search.AppendStmt(
+    search_builder.AppendStmt(
         mir::BlockStmt{
-            .scope = search.child_scopes.Add(*std::move(default_body))});
+            .scope = search_builder.AddScope(*std::move(default_body))});
   }
   return mir::BlockStmt{
-      .scope = frame.current_block->child_scopes.Add(std::move(search)),
+      .scope = frame.Builder().AddScope(std::move(search)),
       .break_label = leaves.Label()};
 }
 

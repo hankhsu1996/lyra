@@ -17,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -54,7 +55,7 @@ auto BuildDefaultReportScope(
     ProcessLowerer& process, hir::AssertionDirective directive,
     diag::SourceSpan span) -> mir::Block {
   mir::Block report;
-  AppendDefaultReport(process, report, directive, span);
+  AppendDefaultReport(process, mir::Builder(report, span), directive, span);
   return report;
 }
 
@@ -86,18 +87,19 @@ auto BuildDeferredSubmit(
     ProcessLowerer& process, WalkFrame frame, hir::AssertionTiming timing,
     Fill fill) -> diag::Result<mir::Block> {
   mir::Block scope;
+  mir::Builder scope_builder(scope, frame.span);
   const WalkFrame scope_frame = frame.WithBlock(&scope);
   ClosureBuilder body(
       process.Owner().Unit(), scope_frame, support::ClosureKind::kFnOnce);
   if (auto filled = fill(body, scope_frame); !filled) {
     return std::unexpected(std::move(filled.error()));
   }
-  const mir::ExprId body_id = scope.exprs.Add(body.BuildCallOnce());
+  const mir::ExprId body_id = scope_builder.Add(body.BuildCallOnce());
   const mir::ExprId runtime_id =
-      scope.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  scope.AppendStmt(
+      scope_builder.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+  scope_builder.AppendStmt(
       mir::ExprStmt{
-          .expr = scope.exprs.Add(
+          .expr = scope_builder.Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{
@@ -182,17 +184,17 @@ auto BuildDeferredFailArm(
 // recorded against the statement's own place, which is what separates one
 // coverage goal from another.
 void AppendRecordCoverage(
-    ProcessLowerer& process, mir::Block& block, diag::SourceSpan span,
+    ProcessLowerer& process, mir::Builder block, diag::SourceSpan span,
     mir::ExprId outcome) {
   const mir::CompilationUnit& unit = process.Owner().Unit();
   const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   const mir::ExprId site_id = BuildStringValueExpr(
       unit, block,
       diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.exprs.Add(
+          .expr = block.Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{
@@ -207,7 +209,7 @@ void AppendRecordCoverage(
 }  // namespace
 
 void AppendDefaultReport(
-    ProcessLowerer& process, mir::Block& block,
+    ProcessLowerer& process, mir::Builder block,
     hir::AssertionDirective directive, diag::SourceSpan span) {
   AppendToolReportStmt(
       process.Owner(), block, support::BuiltinFn::kEmitError,
@@ -225,12 +227,12 @@ auto LowerAssertStmt(
     const hir::AssertStmt& a, diag::SourceSpan span)
     -> diag::Result<mir::Stmt> {
   const mir::CompilationUnit& unit = process.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   auto cond_or =
       process.LowerExpr(process.HirBody().exprs.Get(a.condition), frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId condition = block.exprs.Add(*std::move(cond_or));
+  const mir::ExprId condition = block.Add(*std::move(cond_or));
 
   // LRM 16.4: a deferred assertion evaluates its expression inline and holds
   // the action the outcome selects for a later region.
@@ -247,8 +249,8 @@ auto LowerAssertStmt(
         .label = std::move(label),
         .data = mir::IfStmt{
             .condition = ReduceToCondition(unit, block, condition),
-            .then_scope = block.child_scopes.Add(*std::move(pass_or)),
-            .else_scope = block.child_scopes.Add(*std::move(fail_or))}};
+            .then_scope = block.AddScope(*std::move(pass_or)),
+            .else_scope = block.AddScope(*std::move(fail_or))}};
   }
 
   auto pass_or = LowerArmIntoScope(process, frame, a.pass_stmt);
@@ -267,21 +269,21 @@ auto LowerAssertStmt(
       .label = std::move(label),
       .data = mir::IfStmt{
           .condition = ReduceToCondition(unit, block, condition),
-          .then_scope = block.child_scopes.Add(*std::move(pass_or)),
-          .else_scope = block.child_scopes.Add(std::move(fail_scope))}};
+          .then_scope = block.AddScope(*std::move(pass_or)),
+          .else_scope = block.AddScope(std::move(fail_scope))}};
 }
 
 auto LowerCoverStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::CoverStmt& c, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
   const mir::CompilationUnit& unit = process.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::TypeId bool_type = unit.builtins.machine_bool;
 
   auto cond_or =
       process.LowerExpr(process.HirBody().exprs.Get(c.condition), frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  const mir::ExprId condition = block.exprs.Add(*std::move(cond_or));
+  const mir::ExprId condition = block.Add(*std::move(cond_or));
 
   // LRM 16.3 evaluates the expression once, and both the coverage result and
   // the statement the goal carries read that one outcome.
@@ -321,8 +323,8 @@ auto LowerCoverStmt(
         .label = std::move(label),
         .data = mir::IfStmt{
             .condition = taken_id,
-            .then_scope = block.child_scopes.Add(*std::move(covered_or)),
-            .else_scope = block.child_scopes.Add(*std::move(missed_or))}};
+            .then_scope = block.AddScope(*std::move(covered_or)),
+            .else_scope = block.AddScope(*std::move(missed_or))}};
   }
 
   AppendRecordCoverage(
@@ -333,7 +335,7 @@ auto LowerCoverStmt(
       .label = std::move(label),
       .data = mir::IfStmt{
           .condition = taken_id,
-          .then_scope = block.child_scopes.Add(*std::move(pass_or)),
+          .then_scope = block.AddScope(*std::move(pass_or)),
           .else_scope = std::nullopt}};
 }
 

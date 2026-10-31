@@ -7,6 +7,7 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -19,7 +20,7 @@ auto IntegrateStaticInitializer(
     -> diag::Result<void> {
   const WalkFrame& install_frame = bring_up.install;
   const WalkFrame& value_frame = bring_up.value;
-  auto& value_block = *value_frame.current_block;
+  mir::Builder value_block = value_frame.Builder();
   mir::CompilationUnit& unit = process.Owner().Unit();
   const hir::ProceduralVarDecl& decl = body.procedural_vars.Get(binding.var);
 
@@ -29,16 +30,15 @@ auto IntegrateStaticInitializer(
   // default-only case is fully expressed by that installation and needs no
   // store.
   if (unit.types.Get(binding.cell_type).IsCapabilityWrapper()) {
-    auto& install_block = *install_frame.current_block;
-    const mir::ExprId installed =
-        install_block.exprs.Add(BuildStaticStorageAccess(
-            unit, install_frame, binding.home, binding.cell_type,
-            mir::EnclosingHops{}));
+    mir::Builder install_block = install_frame.Builder();
+    const mir::ExprId installed = install_block.Add(BuildStaticStorageAccess(
+        unit, install_frame, binding.home, binding.cell_type,
+        mir::EnclosingHops{}));
     const mir::ExprId prototype =
         BuildDeclaredInitialValue(process.Owner(), install_frame, decl.type);
     install_block.AppendStmt(
         mir::ExprStmt{
-            .expr = install_block.exprs.Add(
+            .expr = install_block.Add(
                 mir::MakeCapabilityInstallCallExpr(
                     installed, prototype, support::BuiltinFn::kInitialize,
                     unit.builtins.void_type))});
@@ -47,7 +47,7 @@ auto IntegrateStaticInitializer(
     }
   }
 
-  const mir::ExprId target = value_block.exprs.Add(BuildStaticStorageAccess(
+  const mir::ExprId target = value_block.Add(BuildStaticStorageAccess(
       unit, value_frame, binding.home, binding.cell_type,
       mir::EnclosingHops{}));
   mir::ExprId init_value{};
@@ -59,7 +59,7 @@ auto IntegrateStaticInitializer(
         value_frame.WithScopeName(process.Scopes().Get(binding.scope).name);
     auto init_or = process.LowerExpr(initializer, declaring_frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    init_value = value_block.exprs.Add(*std::move(init_or));
+    init_value = value_block.Add(*std::move(init_or));
   } else {
     init_value =
         BuildDeclaredInitialValue(process.Owner(), value_frame, decl.type);
@@ -68,8 +68,7 @@ auto IntegrateStaticInitializer(
   const mir::Expr assign_expr = BuildStoreExpr(
       unit, value_block, AccessPath{.owner = target, .descent = {}},
       init_value);
-  value_block.AppendStmt(
-      mir::ExprStmt{.expr = value_block.exprs.Add(assign_expr)});
+  value_block.AppendStmt(mir::ExprStmt{.expr = value_block.Add(assign_expr)});
   return {};
 }
 

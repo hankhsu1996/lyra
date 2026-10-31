@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -34,11 +35,11 @@ auto LowerHirInsideExpr(
   // comparison reads that. Evaluating it and comparing are the steps of one
   // block expression, so it is evaluated where the operator is written.
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   auto lhs_or = lowerer.LowerExpr(hir_exprs.Get(in.lhs), steps.Frame());
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const mir::ExprId lhs_id =
-      EvaluatedOnce(steps.Frame(), body.exprs.Add(*std::move(lhs_or)));
+      EvaluatedOnce(steps.Frame(), body.Add(*std::move(lhs_or)));
 
   std::vector<mir::ExprId> tests;
   tests.reserve(in.items.size());

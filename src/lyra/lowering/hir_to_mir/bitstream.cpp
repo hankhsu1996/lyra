@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -51,29 +52,29 @@ auto FillOfParts(
 
 // The run of bits the integral stream `bits` is.
 auto RunOfBits(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId bits)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId bits)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kBitVecOf, std::nullopt,
+          unit, block.Body(), support::BuiltinFn::kBitVecOf, std::nullopt,
           {block.AsValue(unit.types, bits)}, unit.builtins.bit_vec));
 }
 
 // The run `run` widened to `width` bits, a machine count, by zero bits on its
 // right.
 auto PaddedTo(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run,
     mir::ExprId width) -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kBitVecPaddedTo, run, {width},
+          unit, block.Body(), support::BuiltinFn::kBitVecPaddedTo, run, {width},
           unit.builtins.bit_vec));
 }
 
 // The run `run`, of exactly `shape.width` bits, read back as a value of
 // `dst_type`, whose type fixes that width.
 auto FromFixedRun(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run,
     StreamShape shape, mir::TypeId dst_type) -> mir::ExprId {
   return BuildFromBitstream(
       unit, block,
@@ -223,9 +224,9 @@ auto StreamFillOf(const mir::CompilationUnit& unit, mir::TypeId type)
 }
 
 auto BuildToBitstream(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value_id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value_id,
     diag::SourceSpan span) -> diag::Result<mir::ExprId> {
-  const mir::TypeId type = block.exprs.Get(value_id).type;
+  const mir::TypeId type = block.Get(value_id).type;
   if (type == unit.builtins.bit_vec) {
     return value_id;
   }
@@ -251,9 +252,9 @@ auto BuildToBitstream(
 }
 
 auto BuildRunOf(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId stream)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId stream)
     -> mir::ExprId {
-  return block.exprs.Get(stream).type == unit.builtins.bit_vec
+  return block.Get(stream).type == unit.builtins.bit_vec
              ? stream
              : RunOfBits(unit, block, stream);
 }
@@ -261,9 +262,9 @@ auto BuildRunOf(
 namespace {
 
 // A run of no bits, which a run is built up from one part after another.
-auto BuildEmptyRun(const mir::CompilationUnit& unit, mir::Block& block)
+auto BuildEmptyRun(const mir::CompilationUnit& unit, mir::Builder block)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
           .type = unit.builtins.bit_vec});
@@ -272,45 +273,44 @@ auto BuildEmptyRun(const mir::CompilationUnit& unit, mir::Block& block)
 // `part`, an integral stream or a run of bits, laid after the bits the local
 // `run` holds (LRM 11.4.14.1).
 void AppendToRun(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId run,
     mir::ExprId part) {
-  const support::BuiltinFn entry =
-      block.exprs.Get(part).type == unit.builtins.bit_vec
-          ? support::BuiltinFn::kBitVecAppend
-          : support::BuiltinFn::kBitVecExtend;
+  const support::BuiltinFn entry = block.Get(part).type == unit.builtins.bit_vec
+                                       ? support::BuiltinFn::kBitVecAppend
+                                       : support::BuiltinFn::kBitVecExtend;
   const mir::ExprId place = block.LocalPlace(run, unit.builtins.bit_vec);
   const mir::ExprId value = block.AsValue(unit.types, part);
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.exprs.Add(
+          .expr = block.Add(
               mir::MakeBuiltinCall(
-                  unit, block, entry, place, {value},
+                  unit, block.Body(), entry, place, {value},
                   unit.builtins.void_type))});
 }
 
 }  // namespace
 
 auto BuildRunOfZeros(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId width)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId width)
     -> mir::ExprId {
   return PaddedTo(unit, block, BuildEmptyRun(unit, block), width);
 }
 
 void InsertIntoRun(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId run,
     mir::ExprId at, mir::ExprId part) {
   const mir::ExprId place = block.LocalPlace(run, unit.builtins.bit_vec);
   const mir::ExprId value = block.AsValue(unit.types, part);
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.exprs.Add(
+          .expr = block.Add(
               mir::MakeBuiltinCall(
-                  unit, block, support::BuiltinFn::kBitVecInsertBits, place,
-                  {at, value}, unit.builtins.void_type))});
+                  unit, block.Body(), support::BuiltinFn::kBitVecInsertBits,
+                  place, {at, value}, unit.builtins.void_type))});
 }
 
 auto BuildRunJoin(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId run,
     std::span<const mir::ExprId> parts) -> mir::ExprId {
   block.AppendStmt(
       mir::LocalDeclStmt{.target = run, .init = BuildEmptyRun(unit, block)});
@@ -321,58 +321,58 @@ auto BuildRunJoin(
 }
 
 auto BuildReorderedStream(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId stream_id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId stream_id,
     std::uint64_t block_bits) -> mir::ExprId {
   if (block_bits == 0) {
     return stream_id;
   }
-  const mir::TypeId stream_type = block.exprs.Get(stream_id).type;
+  const mir::TypeId stream_type = block.Get(stream_id).type;
   const support::BuiltinFn entry =
       stream_type == unit.builtins.bit_vec
           ? support::BuiltinFn::kBitVecReverseBlocks
           : support::BuiltinFn::kReverseBlocks;
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, entry, stream_id,
+          unit, block.Body(), entry, stream_id,
           {mir::BuildMachineCount(unit, block, block_bits)}, stream_type));
 }
 
 auto BuildRunLength(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId run)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kBitVecLen, run, {},
+          unit, block.Body(), support::BuiltinFn::kBitVecLen, run, {},
           unit.builtins.machine_int64));
 }
 
 auto BuildRunExtract(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run,
     mir::ExprId at, mir::ExprId count) -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kBitVecExtractBits, run, {at, count},
-          unit.builtins.bit_vec));
+          unit, block.Body(), support::BuiltinFn::kBitVecExtractBits, run,
+          {at, count}, unit.builtins.bit_vec));
 }
 
 auto BuildRunLoad(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run,
     mir::ExprId at, StreamShape shape) -> mir::ExprId {
   const mir::TypeId bits =
       mir::PackedVectorOf(unit.types, shape.width, shape.state_kind);
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kBitVecLoad, run, std::nullopt,
-          {bits}, {at}, bits));
+          unit, block.Body(), support::BuiltinFn::kBitVecLoad, run,
+          std::nullopt, {bits}, {at}, bits));
 }
 
 auto BuildFromBitstream(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId bits_id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId bits_id,
     mir::TypeId dst_type) -> mir::ExprId {
   // A stream is a sequence of bits, so its own shape is on its type and asking
   // for it cannot fail; only the destination can be a type with no stream.
   const mir::IntegralType stream =
-      unit.types.Get(block.exprs.Get(bits_id).type).Integral();
+      unit.types.Get(block.Get(bits_id).type).Integral();
   const std::optional<StreamShape> target = FixedStreamShapeOf(unit, dst_type);
   if (!target.has_value()) {
     throw InternalError(
@@ -398,9 +398,9 @@ auto BuildFromBitstream(
         ConvertToType(unit, block, bits_id, widened);
     const mir::ExprId distance = mir::BuildIntLiteral(
         unit, block, static_cast<std::int64_t>(target->width - stream_width));
-    filled = block.exprs.Add(
+    filled = block.Add(
         mir::MakeBuiltinCall(
-            unit, block, support::BuiltinFn::kShiftLeft, widened_bits,
+            unit, block.Body(), support::BuiltinFn::kShiftLeft, widened_bits,
             {distance}, widened));
   }
   // A packed destination is those bits, at the signedness and state domain it
@@ -421,9 +421,9 @@ auto BuildFromBitstream(
 auto BuildFromStreamAssigned(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::ExprId bits_id, mir::TypeId dst_type) -> mir::ExprId {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const std::optional<StreamShape> fixed = FixedStreamShapeOf(unit, dst_type);
-  if (block.exprs.Get(bits_id).type != unit.builtins.bit_vec) {
+  if (block.Get(bits_id).type != unit.builtins.bit_vec) {
     if (fixed.has_value()) {
       return BuildFromBitstream(unit, block, bits_id, dst_type);
     }
@@ -499,9 +499,9 @@ auto BuildFromStreamAssigned(
 auto BuildFromBitstreamCast(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::ExprId bits_id, mir::TypeId dst_type) -> mir::ExprId {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const std::optional<StreamShape> fixed = FixedStreamShapeOf(unit, dst_type);
-  if (block.exprs.Get(bits_id).type != unit.builtins.bit_vec) {
+  if (block.Get(bits_id).type != unit.builtins.bit_vec) {
     if (fixed.has_value()) {
       return BuildFromBitstream(unit, block, bits_id, dst_type);
     }
@@ -527,15 +527,15 @@ auto BuildFromBitstreamCast(
 }
 
 auto BuildFromBitVec(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run,
     mir::TypeId dst_type) -> mir::ExprId {
   const mir::Type& dst = unit.types.Get(dst_type);
   const mir::ExprId held = block.AsValue(unit.types, run);
   if (dst.Is<mir::StringType>()) {
-    return block.exprs.Add(
+    return block.Add(
         mir::MakeBuiltinCall(
-            unit, block, support::BuiltinFn::kStringFromBitVec, std::nullopt,
-            {held}, dst_type));
+            unit, block.Body(), support::BuiltinFn::kStringFromBitVec,
+            std::nullopt, {held}, dst_type));
   }
   return BuildValueOperation(
       unit, block, support::BuiltinFn::kFromBitVec, std::nullopt, {held},

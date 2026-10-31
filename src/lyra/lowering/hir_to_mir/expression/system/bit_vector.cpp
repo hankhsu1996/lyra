@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -96,7 +97,7 @@ auto AdmittedByControlArguments(
 // variable-length argument list, which no single runtime entry can take -- so
 // the lowering builds it.
 auto MakeControlBitsExpr(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     AdmittedBitValues admitted) -> mir::ExprId {
   std::vector<unsigned> named;
   for (unsigned i = 0; i < kBitValueCount; ++i) {
@@ -146,14 +147,14 @@ auto ReadingComparison(support::BitCountReading reading)
 template <ExprLowerer Lowerer>
 auto LowerUnknownTest(Lowerer& lowerer, WalkFrame frame, hir::ExprId value)
     -> diag::Result<mir::Expr> {
-  auto& body = *frame.current_block;
+  mir::Builder body = frame.Builder();
   auto operand_or = lowerer.LowerAsPlace(lowerer.HirExprs().Get(value), frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
   const mir::ExprId answer = BuildUnknownTest(
-      lowerer.Owner().Unit(), body, body.exprs.Add(*std::move(operand_or)));
-  return body.exprs.Get(answer);
+      lowerer.Owner().Unit(), body, body.Add(*std::move(operand_or)));
+  return body.Get(answer);
 }
 
 }  // namespace
@@ -195,22 +196,22 @@ auto LowerBitVectorSystemSubroutineCall(
   }
 
   auto& unit = lowerer.Owner().Unit();
-  auto& body = *frame.current_block;
+  mir::Builder body = frame.Builder();
   auto operand_or =
       lowerer.LowerAsPlace(lowerer.HirExprs().Get(operands[0]), frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
-  const mir::ExprId operand_id = body.exprs.Add(*std::move(operand_or));
+  const mir::ExprId operand_id = body.Add(*std::move(operand_or));
   const mir::ExprId control_id = MakeControlBitsExpr(unit, body, admitted);
   const mir::ExprId count = BuildBitCount(unit, body, operand_id, control_id);
 
   const std::optional<mir::BinaryOp> op = ReadingComparison(info.reading);
   if (!op) {
-    return body.exprs.Get(count);
+    return body.Get(count);
   }
   return mir::MakeBinary(
-      unit, body, *op, count, mir::BuildIntLiteral(unit, body, 1),
+      unit, body.Body(), *op, count, mir::BuildIntLiteral(unit, body, 1),
       unit.builtins.bit1);
 }
 

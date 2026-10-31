@@ -33,6 +33,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -47,7 +48,7 @@ namespace {
 // which a pattern walk descends a level. It checks no tag: a pattern reaches a
 // tagged union's member only behind its own test of the tag (LRM 12.6).
 auto SubjectMember(
-    UnitLowerer& owner, mir::Block& block, mir::ExprId subject,
+    UnitLowerer& owner, mir::Builder block, mir::ExprId subject,
     hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId {
   const hir::Type& ty = owner.Hir().types.Get(subject_type);
   // Only a tagged union is destructured by a pattern (LRM 12.6): an untagged
@@ -62,7 +63,7 @@ auto SubjectMember(
   };
   const auto unpacked =
       [&](const std::vector<hir::UnpackedAggregateField>& fields) {
-        return block.exprs.Add(StepForRead(
+        return block.Add(StepForRead(
             owner.Unit(), block,
             MemberStep(owner, block, ty, index, member_type(fields)), subject));
       };
@@ -76,7 +77,7 @@ auto SubjectMember(
   if (index.value >= projection.members.size()) {
     throw InternalError("SubjectMember: member index out of range");
   }
-  return block.exprs.Add(BuildPackedMemberRead(
+  return block.Add(BuildPackedMemberRead(
       owner, block, subject, projection, index,
       owner.TranslateType(projection.members[index.value].type)));
 }
@@ -104,7 +105,7 @@ auto MemberOf(Subject subject, hir::TypeId of, base::ComponentIndex member)
   return subject;
 }
 
-auto Read(UnitLowerer& owner, mir::Block& block, const Subject& subject)
+auto Read(UnitLowerer& owner, mir::Builder block, const Subject& subject)
     -> mir::ExprId {
   mir::ExprId reached = block.LocalPlace(subject.whole, subject.whole_type);
   for (const Subject::Step& step : subject.steps) {
@@ -141,20 +142,19 @@ void CollectPatternTests(
                     const WalkFrame& at) -> diag::Result<mir::ExprId> {
                   auto& owner = lowerer.Owner();
                   auto& unit = owner.Unit();
-                  mir::Block& block = *at.current_block;
+                  mir::Builder block = at.Builder();
                   auto constant_or =
                       lowerer.LowerExpr(lowerer.HirExprs().Get(value), at);
                   if (!constant_or) {
                     return std::unexpected(std::move(constant_or.error()));
                   }
                   const mir::ExprId constant =
-                      block.exprs.Add(*std::move(constant_or));
+                      block.Add(*std::move(constant_or));
                   const mir::ExprId subject_value = Read(owner, block, subject);
                   return BuildCaseComparison(
                       unit, block, keyword,
                       AtType(
-                          unit, block, subject_value,
-                          block.exprs.Get(constant).type),
+                          unit, block, subject_value, block.Get(constant).type),
                       constant);
                 });
           },
@@ -164,7 +164,7 @@ void CollectPatternTests(
                  member = tagged.member_index](
                     const WalkFrame& at) -> diag::Result<mir::ExprId> {
                   auto& owner = lowerer.Owner();
-                  mir::Block& block = *at.current_block;
+                  mir::Builder block = at.Builder();
                   return BuildHoldsMember(
                       owner, block, Read(owner, block, subject), of, member,
                       keyword);
@@ -199,7 +199,7 @@ void BindPatternIdentifiers(
     const Subject& subject, hir::PatternId pattern_id) {
   auto& owner = lowerer.Owner();
   const hir::Pattern& pattern = lowerer.HirPatterns().Get(pattern_id);
-  mir::Block& assigned = *matched.current_block;
+  mir::Builder assigned = matched.Builder();
   std::visit(
       Overloaded{
           [&](const hir::WildcardPattern&) {},
@@ -209,17 +209,17 @@ void BindPatternIdentifiers(
             const mir::LocalId local = matched.bindings->DeclareNamed(
                 PatternOrigin{.pattern = pattern_id}, variable.name, type);
 
-            mir::Block& declared = *declared_in.current_block;
+            mir::Builder declared = declared_in.Builder();
             declared.AppendStmt(
                 mir::LocalDeclStmt{
                     .target = local,
-                    .init = declared.exprs.Add(
+                    .init = declared.Add(
                         BuildDefaultValueExpr(owner.Unit(), declared, type))});
             const mir::ExprId target = assigned.LocalPlace(local, type);
             const mir::ExprId value = Read(owner, assigned, subject);
             assigned.AppendStmt(
                 mir::ExprStmt{
-                    .expr = assigned.exprs.Add(
+                    .expr = assigned.Add(
                         mir::MakeAssignExpr(
                             owner.Unit().builtins, target, value))});
           },
@@ -270,7 +270,7 @@ auto PatternPredicate(
                    keyword](const WalkFrame& at) -> diag::Result<mir::ExprId> {
         const mir::CompilationUnit& unit = lowerer.Owner().Unit();
         BlockBuilder steps(at);
-        mir::Block& body = steps.Body();
+        mir::Builder body = steps.Body();
         const Subject whole{
             .whole = subject, .whole_type = subject_type, .steps = {}};
 
@@ -292,7 +292,7 @@ auto PatternPredicate(
             pattern);
         const mir::ExprId holds = read_matched();
         body.AppendIfThen(holds, std::move(bound));
-        return at.current_block->exprs.Add(
+        return at.Builder().Add(
             steps.Build(ConditionAsBit(unit, body, read_matched())));
       }};
 }

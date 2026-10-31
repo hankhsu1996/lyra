@@ -11,6 +11,7 @@
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -55,7 +56,7 @@ struct WalkedArray {
 // for a fixed-size array (LRM 7.4), and read while the program runs otherwise
 // (LRM 7.5, 7.10).
 [[nodiscard]] auto EntryCount(
-    mir::CompilationUnit& unit, mir::Block& block, const WalkedArray& array)
+    mir::CompilationUnit& unit, mir::Builder block, const WalkedArray& array)
     -> mir::ExprId;
 
 // Where one entry lies while the loop visits it: the variable holding its
@@ -81,7 +82,7 @@ struct VisitedEntry {
 // is of `part_type`: its position for an array that numbers its elements, its
 // key for an associative one.
 [[nodiscard]] auto StepToVisited(
-    mir::CompilationUnit& unit, mir::Block& block, const EntryPlace& place,
+    mir::CompilationUnit& unit, mir::Builder block, const EntryPlace& place,
     mir::TypeId part_type) -> DescentStep;
 
 // What runs at each entry, lowered into the block the frame names. A `break`

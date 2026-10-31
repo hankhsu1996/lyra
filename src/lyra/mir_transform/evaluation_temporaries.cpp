@@ -440,7 +440,7 @@ class BodyTemporaries {
   // full-expression.
   template <typename Build>
   auto InEvaluation(BlockRebuild& rebuild, Build build) -> mir::BlockId {
-    BlockRebuild in(rebuild.From(), rules_);
+    BlockRebuild in = rebuild.Within(rebuild.From());
     evaluations_.push_back(Evaluation{.in = &in, .steps = {}});
     const std::optional<mir::StmtId> last = build(in);
     std::vector<mir::StmtId> stmts = std::move(evaluations_.back().steps);

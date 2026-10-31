@@ -36,6 +36,7 @@
 #include "lyra/lowering/hir_to_mir/statement/procedural_continuous.hpp"
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -48,8 +49,8 @@ namespace lyra::lowering::hir_to_mir {
 auto PromotedVarPlace(
     const mir::TypePool& types, const WalkFrame& frame,
     const PromotedVarBinding& binding) -> mir::Expr {
-  mir::Block& block = *frame.current_block;
-  const mir::ExprId handle = block.exprs.Add(frame.bindings->MakeBindingPlace(
+  mir::Builder block = frame.Builder();
+  const mir::ExprId handle = block.Add(frame.bindings->MakeBindingPlace(
       frame.bindings->EnsureCarrier(binding.handle_origin), block));
   return mir::MakeDerefExpr(
       block.DerefOperand(types, handle), binding.cell_type);
@@ -58,7 +59,8 @@ auto PromotedVarPlace(
 auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
     -> diag::Result<mir::Stmt> {
   const diag::FailureContext at(stmt.span);
-  return std::visit(
+  frame = frame.WithSpan(stmt.span);
+  diag::Result<mir::Stmt> lowered = std::visit(
       Overloaded{
           [&](const hir::EmptyStmt&) { return LowerEmptyStmt(stmt.label); },
           [&](const hir::VarDeclStmt& v) {
@@ -164,6 +166,7 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           },
       },
       stmt.data);
+  return mir::LoweredFrom(std::move(lowered), stmt.span);
 }
 
 namespace {
@@ -178,7 +181,7 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
   if (block != nullptr && block->scope == body.root_scope) {
     auto lowered = process.LowerStmt(root, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    frame.current_block->AppendStmt(*std::move(lowered));
+    frame.Builder().AppendStmt(*std::move(lowered));
     return {};
   }
   // Any other body is its scope's one statement, so what a covergroup samples
@@ -196,7 +199,7 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
   auto lowered = process.LowerStmt(
       root, events.at_end.empty() ? frame : frame.WithNormalCleanup(end));
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  frame.current_block->AppendStmt(*std::move(lowered));
+  frame.Builder().AppendStmt(*std::move(lowered));
   end.emit(frame);
   return {};
 }
@@ -212,7 +215,7 @@ auto LowerStraightLineProcedure(
     ProcessLowerer& process, const BodyOfExecution& body)
     -> diag::Result<mir::CallableCode> {
   const WalkFrame& parent = process.OwnerCtorFrame();
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(parent.span);
   CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
       ReceiverOrigin{}, parent.current_class.cls->self_pointer_type);
@@ -226,7 +229,7 @@ auto LowerStraightLineProcedure(
   // A procedure completes by falling off its end, which is a real body
   // statement rather than an implicit exit (LRM 9.2). A process's coroutine
   // result type is what makes that return a coroutine completion.
-  code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  body_frame.Builder().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   const auto& builtins = process.Owner().Unit().builtins;
   code.result_type =
       body.runs_as_function_call ? builtins.void_type : builtins.coroutine_void;
@@ -235,7 +238,7 @@ auto LowerStraightLineProcedure(
 
 // What follows a forever process's body each time round, appended to the
 // body's block.
-using AfterBody = std::function<void(mir::Block&)>;
+using AfterBody = std::function<void(mir::Builder)>;
 
 // Wraps the body in a `forever` loop. `ahead` adds what the process does once,
 // before the loop, to the block the frame it is handed is writing, and
@@ -244,7 +247,7 @@ template <typename Ahead>
 auto LowerForeverProcess(ProcessLowerer& process, Ahead ahead)
     -> diag::Result<mir::CallableCode> {
   const WalkFrame& parent = process.OwnerCtorFrame();
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(parent.span);
   CallableBindings bindings(process.Owner().Unit(), code);
   const mir::LocalId self_id = bindings.Declare(
       ReceiverOrigin{}, parent.current_class.cls->self_pointer_type);
@@ -258,18 +261,18 @@ auto LowerForeverProcess(ProcessLowerer& process, Ahead ahead)
     const WalkFrame body_frame = entry_frame.WithBlock(&body_block);
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    (*after_body)(body_block);
+    (*after_body)(body_frame.Builder());
   }
 
-  const mir::BlockId body_scope_id =
-      code.Body().child_scopes.Add(std::move(body_block));
-  code.Body().AppendStmt(
+  mir::Builder entry = entry_frame.Builder();
+  const mir::BlockId body_scope_id = entry.AddScope(std::move(body_block));
+  entry.AppendStmt(
       mir::ForStmt{
           .init = {},
           .condition = std::nullopt,
           .step = {},
           .scope = body_scope_id});
-  code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  entry.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.result_type = process.Owner().Unit().builtins.coroutine_void;
   return code;
 }
@@ -280,7 +283,7 @@ auto LowerAlwaysProcess(ProcessLowerer& process)
     -> diag::Result<mir::CallableCode> {
   return LowerForeverProcess(
       process, [](const WalkFrame&) -> diag::Result<AfterBody> {
-        return AfterBody{[](mir::Block&) {}};
+        return AfterBody{[](mir::Builder) {}};
       });
 }
 
@@ -292,7 +295,7 @@ auto LowerImplicitListProcess(ProcessLowerer& process, const hir::Reads& reads)
       process, [&](const WalkFrame& entry_frame) -> diag::Result<AfterBody> {
         auto held = HoldImplicitList(entry_frame, process, reads);
         if (!held) return std::unexpected(std::move(held.error()));
-        return AfterBody{[&process, held = *held](mir::Block& body) {
+        return AfterBody{[&process, held = *held](mir::Builder body) {
           body.AppendStmt(BuildParkStmt(process.Owner(), body, held));
         }};
       });
@@ -308,7 +311,7 @@ auto DeclareParameterVar(
     const hir::ProceduralVarDecl& decl) -> mir::LocalId {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& body = *frame.current_block;
+  mir::Builder body = frame.Builder();
   const mir::TypeId value_type = unit_lowerer.TranslateType(decl.type);
   const bool is_static = decl.lifetime == hir::VariableLifetime::kStatic;
   if (!is_static && frame.runs_as_function_call && !decl.lifetime_extended) {
@@ -320,11 +323,11 @@ auto DeclareParameterVar(
   const mir::LocalId parameter = frame.bindings->DeclareAnonymous(value_type);
   if (is_static) {
     const AccessPath variable{
-        .owner = body.exprs.Add(LowerProceduralVarRefExpr(process, frame, var)),
+        .owner = body.Add(LowerProceduralVarRefExpr(process, frame, var)),
         .descent = {}};
     body.AppendStmt(
         mir::ExprStmt{
-            .expr = body.exprs.Add(BuildStoreExpr(
+            .expr = body.Add(BuildStoreExpr(
                 unit, body, variable, body.ReadLocal(parameter, value_type)))});
     return parameter;
   }
@@ -429,7 +432,7 @@ template <typename AfterFormals>
 auto ProcessLowerer::LowerSubroutine(
     const hir::SubroutineDecl& src, std::optional<CallableForm> member_form,
     AfterFormals after_formals) -> diag::Result<mir::CallableCode> {
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(owner_ctor_frame_.span);
   CallableBindings bindings(owner_->Unit(), code);
   BoundImplicitParameters bound =
       EnterSubroutineBody(src, member_form, code, bindings);
@@ -454,7 +457,7 @@ auto ProcessLowerer::LowerSubroutine(
         ParamTypeOf(owner_->Unit(), owner_->TranslateType(hir_var.type), dir);
 
     if (!param_type.has_value()) {
-      code.Body().AppendStmt(LowerVarStart(
+      body_frame.Builder().AppendStmt(LowerVarStart(
           *this, body_frame, param.var, hir_var.name,
           DefaultInitialValue(*this, body_frame, hir_var)));
       output_vars_.push_back(param.var);
@@ -481,7 +484,7 @@ auto ProcessLowerer::LowerSubroutine(
   // a fall-through or value-less `return` carries. void functions and tasks
   // have none.
   if (src.result_var.has_value()) {
-    code.Body().AppendStmt(LowerVarStart(
+    body_frame.Builder().AppendStmt(LowerVarStart(
         *this, body_frame, *src.result_var, std::nullopt,
         DefaultInitialValue(
             *this, body_frame, src.body.procedural_vars.Get(*src.result_var))));
@@ -516,7 +519,7 @@ auto ProcessLowerer::LowerSubroutine(
     const WalkFrame inner_frame = body_frame.WithBlock(&body_block);
     auto lowered = LowerStraightLineBodyInto(*this, inner_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    code.body->AppendStmt(BuildTargetExtent(
+    body_frame.Builder().AppendStmt(BuildTargetExtent(
         *this, body_frame, std::move(body_block), *disable_target));
   } else {
     auto lowered = LowerStraightLineBodyInto(*this, body_frame);
@@ -526,7 +529,7 @@ auto ProcessLowerer::LowerSubroutine(
   // Close the body with a trailing return of the fall-through payload, the same
   // completion a body falling off its end carries (LRM 13.3). The completion is
   // a real body statement, not a backend-appended epilogue.
-  code.Body().AppendStmt(
+  body_frame.Builder().AppendStmt(
       mir::ReturnStmt{.value = BuildReturnPayload(body_frame, std::nullopt)});
 
   code.params = std::move(params);
@@ -556,13 +559,13 @@ auto ProcessLowerer::Run(
                 *ConstraintProblemParamTypeOf(unit, src.kind);
             const mir::LocalId param = bindings.DeclareAnonymous(handed);
             params.push_back(param);
-            mir::Block& block = *frame.current_block;
+            mir::Builder block = frame.Builder();
             const mir::LocalId held =
                 bindings.DeclareAnonymous(unit.builtins.constraint_problem);
             block.AppendStmt(
                 mir::LocalDeclStmt{
                     .target = held,
-                    .init = block.Read(block.exprs.Add(
+                    .init = block.Read(block.Add(
                         mir::MakeDerefExpr(
                             block.ReadLocal(param, handed),
                             unit.builtins.constraint_problem)))});
@@ -680,14 +683,14 @@ namespace {
 // body compiled whether or not a wait reached it, so the request fails here,
 // at the wait that asked (LRM 9.4.2).
 void AppendRefuseReport(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     const std::string& why) {
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.exprs.Add(
+          .expr = block.Add(
               mir::MakeCallExpr(
                   mir::Direct{.target = support::BuiltinFn::kRefuseReport},
-                  {block.exprs.Add(
+                  {block.Add(
                       mir::MakeStringLiteral(unit.builtins.string, why))},
                   unit.builtins.void_type))});
 }
@@ -698,8 +701,7 @@ auto ProcessLowerer::ReportCellsRead(
     const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
     -> diag::Result<void> {
   if (reads.unreportable.has_value()) {
-    AppendRefuseReport(
-        owner_->Unit(), *frame.current_block, *reads.unreportable);
+    AppendRefuseReport(owner_->Unit(), frame.Builder(), *reads.unreportable);
     return {};
   }
   return ReportCells(*this, frame, report, reads.cells);
@@ -708,7 +710,7 @@ auto ProcessLowerer::ReportCellsRead(
 auto ProcessLowerer::BuildConstructionReport(
     const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
     -> diag::Result<void> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   mir::Block asked;
   auto reported = ReportCellsRead(frame.WithBlock(&asked), reads, report);
   if (!reported) return std::unexpected(std::move(reported.error()));
@@ -721,7 +723,7 @@ auto ProcessLowerer::BuildRecordingPrologue(
     const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
     -> diag::Result<void> {
   mir::CompilationUnit& unit = owner_->Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   // An implicit list is collected without running anything (LRM 9.2.2.2.1):
   // the function states what its text reads and writes, has each function it
@@ -730,33 +732,37 @@ auto ProcessLowerer::BuildRecordingPrologue(
   // shallower level of the same cycle already stated.
   if (!reads.unreportable.has_value()) {
     mir::Block entered;
+    mir::Builder entered_builder = block.Into(entered);
     auto listed = ReportReads(*this, frame.WithBlock(&entered), reads, report);
     if (!listed) return std::unexpected(std::move(listed.error()));
-    entered.AppendStmt(
+    entered_builder.AppendStmt(
         mir::ExprStmt{
             .expr = BuildReportCall(
-                unit, entered, report, support::BuiltinFn::kReadReportLeave, {},
+                unit, entered_builder, report,
+                support::BuiltinFn::kReadReportLeave, {},
                 unit.builtins.void_type)});
     mir::Block collecting;
+    mir::Builder collecting_builder = block.Into(collecting);
     const mir::ExprId entered_at = BuildReportCall(
-        unit, collecting, report, support::BuiltinFn::kReadReportEnter, {},
-        unit.builtins.machine_int64);
-    const mir::ExprId enters = collecting.exprs.Add(
+        unit, collecting_builder, report, support::BuiltinFn::kReadReportEnter,
+        {}, unit.builtins.machine_int64);
+    const mir::ExprId enters = collecting_builder.Add(
         mir::MakeBinary(
-            unit, collecting, mir::BinaryOp::kInequality, entered_at,
-            mir::BuildMachineIntLiteral(unit, collecting, 0),
+            unit, collecting_builder.Body(), mir::BinaryOp::kInequality,
+            entered_at,
+            mir::BuildMachineIntLiteral(unit, collecting_builder, 0),
             unit.builtins.machine_bool));
-    collecting.AppendIfThen(enters, std::move(entered));
-    collecting.AppendStmt(
+    collecting_builder.AppendIfThen(enters, std::move(entered));
+    collecting_builder.AppendStmt(
         mir::ReturnStmt{
             .value = BuildReturnPayload(
                 frame.WithBlock(&collecting), std::nullopt)});
     const mir::ExprId runs_the_body = BuildReportCall(
         unit, block, report, support::BuiltinFn::kReadReportRunsTheBody, {},
         unit.builtins.machine_int64);
-    const mir::ExprId collects = block.exprs.Add(
+    const mir::ExprId collects = block.Add(
         mir::MakeBinary(
-            unit, block, mir::BinaryOp::kEquality, runs_the_body,
+            unit, block.Body(), mir::BinaryOp::kEquality, runs_the_body,
             mir::BuildMachineIntLiteral(unit, block, 0),
             unit.builtins.machine_bool));
     block.AppendIfThen(collects, std::move(collecting));
@@ -773,8 +779,9 @@ void ProcessLowerer::ForwardToRecording(
     std::span<const mir::LocalId> params, mir::LocalId report,
     mir::DirectTarget recording) {
   const mir::CompilationUnit& unit = owner_->Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   mir::Block forwarding;
+  mir::Builder forwarding_builder = block.Into(forwarding);
   // The recording form is entered on the object this one was, and handed
   // every other parameter as it was handed them.
   mir::Direct callee{.target = recording};
@@ -782,20 +789,20 @@ void ProcessLowerer::ForwardToRecording(
   arguments.reserve(params.size());
   for (const mir::LocalId param : params) {
     const mir::ExprId value =
-        forwarding.ReadLocal(param, code.locals.Get(param).type);
+        forwarding_builder.ReadLocal(param, code.locals.Get(param).type);
     if (param == code.receiver) {
-      callee.receiver = BuildObjectDeref(unit, forwarding, value);
+      callee.receiver = BuildObjectDeref(unit, forwarding_builder, value);
       continue;
     }
     arguments.push_back(value);
   }
-  const mir::ExprId call = forwarding.exprs.Add(
+  const mir::ExprId call = forwarding_builder.Add(
       mir::MakeCallExpr(std::move(callee), std::move(arguments), result_type_));
   if (result_type_ == unit.builtins.void_type) {
-    forwarding.AppendStmt(mir::ExprStmt{.expr = call});
-    forwarding.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+    forwarding_builder.AppendStmt(mir::ExprStmt{.expr = call});
+    forwarding_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   } else {
-    forwarding.AppendStmt(mir::ReturnStmt{.value = call});
+    forwarding_builder.AppendStmt(mir::ReturnStmt{.value = call});
   }
   const mir::ExprId handed = BuildReportHanded(unit, block, report);
   block.AppendIfThen(handed, std::move(forwarding));
@@ -804,7 +811,7 @@ void ProcessLowerer::ForwardToRecording(
 auto ProcessLowerer::BuildReturnPayload(
     const WalkFrame& frame, std::optional<mir::ExprId> explicit_value)
     -> std::optional<mir::ExprId> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::Type& result_ty = owner_->Unit().types.Get(result_type_);
   const mir::TypeId payload_type =
       result_ty.Is<mir::CoroutineType>()
@@ -818,8 +825,7 @@ auto ProcessLowerer::BuildReturnPayload(
     return PathValue(
         unit, block,
         AccessPath{
-            .owner =
-                block.exprs.Add(LowerProceduralVarRefExpr(*this, frame, var)),
+            .owner = block.Add(LowerProceduralVarRefExpr(*this, frame, var)),
             .descent = {}});
   };
   // LRM 13.4.1, 10.8: a returned value is assigned to the function's result.
@@ -835,7 +841,7 @@ auto ProcessLowerer::BuildReturnPayload(
   for (const hir::ProceduralVarId output : output_vars_) {
     components.push_back(read(output));
   }
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(components)},
           .type = payload_type});

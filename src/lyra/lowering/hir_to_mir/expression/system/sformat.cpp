@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -47,11 +48,11 @@ auto BuildSFormatCallExpr(
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   auto& unit = lowerer.Owner().Unit();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto time_unit_power =
       static_cast<std::int64_t>(lowerer.Resolution().unit_power);
-  const mir::ExprId items_array = block.exprs.Add(
-      BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
+  const mir::ExprId items_array =
+      block.Add(BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
   return BuildFormatCallExpr(unit, block, items_array);
 }
@@ -77,12 +78,12 @@ auto LowerSFormatSystemSubroutineCallStmt(
     const hir::CallExpr& call, const support::SFormatSystemSubroutineInfo& info)
     -> diag::Result<mir::Stmt> {
   const auto& hir_proc = process.HirBody();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   if (!info.has_output_arg) {
     auto call_expr_or = BuildSFormatCallExpr(process, frame, call, info, 0);
     if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
-    const mir::ExprId expr_id = block.exprs.Add(*std::move(call_expr_or));
+    const mir::ExprId expr_id = block.Add(*std::move(call_expr_or));
     return mir::Stmt{
         .label = std::move(label), .data = mir::ExprStmt{.expr = expr_id}};
   }
@@ -94,7 +95,7 @@ auto LowerSFormatSystemSubroutineCallStmt(
   // Writing the text may take several steps, where what it is written to is
   // a join of destinations, so the statement is a block of them.
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   auto out_or =
       LowerLvalue(process, hir_proc.exprs.Get(operands[0]), steps.Frame());
   if (!out_or) return std::unexpected(std::move(out_or.error()));
@@ -104,7 +105,7 @@ auto LowerSFormatSystemSubroutineCallStmt(
   auto call_expr_or =
       BuildSFormatCallExpr(process, steps.Frame(), call, info, 1);
   if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
-  const mir::ExprId call_id = body.exprs.Add(*std::move(call_expr_or));
+  const mir::ExprId call_id = body.Add(*std::move(call_expr_or));
 
   // LRM 21.3.3: the formatted text reaches output_var under the LRM 5.9
   // string-literal assignment rules, so an integral or unpacked-byte-array

@@ -16,6 +16,7 @@
 #include "lyra/hir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -55,13 +56,13 @@ struct Predicate {
 // it -- a real is true when it is nonzero (LRM 11.3.1), a handle when it names
 // an object (LRM 8.4) -- and that reading cannot be unknown.
 [[nodiscard]] auto BuildTruth(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId;
 
 // The logical negation of an integral value (LRM 11.4.7): one bit, which can
 // be x exactly where the value can hold one, however wide the value is.
 [[nodiscard]] auto BuildLogicalNot(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId;
 
 // An expression of the source as a predicate: its own value.

@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/callable_bounds.hpp"
@@ -50,7 +51,7 @@ auto RunCarrierDetached(
 // would have it built and dropped, leaving a body that does nothing.
 template <typename Capture, typename Apply>
 concept DeferredEffectPlan = requires(
-    Capture capture, Apply apply, ClosureBuilder& closure, mir::Block& body) {
+    Capture capture, Apply apply, ClosureBuilder& closure, mir::Builder body) {
   { apply(body, *capture(closure)) } -> std::same_as<void>;
 };
 

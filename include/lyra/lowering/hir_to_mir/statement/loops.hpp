@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/block_id.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -34,7 +35,7 @@ namespace lyra::lowering::hir_to_mir {
 // returned loop. `break_label` is the label a `break` that names this loop
 // carries, absent where none does.
 auto BuildCountingLoopStmt(
-    const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
+    const mir::CompilationUnit& unit, WalkFrame frame, mir::Builder block,
     mir::ExprId count, mir::LocalId position, mir::BlockId body_scope,
     std::optional<mir::LabelId> break_label = std::nullopt) -> mir::Stmt;
 
@@ -42,7 +43,7 @@ auto BuildCountingLoopStmt(
 // outlives the loop where something still reads it afterwards: `position` is
 // the path to that storage, named in `block`, and evaluates nothing.
 auto BuildCountingLoopStmt(
-    mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
+    mir::CompilationUnit& unit, WalkFrame frame, mir::Builder block,
     mir::ExprId count, const AccessPath& position, mir::BlockId body_scope,
     std::optional<mir::LabelId> break_label) -> mir::Stmt;
 
@@ -54,7 +55,7 @@ enum class WalkOrder : std::uint8_t { kFromFirst, kFromLast };
 // walks from the last, so it stops at the first one it meets. `break_label` is
 // as a counting loop's is.
 auto BuildPositionWalkStmt(
-    const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
+    const mir::CompilationUnit& unit, WalkFrame frame, mir::Builder block,
     mir::ExprId count, mir::LocalId position, WalkOrder order,
     mir::BlockId body_scope, std::optional<mir::LabelId> break_label)
     -> mir::Stmt;
@@ -80,7 +81,7 @@ auto BuildKeyLoopStmt(
 // runs, and `body_scope` runs at each. `index` is a path as the stored position
 // of a counting loop is, and `break_label` is as that loop's is.
 auto BuildRangeLoopStmt(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& index,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& index,
     std::int64_t left, std::int64_t right, mir::BlockId body_scope,
     std::optional<mir::LabelId> break_label) -> mir::Stmt;
 
@@ -88,7 +89,7 @@ auto BuildRangeLoopStmt(
 // time this is (LRM 12.7.3, and the repeat event control of LRM 9.4.5).
 // `break_label` is as a counting loop's is.
 auto BuildRepeatLoopStmt(
-    const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
+    const mir::CompilationUnit& unit, WalkFrame frame, mir::Builder block,
     mir::ExprId count, mir::BlockId body_scope,
     std::optional<mir::LabelId> break_label = std::nullopt) -> mir::Stmt;
 

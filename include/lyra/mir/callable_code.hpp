@@ -8,6 +8,7 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -51,16 +52,23 @@ struct CallableCode {
   // design wrote.
   std::vector<NamedLocal> named_locals;
   std::optional<Block> body;
+  // The piece of source the body as a whole was lowered from, which what runs
+  // around its statements -- entering it, suspending, ending what it holds on
+  // every way out -- stands at, as rustc's MIR body carries a span of its own;
+  // no place where it was lowered from none.
+  diag::SourceSpan span{};
 
-  // A code skeleton for a callable this program defines: the body starts
-  // present and empty, ready for a builder to append to. A bodyless form leaves
-  // `body` default-constructed instead, so the safe default is the one whose
-  // mistake is loud -- a builder that forgets this trips over the missing body
-  // at once, where a builder that forgot to clear an always-present body would
-  // silently publish an empty definition.
-  [[nodiscard]] static auto Defined() -> CallableCode {
+  // A code skeleton for a callable this program defines, lowered from
+  // `lowered_from`: the body starts present and empty, ready for a builder to
+  // append to. A bodyless form leaves `body` default-constructed instead, so
+  // the safe default is the one whose mistake is loud -- a builder that forgets
+  // this trips over the missing body at once, where a builder that forgot to
+  // clear an always-present body would silently publish an empty definition.
+  [[nodiscard]] static auto Defined(diag::SourceSpan lowered_from)
+      -> CallableCode {
     CallableCode code{};
     code.body.emplace();
+    code.span = lowered_from;
     return code;
   }
 

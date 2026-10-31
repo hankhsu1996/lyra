@@ -31,6 +31,7 @@
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -186,9 +187,9 @@ auto FillType(const mir::CompilationUnit& unit) -> mir::TypeId {
 }
 
 auto CallOf(
-    mir::Block& block, mir::Direct callee, std::vector<mir::ExprId> arguments,
+    mir::Builder block, mir::Direct callee, std::vector<mir::ExprId> arguments,
     mir::TypeId result) -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -199,7 +200,7 @@ auto CallOf(
 
 // A call of the body `target` names, borrowing what it is asked about.
 auto OwnOperationCall(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     mir::DirectTarget target, std::optional<mir::ExprId> receiver,
     std::vector<mir::ExprId> operands, mir::TypeId result) -> mir::ExprId {
   for (mir::ExprId& operand : operands) {
@@ -252,7 +253,7 @@ auto OwnOperationTarget(
 
 // Whether a value holds an unknown bit, as a machine boolean.
 auto BuildHasUnknown(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId {
   return BuildValueOperation(
       unit, block, support::BuiltinFn::kHasUnknown, value, {},
@@ -263,7 +264,7 @@ auto BuildHasUnknown(
 // the fill repeated across its width (LRM 11.4.12.1), at the signedness it
 // declares, and any other value answers for itself.
 auto BuildFilled(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value,
     mir::TypeId type, mir::ExprId fill) -> mir::ExprId {
   const mir::Type& t = unit.types.Get(type);
   if (!t.IsIntegral()) {
@@ -273,10 +274,11 @@ auto BuildFilled(
   }
   const mir::TypeId copies = mir::PackedVectorOf(
       unit.types, t.Integral().bit_width,
-      unit.types.Get(block.exprs.Get(fill).type).Integral().state_kind);
-  const mir::ExprId filled = block.exprs.Add(
+      unit.types.Get(block.Get(fill).type).Integral().state_kind);
+  const mir::ExprId filled = block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kReplicateBits, fill, {}, copies));
+          unit, block.Body(), support::BuiltinFn::kReplicateBits, fill, {},
+          copies));
   return ConvertToType(unit, block, filled, type);
 }
 
@@ -292,9 +294,9 @@ constexpr std::array<support::BuiltinFn, 4> kNetFolds{
 // `then_value` where `condition` holds and `else_value` where it does not,
 // both of `type`.
 auto Chosen(
-    mir::Block& block, mir::ExprId condition, mir::ExprId then_value,
+    mir::Builder block, mir::ExprId condition, mir::ExprId then_value,
     mir::ExprId else_value, mir::TypeId type) -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::ConditionalExpr{
@@ -310,7 +312,7 @@ auto Chosen(
 // body borrows and the library's entry reads. A value of one position is held
 // whole, so the run is all of it.
 auto PositionsTaken(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type,
     mir::ExprId into, mir::ExprId from, mir::ExprId start, mir::ExprId count)
     -> mir::ExprId {
   if (PositionCountOf(unit, type) == 1) {
@@ -363,14 +365,15 @@ class OperationBodies {
   // per member, one after another, as a `switch` is lowered, so nothing is one
   // expression nesting as deep as the type has members.
   template <typename Answer>
-  void ReturnWhere(mir::Block& block, mir::ExprId condition, Answer answer) {
+  void ReturnWhere(mir::Builder block, mir::ExprId condition, Answer answer) {
     mir::Block taken;
-    const mir::ExprId answered = answer(taken);
-    taken.AppendStmt(mir::ReturnStmt{.value = answered});
+    mir::Builder taken_builder = block.Into(taken);
+    const mir::ExprId answered = answer(taken_builder);
+    taken_builder.AppendStmt(mir::ReturnStmt{.value = answered});
     block.AppendStmt(
         mir::IfStmt{
             .condition = ReduceToCondition(Unit(), block, condition),
-            .then_scope = block.child_scopes.Add(std::move(taken)),
+            .then_scope = block.AddScope(std::move(taken)),
             .else_scope = std::nullopt});
   }
 
@@ -384,7 +387,7 @@ class OperationBodies {
       mir::TypeId result, Answer answer) -> mir::CallableCode {
     return BodyOf(
         answers, std::move(params), result,
-        [&](mir::CallableCode&, mir::Block& block,
+        [&](mir::CallableCode&, mir::Builder block,
             const std::vector<mir::LocalId>& locals) {
           return answer(block, locals);
         });
@@ -396,7 +399,7 @@ class OperationBodies {
   auto BodyOf(
       support::ValueOperation answers, std::vector<mir::TypeId> params,
       mir::TypeId result, Answer answer) -> mir::CallableCode {
-    mir::CallableCode code = mir::CallableCode::Defined();
+    mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
     for (const mir::TypeId param : params) {
       code.params.push_back(code.AddLocal(ReferenceTo(Unit(), param)));
     }
@@ -405,36 +408,37 @@ class OperationBodies {
     }
     code.result_type = result;
     const std::vector<mir::LocalId> locals = code.params;
-    const mir::ExprId answered = answer(code, code.Body(), locals);
-    code.Body().AppendStmt(mir::ReturnStmt{.value = answered});
+    mir::Builder body(code.Body(), diag::SourceSpan{});
+    const mir::ExprId answered = answer(code, body, locals);
+    body.AppendStmt(mir::ReturnStmt{.value = answered});
     return code;
   }
 
   // A call of the body answering another operation of this type.
   auto Own(
-      mir::Block& block, support::ValueOperation answers, mir::ExprId receiver,
+      mir::Builder block, support::ValueOperation answers, mir::ExprId receiver,
       std::vector<mir::ExprId> operands, mir::TypeId result) -> mir::ExprId {
     return OwnOperationCall(
         Unit(), block, own_(answers), receiver, std::move(operands), result);
   }
 
   // What the parameter `local` refers to, of `type`, as the place it is.
-  auto Referent(mir::Block& block, mir::LocalId local, mir::TypeId type)
+  auto Referent(mir::Builder block, mir::LocalId local, mir::TypeId type)
       -> mir::ExprId {
     return block.Deref(
         Unit().types, block.LocalPlace(local, ReferenceTo(Unit(), type)), type);
   }
 
   // The value of this type the parameter `local` refers to.
-  auto Whole(mir::Block& block, mir::LocalId local) -> mir::ExprId {
+  auto Whole(mir::Builder block, mir::LocalId local) -> mir::ExprId {
     return Referent(block, local, whole_);
   }
 
   // Member `i` of the value the parameter `local` refers to, where it lies:
   // each operation asked of it settles whether it reads it or borrows it.
-  auto Member(mir::Block& block, mir::LocalId local, std::size_t i)
+  auto Member(mir::Builder block, mir::LocalId local, std::size_t i)
       -> mir::ExprId {
-    return block.exprs.Add(
+    return block.Add(
         mir::MakeFieldAccessExpr(
             Whole(block, local),
             mir::ComponentFieldTarget{
@@ -446,7 +450,7 @@ class OperationBodies {
   // A local of `code` holding a value of `type`, declared after what `block`
   // holds and starting at `initial`.
   static auto Declared(
-      mir::CallableCode& code, mir::Block& block, mir::TypeId type,
+      mir::CallableCode& code, mir::Builder block, mir::TypeId type,
       mir::ExprId initial) -> mir::LocalId {
     const mir::LocalId local = code.AddLocal(type);
     block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = initial});
@@ -456,17 +460,17 @@ class OperationBodies {
   // Such a local holding a machine count; what it holds now; it moved to
   // `value`; and a count the lowering holds, written as one.
   auto DeclaredCount(
-      mir::CallableCode& code, mir::Block& block, mir::ExprId initial)
+      mir::CallableCode& code, mir::Builder block, mir::ExprId initial)
       -> mir::LocalId {
     return Declared(code, block, Unit().builtins.machine_int64, initial);
   }
-  auto CountNow(mir::Block& block, mir::LocalId count) -> mir::ExprId {
+  auto CountNow(mir::Builder block, mir::LocalId count) -> mir::ExprId {
     return block.ReadLocal(count, Unit().builtins.machine_int64);
   }
-  void SetCount(mir::Block& block, mir::LocalId count, mir::ExprId value) {
+  void SetCount(mir::Builder block, mir::LocalId count, mir::ExprId value) {
     block.AppendStmt(
         mir::ExprStmt{
-            .expr = block.exprs.Add(BuildStoreExpr(
+            .expr = block.Add(BuildStoreExpr(
                 Unit(), block,
                 AccessPath{
                     .owner =
@@ -474,7 +478,7 @@ class OperationBodies {
                     .descent = {}},
                 value))});
   }
-  auto CountLiteral(mir::Block& block, std::uint64_t count) -> mir::ExprId {
+  auto CountLiteral(mir::Builder block, std::uint64_t count) -> mir::ExprId {
     return mir::BuildMachineCount(Unit(), block, count);
   }
 
@@ -482,7 +486,7 @@ class OperationBodies {
   // `length` bits read from `at`, where the parts after it take `after` where
   // they are empty (LRM 11.4.14.4); a run too short for them is an error.
   auto PartAllotment(
-      mir::CallableCode& code, mir::Block& block, mir::LocalId length,
+      mir::CallableCode& code, mir::Builder block, mir::LocalId length,
       mir::LocalId at, mir::ExprId after) -> mir::LocalId {
     const mir::ExprId length_now = CountNow(block, length);
     const mir::ExprId at_now = CountNow(block, at);
@@ -509,7 +513,7 @@ class OperationBodies {
   // A value of `type` built by `value` after what `block` holds, kept in a
   // local of `code` so that what follows cannot change what it reads.
   static auto Held(
-      mir::CallableCode& code, mir::Block& block, mir::TypeId type,
+      mir::CallableCode& code, mir::Builder block, mir::TypeId type,
       mir::ExprId value) -> mir::ExprId {
     return block.ReadLocal(Declared(code, block, type, value), type);
   }
@@ -517,18 +521,18 @@ class OperationBodies {
   // LRM 11.4.5 `==` of two values of `part`, a member or an element, at this
   // type's equality answer type.
   auto PartEqual(
-      mir::Block& block, mir::ExprId lhs, mir::ExprId rhs, mir::TypeId part)
+      mir::Builder block, mir::ExprId lhs, mir::ExprId rhs, mir::TypeId part)
       -> mir::ExprId {
     return ConvertToType(
         Unit(), block,
-        block.exprs.Add(BuildMirBinaryExpr(
+        block.Add(BuildMirBinaryExpr(
             Unit(), block, hir::BinaryOp::kEquality, lhs, rhs,
             OneBitAnswerType(Unit(), std::array{part}))),
         equality_answer_);
   }
 
   // A known 1 or 0 of the one-bit type `type`.
-  auto KnownBit(mir::Block& block, mir::TypeId type, bool holds)
+  auto KnownBit(mir::Builder block, mir::TypeId type, bool holds)
       -> mir::ExprId {
     return mir::BuildIntegralLiteral(
         Unit(), block, type,
@@ -541,7 +545,7 @@ class OperationBodies {
     const mir::TypeId answer_type = equality_answer_;
     return Body(
         support::ValueOperator::kInequality, {whole_, whole_}, answer_type,
-        [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+        [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
           const mir::ExprId lhs = Whole(block, p[0]);
           const mir::ExprId rhs = Whole(block, p[1]);
           const mir::ExprId equal =
@@ -556,8 +560,8 @@ class OperationBodies {
   auto DeclaredDefault() -> mir::CallableCode {
     return Body(
         support::BuiltinFn::kDeclaredDefault, {}, whole_,
-        [&](mir::Block& block, const std::vector<mir::LocalId>&) {
-          return block.exprs.Add(BuildDefaultValueExpr(Unit(), block, whole_));
+        [&](mir::Builder block, const std::vector<mir::LocalId>&) {
+          return block.Add(BuildDefaultValueExpr(Unit(), block, whole_));
         });
   }
 
@@ -567,11 +571,11 @@ class OperationBodies {
   auto FirstMemberDefault() -> mir::CallableCode {
     return Body(
         support::BuiltinFn::kDeclaredDefault, {}, whole_,
-        [&](mir::Block& block, const std::vector<mir::LocalId>&) {
+        [&](mir::Builder block, const std::vector<mir::LocalId>&) {
           constexpr base::ComponentIndex kFirstMember{0};
-          return block.exprs.Add(
+          return block.Add(
               mir::MakeUnionExpr(
-                  block.exprs.Add(
+                  block.Add(
                       BuildDefaultValueExpr(Unit(), block, members_.front())),
                   kFirstMember, whole_));
         });
@@ -583,7 +587,7 @@ class OperationBodies {
     const mir::TypeId number = Unit().builtins.machine_int64;
     return Body(
         support::BuiltinFn::kTakePositions, {whole_, whole_, number, number},
-        whole_, [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+        whole_, [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
           return block.AsValue(Unit().types, Whole(block, p[1]));
         });
   }
@@ -596,7 +600,7 @@ class OperationBodies {
     mir::LocalId end;
   };
   auto HoldRun(
-      mir::CallableCode& code, mir::Block& block, mir::LocalId first,
+      mir::CallableCode& code, mir::Builder block, mir::LocalId first,
       mir::LocalId count) -> HeldRun {
     const mir::TypeId number = Unit().builtins.machine_int64;
     const mir::LocalId held_first = code.AddLocal(number);
@@ -621,7 +625,7 @@ class OperationBodies {
   // where `run` reaches it, `into` with the positions the run names of it
   // taken from `from`, and elsewhere `into` as it stands.
   auto PartTaken(
-      mir::CallableCode& code, mir::Block& block, mir::TypeId part,
+      mir::CallableCode& code, mir::Builder block, mir::TypeId part,
       mir::ExprId into, mir::ExprId from, mir::ExprId at, const HeldRun& run)
       -> mir::ExprId {
     const mir::TypeId number = Unit().builtins.machine_int64;
@@ -744,7 +748,7 @@ class StructBodies : public OperationBodies {
   // The `int` sum of what `term(i)` answers for each member `i`, added into a
   // local of `code` one statement per member.
   auto SumOverMembers(
-      mir::CallableCode& code, mir::Block& block, const auto& term)
+      mir::CallableCode& code, mir::Builder block, const auto& term)
       -> mir::ExprId {
     const mir::TypeId count = Unit().builtins.int_type;
     std::vector<mir::ExprId> terms;
@@ -759,9 +763,9 @@ class StructBodies : public OperationBodies {
   }
 
   // The struct built from one value per member.
-  auto Built(mir::Block& block, std::vector<mir::ExprId> members)
+  auto Built(mir::Builder block, std::vector<mir::ExprId> members)
       -> mir::ExprId {
-    return block.exprs.Add(
+    return block.Add(
         mir::Expr{
             .data = mir::CompositeExpr{.parts = std::move(members)},
             .type = WholeType()});
@@ -778,7 +782,7 @@ auto StructBodies::Equality() -> mir::CallableCode {
   return BodyOf(
       support::ValueOperator::kEquality, {WholeType(), WholeType()},
       answer_type,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> equal;
         equal.reserve(Members().size());
@@ -796,7 +800,7 @@ auto StructBodies::CaseEqual() -> mir::CallableCode {
   const mir::TypeId bit = Unit().builtins.bit1;
   return BodyOf(
       support::BuiltinFn::kCaseEqual, {WholeType(), WholeType()}, bit,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> equal;
         equal.reserve(Members().size());
@@ -816,7 +820,7 @@ auto StructBodies::BitIdentical() -> mir::CallableCode {
   const mir::TypeId boolean = Unit().builtins.machine_bool;
   return Body(
       support::BuiltinFn::kBitIdentical, {WholeType(), WholeType()}, boolean,
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         for (std::size_t i = 0; i < Members().size(); ++i) {
           const mir::ExprId lhs = Member(block, p[0], i);
           const mir::ExprId rhs = Member(block, p[1], i);
@@ -824,7 +828,7 @@ auto StructBodies::BitIdentical() -> mir::CallableCode {
               block,
               BuildConditionNot(
                   Unit(), block, BuildBitIdentity(Unit(), block, lhs, rhs)),
-              [&](mir::Block& taken) {
+              [&](mir::Builder taken) {
                 return BuildMachineBool(Unit(), taken, false);
               });
         }
@@ -838,11 +842,11 @@ auto StructBodies::HasUnknown() -> mir::CallableCode {
   const mir::TypeId boolean = Unit().builtins.machine_bool;
   return Body(
       support::BuiltinFn::kHasUnknown, {WholeType()}, boolean,
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         for (std::size_t i = 0; i < Members().size(); ++i) {
           ReturnWhere(
               block, BuildHasUnknown(Unit(), block, Member(block, p[0], i)),
-              [&](mir::Block& taken) {
+              [&](mir::Builder taken) {
                 return BuildMachineBool(Unit(), taken, true);
               });
         }
@@ -855,7 +859,7 @@ auto StructBodies::BitWidth() -> mir::CallableCode {
   return BodyOf(
       support::BuiltinFn::kBitstreamWidth, {WholeType()},
       Unit().builtins.int_type,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return SumOverMembers(code, block, [&](std::size_t i) {
           return BuildBitWidth(Unit(), block, Member(block, p[0], i));
@@ -870,7 +874,7 @@ auto StructBodies::CountBits() -> mir::CallableCode {
   return BodyOf(
       support::BuiltinFn::kCountBits, {WholeType(), control},
       Unit().builtins.int_type,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return SumOverMembers(code, block, [&](std::size_t i) {
           const mir::ExprId member = Member(block, p[0], i);
@@ -889,7 +893,7 @@ auto StructBodies::ToBitstream() -> mir::CallableCode {
       mir::PackedVectorOf(Unit().types, shape.width, shape.state_kind);
   return BodyOf(
       support::BuiltinFn::kToBitstream, {WholeType()}, stream,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> streams;
         for (std::size_t i = 0; i < Members().size(); ++i) {
@@ -904,7 +908,8 @@ auto StructBodies::ToBitstream() -> mir::CallableCode {
         }
         return BuildBitsJoin(
             Unit(), block,
-            code.AddLocal(JoinedBitsType(Unit(), block, streams)), streams);
+            code.AddLocal(JoinedBitsType(Unit(), block.Body(), streams)),
+            streams);
       });
 }
 
@@ -917,13 +922,13 @@ auto StructBodies::FromBitstream() -> mir::CallableCode {
       mir::PackedVectorOf(Unit().types, shape.width, shape.state_kind);
   return Body(
       support::BuiltinFn::kFromBitstream, {stream}, WholeType(),
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> members;
         std::uint64_t taken = 0;
         for (const mir::TypeId member : Members()) {
           const std::uint64_t width = FixedStreamShapeOf(Unit(), member)->width;
           taken += width;
-          const mir::ExprId bits = block.exprs.Add(BuildPackedBitsRead(
+          const mir::ExprId bits = block.Add(BuildPackedBitsRead(
               Lowerer(), block, Referent(block, p[0], stream),
               shape.width - taken,
               mir::PackedVectorOf(Unit().types, width, shape.state_kind)));
@@ -939,7 +944,7 @@ auto StructBodies::ToBitVec() -> mir::CallableCode {
   const mir::TypeId run = Unit().builtins.bit_vec;
   return BodyOf(
       support::BuiltinFn::kToBitVec, {WholeType()}, run,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> streams;
         for (std::size_t i = 0; i < Members().size(); ++i) {
@@ -964,7 +969,7 @@ auto StructBodies::FromBitVec() -> mir::CallableCode {
   const mir::TypeId run = Unit().builtins.bit_vec;
   return BodyOf(
       support::BuiltinFn::kFromBitVec, {run}, WholeType(),
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         const mir::LocalId length = DeclaredCount(
             code, block,
@@ -1023,7 +1028,7 @@ auto StructBodies::FromBitVec() -> mir::CallableCode {
 auto StructBodies::Fold(support::BuiltinFn fold) -> mir::CallableCode {
   return Body(
       fold, {WholeType(), WholeType()}, WholeType(),
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> members;
         for (std::size_t i = 0; i < Members().size(); ++i) {
           const mir::ExprId lhs = Member(block, p[0], i);
@@ -1039,7 +1044,7 @@ auto StructBodies::FilledLike() -> mir::CallableCode {
   const mir::TypeId fill = FillType(Unit());
   return Body(
       support::BuiltinFn::kFilledLike, {WholeType(), fill}, WholeType(),
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> members;
         for (std::size_t i = 0; i < Members().size(); ++i) {
           const mir::ExprId member = Member(block, p[0], i);
@@ -1056,8 +1061,8 @@ auto StructBodies::FilledLike() -> mir::CallableCode {
 auto StructBodies::DeclaredDefault() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kDeclaredDefault, {}, WholeType(),
-      [&](mir::Block& block, const std::vector<mir::LocalId>&) {
-        return block.exprs.Add(
+      [&](mir::Builder block, const std::vector<mir::LocalId>&) {
+        return block.Add(
             BuildDeclaredStructValue(Lowerer(), block, *source_, WholeType()));
       });
 }
@@ -1066,7 +1071,7 @@ auto StructBodies::DeclaredDefault() -> mir::CallableCode {
 auto StructBodies::PositionCount() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kPositionCount, {}, Unit().builtins.machine_int64,
-      [&](mir::Block& block, const std::vector<mir::LocalId>&) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>&) {
         return CountLiteral(block, PositionCountOf(Unit(), WholeType()));
       });
 }
@@ -1076,7 +1081,7 @@ auto StructBodies::TakePositions() -> mir::CallableCode {
   return BodyOf(
       support::BuiltinFn::kTakePositions,
       {WholeType(), WholeType(), number, number}, WholeType(),
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         const HeldRun run = HoldRun(code, block, p[2], p[3]);
         std::vector<mir::ExprId> members;
@@ -1134,19 +1139,19 @@ class UnionBodies : public OperationBodies {
  private:
   // Member `i` of the union the parameter `local` refers to, read as its type
   // holds a value.
-  auto Read(mir::Block& block, mir::LocalId local, std::size_t i)
+  auto Read(mir::Builder block, mir::LocalId local, std::size_t i)
       -> mir::ExprId {
     return mir::ReadIfOverlaid(Unit(), block, Member(block, local, i));
   }
-  auto First(mir::Block& block, mir::LocalId local) -> mir::ExprId {
+  auto First(mir::Builder block, mir::LocalId local) -> mir::ExprId {
     return Read(block, local, 0);
   }
   [[nodiscard]] auto FirstType() const -> mir::TypeId {
     return Members().front();
   }
   // The union holding `value` as its first member.
-  auto Holding(mir::Block& block, mir::ExprId value) -> mir::ExprId {
-    return block.exprs.Add(
+  auto Holding(mir::Builder block, mir::ExprId value) -> mir::ExprId {
+    return block.Add(
         mir::Expr{
             .data =
                 mir::UnionExpr{
@@ -1164,10 +1169,10 @@ auto UnionBodies::Equality() -> mir::CallableCode {
   const mir::TypeId answer_type = EqualityAnswer();
   return Body(
       support::ValueOperator::kEquality, {WholeType(), WholeType()},
-      answer_type, [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      answer_type, [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         const mir::ExprId lhs = First(block, p[0]);
         const mir::ExprId rhs = First(block, p[1]);
-        return block.exprs.Add(BuildMirBinaryExpr(
+        return block.Add(BuildMirBinaryExpr(
             Unit(), block, hir::BinaryOp::kEquality, lhs, rhs, answer_type));
       });
 }
@@ -1176,7 +1181,7 @@ auto UnionBodies::CaseEqual() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kCaseEqual, {WholeType(), WholeType()},
       Unit().builtins.bit1,
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         const mir::ExprId lhs = First(block, p[0]);
         const mir::ExprId rhs = First(block, p[1]);
         return BuildCaseEquality(Unit(), block, lhs, rhs);
@@ -1187,7 +1192,7 @@ auto UnionBodies::BitIdentical() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kBitIdentical, {WholeType(), WholeType()},
       Unit().builtins.machine_bool,
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         for (std::size_t i = 0; i < Members().size(); ++i) {
           const mir::ExprId lhs = Read(block, p[0], i);
           const mir::ExprId rhs = Read(block, p[1], i);
@@ -1195,7 +1200,7 @@ auto UnionBodies::BitIdentical() -> mir::CallableCode {
               BuildBitIdentity(Unit(), block, lhs, rhs);
           ReturnWhere(
               block, BuildConditionNot(Unit(), block, identical),
-              [&](mir::Block& taken) {
+              [&](mir::Builder taken) {
                 return BuildMachineBool(Unit(), taken, false);
               });
         }
@@ -1207,7 +1212,7 @@ auto UnionBodies::HasUnknown() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kHasUnknown, {WholeType()},
       Unit().builtins.machine_bool,
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         return BuildHasUnknown(Unit(), block, First(block, p[0]));
       });
 }
@@ -1216,7 +1221,7 @@ auto UnionBodies::BitWidth() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kBitstreamWidth, {WholeType()},
       Unit().builtins.int_type,
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         return BuildBitWidth(Unit(), block, First(block, p[0]));
       });
 }
@@ -1226,7 +1231,7 @@ auto UnionBodies::CountBits() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kCountBits, {WholeType(), control},
       Unit().builtins.int_type,
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         const mir::ExprId member = First(block, p[0]);
         const mir::ExprId control_set = Referent(block, p[1], control);
         return BuildBitCount(Unit(), block, member, control_set);
@@ -1236,7 +1241,7 @@ auto UnionBodies::CountBits() -> mir::CallableCode {
 auto UnionBodies::ToBitstream() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kToBitstream, {WholeType()}, Stream(),
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         auto stream = BuildToBitstream(Unit(), block, First(block, p[0]), {});
         if (!stream) {
           throw InternalError(
@@ -1251,8 +1256,8 @@ auto UnionBodies::FromBitstream() -> mir::CallableCode {
   const mir::TypeId stream = Stream();
   return Body(
       support::BuiltinFn::kFromBitstream, {stream}, WholeType(),
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        const mir::ExprId bits = block.exprs.Add(BuildPackedBitsRead(
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
+        const mir::ExprId bits = block.Add(BuildPackedBitsRead(
             Lowerer(), block, Referent(block, p[0], stream), 0, stream));
         return Holding(
             block, BuildFromBitstream(Unit(), block, bits, FirstType()));
@@ -1262,7 +1267,7 @@ auto UnionBodies::FromBitstream() -> mir::CallableCode {
 auto UnionBodies::Fold(support::BuiltinFn fold) -> mir::CallableCode {
   return Body(
       fold, {WholeType(), WholeType()}, WholeType(),
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         const mir::ExprId lhs = First(block, p[0]);
         const mir::ExprId rhs = First(block, p[1]);
         return Holding(
@@ -1275,7 +1280,7 @@ auto UnionBodies::FilledLike() -> mir::CallableCode {
   const mir::TypeId fill = FillType(Unit());
   return Body(
       support::BuiltinFn::kFilledLike, {WholeType(), fill}, WholeType(),
-      [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         const mir::ExprId member = First(block, p[0]);
         const mir::ExprId fill_value = Referent(block, p[1], fill);
         return Holding(
@@ -1323,7 +1328,7 @@ class TaggedUnionBodies : public OperationBodies {
   // is held.
   template <typename Held, typename Alike, typename Neither>
   auto ByHeldMember(
-      mir::CallableCode& code, mir::Block& block,
+      mir::CallableCode& code, mir::Builder block,
       std::span<const mir::LocalId> locals, Held held, Alike alike,
       Neither neither) -> mir::ExprId {
     const mir::TypeId tag_type = Unit().builtins.machine_int64;
@@ -1335,7 +1340,7 @@ class TaggedUnionBodies : public OperationBodies {
       block.AppendStmt(
           mir::LocalDeclStmt{
               .target = tag,
-              .init = block.exprs.Add(
+              .init = block.Add(
                   mir::MakeDiscriminantExpr(Whole(block, local), tag_type))});
       tags.push_back(tag);
     }
@@ -1344,9 +1349,9 @@ class TaggedUnionBodies : public OperationBodies {
       const mir::ExprId rhs = block.ReadLocal(other, tag_type);
       ReturnWhere(
           block,
-          block.exprs.Add(
+          block.Add(
               mir::MakeBinary(
-                  Unit(), block, mir::BinaryOp::kInequality, lhs, rhs,
+                  Unit(), block.Body(), mir::BinaryOp::kInequality, lhs, rhs,
                   boolean)),
           neither);
     }
@@ -1358,10 +1363,11 @@ class TaggedUnionBodies : public OperationBodies {
           Unit(), block, static_cast<std::int64_t>(i));
       ReturnWhere(
           block,
-          block.exprs.Add(
+          block.Add(
               mir::MakeBinary(
-                  Unit(), block, mir::BinaryOp::kEquality, lhs, rhs, boolean)),
-          [&](mir::Block& taken) {
+                  Unit(), block.Body(), mir::BinaryOp::kEquality, lhs, rhs,
+                  boolean)),
+          [&](mir::Builder taken) {
             return carries_nothing ? alike(taken) : held(taken, i);
           });
     }
@@ -1376,19 +1382,19 @@ auto TaggedUnionBodies::Equality() -> mir::CallableCode {
   return BodyOf(
       support::ValueOperator::kEquality, {WholeType(), WholeType()},
       answer_type,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return ByHeldMember(
             code, block, p,
-            [&](mir::Block& taken, std::size_t i) {
+            [&](mir::Builder taken, std::size_t i) {
               const mir::ExprId lhs = Member(taken, p[0], i);
               const mir::ExprId rhs = Member(taken, p[1], i);
               return PartEqual(taken, lhs, rhs, Members()[i]);
             },
-            [&](mir::Block& taken) {
+            [&](mir::Builder taken) {
               return KnownBit(taken, answer_type, true);
             },
-            [&](mir::Block& taken) {
+            [&](mir::Builder taken) {
               return KnownBit(taken, answer_type, false);
             });
       });
@@ -1398,19 +1404,19 @@ auto TaggedUnionBodies::CaseEqual() -> mir::CallableCode {
   const mir::TypeId bit = Unit().builtins.bit1;
   return BodyOf(
       support::BuiltinFn::kCaseEqual, {WholeType(), WholeType()}, bit,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return ByHeldMember(
             code, block, p,
-            [&](mir::Block& taken, std::size_t i) {
+            [&](mir::Builder taken, std::size_t i) {
               const mir::ExprId lhs = Member(taken, p[0], i);
               const mir::ExprId rhs = Member(taken, p[1], i);
               return BuildCaseEquality(Unit(), taken, lhs, rhs);
             },
-            [&](mir::Block& taken) {
+            [&](mir::Builder taken) {
               return mir::BuildBit1Literal(Unit(), taken, true);
             },
-            [&](mir::Block& taken) {
+            [&](mir::Builder taken) {
               return mir::BuildBit1Literal(Unit(), taken, false);
             });
       });
@@ -1420,19 +1426,19 @@ auto TaggedUnionBodies::BitIdentical() -> mir::CallableCode {
   const mir::TypeId boolean = Unit().builtins.machine_bool;
   return BodyOf(
       support::BuiltinFn::kBitIdentical, {WholeType(), WholeType()}, boolean,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return ByHeldMember(
             code, block, p,
-            [&](mir::Block& taken, std::size_t i) {
+            [&](mir::Builder taken, std::size_t i) {
               const mir::ExprId lhs = Member(taken, p[0], i);
               const mir::ExprId rhs = Member(taken, p[1], i);
               return BuildBitIdentity(Unit(), taken, lhs, rhs);
             },
-            [&](mir::Block& taken) {
+            [&](mir::Builder taken) {
               return BuildMachineBool(Unit(), taken, true);
             },
-            [&](mir::Block& taken) {
+            [&](mir::Builder taken) {
               return BuildMachineBool(Unit(), taken, false);
             });
       });
@@ -1442,17 +1448,17 @@ auto TaggedUnionBodies::HasUnknown() -> mir::CallableCode {
   const mir::TypeId boolean = Unit().builtins.machine_bool;
   return BodyOf(
       support::BuiltinFn::kHasUnknown, {WholeType()}, boolean,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return ByHeldMember(
             code, block, std::span{p}.first(1),
-            [&](mir::Block& taken, std::size_t i) {
+            [&](mir::Builder taken, std::size_t i) {
               return BuildHasUnknown(Unit(), taken, Member(taken, p[0], i));
             },
-            [&](mir::Block& taken) {
+            [&](mir::Builder taken) {
               return BuildMachineBool(Unit(), taken, false);
             },
-            [&](mir::Block& taken) {
+            [&](mir::Builder taken) {
               return BuildMachineBool(Unit(), taken, false);
             });
       });
@@ -1501,9 +1507,9 @@ class ArrayBodies : public OperationBodies {
 
   // The element at the position `position` of the array the parameter
   // `local` refers to, where it lies.
-  auto Element(mir::Block& block, mir::LocalId local, mir::ExprId position)
+  auto Element(mir::Builder block, mir::LocalId local, mir::ExprId position)
       -> mir::ExprId {
-    return block.exprs.Add(StepForRead(
+    return block.Add(StepForRead(
         Unit(), block,
         DescentStep{
             .to = StepToElement{.position = position},
@@ -1514,24 +1520,26 @@ class ArrayBodies : public OperationBodies {
   // A loop over every position of the array, after what `block` holds, whose
   // body `each(body, position)` states.
   template <typename Each>
-  void ForEachPosition(mir::CallableCode& code, mir::Block& block, Each each) {
+  void ForEachPosition(mir::CallableCode& code, mir::Builder block, Each each) {
     const mir::TypeId position_type = mir::PositionType(Unit().types);
     const mir::LocalId position = code.AddLocal(position_type);
     mir::Block body;
-    each(body, body.ReadLocal(position, position_type));
-    const mir::BlockId scope = block.child_scopes.Add(std::move(body));
+    mir::Builder body_builder = block.Into(body);
+    each(body_builder, body_builder.ReadLocal(position, position_type));
+    const mir::BlockId scope = block.AddScope(std::move(body));
     const mir::ExprId tested = block.ReadLocal(position, position_type);
     const mir::ExprId bound =
         BuildConstantPosition(Unit(), block, static_cast<std::int64_t>(count_));
-    const mir::ExprId within = block.exprs.Add(
+    const mir::ExprId within = block.Add(
         mir::MakeBinary(
-            Unit(), block, mir::BinaryOp::kLessThan, tested, bound,
+            Unit(), block.Body(), mir::BinaryOp::kLessThan, tested, bound,
             OneBitAnswerType(Unit(), std::array{position_type})));
     const mir::ExprId current = block.ReadLocal(position, position_type);
     const mir::ExprId one = BuildConstantPosition(Unit(), block, 1);
-    const mir::ExprId next = block.exprs.Add(
+    const mir::ExprId next = block.Add(
         mir::MakeBinary(
-            Unit(), block, mir::BinaryOp::kAdd, current, one, position_type));
+            Unit(), block.Body(), mir::BinaryOp::kAdd, current, one,
+            position_type));
     std::vector<mir::ForInit> init;
     init.emplace_back(
         mir::ForInitDecl{
@@ -1541,7 +1549,7 @@ class ArrayBodies : public OperationBodies {
         mir::ForStmt{
             .init = std::move(init),
             .condition = ReduceToCondition(Unit(), block, within),
-            .step = {block.exprs.Add(
+            .step = {block.Add(
                 mir::MakeAssignExpr(
                     Unit().builtins, block.LocalPlace(position, position_type),
                     next))},
@@ -1552,17 +1560,17 @@ class ArrayBodies : public OperationBodies {
   // position)`, kept in a local of `type` that starts as `first` builds it.
   template <typename First, typename Each, typename Combine>
   auto Reduced(
-      mir::CallableCode& code, mir::Block& block, mir::TypeId type, First first,
-      Each each, Combine combine) -> mir::ExprId {
+      mir::CallableCode& code, mir::Builder block, mir::TypeId type,
+      First first, Each each, Combine combine) -> mir::ExprId {
     const mir::LocalId kept = code.AddLocal(type);
     block.AppendStmt(mir::LocalDeclStmt{.target = kept, .init = first(block)});
-    ForEachPosition(code, block, [&](mir::Block& body, mir::ExprId position) {
+    ForEachPosition(code, block, [&](mir::Builder body, mir::ExprId position) {
       const mir::ExprId so_far = body.ReadLocal(kept, type);
       const mir::ExprId element = each(body, position);
       const mir::ExprId combined = combine(body, so_far, element);
       body.AppendStmt(
           mir::ExprStmt{
-              .expr = body.exprs.Add(
+              .expr = body.Add(
                   mir::MakeAssignExpr(
                       Unit().builtins, body.LocalPlace(kept, type),
                       combined))});
@@ -1572,19 +1580,19 @@ class ArrayBodies : public OperationBodies {
 
   // The array whose element at every position `each(body, position)` builds.
   template <typename Each>
-  auto Built(mir::CallableCode& code, mir::Block& block, Each each)
+  auto Built(mir::CallableCode& code, mir::Builder block, Each each)
       -> mir::ExprId {
     const mir::LocalId built = code.AddLocal(WholeType());
     block.AppendStmt(
         mir::LocalDeclStmt{
             .target = built,
-            .init = block.exprs.Add(
-                BuildDefaultValueExpr(Unit(), block, WholeType()))});
-    ForEachPosition(code, block, [&](mir::Block& body, mir::ExprId position) {
+            .init =
+                block.Add(BuildDefaultValueExpr(Unit(), block, WholeType()))});
+    ForEachPosition(code, block, [&](mir::Builder body, mir::ExprId position) {
       const mir::ExprId element = each(body, position);
       body.AppendStmt(
           mir::ExprStmt{
-              .expr = body.exprs.Add(BuildStoreExpr(
+              .expr = body.Add(BuildStoreExpr(
                   Unit(), body,
                   AccessPath{
                       .owner = body.LocalPlace(built, WholeType()),
@@ -1605,19 +1613,19 @@ class ArrayBodies : public OperationBodies {
     const StreamShape shape = *FixedStreamShapeOf(Unit(), WholeType());
     return mir::PackedVectorOf(Unit().types, shape.width, shape.state_kind);
   }
-  auto ElementStart(mir::Block& block, mir::ExprId position) -> mir::ExprId {
+  auto ElementStart(mir::Builder block, mir::ExprId position) -> mir::ExprId {
     const mir::TypeId position_type = mir::PositionType(Unit().types);
     const auto width = static_cast<std::int64_t>(ElementStream().width);
     const mir::ExprId last_start = BuildConstantPosition(
         Unit(), block, (static_cast<std::int64_t>(count_) - 1) * width);
     const mir::ExprId stride = BuildConstantPosition(Unit(), block, width);
-    const mir::ExprId offset = block.exprs.Add(
+    const mir::ExprId offset = block.Add(
         mir::MakeBinary(
-            Unit(), block, mir::BinaryOp::kMul, position, stride,
+            Unit(), block.Body(), mir::BinaryOp::kMul, position, stride,
             position_type));
-    return block.exprs.Add(
+    return block.Add(
         mir::MakeBinary(
-            Unit(), block, mir::BinaryOp::kSub, last_start, offset,
+            Unit(), block.Body(), mir::BinaryOp::kSub, last_start, offset,
             position_type));
   }
   // The bits of the stream one element takes.
@@ -1636,17 +1644,17 @@ auto ArrayBodies::Equality() -> mir::CallableCode {
   return BodyOf(
       support::ValueOperator::kEquality, {WholeType(), WholeType()},
       answer_type,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return Reduced(
             code, block, answer_type,
-            [&](mir::Block& at) { return KnownBit(at, answer_type, true); },
-            [&](mir::Block& body, mir::ExprId position) {
+            [&](mir::Builder at) { return KnownBit(at, answer_type, true); },
+            [&](mir::Builder body, mir::ExprId position) {
               const mir::ExprId lhs = Element(body, p[0], position);
               const mir::ExprId rhs = Element(body, p[1], position);
               return PartEqual(body, lhs, rhs, ElementType());
             },
-            [&](mir::Block& body, mir::ExprId kept, mir::ExprId each) {
+            [&](mir::Builder body, mir::ExprId kept, mir::ExprId each) {
               return BuildMirLogicalAnd(
                   Unit(), body, answer_type, std::vector{kept, each});
             });
@@ -1657,19 +1665,19 @@ auto ArrayBodies::CaseEqual() -> mir::CallableCode {
   const mir::TypeId bit = Unit().builtins.bit1;
   return BodyOf(
       support::BuiltinFn::kCaseEqual, {WholeType(), WholeType()}, bit,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return Reduced(
             code, block, bit,
-            [&](mir::Block& at) {
+            [&](mir::Builder at) {
               return mir::BuildBit1Literal(Unit(), at, true);
             },
-            [&](mir::Block& body, mir::ExprId position) {
+            [&](mir::Builder body, mir::ExprId position) {
               const mir::ExprId lhs = Element(body, p[0], position);
               const mir::ExprId rhs = Element(body, p[1], position);
               return BuildCaseEquality(Unit(), body, lhs, rhs);
             },
-            [&](mir::Block& body, mir::ExprId kept, mir::ExprId each) {
+            [&](mir::Builder body, mir::ExprId kept, mir::ExprId each) {
               return BuildMirLogicalAnd(
                   Unit(), body, bit, std::vector{kept, each});
             });
@@ -1680,17 +1688,17 @@ auto ArrayBodies::BitIdentical() -> mir::CallableCode {
   const mir::TypeId boolean = Unit().builtins.machine_bool;
   return BodyOf(
       support::BuiltinFn::kBitIdentical, {WholeType(), WholeType()}, boolean,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return Reduced(
             code, block, boolean,
-            [&](mir::Block& at) { return BuildMachineBool(Unit(), at, true); },
-            [&](mir::Block& body, mir::ExprId position) {
+            [&](mir::Builder at) { return BuildMachineBool(Unit(), at, true); },
+            [&](mir::Builder body, mir::ExprId position) {
               const mir::ExprId lhs = Element(body, p[0], position);
               const mir::ExprId rhs = Element(body, p[1], position);
               return BuildBitIdentity(Unit(), body, lhs, rhs);
             },
-            [&](mir::Block& body, mir::ExprId kept, mir::ExprId each) {
+            [&](mir::Builder body, mir::ExprId kept, mir::ExprId each) {
               return AllHold(Unit(), body, std::vector{kept, each});
             });
       });
@@ -1700,16 +1708,18 @@ auto ArrayBodies::HasUnknown() -> mir::CallableCode {
   const mir::TypeId boolean = Unit().builtins.machine_bool;
   return BodyOf(
       support::BuiltinFn::kHasUnknown, {WholeType()}, boolean,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return Reduced(
             code, block, boolean,
-            [&](mir::Block& at) { return BuildMachineBool(Unit(), at, false); },
-            [&](mir::Block& body, mir::ExprId position) {
+            [&](mir::Builder at) {
+              return BuildMachineBool(Unit(), at, false);
+            },
+            [&](mir::Builder body, mir::ExprId position) {
               return BuildHasUnknown(
                   Unit(), body, Element(body, p[0], position));
             },
-            [&](mir::Block& body, mir::ExprId kept, mir::ExprId each) {
+            [&](mir::Builder body, mir::ExprId kept, mir::ExprId each) {
               return AnyHolds(Unit(), body, std::vector{kept, each});
             });
       });
@@ -1721,18 +1731,21 @@ auto ArrayBodies::BitWidth() -> mir::CallableCode {
   const mir::TypeId count = Unit().builtins.int_type;
   return BodyOf(
       support::BuiltinFn::kBitstreamWidth, {WholeType()}, count,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return Reduced(
             code, block, count,
-            [&](mir::Block& at) { return mir::BuildIntLiteral(Unit(), at, 0); },
-            [&](mir::Block& body, mir::ExprId position) {
+            [&](mir::Builder at) {
+              return mir::BuildIntLiteral(Unit(), at, 0);
+            },
+            [&](mir::Builder body, mir::ExprId position) {
               return BuildBitWidth(Unit(), body, Element(body, p[0], position));
             },
-            [&](mir::Block& body, mir::ExprId kept, mir::ExprId each) {
-              return body.exprs.Add(
+            [&](mir::Builder body, mir::ExprId kept, mir::ExprId each) {
+              return body.Add(
                   mir::MakeBinary(
-                      Unit(), body, mir::BinaryOp::kAdd, kept, each, count));
+                      Unit(), body.Body(), mir::BinaryOp::kAdd, kept, each,
+                      count));
             });
       });
 }
@@ -1742,20 +1755,23 @@ auto ArrayBodies::CountBits() -> mir::CallableCode {
   const mir::TypeId control = BitCountControlType(Unit());
   return BodyOf(
       support::BuiltinFn::kCountBits, {WholeType(), control}, count,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         return Reduced(
             code, block, count,
-            [&](mir::Block& at) { return mir::BuildIntLiteral(Unit(), at, 0); },
-            [&](mir::Block& body, mir::ExprId position) {
+            [&](mir::Builder at) {
+              return mir::BuildIntLiteral(Unit(), at, 0);
+            },
+            [&](mir::Builder body, mir::ExprId position) {
               const mir::ExprId element = Element(body, p[0], position);
               const mir::ExprId control_set = Referent(body, p[1], control);
               return BuildBitCount(Unit(), body, element, control_set);
             },
-            [&](mir::Block& body, mir::ExprId kept, mir::ExprId each) {
-              return body.exprs.Add(
+            [&](mir::Builder body, mir::ExprId kept, mir::ExprId each) {
+              return body.Add(
                   mir::MakeBinary(
-                      Unit(), body, mir::BinaryOp::kAdd, kept, each, count));
+                      Unit(), body.Body(), mir::BinaryOp::kAdd, kept, each,
+                      count));
             });
       });
 }
@@ -1766,7 +1782,7 @@ auto ArrayBodies::ToBitstream() -> mir::CallableCode {
   const mir::TypeId stream = Stream();
   return BodyOf(
       support::BuiltinFn::kToBitstream, {WholeType()}, stream,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         const mir::LocalId bits = code.AddLocal(stream);
         block.AppendStmt(
@@ -1775,7 +1791,7 @@ auto ArrayBodies::ToBitstream() -> mir::CallableCode {
                 .init = mir::BuildIntegralLiteral(
                     Unit(), block, stream, mir::IntegralConstant{})});
         ForEachPosition(
-            code, block, [&](mir::Block& body, mir::ExprId position) {
+            code, block, [&](mir::Builder body, mir::ExprId position) {
               auto element = BuildToBitstream(
                   Unit(), body, Element(body, p[0], position), {});
               if (!element) {
@@ -1789,7 +1805,7 @@ auto ArrayBodies::ToBitstream() -> mir::CallableCode {
               const mir::ExprId value = body.AsValue(Unit().types, *element);
               body.AppendStmt(
                   mir::ExprStmt{
-                      .expr = body.exprs.Add(BuildStoreExpr(
+                      .expr = body.Add(BuildStoreExpr(
                           Unit(), body,
                           AccessPath{
                               .owner = owner,
@@ -1808,13 +1824,13 @@ auto ArrayBodies::FromBitstream() -> mir::CallableCode {
   const mir::TypeId stream = Stream();
   return BodyOf(
       support::BuiltinFn::kFromBitstream, {stream}, WholeType(),
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
-        return Built(code, block, [&](mir::Block& body, mir::ExprId position) {
+        return Built(code, block, [&](mir::Builder body, mir::ExprId position) {
           const mir::ExprId start = ElementStart(body, position);
           const mir::TypeId part_type = ElementBits();
           const mir::ExprId source = Referent(body, p[0], stream);
-          const mir::ExprId bits = body.exprs.Add(StepRead(
+          const mir::ExprId bits = body.Add(StepRead(
               Unit(), body,
               DescentStep{
                   .to = StepToBits{.start = start}, .part_type = part_type},
@@ -1830,7 +1846,7 @@ auto ArrayBodies::ToBitVec() -> mir::CallableCode {
   const mir::TypeId run = Unit().builtins.bit_vec;
   return BodyOf(
       support::BuiltinFn::kToBitVec, {WholeType()}, run,
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         // The run is as wide as the array's stream before any element is
         // written, so each element's bits are written where they lie and none
@@ -1846,7 +1862,7 @@ auto ArrayBodies::ToBitVec() -> mir::CallableCode {
         const mir::LocalId at =
             DeclaredCount(code, block, CountLiteral(block, 0));
         ForEachPosition(
-            code, block, [&](mir::Block& body, mir::ExprId position) {
+            code, block, [&](mir::Builder body, mir::ExprId position) {
               auto element = BuildToBitstream(
                   Unit(), body, Element(body, p[0], position), {});
               if (!element) {
@@ -1881,7 +1897,7 @@ auto ArrayBodies::FromBitVec() -> mir::CallableCode {
   const std::uint64_t empty = StreamFillOf(Unit(), ElementType()).empty_width;
   return BodyOf(
       support::BuiltinFn::kFromBitVec, {run}, WholeType(),
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         const mir::LocalId length = DeclaredCount(
             code, block,
@@ -1890,7 +1906,7 @@ auto ArrayBodies::FromBitVec() -> mir::CallableCode {
             DeclaredCount(code, block, CountLiteral(block, 0));
         const mir::LocalId after = DeclaredCount(
             code, block, CountLiteral(block, (count_ - 1) * empty));
-        return Built(code, block, [&](mir::Block& body, mir::ExprId) {
+        return Built(code, block, [&](mir::Builder body, mir::ExprId) {
           const mir::LocalId allotted =
               PartAllotment(code, body, length, at, CountNow(body, after));
           const mir::ExprId source = Referent(body, p[0], run);
@@ -1923,9 +1939,9 @@ auto ArrayBodies::FromBitVec() -> mir::CallableCode {
 auto ArrayBodies::Fold(support::BuiltinFn fold) -> mir::CallableCode {
   return BodyOf(
       fold, {WholeType(), WholeType()}, WholeType(),
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
-        return Built(code, block, [&](mir::Block& body, mir::ExprId position) {
+        return Built(code, block, [&](mir::Builder body, mir::ExprId position) {
           const mir::ExprId lhs = Element(body, p[0], position);
           const mir::ExprId rhs = Element(body, p[1], position);
           return BuildValueOperation(
@@ -1938,9 +1954,9 @@ auto ArrayBodies::FilledLike() -> mir::CallableCode {
   const mir::TypeId fill = FillType(Unit());
   return BodyOf(
       support::BuiltinFn::kFilledLike, {WholeType(), fill}, WholeType(),
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
-        return Built(code, block, [&](mir::Block& body, mir::ExprId position) {
+        return Built(code, block, [&](mir::Builder body, mir::ExprId position) {
           const mir::ExprId element = Element(body, p[0], position);
           const mir::ExprId fill_value = Referent(body, p[1], fill);
           return BuildFilled(Unit(), body, element, ElementType(), fill_value);
@@ -1954,12 +1970,12 @@ auto ArrayBodies::TakePositions() -> mir::CallableCode {
   return BodyOf(
       support::BuiltinFn::kTakePositions,
       {WholeType(), WholeType(), number, number}, WholeType(),
-      [&](mir::CallableCode& code, mir::Block& block,
+      [&](mir::CallableCode& code, mir::Builder block,
           const std::vector<mir::LocalId>& p) {
         const HeldRun run = HoldRun(code, block, p[2], p[3]);
         const std::uint64_t per_element =
             PositionCountOf(Unit(), ElementType());
-        return Built(code, block, [&](mir::Block& body, mir::ExprId position) {
+        return Built(code, block, [&](mir::Builder body, mir::ExprId position) {
           const mir::ExprId into = Element(body, p[0], position);
           const mir::ExprId from = Element(body, p[1], position);
           const mir::ExprId index = BuildToInt64Call(Unit(), body, position);
@@ -2061,7 +2077,7 @@ auto ReferenceTo(const mir::CompilationUnit& unit, mir::TypeId type)
 }
 
 auto BuildBitIdentity(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId lhs,
     mir::ExprId rhs) -> mir::ExprId {
   return BuildValueOperation(
       unit, block, support::BuiltinFn::kBitIdentical, lhs, {rhs},
@@ -2223,11 +2239,11 @@ auto IsWholeValueOperation(support::ValueOperation operation) -> bool {
 }
 
 auto BuildValueOperation(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::BuiltinFn entry, std::optional<mir::ExprId> receiver,
     std::vector<mir::ExprId> operands, mir::TypeId result) -> mir::ExprId {
   const mir::TypeId deciding =
-      receiver.has_value() ? block.exprs.Get(*receiver).type : result;
+      receiver.has_value() ? block.Get(*receiver).type : result;
   if (std::optional<mir::DirectTarget> own =
           OwnOperationTarget(unit, deciding, entry)) {
     return OwnOperationCall(
@@ -2240,16 +2256,16 @@ auto BuildValueOperation(
       receiver.transform([&](mir::ExprId named) {
         return mir::ReadIfOverlaid(unit, block, named);
       });
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, entry, object, std::move(operands), result));
+          unit, block.Body(), entry, object, std::move(operands), result));
 }
 
 auto BuildEquality(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::ValueOperator comparison, mir::ExprId lhs, mir::ExprId rhs,
     mir::TypeId result) -> mir::ExprId {
-  const mir::TypeId type = block.exprs.Get(lhs).type;
+  const mir::TypeId type = block.Get(lhs).type;
   if (std::optional<mir::DirectTarget> own =
           OwnOperationTarget(unit, type, comparison)) {
     return ConvertToType(
@@ -2271,12 +2287,12 @@ auto BuildEquality(
   const mir::BinaryOp op = operator_of();
   const mir::ExprId lhs_value = block.AsValue(unit.types, lhs);
   const mir::ExprId rhs_value = block.AsValue(unit.types, rhs);
-  return block.exprs.Add(
-      mir::MakeBinary(unit, block, op, lhs_value, rhs_value, result));
+  return block.Add(
+      mir::MakeBinary(unit, block.Body(), op, lhs_value, rhs_value, result));
 }
 
 auto BuildCaseEquality(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId lhs,
     mir::ExprId rhs) -> mir::ExprId {
   return BuildValueOperation(
       unit, block, support::BuiltinFn::kCaseEqual, lhs, {rhs},
@@ -2284,7 +2300,7 @@ auto BuildCaseEquality(
 }
 
 auto BuildCaseComparison(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     hir::CaseKeyword keyword, mir::ExprId value, mir::ExprId label)
     -> mir::ExprId {
   const auto entry = [&] {
@@ -2303,16 +2319,16 @@ auto BuildCaseComparison(
 }
 
 auto BuildUnknownTest(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kFromBool, std::nullopt,
+          unit, block.Body(), support::BuiltinFn::kFromBool, std::nullopt,
           {BuildHasUnknown(unit, block, value)}, unit.builtins.bit1));
 }
 
 auto BuildBitCount(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value,
     mir::ExprId control) -> mir::ExprId {
   return BuildValueOperation(
       unit, block, support::BuiltinFn::kCountBits, value, {control},
@@ -2320,10 +2336,10 @@ auto BuildBitCount(
 }
 
 auto BuildBitWidth(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId {
   // An integral value is as many bits as its type is wide.
-  const mir::Type& type = unit.types.Get(block.exprs.Get(value).type);
+  const mir::Type& type = unit.types.Get(block.Get(value).type);
   if (type.IsIntegral()) {
     return mir::BuildIntLiteral(
         unit, block, static_cast<std::int64_t>(type.Integral().bit_width));

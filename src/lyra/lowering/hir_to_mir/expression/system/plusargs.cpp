@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -35,18 +36,18 @@ auto LowerTestPlusargs(
     -> diag::Result<mir::Expr> {
   const auto& hir_exprs = lowerer.HirExprs();
   auto& unit = lowerer.Owner().Unit();
-  auto& body = *frame.current_block;
+  mir::Builder body = frame.Builder();
 
   auto user_or = lowerer.LowerExpr(hir_exprs.Get(operands[0]), frame);
   if (!user_or) return std::unexpected(std::move(user_or.error()));
-  const mir::ExprId raw_user_id = body.exprs.Add(*std::move(user_or));
+  const mir::ExprId raw_user_id = body.Add(*std::move(user_or));
   // A packed literal / integral variable is a legal user_string here
   // (LRM 21.6); the runtime signature is on SV `string`, so the operand
   // gets the value-layer conversion.
   const mir::ExprId user_id =
       ConvertToType(unit, body, raw_user_id, unit.builtins.string);
   const mir::ExprId runtime_id =
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+      body.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -69,12 +70,12 @@ auto LowerValuePlusargs(
   // what the clause requires of it (LRM 21.6). Both are steps of one block
   // expression, so the call stands wherever the source wrote it.
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   const WalkFrame& step_frame = steps.Frame();
 
   auto user_or = lowerer.LowerExpr(hir_exprs.Get(operands[0]), step_frame);
   if (!user_or) return std::unexpected(std::move(user_or.error()));
-  const mir::ExprId raw_user_id = body.exprs.Add(*std::move(user_or));
+  const mir::ExprId raw_user_id = body.Add(*std::move(user_or));
   // A packed literal / integral variable is a legal user_string here
   // (LRM 21.6); the runtime signature is on SV `string`, so the operand
   // gets the value-layer conversion.
@@ -98,7 +99,7 @@ auto LowerValuePlusargs(
       unit.builtins.int_type);
   const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
   const mir::ExprId runtime_id =
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      body.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   // A plusarg is converted into an integral destination by its size and into
   // a string as text, so each has an entry.
   const support::BuiltinFn entry =

@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -161,7 +162,7 @@ auto LowerExprStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ExprStmt& e) -> diag::Result<mir::Stmt> {
   const hir::ProceduralBody& hir_proc = process.HirBody();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   // An assignment statement to a join of lvalues (LRM A.8.5) is a block of its
   // own rather than an expression whose value nobody reads.
@@ -205,8 +206,8 @@ auto LowerExprStmt(
     }
     auto call_or = process.LowerExpr(inner, frame);
     if (!call_or) return std::unexpected(std::move(call_or.error()));
-    const mir::ExprId call_id = block.exprs.Add(*std::move(call_or));
-    const mir::TypeId call_type = block.exprs.Get(call_id).type;
+    const mir::ExprId call_id = block.Add(*std::move(call_or));
+    const mir::TypeId call_type = block.Get(call_id).type;
     // What the call answers says what the statement is: a task enable's
     // execution, awaited (LRM 13.3); a wait, stopped at (LRM 9.7 `await`); or
     // a value nothing reads.
@@ -260,8 +261,8 @@ auto LowerExprStmt(
   if (!expr_or) {
     return std::unexpected(std::move(expr_or.error()));
   }
-  const mir::ExprId value = evaluation.Body().exprs.Add(*std::move(expr_or));
-  if (!evaluation.Body().root_stmts.empty()) {
+  const mir::ExprId value = evaluation.Body().Add(*std::move(expr_or));
+  if (!evaluation.Body().Body().root_stmts.empty()) {
     evaluation.Body().AppendStmt(mir::ExprStmt{.expr = value});
     mir::Stmt stmt = evaluation.BuildStatement();
     stmt.label = std::move(label);
@@ -269,7 +270,7 @@ auto LowerExprStmt(
   }
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::ExprStmt{.expr = block.exprs.Add(evaluation.Build(value))}};
+      .data = mir::ExprStmt{.expr = block.Add(evaluation.Build(value))}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

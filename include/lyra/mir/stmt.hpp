@@ -10,6 +10,7 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/pool_id.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -171,9 +172,12 @@ using StmtData = std::variant<
     FinallyStmt, IfStmt, SwitchStmt, ForStmt, WhileStmt, DoWhileStmt, BreakStmt,
     ContinueStmt, ReturnStmt>;
 
+// `span` is the piece of source the statement was lowered from, as an
+// expression's is.
 struct Stmt {
   std::optional<std::string> label;
   StmtData data;
+  diag::SourceSpan span{};
 };
 
 // Whether `expr` names storage holding a value, which is what a read reads.
@@ -198,121 +202,6 @@ struct Block {
 
   [[nodiscard]] auto GetExprType(ExprId id) const -> TypeId {
     return exprs.Get(id).type;
-  }
-
-  // The value the place `place` holds, read where it stands.
-  auto Read(ExprId place) -> ExprId {
-    return exprs.Add(MakeCopyExpr(place, exprs.Get(place).type));
-  }
-
-  // `id` where a value is wanted: read, where it names storage that holds a
-  // value, and itself otherwise -- clang's `DefaultLvalueConversion`, for an
-  // operand that may be either. Storage with no value to read stands as itself.
-  auto AsValue(const TypePool& types, ExprId id) -> ExprId {
-    return IsReadablePlace(types, exprs.Get(id)) ? Read(id) : id;
-  }
-
-  // The same for an expression not yet added: the read of it where it names
-  // storage holding a value, and it as it stands otherwise.
-  auto AsValue(const TypePool& types, Expr expr) -> Expr {
-    if (!IsReadablePlace(types, expr)) {
-      return expr;
-    }
-    const TypeId type = expr.type;
-    return MakeCopyExpr(exprs.Add(std::move(expr)), type);
-  }
-
-  // The place the local `local`, of type `type`, is.
-  auto LocalPlace(LocalId local, TypeId type) -> ExprId {
-    return exprs.Add(MakeLocalRefExpr(local, type));
-  }
-
-  // The value the local `local`, of type `type`, holds.
-  auto ReadLocal(LocalId local, TypeId type) -> ExprId {
-    return Read(LocalPlace(local, type));
-  }
-
-  // What `*pointer` opens `pointer` as: a value, read where it names storage,
-  // as clang reads the operand of builtin `*p`, and an owner as the object
-  // C++ `*unique_ptr` enters `operator*` on.
-  auto DerefOperand(const TypePool& types, ExprId pointer) -> ExprId {
-    return types.Get(exprs.Get(pointer).type).OwnsPointee()
-               ? pointer
-               : AsValue(types, pointer);
-  }
-
-  // The storage the capability wrapper `wrapper` represents, holding a
-  // `value`: the dereference of the reference the wrapper answers when asked
-  // for what it holds, the ask added here and the dereference left to add.
-  auto WrapperContents(const TypePool& types, ExprId wrapper, TypeId value)
-      -> Expr {
-    return MakeDerefExpr(
-        exprs.Add(MakeCellGetCallExpr(
-            wrapper,
-            types.Intern(
-                Type{ReferenceType{
-                    .referent = value, .mutability = Mutability::kReadOnly}}))),
-        value);
-  }
-
-  // Where `wrapper` keeps what its storage held in the Preponed region of the
-  // current time slot (LRM 16.5.1), reached the same way: the dereference of
-  // the reference the wrapper answers to that value.
-  auto SampledWrapperContents(
-      const TypePool& types, ExprId wrapper, TypeId value) -> Expr {
-    return MakeDerefExpr(
-        exprs.Add(MakeCellSampledGetCallExpr(
-            wrapper,
-            types.Intern(
-                Type{ReferenceType{
-                    .referent = value, .mutability = Mutability::kReadOnly}}))),
-        value);
-  }
-
-  // `*pointer`, the storage `pointer` reaches.
-  auto Deref(const TypePool& types, ExprId pointer, TypeId referent_type)
-      -> ExprId {
-    return exprs.Add(
-        MakeDerefExpr(DerefOperand(types, pointer), referent_type));
-  }
-
-  void AddRootStmt(StmtId id) {
-    root_stmts.push_back(id);
-  }
-  auto AppendStmt(Stmt stmt) -> StmtId {
-    const StmtId id = stmts.Add(std::move(stmt));
-    root_stmts.push_back(id);
-    return id;
-  }
-
-  // Append a label-less statement to the body in one step: stage it in the
-  // stmts arena and register it as a root statement. Encapsulates the
-  // stage-then-register pairing so a synthesized statement cannot be added to
-  // the arena yet left out of the executed sequence.
-  auto AppendStmt(StmtData data) -> StmtId {
-    return AppendStmt(Stmt{.label = std::nullopt, .data = std::move(data)});
-  }
-
-  // Append an `if (cond) <then_body>` statement, registering `then_body` as a
-  // child scope of this scope and consuming it. The IfStmt's then_scope id
-  // resolves against this scope's child_scopes.
-  auto AppendIfThen(ExprId cond, Block then_body) -> StmtId {
-    const BlockId then_scope_id = child_scopes.Add(std::move(then_body));
-    return AppendStmt(
-        IfStmt{
-            .condition = cond,
-            .then_scope = then_scope_id,
-            .else_scope = std::nullopt});
-  }
-
-  // Append `body` paired with a `cleanup` that runs on every way out of it,
-  // registering both as child scopes of this scope and consuming them. This is
-  // the second half of an extent whose first half -- whatever entering it does
-  // -- the caller has already appended here.
-  auto AppendFinally(Block body, Block cleanup) -> StmtId {
-    const BlockId body_id = child_scopes.Add(std::move(body));
-    const BlockId cleanup_id = child_scopes.Add(std::move(cleanup));
-    return AppendStmt(FinallyStmt{.body = body_id, .cleanup = cleanup_id});
   }
 };
 

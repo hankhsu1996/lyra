@@ -7,6 +7,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/structural_data_object.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -133,7 +134,7 @@ auto AggregateNetEntry(NetFold fold) -> support::BuiltinFn {
 }  // namespace
 
 auto BuildNetInstall(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     const hir::StructuralNetDecl& net, mir::ExprId target, const NetData& data,
     mir::TypeId void_type) -> mir::Expr {
   const NetTypeResolution resolution = ResolutionOf(net);
@@ -158,7 +159,7 @@ auto BuildNetInstall(
 }
 
 auto BuildStrengthOperand(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::StrengthLevel level) -> mir::ExprId {
   return mir::BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(level));

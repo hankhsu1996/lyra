@@ -195,8 +195,15 @@ what the construct means.
   follows from these by one rule, which the lowering to LIR and the C++ target both apply.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
+- Where in the source each expression and statement came from: the front end's own value for the
+  piece of source it was lowered from, or no place where it was lowered from none, as rustc's THIR
+  carries a span on every expression. A node is given it as it is built, by whatever lowers that
+  piece of source, and a rewrite gives what it builds the span of the node it answers, so a node
+  moved by a rewrite keeps it. It changes nothing a node means; each consumer says it to what fails
+  while that node is translated, and only the front end opens it.
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
-  not executable, and nothing asserts on its wording.
+  not executable, and nothing asserts on its wording. It prints no source span, which only the front
+  end can read.
 
 ## Does Not Own
 

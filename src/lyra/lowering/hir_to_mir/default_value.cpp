@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/real_literal.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -51,8 +52,8 @@ namespace {
 // the container's element type holding them in order. The container is what
 // the construction makes of the list, never what the list itself is.
 auto BuildElementList(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    std::vector<mir::ExprId> elements) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::TypeId array_type, std::vector<mir::ExprId> elements) -> mir::ExprId {
   const mir::TypeId element_type =
       RequiredContainerElementType(unit, array_type);
   // Each item is assigned to the element it lands in (LRM 10.8, 10.9.1).
@@ -61,7 +62,7 @@ auto BuildElementList(
   }
   const mir::TypeId list_type =
       mir::MachineArrayOf(unit.types, element_type, elements.size());
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(elements)},
           .type = list_type});
@@ -94,23 +95,23 @@ auto BuildContainerFromElements(
 // an unpacked array is the construction that takes them, with the type
 // deciding which of the two a component list is.
 auto MaterializeConstant(
-    const UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId hir_type,
+    const UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId hir_type,
     const hir::ConstantValue& value) -> mir::Expr {
   const mir::TypeId mir_type = unit_lowerer.TranslateType(hir_type);
   return std::visit(
       Overloaded{
           [&](const hir::IntegralConstant& c) -> mir::Expr {
-            return block.exprs.Get(
+            return block.Get(
                 mir::BuildIntegralLiteral(
                     unit_lowerer.Unit(), block, mir_type,
                     LowerHirIntegralConstant(c)));
           },
           [&](hir::RealBits real) -> mir::Expr {
-            return block.exprs.Get(BuildRealLiteral(
+            return block.Get(BuildRealLiteral(
                 unit_lowerer.Unit(), block, mir_type, real.Value()));
           },
           [&](const std::string& text) -> mir::Expr {
-            const mir::ExprId literal = block.exprs.Add(
+            const mir::ExprId literal = block.Add(
                 mir::Expr{
                     .data = mir::StringLiteral{.value = text},
                     .type = mir_type});
@@ -128,7 +129,7 @@ auto MaterializeConstant(
               std::vector<mir::ExprId> component_ids;
               component_ids.reserve(components.size());
               for (std::size_t i = 0; i < components.size(); ++i) {
-                component_ids.push_back(block.exprs.Add(MaterializeConstant(
+                component_ids.push_back(block.Add(MaterializeConstant(
                     unit_lowerer, block, structure.fields[i].type,
                     components[i])));
               }
@@ -140,7 +141,7 @@ auto MaterializeConstant(
               std::vector<mir::ExprId> element_ids;
               element_ids.reserve(components.size());
               for (const auto& component : components) {
-                element_ids.push_back(block.exprs.Add(MaterializeConstant(
+                element_ids.push_back(block.Add(MaterializeConstant(
                     unit_lowerer, block, ua->element_type, component)));
               }
               return BuildArrayConstructionCall(
@@ -157,7 +158,7 @@ auto MaterializeConstant(
 }  // namespace
 
 auto DefaultValueOf(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type)
     -> std::expected<mir::Expr, std::string_view> {
   using Answer = std::expected<mir::Expr, std::string_view>;
   const auto& ty = unit.types.Get(type);
@@ -170,7 +171,7 @@ auto DefaultValueOf(
       if (!part) {
         return part;
       }
-      parts.push_back(block.exprs.Add(*std::move(part)));
+      parts.push_back(block.Add(*std::move(part)));
     }
     return mir::Expr{
         .data = mir::CompositeExpr{.parts = std::move(parts)}, .type = type};
@@ -187,7 +188,7 @@ auto DefaultValueOf(
   return ty.Visit(
       Overloaded{
           [&](const mir::IntegralType& integral) -> Answer {
-            return block.exprs.Get(
+            return block.Get(
                 mir::BuildIntegralLiteral(
                     unit, block, type, DefaultIntegralConstant(integral)));
           },
@@ -195,14 +196,14 @@ auto DefaultValueOf(
           // the default off the state domain, which the base carries and the
           // names do not affect.
           [&](const mir::EnumType& e) -> Answer {
-            return block.exprs.Get(
+            return block.Get(
                 mir::BuildIntegralLiteral(
                     unit, block, type, DefaultIntegralConstant(e.base)));
           },
           [&](const mir::StringType&) -> Answer {
             // The literal is machine text; the empty string value is what the
             // string's constructor builds from it.
-            const mir::ExprId lit = block.exprs.Add(
+            const mir::ExprId lit = block.Add(
                 mir::Expr{
                     .data = mir::StringLiteral{.value = std::string{}},
                     .type = type});
@@ -213,10 +214,10 @@ auto DefaultValueOf(
                 .type = type};
           },
           [&](const mir::RealType&) -> Answer {
-            return block.exprs.Get(BuildRealLiteral(unit, block, type, 0.0));
+            return block.Get(BuildRealLiteral(unit, block, type, 0.0));
           },
           [&](const mir::ShortRealType&) -> Answer {
-            return block.exprs.Get(BuildRealLiteral(unit, block, type, 0.0));
+            return block.Get(BuildRealLiteral(unit, block, type, 0.0));
           },
           // LRM Table 7-1: a fixed unpacked array defaults to every element at
           // the element type's default. One element default fills the array,
@@ -227,7 +228,7 @@ auto DefaultValueOf(
               return element;
             }
             return BuildFixedArrayConstructionCall(
-                unit, block, type, {block.exprs.Add(*std::move(element))});
+                unit, block, type, {block.Add(*std::move(element))});
           },
           // LRM Table 7-1: a product no declaration names defaults
           // component-wise -- each takes its own type's default, recursively.
@@ -450,7 +451,7 @@ auto DefaultValueOf(
 }
 
 auto BuildDefaultValueExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type)
     -> mir::Expr {
   std::expected<mir::Expr, std::string_view> built =
       DefaultValueOf(unit, block, type);
@@ -465,7 +466,7 @@ auto BuildDefaultValueExpr(
 }
 
 auto BuildDeclaredStructValue(
-    const UnitLowerer& unit_lowerer, mir::Block& block,
+    const UnitLowerer& unit_lowerer, mir::Builder block,
     const hir::UnpackedStructDefinition& source, mir::TypeId structure)
     -> mir::Expr {
   std::vector<mir::ExprId> components;
@@ -473,9 +474,9 @@ auto BuildDeclaredStructValue(
   for (const auto& field : source.fields) {
     components.push_back(
         field.default_init.has_value()
-            ? block.exprs.Add(MaterializeConstant(
+            ? block.Add(MaterializeConstant(
                   unit_lowerer, block, field.type, *field.default_init))
-            : block.exprs.Add(
+            : block.Add(
                   BuildDefaultValueFromHir(unit_lowerer, block, field.type)));
   }
   return mir::Expr{
@@ -484,7 +485,7 @@ auto BuildDeclaredStructValue(
 }
 
 auto BuildDefaultValueFromHir(
-    const UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId hir_type)
+    const UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId hir_type)
     -> mir::Expr {
   return BuildDefaultValueExpr(
       unit_lowerer.Unit(), block, unit_lowerer.TranslateType(hir_type));
@@ -504,8 +505,8 @@ auto RequiredContainerElementType(
 }
 
 auto BuildFixedArrayConstructionCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    std::vector<mir::ExprId> repeat_unit) -> mir::Expr {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::TypeId array_type, std::vector<mir::ExprId> repeat_unit) -> mir::Expr {
   const std::uint64_t element_count =
       unit.types.Get(array_type).Get<mir::UnpackedArrayType>().Size();
   if (repeat_unit.empty() || element_count % repeat_unit.size() != 0) {
@@ -525,8 +526,8 @@ auto BuildFixedArrayConstructionCall(
 }
 
 auto BuildArrayConstructionCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    std::vector<mir::ExprId> elements) -> mir::Expr {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::TypeId array_type, std::vector<mir::ExprId> elements) -> mir::Expr {
   if (unit.types.Get(array_type).Is<mir::UnpackedArrayType>()) {
     return BuildFixedArrayConstructionCall(
         unit, block, array_type, std::move(elements));
@@ -538,21 +539,22 @@ auto BuildArrayConstructionCall(
 }
 
 auto BuildArrayRepeatCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    std::vector<mir::ExprId> repeat_unit, mir::ExprId count_id) -> mir::Expr {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::TypeId array_type, std::vector<mir::ExprId> repeat_unit,
+    mir::ExprId count_id) -> mir::Expr {
   const mir::ExprId repeat_unit_id =
       BuildElementList(unit, block, array_type, std::move(repeat_unit));
   return BuildContainerFromElements(unit, array_type, repeat_unit_id, count_id);
 }
 
 auto BuildSequenceConstructionCall(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     mir::TypeId sequence_type, std::vector<mir::ExprId> elements) -> mir::Expr {
   const mir::TypePool& types = unit.types;
   const mir::TypeId list_type = mir::MachineArrayOf(
       types, types.Get(sequence_type).Get<mir::VectorType>().element,
       elements.size());
-  const mir::ExprId list_id = block.exprs.Add(
+  const mir::ExprId list_id = block.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(elements)},
           .type = list_type});
@@ -562,7 +564,8 @@ auto BuildSequenceConstructionCall(
 }
 
 auto BuildAssociativeConstructionCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
     std::optional<mir::ExprId> stated_default) -> mir::Expr {
   const auto* assoc =
@@ -583,7 +586,7 @@ auto BuildAssociativeConstructionCall(
   // 10.8), and so is a `default:`, which the front end leaves unconverted
   // since LRM 10.8 leaves a default correspondence out.
   for (const auto& [key_id, value_id] : entries) {
-    tuple_ids.push_back(block.exprs.Add(
+    tuple_ids.push_back(block.Add(
         mir::Expr{
             .data =
                 mir::CompositeExpr{
@@ -594,7 +597,7 @@ auto BuildAssociativeConstructionCall(
   }
   const mir::TypeId entries_type =
       mir::MachineArrayOf(unit.types, tuple_type, tuple_ids.size());
-  const mir::ExprId entries_id = block.exprs.Add(
+  const mir::ExprId entries_id = block.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(tuple_ids)},
           .type = entries_type});
@@ -612,7 +615,7 @@ auto BuildAssociativeConstructionCall(
               .callee =
                   mir::Direct{
                       .target = support::BuiltinFn::kAssocWithDefault,
-                      .receiver = block.exprs.Add(std::move(built))},
+                      .receiver = block.Add(std::move(built))},
               .arguments = {ConvertToType(
                   unit, block, *stated_default, element_type)}},
       .type = assoc_type};

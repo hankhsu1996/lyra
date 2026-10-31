@@ -9,8 +9,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/fixed_name.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/field.hpp"
@@ -145,6 +147,11 @@ struct WalkFrame {
   // block places statements and exprs; it does not resolve a reference to its
   // binding.
   mir::Block* current_block = nullptr;
+
+  // The piece of source being lowered: every node built into the current
+  // block takes it, as the one it was lowered from. Set where the walk starts
+  // on a construct the source wrote, and no place where it starts on none.
+  diag::SourceSpan span;
 
   // Which value a read of an observable cell answers with while this subtree is
   // lowered. Set for the operand of a construct that reads sampled values (LRM
@@ -345,6 +352,21 @@ struct WalkFrame {
     WalkFrame next = *this;
     next.current_block = block;
     return next;
+  }
+
+  // Enters the lowering of what the source wrote at `at`.
+  [[nodiscard]] auto WithSpan(diag::SourceSpan at) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.span = at;
+    return next;
+  }
+
+  // Builds into the current block, from the piece of source being lowered.
+  [[nodiscard]] auto Builder() const -> mir::Builder {
+    if (current_block == nullptr) {
+      throw InternalError("WalkFrame::Builder: no current block");
+    }
+    return {*current_block, span};
   }
 
   // Enters the index or a bound of a select taken from `queue`, which outlives

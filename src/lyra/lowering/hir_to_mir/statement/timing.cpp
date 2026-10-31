@@ -34,6 +34,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -57,16 +58,17 @@ auto LowerTimedWaitWrapper(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     hir::StmtId inner_stmt, auto build_wait) -> diag::Result<mir::Stmt> {
   mir::Block child_block;
+  mir::Builder child_block_builder(child_block, frame.span);
   const WalkFrame child_frame = frame.WithBlock(&child_block);
-  auto wait_or = build_wait(child_block, child_frame);
+  auto wait_or = build_wait(child_block_builder, child_frame);
   if (!wait_or) return std::unexpected(std::move(wait_or.error()));
-  child_block.AppendStmt(*std::move(wait_or));
+  child_block_builder.AppendStmt(*std::move(wait_or));
   const hir::Stmt& inner_hir = process.HirBody().stmts.Get(inner_stmt);
   auto inner_or = process.LowerStmt(inner_hir, child_frame);
   if (!inner_or) return std::unexpected(std::move(inner_or.error()));
-  child_block.AppendStmt(*std::move(inner_or));
+  child_block_builder.AppendStmt(*std::move(inner_or));
   const mir::BlockId scope_id =
-      frame.current_block->child_scopes.Add(std::move(child_block));
+      frame.Builder().AddScope(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -77,15 +79,15 @@ auto LowerTimedWaitWrapper(
 // the expression is compiled rather than in the runtime that reads the answer.
 template <ExprLowerer Lowerer>
 auto BuildConditionClosure(
-    Lowerer& lowerer, WalkFrame frame, mir::Block& block, hir::ExprId condition)
-    -> diag::Result<mir::ExprId> {
+    Lowerer& lowerer, WalkFrame frame, mir::Builder block,
+    hir::ExprId condition) -> diag::Result<mir::ExprId> {
   auto& unit = lowerer.Owner().Unit();
   ClosureBuilder closure(unit, frame, support::ClosureKind::kFn);
   auto cond_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(condition), closure.Frame());
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-  mir::Block& body = closure.Body();
-  const mir::ExprId raw_id = body.exprs.Add(*std::move(cond_or));
+  mir::Builder body = closure.Body();
+  const mir::ExprId raw_id = body.Add(*std::move(cond_or));
   return BuildKeptClosure(
       unit, block, closure.Build(ReduceToCondition(unit, body, raw_id)));
 }
@@ -96,7 +98,7 @@ auto BuildConditionClosure(
 // 1 a negedge whatever the destination, and from x or z only arrival at 1 or
 // 0 names one.
 auto BuildEventOccurred(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::EventEdge edge, mir::LocalId before, mir::LocalId now,
     mir::TypeId type) -> mir::ExprId {
   const auto is = [&](mir::LocalId bit, bool one) {
@@ -138,7 +140,7 @@ auto BuildEventOccurred(
 // of the least significant bit, which is that bit as a `logic` whatever type
 // the expression has, and any other event is a change anywhere in the value.
 auto BuildWatchedPart(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::EventEdge edge, mir::ExprId value) -> mir::ExprId {
   switch (edge) {
     case support::EventEdge::kAnyChange:
@@ -147,7 +149,7 @@ auto BuildWatchedPart(
     case support::EventEdge::kNegedge:
     case support::EventEdge::kBothEdges: {
       const std::optional<mir::TypeId> bit_type =
-          LeastSignificantBitType(unit, block.exprs.Get(value).type);
+          LeastSignificantBitType(unit, block.Get(value).type);
       if (!bit_type.has_value()) {
         throw InternalError(
             "BuildWatchedPart: an edge is watched on a value that is not "
@@ -173,30 +175,34 @@ auto EvaluatedReporting(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame,
     mir::LocalId report, auto lower_value) -> diag::Result<mir::ExprId> {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const auto on_the_report = [&](mir::Block& at, support::BuiltinFn entry) {
+  const auto on_the_report = [&](mir::Builder at, support::BuiltinFn entry) {
     at.AppendStmt(
         mir::ExprStmt{
             .expr = BuildReportCall(
                 unit, at, report, entry,
-                {at.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer))},
+                {at.Add(BuildCurrentRuntimeCallExpr(unit_lowerer))},
                 unit.builtins.void_type)});
   };
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   on_the_report(block, support::BuiltinFn::kReadReportBeginEvaluation);
   mir::Block evaluated;
+  mir::Builder evaluated_builder = block.Into(evaluated);
   auto value = lower_value(frame.WithBlock(&evaluated));
   if (!value) return std::unexpected(std::move(value.error()));
-  const mir::ExprId answer = evaluated.AsValue(unit.types, *value);
+  const mir::ExprId answer = evaluated_builder.AsValue(unit.types, *value);
   const mir::TypeId type = evaluated.exprs.Get(answer).type;
-  const mir::LocalId held = DeclareLocal(
-      frame, block.exprs.Add(BuildDefaultValueExpr(unit, block, type)));
-  evaluated.AppendStmt(
+  const mir::LocalId held =
+      DeclareLocal(frame, block.Add(BuildDefaultValueExpr(unit, block, type)));
+  evaluated_builder.AppendStmt(
       mir::ExprStmt{
-          .expr = evaluated.exprs.Add(
+          .expr = evaluated_builder.Add(
               mir::MakeAssignExpr(
-                  unit.builtins, evaluated.LocalPlace(held, type), answer))});
+                  unit.builtins, evaluated_builder.LocalPlace(held, type),
+                  answer))});
   mir::Block cleanup;
-  on_the_report(cleanup, support::BuiltinFn::kReadReportEndEvaluation);
+  on_the_report(
+      evaluated_builder.Into(cleanup),
+      support::BuiltinFn::kReadReportEndEvaluation);
   block.AppendFinally(std::move(evaluated), std::move(cleanup));
   return block.ReadLocal(held, type);
 }
@@ -214,13 +220,13 @@ struct EntryReading {
   EntryWatches watches;
   mir::ExprId now;
   mir::ExprId kept_first;
-  std::function<mir::ExprId(mir::Block&, mir::ExprId)> kept_of;
-  std::function<mir::ExprId(mir::Block&, mir::LocalId, mir::LocalId)>
+  std::function<mir::ExprId(mir::Builder, mir::ExprId)> kept_of;
+  std::function<mir::ExprId(mir::Builder, mir::LocalId, mir::LocalId)>
       occurred_between;
 };
 
 // What a watch keeps of a value it read where it keeps the value itself.
-const auto kKeepsTheValue = [](mir::Block&, mir::ExprId value) {
+const auto kKeepsTheValue = [](mir::Builder, mir::ExprId value) {
   return value;
 };
 
@@ -233,15 +239,15 @@ auto ReadingOfValueChange(
     Lowerer& lowerer, const WalkFrame& frame, const WalkFrame& evaluation,
     const hir::ValueChange& change) -> diag::Result<EntryReading> {
   auto& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto watched_part =
       [&](const WalkFrame& at) -> diag::Result<mir::ExprId> {
     auto value_or =
         lowerer.LowerExpr(lowerer.HirExprs().Get(change.signal), at);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
-    mir::Block& at_block = *at.current_block;
+    mir::Builder at_block = at.Builder();
     return BuildWatchedPart(
-        unit, at_block, change.edge, at_block.exprs.Add(*std::move(value_or)));
+        unit, at_block, change.edge, at_block.Add(*std::move(value_or)));
   };
   diag::Result<mir::ExprId> now = [&]() -> diag::Result<mir::ExprId> {
     if (!evaluation.reports_reached_to.has_value()) {
@@ -266,10 +272,10 @@ auto ReadingOfValueChange(
     return EntryReading{
         .watches = std::span<const hir::SensitivityEntry>{change.cells},
         .now = *now,
-        .kept_first = block.exprs.Add(BuildDefaultValueExpr(unit, block, weak)),
+        .kept_first = block.Add(BuildDefaultValueExpr(unit, block, weak)),
         .kept_of =
-            [weak](mir::Block& at, mir::ExprId value) {
-              return at.exprs.Add(
+            [weak](mir::Builder at, mir::ExprId value) {
+              return at.Add(
                   mir::MakeCallExpr(
                       mir::Direct{
                           .target = support::BuiltinFn::kWeakDowngrade,
@@ -278,12 +284,12 @@ auto ReadingOfValueChange(
             },
         .occurred_between =
             [unit = &unit, weak, type](
-                mir::Block& at, mir::LocalId before, mir::LocalId now) {
+                mir::Builder at, mir::LocalId before, mir::LocalId now) {
               const mir::ExprId kept = at.ReadLocal(before, weak);
               const mir::ExprId current = at.ReadLocal(now, type);
               return BuildConditionNot(
                   *unit, at,
-                  at.exprs.Add(
+                  at.Add(
                       mir::MakeCallExpr(
                           mir::Direct{
                               .target = support::BuiltinFn::kWeakRefersTo,
@@ -295,11 +301,11 @@ auto ReadingOfValueChange(
   return EntryReading{
       .watches = std::span<const hir::SensitivityEntry>{change.cells},
       .now = *now,
-      .kept_first = block.exprs.Add(BuildDefaultValueExpr(unit, block, type)),
+      .kept_first = block.Add(BuildDefaultValueExpr(unit, block, type)),
       .kept_of = kKeepsTheValue,
       .occurred_between =
           [unit = &unit, edge = change.edge, type](
-              mir::Block& at, mir::LocalId before, mir::LocalId now) {
+              mir::Builder at, mir::LocalId before, mir::LocalId now) {
             return BuildEventOccurred(*unit, at, edge, before, now, type);
           },
   };
@@ -316,19 +322,19 @@ auto ReadingOfHeldEvent(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, ClosureBuilder& closure,
     const WalkFrame& evaluation, mir::ExprId event) -> EntryReading {
   auto& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::LocalId handle = DeclareLocal(frame, event);
   const BodyBindingRef held = SnapshotBindingIntoClosure(
       unit_lowerer, frame, closure,
       block.ReadLocal(handle, unit.builtins.event));
-  mir::Block& body = closure.Body();
+  mir::Builder body = closure.Body();
   const mir::TypeId count = unit.builtins.machine_int64;
   const mir::ExprId receiver =
-      body.exprs.Add(closure.Bindings().MakeBindingPlace(held, body));
+      body.Add(closure.Bindings().MakeBindingPlace(held, body));
   const mir::ExprId report = BuildReportHandedOn(unit, evaluation);
   return EntryReading{
       .watches = HeldEvent{.handle = handle},
-      .now = body.exprs.Add(
+      .now = body.Add(
           mir::MakeCallExpr(
               mir::Direct{
                   .target = support::BuiltinFn::kEventOccurrences,
@@ -338,12 +344,12 @@ auto ReadingOfHeldEvent(
       .kept_of = kKeepsTheValue,
       .occurred_between =
           [unit = &unit, count](
-              mir::Block& at, mir::LocalId before, mir::LocalId now) {
+              mir::Builder at, mir::LocalId before, mir::LocalId now) {
             const mir::ExprId lhs = at.ReadLocal(now, count);
             const mir::ExprId rhs = at.ReadLocal(before, count);
-            return at.exprs.Add(
+            return at.Add(
                 mir::MakeBinary(
-                    *unit, at, mir::BinaryOp::kInequality, lhs, rhs,
+                    *unit, at.Body(), mir::BinaryOp::kInequality, lhs, rhs,
                     unit->builtins.machine_bool));
           },
   };
@@ -359,7 +365,7 @@ auto ReadingOfNamedEventTrigger(
   if (!event_or) return std::unexpected(std::move(event_or.error()));
   return ReadingOfHeldEvent(
       lowerer.Owner(), frame, closure, evaluation,
-      frame.current_block->exprs.Add(*std::move(event_or)));
+      frame.Builder().Add(*std::move(event_or)));
 }
 
 // One entry of an event control, armed where its wait is built: what its leaves
@@ -391,7 +397,7 @@ auto ArmOccurrence(
     std::optional<hir::ExprId> condition, std::optional<mir::LocalId> report)
     -> diag::Result<ArmedEntry> {
   auto& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   ClosureBuilder closure(unit, frame, support::ClosureKind::kFnMut);
   const mir::LocalId arming = closure.AddParam(unit.builtins.machine_bool);
@@ -399,18 +405,18 @@ auto ArmOccurrence(
       ClosureFrameReportingTo(lowerer.Owner(), frame, closure, report);
   auto reading = read(closure, evaluation);
   if (!reading) return std::unexpected(std::move(reading.error()));
-  mir::Block& body = closure.Body();
-  const mir::TypeId watched = body.exprs.Get(reading->now).type;
+  mir::Builder body = closure.Body();
+  const mir::TypeId watched = body.Get(reading->now).type;
 
   const BodyBindingRef previous = SnapshotBindingIntoClosure(
       lowerer.Owner(), frame, closure, reading->kept_first);
   const mir::LocalId now = DeclareLocal(evaluation, reading->now);
   const mir::LocalId before = DeclareLocal(
       evaluation,
-      body.exprs.Add(closure.Bindings().MakeBindingPlace(previous, body)));
+      body.Add(closure.Bindings().MakeBindingPlace(previous, body)));
   const mir::LocalId occurred = DeclareLocal(
       evaluation,
-      body.exprs.Add(
+      body.Add(
           mir::Expr{
               .data =
                   mir::ConditionalExpr{
@@ -421,12 +427,12 @@ auto ArmOccurrence(
                           reading->occurred_between(body, before, now)},
               .type = unit.builtins.machine_bool}));
   const mir::ExprId kept_place =
-      body.exprs.Add(closure.Bindings().MakeBindingPlace(previous, body));
+      body.Add(closure.Bindings().MakeBindingPlace(previous, body));
   const mir::ExprId kept_value =
       reading->kept_of(body, body.ReadLocal(now, watched));
   body.AppendStmt(
       mir::ExprStmt{
-          .expr = body.exprs.Add(
+          .expr = body.Add(
               mir::MakeAssignExpr(unit.builtins, kept_place, kept_value))});
 
   std::vector<mir::ExprId> arguments{BuildKeptClosure(
@@ -484,16 +490,15 @@ auto ArmEntry(
 // already refused an amount that is neither (a delay expression must be
 // numeric), so the two together are the whole of what arrives.
 auto BuildDelayWaitStmt(
-    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    ProcessLowerer& process, WalkFrame frame, mir::Builder block,
     const hir::DelayControl& d) -> diag::Result<mir::Stmt> {
   auto& unit = process.Owner().Unit();
   auto duration_or =
       process.LowerExpr(process.HirBody().exprs.Get(d.duration), frame);
   if (!duration_or) return std::unexpected(std::move(duration_or.error()));
-  mir::ExprId duration_id = block.exprs.Add(*std::move(duration_or));
+  mir::ExprId duration_id = block.Add(*std::move(duration_or));
 
-  const mir::Type& duration_type =
-      unit.types.Get(block.exprs.Get(duration_id).type);
+  const mir::Type& duration_type = unit.types.Get(block.Get(duration_id).type);
   const bool is_real = duration_type.IsRealFamily();
   if (duration_type.Is<mir::ShortRealType>()) {
     // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
@@ -503,7 +508,7 @@ auto BuildDelayWaitStmt(
   }
 
   const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   const mir::ExprId unit_power_id = mir::BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));
   const mir::ExprId precision_power_id = mir::BuildMachineIntLiteral(
@@ -511,12 +516,13 @@ auto BuildDelayWaitStmt(
       static_cast<std::int64_t>(process.Resolution().precision_power));
   const support::BuiltinFn entry =
       is_real ? support::BuiltinFn::kDelayReal : support::BuiltinFn::kDelay;
-  const mir::ExprId wait_id = block.exprs.Add(
+  const mir::ExprId wait_id = block.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = entry},
           {runtime_id, duration_id, unit_power_id, precision_power_id},
           unit.builtins.wait));
-  return BuildStopStmt(process.Owner(), frame.WithBlock(&block), wait_id);
+  return BuildStopStmt(
+      process.Owner(), frame.WithBlock(&block.Body()), wait_id);
 }
 
 // The expressions an event control evaluates when what it watches moves: what
@@ -558,12 +564,12 @@ auto ChangeDecides(
 
 // `entry` acting on the observation `observation` holds, answering `type`.
 auto ObservationCall(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::BuiltinFn entry, mir::LocalId observation, mir::TypeId type)
     -> mir::ExprId {
   const mir::ExprId held =
       block.LocalPlace(observation, unit.builtins.observation);
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = entry, .receiver = held}, {}, type));
 }
@@ -574,7 +580,7 @@ auto ObservationCall(
 // fired; every one is asked, since each is a part of one event expression and
 // each moves what it measures from.
 auto WaitUntilOneFires(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     std::span<const mir::LocalId> observations, mir::Block waiting)
     -> mir::Stmt {
   const auto fires = [&](mir::LocalId observation) {
@@ -584,21 +590,20 @@ auto WaitUntilOneFires(
   };
   mir::ExprId fired = fires(observations.front());
   for (const mir::LocalId observation : observations.subspan(1)) {
-    fired = block.exprs.Add(
+    fired = block.Add(
         mir::MakeBinary(
-            unit, block, mir::BinaryOp::kBitwiseOr, fired, fires(observation),
-            unit.builtins.machine_int64));
+            unit, block.Body(), mir::BinaryOp::kBitwiseOr, fired,
+            fires(observation), unit.builtins.machine_int64));
   }
-  const mir::ExprId none = block.exprs.Add(
+  const mir::ExprId none = block.Add(
       mir::MakeBinary(
-          unit, block, mir::BinaryOp::kEquality, fired,
+          unit, block.Body(), mir::BinaryOp::kEquality, fired,
           mir::BuildMachineIntLiteral(unit, block, 0),
           unit.builtins.machine_bool));
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::WhileStmt{
-          .condition = none,
-          .scope = block.child_scopes.Add(std::move(waiting))}};
+          .condition = none, .scope = block.AddScope(std::move(waiting))}};
 }
 
 // A report nothing has been stated into, declared in `frame`'s block, and a
@@ -606,23 +611,23 @@ auto WaitUntilOneFires(
 // what a wait takes.
 auto DeclareReport(const mir::CompilationUnit& unit, const WalkFrame& frame)
     -> mir::LocalId {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::LocalId report = DeclareLocal(
       frame,
-      block.exprs.Add(
+      block.Add(
           mir::MakeCallExpr(
               mir::Direct{.target = support::BuiltinFn::kReadReportEmpty}, {},
               unit.builtins.read_report)));
   const mir::ExprId held = block.LocalPlace(report, unit.builtins.read_report);
   return DeclareLocal(
-      frame, block.exprs.Add(
-                 mir::MakeAddressOfExpr(held, unit.builtins.read_report_ptr)));
+      frame,
+      block.Add(mir::MakeAddressOfExpr(held, unit.builtins.read_report_ptr)));
 }
 
 // `elements`, each built in `block` from one local, as a machine array of
 // `element` -- the form a span crosses into a runtime entry as.
 auto LocalsAsArray(
-    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId element,
+    mir::CompilationUnit& unit, mir::Builder block, mir::TypeId element,
     std::span<const mir::LocalId> locals, const auto& element_of)
     -> mir::ExprId {
   std::vector<mir::ExprId> parts;
@@ -630,7 +635,7 @@ auto LocalsAsArray(
   for (const mir::LocalId local : locals) {
     parts.push_back(element_of(local));
   }
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(parts)},
           .type = mir::MachineArrayOf(unit.types, element, locals.size())});
@@ -644,12 +649,13 @@ auto LocalsAsArray(
 // measured from, so it is no event.
 template <ExprLowerer Lowerer>
 auto BuildProcessDecidedEventWaitStmt(
-    Lowerer& lowerer, WalkFrame frame, mir::Block& block,
+    Lowerer& lowerer, WalkFrame frame, mir::Builder block,
     const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   // The reports are the wait's own and end where the wait does, so nothing an
   // evaluation read is held while the statement the control governs runs.
   mir::Block own;
+  mir::Builder own_builder = block.Into(own);
   const WalkFrame own_frame = frame.WithBlock(&own);
   std::vector<mir::LocalId> reports;
   std::vector<mir::LocalId> observations;
@@ -664,10 +670,11 @@ auto BuildProcessDecidedEventWaitStmt(
   }
 
   mir::Block waiting;
+  mir::Builder waiting_builder = frame.Builder().Into(waiting);
   const mir::ExprId reports_id = LocalsAsArray(
-      unit, waiting, unit.builtins.read_report_ptr, reports,
+      unit, waiting_builder, unit.builtins.read_report_ptr, reports,
       [&](mir::LocalId report) {
-        return waiting.ReadLocal(report, unit.builtins.read_report_ptr);
+        return waiting_builder.ReadLocal(report, unit.builtins.read_report_ptr);
       });
   const mir::TypeId observation_ptr = unit.types.Intern(
       mir::Type{mir::PointerType{
@@ -675,24 +682,25 @@ auto BuildProcessDecidedEventWaitStmt(
           .ownership = mir::PointerOwnership::kBorrowed,
           .mutability = mir::Mutability::kReadOnly}});
   const mir::ExprId observations_id = LocalsAsArray(
-      unit, waiting, observation_ptr, observations,
+      unit, waiting_builder, observation_ptr, observations,
       [&](mir::LocalId observation) {
-        return waiting.exprs.Add(
+        return waiting_builder.Add(
             mir::MakeAddressOfExpr(
-                waiting.LocalPlace(observation, unit.builtins.observation),
+                waiting_builder.LocalPlace(
+                    observation, unit.builtins.observation),
                 observation_ptr));
       });
-  const mir::ExprId wait_id = waiting.exprs.Add(
+  const mir::ExprId wait_id = waiting_builder.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = support::BuiltinFn::kWaitRecollecting},
           {reports_id, observations_id}, unit.builtins.wait));
-  waiting.AppendStmt(
+  waiting_builder.AppendStmt(
       BuildStopStmt(lowerer.Owner(), frame.WithBlock(&waiting), wait_id));
-  own.AppendStmt(
-      WaitUntilOneFires(unit, own, observations, std::move(waiting)));
+  own_builder.AppendStmt(
+      WaitUntilOneFires(unit, own_builder, observations, std::move(waiting)));
   return mir::Stmt{
       .label = std::nullopt,
-      .data = mir::BlockStmt{.scope = block.child_scopes.Add(std::move(own))}};
+      .data = mir::BlockStmt{.scope = block.AddScope(std::move(own))}};
 }
 
 // An event control a change decides (LRM 4.7, 9.4.2): one wait, built where
@@ -701,7 +709,7 @@ auto BuildProcessDecidedEventWaitStmt(
 // observation of its entry decides.
 template <ExprLowerer Lowerer>
 auto BuildChangeDecidedEventWaitStmt(
-    Lowerer& lowerer, WalkFrame frame, mir::Block& block,
+    Lowerer& lowerer, WalkFrame frame, mir::Builder block,
     const hir::EventControl& ec, std::span<const hir::ExprId> evaluated)
     -> diag::Result<mir::Stmt> {
   std::vector<hir::SensitivityEntry> cells;
@@ -718,10 +726,10 @@ auto BuildChangeDecidedEventWaitStmt(
             }},
         entry.occurrence);
   }
-  mir::Block& storage = WaitStorageBlock(
+  mir::Builder storage = WaitStorageBlock(
       frame, block, cells, lowerer.HirExprs(), evaluated,
       evaluates_where_reached);
-  auto leaves = BuildEventLeaves(lowerer, frame.WithBlock(&storage), ec);
+  auto leaves = BuildEventLeaves(lowerer, frame.WithBlock(&storage.Body()), ec);
   if (!leaves) return std::unexpected(std::move(leaves.error()));
   return BuildWaitOnStmt(storage, block, frame, lowerer, *leaves);
 }
@@ -732,10 +740,10 @@ auto BuildChangeDecidedEventWaitStmt(
 // object the event names. The engine handle rides after the event, the way
 // every runtime effect threads it.
 auto BuildTriggerCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId event_id)
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId event_id)
     -> mir::Expr {
   const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -750,7 +758,7 @@ auto BuildTriggerCallExpr(
 
 template <ExprLowerer Lowerer>
 auto BuildEventObjectWaitStmt(
-    Lowerer& lowerer, WalkFrame frame, mir::Block& block, mir::ExprId event)
+    Lowerer& lowerer, WalkFrame frame, mir::Builder block, mir::ExprId event)
     -> diag::Result<mir::Stmt> {
   auto armed = ArmOccurrence(
       lowerer, frame,
@@ -768,7 +776,7 @@ auto BuildEventObjectWaitStmt(
 }
 
 template auto BuildEventObjectWaitStmt(
-    ProcessLowerer&, WalkFrame, mir::Block&, mir::ExprId)
+    ProcessLowerer&, WalkFrame, mir::Builder, mir::ExprId)
     -> diag::Result<mir::Stmt>;
 
 auto ChangeDecides(
@@ -813,7 +821,7 @@ template auto BuildEventLeaves(
 
 template <ExprLowerer Lowerer>
 auto BuildEventWaitStmt(
-    Lowerer& lowerer, WalkFrame frame, mir::Block& block,
+    Lowerer& lowerer, WalkFrame frame, mir::Builder block,
     const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
   const std::vector<hir::ExprId> evaluated = EvaluatedBy(ec);
   if (ChangeDecides(lowerer.HirExprs(), evaluated)) {
@@ -824,10 +832,10 @@ auto BuildEventWaitStmt(
 }
 
 template auto BuildEventWaitStmt(
-    ProcessLowerer&, WalkFrame, mir::Block&, const hir::EventControl&)
+    ProcessLowerer&, WalkFrame, mir::Builder, const hir::EventControl&)
     -> diag::Result<mir::Stmt>;
 template auto BuildEventWaitStmt(
-    const StructuralScopeLowerer&, WalkFrame, mir::Block&,
+    const StructuralScopeLowerer&, WalkFrame, mir::Builder,
     const hir::EventControl&) -> diag::Result<mir::Stmt>;
 
 auto LowerTimedStmt(
@@ -835,7 +843,7 @@ auto LowerTimedStmt(
     const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
   return LowerTimedWaitWrapper(
       process, frame, std::move(label), t.stmt,
-      [&](mir::Block& block, WalkFrame inner) -> diag::Result<mir::Stmt> {
+      [&](mir::Builder block, WalkFrame inner) -> diag::Result<mir::Stmt> {
         return std::visit(
             Overloaded{
                 [&](const hir::DelayControl& d) {
@@ -863,7 +871,7 @@ auto LowerTimedStmt(
 auto LowerEventTriggerStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::EventTriggerStmt& et) -> diag::Result<mir::Stmt> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const hir::Expr& event_hir = process.HirBody().exprs.Get(et.event);
 
   auto effect_or = std::visit(
@@ -872,7 +880,7 @@ auto LowerEventTriggerStmt(
             auto event_or = process.LowerAsPlace(event_hir, frame);
             if (!event_or) return std::unexpected(std::move(event_or.error()));
             return BuildTriggerCallExpr(
-                process.Owner(), block, block.exprs.Add(*std::move(event_or)));
+                process.Owner(), block, block.Add(*std::move(event_or)));
           },
           [&](const hir::NonBlockingEffect& deferred)
               -> diag::Result<mir::Expr> {
@@ -885,15 +893,14 @@ auto LowerEventTriggerStmt(
                   }
                   const BodyBindingRef held = SnapshotBindingIntoClosure(
                       process.Owner(), frame, closure,
-                      block.exprs.Add(*std::move(event_or)));
-                  return closure.Body().exprs.Add(
-                      closure.Bindings().MakeBindingPlace(
-                          held, closure.Body()));
+                      block.Add(*std::move(event_or)));
+                  return closure.Body().Add(closure.Bindings().MakeBindingPlace(
+                      held, closure.Body()));
                 },
-                [&](mir::Block& body, const mir::ExprId& event) {
+                [&](mir::Builder body, const mir::ExprId& event) {
                   body.AppendStmt(
                       mir::ExprStmt{
-                          .expr = body.exprs.Add(BuildTriggerCallExpr(
+                          .expr = body.Add(BuildTriggerCallExpr(
                               process.Owner(), body, event))});
                 });
           }},
@@ -901,7 +908,7 @@ auto LowerEventTriggerStmt(
   if (!effect_or) return std::unexpected(std::move(effect_or.error()));
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::ExprStmt{.expr = block.exprs.Add(*std::move(effect_or))}};
+      .data = mir::ExprStmt{.expr = block.Add(*std::move(effect_or))}};
 }
 
 // LRM 9.4.3 `wait (cond) body`.
@@ -911,6 +918,7 @@ auto LowerWaitStmt(
   const hir::ProceduralBody& hir_proc = process.HirBody();
   mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Block wrapper;
+  mir::Builder wrapper_builder = frame.Builder().Into(wrapper);
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
   // The loop is what reads the condition, so what this waits for is the loop
@@ -934,48 +942,51 @@ auto LowerWaitStmt(
       [&](const WalkFrame& at) -> diag::Result<mir::ExprId> {
         auto cond_or = process.LowerExpr(hir_proc.exprs.Get(w.cond), at);
         if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-        return at.current_block->exprs.Add(*std::move(cond_or));
+        return at.Builder().Add(*std::move(cond_or));
       });
   if (!cond_id) return std::unexpected(std::move(cond_id.error()));
-  mir::Block& test_block = test.Body();
+  mir::Builder test_block = test.Body();
   const mir::ExprId not_yet = BuildConditionNot(
       unit, test_block, ReduceToCondition(unit, test_block, *cond_id));
-  const mir::ExprId waiting_id = wrapper.exprs.Add(test.Build(not_yet));
+  const mir::ExprId waiting_id = wrapper_builder.Add(test.Build(not_yet));
 
   mir::Block inner_block;
+  mir::Builder inner_block_builder = test_block.Into(inner_block);
   const std::array<mir::LocalId, 1> reports{report};
   const mir::ExprId reports_id = LocalsAsArray(
-      unit, inner_block, unit.builtins.read_report_ptr, reports,
+      unit, inner_block_builder, unit.builtins.read_report_ptr, reports,
       [&](mir::LocalId reported) {
-        return inner_block.ReadLocal(reported, unit.builtins.read_report_ptr);
+        return inner_block_builder.ReadLocal(
+            reported, unit.builtins.read_report_ptr);
       });
-  const mir::ExprId wait_id = inner_block.exprs.Add(
+  const mir::ExprId wait_id = inner_block_builder.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = support::BuiltinFn::kWaitUntil}, {reports_id},
           unit.builtins.wait));
-  inner_block.AppendStmt(BuildStopStmt(
+  inner_block_builder.AppendStmt(BuildStopStmt(
       process.Owner(), wrapper_frame.WithBlock(&inner_block), wait_id));
 
   const mir::BlockId inner_scope_id =
-      wrapper.child_scopes.Add(std::move(inner_block));
+      wrapper_builder.AddScope(std::move(inner_block));
 
-  wrapper.AppendStmt(
+  wrapper_builder.AppendStmt(
       mir::WhileStmt{.condition = waiting_id, .scope = inner_scope_id});
 
   // The report is the wait's and ends where the wait does, so nothing the last
   // test read is held while the body runs.
   mir::Block whole;
-  whole.AppendStmt(
-      mir::BlockStmt{.scope = whole.child_scopes.Add(std::move(wrapper))});
+  mir::Builder whole_builder(whole, frame.span);
+  whole_builder.AppendStmt(
+      mir::BlockStmt{.scope = whole_builder.AddScope(std::move(wrapper))});
   const hir::Stmt& body_hir = hir_proc.stmts.Get(w.body);
   auto body_or = process.LowerStmt(body_hir, frame.WithBlock(&whole));
   if (!body_or) {
     return std::unexpected(std::move(body_or.error()));
   }
-  whole.AppendStmt(*std::move(body_or));
+  whole_builder.AppendStmt(*std::move(body_or));
 
   const mir::BlockId whole_scope_id =
-      frame.current_block->child_scopes.Add(std::move(whole));
+      frame.Builder().AddScope(std::move(whole));
 
   return mir::Stmt{
       .label = std::move(label),

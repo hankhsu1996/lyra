@@ -27,6 +27,7 @@
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -59,7 +60,7 @@ auto BindRouted(
 // Only a procedural body declares one.
 template <typename Lowerer>
 auto BodyVariableSource(
-    Lowerer& lowerer, const WalkFrame& frame, mir::Block& block,
+    Lowerer& lowerer, const WalkFrame& frame, mir::Builder block,
     const hir::ProceduralVarRef& var) -> mir::ExprId {
   if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
     throw InternalError(
@@ -69,7 +70,7 @@ auto BodyVariableSource(
     mir::CompilationUnit& unit = lowerer.Owner().Unit();
     const hir::ProceduralVarDecl& decl =
         lowerer.HirBody().procedural_vars.Get(var.var);
-    const WalkFrame block_frame = frame.WithBlock(&block);
+    const WalkFrame block_frame = frame.WithBlock(&block.Body());
     auto lowered = LowerHirPrimaryExprProc(
         lowerer, block_frame, hir::Primary{var},
         lowerer.Owner().TranslateType(decl.type));
@@ -78,8 +79,8 @@ auto BodyVariableSource(
           "BodyVariableSource: a variable the body declares failed to lower as "
           "the storage a wait enrols on");
     }
-    const mir::ExprId storage = block.exprs.Add(*std::move(lowered));
-    const mir::TypeId storage_type = block.exprs.Get(storage).type;
+    const mir::ExprId storage = block.Add(*std::move(lowered));
+    const mir::TypeId storage_type = block.Get(storage).type;
     const mir::Type& storage_form = unit.types.Get(storage_type);
     if (storage_form.IsVariableRef()) {
       return ReferenceReportsTo(unit, block, storage);
@@ -87,12 +88,12 @@ auto BodyVariableSource(
     // A closure's snapshot of a variable is the closure's own copy, which no
     // other process reaches, so nothing that could change it is ever told.
     if (!storage_form.Is<mir::ObservableType>()) {
-      return block.exprs.Add(
+      return block.Add(
           mir::Expr{
               .data = mir::NullLiteral{},
               .type = mir::ErasedPointer(unit.types)});
     }
-    return block.exprs.Add(
+    return block.Add(
         mir::MakeAddressOfExpr(
             storage, unit.types.Intern(
                          mir::Type{mir::PointerType{
@@ -106,20 +107,19 @@ auto BodyVariableSource(
 
 template <typename Lowerer>
 auto BuildObservableCellExpr(
-    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
+    mir::Builder block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::ValueTarget& cell) -> mir::ExprId {
   return std::visit(
       Overloaded{
           [&](const hir::RoutedValueRef& reference) -> mir::ExprId {
-            return block.exprs.Add(EndpointCellExpr(
+            return block.Add(EndpointCellExpr(
                 frame, unit, BindRouted(lowerer, frame, reference)));
           },
           [&](const hir::NamespaceValueRef& pkg) -> mir::ExprId {
-            return block.exprs.Add(
-                LowerNamespaceValueRefExpr(lowerer.Owner(), pkg));
+            return block.Add(LowerNamespaceValueRefExpr(lowerer.Owner(), pkg));
           },
           [&](const hir::StaticPropertyRef& property) -> mir::ExprId {
-            return block.exprs.Add(
+            return block.Add(
                 LowerStaticPropertyRefExpr(lowerer.Owner(), frame, property));
           },
       },
@@ -127,7 +127,7 @@ auto BuildObservableCellExpr(
 }
 
 auto BuildReportCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId report,
     support::BuiltinFn entry, std::vector<mir::ExprId> arguments,
     mir::TypeId type) -> mir::ExprId {
   for (mir::ExprId& argument : arguments) {
@@ -135,7 +135,7 @@ auto BuildReportCall(
   }
   const mir::ExprId object = BuildObjectDeref(
       unit, block, block.LocalPlace(report, unit.builtins.read_report_ptr));
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -154,7 +154,7 @@ namespace {
 // with its address, and a net with what it shows its value through.
 template <typename Lowerer>
 auto BuildObservablePtrExpr(
-    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
+    mir::Builder block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::SensitivityEntry& entry) -> mir::ExprId {
   const auto address_of_cell =
       [&](const hir::ValueTarget& sealed) -> mir::ExprId {
@@ -162,10 +162,10 @@ auto BuildObservablePtrExpr(
         BuildObservableCellExpr(block, frame, unit, lowerer, sealed);
     const mir::TypeId ptr_type = unit.types.Intern(
         mir::Type{mir::PointerType{
-            .pointee = block.exprs.Get(cell).type,
+            .pointee = block.Get(cell).type,
             .ownership = mir::PointerOwnership::kBorrowed,
             .mutability = mir::Mutability::kMutable}});
-    return block.exprs.Add(mir::MakeAddressOfExpr(cell, ptr_type));
+    return block.Add(mir::MakeAddressOfExpr(cell, ptr_type));
   };
   const auto sealed_cell = [&](const hir::ValueTarget& sealed) -> mir::ExprId {
     return std::visit(
@@ -196,13 +196,13 @@ auto BuildObservablePtrExpr(
   // only the built design says, so a wait on it is enrolled through what it
   // shows its value by, as a wait through a reference is.
   const auto* pointer =
-      unit.types.Get(block.exprs.Get(reached).type).As<mir::PointerType>();
+      unit.types.Get(block.Get(reached).type).As<mir::PointerType>();
   if (pointer == nullptr ||
       !unit.types.Get(pointer->pointee).Is<mir::ResolvedType>()) {
     return reached;
   }
   const mir::ExprId net = block.Deref(unit.types, reached, pointer->pointee);
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -229,17 +229,17 @@ struct LeafPart {
 
 // `steps` as the one array a leaf or a report is handed.
 auto StepArray(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     std::vector<mir::ExprId> steps) -> mir::ExprId {
   const mir::TypeId array = mir::MachineArrayOf(
       unit.types, unit.builtins.machine_int64, steps.size());
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(steps)},
           .type = array});
 }
 
-auto WholePlace(const mir::CompilationUnit& unit, mir::Block& block)
+auto WholePlace(const mir::CompilationUnit& unit, mir::Builder block)
     -> LeafPart {
   return LeafPart{
       .steps = StepArray(unit, block, {}),
@@ -249,7 +249,7 @@ auto WholePlace(const mir::CompilationUnit& unit, mir::Block& block)
 
 template <typename Lowerer>
 auto LeafPartOf(
-    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
+    mir::Builder block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::WatchedPart& part) -> diag::Result<LeafPart> {
   const auto count = [&](std::uint64_t value) {
     return mir::BuildMachineCount(unit, block, value);
@@ -261,7 +261,7 @@ auto LeafPartOf(
           },
           [&](const hir::WatchedSelect& select) -> diag::Result<LeafPart> {
             const hir::Expr& prefix = lowerer.HirExprs().Get(select.prefix);
-            const WalkFrame block_frame = frame.WithBlock(&block);
+            const WalkFrame block_frame = frame.WithBlock(&block.Body());
             auto part = lowerer.LowerAccessPath(prefix, block_frame);
             if (!part) return std::unexpected(std::move(part.error()));
             NamedPart named = PartNamedBy(unit, block, *part);
@@ -288,14 +288,14 @@ auto LeafPartOf(
 // there is an event, and which bits of that place's packed encoding it reads.
 template <typename Lowerer>
 auto BuildTriggerExpr(
-    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
+    mir::Builder block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::SensitivityEntry& entry,
     mir::LocalId observation) -> diag::Result<mir::ExprId> {
   const mir::ExprId observable_ptr = block.AsValue(
       unit.types, BuildObservablePtrExpr(block, frame, unit, lowerer, entry));
   auto watched = LeafPartOf(block, frame, unit, lowerer, entry.part);
   if (!watched) return std::unexpected(std::move(watched.error()));
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -311,16 +311,16 @@ auto BuildTriggerExpr(
 // object it names reports a trigger to, read once where the wait is built, and
 // the whole of that place, since a trigger has no bits.
 auto BuildEventTriggerExpr(
-    mir::Block& block, const mir::CompilationUnit& unit, const HeldEvent& event,
-    mir::LocalId observation) -> mir::ExprId {
-  const mir::ExprId reports_to = block.exprs.Add(
+    mir::Builder block, const mir::CompilationUnit& unit,
+    const HeldEvent& event, mir::LocalId observation) -> mir::ExprId {
+  const mir::ExprId reports_to = block.Add(
       mir::MakeCallExpr(
           mir::Direct{
               .target = support::BuiltinFn::kEventReportsTo,
               .receiver = block.LocalPlace(event.handle, unit.builtins.event)},
           {}, mir::WatchedPlace(unit.types)));
   const LeafPart whole = WholePlace(unit, block);
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -334,7 +334,7 @@ auto BuildEventTriggerExpr(
 
 // Appends `entry(arguments)`, acting on the report, to `block`.
 void ActOnReport(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId report,
     support::BuiltinFn entry, std::vector<mir::ExprId> arguments) {
   block.AppendStmt(
       mir::ExprStmt{
@@ -355,7 +355,7 @@ auto ReportedCellOf(
     Lowerer& lowerer, const WalkFrame& frame, const hir::SensitivityEntry& cell)
     -> diag::Result<ReportedCell> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::ExprId place =
       BuildObservablePtrExpr(block, frame, unit, lowerer, cell);
   auto part = LeafPartOf(block, frame, unit, lowerer, cell.part);
@@ -365,7 +365,7 @@ auto ReportedCellOf(
 
 // Tells the report of `cell`, read or written as `entry` says.
 void ReportCell(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId report,
     support::BuiltinFn entry, const ReportedCell& cell) {
   ActOnReport(
       unit, block, report, entry,
@@ -387,13 +387,13 @@ auto Reported(
   if (!frame.reports_reached_to.has_value()) {
     return value;
   }
-  mir::Block& block = *frame.current_block;
-  const auto* copy = std::get_if<mir::CopyExpr>(&block.exprs.Get(value).data);
+  mir::Builder block = frame.Builder();
+  const auto* copy = std::get_if<mir::CopyExpr>(&block.Get(value).data);
   const mir::ExprId place = copy != nullptr ? copy->place : value;
-  const bool names_a_place = mir::IsPlace(block.exprs.Get(value).data);
-  const bool by_pointer = mir::IsPlace(block.exprs.Get(place).data) &&
-                          mir::WholeLiesInStorage(unit, block, place);
-  const mir::TypeId type = block.exprs.Get(place).type;
+  const bool names_a_place = mir::IsPlace(block.Get(value).data);
+  const bool by_pointer = mir::IsPlace(block.Get(place).data) &&
+                          mir::WholeLiesInStorage(unit, block.Body(), place);
+  const mir::TypeId type = block.Get(place).type;
   const mir::TypeId held_type =
       by_pointer ? unit.types.Intern(
                        mir::Type{mir::PointerType{
@@ -402,10 +402,9 @@ auto Reported(
                            .mutability = mir::Mutability::kReadOnly}})
                  : type;
   const mir::LocalId held = DeclareLocal(
-      frame, by_pointer
-                 ? block.exprs.Add(mir::MakeAddressOfExpr(place, held_type))
-                 : block.AsValue(unit.types, value));
-  const auto named_in = [&](mir::Block& at) {
+      frame, by_pointer ? block.Add(mir::MakeAddressOfExpr(place, held_type))
+                        : block.AsValue(unit.types, value));
+  const auto named_in = [&](mir::Builder at) {
     const mir::ExprId lies =
         by_pointer ? at.Deref(unit.types, at.ReadLocal(held, held_type), type)
                    : at.LocalPlace(held, type);
@@ -413,7 +412,8 @@ auto Reported(
   };
   const mir::LocalId report = *frame.reports_reached_to;
   mir::Block reporting;
-  state(reporting, report, named_in(reporting));
+  mir::Builder reporting_builder = block.Into(reporting);
+  state(reporting_builder, report, named_in(reporting_builder));
   const mir::ExprId handed = BuildReportHanded(unit, block, report);
   block.AppendIfThen(handed, std::move(reporting));
   return named_in(block);
@@ -422,27 +422,27 @@ auto Reported(
 }  // namespace
 
 auto BuildReportHanded(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId report)
     -> mir::ExprId {
   const mir::ExprId lhs =
       block.ReadLocal(report, unit.builtins.read_report_ptr);
-  const mir::ExprId rhs = block.exprs.Add(
+  const mir::ExprId rhs = block.Add(
       mir::Expr{
           .data = mir::NullLiteral{}, .type = unit.builtins.read_report_ptr});
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBinary(
-          unit, block, mir::BinaryOp::kInequality, lhs, rhs,
+          unit, block.Body(), mir::BinaryOp::kInequality, lhs, rhs,
           unit.builtins.machine_bool));
 }
 
 auto BuildReportHandedOn(
     const mir::CompilationUnit& unit, const WalkFrame& frame) -> mir::ExprId {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::TypeId report = unit.builtins.read_report_ptr;
   if (frame.reports_reached_to.has_value()) {
     return block.ReadLocal(*frame.reports_reached_to, report);
   }
-  return block.exprs.Add(mir::Expr{.data = mir::NullLiteral{}, .type = report});
+  return block.Add(mir::Expr{.data = mir::NullLiteral{}, .type = report});
 }
 
 auto ClosureFrameReportingTo(
@@ -455,7 +455,7 @@ auto ClosureFrameReportingTo(
   const mir::TypeId pointer = unit_lowerer.Unit().builtins.read_report_ptr;
   const mir::ExprId held = SnapshotValueIntoClosure(
       unit_lowerer, outer, closure,
-      outer.current_block->ReadLocal(*report, pointer));
+      outer.Builder().ReadLocal(*report, pointer));
   const mir::LocalId own = inner.bindings->DeclareAnonymous(pointer);
   closure.Body().AppendStmt(mir::LocalDeclStmt{.target = own, .init = held});
   return inner.WithReportingReachedTo(own);
@@ -466,7 +466,7 @@ auto ReportedObject(
     -> mir::ExprId {
   return Reported(
       unit, frame, object,
-      [&](mir::Block& at, mir::LocalId report, mir::ExprId held) {
+      [&](mir::Builder at, mir::LocalId report, mir::ExprId held) {
         ActOnReport(
             unit, at, report, support::BuiltinFn::kReadReportAddObject, {held});
       });
@@ -477,7 +477,7 @@ auto ReportedPlace(
     -> mir::ExprId {
   return Reported(
       unit, frame, place,
-      [&](mir::Block& at, mir::LocalId report, mir::ExprId held) {
+      [&](mir::Builder at, mir::LocalId report, mir::ExprId held) {
         const LeafPart whole = WholePlace(unit, at);
         ActOnReport(
             unit, at, report, support::BuiltinFn::kReadReportAdd,
@@ -493,7 +493,7 @@ auto ReportCells(
     auto read = ReportedCellOf(lowerer, frame, cell);
     if (!read) return std::unexpected(std::move(read.error()));
     ReportCell(
-        lowerer.Owner().Unit(), *frame.current_block, report,
+        lowerer.Owner().Unit(), frame.Builder(), report,
         support::BuiltinFn::kReadReportAdd, *read);
   }
   return {};
@@ -513,7 +513,7 @@ auto ReportReads(
     // take out what the procedure did not write.
     if (!written->part.exact) continue;
     ReportCell(
-        lowerer.Owner().Unit(), *frame.current_block, report,
+        lowerer.Owner().Unit(), frame.Builder(), report,
         support::BuiltinFn::kReadReportAddWrite, *written);
   }
   for (const hir::ExprId call : reads.calls) {
@@ -524,23 +524,23 @@ auto ReportReads(
 }
 
 auto DeclareObservation(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
-    support::BuiltinFn entry, std::vector<mir::ExprId> arguments)
-    -> mir::LocalId {
-  const WalkFrame block_frame = frame.WithBlock(&block);
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::Builder block, support::BuiltinFn entry,
+    std::vector<mir::ExprId> arguments) -> mir::LocalId {
+  const WalkFrame block_frame = frame.WithBlock(&block.Body());
   return DeclareLocal(
-      block_frame, block.exprs.Add(
+      block_frame, block.Add(
                        mir::MakeCallExpr(
                            mir::Direct{.target = entry}, std::move(arguments),
                            unit.builtins.observation)));
 }
 
 auto WaitStorageBlock(
-    const WalkFrame& frame, mir::Block& stop_block,
+    const WalkFrame& frame, mir::Builder stop_block,
     std::span<const hir::SensitivityEntry> cells,
     const base::Arena<hir::Expr, hir::ExprId>& exprs,
     std::span<const hir::ExprId> evaluated, bool evaluates_where_reached)
-    -> mir::Block& {
+    -> mir::Builder {
   const bool watches_a_body_variable =
       std::ranges::any_of(cells, [](const hir::SensitivityEntry& cell) {
         return std::visit(
@@ -556,12 +556,12 @@ auto WaitStorageBlock(
   return watches_a_body_variable || evaluates_a_body_variable ||
                  evaluates_where_reached
              ? stop_block
-             : frame.bindings->RootBlock();
+             : mir::Builder(frame.bindings->RootBlock(), frame.span);
 }
 
 template <typename Lowerer>
 auto BuildTriggerArray(
-    mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
+    mir::Builder target_block, const WalkFrame& frame, Lowerer& lowerer,
     std::span<const ObservedLeaf> leaves) -> diag::Result<mir::ExprId> {
   auto& unit = lowerer.Owner().Unit();
   std::vector<mir::ExprId> triggers;
@@ -584,7 +584,7 @@ auto BuildTriggerArray(
   }
   const mir::TypeId triggers_type =
       mir::MachineArrayOf(unit.types, unit.builtins.trigger, triggers.size());
-  return target_block.exprs.Add(
+  return target_block.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(triggers)},
           .type = triggers_type});
@@ -592,16 +592,16 @@ auto BuildTriggerArray(
 
 template <typename Lowerer>
 auto BuildWaitOnStmt(
-    mir::Block& storage_block, mir::Block& stop_block, const WalkFrame& frame,
+    mir::Builder storage_block, mir::Builder stop_block, const WalkFrame& frame,
     Lowerer& lowerer, std::span<const ObservedLeaf> leaves)
     -> diag::Result<mir::Stmt> {
-  const WalkFrame storage_frame = frame.WithBlock(&storage_block);
+  const WalkFrame storage_frame = frame.WithBlock(&storage_block.Body());
   auto triggers =
       BuildTriggerArray(storage_block, storage_frame, lowerer, leaves);
   if (!triggers) return std::unexpected(std::move(triggers.error()));
   const mir::LocalId wait = DeclareLocal(
       storage_frame,
-      storage_block.exprs.Add(
+      storage_block.Add(
           mir::MakeCallExpr(
               mir::Direct{.target = support::BuiltinFn::kWaitOn}, {*triggers},
               lowerer.Owner().Unit().builtins.wait)));
@@ -609,8 +609,8 @@ auto BuildWaitOnStmt(
 }
 
 auto BuildValueChangeLeaves(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
-    std::span<const hir::SensitivityEntry> sensitivity)
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::Builder block, std::span<const hir::SensitivityEntry> sensitivity)
     -> std::vector<ObservedLeaf> {
   const mir::LocalId observation = DeclareObservation(
       unit, frame, block, support::BuiltinFn::kObservationOnReaching, {});
@@ -625,10 +625,10 @@ auto BuildValueChangeLeaves(
 
 template <typename Lowerer>
 auto BuildValueChangeWaitStmt(
-    mir::Block& stop_block, const WalkFrame& frame, Lowerer& lowerer,
+    mir::Builder stop_block, const WalkFrame& frame, Lowerer& lowerer,
     std::span<const hir::SensitivityEntry> sensitivity_list)
     -> diag::Result<mir::Stmt> {
-  mir::Block& storage_block = WaitStorageBlock(
+  mir::Builder storage_block = WaitStorageBlock(
       frame, stop_block, sensitivity_list, lowerer.HirExprs(), {}, false);
   const std::vector<ObservedLeaf> leaves = BuildValueChangeLeaves(
       lowerer.Owner().Unit(), frame, storage_block, sensitivity_list);
@@ -639,18 +639,18 @@ auto HoldImplicitList(
     const WalkFrame& frame, ProcessLowerer& lowerer, const hir::Reads& reads)
     -> diag::Result<mir::LocalId> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   // A report no evaluation makes, so a function called to report into it runs
   // nothing of its body.
   const mir::LocalId report = DeclareLocal(
       frame,
-      block.exprs.Add(
+      block.Add(
           mir::MakeCallExpr(
               mir::Direct{
                   .target = support::BuiltinFn::kReadReportForImplicitList},
               {}, unit.builtins.read_report)));
   const mir::LocalId pointer = DeclareLocal(
-      frame, block.exprs.Add(
+      frame, block.Add(
                  mir::MakeAddressOfExpr(
                      block.LocalPlace(report, unit.builtins.read_report),
                      unit.builtins.read_report_ptr)));
@@ -661,7 +661,7 @@ auto HoldImplicitList(
       {});
   return DeclareLocal(
       frame,
-      block.exprs.Add(
+      block.Add(
           mir::MakeCallExpr(
               mir::Direct{.target = support::BuiltinFn::kWaitOnImplicitList},
               {block.ReadLocal(pointer, unit.builtins.read_report_ptr)},
@@ -670,10 +670,10 @@ auto HoldImplicitList(
 
 // One instantiation per lowering a wait is built in.
 template auto BuildObservableCellExpr(
-    mir::Block&, const WalkFrame&, mir::CompilationUnit&, ProcessLowerer&,
+    mir::Builder, const WalkFrame&, mir::CompilationUnit&, ProcessLowerer&,
     const hir::ValueTarget&) -> mir::ExprId;
 template auto BuildObservableCellExpr(
-    mir::Block&, const WalkFrame&, mir::CompilationUnit&,
+    mir::Builder, const WalkFrame&, mir::CompilationUnit&,
     const StructuralScopeLowerer&, const hir::ValueTarget&) -> mir::ExprId;
 template auto ReportReads(
     ProcessLowerer&, const WalkFrame&, const hir::Reads&, mir::LocalId)
@@ -682,16 +682,16 @@ template auto ReportReads(
     const StructuralScopeLowerer&, const WalkFrame&, const hir::Reads&,
     mir::LocalId) -> diag::Result<void>;
 template auto BuildTriggerArray(
-    mir::Block&, const WalkFrame&, ProcessLowerer&,
+    mir::Builder, const WalkFrame&, ProcessLowerer&,
     std::span<const ObservedLeaf>) -> diag::Result<mir::ExprId>;
 template auto BuildTriggerArray(
-    mir::Block&, const WalkFrame&, const StructuralScopeLowerer&,
+    mir::Builder, const WalkFrame&, const StructuralScopeLowerer&,
     std::span<const ObservedLeaf>) -> diag::Result<mir::ExprId>;
 template auto BuildWaitOnStmt(
-    mir::Block&, mir::Block&, const WalkFrame&, ProcessLowerer&,
+    mir::Builder, mir::Builder, const WalkFrame&, ProcessLowerer&,
     std::span<const ObservedLeaf>) -> diag::Result<mir::Stmt>;
 template auto BuildWaitOnStmt(
-    mir::Block&, mir::Block&, const WalkFrame&, const StructuralScopeLowerer&,
+    mir::Builder, mir::Builder, const WalkFrame&, const StructuralScopeLowerer&,
     std::span<const ObservedLeaf>) -> diag::Result<mir::Stmt>;
 template auto ReportCells(
     ProcessLowerer&, const WalkFrame&, mir::LocalId,
@@ -700,10 +700,10 @@ template auto ReportCells(
     const StructuralScopeLowerer&, const WalkFrame&, mir::LocalId,
     std::span<const hir::SensitivityEntry>) -> diag::Result<void>;
 template auto BuildValueChangeWaitStmt(
-    mir::Block&, const WalkFrame&, ProcessLowerer&,
+    mir::Builder, const WalkFrame&, ProcessLowerer&,
     std::span<const hir::SensitivityEntry>) -> diag::Result<mir::Stmt>;
 template auto BuildValueChangeWaitStmt(
-    mir::Block&, const WalkFrame&, const StructuralScopeLowerer&,
+    mir::Builder, const WalkFrame&, const StructuralScopeLowerer&,
     std::span<const hir::SensitivityEntry>) -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

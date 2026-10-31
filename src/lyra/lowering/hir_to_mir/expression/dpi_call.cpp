@@ -38,6 +38,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
@@ -125,7 +126,7 @@ enum class ForeignHold : std::uint8_t {
 // crosses by value, the seed of a scalar boundary object the callee writes
 // back through, and what an export hands back.
 auto MarshalSvToCarrier(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId sv_id,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId sv_id,
     const support::DpiCarrier& carrier_desc, ForeignHold hold) -> mir::ExprId {
   const auto* scalar = std::get_if<support::ScalarCarrier>(&carrier_desc);
   if (scalar == nullptr) {
@@ -143,12 +144,12 @@ auto MarshalSvToCarrier(
     case support::DpiScalarAbi::kInt:
     case support::DpiScalarAbi::kLongInt: {
       const mir::ExprId machine_int = BuildToInt64Call(unit, block, sv_id);
-      return block.exprs.Add(
+      return block.Add(
           mir::Expr{
               .data = mir::CastExpr{.operand = machine_int}, .type = carrier});
     }
     case support::DpiScalarAbi::kReal:
-      return block.exprs.Add(
+      return block.Add(
           mir::Expr{
               .data =
                   mir::CallExpr{
@@ -161,7 +162,7 @@ auto MarshalSvToCarrier(
     case support::DpiScalarAbi::kString:
       switch (hold) {
         case ForeignHold::kForTheCall:
-          return block.exprs.Add(
+          return block.Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{
@@ -172,7 +173,7 @@ auto MarshalSvToCarrier(
                           .arguments = {}},
                   .type = carrier});
         case ForeignHold::kUntilTheImportReturns:
-          return block.exprs.Add(
+          return block.Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{
@@ -181,14 +182,14 @@ auto MarshalSvToCarrier(
                                   .target = support::BuiltinFn::
                                       kHandStringToForeignCaller},
                           .arguments =
-                              {block.exprs.Add(
+                              {block.Add(
                                    BuildCurrentRuntimeCallExpr(unit_lowerer)),
                                sv_id}},
                   .type = carrier});
       }
       throw InternalError("MarshalSvToCarrier: unknown ForeignHold");
     case support::DpiScalarAbi::kChandle:
-      return block.exprs.Add(
+      return block.Add(
           mir::Expr{
               .data =
                   mir::CallExpr{
@@ -199,7 +200,7 @@ auto MarshalSvToCarrier(
                       .arguments = {}},
               .type = carrier});
     case support::DpiScalarAbi::kLogicScalar:
-      return block.exprs.Add(
+      return block.Add(
           mir::Expr{
               .data =
                   mir::CallExpr{
@@ -231,7 +232,7 @@ auto MarshalCarrierToSv(
         "machine value; every other carrier reads back from its boundary "
         "object");
   }
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   // The carrier is read as the machine value it holds.
   call_id = block.AsValue(unit_lowerer.Unit().types, call_id);
   switch (scalar->abi) {
@@ -243,13 +244,14 @@ auto MarshalCarrierToSv(
       // The carrier is the formal's declared C width; the conversion takes
       // the widest machine integer, so widening here keeps one runtime entry
       // serving every carrier width instead of one per width.
-      const mir::ExprId machine_int = block.exprs.Add(
+      const mir::ExprId machine_int = block.Add(
           mir::Expr{
               .data = mir::CastExpr{.operand = call_id},
               .type = unit_lowerer.Unit().builtins.machine_int64});
       return mir::MakeBuiltinCall(
-          unit_lowerer.Unit(), block, support::BuiltinFn::kIntegralFromInt,
-          std::nullopt, {machine_int}, result_type);
+          unit_lowerer.Unit(), block.Body(),
+          support::BuiltinFn::kIntegralFromInt, std::nullopt, {machine_int},
+          result_type);
     }
     case support::DpiScalarAbi::kReal:
     case support::DpiScalarAbi::kString:
@@ -260,7 +262,7 @@ auto MarshalCarrierToSv(
           .type = result_type};
     case support::DpiScalarAbi::kLogicScalar:
       return mir::MakeBuiltinCall(
-          unit_lowerer.Unit(), block, support::BuiltinFn::kFromSvLogic,
+          unit_lowerer.Unit(), block.Body(), support::BuiltinFn::kFromSvLogic,
           std::nullopt, {call_id}, result_type);
     case support::DpiScalarAbi::kVoid:
       throw InternalError("MarshalCarrierToSv: void has no marshal-out");
@@ -312,9 +314,9 @@ auto ChunkType(
 // The writable canonical chunk pointer of a boundary buffer, which feeds both
 // the foreign call (which writes through it) and the copy-back read.
 auto BuildBufferDataCall(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId buffer_ref,
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId buffer_ref,
     const support::VectorCarrier& carrier) -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -382,7 +384,7 @@ auto OpenArrayElementType(
 // from the actual's type, because a declaration that sizes a dimension
 // overrides what the actual declares.
 auto BuildOpenArrayBounds(
-    mir::CompilationUnit& unit, mir::Block& block,
+    mir::CompilationUnit& unit, mir::Builder block,
     const support::OpenArrayCarrier& open, const hir::TypePool& hir_types,
     hir::TypeId actual_type) -> mir::ExprId {
   std::vector<support::DpiRange> ranges;
@@ -409,13 +411,13 @@ auto BuildOpenArrayBounds(
 // each dimension and whether an element's canonical form is how an individual
 // value of its type crosses (LRM Annex H.12.4).
 auto BuildBoundaryInit(
-    UnitLowerer& unit_lowerer, mir::Block& block,
+    UnitLowerer& unit_lowerer, mir::Builder block,
     const support::DpiCarrier& carrier, mir::ExprId seed_sv,
     mir::TypeId actual_type, hir::TypeId actual_hir_type,
     mir::TypeId carrier_type) -> diag::Result<mir::ExprId> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const auto construct = [&](std::vector<mir::ExprId> arguments) {
-    return block.exprs.Add(
+    return block.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -453,7 +455,7 @@ auto BuildBoundaryInit(
                 unit, block, open, unit_lowerer.Hir().types, actual_hir_type);
             return construct(
                 {seed_sv, bounds,
-                 block.exprs.Add(
+                 block.Add(
                      mir::Expr{
                          .data =
                              mir::MachineBoolLiteral{
@@ -467,14 +469,14 @@ auto BuildBoundaryInit(
 // The argument the foreign call receives for one boundary object: a scalar's
 // address, a buffer's canonical chunk pointer, or an open array's handle.
 auto BuildBoundaryArgument(
-    mir::CompilationUnit& unit, mir::Block& block,
+    mir::CompilationUnit& unit, mir::Builder block,
     const support::DpiCarrier& carrier, mir::LocalId temp,
     mir::TypeId carrier_type) -> mir::ExprId {
   const mir::ExprId object = block.LocalPlace(temp, carrier_type);
   return std::visit(
       Overloaded{
           [&](const support::ScalarCarrier&) {
-            return block.exprs.Add(
+            return block.Add(
                 mir::MakeAddressOfExpr(
                     object,
                     unit.types.Intern(
@@ -486,7 +488,7 @@ auto BuildBoundaryArgument(
             return BuildBufferDataCall(unit, block, object, vector);
           },
           [&](const support::OpenArrayCarrier&) {
-            return block.exprs.Add(
+            return block.Add(
                 mir::Expr{
                     .data =
                         mir::CallExpr{
@@ -519,13 +521,13 @@ auto BuildBoundaryReadback(
     const support::DpiCarrier& carrier, mir::ExprId object, mir::TypeId sv_type)
     -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   // A canonical chunk buffer is read by an entry over two operands, while an
   // open array's image is read by an entry the image itself answers, so each
   // arm states its own callee and the shared step is only the interning.
   const auto read = [&](mir::Direct callee,
                         std::vector<mir::ExprId> arguments) {
-    return block.exprs.Add(
+    return block.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -536,7 +538,7 @@ auto BuildBoundaryReadback(
   return std::visit(
       Overloaded{
           [&](const support::ScalarCarrier&) {
-            return block.exprs.Add(MarshalCarrierToSv(
+            return block.Add(MarshalCarrierToSv(
                 unit_lowerer, frame, object, carrier, sv_type));
           },
           [&](const support::VectorCarrier& vector) {
@@ -613,7 +615,7 @@ auto LowerForeignImportDirect(
     -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto& hir_exprs = lowerer.HirExprs();
 
   // A DPI-C import declares every formal (LRM 35.5), so the call carries an
@@ -624,7 +626,7 @@ auto LowerForeignImportDirect(
   for (std::size_t i = 0; i < operands.size(); ++i) {
     auto sv_or = lowerer.LowerExpr(hir_exprs.Get(operands[i]), frame);
     if (!sv_or) return std::unexpected(std::move(sv_or.error()));
-    const mir::ExprId sv_id = block.exprs.Add(*std::move(sv_or));
+    const mir::ExprId sv_id = block.Add(*std::move(sv_or));
     carrier_args.push_back(MarshalSvToCarrier(
         unit_lowerer, block, sv_id, import.params[i].carrier,
         ForeignHold::kForTheCall));
@@ -635,7 +637,7 @@ auto LowerForeignImportDirect(
   if (!ReturnsValue(import)) {
     return foreign_call;
   }
-  const mir::ExprId call_id = block.exprs.Add(std::move(foreign_call));
+  const mir::ExprId call_id = block.Add(std::move(foreign_call));
   return MarshalCarrierToSv(
       unit_lowerer, frame, call_id, support::ScalarCarrier{import.ret_abi},
       result_type);
@@ -659,7 +661,7 @@ auto PopulateForeignImportBoundary(
   auto& unit = unit_lowerer.Unit();
   const auto& hir_exprs = lowerer.HirExprs();
 
-  mir::Block& body = *cframe.current_block;
+  mir::Builder body = cframe.Builder();
 
   // One output / inout argument, and what its boundary object needs to be read
   // back into the actual once the call returns.
@@ -705,7 +707,7 @@ auto PopulateForeignImportBoundary(
       auto sv_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
       if (!sv_or) return std::unexpected(std::move(sv_or.error()));
       crossing_type = sv_or->type;
-      seed_sv = body.exprs.Add(*std::move(sv_or));
+      seed_sv = body.Add(*std::move(sv_or));
     }
 
     if (CrossesByValue(param)) {
@@ -754,11 +756,9 @@ auto PopulateForeignImportBoundary(
     ret_temp = cframe.bindings->DeclareAnonymous(call_type);
     body.AppendStmt(
         mir::LocalDeclStmt{
-            .target = *ret_temp,
-            .init = body.exprs.Add(std::move(foreign_call))});
+            .target = *ret_temp, .init = body.Add(std::move(foreign_call))});
   } else {
-    body.AppendStmt(
-        mir::ExprStmt{.expr = body.exprs.Add(std::move(foreign_call))});
+    body.AppendStmt(mir::ExprStmt{.expr = body.Add(std::move(foreign_call))});
   }
 
   for (const Writeback& wb : writebacks) {
@@ -803,7 +803,7 @@ auto BuildDeclaringScopeExpr(
     return BuildEnclosingScopeReceiver(
         frame, unit, mir::EnclosingHops{.value = declaring_scope->value});
   }
-  return frame.current_block->exprs.Add(
+  return frame.Builder().Add(
       mir::Expr{.data = mir::NullLiteral{}, .type = unit.builtins.scope_ptr});
 }
 
@@ -825,14 +825,15 @@ auto BuildDeclaringScopeExpr(
 void CloseDpiScopeExtent(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Block&& boundary,
     std::optional<hir::StructuralHops> declaring_scope) {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   AppendRuntimeEffectStmt(
       unit_lowerer, block, support::BuiltinFn::kEnterDpiScope,
       {BuildDeclaringScopeExpr(unit_lowerer, frame, declaring_scope)});
 
   mir::Block cleanup;
   AppendRuntimeEffectStmt(
-      unit_lowerer, cleanup, support::BuiltinFn::kLeaveDpiScope, {});
+      unit_lowerer, block.Into(cleanup), support::BuiltinFn::kLeaveDpiScope,
+      {});
 
   block.AppendFinally(std::move(boundary), std::move(cleanup));
   AppendRuntimeEffectStmt(
@@ -884,11 +885,11 @@ auto LowerForeignImportSequenced(
         "LowerForeignImportSequenced: a boundary that returns nothing has no "
         "expression to stand as -- please report this as a bug");
   }
-  mir::Block& body = *bframe.current_block;
+  mir::Builder body = bframe.Builder();
   const mir::TypeId call_type =
       CarrierTypeId(unit, support::ScalarCarrier{import.ret_abi});
   const mir::ExprId ret_ref = body.LocalPlace(**ret_temp, call_type);
-  const mir::ExprId result_id = body.exprs.Add(MarshalCarrierToSv(
+  const mir::ExprId result_id = body.Add(MarshalCarrierToSv(
       unit_lowerer, bframe, ret_ref, support::ScalarCarrier{import.ret_abi},
       result_type));
   if (!import.is_context) return steps.Build(result_id);
@@ -899,11 +900,11 @@ auto LowerForeignImportSequenced(
   steps.Body().AppendStmt(
       mir::LocalDeclStmt{
           .target = result,
-          .init = steps.Body().exprs.Add(
+          .init = steps.Body().Add(
               BuildDefaultValueExpr(unit, steps.Body(), result_type))});
   body.AppendStmt(
       mir::ExprStmt{
-          .expr = body.exprs.Add(
+          .expr = body.Add(
               mir::MakeAssignExpr(
                   unit.builtins, body.LocalPlace(result, result_type),
                   result_id))});
@@ -952,16 +953,16 @@ auto LowerForeignImportTask(
       PopulateForeignImportBoundary(lowerer, fiber_body.Frame(), c, import);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
-  mir::Block& body = *await_frame.current_block;
+  mir::Builder body = await_frame.Builder();
   const mir::ExprId fiber_id =
       BuildKeptClosure(unit, body, fiber_body.BuildVoid());
   const mir::ExprId runtime_id =
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      body.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   // A foreign task may consume simulation time (LRM 35.5.1.1), so its call is
   // a suspending construct like a delay: the runtime carries it on a stack of
   // its own and answers whether this execution must park at all, and the
   // suspension that follows waits for nothing else.
-  const mir::ExprId run_id = body.exprs.Add(
+  const mir::ExprId run_id = body.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -1123,14 +1124,14 @@ auto LowerForeignImportCallStmtForm(
 // at once at a `context` import's boundary, and after a plain import at the
 // execution's next suspension -- so landing it here loses nothing.
 void CloseForeignCallerRegion(
-    mir::CompilationUnit& unit, CallableBindings& bindings, mir::Block& block,
+    mir::CompilationUnit& unit, CallableBindings& bindings, mir::Builder block,
     mir::Block&& body) {
   const mir::TypeId effect_type = unit.types.Intern(
       mir::Type{mir::RuntimeLibraryType{
           .kind = mir::RuntimeLibraryKind::kControlEffect}});
-  const mir::BlockId region = block.child_scopes.Add(std::move(body));
+  const mir::BlockId region = block.AddScope(std::move(body));
   const mir::LocalId caught = bindings.DeclareAnonymous(effect_type);
-  const mir::BlockId consumed = block.child_scopes.Add(mir::Block{});
+  const mir::BlockId consumed = block.AddScope(mir::Block{});
   block.AppendStmt(
       mir::TryStmt{.body = region, .caught = caught, .handler = consumed});
 }
@@ -1145,14 +1146,14 @@ void CloseForeignCallerRegion(
 // zero of its result's C type, which needs no SystemVerilog type to state and,
 // for a string, no storage to keep.
 void ReturnTheFallbackAnswer(
-    UnitLowerer& module, mir::Block& block, hir::SubroutineKind kind,
+    UnitLowerer& module, mir::Builder block, hir::SubroutineKind kind,
     support::DpiScalarAbi ret_abi) {
   mir::CompilationUnit& unit = module.Unit();
   switch (kind) {
     case hir::SubroutineKind::kTask:
       block.AppendStmt(
           mir::ReturnStmt{
-              .value = block.exprs.Add(
+              .value = block.Add(
                   mir::Expr{
                       .data =
                           mir::CallExpr{
@@ -1160,7 +1161,7 @@ void ReturnTheFallbackAnswer(
                                   mir::Direct{
                                       .target =
                                           support::BuiltinFn::kDisableIsActive},
-                              .arguments = {block.exprs.Add(
+                              .arguments = {block.Add(
                                   BuildCurrentRuntimeCallExpr(module))}},
                       .type =
                           ForeignBoundaryReturnType(unit, ret_abi, true)})});
@@ -1185,21 +1186,21 @@ void ReturnTheFallbackAnswer(
       case support::DpiScalarAbi::kShortInt:
       case support::DpiScalarAbi::kInt:
       case support::DpiScalarAbi::kLongInt:
-        return block.exprs.Add(
+        return block.Add(
             mir::Expr{
                 .data =
                     mir::CastExpr{
                         .operand = mir::BuildMachineIntLiteral(unit, block, 0)},
                 .type = carrier});
       case support::DpiScalarAbi::kReal:
-        return block.exprs.Add(
+        return block.Add(
             mir::Expr{
                 .data = mir::MachineFloatLiteral{.value = 0.0},
                 .type = carrier});
       case support::DpiScalarAbi::kString:
-        return block.exprs.Add(mir::MakeStringLiteral(carrier, ""));
+        return block.Add(mir::MakeStringLiteral(carrier, ""));
       case support::DpiScalarAbi::kChandle:
-        return block.exprs.Add(
+        return block.Add(
             mir::Expr{.data = mir::NullLiteral{}, .type = carrier});
     }
     throw InternalError("ReturnTheFallbackAnswer: unknown DpiScalarAbi");
@@ -1217,16 +1218,17 @@ void ReturnTheFallbackAnswer(
 // to a scope, one does, and where it belongs to a namespace, the entry is the
 // symbol and the foreign caller's frame is directly above it.
 void CloseForeignExportEntry(
-    UnitLowerer& module, CallableBindings& bindings, mir::Block& entry,
+    UnitLowerer& module, CallableBindings& bindings, mir::Builder entry,
     mir::Block&& body, hir::SubroutineKind kind,
     support::DpiScalarAbi ret_abi) {
   mir::Block ran;
+  mir::Builder ran_builder = entry.Into(ran);
   AppendRuntimeEffectStmt(
-      module, ran, support::BuiltinFn::kCheckExportReachable, {});
+      module, ran_builder, support::BuiltinFn::kCheckExportReachable, {});
   AppendRuntimeEffectStmt(
-      module, ran, support::BuiltinFn::kTakeDepartureIfDue, {});
-  ran.AppendStmt(
-      mir::BlockStmt{.scope = ran.child_scopes.Add(std::move(body))});
+      module, ran_builder, support::BuiltinFn::kTakeDepartureIfDue, {});
+  ran_builder.AppendStmt(
+      mir::BlockStmt{.scope = ran_builder.AddScope(std::move(body))});
   CloseForeignCallerRegion(module.Unit(), bindings, entry, std::move(ran));
   ReturnTheFallbackAnswer(module, entry, kind, ret_abi);
 }
@@ -1280,11 +1282,12 @@ auto SynthesizeForeignExportEntry(
 
   code.body.emplace();
   CallableBindings bindings(unit, code);
-  mir::Block& entry = code.Body();
+  mir::Builder entry(code.Body(), diag::SourceSpan{});
 
   // The boundary's own statements, which the entry's region closes around once
   // they are built.
   mir::Block body;
+  mir::Builder body_builder = entry.Into(body);
 
   std::optional<mir::LocalId> scope_param;
   if (through_scope) {
@@ -1307,19 +1310,20 @@ auto SynthesizeForeignExportEntry(
         context_frame.current_class.cls->self_pointer_type;
     const mir::LocalId self_local =
         bindings.Declare(ReceiverOrigin{}, self_type);
-    const mir::ExprId narrowed = body.exprs.Add(
+    const mir::ExprId narrowed = body_builder.Add(
         mir::Expr{
             .data =
                 mir::CastExpr{
-                    .operand =
-                        body.ReadLocal(*scope_param, unit.builtins.scope_ptr)},
+                    .operand = body_builder.ReadLocal(
+                        *scope_param, unit.builtins.scope_ptr)},
             .type = self_type});
-    body.AppendStmt(mir::LocalDeclStmt{.target = self_local, .init = narrowed});
-    receiver =
-        BuildObjectDeref(unit, body, body.LocalPlace(self_local, self_type));
+    body_builder.AppendStmt(
+        mir::LocalDeclStmt{.target = self_local, .init = narrowed});
+    receiver = BuildObjectDeref(
+        unit, body_builder, body_builder.LocalPlace(self_local, self_type));
   }
 
-  const auto param_ref = [&](mir::Block& block, std::size_t i) -> mir::ExprId {
+  const auto param_ref = [&](mir::Builder block, std::size_t i) -> mir::ExprId {
     return block.ReadLocal(params[i], code.locals.Get(params[i]).type);
   };
 
@@ -1363,7 +1367,7 @@ auto SynthesizeForeignExportEntry(
     const hir::DpiParamAbi& p = export_decl.params[i];
     mir::ExprId sv_init{};
     if (const auto* vec = std::get_if<support::VectorCarrier>(&p.carrier)) {
-      sv_init = body.exprs.Add(
+      sv_init = body_builder.Add(
           mir::Expr{
               .data =
                   mir::CallExpr{
@@ -1371,15 +1375,16 @@ auto SynthesizeForeignExportEntry(
                           mir::Direct{
                               .target = VectorReadBuiltin(*vec),
                               .type_arguments = {sv_type}},
-                      .arguments = {param_ref(body, i)}},
+                      .arguments = {param_ref(body_builder, i)}},
               .type = sv_type});
     } else {
-      sv_init = body.exprs.Add(MarshalCarrierToSv(
+      sv_init = body_builder.Add(MarshalCarrierToSv(
           module, body_frame, carrier(), p.carrier, sv_type));
     }
     const mir::LocalId sv_in = bindings.DeclareAnonymous(sv_type);
-    body.AppendStmt(mir::LocalDeclStmt{.target = sv_in, .init = sv_init});
-    call_args.push_back(body.ReadLocal(sv_in, sv_type));
+    body_builder.AppendStmt(
+        mir::LocalDeclStmt{.target = sv_in, .init = sv_init});
+    call_args.push_back(body_builder.ReadLocal(sv_in, sv_type));
     return sv_in;
   };
   for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
@@ -1387,12 +1392,13 @@ auto SynthesizeForeignExportEntry(
     const mir::TypeId sv_type = module.TranslateType(p.sv_type);
     switch (p.direction) {
       case support::DpiDirection::kInput:
-        read_in(i, sv_type, [&] { return param_ref(body, i); });
+        read_in(i, sv_type, [&] { return param_ref(body_builder, i); });
         break;
       case support::DpiDirection::kInout: {
         const mir::LocalId sv_in = read_in(i, sv_type, [&] {
-          return body.Deref(
-              unit.types, param_ref(body, i), CarrierTypeId(unit, p.carrier));
+          return body_builder.Deref(
+              unit.types, param_ref(body_builder, i),
+              CarrierTypeId(unit, p.carrier));
         });
         components.push_back(
             Component{
@@ -1412,10 +1418,10 @@ auto SynthesizeForeignExportEntry(
   // is what the function reports into; with none in progress, it reports
   // nowhere and runs.
   if (const std::optional<mir::TypeId> report = ReportParamTypeOf(unit, kind)) {
-    call_args.push_back(body.exprs.Add(
+    call_args.push_back(body_builder.Add(
         mir::MakeCallExpr(
             mir::Direct{.target = support::BuiltinFn::kEvaluationInProgress},
-            {body.exprs.Add(BuildCurrentRuntimeCallExpr(module))}, *report)));
+            {body_builder.Add(BuildCurrentRuntimeCallExpr(module))}, *report)));
   }
 
   // The completion payload the writeback loop below destructures is the
@@ -1426,7 +1432,7 @@ auto SynthesizeForeignExportEntry(
       is_task
           ? unit.types.Get(method_result_type).Get<mir::CoroutineType>().payload
           : method_result_type;
-  const mir::ExprId method_call = body.exprs.Add(
+  const mir::ExprId method_call = body_builder.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -1440,7 +1446,7 @@ auto SynthesizeForeignExportEntry(
   // entry point drives the coroutine to completion here; a function call
   // already yields its payload.
   const mir::ExprId completion_source =
-      is_task ? body.exprs.Add(
+      is_task ? body_builder.Add(
                     mir::Expr{
                         .data =
                             mir::CallExpr{
@@ -1456,9 +1462,9 @@ auto SynthesizeForeignExportEntry(
   // completion is a product at every count, so it binds the same way whether or
   // not anything is projected back out of it.
   const mir::LocalId completion = bindings.DeclareAnonymous(payload_type);
-  body.AppendStmt(
+  body_builder.AppendStmt(
       mir::LocalDeclStmt{.target = completion, .init = completion_source});
-  const auto component_value = [&](mir::Block& block,
+  const auto component_value = [&](mir::Builder block,
                                    std::size_t k) -> mir::ExprId {
     return ProjectCompletionComponent(
         block, completion, payload_type,
@@ -1469,13 +1475,14 @@ auto SynthesizeForeignExportEntry(
   // Writes component `k`, formal `i`, back through its foreign pointer, in
   // `block`: a scalar stores its marshaled carrier through the pointer; a
   // vector reshapes the SV value into the foreign-owned canonical buffer.
-  const auto write_back = [&](mir::Block& block, std::size_t k, std::size_t i) {
+  const auto write_back = [&](mir::Builder block, std::size_t k,
+                              std::size_t i) {
     const hir::DpiParamAbi& p = export_decl.params[i];
     const mir::ExprId value = component_value(block, k);
     if (const auto* vec = std::get_if<support::VectorCarrier>(&p.carrier)) {
       block.AppendStmt(
           mir::ExprStmt{
-              .expr = block.exprs.Add(
+              .expr = block.Add(
                   mir::Expr{
                       .data =
                           mir::CallExpr{
@@ -1493,8 +1500,8 @@ auto SynthesizeForeignExportEntry(
         block.Deref(unit.types, param_ref(block, i), carrier_type);
     block.AppendStmt(
         mir::ExprStmt{
-            .expr = block.exprs.Add(
-                mir::MakeAssignExpr(unit.builtins, place, carrier))});
+            .expr =
+                block.Add(mir::MakeAssignExpr(unit.builtins, place, carrier))});
   };
 
   // An `output` is always written. An `inout` is written only where the
@@ -1508,19 +1515,21 @@ auto SynthesizeForeignExportEntry(
         Overloaded{
             [&](const ReturnedValue&) {},
             [&](const OutputFormal& output) {
-              write_back(body, k, output.param_index);
+              write_back(body_builder, k, output.param_index);
             },
             [&](const InoutFormal& inout) {
               mir::Block changed;
-              write_back(changed, k, inout.param_index);
-              const mir::ExprId lhs = component_value(body, k);
-              const mir::ExprId rhs =
-                  body.ReadLocal(inout.held_before, components[k].sv_type);
-              const mir::ExprId same = BuildBitIdentity(unit, body, lhs, rhs);
-              body.AppendStmt(
+              mir::Builder changed_builder(changed, body_frame.span);
+              write_back(changed_builder, k, inout.param_index);
+              const mir::ExprId lhs = component_value(body_builder, k);
+              const mir::ExprId rhs = body_builder.ReadLocal(
+                  inout.held_before, components[k].sv_type);
+              const mir::ExprId same =
+                  BuildBitIdentity(unit, body_builder, lhs, rhs);
+              body_builder.AppendStmt(
                   mir::IfStmt{
-                      .condition = BuildConditionNot(unit, body, same),
-                      .then_scope = body.child_scopes.Add(std::move(changed)),
+                      .condition = BuildConditionNot(unit, body_builder, same),
+                      .then_scope = body_builder.AddScope(std::move(changed)),
                       .else_scope = std::nullopt});
             }},
         components[k].role);
@@ -1528,10 +1537,10 @@ auto SynthesizeForeignExportEntry(
 
   if (has_return) {
     const mir::ExprId ret_carrier = MarshalSvToCarrier(
-        module, body, component_value(body, 0),
+        module, body_builder, component_value(body_builder, 0),
         support::ScalarCarrier{export_decl.ret_abi},
         ForeignHold::kUntilTheImportReturns);
-    body.AppendStmt(mir::ReturnStmt{.value = ret_carrier});
+    body_builder.AppendStmt(mir::ReturnStmt{.value = ret_carrier});
   }
 
   CloseForeignExportEntry(
@@ -1567,7 +1576,7 @@ void PublishForeignScopeName(
   const mir::MachineFunctionType prototype =
       unit.types.Get(exported.signature).Get<mir::MachineFunctionType>();
 
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   code.body.emplace();
   CallableBindings bindings(unit, code);
 
@@ -1576,6 +1585,8 @@ void PublishForeignScopeName(
   // declares no such export -- so it runs inside the same region the entry
   // stands in, and answers the same fallback where that landed.
   mir::Block body;
+  mir::Builder entry_at(code.Body(), diag::SourceSpan{});
+  mir::Builder body_builder = entry_at.Into(body);
 
   std::vector<mir::TypeId> entry_params{unit.builtins.scope_ptr};
   for (const mir::TypeId type : prototype.params) {
@@ -1585,10 +1596,10 @@ void PublishForeignScopeName(
   code.result_type = prototype.result;
 
   const mir::LocalId scope = bindings.DeclareAnonymous(unit.builtins.scope_ptr);
-  body.AppendStmt(
+  body_builder.AppendStmt(
       mir::LocalDeclStmt{
           .target = scope,
-          .init = body.exprs.Add(
+          .init = body_builder.Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{
@@ -1599,11 +1610,12 @@ void PublishForeignScopeName(
                           .arguments = {}},
                   .type = unit.builtins.scope_ptr})});
 
-  const mir::ExprId scope_ref = body.ReadLocal(scope, unit.builtins.scope_ptr);
-  const mir::ExprId name = body.exprs.Add(
+  const mir::ExprId scope_ref =
+      body_builder.ReadLocal(scope, unit.builtins.scope_ptr);
+  const mir::ExprId name = body_builder.Add(
       mir::MakeStringLiteral(
           unit.builtins.machine_c_string, linkage.foreign_name));
-  const mir::ExprId entry = body.exprs.Add(
+  const mir::ExprId entry = body_builder.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -1613,7 +1625,7 @@ void PublishForeignScopeName(
                   .arguments = {scope_ref, name}},
           .type = mir::ErasedFunction(unit.types)});
 
-  const mir::ExprId restored = body.exprs.Add(
+  const mir::ExprId restored = body_builder.Add(
       mir::Expr{
           .data = mir::CastExpr{.operand = entry},
           .type = unit.types.Intern(
@@ -1622,11 +1634,12 @@ void PublishForeignScopeName(
                   .result = prototype.result}})});
   std::vector<mir::ExprId> call_args;
   call_args.reserve(code.params.size() + 1);
-  call_args.push_back(body.ReadLocal(scope, unit.builtins.scope_ptr));
+  call_args.push_back(body_builder.ReadLocal(scope, unit.builtins.scope_ptr));
   for (const mir::LocalId param : code.params) {
-    call_args.push_back(body.ReadLocal(param, code.locals.Get(param).type));
+    call_args.push_back(
+        body_builder.ReadLocal(param, code.locals.Get(param).type));
   }
-  const mir::ExprId call = body.exprs.Add(
+  const mir::ExprId call = body_builder.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -1634,13 +1647,13 @@ void PublishForeignScopeName(
                   .arguments = std::move(call_args)},
           .type = prototype.result});
   if (unit.types.Get(prototype.result).Is<mir::VoidType>()) {
-    body.AppendStmt(mir::ExprStmt{.expr = call});
-    body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+    body_builder.AppendStmt(mir::ExprStmt{.expr = call});
+    body_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   } else {
-    body.AppendStmt(mir::ReturnStmt{.value = call});
+    body_builder.AppendStmt(mir::ReturnStmt{.value = call});
   }
-  CloseForeignCallerRegion(unit, bindings, code.Body(), std::move(body));
-  ReturnTheFallbackAnswer(module, code.Body(), exported.kind, exported.ret_abi);
+  CloseForeignCallerRegion(unit, bindings, entry_at, std::move(body));
+  ReturnTheFallbackAnswer(module, entry_at, exported.kind, exported.ret_abi);
 
   unit.foreign_scope_entries.push_back(
       mir::ForeignScopeEntry{

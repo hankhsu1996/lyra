@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -50,14 +51,14 @@ auto BindPromotedVar(ProcessLowerer& process, hir::ProceduralVarId var)
 auto InitializePromotedVar(
     ProcessLowerer& process, const WalkFrame& frame,
     const PromotedVarBinding& promoted, mir::ExprId initial) -> mir::Stmt {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   mir::CompilationUnit& unit = process.Owner().Unit();
   const mir::ExprId cell =
-      block.exprs.Add(PromotedVarPlace(unit.types, frame, promoted));
+      block.Add(PromotedVarPlace(unit.types, frame, promoted));
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::ExprStmt{
-          .expr = block.exprs.Add(
+          .expr = block.Add(
               mir::MakeCapabilityInstallCallExpr(
                   cell, initial, support::BuiltinFn::kInitialize,
                   unit.builtins.void_type))}};
@@ -93,7 +94,7 @@ auto LowerVarStart(
   if (hir_local.lifetime == hir::VariableLifetime::kStatic) {
     return mir::Stmt{.label = std::nullopt, .data = mir::EmptyStmt{}};
   }
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   mir::CompilationUnit& unit = process.Owner().Unit();
   const DeclaredVariable variable = DeclareVariable(
       unit, *frame.bindings, block, ProceduralOrigin{.var = var}, name,
@@ -119,20 +120,20 @@ auto LowerVarDeclaration(
     return started;
   }
   const mir::TypeId type = process.Owner().TranslateType(hir_local.type);
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   block.AppendStmt(std::move(started));
   auto init =
       process.LowerExpr(process.HirBody().exprs.Get(*hir_local.init), frame);
   if (!init) return std::unexpected(std::move(init.error()));
   const mir::ExprId value = ConvertToType(
-      process.Owner().Unit(), block, block.exprs.Add(*std::move(init)), type);
+      process.Owner().Unit(), block, block.Add(*std::move(init)), type);
   const AccessPath variable{
-      .owner = block.exprs.Add(LowerProceduralVarRefExpr(process, frame, var)),
+      .owner = block.Add(LowerProceduralVarRefExpr(process, frame, var)),
       .descent = {}};
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::ExprStmt{
-          .expr = block.exprs.Add(
+          .expr = block.Add(
               BuildStoreExpr(process.Owner().Unit(), block, variable, value))}};
 }
 
@@ -148,13 +149,13 @@ auto LowerVarDeclStmt(
 auto LowerReturnStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ReturnStmt& r) -> diag::Result<mir::Stmt> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   std::optional<mir::ExprId> explicit_value;
   if (r.value.has_value()) {
     auto value_or =
         process.LowerExpr(process.HirBody().exprs.Get(*r.value), frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
-    explicit_value = block.exprs.Add(*std::move(value_or));
+    explicit_value = block.Add(*std::move(value_or));
   }
   // The returned value is the completion payload: this return's explicit value
   // (or the implicit result variable) plus each output / inout formal,
@@ -165,7 +166,7 @@ auto LowerReturnStmt(
   // The value is part of the return, so it is evaluated before what leaving
   // the scopes owes runs, as rustc writes the return place before the drops.
   if (payload.has_value() && frame.normal_cleanups != nullptr) {
-    const mir::TypeId type = block.exprs.Get(*payload).type;
+    const mir::TypeId type = block.Get(*payload).type;
     payload = block.ReadLocal(DeclareLocal(frame, *payload), type);
   }
   EmitNormalCleanups(frame, nullptr);

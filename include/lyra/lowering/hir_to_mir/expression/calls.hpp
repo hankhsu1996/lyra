@@ -17,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -30,7 +31,7 @@ namespace lyra::lowering::hir_to_mir {
 // no source writes -- the engine it reaches -- is supplied here, so a call the
 // source wrote and one a lowering makes of its own are stated one way.
 [[nodiscard]] auto BuildBuiltinMethodCall(
-    const UnitLowerer& unit_lowerer, mir::Block& block,
+    const UnitLowerer& unit_lowerer, mir::Builder block,
     support::BuiltinFn method, std::optional<mir::ExprId> receiver,
     std::vector<mir::ExprId> operands, mir::TypeId result_type) -> mir::Expr;
 

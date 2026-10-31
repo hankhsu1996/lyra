@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -65,14 +66,14 @@ auto KindOfPlace(const CompilationUnit& unit, const Block& block, ExprId place)
 // entered on, what a borrow binds: the storage it names, or its read where that
 // storage is overlaid, since only a read makes a value of its type out of the
 // bits there.
-auto ReadIfOverlaid(const CompilationUnit& unit, Block& block, ExprId object)
+auto ReadIfOverlaid(const CompilationUnit& unit, Builder block, ExprId object)
     -> ExprId;
 
 // A read-only reference to `operand` where it lies: to the storage it names, or
 // reads where a borrow may bind that storage, and otherwise to its value, held
 // to the end of the full-expression -- as a C++ `const T&` binds an lvalue
 // where it lies and a prvalue in a temporary.
-auto Borrow(const CompilationUnit& unit, Block& block, ExprId operand)
+auto Borrow(const CompilationUnit& unit, Builder block, ExprId operand)
     -> ExprId;
 
 // Whether the value the node `id` of `block` stands for already lies in

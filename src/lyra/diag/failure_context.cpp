@@ -76,7 +76,7 @@ FailureContext::~FailureContext() {
   std::visit(
       Overloaded{
           [&](const Place& place) {
-            if (!trail.place.has_value()) {
+            if (!trail.place.has_value() && place.at != SourceSpan{}) {
               trail.place = place.at;
             }
           },

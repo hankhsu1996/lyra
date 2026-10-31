@@ -44,6 +44,7 @@
 #include "lyra/lowering/hir_to_mir/synthesized_function.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -275,8 +276,8 @@ class Writer {
   [[nodiscard]] auto Frame() const -> const WalkFrame& {
     return frame_;
   }
-  [[nodiscard]] auto Block() const -> mir::Block& {
-    return *frame_.current_block;
+  [[nodiscard]] auto Block() const -> mir::Builder {
+    return frame_.Builder();
   }
   [[nodiscard]] auto Unit() const -> mir::CompilationUnit& {
     return unit_lowerer_->Unit();
@@ -298,8 +299,7 @@ class Writer {
   [[nodiscard]] auto Value(hir::ExprId id) const -> diag::Result<mir::ExprId> {
     auto lowered = lowerer_->LowerExpr(decl_->body.exprs.Get(id), frame_);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return Block().AsValue(
-        Unit().types, Block().exprs.Add(*std::move(lowered)));
+    return Block().AsValue(Unit().types, Block().Add(*std::move(lowered)));
   }
 
   [[nodiscard]] auto Int(std::int64_t value) const -> mir::ExprId {
@@ -329,7 +329,7 @@ class Writer {
     Block().AppendStmt(mir::ExprStmt{.expr = expr});
   }
   void Do(mir::Expr expr) const {
-    Do(Block().exprs.Add(std::move(expr)));
+    Do(Block().Add(std::move(expr)));
   }
 
   // `name` of the library class `cls`, called on what the handle `receiver`
@@ -373,7 +373,7 @@ class Writer {
   // body's own object.
   [[nodiscard]] auto Own(const CovergroupClass& cls, std::uint32_t index) const
       -> AccessPath {
-    const mir::ExprId self = Block().exprs.Add(MakeSelfRefExpr(frame_));
+    const mir::ExprId self = Block().Add(MakeSelfRefExpr(frame_));
     const mir::ClassFieldTarget property =
         CovergroupPropertyTarget(*unit_lowerer_, cls, index);
     const mir::TypeId type = CovergroupPropertyType(*unit_lowerer_, cls, index);
@@ -393,7 +393,7 @@ class Writer {
   }
 
   void Store(const AccessPath& path, mir::ExprId value) const {
-    const mir::TypeId type = PathValueType(Unit(), Block(), path);
+    const mir::TypeId type = PathValueType(Unit(), Block().Body(), path);
     Do(BuildStoreExpr(
         Unit(), Block(), path,
         ConvertToType(
@@ -422,8 +422,8 @@ class Writer {
     Block().AppendStmt(
         mir::IfStmt{
             .condition = reduced,
-            .then_scope = Block().child_scopes.Add(std::move(then_block)),
-            .else_scope = Block().child_scopes.Add(std::move(else_block))});
+            .then_scope = Block().AddScope(std::move(then_block)),
+            .else_scope = Block().AddScope(std::move(else_block))});
   }
 
   // Runs `visit` on each element of the array `array` holds, in order, the
@@ -433,7 +433,7 @@ class Writer {
       const std::function<diag::Result<void>(const Writer&, mir::ExprId)>&
           visit) const -> diag::Result<void> {
     const mir::ExprId value = Block().AsValue(Unit().types, array);
-    const mir::TypeId type = Block().exprs.Get(value).type;
+    const mir::TypeId type = Block().Get(value).type;
     const mir::LocalId held = DeclareLocal(frame_, value);
     const WalkedArray walked = WalkedArrayOf(
         *unit_lowerer_, frame_, Block().LocalPlace(held, type), std::nullopt);
@@ -476,7 +476,7 @@ auto NewLibraryObject(
     const Writer& e, hir::ClassId cls, const std::vector<mir::ExprId>& values)
     -> mir::ExprId {
   mir::CompilationUnit& unit = e.Unit();
-  mir::Block& block = e.Block();
+  mir::Builder block = e.Block();
   const std::vector<hir::TypeId> types = e.Library().ConstructorParamTypes(cls);
   std::vector<mir::ExprId> arguments;
   // A class of this unit's, specialized on a type of an instance, is a type of
@@ -493,9 +493,9 @@ auto NewLibraryObject(
   }
   arguments.push_back(BuildReportHandedOn(unit, e.Frame()));
   const mir::TypeId handle = HandleTo(e.Lowering(), cls);
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeNewExpr(
-          block.exprs.Add(
+          block.Add(
               mir::MakeObjectConstructionExpr(
                   *mir::AllocatedType(unit.types, handle),
                   std::move(arguments))),
@@ -508,7 +508,7 @@ auto NewLibraryObject(
 void HandToRuntime(
     const Writer& e, support::BuiltinFn entry, mir::ExprId closure) {
   const mir::ExprId runtime =
-      e.Block().exprs.Add(BuildCurrentRuntimeCallExpr(e.Lowering()));
+      e.Block().Add(BuildCurrentRuntimeCallExpr(e.Lowering()));
   e.Do(
       mir::Expr{
           .data =
@@ -669,7 +669,8 @@ class ClassWriter {
         scopes_(&scopes),
         cls_(&cls),
         class_id_(class_id),
-        owner_(std::move(owner)),
+        // Every body the class is written of is lowered from the covergroup.
+        owner_(owner.WithSpan(decl.span)),
         type_event_(&type_event),
         library_(unit_lowerer.Hir()),
         own_(CovergroupClassOf(unit_lowerer, covergroup)),
@@ -736,7 +737,7 @@ class ClassWriter {
             [&](const hir::NameBelowInstance& below) {
               const mir::ExprId instance = BuildEnclosingScopeReceiver(
                   e.Frame(), Unit(), mir::EnclosingHops{below.scopes_out});
-              return e.Block().exprs.Add(
+              return e.Block().Add(
                   mir::Expr{
                       .data =
                           mir::CallExpr{
@@ -805,9 +806,9 @@ class ClassWriter {
       const Writer& e, std::uint32_t behavior,
       std::vector<mir::ExprId> arguments,
       std::optional<mir::TypeId> result) const -> mir::ExprId {
-    mir::Block& block = e.Block();
+    mir::Builder block = e.Block();
     const mir::VirtualSlot slot = IntroducedSlot(*u_, Self(), behavior);
-    const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(e.Frame()));
+    const mir::ExprId self = block.Add(MakeSelfRefExpr(e.Frame()));
     return BuildFunctionCall(
         Unit(), e.Frame(),
         mir::Virtual{
@@ -825,7 +826,7 @@ class ClassWriter {
   // assigns either, so what is read here is what the property holds.
   void BindKept(const Writer& e) const {
     mir::CompilationUnit& unit = Unit();
-    mir::Block& block = e.Block();
+    mir::Builder block = e.Block();
     for (std::size_t i = 0; i < decl_->formals.size(); ++i) {
       const hir::SubroutineParam& formal = decl_->formals[i];
       const std::uint32_t index = first_.layout.formals.at(i);
@@ -834,12 +835,12 @@ class ClassWriter {
       if (formal.direction == hir::ParamDirection::kRef ||
           formal.direction == hir::ParamDirection::kConstRef) {
         const mir::TypeId type = *ParamTypeOf(unit, value, formal.direction);
-        const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(e.Frame()));
+        const mir::ExprId self = block.Add(MakeSelfRefExpr(e.Frame()));
         const mir::ClassFieldTarget property =
             CovergroupPropertyTarget(*u_, first_, index);
         const mir::TypeId property_type =
             CovergroupPropertyType(*u_, first_, index);
-        const mir::ExprId held = block.exprs.Add(
+        const mir::ExprId held = block.Add(
             PropertyStorage(unit, block, self, property, property_type));
         const mir::ExprId reference = AtType(
             unit, block,
@@ -994,7 +995,7 @@ class ClassWriter {
                     }
                     least = *written;
                   }
-                  const mir::TypeId count = e.Block().exprs.Get(least).type;
+                  const mir::TypeId count = e.Block().Get(least).type;
                   const mir::LocalId kept = DeclareLocal(e.Frame(), least);
                   mir::ExprId most = e.Block().ReadLocal(kept, count);
                   if (step.most.has_value()) {
@@ -1208,7 +1209,7 @@ class ClassWriter {
                   [&](const Writer& at,
                       mir::ExprId candidate) -> diag::Result<void> {
                     const mir::TypeId tuple_type =
-                        at.Block().exprs.Get(candidate).type;
+                        at.Block().Get(candidate).type;
                     const mir::LocalId tuple =
                         at.Frame().bindings->DeclareAnonymous(tuple_type);
                     at.Block().AppendStmt(
@@ -1279,8 +1280,7 @@ class ClassWriter {
                   *tuples,
                   [&](const Writer& at,
                       mir::ExprId value) -> diag::Result<void> {
-                    const mir::TypeId tuple_type =
-                        at.Block().exprs.Get(value).type;
+                    const mir::TypeId tuple_type = at.Block().Get(value).type;
                     const mir::LocalId tuple =
                         at.Frame().bindings->DeclareAnonymous(tuple_type);
                     at.Block().AppendStmt(
@@ -1338,7 +1338,7 @@ class ClassWriter {
   // constructed (LRM 8.17), and starts the sampling.
   auto WriteConstructor() -> diag::Result<void> {
     mir::CompilationUnit& unit = Unit();
-    mir::CallableCode code = mir::CallableCode::Defined();
+    mir::CallableCode code = mir::CallableCode::Defined(owner_.span);
     CallableBindings bindings(unit, code);
     BoundImplicitParameters bound = BindImplicitParameters(
         *u_,
@@ -1347,30 +1347,30 @@ class ClassWriter {
             .WithRunsAsFunctionCall(true),
         Shape(), CallableForm::kConstructor);
     std::vector<mir::LocalId> params = std::move(bound.params);
-    mir::Block& block = code.Body();
+    mir::Builder block = bound.frame.Builder();
     ProcessLowerer lowerer = Lowerer();
 
     // The instance the object belongs to, recorded before anything else, since
     // a method the base's construction dispatches to may read it.
     if (const std::optional<DeclaringInstance>& instance =
             Shape().declaring_instance) {
-      const mir::ExprId value = block.exprs.Add(
+      const mir::ExprId value = block.Add(
           mir::Expr{
               .data =
                   mir::CastExpr{
                       .operand = BuildEnclosingScopeReceiver(
                           bound.frame, unit, mir::EnclosingHops{})},
               .type = instance->type});
-      const mir::ExprId target = block.exprs.Add(
+      const mir::ExprId target = block.Add(
           mir::MakeFieldAccessExpr(
               BuildObjectDeref(
-                  unit, block, block.exprs.Add(MakeSelfRefExpr(bound.frame))),
+                  unit, block, block.Add(MakeSelfRefExpr(bound.frame))),
               mir::ClassFieldTarget{
                   .owner = class_id_, .slot = instance->member},
               instance->type));
       block.AppendStmt(
           mir::ExprStmt{
-              .expr = block.exprs.Add(
+              .expr = block.Add(
                   mir::MakeAssignExpr(unit.builtins, target, value))});
     }
 
@@ -1446,7 +1446,7 @@ class ClassWriter {
             e.Frame());
         if (!named) return std::unexpected(std::move(named.error()));
         const mir::ExprId object = BuildObjectDeref(
-            unit, block, block.exprs.Add(MakeSelfRefExpr(e.Frame())));
+            unit, block, block.Add(MakeSelfRefExpr(e.Frame())));
         const mir::ClassFieldTarget property =
             CovergroupPropertyTarget(*u_, own_, index);
         const mir::TypeId property_type =
@@ -1455,7 +1455,7 @@ class ClassWriter {
             mir::MakeCallExpr(
                 mir::Direct{.target = support::BuiltinFn::kBindReference},
                 {block.AsValue(
-                     unit.types, block.exprs.Add(
+                     unit.types, block.Add(
                                      mir::MakeFieldAccessExpr(
                                          object, property, property_type))),
                  PathReference(unit, block, *named)},
@@ -1572,7 +1572,7 @@ class ClassWriter {
       const std::optional<std::pair<mir::LocalId, mir::TypeId>>& embedding,
       mir::LocalId report) const -> diag::Result<void> {
     mir::CompilationUnit& unit = Unit();
-    mir::Block& block = e.Block();
+    mir::Builder block = e.Block();
     hir::CovergroupId base = *decl_->base;
     const hir::PublishedCovergroup& published = PublishedOf(*u_, base);
     std::vector<mir::ExprId> arguments;
@@ -1620,7 +1620,7 @@ class ClassWriter {
                     mir::ConstructorTarget{
                         .cls = u_->CovergroupClassIdentity(base)},
                 .receiver = BuildObjectDeref(
-                    unit, block, block.exprs.Add(MakeSelfRefExpr(e.Frame())))},
+                    unit, block, block.Add(MakeSelfRefExpr(e.Frame())))},
             std::move(arguments), unit.builtins.void_type));
     return {};
   }
@@ -1630,17 +1630,17 @@ class ClassWriter {
   // and the one kept for the covergroup's type otherwise.
   [[nodiscard]] auto BlockEventOf(const Writer& e) const -> mir::ExprId {
     mir::CompilationUnit& unit = Unit();
-    mir::Block& block = e.Block();
+    mir::Builder block = e.Block();
     if (decl_->embedding.has_value()) {
       return e.Read(e.LibraryProperty(
           e.Read(Record(e)), Refs().group_instance, "block_event"));
     }
     const mir::TypeId cell_type =
         mir::ObservableCellOf(unit.types, unit.builtins.event);
-    const mir::ExprId cell = block.exprs.Add(BuildStaticStorageAccess(
+    const mir::ExprId cell = block.Add(BuildStaticStorageAccess(
         unit, e.Frame(), **type_event_, cell_type, mir::EnclosingHops{}));
     return block.AsValue(
-        unit.types, block.exprs.Add(block.WrapperContents(
+        unit.types, block.Add(block.WrapperContents(
                         unit.types, cell, unit.builtins.event)));
   }
 
@@ -1656,7 +1656,7 @@ class ClassWriter {
     // covergroup sampled only by calls has no execution.
     struct Sampler {
       std::function<diag::Result<mir::Stmt>(
-          ProcessLowerer&, const Writer&, mir::Block&)>
+          ProcessLowerer&, const Writer&, mir::Builder)>
           wait;
       bool strobes = false;
     };
@@ -1670,7 +1670,7 @@ class ClassWriter {
                   .wait =
                       [&on](
                           ProcessLowerer& lowerer, const Writer& at,
-                          mir::Block& block) {
+                          mir::Builder block) {
                         return BuildEventWaitStmt(
                             lowerer, at.Frame(), block, on.event);
                       },
@@ -1681,7 +1681,7 @@ class ClassWriter {
                   .wait =
                       [this](
                           ProcessLowerer& lowerer, const Writer& at,
-                          mir::Block& block) {
+                          mir::Builder block) {
                         return BuildEventObjectWaitStmt(
                             lowerer, at.Frame(), block, BlockEventOf(at));
                       },
@@ -1705,12 +1705,13 @@ class ClassWriter {
     BindKept(inside);
     mir::Block each;
     const Writer round = inside.At(inside.Frame().WithBlock(&each));
+    mir::Builder each_builder = round.Block();
     const auto sample = [&](const Writer& at) {
       at.Do(CallVirtual(at, kSampleBehavior, {}, std::nullopt));
     };
-    auto waited = sampler->wait(lowerer, round, each);
+    auto waited = sampler->wait(lowerer, round, each_builder);
     if (!waited) return std::unexpected(std::move(waited.error()));
-    each.AppendStmt(*std::move(waited));
+    each_builder.AppendStmt(*std::move(waited));
     if (sampler->strobes) {
       const mir::ExprId is_strobed = round.Call(
           round.Read(Record(round)), Refs().group_instance, "strobed");
@@ -1746,10 +1747,10 @@ class ClassWriter {
             .init = {},
             .condition = std::nullopt,
             .step = {},
-            .scope = closure.Body().child_scopes.Add(std::move(each))});
+            .scope = closure.Body().AddScope(std::move(each))});
     HandToRuntime(
         e, support::BuiltinFn::kRunObserving,
-        e.Block().exprs.Add(closure.BuildCallOnce()));
+        e.Block().Add(closure.BuildCallOnce()));
     return {};
   }
 
@@ -1780,8 +1781,7 @@ class ClassWriter {
           mir::Direct{
               .target = TypeMethod(*u_, *decl_->base, kSample),
               .receiver = BuildObjectDeref(
-                  unit, e.Block(),
-                  e.Block().exprs.Add(MakeSelfRefExpr(e.Frame())))},
+                  unit, e.Block(), e.Block().Add(MakeSelfRefExpr(e.Frame())))},
           std::move(forwarded), std::nullopt));
     }
     BindKept(e);
@@ -1912,11 +1912,12 @@ class ClassWriter {
         unit, e.Block(), ReduceToCondition(unit, e.Block(), e.Read(declared)));
     mir::Block first;
     const Writer then = e.At(e.Frame().WithBlock(&first));
+    mir::Builder first_builder = then.Block();
     const AccessPath now_declared = then.LibraryProperty(
-        first.ReadLocal(found, type), Refs().group_type, "declared");
+        first_builder.ReadLocal(found, type), Refs().group_type, "declared");
     then.Store(now_declared, then.Bit(true));
     std::vector<mir::ExprId> arguments = InstanceArgument(then);
-    arguments.push_back(first.ReadLocal(found, type));
+    arguments.push_back(first_builder.ReadLocal(found, type));
     then.Do(BuildFunctionCall(
         unit, then.Frame(),
         mir::Direct{
@@ -2150,18 +2151,18 @@ auto CovergroupLowerer::PopulateBodies(
   // before any process runs, as a declared event does (LRM 6.17), brought up
   // with the rest of what replicates the declaration (LRM 10.5).
   if (type_event_.has_value()) {
-    mir::Block& install = *bring_up.install.current_block;
+    mir::Builder install = bring_up.install.Builder();
     const mir::TypeId cell_type =
         mir::ObservableCellOf(unit.types, unit.builtins.event);
-    const mir::ExprId cell = install.exprs.Add(BuildStaticStorageAccess(
+    const mir::ExprId cell = install.Add(BuildStaticStorageAccess(
         unit, bring_up.install, *type_event_, cell_type, mir::EnclosingHops{}));
-    const mir::ExprId fresh_event = install.exprs.Add(
+    const mir::ExprId fresh_event = install.Add(
         mir::MakeCallExpr(
             mir::Direct{.target = support::BuiltinFn::kEventNew}, {},
             unit.builtins.event));
     install.AppendStmt(
         mir::ExprStmt{
-            .expr = install.exprs.Add(
+            .expr = install.Add(
                 mir::MakeCapabilityInstallCallExpr(
                     cell, fresh_event, support::BuiltinFn::kInitialize,
                     unit.builtins.void_type))});
@@ -2362,8 +2363,8 @@ namespace {
 // handed on as the scope every instance is (LRM 6.22).
 auto DeclaringInstanceOf(mir::CompilationUnit& unit, const WalkFrame& frame)
     -> mir::ExprId {
-  mir::Block& block = *frame.current_block;
-  return block.exprs.Add(
+  mir::Builder block = frame.Builder();
+  return block.Add(
       mir::Expr{
           .data =
               mir::CastExpr{
@@ -2375,14 +2376,14 @@ auto DeclaringInstanceOf(mir::CompilationUnit& unit, const WalkFrame& frame)
 
 // Whether the handle `handle` holds an object, as a condition.
 auto HoldsObject(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId handle)
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId handle)
     -> mir::ExprId {
-  const mir::TypeId type = block.exprs.Get(handle).type;
+  const mir::TypeId type = block.Get(handle).type;
   return ReduceToCondition(
       unit, block,
       BuildEquality(
           unit, block, support::ValueOperator::kInequality, handle,
-          block.exprs.Add(mir::Expr{.data = mir::NullLiteral{}, .type = type}),
+          block.Add(mir::Expr{.data = mir::NullLiteral{}, .type = type}),
           unit.builtins.bit1));
 }
 
@@ -2398,7 +2399,7 @@ auto LowerCovergroupFactory(
   SynthesizedFunction function(
       unit_lowerer, owner, shape, CallableForm::kInstanceMember);
   const WalkFrame& frame = function.Frame();
-  mir::Block& block = function.Body();
+  mir::Builder block = function.Body();
 
   // What `new` of the covergroup is handed, as a construction no extension
   // takes part in makes it: the object, the arguments, and every item
@@ -2407,7 +2408,7 @@ auto LowerCovergroupFactory(
   if (TakesDeclaringInstance(unit_lowerer, self)) {
     arguments.push_back(DeclaringInstanceOf(unit, frame));
   }
-  const mir::ExprId this_handle = block.exprs.Add(BuildThisHandle(frame));
+  const mir::ExprId this_handle = block.Add(BuildThisHandle(frame));
   const mir::TypeId embedding_handle =
       HandleTo(unit_lowerer, *own.published->embedding);
   arguments.push_back(
@@ -2431,9 +2432,9 @@ auto LowerCovergroupFactory(
   block.AppendStmt(
       mir::LocalDeclStmt{
           .target = made,
-          .init = block.exprs.Add(
+          .init = block.Add(
               mir::MakeNewExpr(
-                  block.exprs.Add(
+                  block.Add(
                       mir::MakeObjectConstructionExpr(
                           *mir::AllocatedType(unit.types, made_type),
                           std::move(arguments))),
@@ -2491,45 +2492,46 @@ void AppendBlockEventTriggers(
     std::span<const BlockEventTrigger> triggers) {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   for (const BlockEventTrigger& trigger : triggers) {
     std::visit(
         Overloaded{
             [&](const TypeEventCell& cell) {
-              const mir::ExprId held = block.exprs.Add(BuildStaticStorageAccess(
+              const mir::ExprId held = block.Add(BuildStaticStorageAccess(
                   unit, frame, cell.home,
                   mir::ObservableCellOf(unit.types, unit.builtins.event),
                   mir::EnclosingHops{}));
               block.AppendStmt(
                   mir::ExprStmt{
-                      .expr = block.exprs.Add(BuildTriggerCallExpr(
+                      .expr = block.Add(BuildTriggerCallExpr(
                           unit_lowerer, block,
-                          block.exprs.Add(block.WrapperContents(
+                          block.Add(block.WrapperContents(
                               unit.types, held, unit.builtins.event))))});
             },
             [&](const HeldCovergroupEvent& held) {
               // The holder's handle, read in `at`.
-              const auto holder = [&](mir::Block& at) {
+              const auto holder = [&](mir::Builder at) {
                 return at.AsValue(
                     unit.types,
-                    at.exprs.Add(PropertyStorage(
+                    at.Add(PropertyStorage(
                         unit, at,
-                        at.exprs.Add(MakeSelfRefExpr(frame.WithBlock(&at))),
+                        at.Add(MakeSelfRefExpr(frame.WithBlock(&at.Body()))),
                         held.holder, held.handle_type)));
               };
               const mir::ExprId holds = HoldsObject(unit, block, holder(block));
               mir::Block told;
-              const mir::ExprId handle = holder(told);
+              mir::Builder told_builder = block.Into(told);
+              const mir::ExprId handle = holder(told_builder);
               const auto [first, record] =
                   RecordOf(unit_lowerer, held.covergroup);
               const mir::ClassFieldTarget record_property =
                   CovergroupPropertyTarget(unit_lowerer, first, record);
               const mir::TypeId record_type =
                   CovergroupPropertyType(unit_lowerer, first, record);
-              const mir::ExprId record_handle = told.AsValue(
-                  unit.types,
-                  told.exprs.Add(PropertyStorage(
-                      unit, told, handle, record_property, record_type)));
+              const mir::ExprId record_handle = told_builder.AsValue(
+                  unit.types, told_builder.Add(PropertyStorage(
+                                  unit, told_builder, handle, record_property,
+                                  record_type)));
               const CoverageLibrary library(unit_lowerer.Hir());
               const CoverageLibrary::Property event = library.PropertyOf(
                   library.Refs().group_instance, "block_event");
@@ -2537,12 +2539,12 @@ void AppendBlockEventTriggers(
                   LibraryField(unit_lowerer, event);
               const mir::TypeId event_type =
                   unit_lowerer.TranslateType(event.type);
-              told.AppendStmt(
+              told_builder.AppendStmt(
                   mir::ExprStmt{
-                      .expr = told.exprs.Add(BuildTriggerCallExpr(
-                          unit_lowerer, told,
-                          told.exprs.Add(PropertyStorage(
-                              unit, told, record_handle, event_property,
+                      .expr = told_builder.Add(BuildTriggerCallExpr(
+                          unit_lowerer, told_builder,
+                          told_builder.Add(PropertyStorage(
+                              unit, told_builder, record_handle, event_property,
                               event_type))))});
               block.AppendIfThen(holds, std::move(told));
             }},
@@ -2598,11 +2600,11 @@ auto TypeRecordCall(
 // replaces the base's (LRM 19.4.1); the object is one of that covergroup, so
 // it is seen as one.
 auto InstanceAs(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId handle,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId handle,
     hir::CovergroupId covergroup) -> mir::ExprId {
   const mir::TypeId type = CovergroupHandle(unit_lowerer, covergroup);
-  if (block.exprs.Get(handle).type == type) return handle;
-  return block.exprs.Add(
+  if (block.Get(handle).type == type) return handle;
+  return block.Add(
       mir::Expr{.data = mir::CastExpr{.operand = handle}, .type = type});
 }
 
@@ -2618,7 +2620,7 @@ auto KeeperOf(
     hir::CovergroupId covergroup, mir::ExprId instance,
     const std::optional<std::string>& item) -> Keeper {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const CoverageLibrary library(unit_lowerer.Hir());
   const auto read = [&](const CovergroupClass& owner, std::uint32_t property) {
     const mir::ExprId object = ReportedObject(unit, frame, instance);
@@ -2628,7 +2630,7 @@ auto KeeperOf(
         CovergroupPropertyType(unit_lowerer, owner, property);
     return block.AsValue(
         unit.types,
-        block.exprs.Add(PropertyStorage(unit, block, object, target, type)));
+        block.Add(PropertyStorage(unit, block, object, target, type)));
   };
   if (item.has_value()) {
     const LineageItem found =
@@ -2682,14 +2684,13 @@ auto BuildReceivedInstance(
     const hir::CovergroupInstanceReceiver& through,
     hir::CovergroupId covergroup) -> diag::Result<mir::ExprId> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto lowered =
       lowerer.LowerExpr(lowerer.HirExprs().Get(through.instance), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   return InstanceAs(
       unit_lowerer, block,
-      block.AsValue(
-          unit_lowerer.Unit().types, block.exprs.Add(*std::move(lowered))),
+      block.AsValue(unit_lowerer.Unit().types, block.Add(*std::move(lowered))),
       covergroup);
 }
 
@@ -2702,7 +2703,7 @@ auto LowerCovergroupNewExpr(
     -> diag::Result<mir::Expr> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const CovergroupClass cls =
       CovergroupClassOf(unit_lowerer, created.covergroup);
   const hir::PublishedCovergroup& published = *cls.published;
@@ -2714,12 +2715,12 @@ auto LowerCovergroupNewExpr(
         lowerer.LowerExpr(lowerer.HirExprs().Get(*created.embedding), frame);
     if (!embedding) return std::unexpected(std::move(embedding.error()));
     const mir::ExprId handle =
-        block.AsValue(unit.types, block.exprs.Add(*std::move(embedding)));
+        block.AsValue(unit.types, block.Add(*std::move(embedding)));
     auto actuals = BindCovergroupActuals(
         lowerer, frame, published.formals, created.arguments);
     if (!actuals) return std::unexpected(std::move(actuals.error()));
     const mir::VirtualSlot slot = FactorySlot(unit_lowerer, created.covergroup);
-    return block.exprs.Get(BuildFunctionCall(
+    return block.Get(BuildFunctionCall(
         unit, frame,
         mir::Virtual{
             .receiver = BuildObjectDeref(
@@ -2742,7 +2743,7 @@ auto LowerCovergroupNewExpr(
         lowerer.LowerExpr(lowerer.HirExprs().Get(*created.embedding), frame);
     if (!embedding) return std::unexpected(std::move(embedding.error()));
     const mir::ExprId handle =
-        block.AsValue(unit.types, block.exprs.Add(*std::move(embedding)));
+        block.AsValue(unit.types, block.Add(*std::move(embedding)));
     const mir::TypeId embedding_handle =
         HandleTo(unit_lowerer, *published.embedding);
     arguments.push_back(ConvertToType(unit, block, handle, embedding_handle));
@@ -2761,7 +2762,7 @@ auto LowerCovergroupNewExpr(
   }
   arguments.push_back(BuildReportHandedOn(unit, frame));
   return mir::MakeNewExpr(
-      block.exprs.Add(
+      block.Add(
           mir::MakeObjectConstructionExpr(
               *mir::AllocatedType(unit.types, result_type),
               std::move(arguments))),
@@ -2774,7 +2775,7 @@ auto LowerCovergroupMethodCallExpr(
     const hir::CovergroupMethodCallExpr& call) -> diag::Result<mir::Expr> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const CoverageLibrary library(unit_lowerer.Hir());
   const std::vector<hir::ExprId> given = GivenActuals(call.arguments);
   const bool counted = !given.empty();
@@ -2798,7 +2799,7 @@ auto LowerCovergroupMethodCallExpr(
         BindLibraryActuals(lowerer, frame, method, given, leading.size());
     if (!bound) return std::unexpected(std::move(bound.error()));
     leading.insert(leading.end(), bound->begin(), bound->end());
-    return block.exprs.Get(BuildMethodCall(
+    return block.Get(BuildMethodCall(
         unit_lowerer, frame, method.callee, receiver, leading,
         method.prototype.result_type));
   };
@@ -2829,7 +2830,7 @@ auto LowerCovergroupMethodCallExpr(
       if (!actuals) return std::unexpected(std::move(actuals.error()));
       const mir::VirtualSlot slot =
           IntroducedSlot(unit_lowerer, call.covergroup, kSampleBehavior);
-      return block.exprs.Get(BuildFunctionCall(
+      return block.Get(BuildFunctionCall(
           unit, frame,
           mir::Virtual{
               .receiver = BuildObjectDeref(
@@ -2877,7 +2878,7 @@ auto CovergroupOptionPath(
     const hir::CovergroupOptionExpr& option) -> diag::Result<AccessPath> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const CoverageLibrary library(unit_lowerer.Hir());
   // The member `field` of the options structure `path` names, of `type`.
   const auto member = [&](AccessPath path, hir::TypeId type) -> AccessPath {

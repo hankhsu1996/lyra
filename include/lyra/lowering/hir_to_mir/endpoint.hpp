@@ -5,6 +5,7 @@
 
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
@@ -73,15 +74,16 @@ struct BoundEndpoint {
 // address of the cell it names. Appends to `block` and returns the pointer's
 // id.
 [[nodiscard]] auto EndpointObservablePtr(
-    mir::Block& block, const WalkFrame& frame, const mir::CompilationUnit& unit,
-    const BoundEndpoint& endpoint) -> mir::ExprId;
+    mir::Builder block, const WalkFrame& frame,
+    const mir::CompilationUnit& unit, const BoundEndpoint& endpoint)
+    -> mir::ExprId;
 
 // What a wait on the storage `reference` names enrols on (LRM 13.5.2):
 // whatever a write through the reference is told to, the variable or the
 // object a property belongs to, as an erased pointer -- null where the storage
 // belongs to nothing. Appends to `block` and returns the pointer's id.
 [[nodiscard]] auto ReferenceReportsTo(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reference)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId reference)
     -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

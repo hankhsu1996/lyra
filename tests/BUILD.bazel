@@ -269,6 +269,19 @@ cc_test(
 )
 
 cc_test(
+    name = "mir_to_lir_source_span_test",
+    srcs = ["mir_to_lir/source_span_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:diag",
+        "//:lir",
+        "//:mir",
+        "//:mir_to_lir",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "backend_cpp_refusal_test",
     srcs = ["backend_cpp/refusal_test.cpp"],
     copts = LYRA_COPTS,
@@ -354,6 +367,21 @@ cc_test(
         "//:compiler",
         "//:diag",
         "//:hir",
+        "@googletest//:gtest_main",
+        "@slang",
+    ],
+)
+
+cc_test(
+    name = "compiler_source_span_test",
+    srcs = ["compiler/source_span_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:compiler",
+        "//:diag",
+        "//:frontend",
+        "//:lir",
+        "//:mir_transform",
         "@googletest//:gtest_main",
         "@slang",
     ],

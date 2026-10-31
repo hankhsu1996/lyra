@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -37,8 +38,8 @@ namespace {
 auto LowerHirIntegerLiteral(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const hir::IntegerLiteral& i, mir::TypeId type) -> mir::Expr {
-  mir::Block& block = *frame.current_block;
-  return block.exprs.Get(
+  mir::Builder block = frame.Builder();
+  return block.Get(
       mir::BuildIntegralLiteral(
           unit_lowerer.Unit(), block, type, LowerHirIntegralConstant(i.value)));
 }
@@ -66,14 +67,14 @@ auto LowerHirStringLiteral(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const hir::StringLiteral& s, mir::TypeId type) -> mir::Expr {
   const auto& ty = unit_lowerer.Unit().types.Get(type);
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   if (ty.IsIntegral()) {
-    return block.exprs.Get(
+    return block.Get(
         mir::BuildIntegralLiteral(
             unit_lowerer.Unit(), block, type,
             StringBytesToConstant(s.value, ty.Integral())));
   }
-  const mir::ExprId lit = block.exprs.Add(
+  const mir::ExprId lit = block.Add(
       mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type});
   return mir::Expr{
       .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {lit}},
@@ -94,7 +95,7 @@ auto LowerHirRandomizedObject(const WalkFrame& frame, mir::TypeId type)
         "named outside the constraints written with the call");
   }
   return mir::MakeCopyExpr(
-      frame.current_block->LocalPlace(*frame.randomized_object, type), type);
+      frame.Builder().LocalPlace(*frame.randomized_object, type), type);
 }
 
 // LRM 7.10.1 `$`: the index of the last element of the queue the enclosing
@@ -109,8 +110,8 @@ auto LowerHirQueueLastIndex(
         "queue");
   }
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
-  const mir::ExprId size = block.exprs.Add(
+  mir::Builder block = frame.Builder();
+  const mir::ExprId size = block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -130,8 +131,8 @@ auto LowerHirQueueLastIndex(
 auto LowerHirRealLiteral(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const hir::RealLiteral& r, mir::TypeId type) -> mir::Expr {
-  mir::Block& block = *frame.current_block;
-  return block.exprs.Get(
+  mir::Builder block = frame.Builder();
+  return block.Get(
       BuildRealLiteral(unit_lowerer.Unit(), block, type, r.value.Value()));
 }
 
@@ -150,7 +151,7 @@ auto LowerRoutedObjectRefExpr(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::RoutedObjectRef& reference, mir::TypeId type) -> mir::Expr {
   return InterfaceValueOf(
-      lowerer.Owner().Unit(), *frame.current_block,
+      lowerer.Owner().Unit(), frame.Builder(),
       lowerer.RouteEnd(frame, reference.id), type);
 }
 
@@ -161,7 +162,7 @@ auto LowerPatternVarRefExpr(WalkFrame frame, const hir::PatternVarRef& r)
     -> mir::Expr {
   const BodyBindingRef ref =
       frame.bindings->EnsureCarrier(PatternOrigin{.pattern = r.pattern});
-  return frame.bindings->MakeBindingPlace(ref, *frame.current_block);
+  return frame.bindings->MakeBindingPlace(ref, frame.Builder());
 }
 
 // LRM 7.12.4: a with-clause iteration reference reads the variable the
@@ -175,7 +176,7 @@ auto LowerIterationBindingRefExpr(
   return frame.bindings->MakeBindingPlace(
       frame.bindings->EnsureCarrier(
           IteratorOrigin{.clause = ref.clause, .role = ref.role}),
-      *frame.current_block);
+      frame.Builder());
 }
 
 }  // namespace
@@ -210,7 +211,7 @@ auto LowerProceduralVarRefExpr(
           [&](const AutomaticVarBinding&) {
             const BodyBindingRef ref =
                 frame.bindings->EnsureCarrier(ProceduralOrigin{.var = var});
-            return frame.bindings->MakeBindingPlace(ref, *frame.current_block);
+            return frame.bindings->MakeBindingPlace(ref, frame.Builder());
           }},
       var_binding);
 }
@@ -311,7 +312,7 @@ auto LowerHirPrimaryExprProc(
           },
           [&](const hir::ClassPropertyRef& r) -> mir::Expr {
             const mir::ExprId self_ref =
-                frame.current_block->exprs.Add(MakeSelfRefExpr(frame));
+                frame.Builder().Add(MakeSelfRefExpr(frame));
             return BuildClassPropertyAccess(
                 process, frame, self_ref, r.target, result_type);
           },

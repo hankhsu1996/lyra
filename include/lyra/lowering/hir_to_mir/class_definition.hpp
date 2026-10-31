@@ -10,6 +10,7 @@
 #include "lyra/hir/specialization_ref.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/block_body_ordinal.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -22,7 +23,7 @@ namespace lyra::lowering::hir_to_mir {
 // The address of the definition every object of `of` carries, as a value of
 // `block`: the constant the unit declaring the class emits.
 auto BuildDefinitionRead(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId of)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId of)
     -> mir::ExprId;
 
 // States the definition of every class `unit` defines, each the constant its
@@ -37,10 +38,10 @@ void StateObjectDefinitions(mir::CompilationUnit& unit);
 // function around such things (LRM 21.7.1.2), each held as a constant of the
 // class.
 auto DumpEntryAddress(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
     mir::Class& cls, const hir::DumpedDeclaration& declaration) -> mir::ExprId;
 auto DumpBlockAddress(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
     mir::Class& cls, const hir::DumpedBlock& dumped) -> mir::ExprId;
 
 // The type of the entry that makes a block of a block body (LRM 27): where the

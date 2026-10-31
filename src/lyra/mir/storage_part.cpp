@@ -176,30 +176,30 @@ auto KindOfPlace(const CompilationUnit& unit, const Block& block, ExprId place)
   return PlaceKind::kOrdinary;
 }
 
-auto ReadIfOverlaid(const CompilationUnit& unit, Block& block, ExprId object)
+auto ReadIfOverlaid(const CompilationUnit& unit, Builder block, ExprId object)
     -> ExprId {
-  if (!IsPlace(block.exprs.Get(object).data) ||
-      KindOfPlace(unit, block, object) != PlaceKind::kOverlaid) {
+  if (!IsPlace(block.Get(object).data) ||
+      KindOfPlace(unit, block.Body(), object) != PlaceKind::kOverlaid) {
     return object;
   }
   return block.Read(object);
 }
 
-auto Borrow(const CompilationUnit& unit, Block& block, ExprId operand)
+auto Borrow(const CompilationUnit& unit, Builder block, ExprId operand)
     -> ExprId {
   ExprId object = operand;
-  if (const auto* read = std::get_if<CopyExpr>(&block.exprs.Get(operand).data);
+  if (const auto* read = std::get_if<CopyExpr>(&block.Get(operand).data);
       read != nullptr &&
-      KindOfPlace(unit, block, read->place) != PlaceKind::kOverlaid) {
+      KindOfPlace(unit, block.Body(), read->place) != PlaceKind::kOverlaid) {
     object = read->place;
   }
   object = ReadIfOverlaid(unit, block, object);
-  return block.exprs.Add(
+  return block.Add(
       Expr{
           .data = BorrowExpr{.operand = object},
           .type = unit.types.Intern(
               Type{ReferenceType{
-                  .referent = block.exprs.Get(object).type,
+                  .referent = block.Get(object).type,
                   .mutability = Mutability::kReadOnly}})});
 }
 

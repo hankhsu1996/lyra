@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -39,14 +40,14 @@ auto LowerEnumMethod(
 // rendering of an enumeration (LRM 21.2.1.6), which prints that name when there
 // is one.
 auto BuildEnumNameCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId value_id,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId value_id,
     hir::TypeId enum_type) -> mir::Expr;
 
 // Whether a value is a member of the enumeration (LRM 6.24.2), which is what a
 // dynamic cast into a variable of that type answers with. The value asked about
 // is the one such an assignment would store.
 auto BuildEnumMembershipCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId value_id,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId value_id,
     hir::TypeId enum_type) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

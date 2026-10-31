@@ -478,8 +478,10 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
   const std::vector<bool> allocated = AllocatedStorage(fn);
   for (const BasicBlock& block : fn.blocks) {
     for (const Instr& instr : block.instrs) {
+      const diag::FailureContext at(instr.span);
       VerifyInstr(unit, fn, allocated, instr);
     }
+    const diag::FailureContext ended_at(block.terminator.span);
     if (const auto* call = std::get_if<InvokeTerm>(&block.terminator.data)) {
       RequireInitializes(
           unit, fn, allocated, call->destination, CallMakesValue(call->target));

@@ -5,6 +5,7 @@
 
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -35,7 +36,7 @@ struct DeclaredVariable {
 // reached and holds nothing until it is initialized; a value comes into being
 // with its first value.
 auto DeclareVariable(
-    mir::CompilationUnit& unit, CallableBindings& bindings, mir::Block& block,
+    mir::CompilationUnit& unit, CallableBindings& bindings, mir::Builder block,
     BindingOriginId origin, const std::optional<std::string>& name,
     mir::TypeId value_type, bool runs_as_function_call) -> DeclaredVariable;
 
@@ -43,7 +44,7 @@ auto DeclareVariable(
 // variable afresh in the one cell, which is what initializing an installed cell
 // does.
 auto InitializeVariable(
-    mir::CompilationUnit& unit, mir::Block& block,
+    mir::CompilationUnit& unit, mir::Builder block,
     const DeclaredVariable& variable, mir::ExprId value) -> mir::Stmt;
 
 }  // namespace lyra::lowering::hir_to_mir

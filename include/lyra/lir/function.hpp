@@ -14,6 +14,7 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/pool_id.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/lir/enum_table_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
@@ -846,8 +847,12 @@ using InstrData = std::variant<
     BeginStorageInstr, EndStorageInstr, SetObjectClassInstr, EndAndReplaceInstr,
     BeginHandlingInstr, EndHandlingInstr>;
 
+// `span` is the piece of source the instruction was lowered from, or no place
+// where it was lowered from none, as rustc's MIR statements carry a span; only
+// the front end opens it.
 struct Instr {
   InstrData data;
+  diag::SourceSpan span{};
 };
 
 // Returns from the callable, whose answer, where it has one, is already in its
@@ -953,8 +958,10 @@ using TerminatorData = std::variant<
     ReturnTerm, BranchTerm, CondBranchTerm, SwitchTerm, SuspendTerm,
     AbandonTerm, DepartTerm, UnwindResumeTerm, UnreachableTerm, InvokeTerm>;
 
+// `span` is as an instruction's.
 struct Terminator {
   TerminatorData data;
+  diag::SourceSpan span{};
 };
 
 // A maximal straight-line run of instructions entered only at its first and

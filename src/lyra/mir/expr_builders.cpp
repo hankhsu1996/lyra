@@ -50,15 +50,15 @@ auto CanonicalIntegralConstant(
 }
 
 auto BuildMachineIntLiteral(
-    const CompilationUnit& unit, Block& block, std::int64_t value) -> ExprId {
-  return block.exprs.Add(
+    const CompilationUnit& unit, Builder block, std::int64_t value) -> ExprId {
+  return block.Add(
       Expr{
           .data = MachineIntLiteral{.value = value},
           .type = unit.builtins.machine_int64});
 }
 
 auto BuildMachineCount(
-    const CompilationUnit& unit, Block& block, std::uint64_t count) -> ExprId {
+    const CompilationUnit& unit, Builder block, std::uint64_t count) -> ExprId {
   return BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(count));
 }
 
@@ -112,7 +112,7 @@ auto MinimalExtendingType(
 }  // namespace
 
 auto BuildIntegralLiteral(
-    const CompilationUnit& unit, Block& block, TypeId type,
+    const CompilationUnit& unit, Builder block, TypeId type,
     const IntegralConstant& value) -> ExprId {
   // A constant of a type too large for a frame is as large as the type,
   // however little it says: a fill, a default and a small number widened are
@@ -125,14 +125,14 @@ auto BuildIntegralLiteral(
     const IntegralType narrowest = MinimalExtendingType(*integral, canonical);
     if (lyra::value::WordCountForBits(narrowest.bit_width) <
         lyra::value::WordCountForBits(integral->bit_width)) {
-      const ExprId extended_from = block.exprs.Add(MakeIntegralLiteral(
+      const ExprId extended_from = block.Add(MakeIntegralLiteral(
           unit, unit.types.Intern(Type{narrowest}), canonical));
-      return block.exprs.Add(MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kIntegralConvert, std::nullopt,
-          {extended_from}, type));
+      return block.Add(MakeBuiltinCall(
+          unit, block.Body(), support::BuiltinFn::kIntegralConvert,
+          std::nullopt, {extended_from}, type));
     }
   }
-  return block.exprs.Add(MakeIntegralLiteral(unit, type, value));
+  return block.Add(MakeIntegralLiteral(unit, type, value));
 }
 
 namespace {
@@ -185,34 +185,34 @@ auto MakeBinary(
 }
 
 auto BuildMachineIntBinary(
-    const CompilationUnit& unit, Block& block, BinaryOp op, ExprId lhs,
+    const CompilationUnit& unit, Builder block, BinaryOp op, ExprId lhs,
     ExprId rhs) -> ExprId {
-  return block.exprs.Add(
-      MakeBinary(unit, block, op, lhs, rhs, unit.builtins.machine_int64));
+  return block.Add(MakeBinary(
+      unit, block.Body(), op, lhs, rhs, unit.builtins.machine_int64));
 }
 
 void AppendRunTimeCheck(
-    const CompilationUnit& unit, Block& block, ExprId holds,
+    const CompilationUnit& unit, Builder block, ExprId holds,
     std::string message) {
-  const ExprId text = block.exprs.Add(
-      MakeStringLiteral(unit.builtins.string, std::move(message)));
+  const ExprId text =
+      block.Add(MakeStringLiteral(unit.builtins.string, std::move(message)));
   block.AppendStmt(
       ExprStmt{
-          .expr = block.exprs.Add(
-              MakeAssertExpr(holds, text, unit.builtins.void_type))});
+          .expr =
+              block.Add(MakeAssertExpr(holds, text, unit.builtins.void_type))});
 }
 
 auto BuildMachineIntComparison(
-    const CompilationUnit& unit, Block& block, BinaryOp op, ExprId lhs,
+    const CompilationUnit& unit, Builder block, BinaryOp op, ExprId lhs,
     ExprId rhs) -> ExprId {
-  return block.exprs.Add(
-      MakeBinary(unit, block, op, lhs, rhs, unit.builtins.machine_bool));
+  return block.Add(
+      MakeBinary(unit, block.Body(), op, lhs, rhs, unit.builtins.machine_bool));
 }
 
 auto BuildMachineIntConditional(
-    const CompilationUnit& unit, Block& block, ExprId condition,
+    const CompilationUnit& unit, Builder block, ExprId condition,
     ExprId then_value, ExprId else_value) -> ExprId {
-  return block.exprs.Add(
+  return block.Add(
       Expr{
           .data =
               ConditionalExpr{
@@ -331,7 +331,7 @@ auto MakeIntegralConversion(
 }
 
 auto BuildIntLiteral(
-    const CompilationUnit& unit, Block& block, std::int64_t value) -> ExprId {
+    const CompilationUnit& unit, Builder block, std::int64_t value) -> ExprId {
   return BuildIntegralLiteral(
       unit, block, unit.builtins.int_type,
       IntegralConstant{
@@ -340,7 +340,7 @@ auto BuildIntLiteral(
 }
 
 auto BuildIntegerLiteral(
-    const CompilationUnit& unit, Block& block, std::int64_t value) -> ExprId {
+    const CompilationUnit& unit, Builder block, std::int64_t value) -> ExprId {
   return BuildIntegralLiteral(
       unit, block, unit.builtins.integer,
       IntegralConstant{
@@ -348,7 +348,7 @@ auto BuildIntegerLiteral(
           .state_words = {}});
 }
 
-auto BuildBit1Literal(const CompilationUnit& unit, Block& block, bool value)
+auto BuildBit1Literal(const CompilationUnit& unit, Builder block, bool value)
     -> ExprId {
   return BuildIntegralLiteral(
       unit, block, unit.builtins.bit1,

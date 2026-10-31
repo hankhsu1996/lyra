@@ -11,6 +11,7 @@
 #include "lyra/hir/case_keyword.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -183,7 +184,7 @@ void ForEachOperand(DescentStep& step, Visit visit) {
 // machine boolean, its bits compared as a case statement of `keyword` compares
 // two values, so that under `case` a tag carrying x or z names no member.
 [[nodiscard]] auto BuildTagMatches(
-    mir::CompilationUnit& unit, mir::Block& block, const TagRequirement& tag,
+    mir::CompilationUnit& unit, mir::Builder block, const TagRequirement& tag,
     mir::ExprId into, hir::CaseKeyword keyword) -> mir::ExprId;
 
 // A property of an object as what owns a value (LRM 8.4): the object, as the
@@ -261,7 +262,7 @@ struct AccessPath {
 // An owner that is a property of an object is reached through a write opened on
 // the object alone, as the member of the object the write answers.
 [[nodiscard]] auto PathPlace(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> mir::ExprId;
 
 // The path as a reference (LRM 13.5.2): a reference to the whole of what the
@@ -271,7 +272,7 @@ struct AccessPath {
 // write of the owner at the moment it lands, however long the reference is
 // held.
 [[nodiscard]] auto PathReference(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> mir::ExprId;
 
 // Holds a leased reference for as long as the call it is bound for runs, and
@@ -288,14 +289,14 @@ using HoldLease = std::function<mir::ExprId(mir::ExprId leased)>;
 // full-expression's end, or a local holding it where the call runs after that
 // full-expression has ended.
 [[nodiscard]] auto PathBoundReference(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path,
     const HoldLease& hold) -> mir::ExprId;
 
 // The reference the read form of an element step answers on `receiver`, whose
 // dereference is the element: what a block of steps yields where the element
 // is reached after the block, the receiver outliving it.
 [[nodiscard]] auto ElementReference(
-    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::CompilationUnit& unit, mir::Builder block, const DescentStep& step,
     mir::ExprId receiver) -> mir::Expr;
 
 // The part `step` reaches in what `receiver` names, taken for a read, at the
@@ -303,12 +304,12 @@ using HoldLease = std::function<mir::ExprId(mir::ExprId leased)>;
 // what the reference an element's read form answers refers to -- and otherwise
 // what the entry reading the part answers, bits of a packed value included.
 [[nodiscard]] auto StepForRead(
-    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::CompilationUnit& unit, mir::Builder block, const DescentStep& step,
     mir::ExprId receiver) -> mir::Expr;
 
 // The value of that part.
 [[nodiscard]] auto StepRead(
-    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::CompilationUnit& unit, mir::Builder block, const DescentStep& step,
     mir::ExprId receiver) -> mir::Expr;
 
 // The type a read of a part of `source_type` answers at, where the part is
@@ -328,25 +329,25 @@ using HoldLease = std::function<mir::ExprId(mir::ExprId leased)>;
 // a member of a tagged union, appended to `block`: for a construct that takes
 // the steps itself after the checks, where it lies.
 void AppendReadChecks(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path);
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path);
 
 // The part the path names, as the place it lies in where it is one: what the
 // owner holds, then each step as a read takes it, so nothing on the way to the
 // part is read whole.
 [[nodiscard]] auto PathAsPlace(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> mir::ExprId;
 
 // The path as an expression yielding the part's value, for a caller that reads
 // it and writes nothing.
 [[nodiscard]] auto PathValue(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> mir::ExprId;
 
 // The path's value at the type the part is declared with: a packed part is
 // read at the type the read answers at and brought to its declared type.
 [[nodiscard]] auto PathValueAsDeclared(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> mir::ExprId;
 
 // The place `place` names, with whatever is computed on the way to it evaluated
@@ -402,7 +403,7 @@ struct SettledPath {
 // -- a loop's body, a sequence of steps -- names the path's nodes afresh to
 // read through it; they evaluate nothing, so the path named again reaches the
 // same part.
-[[nodiscard]] auto NamedIn(const SettledPath& settled, mir::Block& to)
+[[nodiscard]] auto NamedIn(const SettledPath& settled, mir::Builder to)
     -> AccessPath;
 
 // Whether `path` reaches its part through a member of an untagged union, so the
@@ -440,7 +441,7 @@ struct PathPositions {
 // the steps start, and that sum stays an expression because a step's position
 // may be a value the program or a construction supplies.
 [[nodiscard]] auto BitsWithinOwner(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> PathPositions;
 
 // Which part of its owner a path names, as a wait or a report is told of it.
@@ -464,7 +465,7 @@ struct NamedPart {
 };
 
 [[nodiscard]] auto PartNamedBy(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> NamedPart;
 
 // Whether a write to the part `path` names lands on bits of a character of a
@@ -480,7 +481,7 @@ struct NamedPart {
 // the place the value lies in or on its designation within a write; every
 // other write is a store into the place the path designates.
 [[nodiscard]] auto BuildStoreExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path,
     mir::ExprId rhs_id) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

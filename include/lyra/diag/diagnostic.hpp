@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -77,6 +78,30 @@ struct Diagnostic {
 
 template <typename T>
 using Result = std::expected<T, Diagnostic>;
+
+// `diagnostic`, standing at `span` where it names no place of its own: the
+// construct whose lowering or translation it was raised in, which a site deeper
+// in that work does not hold.
+inline auto PlacedAt(Diagnostic diagnostic, SourceSpan span) -> Diagnostic {
+  const bool placed = std::visit(
+      Overloaded{
+          [](const SourceSpan& at) { return at != SourceSpan{}; },
+          [](const UnknownSpan&) { return false; }},
+      diagnostic.primary.span);
+  if (!placed) {
+    diagnostic.primary.span = span;
+  }
+  return diagnostic;
+}
+
+// The same for what a piece of that work answered, where it failed.
+template <typename T>
+auto PlacedAt(Result<T> result, SourceSpan span) -> Result<T> {
+  if (!result) {
+    return std::unexpected(PlacedAt(std::move(result.error()), span));
+  }
+  return result;
+}
 
 // Builds a Diagnostic for the report-and-continue path (a warning, or a
 // diagnostic handed straight to a sink). The kind comes from the code.

@@ -17,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -32,7 +33,7 @@ namespace lyra::lowering::hir_to_mir {
 // build different things and the wait is not one of them.
 template <ExprLowerer Lowerer>
 auto BuildEventWaitStmt(
-    Lowerer& lowerer, WalkFrame frame, mir::Block& block,
+    Lowerer& lowerer, WalkFrame frame, mir::Builder block,
     const hir::EventControl& ec) -> diag::Result<mir::Stmt>;
 
 // Whether a change to what an event control watches can decide on its own that
@@ -58,13 +59,13 @@ auto BuildEventLeaves(
 // lowering writes rather than the source.
 template <ExprLowerer Lowerer>
 auto BuildEventObjectWaitStmt(
-    Lowerer& lowerer, WalkFrame frame, mir::Block& block, mir::ExprId event)
+    Lowerer& lowerer, WalkFrame frame, mir::Builder block, mir::ExprId event)
     -> diag::Result<mir::Stmt>;
 
 // LRM 15.5.1: triggering the object the event value `event_id`, in `block`,
 // names, which wakes what waits on it.
 auto BuildTriggerCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId event_id)
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId event_id)
     -> mir::Expr;
 
 auto LowerTimedStmt(

@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -36,7 +37,7 @@ auto LowerHirDynamicCastExpr(
   mir::CompilationUnit& unit = owner.Unit();
 
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
 
   const hir::TypeId declared = lowerer.HirExprs().Get(c.destination).type;
   const mir::TypeId destination_type = owner.TranslateType(declared);
@@ -44,13 +45,13 @@ auto LowerHirDynamicCastExpr(
   auto source_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(c.source), steps.Frame());
   if (!source_or) return std::unexpected(std::move(source_or.error()));
-  const mir::ExprId source = body.exprs.Add(*std::move(source_or));
+  const mir::ExprId source = body.Add(*std::move(source_or));
 
   // LRM 6.24.2: called as a task the construct tells the design that the
   // assignment it asked for did not happen. It is the design's own error rather
   // than a limit of this compiler, and the standard leaves the destination
   // holding what it held, which is a state the run goes on from.
-  const auto report_invalid = [&](mir::Block& into) {
+  const auto report_invalid = [&](mir::Builder into) {
     AppendToolReportStmt(
         owner, into, support::BuiltinFn::kEmitError,
         base::DiagMessage(
@@ -85,20 +86,20 @@ auto LowerHirDynamicCastExpr(
     const mir::ExprId reference = AtType(
         unit, body, PathReference(unit, body, *destination_or),
         *ParamTypeOf(unit, destination_type, hir::ParamDirection::kRef));
-    const mir::ExprId received = body.exprs.Add(
+    const mir::ExprId received = body.Add(
         mir::MakeCallExpr(
             mir::Direct{.target = support::BuiltinFn::kReceiveAny},
             {reference, source}, unit.builtins.machine_bool));
     if (c.on_invalid == hir::InvalidAssignmentHandling::kReported) {
       mir::Block invalid;
-      report_invalid(invalid);
+      report_invalid(body.Into(invalid));
       body.AppendStmt(
           mir::IfStmt{
               .condition = BuildLogicalNot(unit, body, received),
-              .then_scope = body.child_scopes.Add(std::move(invalid)),
+              .then_scope = body.AddScope(std::move(invalid)),
               .else_scope = std::nullopt});
     }
-    return steps.Build(body.exprs.Add(
+    return steps.Build(body.Add(
         mir::Expr{
             .data =
                 mir::ConditionalExpr{
@@ -120,7 +121,7 @@ auto LowerHirDynamicCastExpr(
   // The value is read in two scopes -- where the check is made and where the
   // store happens -- and an expression belongs to the scope it is interned
   // into, so which one a read lands in is said at every read.
-  const auto read_value = [&](mir::Block& into) {
+  const auto read_value = [&](mir::Builder into) {
     return into.ReadLocal(value_var, destination_type);
   };
 
@@ -131,7 +132,7 @@ auto LowerHirDynamicCastExpr(
         return mir::BuildIntLiteral(unit, body, 1);
       case hir::RunTimeCheck::kValueIsAMemberOfTheEnumeration:
         bind_value(ConvertToType(unit, body, source, destination_type));
-        return body.exprs.Add(BuildEnumMembershipCallExpr(
+        return body.Add(BuildEnumMembershipCallExpr(
             owner, body, read_value(body), declared));
       case hir::RunTimeCheck::kValueIsOfAnEquivalentType:
         throw InternalError(
@@ -142,7 +143,7 @@ auto LowerHirDynamicCastExpr(
             unit.types, unit.types.Get(destination_type)
                             .Get<mir::ManagedRefType>()
                             .pointee);
-        bind_value(body.exprs.Add(
+        bind_value(body.Add(
             mir::MakeCallExpr(
                 mir::Direct{.target = support::BuiltinFn::kDynamicCast},
                 {source, BuildDefinitionRead(unit, body, destination_class)},
@@ -155,12 +156,14 @@ auto LowerHirDynamicCastExpr(
         const mir::ExprId is_of_class =
             ReduceToCondition(unit, body, read_value(body));
         mir::Block belongs;
+        mir::Builder belongs_builder = body.Into(belongs);
         const mir::ExprId object = BuildObjectDeref(
-            unit, belongs,
-            BuildObjectPointer(unit, belongs, read_value(belongs)));
+            unit, belongs_builder,
+            BuildObjectPointer(
+                unit, belongs_builder, read_value(belongs_builder)));
         const mir::FieldId slot =
             owner.DeclaringInstanceFieldOf(destination_class);
-        const mir::ExprId kept = belongs.Read(belongs.exprs.Add(
+        const mir::ExprId kept = belongs_builder.Read(belongs_builder.Add(
             mir::MakeFieldAccessExpr(
                 object,
                 mir::ClassFieldTarget{.owner = destination_class, .slot = slot},
@@ -168,24 +171,24 @@ auto LowerHirDynamicCastExpr(
         const mir::ExprId expected = BuildImplicitInstanceArgument(
             lowerer, steps.Frame().WithBlock(&belongs),
             *c.destination_instance);
-        const mir::ExprId same = belongs.exprs.Add(
+        const mir::ExprId same = belongs_builder.Add(
             mir::MakeBinary(
-                unit, belongs, mir::BinaryOp::kEquality, kept, expected,
-                unit.builtins.machine_bool));
-        const mir::ExprId belongs_answer = body.exprs.Add(
+                unit, belongs_builder.Body(), mir::BinaryOp::kEquality, kept,
+                expected, unit.builtins.machine_bool));
+        const mir::ExprId belongs_answer = body.Add(
             mir::Expr{
                 .data =
                     mir::BlockExpr{
-                        .scope = body.child_scopes.Add(std::move(belongs)),
+                        .scope = body.AddScope(std::move(belongs)),
                         .value = same},
                 .type = unit.builtins.machine_bool});
-        return body.exprs.Add(
+        return body.Add(
             mir::Expr{
                 .data =
                     mir::ConditionalExpr{
                         .condition = is_of_class,
                         .then_value = belongs_answer,
-                        .else_value = body.exprs.Add(
+                        .else_value = body.Add(
                             mir::Expr{
                                 .data = mir::MachineBoolLiteral{.value = false},
                                 .type = unit.builtins.machine_bool})},
@@ -199,7 +202,7 @@ auto LowerHirDynamicCastExpr(
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = answer_var,
-          .init = body.exprs.Add(
+          .init = body.Add(
               mir::Expr{
                   .data =
                       mir::ConditionalExpr{
@@ -219,21 +222,23 @@ auto LowerHirDynamicCastExpr(
   auto target_or =
       LowerLvalue(lowerer, lowerer.HirExprs().Get(c.destination), taken_frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
-  auto stored =
-      AppendStores(lowerer.Owner(), taken_frame, *target_or, read_value(taken));
+  auto stored = AppendStores(
+      lowerer.Owner(), taken_frame, *target_or,
+      read_value(taken_frame.Builder()));
   if (!stored) return std::unexpected(std::move(stored.error()));
 
   std::optional<mir::BlockId> invalid_scope;
   if (c.on_invalid == hir::InvalidAssignmentHandling::kReported) {
     mir::Block invalid;
-    report_invalid(invalid);
-    invalid_scope = body.child_scopes.Add(std::move(invalid));
+    mir::Builder invalid_builder(invalid, taken_frame.span);
+    report_invalid(invalid_builder);
+    invalid_scope = body.AddScope(std::move(invalid));
   }
 
   body.AppendStmt(
       mir::IfStmt{
           .condition = ReduceToCondition(unit, body, read_answer()),
-          .then_scope = body.child_scopes.Add(std::move(taken)),
+          .then_scope = body.AddScope(std::move(taken)),
           .else_scope = invalid_scope});
 
   return steps.Build(read_answer());

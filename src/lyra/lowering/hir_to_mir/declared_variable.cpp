@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/declared_variable.hpp"
 
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -9,7 +10,7 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto DeclareVariable(
-    mir::CompilationUnit& unit, CallableBindings& bindings, mir::Block& block,
+    mir::CompilationUnit& unit, CallableBindings& bindings, mir::Builder block,
     BindingOriginId origin, const std::optional<std::string>& name,
     mir::TypeId value_type, bool runs_as_function_call) -> DeclaredVariable {
   const mir::TypeId held_as =
@@ -22,7 +23,7 @@ auto DeclareVariable(
   block.AppendStmt(
       mir::LocalDeclStmt{
           .target = local,
-          .init = block.exprs.Add(
+          .init = block.Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{
@@ -32,7 +33,7 @@ auto DeclareVariable(
 }
 
 auto InitializeVariable(
-    mir::CompilationUnit& unit, mir::Block& block,
+    mir::CompilationUnit& unit, mir::Builder block,
     const DeclaredVariable& variable, mir::ExprId value) -> mir::Stmt {
   if (!unit.types.Get(variable.type).Is<mir::ObservableType>()) {
     return mir::Stmt{
@@ -42,7 +43,7 @@ auto InitializeVariable(
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::ExprStmt{
-          .expr = block.exprs.Add(
+          .expr = block.Add(
               mir::MakeCapabilityInstallCallExpr(
                   block.LocalPlace(variable.local, variable.type), value,
                   support::BuiltinFn::kInitialize, unit.builtins.void_type))}};

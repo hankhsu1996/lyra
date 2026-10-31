@@ -19,11 +19,17 @@
 
 namespace lyra::mir_transform {
 
-BlockRebuild::BlockRebuild(const mir::Block& from, const RebuildRules& rules)
+BlockRebuild::BlockRebuild(
+    const mir::Block& from, const RebuildRules& rules, diag::SourceSpan around)
     : from_(&from),
       rules_(&rules),
       carried_exprs_(from.exprs.size()),
-      carried_stmts_(from.stmts.size()) {
+      carried_stmts_(from.stmts.size()),
+      span_(around) {
+}
+
+auto BlockRebuild::Within(const mir::Block& from) const -> BlockRebuild {
+  return {from, *rules_, span_};
 }
 
 auto BlockRebuild::Expr(mir::ExprId old) -> mir::ExprId {
@@ -38,6 +44,7 @@ auto BlockRebuild::Expr(mir::ExprId old) -> mir::ExprId {
     carried_exprs_.at(old.value) = id;
     return id;
   }
+  const diag::SourceSpan around = std::exchange(span_, expr.span);
   std::optional<mir::Expr> replaced = rules_->expr(*this, old);
   mir::Expr standing =
       replaced.has_value()
@@ -46,6 +53,7 @@ auto BlockRebuild::Expr(mir::ExprId old) -> mir::ExprId {
                 .data = WithOperandsCarried(expr.data), .type = expr.type};
   standing.type = rules_->type(standing.type);
   const mir::ExprId id = Add(std::move(standing));
+  span_ = around;
   carried_exprs_.at(old.value) = id;
   return id;
 }
@@ -60,12 +68,15 @@ auto BlockRebuild::Stmt(mir::StmtId old) -> mir::StmtId {
     return *carried;
   }
   const mir::Stmt& stmt = from_->stmts.Get(old);
+  const diag::SourceSpan around = std::exchange(span_, stmt.span);
   std::optional<mir::StmtData> replaced = rules_->stmt(*this, stmt);
   const mir::StmtId id = to_.stmts.Add(
       mir::Stmt{
           .label = stmt.label,
           .data = replaced.has_value() ? *std::move(replaced)
-                                       : WithOperandsCarried(stmt.data)});
+                                       : WithOperandsCarried(stmt.data),
+          .span = stmt.span});
+  span_ = around;
   carried_stmts_.at(old.value) = id;
   return id;
 }
@@ -88,12 +99,24 @@ void BlockRebuild::Precede(mir::StmtId stmt) {
 }
 
 auto BlockRebuild::Add(mir::Expr expr) -> mir::ExprId {
+  if (expr.span == diag::SourceSpan{}) {
+    expr.span = span_;
+  }
   return to_.exprs.Add(std::move(expr));
 }
 
 auto BlockRebuild::Add(mir::StmtData data) -> mir::StmtId {
   return to_.stmts.Add(
-      mir::Stmt{.label = std::nullopt, .data = std::move(data)});
+      mir::Stmt{.label = std::nullopt, .data = std::move(data), .span = span_});
+}
+
+auto BlockRebuild::AddInPlaceOf(mir::StmtId old, mir::StmtData data)
+    -> mir::StmtId {
+  return to_.stmts.Add(
+      mir::Stmt{
+          .label = std::nullopt,
+          .data = std::move(data),
+          .span = from_->stmts.Get(old).span});
 }
 
 auto BlockRebuild::Add(mir::Block block) -> mir::BlockId {
@@ -121,7 +144,7 @@ auto BlockRebuild::Finish(
 
 auto BlockRebuild::Child(mir::BlockId old) -> mir::BlockId {
   const mir::Block& child = from_->child_scopes.Get(old);
-  BlockRebuild rebuild(child, *rules_);
+  BlockRebuild rebuild = Within(child);
   std::vector<mir::StmtId> stmts = rebuild.Stmts(child.root_stmts);
   return Add(std::move(rebuild).Finish(std::move(stmts)));
 }
@@ -131,7 +154,7 @@ auto BlockRebuild::Child(mir::BlockId old) -> mir::BlockId {
 auto BlockRebuild::BlockExprSteps(mir::BlockId old, mir::ExprId value)
     -> std::pair<mir::BlockId, mir::ExprId> {
   const mir::Block& child = from_->child_scopes.Get(old);
-  BlockRebuild rebuild(child, *rules_);
+  BlockRebuild rebuild = Within(child);
   std::vector<mir::StmtId> stmts = rebuild.Stmts(child.root_stmts);
   const mir::ExprId carried = rebuild.Evaluation(value);
   return {Add(std::move(rebuild).Finish(std::move(stmts))), carried};
@@ -260,7 +283,7 @@ auto RebuildCode(const mir::CallableCode& code, const RebuildRules& rules)
     -> mir::CallableCode {
   std::optional<mir::Block> body;
   if (code.body.has_value()) {
-    BlockRebuild rebuild(*code.body, rules);
+    BlockRebuild rebuild(*code.body, rules, code.span);
     std::vector<mir::StmtId> stmts = rebuild.Stmts(code.body->root_stmts);
     body = std::move(rebuild).Finish(std::move(stmts));
   }
@@ -270,7 +293,8 @@ auto RebuildCode(const mir::CallableCode& code, const RebuildRules& rules)
       .result_type = code.result_type,
       .locals = code.locals,
       .named_locals = code.named_locals,
-      .body = std::move(body)};
+      .body = std::move(body),
+      .span = code.span};
 }
 
 }  // namespace lyra::mir_transform

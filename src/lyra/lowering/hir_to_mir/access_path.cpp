@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -230,7 +231,7 @@ auto BitsStepTaken(StepUse use, const DescentStep& step, mir::ExprId start)
 // part having a type of its own; a run of elements is handed how many it takes
 // as a machine count.
 auto StepTakenFor(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     const DescentStep& step, StepUse use) -> StepTaken {
   return std::visit(
       Overloaded{
@@ -349,16 +350,16 @@ auto ReferenceStepCall(
 // The part a reference step reaches in `receiver`: the dereference of the
 // reference the call answers, whose referent is `type`.
 auto ReferencedPart(
-    mir::CompilationUnit& unit, mir::Block& block, ReferenceStep step,
+    mir::CompilationUnit& unit, mir::Builder block, ReferenceStep step,
     mir::ExprId receiver, mir::TypeId type) -> mir::Expr {
   return mir::MakeDerefExpr(
-      block.exprs.Add(ReferenceStepCall(unit, std::move(step), receiver, type)),
+      block.Add(ReferenceStepCall(unit, std::move(step), receiver, type)),
       type);
 }
 
 // One step taken on `receiver` for `use`, answering `type`.
 auto StepExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::CompilationUnit& unit, mir::Builder block, const DescentStep& step,
     StepUse use, mir::ExprId receiver, mir::TypeId type) -> mir::Expr {
   return std::visit(
       Overloaded{
@@ -371,7 +372,7 @@ auto StepExpr(
           },
           [&](StepCall call) {
             return mir::MakeBuiltinCall(
-                unit, block, call.entry, receiver, call.part,
+                unit, block.Body(), call.entry, receiver, call.part,
                 std::move(call.type_arguments), std::move(call.arguments),
                 type);
           }},
@@ -379,9 +380,9 @@ auto StepExpr(
 }
 
 auto TakeStep(
-    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::CompilationUnit& unit, mir::Builder block, const DescentStep& step,
     StepUse use, mir::ExprId receiver, mir::TypeId type) -> mir::ExprId {
-  return block.exprs.Add(StepExpr(unit, block, step, use, receiver, type));
+  return block.Add(StepExpr(unit, block, step, use, receiver, type));
 }
 
 // A net's resolved cell is readable and observable, but no value gets into it
@@ -421,7 +422,7 @@ auto StoredWrapper(
 // nothing can be: a name, a constant, or a place formed over those means the
 // same wherever it is written, while a computation written again would run
 // again.
-auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
+auto NamedAgain(const mir::Block& from, mir::Builder to, mir::ExprId id)
     -> mir::ExprId {
   const mir::Expr& node = from.exprs.Get(id);
   const auto again = [&](mir::ExprId operand) {
@@ -475,7 +476,7 @@ auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
           [&](const mir::WaitExpr&) { return computes(); },
           [&](const mir::VectorGetExpr&) { return computes(); }},
       node.data);
-  return to.exprs.Add(mir::Expr{.data = std::move(data), .type = node.type});
+  return to.Add(mir::Expr{.data = std::move(data), .type = node.type});
 }
 
 // The type of the value the last step of `path`, which takes at least one,
@@ -549,11 +550,11 @@ enum class WriteEnd : std::uint8_t { kLanded, kDesignated };
 // What a write along `path` reaches, `end` saying how a write in progress
 // that took every step within itself ends.
 auto ReachedForWrite(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path,
     WriteEnd end) -> mir::ExprId {
   auto step = path.descent.begin();
   const auto from_place = [&](mir::ExprId owner) -> mir::ExprId {
-    const mir::Type& owner_ty = unit.types.Get(block.exprs.Get(owner).type);
+    const mir::Type& owner_ty = unit.types.Get(block.Get(owner).type);
     if (!owner_ty.IsCapabilityWrapper()) {
       return owner;
     }
@@ -565,7 +566,7 @@ auto ReachedForWrite(
     const auto designated = [&](mir::TypeId part) {
       return unit.types.Intern(mir::Type{mir::DesignationType{.value = part}});
     };
-    const mir::ExprId write = block.exprs.Add(
+    const mir::ExprId write = block.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -576,7 +577,7 @@ auto ReachedForWrite(
                     .arguments = {}},
             .type = unit.types.Intern(
                 mir::Type{mir::OpenWriteType{.value = value}})});
-    mir::ExprId designation = block.exprs.Add(
+    mir::ExprId designation = block.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -586,9 +587,9 @@ auto ReachedForWrite(
                             .receiver = write},
                     .arguments = {}},
             .type = designated(value)});
-    const auto within =
-        path.descent.begin() + static_cast<std::ptrdiff_t>(
-                                   StepsTakenWithinTheWrite(unit, block, path));
+    const auto within = path.descent.begin() +
+                        static_cast<std::ptrdiff_t>(
+                            StepsTakenWithinTheWrite(unit, block.Body(), path));
     for (; step != within; ++step) {
       value = step->part_type;
       designation = TakeStep(
@@ -603,7 +604,7 @@ auto ReachedForWrite(
           return designation;
       }
     }
-    return block.exprs.Add(mir::MakeDerefExpr(designation, value));
+    return block.Add(mir::MakeDerefExpr(designation, value));
   };
   // A property is written through a write opened on its object alone, which
   // the object hears when the write ends; the property is reached through the
@@ -612,7 +613,7 @@ auto ReachedForWrite(
       Overloaded{
           from_place,
           [&](const ObjectProperty& owner) {
-            return block.exprs.Add(PropertyStorage(
+            return block.Add(PropertyStorage(
                 unit, block, OpenObjectWrite(unit, block, owner.object),
                 owner.property, owner.type));
           }},
@@ -629,7 +630,7 @@ auto ReachedForWrite(
 // progress designated that value, its designation, so the write hears what the
 // operation moved.
 auto WriteOperandOf(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path,
     std::size_t steps) -> mir::ExprId {
   const AccessPath whole{
       .owner = path.owner,
@@ -642,26 +643,25 @@ auto WriteOperandOf(
 // The part `path` names, reached for a read where it lies: what the owner
 // holds, then each step as a read takes it.
 auto PlaceForRead(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> mir::ExprId {
   mir::ExprId reached = std::visit(
       Overloaded{
           [&](mir::ExprId place) {
-            const mir::Type& owner_ty =
-                unit.types.Get(block.exprs.Get(place).type);
+            const mir::Type& owner_ty = unit.types.Get(block.Get(place).type);
             if (!owner_ty.IsCapabilityWrapper()) {
               return place;
             }
-            return block.exprs.Add(block.WrapperContents(
+            return block.Add(block.WrapperContents(
                 unit.types, place, owner_ty.WrappedValueType()));
           },
           [&](const ObjectProperty& owner) {
-            return block.exprs.Add(PropertyStorage(
+            return block.Add(PropertyStorage(
                 unit, block, owner.object, owner.property, owner.type));
           }},
       path.owner);
   for (const DescentStep& step : path.descent) {
-    reached = block.exprs.Add(StepForRead(unit, block, step, reached));
+    reached = block.Add(StepForRead(unit, block, step, reached));
   }
   return reached;
 }
@@ -686,7 +686,7 @@ auto AccessText(CheckedAccess access) -> std::string_view {
 // a write that lands after the statement naming it -- a nonblocking update, an
 // output argument copied back -- is checked when it lands.
 void AppendTagChecks(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path,
     CheckedAccess access) {
   for (std::size_t taken = 0; taken < path.descent.size(); ++taken) {
     const std::optional<TagRequirement> tag =
@@ -714,7 +714,7 @@ void AppendTagChecks(
 }  // namespace
 
 auto BuildTagMatches(
-    mir::CompilationUnit& unit, mir::Block& block, const TagRequirement& tag,
+    mir::CompilationUnit& unit, mir::Builder block, const TagRequirement& tag,
     mir::ExprId into, hir::CaseKeyword keyword) -> mir::ExprId {
   return std::visit(
       Overloaded{
@@ -723,7 +723,7 @@ auto BuildTagMatches(
           // in are the union's.
           [&](const TagInBits& bits) {
             const mir::IntegralType& vector =
-                unit.types.Get(block.exprs.Get(into).type).Integral();
+                unit.types.Get(block.Get(into).type).Integral();
             const mir::TypeId tag_type = mir::PackedVectorOf(
                 unit.types, bits.tag_bits, vector.state_kind);
             const DescentStep to_tag{
@@ -735,7 +735,7 @@ auto BuildTagMatches(
                                 vector.bit_width - bits.tag_bits))},
                 .part_type = tag_type};
             const mir::ExprId carried =
-                block.exprs.Add(StepRead(unit, block, to_tag, into));
+                block.Add(StepRead(unit, block, to_tag, into));
             const mir::ExprId named = mir::BuildIntLiteral(
                 unit, block, static_cast<std::int64_t>(bits.member.value));
             return ReduceToCondition(
@@ -747,11 +747,11 @@ auto BuildTagMatches(
           // A tag held apart is set only by building a tagged value, so it
           // carries no x or z, and every way of comparing it answers alike.
           [&](const HeldTag& held) {
-            const mir::ExprId held_now = block.exprs.Add(
+            const mir::ExprId held_now = block.Add(
                 mir::MakeDiscriminantExpr(into, unit.builtins.machine_int64));
-            return block.exprs.Add(
+            return block.Add(
                 mir::MakeBinary(
-                    unit, block, mir::BinaryOp::kEquality, held_now,
+                    unit, block.Body(), mir::BinaryOp::kEquality, held_now,
                     mir::BuildMachineIntLiteral(
                         unit, block,
                         static_cast<std::int64_t>(held.member.value)),
@@ -761,12 +761,12 @@ auto BuildTagMatches(
 }
 
 void AppendReadChecks(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path) {
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path) {
   AppendTagChecks(unit, block, path, CheckedAccess::kRead);
 }
 
 auto PathPlace(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> mir::ExprId {
   AppendTagChecks(unit, block, path, CheckedAccess::kWrite);
   return ReachedForWrite(unit, block, path, WriteEnd::kLanded);
@@ -777,13 +777,12 @@ namespace {
 // A reference to the whole of what `owner` holds: the place itself, or, for a
 // property, a step taken on its object.
 auto OwnerReference(
-    mir::CompilationUnit& unit, mir::Block& block, const PathOwner& owner)
+    mir::CompilationUnit& unit, mir::Builder block, const PathOwner& owner)
     -> mir::ExprId {
   return std::visit(
       Overloaded{
           [&](mir::ExprId place) {
-            return BuildReferenceArg(
-                unit, block, place, block.exprs.Get(place).type);
+            return BuildReferenceArg(unit, block, place, block.Get(place).type);
           },
           [&](const ObjectProperty& property) {
             return PropertyReference(
@@ -794,7 +793,7 @@ auto OwnerReference(
 
 // `step` taken on `reference` for a reference to the part.
 auto LentStep(
-    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::CompilationUnit& unit, mir::Builder block, const DescentStep& step,
     mir::ExprId reference) -> mir::ExprId {
   return TakeStep(
       unit, block, step, StepUse::kLend, reference,
@@ -865,11 +864,11 @@ auto ElementLeaseFor(const DescentStep& step, const mir::Type& container)
 
 // The reference to `pointee` the leased reference `leased` carries.
 auto CarriedReference(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId leased,
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId leased,
     mir::TypeId pointee) -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kLeasedReference, leased,
+          unit, block.Body(), support::BuiltinFn::kLeasedReference, leased,
           std::nullopt, {pointee}, {},
           unit.types.Intern(
               mir::Type{mir::VariableRefType{
@@ -880,7 +879,7 @@ auto CarriedReference(
 }  // namespace
 
 auto PathReference(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> mir::ExprId {
   mir::ExprId reference = OwnerReference(unit, block, path.owner);
   for (const DescentStep& step : path.descent) {
@@ -890,7 +889,7 @@ auto PathReference(
 }
 
 auto PathBoundReference(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path,
     const HoldLease& hold) -> mir::ExprId {
   const mir::TypeId leased = unit.types.Intern(
       mir::Type{mir::RuntimeLibraryType{
@@ -902,26 +901,26 @@ auto PathBoundReference(
           [&](const ObjectProperty& property) {
             return CarriedReference(
                 unit, block,
-                hold(block.exprs.Add(
+                hold(block.Add(
                     mir::MakeBuiltinCall(
-                        unit, block, support::BuiltinFn::kLeaseObject,
+                        unit, block.Body(), support::BuiltinFn::kLeaseObject,
                         std::nullopt, {owned}, leased))),
                 property.type);
           }},
       path.owner);
   for (const DescentStep& step : path.descent) {
     const mir::Type& container =
-        unit.types.Get(unit.types.Get(block.exprs.Get(reference).type)
+        unit.types.Get(unit.types.Get(block.Get(reference).type)
                            .Get<mir::VariableRefType>()
                            .pointee);
     if (const std::optional<ElementLease> lease =
             ElementLeaseFor(step, container)) {
       reference = CarriedReference(
           unit, block,
-          hold(block.exprs.Add(
+          hold(block.Add(
               mir::MakeBuiltinCall(
-                  unit, block, lease->entry, reference, {lease->coordinate},
-                  leased))),
+                  unit, block.Body(), lease->entry, reference,
+                  {lease->coordinate}, leased))),
           step.part_type);
     } else {
       reference = LentStep(unit, block, step, reference);
@@ -931,26 +930,26 @@ auto PathBoundReference(
 }
 
 auto PathAsPlace(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> mir::ExprId {
   AppendTagChecks(unit, block, path, CheckedAccess::kRead);
   return PlaceForRead(unit, block, path);
 }
 
 auto PathValue(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> mir::ExprId {
   return block.AsValue(unit.types, PathAsPlace(unit, block, path));
 }
 
 auto StepForRead(
-    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::CompilationUnit& unit, mir::Builder block, const DescentStep& step,
     mir::ExprId receiver) -> mir::Expr {
   return StepExpr(unit, block, step, StepUse::kRead, receiver, step.part_type);
 }
 
 auto ElementReference(
-    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::CompilationUnit& unit, mir::Builder block, const DescentStep& step,
     mir::ExprId receiver) -> mir::Expr {
   StepTaken taken = StepTakenFor(unit, block, step, StepUse::kRead);
   auto* element = std::get_if<ReferenceStep>(&taken);
@@ -963,7 +962,7 @@ auto ElementReference(
 }
 
 auto StepRead(
-    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::CompilationUnit& unit, mir::Builder block, const DescentStep& step,
     mir::ExprId receiver) -> mir::Expr {
   return block.AsValue(unit.types, StepForRead(unit, block, step, receiver));
 }
@@ -983,7 +982,7 @@ auto PartSelectNaturalType(
 }
 
 auto PathValueAsDeclared(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> mir::ExprId {
   // A path that descends nowhere reads the whole of what its owner holds,
   // which is a value of its own.
@@ -996,21 +995,20 @@ auto PathValueAsDeclared(
   into.descent.pop_back();
   const mir::TypeId declared = last.part_type;
   last.part_type = PartSelectNaturalType(
-      unit, ValueSelectedWithin(unit, block, path), declared);
+      unit, ValueSelectedWithin(unit, block.Body(), path), declared);
   const mir::ExprId receiver = PlaceForRead(unit, block, into);
-  const mir::ExprId read =
-      block.exprs.Add(StepRead(unit, block, last, receiver));
+  const mir::ExprId read = block.Add(StepRead(unit, block, last, receiver));
   return ConvertToType(unit, block, read, declared);
 }
 
 auto SettledPlace(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId place)
     -> mir::ExprId {
-  mir::Block& block = *frame.current_block;
-  if (mir::EvaluatesNothing(block, place)) {
+  mir::Builder block = frame.Builder();
+  if (mir::EvaluatesNothing(block.Body(), place)) {
     return place;
   }
-  const mir::Expr node = block.exprs.Get(place);
+  const mir::Expr node = block.Get(place);
   // A pointer or a reference a computation yields is a value, and holding it in
   // a local names the same object. Any other value a computation yields names
   // no storage a place could be formed over again, and no path is rooted at
@@ -1028,14 +1026,13 @@ auto SettledPlace(
   return std::visit(
       Overloaded{
           [&](const mir::FieldAccessExpr& field) -> mir::ExprId {
-            return block.exprs.Add(
+            return block.Add(
                 mir::MakeFieldAccessExpr(
                     SettledPlace(unit_lowerer, frame, field.receiver),
                     field.field, node.type));
           },
           [&](const mir::DerefExpr& deref) -> mir::ExprId {
-            const mir::TypeId reached_through =
-                block.exprs.Get(deref.pointer).type;
+            const mir::TypeId reached_through = block.Get(deref.pointer).type;
             // A capability wrapper is storage, so what it is reached through
             // is settled and the wrapper stays where it is; a pointer or a
             // handle is a value, and holding it in a local names the same
@@ -1043,12 +1040,12 @@ auto SettledPlace(
             if (unit_lowerer.Unit()
                     .types.Get(reached_through)
                     .IsCapabilityWrapper()) {
-              return block.exprs.Add(
+              return block.Add(
                   mir::MakeDerefExpr(
                       SettledPlace(unit_lowerer, frame, deref.pointer),
                       node.type));
             }
-            return block.exprs.Add(
+            return block.Add(
                 mir::MakeDerefExpr(
                     EvaluatedOnce(frame, deref.pointer), node.type));
           },
@@ -1139,12 +1136,12 @@ auto SettledForRead(
       .descent = std::move(settled.descent)};
 }
 
-auto NamedIn(const SettledPath& settled, mir::Block& to) -> AccessPath {
+auto NamedIn(const SettledPath& settled, mir::Builder to) -> AccessPath {
   const mir::Block& from = *settled.named_in;
   AccessPath path{.owner = settled.owner, .descent = settled.descent};
   // Naming a node again reads it out of one pool while adding to the other, so
   // the two are different pools; a path already named in `to` is the answer.
-  if (&from == &to) {
+  if (&from == &to.Body()) {
     return path;
   }
   const auto again = [&](mir::ExprId id) { return NamedAgain(from, to, id); };
@@ -1177,12 +1174,12 @@ auto ReadThenWrite(
     -> ReadThenWritten {
   AccessPath settled = Settled(unit_lowerer, frame, std::move(place));
   const mir::ExprId incoming =
-      PathValueAsDeclared(unit_lowerer.Unit(), *frame.current_block, settled);
+      PathValueAsDeclared(unit_lowerer.Unit(), frame.Builder(), settled);
   return ReadThenWritten{.place = std::move(settled), .incoming = incoming};
 }
 
 auto BitsWithinOwner(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> PathPositions {
   mir::ExprId first = BuildConstantPosition(unit, block, 0);
   for (const DescentStep& step : path.descent) {
@@ -1194,13 +1191,13 @@ auto BitsWithinOwner(
     }
     first = BuildPositionSum(unit, block, first, bits->start);
   }
-  const mir::TypeId part = PathValueType(unit, block, path);
+  const mir::TypeId part = PathValueType(unit, block.Body(), path);
   return PathPositions{
       .first = first, .width = unit.types.Get(part).Integral().bit_width};
 }
 
 auto PartNamedBy(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path)
     -> NamedPart {
   NamedPart named;
   auto step = path.descent.begin();
@@ -1267,7 +1264,7 @@ auto PartNamedBy(
     }
     first = BuildPositionSum(unit, block, first, bits->start);
   }
-  const mir::TypeId part = PathValueType(unit, block, path);
+  const mir::TypeId part = PathValueType(unit, block.Body(), path);
   named.positions = PathPositions{
       .first = first, .width = unit.types.Get(part).Integral().bit_width};
   return named;
@@ -1291,7 +1288,7 @@ auto CharacterAt(const AccessPath& path) -> std::optional<std::size_t> {
 // string holds with those bits replaced. That reads the path before the write
 // lands, which is why such a path evaluates nothing of its own.
 auto PutCharacterExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path,
     std::size_t at, mir::ExprId value) -> mir::Expr {
   const AccessPath string{
       .owner = path.owner,
@@ -1312,13 +1309,13 @@ auto PutCharacterExpr(
     const mir::ExprId held = block.AsValue(
         unit.types,
         PlaceForRead(unit, block, DescendInto(string, path.descent[at])));
-    put = block.exprs.Add(
+    put = block.Add(
         mir::MakeBuiltinCall(
-            unit, block, support::BuiltinFn::kWithSlice, std::nullopt,
-            {held, bits->start, value}, block.exprs.Get(held).type));
+            unit, block.Body(), support::BuiltinFn::kWithSlice, std::nullopt,
+            {held, bits->start, value}, block.Get(held).type));
   }
   return mir::MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kPutc,
+      unit, block.Body(), support::BuiltinFn::kPutc,
       ReachedForWrite(unit, block, string, WriteEnd::kLanded),
       {character.position, put}, unit.builtins.void_type);
 }
@@ -1329,7 +1326,7 @@ auto PutCharacterExpr(
 // queue's between the two positions it clamps (LRM 7.10.1). Absent where the
 // path ends in no run.
 auto AssignSliceExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path,
     mir::ExprId value) -> std::optional<mir::Expr> {
   if (path.descent.empty()) {
     return std::nullopt;
@@ -1338,7 +1335,7 @@ auto AssignSliceExpr(
                          std::vector<mir::ExprId> bounds) {
     bounds.push_back(value);
     return mir::MakeBuiltinCall(
-        unit, block, entry,
+        unit, block.Body(), entry,
         WriteOperandOf(unit, block, path, path.descent.size() - 1),
         std::move(bounds), unit.builtins.void_type);
   };
@@ -1384,15 +1381,16 @@ auto TrailingBitsAt(const AccessPath& path) -> std::optional<std::size_t> {
 // the reference's `set` (LRM 11.5.1), as `std::bitset`'s `b[i] = x` assigns
 // through the reference `operator[]` answers.
 auto StoreBitsExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path,
     std::size_t at, mir::ExprId value) -> mir::Expr {
   mir::ExprId reference = WriteOperandOf(unit, block, path, at);
   for (std::size_t i = at; i < path.descent.size(); ++i) {
     const DescentStep& step = path.descent[i];
-    reference = block.exprs.Add(
+    reference = block.Add(
         mir::MakeBuiltinCall(
-            unit, block, support::BuiltinFn::kSliceMut, reference, std::nullopt,
-            {step.part_type}, {std::get<StepToBits>(step.to).start},
+            unit, block.Body(), support::BuiltinFn::kSliceMut, reference,
+            std::nullopt, {step.part_type},
+            {std::get<StepToBits>(step.to).start},
             unit.types.Intern(
                 mir::Type{mir::BitsReferenceType{.bits = step.part_type}})));
   }
@@ -1415,11 +1413,12 @@ auto WritesBitsOfACharacter(const AccessPath& path) -> bool {
 }
 
 auto BuildStoreExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path,
     mir::ExprId rhs_id) -> mir::Expr {
   // A store carries the right-hand side to the destination's declared
   // representation (LRM 10.7, 10.8).
-  rhs_id = ConvertToType(unit, block, rhs_id, PathValueType(unit, block, path));
+  rhs_id = ConvertToType(
+      unit, block, rhs_id, PathValueType(unit, block.Body(), path));
   AppendTagChecks(unit, block, path, CheckedAccess::kWrite);
   // Replacing the whole of what a capability wrapper holds acts on the wrapper
   // -- the value lands in its storage and it reports the change to whatever is
@@ -1427,7 +1426,7 @@ auto BuildStoreExpr(
   // that descends writes a part, which reaches storage the way a read does and
   // assigns through what it reaches.
   const std::optional<mir::ExprId> wrapper =
-      StoredWrapper(unit, block, path.owner);
+      StoredWrapper(unit, block.Body(), path.owner);
   if (path.descent.empty() && wrapper.has_value()) {
     // The operands are the destination and the value, and nothing else: the
     // engine the wrapper reports through is the ambient one, which has the

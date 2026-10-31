@@ -35,6 +35,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/synthesized_function.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -115,7 +116,7 @@ struct NamedCallee {
 // The call of `behavior` on the object `object` points at, seen as the class
 // introducing the behavior, a class or an interface class (LRM 8.20, 8.26.5).
 auto DispatchingCallee(
-    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    const UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
     const mir::VirtualSlot& behavior) -> mir::Callee {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::ExprId receiver = BuildObjectDeref(
@@ -445,16 +446,16 @@ template <ExprLowerer Lowerer>
 auto BuildReceiverPointer(
     Lowerer& lowerer, const WalkFrame& frame,
     const hir::MethodReceiver& receiver) -> diag::Result<mir::ExprId> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto* handle = std::get_if<hir::HandleReceiver>(&receiver);
   if (handle == nullptr) {
-    return block.exprs.Add(MakeSelfRefExpr(frame));
+    return block.Add(MakeSelfRefExpr(frame));
   }
   auto handle_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(handle->expr), frame);
   if (!handle_or) return std::unexpected(std::move(handle_or.error()));
   return BuildObjectPointer(
-      lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(handle_or)));
+      lowerer.Owner().Unit(), block, block.Add(*std::move(handle_or)));
 }
 
 // Evaluates the ambient handle a callee's first parameter binds, in the block
@@ -506,7 +507,7 @@ auto EvaluateHandle(
 // How a call names the callee `form` names and what leads the arguments the
 // source wrote, where its handle evaluated to `handle`.
 auto ResolveCalleeOn(
-    const UnitLowerer& unit_lowerer, mir::Block& block, const CalleeForm& form,
+    const UnitLowerer& unit_lowerer, mir::Builder block, const CalleeForm& form,
     std::optional<mir::ExprId> handle) -> ResolvedCallee {
   return std::visit(
       Overloaded{
@@ -574,7 +575,7 @@ auto EvaluateOmitted(
         "evaluates");
   }
   ResolvedCallee evaluator = ResolveCalleeOn(
-      unit_lowerer, *frame.current_block, *plan.defaults[position], handle);
+      unit_lowerer, frame.Builder(), *plan.defaults[position], handle);
   std::vector<mir::ExprId> leading;
   if (evaluator.leading.has_value()) leading.push_back(*evaluator.leading);
   return BuildFunctionCall(
@@ -596,10 +597,10 @@ auto TakenAsAny(
 // The identity a value of `type` is kept with, as the machine text a call
 // names it by.
 auto IdentityText(
-    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId type)
+    UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId type)
     -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeStringLiteral(
           unit.builtins.machine_c_string,
           EquivalenceIdentityOf(unit_lowerer, type)));
@@ -608,12 +609,12 @@ auto IdentityText(
 // `value`, of `type`, as a value of the type `any` holding a copy of it, kept
 // at the type every type equivalent to `type` is kept at.
 auto MadeAny(
-    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId type,
+    UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId type,
     mir::ExprId value, mir::TypeId any) -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::TypeId kept =
       WithoutQueueBounds(unit.types, unit_lowerer.TranslateType(type));
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = support::BuiltinFn::kMakeAny},
           {ConvertToType(unit, block, value, kept),
@@ -632,7 +633,7 @@ auto SeenAsAny(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, hir::TypeId type,
     const AccessPath& place, mir::TypeId reference) -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::TypeId seen = unit_lowerer.TranslateType(type);
   const mir::TypeId kept = WithoutQueueBounds(unit.types, seen);
   const auto reference_to = [&](const AccessPath& path, mir::TypeId at) {
@@ -643,12 +644,12 @@ auto SeenAsAny(
   const AccessPath incoming{
       .owner = block.LocalPlace(
           DeclareLocal(
-              frame, block.exprs.Add(BuildDefaultValueExpr(unit, block, kept))),
+              frame, block.Add(BuildDefaultValueExpr(unit, block, kept))),
           kept),
       .descent = {}};
 
   ClosureBuilder carry(unit, frame, support::ClosureKind::kFn);
-  mir::Block& body = carry.Body();
+  mir::Builder body = carry.Body();
   const AccessPath received{
       .owner = SnapshotPlaceIntoClosure(
           unit_lowerer, frame, carry, reference_to(incoming, kept)),
@@ -661,7 +662,7 @@ auto SeenAsAny(
           unit, block, place,
           [&](mir::ExprId leased) {
             const mir::LocalId local = DeclareLocal(frame, leased);
-            return block.LocalPlace(local, block.exprs.Get(leased).type);
+            return block.LocalPlace(local, block.Get(leased).type);
           }),
       *ParamTypeOf(unit, seen, hir::ParamDirection::kRef));
   const AccessPath variable{
@@ -669,16 +670,16 @@ auto SeenAsAny(
       .descent = {}};
   body.AppendStmt(
       mir::ExprStmt{
-          .expr = body.exprs.Add(BuildStoreExpr(
+          .expr = body.Add(BuildStoreExpr(
               unit, body, variable,
               ConvertToType(
                   unit, body, PathValue(unit, body, received), seen)))});
-  const mir::ExprId made = block.exprs.Add(carry.BuildVoid());
-  const mir::TypeId closure_type = block.exprs.Get(made).type;
+  const mir::ExprId made = block.Add(carry.BuildVoid());
+  const mir::TypeId closure_type = block.Get(made).type;
   const mir::ExprId lent = BuildBorrowedClosure(
       unit, block, block.LocalPlace(DeclareLocal(frame, made), closure_type));
 
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeCallExpr(
           mir::Direct{
               .target = support::BuiltinFn::kSeeAsAny,
@@ -696,7 +697,7 @@ auto EmitBoundActual(
     hir::ParamDirection direction, mir::TypeId type)
     -> diag::Result<mir::ExprId> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   switch (direction) {
     case hir::ParamDirection::kRef:
     case hir::ParamDirection::kConstRef: {
@@ -716,7 +717,7 @@ auto EmitBoundActual(
     case hir::ParamDirection::kInput: {
       auto lowered = lowerer.LowerExpr(actual, frame);
       if (!lowered) return std::unexpected(std::move(lowered.error()));
-      const mir::ExprId value = block.exprs.Add(*std::move(lowered));
+      const mir::ExprId value = block.Add(*std::move(lowered));
       // LRM 13.5.1, 10.8: an input passes its value into the formal as an
       // assignment to it would.
       return TakenAsAny(lowerer.Owner(), type, actual.type)
@@ -755,7 +756,7 @@ auto EmitSubroutineCall(
   }
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& hir_exprs = lowerer.HirExprs();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   const mir::TypeId payload_type =
       CompletionPayloadType(unit, plan.completion.components);
@@ -920,7 +921,7 @@ auto BuildMethodCall(
     std::span<const mir::ExprId> arguments, hir::TypeId result_type)
     -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const MethodCalleeFacts facts = ReadMethodCallee(unit_lowerer, callee);
   if (facts.kind != hir::SubroutineKind::kFunction) {
     throw InternalError(
@@ -1033,8 +1034,8 @@ auto LowerSubroutineCall(
   if (!callee.result_type.has_value()) {
     return diag::Result<mir::Expr>{std::move(emitted->call)};
   }
-  mir::Block& block = *frame.current_block;
-  const mir::ExprId completion = block.exprs.Add(std::move(emitted->call));
+  mir::Builder block = frame.Builder();
+  const mir::ExprId completion = block.Add(std::move(emitted->call));
   return diag::Result<mir::Expr>{mir::MakeFieldAccessExpr(
       completion, mir::ComponentFieldTarget{.position = kCompletionResult},
       *callee.result_type)};
@@ -1060,7 +1061,7 @@ auto EmitReportingCall(
         "other than a function");
   }
   const SubroutineCallee& plan = *planned;
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   const mir::TypeId payload_type =
       CompletionPayloadType(unit, plan.completion.components);
@@ -1101,7 +1102,7 @@ auto EmitReportingCall(
               *handle, formal.type));
           break;
         }
-        const mir::ExprId value = block.exprs.Add(
+        const mir::ExprId value = block.Add(
             BuildDefaultValueFromHir(lowerer.Owner(), block, actual_type));
         call_args.push_back(
             TakenAsAny(lowerer.Owner(), formal.type, actual_type)
@@ -1119,7 +1120,7 @@ auto EmitReportingCall(
         const mir::TypeId reference =
             *ParamTypeOf(unit, formal.type, formal.direction);
         if (unit.types.Get(formal.type).Is<mir::AnyType>()) {
-          call_args.push_back(block.exprs.Add(
+          call_args.push_back(block.Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{
@@ -1130,13 +1131,12 @@ auto EmitReportingCall(
         const mir::TypeId value_type =
             lowerer.Owner().TranslateType(actual_type);
         const mir::LocalId held = DeclareLocal(
-            frame, block.exprs.Add(BuildDefaultValueFromHir(
+            frame, block.Add(BuildDefaultValueFromHir(
                        lowerer.Owner(), block, actual_type)));
         call_args.push_back(AtType(
             unit, block,
             BuildReferenceArg(
-                unit, block,
-                block.exprs.Add(mir::MakeLocalRefExpr(held, value_type)),
+                unit, block, block.Add(mir::MakeLocalRefExpr(held, value_type)),
                 value_type),
             reference));
         break;
@@ -1146,7 +1146,7 @@ auto EmitReportingCall(
   call_args.push_back(block.ReadLocal(report, unit.builtins.read_report_ptr));
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.exprs.Add(
+          .expr = block.Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{

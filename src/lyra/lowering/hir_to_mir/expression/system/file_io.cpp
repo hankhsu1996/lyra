@@ -28,6 +28,7 @@
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -46,9 +47,9 @@ auto BuildFileIoCall(
     const ProcessLowerer& process, const WalkFrame& frame,
     support::BuiltinFn builtin_fn, std::vector<mir::ExprId> operands,
     mir::TypeId result_type) -> mir::Expr {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::ExprId files =
-      block.exprs.Add(BuildFilesCallExpr(process.Owner(), block));
+      block.Add(BuildFilesCallExpr(process.Owner(), block));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -70,9 +71,9 @@ auto BuildMachineIntOperand(
     -> diag::Result<mir::ExprId> {
   auto operand_or = LowerOperand(process, frame, operand);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   return BuildToInt64Call(
-      process.Owner().Unit(), block, block.exprs.Add(*std::move(operand_or)));
+      process.Owner().Unit(), block, block.Add(*std::move(operand_or)));
 }
 
 // Every operand of the calls built here is a machine integer (LRM 21.3).
@@ -100,16 +101,16 @@ auto LowerFixedOperandCall(
 auto LowerFileOpenCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const std::vector<hir::ExprId> head = RequiredLeadingOperands(call, 1);
   auto name_or = LowerOperand(process, frame, head[0]);
   if (!name_or) return std::unexpected(std::move(name_or.error()));
-  std::vector<mir::ExprId> operands{block.exprs.Add(*std::move(name_or))};
+  std::vector<mir::ExprId> operands{block.Add(*std::move(name_or))};
   const std::optional<hir::ExprId> mode = OptionalOperand(call, 1);
   if (mode) {
     auto mode_or = LowerOperand(process, frame, *mode);
     if (!mode_or) return std::unexpected(std::move(mode_or.error()));
-    operands.push_back(block.exprs.Add(*std::move(mode_or)));
+    operands.push_back(block.Add(*std::move(mode_or)));
   }
   return BuildFileIoCall(
       process, frame,
@@ -153,7 +154,7 @@ auto RequireStringDestination(
 // at the type `layout` gives the result, and the front end types `$fgets`,
 // `$ferror` and `$fread` as the `integer` the code of LRM 21.3.4 is read into.
 auto ReadCount(
-    mir::CompilationUnit& unit, mir::Block& block, mir::LocalId completion,
+    mir::CompilationUnit& unit, mir::Builder block, mir::LocalId completion,
     const CompletionLayout& layout) -> mir::ExprId {
   return ConvertToType(
       unit, block,
@@ -256,7 +257,7 @@ auto LowerFileReadCall(
 
   BlockBuilder steps(frame);
   const WalkFrame& step_frame = steps.Frame();
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
 
   // The destination is an `inout`: its own shape decides how many bytes a word
   // takes and what the file does not reach keeps what it held, so its value

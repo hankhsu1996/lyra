@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -90,18 +91,17 @@ auto LowerRandomSystemSubroutineCall(
     -> diag::Result<mir::Expr> {
   const std::vector<hir::ExprId> operands = RequiredOperands(call);
   auto& unit = lowerer.Owner().Unit();
-  auto& body = *frame.current_block;
+  mir::Builder body = frame.Builder();
 
   std::vector<mir::ExprId> arguments;
-  arguments.push_back(
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())));
+  arguments.push_back(body.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())));
   for (const hir::ExprId operand : operands) {
     auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(operand), frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
     arguments.push_back(
-        BuildToInt64Call(unit, body, body.exprs.Add(*std::move(lowered))));
+        BuildToInt64Call(unit, body, body.Add(*std::move(lowered))));
   }
 
   // An omitted low bound is the zero LRM 18.13.2 defines it to be, and the
@@ -134,12 +134,12 @@ auto LowerDistributionSystemSubroutineCall(
   // LRM 20.14.1 makes `$random`'s seed optional, and a call that omits one
   // names no variable to advance, so the stream it advances is the run's.
   if (operands.empty()) {
-    auto& block = *frame.current_block;
+    mir::Builder block = frame.Builder();
     return mir::Expr{
         .data =
             mir::CallExpr{
                 .callee = mir::Direct{.target = support::BuiltinFn::kRandom},
-                .arguments = {block.exprs.Add(
+                .arguments = {block.Add(
                     BuildCurrentRuntimeCallExpr(unit_lowerer))}},
         .type = int_type};
   }
@@ -148,7 +148,7 @@ auto LowerDistributionSystemSubroutineCall(
   // statements, and a call sits in expression position, so they are the steps
   // of one block expression.
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   const WalkFrame& step_frame = steps.Frame();
 
   // LRM 20.14.1 / 20.14.2 make the seed an integral variable the draw reads and
@@ -180,7 +180,7 @@ auto LowerDistributionSystemSubroutineCall(
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    const mir::ExprId raw = body.exprs.Add(*std::move(lowered));
+    const mir::ExprId raw = body.Add(*std::move(lowered));
     arguments.push_back(
         BuildToInt64Call(unit, body, ConvertToType(unit, body, raw, int_type)));
   }
@@ -198,7 +198,7 @@ auto LowerDistributionSystemSubroutineCall(
 
   const mir::TypeId payload_type =
       CompletionPayloadType(unit, {int_type, int_type});
-  const mir::ExprId draw_call = body.exprs.Add(
+  const mir::ExprId draw_call = body.Add(
       mir::Expr{
           .data =
               mir::CallExpr{

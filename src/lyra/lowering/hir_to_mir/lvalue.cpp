@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -47,7 +48,7 @@ auto DistributePacked(
     const LvalueJoin& join, mir::ExprId value, const ShareSink& sink)
     -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::IntegralType whole = unit.types.Get(lvalue.type).Integral();
   const mir::ExprId held = EvaluatedOnce(
       frame, ConvertToType(
@@ -62,7 +63,7 @@ auto DistributePacked(
     }
     const std::uint64_t width = member_type.Integral().bit_width;
     offset -= width;
-    const mir::ExprId bits = block.exprs.Add(BuildPackedBitsRead(
+    const mir::ExprId bits = block.Add(BuildPackedBitsRead(
         unit_lowerer, block, held, offset,
         mir::PackedVectorOf(unit.types, width, whole.state_kind)));
     auto taken = Distribute(
@@ -78,7 +79,7 @@ auto DistributePacked(
 // are numbered (LRM 10.9.1, 10.9.2). Nothing for an aggregate whose members
 // are not counted by its type.
 auto PatternMemberStep(
-    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId whole,
+    mir::CompilationUnit& unit, mir::Builder block, mir::TypeId whole,
     std::size_t position) -> std::optional<DescentStep> {
   if (const auto components = mir::ProductElements(unit, whole)) {
     return DescentStep{
@@ -105,13 +106,13 @@ auto DistributeUnpacked(
     const LvalueJoin& join, mir::ExprId value, const ShareSink& sink)
     -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   // Each member is taken where it lies in what is distributed; a value that
   // lies nowhere is held in a local first, as a place is needed to step into.
   mir::ExprId held = value;
-  if (!mir::IsReadablePlace(unit.types, block.exprs.Get(value))) {
+  if (!mir::IsReadablePlace(unit.types, block.Get(value))) {
     const mir::LocalId local = DeclareLocal(frame, value);
-    held = block.LocalPlace(local, block.exprs.Get(value).type);
+    held = block.LocalPlace(local, block.Get(value).type);
   }
   for (std::size_t i = 0; i < join.members.size(); ++i) {
     const std::optional<DescentStep> step =
@@ -123,8 +124,7 @@ auto DistributeUnpacked(
           "an assignment pattern of this type is not yet supported as the "
           "target of a write");
     }
-    const mir::ExprId member =
-        block.exprs.Add(StepRead(unit, block, *step, held));
+    const mir::ExprId member = block.Add(StepRead(unit, block, *step, held));
     auto taken = Distribute(unit_lowerer, frame, join.members[i], member, sink);
     if (!taken) return taken;
   }
@@ -140,7 +140,7 @@ auto Distribute(
             sink(
                 Share{
                     .place = place,
-                    .value = frame.current_block->AsValue(
+                    .value = frame.Builder().AsValue(
                         unit_lowerer.Unit().types, value)});
             return {};
           },
@@ -243,11 +243,11 @@ auto Shares(
 auto AppendStores(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const Lvalue& lvalue,
     mir::ExprId value) -> diag::Result<void> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto store = [&](const Share& share) {
     block.AppendStmt(
         mir::ExprStmt{
-            .expr = block.exprs.Add(BuildStoreExpr(
+            .expr = block.Add(BuildStoreExpr(
                 unit_lowerer.Unit(), block, share.place, share.value))});
   };
   // One place alone has no other store to be ordered against and takes the
@@ -261,7 +261,7 @@ auto AppendStores(
   // from, even where the value was read out of a member's own storage (LRM
   // 10.9, 11.4.12).
   const mir::LocalId local = DeclareLocal(frame, value);
-  const mir::ExprId held = block.LocalPlace(local, block.exprs.Get(value).type);
+  const mir::ExprId held = block.LocalPlace(local, block.Get(value).type);
   Lvalue located = lvalue;
   ForEachPlace(located, [&](AccessPath& place) {
     place = Settled(unit_lowerer, frame, std::move(place));
@@ -273,7 +273,7 @@ auto ReadThenWrite(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, Lvalue lvalue)
     -> diag::Result<LvalueReadThenWritten> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   // What the members of a join hold together is the value the join stands
   // for: their bits end to end, or the aggregate they are the members of.
   const auto read_join = [&](LvalueJoin& join) -> diag::Result<mir::ExprId> {
@@ -301,7 +301,7 @@ auto ReadThenWrite(
                       ConvertToType(unit, block, incoming[i], step->part_type);
                 }
               }
-              return block.exprs.Add(BuildPositionalAggregate(
+              return block.Add(BuildPositionalAggregate(
                   unit, frame, lvalue.type, std::move(incoming)));
             }},
         join.kind);

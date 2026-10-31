@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -30,12 +31,12 @@ constexpr int kDefaultFinishNumber = 1;
 // A call to `entry` on the runtime handle, carrying where the call was written
 // and then `more`: every control task reports where it was called.
 auto ControlCallAt(
-    const ProcessLowerer& process, mir::Block& block, support::BuiltinFn entry,
+    const ProcessLowerer& process, mir::Builder block, support::BuiltinFn entry,
     diag::SourceSpan span, std::initializer_list<mir::ExprId> more)
     -> mir::Expr {
   const auto& unit = process.Owner().Unit();
   std::vector<mir::ExprId> arguments = {
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner())),
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner())),
       BuildStringValueExpr(
           unit, block,
           diag::RuntimeOriginOf(span, process.Owner().SourceManager()))};
@@ -54,7 +55,7 @@ auto BuildFinishNumber(
     ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call)
     -> diag::Result<mir::ExprId> {
   const auto& unit = process.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   if (call.arguments.empty()) {
     return mir::BuildMachineIntLiteral(unit, block, kDefaultFinishNumber);
   }
@@ -64,8 +65,8 @@ auto BuildFinishNumber(
   auto lowered = process.LowerExpr(
       process.HirBody().exprs.Get(*call.arguments.front()), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  const mir::ExprId value = block.exprs.Add(*std::move(lowered));
-  const mir::Type& type = unit.types.Get(block.exprs.Get(value).type);
+  const mir::ExprId value = block.Add(*std::move(lowered));
+  const mir::Type& type = unit.types.Get(block.Get(value).type);
   // A real is rounded (LRM 6.12.1) and a string read as the bits of its
   // characters (LRM 5.9), the conversions a cast to `int` makes.
   if (type.IsIntegral() || type.IsRealFamily() || type.Is<mir::StringType>()) {
@@ -77,7 +78,7 @@ auto BuildFinishNumber(
 }
 
 auto BuildEndRunCall(
-    const ProcessLowerer& process, mir::Block& block, support::BuiltinFn entry,
+    const ProcessLowerer& process, mir::Builder block, support::BuiltinFn entry,
     mir::ExprId finish_number, diag::SourceSpan span) -> mir::Expr {
   return ControlCallAt(process, block, entry, span, {finish_number});
 }
@@ -89,11 +90,11 @@ auto LowerTerminationSystemSubroutineCall(
   auto finish_number = BuildFinishNumber(process, frame, call);
   if (!finish_number) return std::unexpected(std::move(finish_number.error()));
   return BuildEndRunCall(
-      process, *frame.current_block, info.builtin_fn, *finish_number, span);
+      process, frame.Builder(), info.builtin_fn, *finish_number, span);
 }
 
 auto LowerProgramControlSystemSubroutineCall(
-    const ProcessLowerer& process, mir::Block& block, diag::SourceSpan span)
+    const ProcessLowerer& process, mir::Builder block, diag::SourceSpan span)
     -> mir::Expr {
   return ControlCallAt(process, block, support::BuiltinFn::kExit, span, {});
 }

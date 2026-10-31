@@ -23,6 +23,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -47,7 +48,7 @@ namespace {
 // of its type. Which of the two a type is follows from the type, so it is
 // settled here rather than left for a backend to work out.
 auto BuildCombinedArms(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId one,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId one,
     mir::LocalId other, mir::TypeId result_type) -> mir::ExprId {
   const mir::Type& type = unit.types.Get(result_type);
   const bool combines_by_part =
@@ -56,22 +57,22 @@ auto BuildCombinedArms(
   if (combines_by_part) {
     const mir::ExprId one_value = block.ReadLocal(one, result_type);
     const mir::ExprId other_value = block.ReadLocal(other, result_type);
-    return block.exprs.Add(
+    return block.Add(
         mir::MakeBuiltinCall(
-            unit, block, support::BuiltinFn::kMergeConditional, one_value,
-            {other_value}, result_type));
+            unit, block.Body(), support::BuiltinFn::kMergeConditional,
+            one_value, {other_value}, result_type));
   }
   const std::array compared{result_type, result_type};
   const mir::ExprId lhs = block.LocalPlace(one, result_type);
   const mir::ExprId rhs = block.LocalPlace(other, result_type);
   const mir::TypeId answer_type = OneBitAnswerType(unit, compared);
-  const mir::ExprId equal = block.exprs.Add(BuildMirBinaryExpr(
+  const mir::ExprId equal = block.Add(BuildMirBinaryExpr(
       unit, block, hir::BinaryOp::kEquality, lhs, rhs, answer_type));
   const std::array shared{SelectedValue{
       .selected = ReduceToCondition(unit, block, equal),
       .value = block.ReadLocal(one, result_type)}};
   const mir::ExprId otherwise =
-      block.exprs.Add(BuildDefaultValueExpr(unit, block, result_type));
+      block.Add(BuildDefaultValueExpr(unit, block, result_type));
   return BuildSelectionChain(block, shared, otherwise, result_type);
 }
 
@@ -79,13 +80,13 @@ auto BuildCombinedArms(
 // false. A condition holds only for a known nonzero value (LRM 12.4), so being
 // known false is asked of the negation.
 auto BuildIsKnownTrue(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId {
   return ReduceToCondition(unit, block, value);
 }
 
 auto BuildIsKnownFalse(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId {
   return ReduceToCondition(unit, block, BuildLogicalNot(unit, block, value));
 }
@@ -97,7 +98,7 @@ auto BuildDecidedSelection(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     std::span<const SelectionArm> arms, const Evaluation& otherwise,
     mir::TypeId result_type) -> diag::Result<mir::ExprId> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   std::vector<SelectedValue> reached;
   reached.reserve(arms.size());
   for (const SelectionArm& arm : arms) {
@@ -143,20 +144,19 @@ auto BuildMergingSelection(
     std::span<const SelectionArm> arms, const Evaluation& otherwise,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   const mir::TypeId boolean = unit.builtins.machine_bool;
   const mir::LocalId answer = steps.DeclareLocal(
-      result_type,
-      body.exprs.Add(BuildDefaultValueExpr(unit, body, result_type)));
+      result_type, body.Add(BuildDefaultValueExpr(unit, body, result_type)));
   const mir::LocalId answered =
       steps.DeclareLocal(boolean, BuildMachineBool(unit, body, false));
   const mir::LocalId ended =
       steps.DeclareLocal(boolean, BuildMachineBool(unit, body, false));
 
   // `value`, evaluated into `block`, becomes the answer or is combined into it.
-  const auto contribute = [&](mir::Block& block,
+  const auto contribute = [&](mir::Builder block,
                               const Evaluation& value) -> diag::Result<void> {
-    const WalkFrame at = steps.Frame().WithBlock(&block);
+    const WalkFrame at = steps.Frame().WithBlock(&block.Body());
     auto value_or = value(at);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::LocalId held = DeclareLocal(at, *value_or);
@@ -179,6 +179,7 @@ auto BuildMergingSelection(
 
   for (const SelectionArm& arm : arms) {
     mir::Block reached;
+    mir::Builder reached_builder = body.Into(reached);
     const WalkFrame at = steps.Frame().WithBlock(&reached);
     auto predicate_or = arm.predicate.evaluate(at);
     if (!predicate_or) return std::unexpected(std::move(predicate_or.error()));
@@ -186,21 +187,24 @@ auto BuildMergingSelection(
     const mir::LocalId predicate = DeclareLocal(at, *predicate_or);
 
     mir::Block taken;
-    auto contributed = contribute(taken, arm.value);
+    mir::Builder taken_builder = reached_builder.Into(taken);
+    auto contributed = contribute(taken_builder, arm.value);
     if (!contributed) return std::unexpected(std::move(contributed.error()));
     AssignLocal(
-        unit, taken, ended,
+        unit, taken_builder, ended,
         BuildIsKnownTrue(
-            unit, taken, taken.ReadLocal(predicate, predicate_type)));
+            unit, taken_builder,
+            taken_builder.ReadLocal(predicate, predicate_type)));
     const mir::ExprId not_known_false = BuildConditionNot(
-        unit, reached,
+        unit, reached_builder,
         BuildIsKnownFalse(
-            unit, reached, reached.ReadLocal(predicate, predicate_type)));
-    reached.AppendIfThen(not_known_false, std::move(taken));
+            unit, reached_builder,
+            reached_builder.ReadLocal(predicate, predicate_type)));
+    reached_builder.AppendIfThen(not_known_false, std::move(taken));
     append_unless_ended(std::move(reached));
   }
   mir::Block last;
-  auto contributed = contribute(last, otherwise);
+  auto contributed = contribute(body.Into(last), otherwise);
   if (!contributed) return std::unexpected(std::move(contributed.error()));
   append_unless_ended(std::move(last));
   return steps.Build(body.ReadLocal(answer, result_type));
@@ -233,7 +237,7 @@ auto ClausePredicate(
                            pattern, hir::CaseKeyword::kCase)
                            .evaluate(steps.Frame());
         if (!matched) return std::unexpected(std::move(matched.error()));
-        return at.current_block->exprs.Add(steps.Build(*matched));
+        return at.Builder().Add(steps.Build(*matched));
       }};
 }
 
@@ -251,7 +255,7 @@ auto BuildDecidedSearch(
   const auto settled_as = [&unit, type](bool answer) -> Evaluation {
     return [&unit, type,
             answer](const WalkFrame& at) -> diag::Result<mir::ExprId> {
-      mir::Block& block = *at.current_block;
+      mir::Builder block = at.Builder();
       return ConvertToType(
           unit, block, mir::BuildBit1Literal(unit, block, answer), type);
     };
@@ -263,7 +267,7 @@ auto BuildDecidedSearch(
                      &term](const WalkFrame& at) -> diag::Result<mir::ExprId> {
           auto value_or = term.evaluate(at);
           if (!value_or) return value_or;
-          mir::Block& block = *at.current_block;
+          mir::Builder block = at.Builder();
           return BuildConditionNot(
               unit, block, ReduceToCondition(unit, block, *value_or));
         }};
@@ -289,7 +293,7 @@ auto BuildDecidedSearch(
       [&](const WalkFrame& at) -> diag::Result<mir::ExprId> {
     auto value_or = terms.back().evaluate(at);
     if (!value_or) return value_or;
-    mir::Block& block = *at.current_block;
+    mir::Builder block = at.Builder();
     return ConvertToType(unit, block, BuildTruth(unit, block, *value_or), type);
   };
   return BuildDecidedSelection(unit, frame, arms, last_truth, type);
@@ -311,8 +315,8 @@ auto BuildSearchSteps(
     std::span<const Predicate> terms, mir::TypeId type)
     -> diag::Result<mir::ExprId> {
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
-  const auto truth = [&](mir::Block& block, mir::ExprId value) {
+  mir::Builder body = steps.Body();
+  const auto truth = [&](mir::Builder block, mir::ExprId value) {
     return ConvertToType(unit, block, BuildTruth(unit, block, value), type);
   };
   const auto is_open = [&](mir::ExprId answer) {
@@ -328,7 +332,7 @@ auto BuildSearchSteps(
     }
     throw InternalError("BuildSearchSteps: unknown SettledBy");
   };
-  const auto folded = [&](mir::Block& block, mir::ExprId answer,
+  const auto folded = [&](mir::Builder block, mir::ExprId answer,
                           mir::ExprId term) {
     switch (rule) {
       case SettledBy::kTrueTerm:
@@ -348,16 +352,17 @@ auto BuildSearchSteps(
   const mir::LocalId answer = steps.DeclareLocal(type, truth(body, *first_or));
   for (const Predicate& term : terms.subspan(1)) {
     mir::Block step;
+    mir::Builder step_builder = body.Into(step);
     auto term_or = term.evaluate(steps.Frame().WithBlock(&step));
     if (!term_or) return std::unexpected(std::move(term_or.error()));
-    const mir::ExprId so_far = step.ReadLocal(answer, type);
-    const mir::ExprId term_truth = truth(step, *term_or);
-    AssignLocal(unit, step, answer, folded(step, so_far, term_truth));
+    const mir::ExprId so_far = step_builder.ReadLocal(answer, type);
+    const mir::ExprId term_truth = truth(step_builder, *term_or);
+    AssignLocal(
+        unit, step_builder, answer, folded(step_builder, so_far, term_truth));
     const mir::ExprId open = is_open(body.ReadLocal(answer, type));
     body.AppendIfThen(open, std::move(step));
   }
-  return frame.current_block->exprs.Add(
-      steps.Build(body.ReadLocal(answer, type)));
+  return frame.Builder().Add(steps.Build(body.ReadLocal(answer, type)));
 }
 
 // Assigns `held` the answer the conditions settle, one step per condition, each
@@ -368,13 +373,16 @@ auto AssignInOrder(
     const mir::CompilationUnit& unit, const WalkFrame& frame, mir::LocalId held,
     std::span<const Evaluation> conditions, bool holding_settles)
     -> diag::Result<void> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::TypeId boolean = unit.builtins.machine_bool;
   for (const Evaluation& condition : conditions) {
     mir::Block tried;
     auto tested = condition(frame.WithBlock(&tried));
     if (!tested) return std::unexpected(std::move(tested.error()));
-    AssignLocal(unit, tried, held, ReduceToCondition(unit, tried, *tested));
+    mir::Builder tried_builder = block.Into(tried);
+    AssignLocal(
+        unit, tried_builder, held,
+        ReduceToCondition(unit, tried_builder, *tested));
     const mir::ExprId read = block.ReadLocal(held, boolean);
     const mir::ExprId unsettled =
         holding_settles ? BuildConditionNot(unit, block, read) : read;
@@ -415,23 +423,23 @@ auto ConditionallyEvaluated(const WalkFrame& frame, const Evaluation& operand)
   BlockBuilder point(frame);
   auto value_or = operand(point.Frame());
   if (!value_or) return std::unexpected(std::move(value_or.error()));
-  return frame.current_block->exprs.Add(point.Build(*value_or));
+  return frame.Builder().Add(point.Build(*value_or));
 }
 
 auto BuildLogicalNot(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId {
-  const mir::TypeId type = block.exprs.Get(value).type;
-  return block.exprs.Add(
+  const mir::TypeId type = block.Get(value).type;
+  return block.Add(
       mir::MakeUnary(
-          unit, block, mir::UnaryOp::kLogicalNot, value,
+          unit, block.Body(), mir::UnaryOp::kLogicalNot, value,
           OneBitAnswerType(unit, {&type, 1})));
 }
 
 auto BuildTruth(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId {
-  const mir::TypeId type_id = block.exprs.Get(value).type;
+  const mir::TypeId type_id = block.Get(value).type;
   const mir::Type& type = unit.types.Get(type_id);
   if (!type.IsIntegral()) {
     return ConditionAsBit(unit, block, value);
@@ -442,9 +450,9 @@ auto BuildTruth(
   if (type.Integral().bit_width == 1 && !CarriesUnknowns(unit, type_id)) {
     return value;
   }
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kReductionOr, value, {},
+          unit, block.Body(), support::BuiltinFn::kReductionOr, value, {},
           OneBitAnswerType(unit, {&type_id, 1})));
 }
 
@@ -456,7 +464,7 @@ auto ExpressionPredicate(Lowerer& lowerer, hir::ExprId id) -> Predicate {
                    id](const WalkFrame& at) -> diag::Result<mir::ExprId> {
         auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(id), at);
         if (!lowered) return std::unexpected(std::move(lowered.error()));
-        return at.current_block->exprs.Add(*std::move(lowered));
+        return at.Builder().Add(*std::move(lowered));
       }};
 }
 
@@ -469,7 +477,7 @@ auto Negated(const mir::CompilationUnit& unit, Predicate predicate)
                       const WalkFrame& at) -> diag::Result<mir::ExprId> {
         auto value_or = operand.evaluate(at);
         if (!value_or) return value_or;
-        mir::Block& block = *at.current_block;
+        mir::Builder block = at.Builder();
         return BuildLogicalNot(unit, block, BuildTruth(unit, block, *value_or));
       }};
 }

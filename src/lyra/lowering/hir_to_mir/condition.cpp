@@ -5,6 +5,7 @@
 #include <span>
 #include <vector>
 
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -17,52 +18,52 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto BuildMachineBool(
-    const mir::CompilationUnit& unit, mir::Block& block, bool value)
+    const mir::CompilationUnit& unit, mir::Builder block, bool value)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data = mir::MachineBoolLiteral{.value = value},
           .type = unit.builtins.machine_bool});
 }
 
 auto ReduceToCondition(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cond)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId cond)
     -> mir::ExprId {
   cond = block.AsValue(unit.types, cond);
-  if (block.exprs.Get(cond).type == unit.builtins.machine_bool) {
+  if (block.Get(cond).type == unit.builtins.machine_bool) {
     return cond;
   }
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data = mir::CastExpr{.operand = cond},
           .type = unit.builtins.machine_bool});
 }
 
 auto BuildConditionNot(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId condition)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId condition)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeUnary(
-          unit, block, mir::UnaryOp::kLogicalNot, condition,
+          unit, block.Body(), mir::UnaryOp::kLogicalNot, condition,
           unit.builtins.machine_bool));
 }
 
 auto ConditionAsBit(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId {
   const mir::ExprId condition = ReduceToCondition(unit, block, value);
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kFromBool, std::nullopt, {condition},
-          unit.builtins.bit1));
+          unit, block.Body(), support::BuiltinFn::kFromBool, std::nullopt,
+          {condition}, unit.builtins.bit1));
 }
 
 auto BuildSelectionChain(
-    mir::Block& block, std::span<const SelectedValue> arms,
+    mir::Builder block, std::span<const SelectedValue> arms,
     mir::ExprId otherwise, mir::TypeId type) -> mir::ExprId {
   mir::ExprId rest = otherwise;
   for (const SelectedValue& arm : arms | std::views::reverse) {
-    rest = block.exprs.Add(
+    rest = block.Add(
         mir::Expr{
             .data =
                 mir::ConditionalExpr{
@@ -84,7 +85,7 @@ namespace {
 //   any:  c0 ? true : c1 ? true : ... : last
 //   all:  c0 ? (c1 ? ... last ... : false) : false
 auto Search(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     std::span<const mir::ExprId> conditions, bool settles) -> mir::ExprId {
   if (conditions.empty()) {
     return BuildMachineBool(unit, block, !settles);
@@ -98,7 +99,7 @@ auto Search(
   for (const mir::ExprId holds :
        std::span(held).first(held.size() - 1) | std::views::reverse) {
     const mir::ExprId settled = BuildMachineBool(unit, block, settles);
-    rest = block.exprs.Add(
+    rest = block.Add(
         mir::Expr{
             .data =
                 mir::ConditionalExpr{
@@ -113,13 +114,13 @@ auto Search(
 }  // namespace
 
 auto AllHold(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     std::span<const mir::ExprId> conditions) -> mir::ExprId {
   return Search(unit, block, conditions, false);
 }
 
 auto AnyHolds(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     std::span<const mir::ExprId> conditions) -> mir::ExprId {
   return Search(unit, block, conditions, true);
 }

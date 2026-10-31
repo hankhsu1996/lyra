@@ -10,6 +10,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/support/system_subroutine.hpp"
 #include "lyra/value/format.hpp"
@@ -86,7 +87,7 @@ auto BuildFormatStringTextExpr(
 // `time_unit_power` scales a %t directive (LRM 21.2.1.3) and is unread when no
 // item carries one.
 auto BuildPrintItemsArray(
-    mir::CompilationUnit& unit, mir::Block& block,
+    mir::CompilationUnit& unit, mir::Builder block,
     const std::vector<RuntimePrintItem>& items, std::int64_t time_unit_power)
     -> mir::Expr;
 
