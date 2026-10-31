@@ -89,8 +89,10 @@ array, so no layer tells the kinds apart to answer it.
 **D2. A unit states it once per element type, in MIR.** For every type that is the element type of
 an array type the unit holds, of any kind, the unit states the code that builds that type's default:
 for a structure its declared default, member initializers included (LRM 7.2.2), for a variable-size
-array its empty value, for a fixed-size array its elements' in turn. The unit states one for no
-other type, and its verification holds it to exactly that set.
+array its empty value, for a fixed-size array its elements' in turn. It may state one for a tuple as
+well, where each component has one (no declaration holds a wildcard index, LRM 7.8.1), since a tuple
+has no declaration of its own to state it. The unit states one for no other type; its verification
+requires it of every element type and admits it for a tuple.
 
 **D3. No call carries it.** A construction, `new[n]` and `new[n](src)`, a conversion from one array
 kind to another and a concatenation state what can differ between two evaluations -- the elements, a
@@ -108,9 +110,12 @@ only that it is told the array it builds. The two answers of LRM 7.4.5 -- the va
 returns and the storage a discarded write lands on -- are asked of the element type's constant,
 whatever kind of array the position belongs to; each is built from the function the first time it is
 asked for and kept beside the constant, once per element type per unit, for as long as the program
-runs. On the C++ backend nothing is emitted for any of this: the host compiler's default
-construction of the element type is the same statement, and each container asks it where a
-fixed-size array already did.
+runs. A cell and a net are built from the same constant for the type they hold, so storage before
+its first write starts at what MIR states and no type answers its own default
+([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
+D5). On the C++ backend nothing is emitted for any of this: the host compiler's default construction
+of the element type is the same statement, and each container asks it where a fixed-size array
+already did.
 
 **D5. The `default:` of an associative array literal stays an operand, because it is the one value
 here that can differ where the type cannot** (LRM 7.9.11). "If a default value is specified, then

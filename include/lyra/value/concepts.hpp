@@ -90,25 +90,19 @@ template <ComparisonAnswer R>
   std::unreachable();
 }
 
-// The SV data type contract every value type realises (LRM Table 11-1 "Any"
-// row). A type that satisfies this concept provides the universal equality
-// operators plus the engine's bit-pattern change-detection predicate. This
-// is the concept `lyra::runtime::Var<T>` requires, so wrapping a
-// structural-var in observable storage gates on it.
+// What every value a holder keeps answers, whatever its type: whether a value
+// written over it changed it, the engine's change-detection predicate (LRM
+// 9.4.2), since any variable may be waited on. This is the concept
+// `lyra::runtime::Var<T>` requires. The language's operations on the whole
+// value -- `==`, `$isunknown`, its stream of bits -- are asked of a type by
+// whatever compares or streams it, so a value the library holds of a type it
+// was compiled without carries none of them.
 template <typename T>
 concept LyraValue = Storable<T> && requires(const T& a, const T& b) {
-  // LRM 11.4.5 `==` / `!=` (Any data type).
-  { a == b } -> ComparisonAnswer;
-  { a != b } -> ComparisonAnswer;
-  // LRM 9.4.2 update event predicate: did the cell's bit-pattern change.
   // The engine's change-detection hook -- distinct from the LRM `===`
   // operator (`CaseEqualComparable`) even when their internal algorithm
   // coincides.
   { a.IsBitIdentical(b) } -> std::same_as<bool>;
-  // LRM 20.9 unknown detection: does any bit of this value's representation
-  // carry an X or Z. 2-state types answer no; 4-state types scan their bit
-  // pattern; aggregates recurse into elements.
-  { a.HasUnknown() } -> std::same_as<bool>;
 };
 
 // LRM 11.4.5 `===` / `!==`. A value type opts in when its SV counterpart

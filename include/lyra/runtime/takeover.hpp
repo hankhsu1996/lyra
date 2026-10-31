@@ -11,6 +11,7 @@
 #include "lyra/support/takeover_level.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/positions.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
 
@@ -46,6 +47,32 @@ template <class T>
 concept TakenOverByBits = requires(T& value, const T& other) {
   value.MutableView();
   other.View();
+};
+
+// How a takeover shows what it holds at some positions of a value of `T`. A
+// type the library is compiled with takes them itself (LRM 10.6.2).
+template <class T>
+struct TakePositionsOf {
+  [[nodiscard]] auto Taken(
+      const T& into, const T& from, std::int64_t first,
+      std::int64_t count) const -> T {
+    return value::PositionsTaken(into, from, first, count);
+  }
+};
+
+// A type the library was compiled without takes them by its own function, which
+// the takeover is handed where it begins, since nothing else asks for it.
+template <value::LaidOutByType T>
+struct TakePositionsOf<T> {
+  value::TakePositionsWitness take = nullptr;
+
+  [[nodiscard]] auto Taken(
+      const T& into, const T& from, std::int64_t first,
+      std::int64_t count) const -> T {
+    return T::Built(into.Type(), [&](void* out) {
+      take(into.Type(), into.Bytes(), from.Bytes(), &first, &count, out);
+    });
+  }
 };
 
 // The positions a takeover still holds: runs of positions, none overlapping
@@ -110,9 +137,12 @@ class Takeovers {
  public:
   // Begins a takeover at `level` over `positions`, which every other takeover
   // at that level stops holding, and answers with its generation. A value held
-  // whole is always named whole, as its one position.
-  auto Begin(support::TakeoverLevel level, value::BitPositions positions)
-      -> std::uint32_t {
+  // whole is always named whole, as its one position. `take_positions` is how
+  // what a takeover holds is shown, the same at every beginning.
+  auto Begin(
+      support::TakeoverLevel level, value::BitPositions positions,
+      TakePositionsOf<T> take_positions) -> std::uint32_t {
+    take_positions_ = take_positions;
     Remove(level, positions);
     const std::uint32_t generation = ++GenerationOf(level);
     // Built where it is kept, since its value may be larger than a frame keeps.
@@ -223,16 +253,17 @@ class Takeovers {
   }
 
   // `written` showing what `held` holds at `run`.
-  static void OverlayRun(T& written, const T& held, value::BitPositions run) {
+  void OverlayRun(T& written, const T& held, value::BitPositions run) const {
     if constexpr (TakenOverByBits<T>) {
       value::InsertWithin(written.MutableView(), held.View(), 0, run);
     } else {
-      written = value::PositionsTaken(
+      written = take_positions_.Taken(
           written, held, static_cast<std::int64_t>(run.lsb),
           static_cast<std::int64_t>(run.width));
     }
   }
 
+  [[no_unique_address]] TakePositionsOf<T> take_positions_;
   std::vector<Takeover> takeovers_;
   std::array<std::uint32_t, support::kTakeoverLevelCount> generations_{};
   std::optional<T> beneath_;

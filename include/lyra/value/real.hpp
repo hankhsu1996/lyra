@@ -233,10 +233,6 @@ class RealValue {
     return false;
   }
 
-  [[nodiscard]] static auto IsUnknown() -> Bit {
-    return Bit::FromBool(false);
-  }
-
   // LRM 11.4.7 / 12.4: a real in a boolean context is true when non-zero.
   explicit operator bool() const {
     return v_ != Host{0};

@@ -3,7 +3,8 @@
 // $high are the last position and are -1 while it is empty. An associative
 // dimension takes its index space from its index type -- $left 0 and $right
 // that type's highest value -- while $low and $high are the smallest and
-// largest indices currently allocated, and read as x when none is (LRM 20.7).
+// largest indices currently allocated, and read as x when none is (LRM 20.7),
+// an integer whatever the index type, so even a two-state index answers x.
 // Below a dimension whose size varies, a fixed dimension is still answered,
 // while a query naming a variable-sized dimension below the top is an error
 // (LRM 20.7.1), so none is made here.
@@ -41,6 +42,8 @@ module Top;
   logic [7:0] byte_right;
   logic [7:0] unallocated_low;
   logic [7:0] unallocated_high;
+  integer unallocated_key_low = 0;
+  integer unallocated_key_high = 0;
 
   int nested[3][][5];
 
@@ -97,6 +100,10 @@ module Top;
     unallocated_high = 8'h55;
     unallocated_low = $low(table_by_byte);
     unallocated_high = $high(table_by_byte);
+
+    table_by_key.delete();
+    unallocated_key_low = $low(table_by_key);
+    unallocated_key_high = $high(table_by_key);
 
     rows = new[3];
     dimension = 1;
@@ -180,6 +187,13 @@ module Top;
       $fatal(1, "nested_inner was %0d, expected 5", nested_inner);
     if (nested_element !== 32)
       $fatal(1, "nested_element was %0d, expected 32", nested_element);
+
+    if (unallocated_key_low !== 'x)
+      $fatal(1, "$low of an int-indexed array holding none was %0d",
+             unallocated_key_low);
+    if (unallocated_key_high !== 'x)
+      $fatal(1, "$high of an int-indexed array holding none was %0d",
+             unallocated_key_high);
     $display("All checks passed");
   end
 endmodule

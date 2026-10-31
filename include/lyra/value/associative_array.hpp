@@ -220,41 +220,39 @@ class AssociativeArray {
 
   [[nodiscard]] auto operator==(const AssociativeArray& other) const ->
       typename StaticElem<V>::Equality {
-    return StaticElem<V>::Equality::Filled(core_.Equal(other.core_));
+    return StaticElem<V>::Equality::Filled(
+        core_.Equal(other.core_, core_.Element()));
   }
   [[nodiscard]] auto operator!=(const AssociativeArray& other) const ->
       typename StaticElem<V>::Equality {
     return !(*this == other);
   }
   [[nodiscard]] auto CaseEqual(const AssociativeArray& other) const -> Bit {
-    return core_.CaseEqual(other.core_);
+    return core_.CaseEqual(other.core_, core_.Element());
   }
   [[nodiscard]] auto IsBitIdentical(const AssociativeArray& other) const
       -> bool {
     return core_.IsBitIdentical(other.core_);
   }
   [[nodiscard]] auto HasUnknown() const -> bool {
-    return core_.HasUnknown();
-  }
-  [[nodiscard]] auto IsUnknown() const -> Bit {
-    return Bit::FromBool(HasUnknown());
+    return core_.HasUnknown(core_.Element());
   }
   [[nodiscard]] auto BitstreamWidth() const -> Int {
-    return Int::FromInt(core_.BitstreamWidth());
+    return Int::FromInt(core_.BitstreamWidth(core_.Element()));
   }
   // LRM 6.24.3: the elements written below the `filled` most significant
   // positions of `stream`, the lowest index first, and as a run of bits of
   // their own.
   [[nodiscard]] auto WriteToStream(
       const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
-    return core_.WriteToStream(stream, filled);
+    return core_.WriteToStream(stream, filled, core_.Element());
   }
   [[nodiscard]] auto ToBitVec() const -> BitVec {
     return StreamOf(*this);
   }
   template <IntegralValue Control>
   [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
-    return Int::FromInt(core_.CountBits(control_bits));
+    return Int::FromInt(core_.CountBits(control_bits, core_.Element()));
   }
 
  private:

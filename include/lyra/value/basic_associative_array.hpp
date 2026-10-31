@@ -18,7 +18,8 @@ namespace lyra::value {
 // -- which compares a held key with a handed one -- whether a handed key names
 // no entry at all, as one carrying x or z does (LRM 7.8.6), and the key an
 // insertion holds of one. Like an element, a key is answered by its C++ type
-// where the array is compiled with it, and by its type's table in the library.
+// where the array is compiled with it, and in the library by the order the
+// array is built holding.
 template <typename P>
 concept KeyPolicy =
     std::copyable<P> && requires(const P& p, const typename P::Probe& key) {
@@ -30,7 +31,8 @@ concept KeyPolicy =
 
 // An associative array (LRM 7.8), written once over what its index and element
 // answer: compiled with their C++ types for the C++ backend, and once in the
-// library, with their types' tables, for the execution backend. Every element
+// library, with the element type's table and the index order, for the
+// execution backend. Every element
 // is handed in and out by its address.
 //
 // Each element is storage of its own that never moves while its key is in the
@@ -91,9 +93,6 @@ class BasicAssociativeArray {
     }
   }
 
-  [[nodiscard]] auto KeyType() const -> const Key& {
-    return key_;
-  }
   [[nodiscard]] auto Element() const -> const Elem& {
     return elem_;
   }
@@ -220,30 +219,33 @@ class BasicAssociativeArray {
 
   // LRM 11.2.2 aggregate equality / 11.4.5: the same key set, each paired
   // element comparing equal by `==` (which propagates X / Z), answering what
-  // the element policy's comparison does.
-  [[nodiscard]] auto Equal(const BasicAssociativeArray& other) const
-      -> FourStateBit {
+  // `ops`'s comparison of two elements does.
+  template <typename Ops>
+  [[nodiscard]] auto Equal(const BasicAssociativeArray& other, const Ops& ops)
+      const -> FourStateBit {
     if (!SameKeys(other)) {
       return FourStateBit::kZero;
     }
     FourStateBit result = FourStateBit::kOne;
     for (const auto& [key, slot] : map_) {
       result =
-          LogicalAnd(result, elem_.Equal(slot, other.map_.find(key)->second));
+          LogicalAnd(result, ops.Equal(slot, other.map_.find(key)->second));
     }
     return result;
   }
   // LRM 11.4.5 `===`, which is never unknown.
-  [[nodiscard]] auto CaseEqual(const BasicAssociativeArray& other) const {
+  template <typename Ops>
+  [[nodiscard]] auto CaseEqual(
+      const BasicAssociativeArray& other, const Ops& ops) const {
     if (!SameKeys(other)) {
-      return elem_.CaseAnswer(false);
+      return ops.CaseAnswer(false);
     }
     for (const auto& [key, slot] : map_) {
-      if (!elem_.CaseEqual(slot, other.map_.find(key)->second)) {
-        return elem_.CaseAnswer(false);
+      if (!ops.CaseEqual(slot, other.map_.find(key)->second)) {
+        return ops.CaseAnswer(false);
       }
     }
-    return elem_.CaseAnswer(true);
+    return ops.CaseAnswer(true);
   }
 
   // LRM 9.4.2 update event predicate: the array's own value for an absent
@@ -267,9 +269,10 @@ class BasicAssociativeArray {
 
   // LRM 20.9: an element carrying an unknown bit propagates up; a key cannot
   // carry one, since a write under such a key is discarded (LRM 7.8.6).
-  [[nodiscard]] auto HasUnknown() const -> bool {
+  template <typename Ops>
+  [[nodiscard]] auto HasUnknown(const Ops& ops) const -> bool {
     for (const auto& [key, slot] : map_) {
-      if (elem_.HasUnknown(slot)) {
+      if (ops.HasUnknown(slot)) {
         return true;
       }
     }
@@ -277,30 +280,33 @@ class BasicAssociativeArray {
   }
 
   // LRM 20.6.2 `$bits` / LRM 20.9 `$countbits`: the entries' elements laid end
-  // to end, a key being no part of the stream.
-  [[nodiscard]] auto BitstreamWidth() const -> std::int64_t {
+  // to end, a key being no part of the stream, each as `ops` streams it.
+  template <typename Ops>
+  [[nodiscard]] auto BitstreamWidth(const Ops& ops) const -> std::int64_t {
     std::int64_t total = 0;
     for (const auto& [key, slot] : map_) {
-      total += elem_.BitstreamWidth(slot);
+      total += ops.BitstreamWidth(slot);
     }
     return total;
   }
   // LRM 6.24.3: the entries' elements written into `stream` below its `filled`
   // most significant positions, the lowest index first. Answers how many are
   // filled after them.
+  template <typename Ops>
   [[nodiscard]] auto WriteToStream(
-      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+      const IntegralView& stream, std::uint64_t filled, const Ops& ops) const
+      -> std::uint64_t {
     for (const auto& [key, slot] : map_) {
-      filled = elem_.WriteToStream(slot, stream, filled);
+      filled = ops.WriteToStream(slot, stream, filled);
     }
     return filled;
   }
-  template <typename Control>
-  [[nodiscard]] auto CountBits(const Control& control_bits) const
-      -> std::int64_t {
+  template <typename Control, typename Ops>
+  [[nodiscard]] auto CountBits(
+      const Control& control_bits, const Ops& ops) const -> std::int64_t {
     std::int64_t total = 0;
     for (const auto& [key, slot] : map_) {
-      total += elem_.CountBits(slot, control_bits);
+      total += ops.CountBits(slot, control_bits);
     }
     return total;
   }

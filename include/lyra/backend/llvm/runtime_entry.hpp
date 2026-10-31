@@ -99,10 +99,14 @@ struct ToldWidthMetadata {
 };
 struct ToldWidthMetadataAhead {};
 // Storage laying a value out after itself by the value's type is told that
-// type ahead of whatever it takes where it is made, and an entry acting on
-// such storage once it is made is told nothing of the values it is handed,
-// which the storage keeps the type of.
+// type, with how a value of it starts, ahead of whatever it takes where it is
+// made, and an entry acting on such storage once it is made is told nothing of
+// the values it is handed, which the storage keeps the type of.
 struct ToldTypeMetadataAhead {};
+// A net of a value laid out by its type is told that type and how a net folds
+// values of it, ahead of whatever it takes where it is made, since the net is
+// the one holder that folds one value into another (LRM 6.6).
+struct ToldTypeAndNetFoldsAhead {};
 // A tuple, a union and a fixed-size unpacked array are their bytes laid out by
 // their type and nothing more, so a realization for one is told that type,
 // after its operands, once however many values of it it takes or builds, as a
@@ -117,9 +121,19 @@ struct ToldKeyType {
 struct ToldEntryType {
   std::size_t after;
 };
+// A takeover begun on a value laid out by its type is told, after its
+// operands, the type's own function taking some of its positions from another
+// value of it (LRM 10.6.2), which the takeover keeps while it shows anything.
+struct ToldTakePositions {};
+// A realization comparing or streaming a whole value of a container the library
+// holds, or of a fixed-size unpacked array, is told, after its operands, the
+// operations of the type it is realized for, which name its element's (LRM
+// 11.4.5, 20.6.2, 20.9, 6.24.3): no container keeps them.
+struct ToldOperations {};
 using Told = std::variant<
     ToldNothing, ToldWidthMetadata, ToldWidthMetadataAhead,
-    ToldTypeMetadataAhead, ToldLaidOutType, ToldKeyType, ToldEntryType>;
+    ToldTypeMetadataAhead, ToldTypeAndNetFoldsAhead, ToldLaidOutType,
+    ToldKeyType, ToldEntryType, ToldTakePositions, ToldOperations>;
 
 // The domains the library realizes an entry for that are told the same thing.
 // An entry states one of these per thing its realizations are told, and a
@@ -188,11 +202,9 @@ enum class RuntimeOp : std::uint8_t {
   // times over as fill the array: how many elements there are is the type's
   // to say.
   kFromElements,
-  // An associative array built from its entries. A wildcard index type's
-  // order is absent from the indices, so an array of one is built by an entry
-  // of its own (LRM 7.8.1).
+  // An associative array built from its entries, holding the order its index
+  // type imposes (LRM 7.8).
   kFromEntries,
-  kFromEntriesWildcard,
   kMakeSegment,
   kMakeTrigger,
   // A print item and a format argument over a value: one entry per domain of a
@@ -251,11 +263,26 @@ auto RuntimeOpOf(lir::ValueStep step) -> RuntimeOp;
 // other symbol here names an entry.
 auto ValueTypeSymbol(support::ValueDomain domain) -> std::string;
 
+// The symbol of the order an associative array indexed by values held in
+// `domain` keeps its entries in (LRM 7.8), which the library defines once per
+// kind of index: one for every integral type, and one for each other kind the
+// language admits as an index, a wildcard index's among them (LRM 7.8.1).
+auto IndexOrderSymbol(support::ValueDomain domain) -> std::string;
+
+// The symbols of what the library states of the language's operations on a
+// value held in `domain`: the functions of a kind, which a container type's
+// operations name with its element's, and the whole of the operations of a
+// kind no other type parameterizes.
+auto OperationFunctionsSymbol(support::ValueDomain domain) -> std::string;
+auto ValueOperationsSymbol(support::ValueDomain domain) -> std::string;
+
 // Witnesses the library defines once for every type of a kind, which generated
 // code names where it states such a type, and the entry a table names for an
 // operation the language does not define for its type.
 inline constexpr std::string_view kIntegralValueWitnessTableSymbol =
     "lyra_rt_integral_value_witness_table";
+inline constexpr std::string_view kIntegralOperationFunctionsSymbol =
+    "lyra_rt_integral_operation_functions";
 inline constexpr std::string_view kFixedArrayPartsWitnessTableSymbol =
     "lyra_rt_fixed_array_parts_witness_table";
 inline constexpr std::string_view kTypeLacksOperationSymbol =

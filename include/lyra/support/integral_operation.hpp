@@ -81,10 +81,10 @@ enum class IntegralOp : std::uint8_t {
   kFromBool,
   kToInt64,
   kToPosition,
-  // LRM 20.9 `$isunknown` and `$countbits`, LRM 20.8.1 `$clog2`, and the two
-  // questions a write asks of a value: whether it holds an x or z, and whether
-  // it is the same bits as another (LRM 9.4.2).
-  kIsUnknown,
+  // Whether a value holds an x or z, which `$isunknown` answers as a bit (LRM
+  // 20.9); whether it is the same bits as another, which decides whether a
+  // write changed it (LRM 9.4.2); LRM 20.9 `$countbits` and LRM 20.8.1
+  // `$clog2`.
   kHasUnknown,
   kBitIdentical,
   kCountBits,
@@ -175,7 +175,7 @@ enum class IntegralAnswer : std::uint8_t {
   // One bit, able to hold x where any operand can (LRM 11.4.4, 11.4.5,
   // 11.4.7).
   kOneBit,
-  // One bit that is never x (LRM 11.4.5 `===`, 20.9).
+  // One bit that is never x (LRM 11.4.5 `===`, 12.5.1).
   kTwoStateBit,
   // The `int`, `integer` and position types the language or the library fixes
   // for the answer.
@@ -455,11 +455,6 @@ inline constexpr std::array kIntegralOperations = {
         .name = "to_position",
         .operands = {kNumber},
         .answer = IntegralAnswer::kPosition},
-    IntegralOperation{
-        .op = IntegralOp::kIsUnknown,
-        .name = "is_unknown",
-        .operands = {kBits},
-        .answer = IntegralAnswer::kTwoStateBit},
     IntegralOperation{
         .op = IntegralOp::kHasUnknown,
         .name = "has_unknown",

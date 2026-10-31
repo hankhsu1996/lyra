@@ -21,7 +21,8 @@ class String;
 // states, then how many elements, and their type, which is what reaching an
 // element, a run of them, or their order by position needs. Every operation
 // on a whole array is code compiled for the array type, which the type's table
-// holds, as a structure's and a union's are, so nothing here builds one.
+// and its operations name, as a structure's and a union's are, so nothing here
+// builds one.
 //
 // The elements lie in the array, and an element keeps its address across every
 // assignment (LRM 13.5.2 has a reference to one go on naming it).

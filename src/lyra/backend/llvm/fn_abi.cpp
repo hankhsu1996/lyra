@@ -212,6 +212,9 @@ auto ToldModeOf(
           [](const ToldNothing&) -> Mode { return std::nullopt; },
           [](const ToldWidthMetadataAhead&) -> Mode { return std::nullopt; },
           [](const ToldTypeMetadataAhead&) -> Mode { return std::nullopt; },
+          [](const ToldTypeAndNetFoldsAhead&) -> Mode { return std::nullopt; },
+          [](const ToldTakePositions&) -> Mode { return std::nullopt; },
+          [](const ToldOperations&) -> Mode { return std::nullopt; },
           [&](const ToldWidthMetadata& t) -> Mode {
             if (t.after != index) {
               return std::nullopt;
@@ -275,14 +278,34 @@ auto ToldModeOf(
 }
 
 // What a realization for values laid out by their type is told after its
-// operands: that type, once, however many values of it it takes or builds.
+// operands: that type, once, however many values of it it takes or builds, how
+// the type takes some of a value's positions, or the type's operations.
 auto TypeArgsOfTheRealization(const std::optional<Realization>& realization)
     -> std::vector<TypeArg> {
-  if (!realization.has_value() ||
-      !std::holds_alternative<ToldLaidOutType>(realization->told)) {
+  if (!realization.has_value()) {
     return {};
   }
-  return {TypeConstantArg{.type = realization->of}};
+  using Args = std::vector<TypeArg>;
+  const lir::TypeId of = realization->of;
+  return std::visit(
+      Overloaded{
+          [&](const ToldLaidOutType&) -> Args {
+            return {TypeConstantArg{.type = of}};
+          },
+          [&](const ToldTakePositions&) -> Args {
+            return {TakePositionsArg{.type = of}};
+          },
+          [&](const ToldOperations&) -> Args {
+            return {OperationsArg{.type = of}};
+          },
+          [](const ToldNothing&) -> Args { return {}; },
+          [](const ToldWidthMetadata&) -> Args { return {}; },
+          [](const ToldWidthMetadataAhead&) -> Args { return {}; },
+          [](const ToldTypeMetadataAhead&) -> Args { return {}; },
+          [](const ToldTypeAndNetFoldsAhead&) -> Args { return {}; },
+          [](const ToldKeyType&) -> Args { return {}; },
+          [](const ToldEntryType&) -> Args { return {}; }},
+      realization->told);
 }
 
 // What an entry told `told` of its answer is handed after its operands, where
@@ -314,6 +337,11 @@ auto TypeArgsCalledAt(
       throw InternalError(
           "llvm codegen: an entry told the type it answers is called where no "
           "answer is stated -- please report this as a bug");
+    case support::AnswerTold::kAnswerTypeAndOperations:
+      throw InternalError(
+          "llvm codegen: an entry told the type it answers and its operations "
+          "is called where no answer is stated -- please report this as a "
+          "bug");
   }
   throw InternalError("llvm codegen: unknown answer told");
 }
@@ -329,6 +357,9 @@ auto TypeArgsToldAs(
   switch (told) {
     case support::AnswerTold::kAnswerType:
       return {TypeConstantArg{.type = answered}};
+    case support::AnswerTold::kAnswerTypeAndOperations:
+      return {
+          ElementTypeArg{.type = answered}, OperationsArg{.type = answered}};
     case support::AnswerTold::kBuiltArray: {
       const lir::Type& built = types.Get(answered);
       if (built.Is<lir::UnpackedArrayType>()) {
@@ -342,6 +373,13 @@ auto TypeArgsToldAs(
         throw InternalError(
             "llvm codegen: an entry told of the array it builds answers with "
             "no array -- please report this as a bug");
+      }
+      // An associative array holds its entries in the order its index type
+      // imposes (LRM 7.8), which it is built holding.
+      if (const auto* keyed = built.As<lir::AssociativeArrayType>()) {
+        return {
+            IndexOrderArg{.key = keyed->key_type},
+            ElementTypeArg{.type = *element}};
       }
       return {ElementTypeArg{.type = *element}};
     }
@@ -368,7 +406,8 @@ auto AnswerTypeArgs(
     case support::AnswerTold::kNothing:
       if (std::holds_alternative<ReturnIndirect>(ret) &&
           lir::IsLaidOutByItsType(types.Get(answered)) &&
-          !TypeArgsOfTheRealization(realization).empty() &&
+          realization.has_value() &&
+          lir::IsLaidOutByItsType(types.Get(realization->of)) &&
           answered != realization->of) {
         throw InternalError(
             "llvm codegen: a realization for values laid out by one type "
@@ -378,6 +417,7 @@ auto AnswerTypeArgs(
       return {};
     case support::AnswerTold::kBuiltArray:
     case support::AnswerTold::kAnswerType:
+    case support::AnswerTold::kAnswerTypeAndOperations:
     case support::AnswerTold::kElementType:
     case support::AnswerTold::kIntegralExtent:
     case support::AnswerTold::kTypeCalledAt:
@@ -401,13 +441,20 @@ auto ImplicitArgOf(const std::optional<Realization>& realization)
           [&](const ToldTypeMetadataAhead&) -> ImplicitArg {
             return TypeMetadataArg{.of = realization->of};
           },
+          [&](const ToldTypeAndNetFoldsAhead&) -> ImplicitArg {
+            return TypeAndNetFoldsArg{.of = realization->of};
+          },
           [](const ToldNothing&) -> ImplicitArg { return NoImplicitArg{}; },
           [](const ToldWidthMetadata&) -> ImplicitArg {
             return NoImplicitArg{};
           },
           [](const ToldLaidOutType&) -> ImplicitArg { return NoImplicitArg{}; },
           [](const ToldKeyType&) -> ImplicitArg { return NoImplicitArg{}; },
-          [](const ToldEntryType&) -> ImplicitArg { return NoImplicitArg{}; }},
+          [](const ToldEntryType&) -> ImplicitArg { return NoImplicitArg{}; },
+          [](const ToldTakePositions&) -> ImplicitArg {
+            return NoImplicitArg{};
+          },
+          [](const ToldOperations&) -> ImplicitArg { return NoImplicitArg{}; }},
       realization->told);
 }
 
@@ -734,19 +781,12 @@ auto CallArranger::ConstructionOf(
                 support::ValueDomain::kLaidOut, result,
                 RuntimeOp::kFromElements);
           },
-          // LRM 7.8: the index type imposes the order the entries are held in.
-          // Every declared index type's order is its own, which an index's type
-          // answers wherever the index crosses; a wildcard index (LRM 7.8.1)
-          // is self-determined, treated as unsigned, and admits one value at
-          // any width, so its order is absent from the indices and the array
-          // is built holding it.
-          [&](const lir::AssociativeArrayType& a) -> Built {
-            const bool wildcard =
-                types.Get(a.key_type).Is<lir::WildcardIndexType>();
+          // LRM 7.8: the index type imposes the order the entries are held in,
+          // which the array is built holding.
+          [&](const lir::AssociativeArrayType&) -> Built {
             return entry_over(
                 support::ValueDomain::kAssocArray, result,
-                wildcard ? RuntimeOp::kFromEntriesWildcard
-                         : RuntimeOp::kFromEntries);
+                RuntimeOp::kFromEntries);
           },
           // A sequence outlives the body that built it -- the owner keeps
           // its address, and a dimension above it keeps that address as an

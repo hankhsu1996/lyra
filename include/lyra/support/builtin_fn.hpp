@@ -273,9 +273,6 @@ enum class BuiltinFn : std::uint16_t {
   // before.
   kTimerBind,
   kTimerArm,
-  // LRM 20.9 / 21.3.4.3. 2-state packed types return false; downstream
-  // constant-folds those calls.
-  kIsUnknown,
   // LRM 20.9 bit counting. The argument carries the control bits, one per bit
   // position; a receiver bit counts when it matches any of them, and a bit
   // value named by several control bits still counts once. Returns the SV
@@ -284,9 +281,10 @@ enum class BuiltinFn : std::uint16_t {
   // Whether two values are the same bits -- an unknown bit matching only the
   // same unknown, a real its own pattern -- which is what decides whether a
   // write changed a variable (LRM 4.3, 9.4.2); and whether a value holds an
-  // unknown bit at all, which a value with no four-state part never does (LRM
-  // 20.9). Each answers with a machine boolean, being a predicate the runtime
-  // asks of a value it holds as well as one the program writes.
+  // unknown bit at all, which a value with no four-state part never does and
+  // `$isunknown` answers as a bit (LRM 20.9). Each answers with a machine
+  // boolean, being a predicate the runtime asks of a value it holds as well as
+  // one the program writes.
   kBitIdentical,
   kHasUnknown,
   // Folding two contributions of equal strength to a net, one entry per truth
@@ -1408,7 +1406,6 @@ enum class BuiltinFn : std::uint16_t {
   kIntegralCaseEqual,
   kIntegralBitIdentical,
   kIntegralHasUnknown,
-  kIntegralIsUnknown,
   kIntegralCountBits,
   kIntegralResolveTriState,
   kIntegralResolveWiredAnd,
@@ -1602,12 +1599,15 @@ enum class AnswerTold : std::uint8_t {
   // the type the call answers at to say.
   kBuiltArray,
   // The type of the value it answers, which nothing it is handed states: what
-  // it answers where it finds nothing to answer with -- the index an
-  // unallocated dimension reports (LRM 20.7) -- is that type's default (LRM
-  // Table 6-7), what a stream of bits is read as (LRM 6.24.3) is a value of
-  // it, and a tuple it lays its answers out in states nothing of it in its
-  // bytes.
+  // it answers where it finds nothing to answer with -- the 'x an associative
+  // dimension holding no index reports (LRM 20.7) -- is a value of that type,
+  // and a tuple it lays its answers out in states nothing of it in its bytes.
   kAnswerType,
+  // The type of the value it answers with how a value of it starts, and the
+  // operations of that type it reads the value by: a value read out of a
+  // stream of bits (LRM 6.24.3), which only the type's own operations read,
+  // into one at its default.
+  kAnswerTypeAndOperations,
   // The element type of the element it answers with where no array is in hand
   // to state one: what a read of a position naming no element yields, and
   // storage a write to one lands in (LRM 7.4.5).

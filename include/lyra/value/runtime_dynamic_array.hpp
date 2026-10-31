@@ -93,45 +93,53 @@ class RuntimeDynamicArray {
   // LRM 7.12.2: puts the value that was at `order[k]` at index `k`.
   void Permute(std::span<const std::size_t> order);
 
-  [[nodiscard]] auto operator==(const RuntimeDynamicArray& other) const
+  // The language's operations on the whole array (LRM 11.4.5, 20.9, 20.6.2,
+  // 6.24.3), each comparing or streaming an element by `element`, the
+  // operations of the element type.
+  [[nodiscard]] auto Equal(
+      const RuntimeDynamicArray& other, const ValueOperations& element) const
       -> FourStateBit;
-  [[nodiscard]] auto operator!=(const RuntimeDynamicArray& other) const
-      -> FourStateBit;
-  [[nodiscard]] auto CaseEqual(const RuntimeDynamicArray& other) const -> Bit;
+  [[nodiscard]] auto CaseEqual(
+      const RuntimeDynamicArray& other, const ValueOperations& element) const
+      -> Bit;
   // LRM 11.4.11: this array and `other` as the two arms of a conditional
   // operator whose condition is ambiguous, combined element by element.
-  [[nodiscard]] auto MergeConditional(const RuntimeDynamicArray& other) const
+  [[nodiscard]] auto MergeConditional(
+      const RuntimeDynamicArray& other, const ValueOperations& element) const
       -> RuntimeDynamicArray;
   [[nodiscard]] auto IsBitIdentical(const RuntimeDynamicArray& other) const
       -> bool;
-  [[nodiscard]] auto HasUnknown() const -> bool;
-  [[nodiscard]] auto IsUnknown() const -> Bit;
-  [[nodiscard]] auto BitstreamWidth() const -> Int;
-  [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
+  [[nodiscard]] auto HasUnknown(const ValueOperations& element) const -> bool;
+  [[nodiscard]] auto BitstreamWidth(const ValueOperations& element) const
       -> Int;
+  [[nodiscard]] auto CountBits(
+      const ConstIntegralView& control_bits,
+      const ValueOperations& element) const -> Int;
   // LRM 6.24.3: the elements' own streams laid end to end below the `filled`
   // most significant positions of `stream`, the one at position 0 first, and
   // the inverse, as many elements as fill the stream up to `until`; and the
   // stream as a run of bits of its own.
   [[nodiscard]] auto WriteToStream(
-      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t;
+      const IntegralView& stream, std::uint64_t filled,
+      const ValueOperations& element) const -> std::uint64_t;
   auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
-      -> std::uint64_t;
-  [[nodiscard]] auto ToBitVec() const -> BitVec;
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until,
+      const ValueOperations& element) -> std::uint64_t;
+  [[nodiscard]] auto ToBitVec(const ValueOperations& element) const -> BitVec;
   // LRM 11.4.14.4: the stream of the `count` elements from `start`, an element
   // outside streaming as the element default; and these elements with those
   // taking `values`, grown first to hold them.
   [[nodiscard]] auto WindowToBitVec(
-      std::optional<std::int64_t> start, std::size_t count) const -> BitVec;
+      std::optional<std::int64_t> start, std::size_t count,
+      const ValueOperations& element) const -> BitVec;
   [[nodiscard]] auto WithWindow(
       std::optional<std::int64_t> start, std::size_t count,
       std::span<const void* const> values) const -> RuntimeDynamicArray;
   // LRM 6.24.3: an array of `element` holding as many elements as fill `run`
   // exactly.
   [[nodiscard]] static auto FromBitVec(
-      const value::ElementType& element, const BitVec& run)
-      -> RuntimeDynamicArray;
+      const value::ElementType& element, const BitVec& run,
+      const ValueOperations& operations) -> RuntimeDynamicArray;
 
  private:
   explicit RuntimeDynamicArray(BasicDynamicArray<WitnessedElem> core);
@@ -144,9 +152,6 @@ class RuntimeDynamicArray {
 };
 
 static_assert(LyraValue<RuntimeDynamicArray>);
-static_assert(CaseEqualComparable<RuntimeDynamicArray>);
-static_assert(ConditionallyMergeable<RuntimeDynamicArray>);
 static_assert(Sized<RuntimeDynamicArray>);
-static_assert(BitstreamSizable<RuntimeDynamicArray, ConstIntegralView>);
 
 }  // namespace lyra::value

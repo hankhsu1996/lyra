@@ -266,8 +266,6 @@ auto ApplyIntegralOperation(const Operands& to, const IntegralView& answer)
     case IntegralOp::kToPosition:
       ToPosition(answer, to.At(0));
       return {};
-    case IntegralOp::kIsUnknown:
-      return one_bit(detail::ScalarOf(HasUnknown(to.At(0))));
     case IntegralOp::kHasUnknown:
       return HasUnknown(to.At(0));
     case IntegralOp::kBitIdentical:

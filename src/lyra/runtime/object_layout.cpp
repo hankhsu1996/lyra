@@ -1,6 +1,7 @@
 #include "lyra/runtime/object_layout.hpp"
 
 #include <bit>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -47,6 +48,7 @@
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
+#include "lyra/value/element_type.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/format.hpp"
@@ -221,8 +223,7 @@ struct AdmitsHistory
 // A net resolves only what LRM 6.7.1 admits as a net's data type, which of the
 // integral types is the four-state ones.
 template <typename T>
-struct AdmitsNet
-    : std::bool_constant<AdmitsVariable<T>::value && value::NetResolvable<T>> {
+struct AdmitsNet : std::bool_constant<AdmitsVariable<T>::value && NetValue<T>> {
 };
 
 template <BitAddressed T>
@@ -410,10 +411,27 @@ auto TailThroughOffset(Through through) -> std::uint64_t {
     return ThroughOffset<Holder>(
         HeldAs::ValueLayoutFor(kWidth), through, kWidth);
   } else {
-    const value::ValueType& type =
-        value::IntegralValueType::Of<value::Bit>().Type();
-    return ThroughOffset<Holder>(
-        HeldAs::ValueLayoutFor(type), through, std::cref(type));
+    // A probe holds a bit, built at the bit's default, which no read sees.
+    static value::ElementScratch scratch;
+    static const value::ElementType held(
+        value::IntegralValueType::Of<value::Bit>().Type(),
+        [](void* out) -> void* {
+          return std::construct_at(static_cast<value::Bit*>(out));
+        },
+        scratch);
+    // A net is built holding how it folds values too, which a probe that
+    // folds nothing hands as a table of no functions.
+    if constexpr (std::constructible_from<
+                      Holder, const value::ElementType&,
+                      const value::NetFoldTable&>) {
+      static constexpr value::NetFoldTable kFoldsNothing{};
+      return ThroughOffset<Holder>(
+          HeldAs::ValueLayoutFor(held), through, std::cref(held),
+          std::cref(kFoldsNothing));
+    } else {
+      return ThroughOffset<Holder>(
+          HeldAs::ValueLayoutFor(held), through, std::cref(held));
+    }
   }
 }
 

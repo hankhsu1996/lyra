@@ -56,44 +56,8 @@ auto ElementTypeOf() -> const ElementType& {
 // fails the test. The witnesses below state how their values are copied, moved,
 // assigned and ended, answer what their tests ask, and take the rest from here.
 struct NothingAsked {
-  static constexpr auto Equal = [](const ValueType&, const void*,
-                                   const void*) -> FourStateBit { Unused(); };
-  static constexpr auto CaseEqual = [](const ValueType&, const void*,
-                                       const void*) -> bool { Unused(); };
   static constexpr auto BitIdentical = [](const ValueType&, const void*,
                                           const void*) -> bool { Unused(); };
-  static constexpr auto HasUnknown = [](const ValueType&, const void*) -> bool {
-    Unused();
-  };
-  static constexpr auto BuildDefault = [](const ValueType&, void*) {
-    Unused();
-  };
-  static constexpr auto BitstreamWidth = [](const ValueType&, const void*,
-                                            void*) { Unused(); };
-  static constexpr auto CountBits = [](const ValueType&, const void*,
-                                       const ConstIntegralView&,
-                                       void*) { Unused(); };
-  static constexpr auto WriteToStream =
-      [](const ValueType&, const void*, const IntegralView&,
-         std::uint64_t) -> std::uint64_t { Unused(); };
-  static constexpr auto ReadFromStream =
-      [](const ValueType&, const ConstIntegralView&, std::uint64_t,
-         std::uint64_t, void*) -> std::uint64_t { Unused(); };
-  static constexpr auto ResolveTriState = [](const ValueType&, const void*,
-                                             const void*, void*) { Unused(); };
-  static constexpr auto ResolveWiredAnd = [](const ValueType&, const void*,
-                                             const void*, void*) { Unused(); };
-  static constexpr auto ResolveWiredOr = [](const ValueType&, const void*,
-                                            const void*, void*) { Unused(); };
-  static constexpr auto Dominating = [](const ValueType&, const void*,
-                                        const void*, void*) { Unused(); };
-  static constexpr auto FilledLike = [](const ValueType&, const void*,
-                                        const void*, void*) { Unused(); };
-  static constexpr auto TakePositions =
-      [](const ValueType&, const void*, const void*, const std::int64_t*,
-         const std::int64_t*, void*) { Unused(); };
-  static constexpr auto OrderBefore = [](const ValueType&, const void*,
-                                         const void*) -> bool { Unused(); };
   static constexpr const PartsWitnessTable* kParts = nullptr;
 };
 
@@ -101,7 +65,7 @@ struct NothingAsked {
 // whole value is code compiled for it, which here is each element's operation
 // in turn. The library's own part is what reaches an element, and that is
 // what these tests hold to account.
-struct ArrayWitnesses : NothingAsked {
+struct ArrayWitnesses {
   static auto ArrayOf(const ValueType& type) -> const FixedArrayType& {
     return *type.AsFixedArray();
   }
@@ -143,47 +107,12 @@ struct ArrayWitnesses : NothingAsked {
           array.ElementAt(storage, i), array.ElementAt(value, i));
     }
   }
-  static auto Equal(const ValueType& type, const void* lhs, const void* rhs)
-      -> FourStateBit {
-    const FixedArrayType& array = ArrayOf(type);
-    FourStateBit all = FourStateBit::kOne;
-    for (std::size_t i = 0; i < array.Count(); ++i) {
-      const FourStateBit one = ElementOf(type).Equal(
-          array.ElementAt(lhs, i), array.ElementAt(rhs, i));
-      if (one == FourStateBit::kZero) {
-        return one;
-      }
-      if (one != FourStateBit::kOne) {
-        all = one;
-      }
-    }
-    return all;
-  }
-  static auto CaseEqual(const ValueType& type, const void* lhs, const void* rhs)
-      -> bool {
-    const FixedArrayType& array = ArrayOf(type);
-    return Every(type, [&](std::size_t i) {
-      return ElementOf(type).CaseEqual(
-          array.ElementAt(lhs, i), array.ElementAt(rhs, i));
-    });
-  }
   static auto BitIdentical(
       const ValueType& type, const void* lhs, const void* rhs) -> bool {
     const FixedArrayType& array = ArrayOf(type);
     return Every(type, [&](std::size_t i) {
       return ElementOf(type).BitIdentical(
           array.ElementAt(lhs, i), array.ElementAt(rhs, i));
-    });
-  }
-  static auto HasUnknown(const ValueType& type, const void* value) -> bool {
-    const FixedArrayType& array = ArrayOf(type);
-    return !Every(type, [&](std::size_t i) {
-      return !ElementOf(type).HasUnknown(array.ElementAt(value, i));
-    });
-  }
-  static void BuildDefault(const ValueType& type, void* out) {
-    ArrayOf(type).BuildEach(out, [&](std::size_t, void* element) {
-      ElementOf(type).BuildDefault(element);
     });
   }
 
@@ -513,7 +442,6 @@ TEST(LaidOutValue, HoldsACopyInStorageOfItsOwn) {
     const LaidOutValue built = CountingArray(type, 30);
     EXPECT_EQ(built.Type().AsFixedArray(), &type);
     EXPECT_TRUE(built.IsBitIdentical(copy));
-    EXPECT_EQ(built == copy, FourStateBit::kOne);
 
     type.Type().Destroy(laid_out.Bytes());
   }
@@ -611,40 +539,6 @@ TEST(LaidOutValue, LaysItsArrayOutWhereItIsAsked) {
     type.Type().Destroy(copied.Bytes());
     type.Type().Destroy(moved.Bytes());
   }
-}
-
-TEST(ValueType, EveryTypeBuildsWhatItsStorageHoldsBeforeAnyWrite) {
-  // LRM Table 6-7: x in every position of a four-state integral, 0 in every
-  // position of a two-state one, and the empty string; an array with every
-  // element at its element type's, and a queue holding nothing.
-  Element logic = Element::FromInt(5);
-  IntegralValueType::Of<Element>().Type().BuildDefault(&logic);
-  EXPECT_TRUE(logic.HasUnknown());
-  EXPECT_TRUE(logic.CaseEqual(Element{}).IsTruthy());
-
-  BitVector<8> bits = BitVector<8>::FromInt(5);
-  IntegralValueType::Of<BitVector<8>>().Type().BuildDefault(&bits);
-  EXPECT_EQ(bits.ToInt64(), 0);
-
-  const Storage text(LibraryTypeOf<String>());
-  LibraryTypeOf<String>().BuildDefault(text.Bytes());
-  EXPECT_TRUE(static_cast<const String*>(text.Bytes())->View().empty());
-  LibraryTypeOf<String>().Destroy(text.Bytes());
-
-  const FixedArrayType array(kArrayWitnesses, ElementTypeOf<Element>(), 2);
-  const Storage pair(array.Type());
-  array.Type().BuildDefault(pair.Bytes());
-  for (std::size_t i = 0; i < 2; ++i) {
-    const auto* element =
-        static_cast<const Element*>(array.ElementAt(pair.Bytes(), i));
-    EXPECT_TRUE(element->CaseEqual(Element{}).IsTruthy());
-  }
-  array.Type().Destroy(pair.Bytes());
-
-  const Storage queue(LibraryTypeOf<RuntimeQueue>());
-  LibraryTypeOf<RuntimeQueue>().BuildDefault(queue.Bytes());
-  EXPECT_EQ(static_cast<const RuntimeQueue*>(queue.Bytes())->Count(), 0U);
-  LibraryTypeOf<RuntimeQueue>().Destroy(queue.Bytes());
 }
 
 TEST(RuntimeQueue, HoldsTheBoundItsTypeStates) {

@@ -10,6 +10,7 @@
 #include "lyra/value/basic_associative_array.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/index_order.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/value_type.hpp"
@@ -20,41 +21,69 @@ namespace lyra::value {
 
 namespace {
 
-// An index the clause admits only as an integral (LRM 7.8.1), read as words.
+// An index of an integral type, read as words.
 auto IntegralIndex(IndexView index) -> LoadedWords {
   const IntegralValueType* type = index.type->AsIntegral();
   if (type == nullptr) {
     throw InternalError(
-        "RuntimeAssociativeArray: a wildcard index is no integral value -- "
-        "please report this as a bug");
+        "RuntimeAssociativeArray: an index ordered as an integral is no "
+        "integral value -- please report this as a bug");
   }
   return type->Load(index.bytes);
 }
 
+// LRM 7.8.4: integral indices order by their numerical value at the type's
+// signedness.
+auto IntegralBefore(IndexView a, IndexView b) -> bool {
+  return Less(IntegralIndex(a).View(), IntegralIndex(b).View()) ==
+         FourStateBit::kOne;
+}
+
+auto IntegralNamesNoEntry(IndexView index) -> bool {
+  return HasUnknown(IntegralIndex(index).View());
+}
+
+// A wildcard index reaches the array as the bare value the program wrote, so
+// this normalizes per comparison where the array compiled with its index type
+// normalizes once per key.
+auto WildcardBefore(IndexView a, IndexView b) -> bool {
+  return WildcardIndexBefore(
+      WildcardIndexWords(IntegralIndex(a).View()),
+      WildcardIndexWords(IntegralIndex(b).View()));
+}
+
+// An index of a kind the library holds as an object of its own, ordered as
+// the array compiled with that index type orders it. Such an index holds no x
+// or z, so each names an entry.
+template <typename K>
+constexpr IndexOrder kObjectIndexOrder{
+    .before = [](IndexView a, IndexView b) -> bool {
+      return typename AssocKeyTraits<K>::Less{}(
+          *static_cast<const K*>(a.bytes), *static_cast<const K*>(b.bytes));
+    },
+    .names_no_entry = [](IndexView) -> bool { return false; }};
+
 }  // namespace
 
-auto WitnessedKey::Less::operator()(IndexView a, IndexView b) const -> bool {
-  switch (order) {
-    case AssociativeIndexOrder::kIndexValueDomain:
-      return a.type->OrderBefore(a.bytes, b.bytes);
-    // A wildcard index reaches the array as the bare value the program wrote,
-    // so this normalizes per comparison where the array compiled with its
-    // index type normalizes once per key. The clause admits only an integral
-    // index.
-    case AssociativeIndexOrder::kWildcardNumeric:
-      return WildcardIndexBefore(
-          WildcardIndexWords(IntegralIndex(a).View()),
-          WildcardIndexWords(IntegralIndex(b).View()));
-  }
-  std::unreachable();
+extern "C" {
+constinit const IndexOrder lyra_rt_integral_index_order{
+    .before = &IntegralBefore, .names_no_entry = &IntegralNamesNoEntry};
+constinit const IndexOrder lyra_rt_string_index_order =
+    kObjectIndexOrder<String>;
+constinit const IndexOrder lyra_rt_chandle_index_order =
+    kObjectIndexOrder<Chandle>;
+constinit const IndexOrder lyra_rt_managedref_index_order =
+    kObjectIndexOrder<ObjectRef>;
+constinit const IndexOrder lyra_rt_wildcard_index_index_order{
+    .before = &WildcardBefore, .names_no_entry = &IntegralNamesNoEntry};
 }
 
 RuntimeAssociativeArray::RuntimeAssociativeArray() = default;
 
 RuntimeAssociativeArray::RuntimeAssociativeArray(
-    AssociativeIndexOrder index_order, const value::ElementType& element)
+    const value::IndexOrder& index_order, const value::ElementType& element)
     : core_(
-          std::in_place, WitnessedKey{.order = index_order},
+          std::in_place, WitnessedKey{.order = &index_order},
           WitnessedElem(element)) {
 }
 
@@ -90,10 +119,6 @@ auto RuntimeAssociativeArray::Installed() const -> const Core& {
 auto RuntimeAssociativeArray::Installed() -> Core& {
   RequireInstalled();
   return *core_;
-}
-
-auto RuntimeAssociativeArray::IndexOrder() const -> AssociativeIndexOrder {
-  return Installed().KeyType().order;
 }
 
 auto RuntimeAssociativeArray::ElementType() const -> const value::ElementType& {
@@ -183,25 +208,22 @@ auto RuntimeAssociativeArray::Entries() const
 
 // An array with no element type yet holds no entries, which is all a
 // comparison with one can read.
-auto RuntimeAssociativeArray::operator==(
-    const RuntimeAssociativeArray& other) const -> FourStateBit {
+auto RuntimeAssociativeArray::Equal(
+    const RuntimeAssociativeArray& other, const ValueOperations& element) const
+    -> FourStateBit {
   if (!core_.has_value() || !other.core_.has_value()) {
     return detail::ScalarOf(Count() == other.Count());
   }
-  return core_->Equal(*other.core_);
-}
-
-auto RuntimeAssociativeArray::operator!=(
-    const RuntimeAssociativeArray& other) const -> FourStateBit {
-  return Inverted(*this == other);
+  return core_->Equal(*other.core_, WitnessedOperations(element));
 }
 
 auto RuntimeAssociativeArray::CaseEqual(
-    const RuntimeAssociativeArray& other) const -> Bit {
+    const RuntimeAssociativeArray& other, const ValueOperations& element) const
+    -> Bit {
   if (!core_.has_value() || !other.core_.has_value()) {
     return Bit::FromBool(Count() == other.Count());
   }
-  return core_->CaseEqual(*other.core_);
+  return core_->CaseEqual(*other.core_, WitnessedOperations(element));
 }
 
 auto RuntimeAssociativeArray::IsBitIdentical(
@@ -212,30 +234,38 @@ auto RuntimeAssociativeArray::IsBitIdentical(
   return core_->IsBitIdentical(*other.core_);
 }
 
-auto RuntimeAssociativeArray::HasUnknown() const -> bool {
-  return core_.has_value() && core_->HasUnknown();
+auto RuntimeAssociativeArray::HasUnknown(const ValueOperations& element) const
+    -> bool {
+  return core_.has_value() && core_->HasUnknown(WitnessedOperations(element));
 }
 
-auto RuntimeAssociativeArray::IsUnknown() const -> Bit {
-  return Bit::FromBool(HasUnknown());
-}
-
-auto RuntimeAssociativeArray::BitstreamWidth() const -> Int {
-  return Int::FromInt(core_.has_value() ? core_->BitstreamWidth() : 0);
+auto RuntimeAssociativeArray::BitstreamWidth(
+    const ValueOperations& element) const -> Int {
+  return Int::FromInt(
+      core_.has_value() ? core_->BitstreamWidth(WitnessedOperations(element))
+                        : 0);
 }
 
 auto RuntimeAssociativeArray::CountBits(
-    const ConstIntegralView& control_bits) const -> Int {
-  return Int::FromInt(core_.has_value() ? core_->CountBits(control_bits) : 0);
+    const ConstIntegralView& control_bits, const ValueOperations& element) const
+    -> Int {
+  return Int::FromInt(
+      core_.has_value()
+          ? core_->CountBits(control_bits, WitnessedOperations(element))
+          : 0);
 }
 
 auto RuntimeAssociativeArray::WriteToStream(
-    const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
-  return core_.has_value() ? core_->WriteToStream(stream, filled) : filled;
+    const IntegralView& stream, std::uint64_t filled,
+    const ValueOperations& element) const -> std::uint64_t {
+  return core_.has_value() ? core_->WriteToStream(
+                                 stream, filled, WitnessedOperations(element))
+                           : filled;
 }
 
-auto RuntimeAssociativeArray::ToBitVec() const -> BitVec {
-  return StreamOf(*this);
+auto RuntimeAssociativeArray::ToBitVec(const ValueOperations& element) const
+    -> BitVec {
+  return StreamOf(*this, element);
 }
 
 }  // namespace lyra::value

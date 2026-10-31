@@ -109,17 +109,17 @@ what the construct means.
   keeping what its own bound admits. Each unit naming the type states the two, as it states a
   fixed-size array's operations.
 - What a value of a type is before anything is written to it, for every type the unit holds an array
-  of: the code that builds it, stated once for the type, because the source's declaration decides it
-  -- a structure member's own initializer is part of it (LRM 7.2.2, 7.4.5) -- and nothing below this
-  layer has that declaration. An array's type names its element type, so whatever builds, sizes or
-  answers an array of any kind learns how its elements start from the type. It is one of the type's
-  operations above, stated for the element type. It is what reading an entry an array does not have
-  answers (LRM Table 7-1), and for every type but one it is also what a declaration that writes no
-  initializer starts at (Table 6-7). The exception is a reference to a runtime object that the
-  source language makes anew for each declaration -- an event's synchronization object (LRM 6.17) --
-  which reads as no object and starts as a new one, each position its own; a declaration, and an
-  array growing by `new[N]`, state that object on top of the type's value, so no copy of one value
-  stands for several objects.
+  of and every tuple whose components each have one: the code that builds it, stated once for the
+  type, because the source's declaration decides it -- a structure member's own initializer is part
+  of it (LRM 7.2.2, 7.4.5) -- and nothing below this layer has that declaration. An array's type
+  names its element type, so whatever builds, sizes or answers an array of any kind learns how its
+  elements start from the type. It is one of the type's operations above, stated for the element
+  type. It is what reading an entry an array does not have answers (LRM Table 7-1), and for every
+  type but one it is also what a declaration that writes no initializer starts at (Table 6-7). The
+  exception is a reference to a runtime object that the source language makes anew for each
+  declaration -- an event's synchronization object (LRM 6.17) -- which reads as no object and starts
+  as a new one, each position its own; a declaration, and an array growing by `new[N]`, state that
+  object on top of the type's value, so no copy of one value stands for several objects.
 - Capability wrappers: types that represent a storage place instead of being a value -- an
   observable cell, a reference, a net's resolved value, a net driver's contribution. A capability
   wrapper composes over the value type it represents, and the wrapper and that storage are distinct

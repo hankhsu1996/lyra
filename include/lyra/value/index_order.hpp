@@ -14,7 +14,7 @@
 
 // The order an associative array keeps the indices of each index type in (LRM
 // 7.8), stated once for the array compiled with its index type and for the
-// type's table the library reads it through.
+// order the library's array is built holding.
 namespace lyra::value {
 
 // Numerical key ordering for integral-indexed associative arrays (LRM 7.8.4):

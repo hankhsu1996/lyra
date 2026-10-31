@@ -269,11 +269,20 @@ auto CodeGenModule::BuildCallArgs(
             return {};
           },
           [&](const TypeMetadataArg& held) -> diag::Result<void> {
-            auto type_object = value_types_.GetAddrOfValueType(held.of);
+            auto type_object = value_types_.GetAddrOfElementType(held.of);
             if (!type_object) {
               return std::unexpected(std::move(type_object.error()));
             }
             args.push_back(*type_object);
+            return {};
+          },
+          [&](const TypeAndNetFoldsArg& held) -> diag::Result<void> {
+            auto type_object = value_types_.GetAddrOfElementType(held.of);
+            if (!type_object) {
+              return std::unexpected(std::move(type_object.error()));
+            }
+            args.push_back(*type_object);
+            args.push_back(value_types_.GetAddrOfNetFolds(held.of));
             return {};
           }},
       abi.implicit_arg);
@@ -324,6 +333,26 @@ auto CodeGenModule::BuildCallArgs(
                 return std::unexpected(std::move(queue_type.error()));
               }
               args.push_back(*queue_type);
+              return {};
+            },
+            [&](const TakePositionsArg& of) -> diag::Result<void> {
+              args.push_back(value_types_.GetAddrOfTakePositions(of.type));
+              return {};
+            },
+            [&](const IndexOrderArg& of) -> diag::Result<void> {
+              auto domain = DomainOf(of.key);
+              if (!domain) {
+                return std::unexpected(std::move(domain.error()));
+              }
+              args.push_back(LibraryData(IndexOrderSymbol(*domain)));
+              return {};
+            },
+            [&](const OperationsArg& of) -> diag::Result<void> {
+              auto operations = value_types_.GetAddrOfOperations(of.type);
+              if (!operations) {
+                return std::unexpected(std::move(operations.error()));
+              }
+              args.push_back(*operations);
               return {};
             }},
         told);

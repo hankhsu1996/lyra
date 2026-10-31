@@ -33,10 +33,9 @@ namespace lyra::value {
 // (LRM 7.4.5): storage no read reaches, holding the default again each time it
 // is handed out so a discarded write never shows through a later one.
 //
-// A comparison of two elements answers 0, 1 or x as a scalar, which a container
-// folds over its elements and whoever knows the type the comparison has holds
-// as a value of it. A stream of bits (LRM 6.24.3) is an integral value, which
-// a policy writes one element's bits into and reads one element back out of.
+// Comparing two elements and streaming one (LRM 11.4.5, 6.24.3) are not the
+// policy's: an algorithm doing either is handed them by whoever asks, since a
+// container holds its element type only for what its storage needs.
 //
 // A policy also round-trips through an opaque address, as LLVM's
 // `PointerIntPair` does through `getOpaqueValue`, so storage a container
@@ -54,9 +53,7 @@ concept ElementPolicy =
       p.Move(from, out);
       p.Destroy(from);
       p.Assign(from, in);
-      { p.Agree(in, in) } -> std::same_as<bool>;
       { p.BitIdentical(in, in) } -> std::same_as<bool>;
-      { p.HasUnknown(in) } -> std::same_as<bool>;
       { p.OpaqueValue() } -> std::same_as<const void*>;
       { P::FromOpaqueValue(in) } -> std::same_as<P>;
     };
@@ -177,22 +174,6 @@ class StaticElem {
   [[nodiscard]] static auto CountBits(
       const void* value, const Control& control_bits) -> std::int64_t {
     return Of(value).CountBits(control_bits).ToInt64();
-  }
-
-  // What an array asks of its elements as a whole value of its own: as a net
-  // (LRM 6.6, 28.12.1, 6.7.1) and as a stream of bits (LRM 6.24.3). Each
-  // answers in `out`.
-  static void Resolve(
-      NetResolution fold, const void* lhs, const void* rhs, void* out) {
-    BuildFrom<T>(
-        out, [&] { return lyra::value::Resolve(fold, Of(lhs), Of(rhs)); });
-  }
-  static void Dominating(const void* stronger, const void* weaker, void* out) {
-    BuildFrom<T>(out, [&] { return Of(stronger).Dominating(Of(weaker)); });
-  }
-  template <IntegralValue Fill>
-  static void FilledLike(const void* prototype, const Fill& fill, void* out) {
-    BuildFrom<T>(out, [&] { return FilledAs(Of(prototype), fill); });
   }
 
   // The element written into a stream below its `filled` most significant

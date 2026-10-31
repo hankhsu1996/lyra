@@ -1068,8 +1068,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_queue_value_cell_store", &lyra_rt_queue_value_cell_store);
   add("lyra_rt_queue_value_cell_load", &lyra_rt_queue_value_cell_load);
   add("lyra_rt_assocarray_from_entries", &lyra_rt_assocarray_from_entries);
-  add("lyra_rt_assocarray_from_entries_wildcard",
-      &lyra_rt_assocarray_from_entries_wildcard);
   add("lyra_rt_assocarray_assoc_with_default",
       &lyra_rt_assocarray_assoc_with_default);
   add("lyra_rt_assocarray_assoc_has_stated_default",

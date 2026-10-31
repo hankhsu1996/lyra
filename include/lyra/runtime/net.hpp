@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -24,6 +25,7 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/strength_level.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/element_type.hpp"
 #include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -219,11 +221,73 @@ void WritePositions(
 class NetName;
 class PhysicalNet;
 
-// A value a net holds (LRM 6.7.1): an integral one, whose positions resolve
-// wherever a connection put them, or an unpacked aggregate, which folds one
-// contribution into another itself.
+// How an aggregate net folds one contribution into another, what a stronger
+// one leaves a weaker, and what fills a value of the net's shape (LRM 6.6,
+// 6.7.1, 28.12.1). A type the library is compiled with states these itself.
 template <class T>
-concept NetValue = BitAddressed<T> || value::NetResolvable<T>;
+struct NetFoldsOf;
+
+template <value::NetResolvable T>
+struct NetFoldsOf<T> {
+  [[nodiscard]] auto Resolve(
+      value::NetResolution fold, const T& lhs, const T& rhs) const -> T {
+    return value::Resolve(fold, lhs, rhs);
+  }
+  [[nodiscard]] auto Dominating(const T& stronger, const T& weaker) const -> T {
+    return stronger.Dominating(weaker);
+  }
+  [[nodiscard]] auto FilledLike(
+      const T& prototype, const value::Logic& fill) const -> T {
+    return T::FilledLike(prototype, fill);
+  }
+};
+
+// A type the library was compiled without is folded by the table its net was
+// built holding, since nothing but a net asks a value of one to fold.
+template <value::LaidOutByType T>
+struct NetFoldsOf<T> {
+  const value::ValueType* type = nullptr;
+  const value::NetFoldTable* table = nullptr;
+
+  [[nodiscard]] auto Resolve(
+      value::NetResolution fold, const T& lhs, const T& rhs) const -> T {
+    return T::Built(*type, [&](void* out) {
+      EntryOf(fold)(*type, lhs.Bytes(), rhs.Bytes(), out);
+    });
+  }
+  [[nodiscard]] auto Dominating(const T& stronger, const T& weaker) const -> T {
+    return T::Built(*type, [&](void* out) {
+      table->dominating(*type, stronger.Bytes(), weaker.Bytes(), out);
+    });
+  }
+  [[nodiscard]] auto FilledLike(
+      const T& prototype, const value::Logic& fill) const -> T {
+    return T::Built(*type, [&](void* out) {
+      table->filled_like(*type, prototype.Bytes(), &fill, out);
+    });
+  }
+
+ private:
+  [[nodiscard]] auto EntryOf(value::NetResolution fold) const
+      -> decltype(value::NetFoldTable::tri_state) {
+    switch (fold) {
+      case value::NetResolution::kTriState:
+        return table->tri_state;
+      case value::NetResolution::kWiredAnd:
+        return table->wired_and;
+      case value::NetResolution::kWiredOr:
+        return table->wired_or;
+    }
+    std::unreachable();
+  }
+};
+
+// A value a net holds (LRM 6.7.1): an integral one, whose positions resolve
+// wherever a connection put them, or an unpacked aggregate, which a net folds
+// one contribution into another of.
+template <class T>
+concept NetValue =
+    BitAddressed<T> || value::NetResolvable<T> || value::LaidOutByType<T>;
 
 template <NetValue T>
 class Driver;
@@ -1165,7 +1229,7 @@ class ResolvedNet<T> : public Observable {
 
   ResolvedNet()
     requires(!value::LaidOutByType<T>);
-  explicit ResolvedNet(const value::ValueType& type)
+  ResolvedNet(const value::ElementType& held, const value::NetFoldTable& folds)
     requires value::LaidOutByType<T>;
 
   // Fixes what the net's declaration gives it: the declared type, from a value
@@ -1232,7 +1296,7 @@ class ResolvedNet<T> : public Observable {
     sampled_ = std::make_unique<SampledValueOf<TakenShown>>(
         TakenShown(*this),
         [&] {
-          return T::FilledLike(
+          return folds_.FilledLike(
               nondriving_, value::Logic::Filled(value::FourStateBit::kUnknown));
         },
         Trigger(WatchedPlace::Through(Member()), Observation{}, {}, 0, 0));
@@ -1263,13 +1327,20 @@ class ResolvedNet<T> : public Observable {
   // what the net shows, never the contributions, which are what the net
   // answers with again once released. What a force names of the net is
   // positions of its value, which its type numbers part by part.
-  auto BeginTakeover(std::int64_t level, std::int64_t first, std::int64_t count)
-      -> std::int64_t {
+  auto BeginTakeover(
+      std::int64_t level, std::int64_t first, std::int64_t count,
+      TakePositionsOf<T> take_positions) -> std::int64_t {
     if (takeovers_ == nullptr) {
       takeovers_ = std::make_unique<Takeovers<T>>();
     }
     return std::int64_t{takeovers_->Begin(
-        TakeoverLevelOf(level), PositionsNamed(first, count))};
+        TakeoverLevelOf(level), PositionsNamed(first, count), take_positions)};
+  }
+  auto BeginTakeover(std::int64_t level, std::int64_t first, std::int64_t count)
+      -> std::int64_t
+    requires(!value::LaidOutByType<T>)
+  {
+    return BeginTakeover(level, first, count, {});
   }
 
   auto DriveTakeover(
@@ -1391,11 +1462,12 @@ class ResolvedNet<T> : public Observable {
     }
     installed_ = true;
     value::RebuildFrom(nondriving_, [&] {
-      return T::FilledLike(
+      return folds_.FilledLike(
           prototype, value::Logic::Filled(value::FourStateBit::kHighImpedance));
     });
     value::RebuildFrom(own_.value, [&] {
-      return T::FilledLike(prototype, value::Logic::Filled(NetFillOf(fill)));
+      return folds_.FilledLike(
+          prototype, value::Logic::Filled(NetFillOf(fill)));
     });
     own_.strength = static_cast<support::StrengthLevel>(strength);
     fold_ = resolution;
@@ -1421,11 +1493,11 @@ class ResolvedNet<T> : public Observable {
       for (const DriveContribution<T>& driver : contributions_) {
         if (driver.strength == at) {
           group = value::SmallBox<T>::BuiltBy(
-              [&] { return value::Resolve(fold_, *group, driver.value); });
+              [&] { return folds_.Resolve(fold_, *group, driver.value); });
         }
       }
       resolved = value::SmallBox<T>::BuiltBy(
-          [&] { return resolved->Dominating(*group); });
+          [&] { return folds_.Dominating(*resolved, *group); });
     }
     return resolved;
   }
@@ -1581,6 +1653,7 @@ class ResolvedNet<T> : public Observable {
   }
 
   NetShowing<HeldAs> showing_{*this};
+  [[no_unique_address]] NetFoldsOf<T> folds_;
   T nondriving_{};
   // The contribution the net type makes to its own resolution, the table
   // contributions of equal strength fold under, and whether resolution keeps
@@ -1640,9 +1713,10 @@ ResolvedNet<T>::ResolvedNet()
 
 template <NetValue T>
   requires(!BitAddressed<T>)
-ResolvedNet<T>::ResolvedNet(const value::ValueType& type)
+ResolvedNet<T>::ResolvedNet(
+    const value::ElementType& held, const value::NetFoldTable& folds)
   requires value::LaidOutByType<T>
-    : held_(type) {
+    : held_(held), folds_{.type = &held.Type(), .table = &folds} {
   showing_.ShowOwn(held_);
 }
 

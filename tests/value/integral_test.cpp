@@ -1018,9 +1018,9 @@ TEST(IntegralTest, BitQueries) {
   EXPECT_EQ(
       BitVector<67>::FromInt(-1).CountBits(Bit::FromInt(1)).ToInt64(), 67);
 
-  EXPECT_EQ(counted.IsUnknown().ToInt64(), 1);
-  EXPECT_EQ(Logic8::FromInt(3).IsUnknown().ToInt64(), 0);
-  EXPECT_EQ(Int::FromInt(3).IsUnknown().ToInt64(), 0);
+  EXPECT_TRUE(counted.HasUnknown());
+  EXPECT_FALSE(Logic8::FromInt(3).HasUnknown());
+  EXPECT_FALSE(Int::FromInt(3).HasUnknown());
 }
 
 // LRM 11.4.14.2: a streaming concatenation reverses the order of the blocks a

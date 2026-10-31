@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <optional>
 #include <span>
@@ -155,17 +156,21 @@ auto MaterializeConstant(
 
 }  // namespace
 
-auto BuildDefaultValueExpr(
+auto DefaultValueOf(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
-    -> mir::Expr {
+    -> std::expected<mir::Expr, std::string_view> {
+  using Answer = std::expected<mir::Expr, std::string_view>;
   const auto& ty = unit.types.Get(type);
   const auto component_wise =
-      [&](std::span<const mir::TypeId> components) -> mir::Expr {
+      [&](std::span<const mir::TypeId> components) -> Answer {
     std::vector<mir::ExprId> parts;
     parts.reserve(components.size());
     for (const mir::TypeId component : components) {
-      parts.push_back(
-          block.exprs.Add(BuildDefaultValueExpr(unit, block, component)));
+      Answer part = DefaultValueOf(unit, block, component);
+      if (!part) {
+        return part;
+      }
+      parts.push_back(block.exprs.Add(*std::move(part)));
     }
     return mir::Expr{
         .data = mir::CompositeExpr{.parts = std::move(parts)}, .type = type};
@@ -176,16 +181,12 @@ auto BuildDefaultValueExpr(
   // those or to reach it, so a value of it starts out wherever the step that
   // built it put it, and being asked what one starts out as means a producer
   // handed over a type no declaration names.
-  const auto holds_no_declared_value = [](std::string_view what) -> mir::Expr {
-    throw InternalError(
-        std::format(
-            "BuildDefaultValueExpr: {} is not what a declaration holds, so "
-            "there is no initial value to state for it",
-            what));
+  const auto holds_no_declared_value = [](std::string_view what) -> Answer {
+    return std::unexpected(what);
   };
   return ty.Visit(
       Overloaded{
-          [&](const mir::IntegralType& integral) -> mir::Expr {
+          [&](const mir::IntegralType& integral) -> Answer {
             return block.exprs.Get(
                 mir::BuildIntegralLiteral(
                     unit, block, type, DefaultIntegralConstant(integral)));
@@ -193,12 +194,12 @@ auto BuildDefaultValueExpr(
           // An enumeration defaults as the vector it is: LRM Table 6-7 reads
           // the default off the state domain, which the base carries and the
           // names do not affect.
-          [&](const mir::EnumType& e) -> mir::Expr {
+          [&](const mir::EnumType& e) -> Answer {
             return block.exprs.Get(
                 mir::BuildIntegralLiteral(
                     unit, block, type, DefaultIntegralConstant(e.base)));
           },
-          [&](const mir::StringType&) -> mir::Expr {
+          [&](const mir::StringType&) -> Answer {
             // The literal is machine text; the empty string value is what the
             // string's constructor builds from it.
             const mir::ExprId lit = block.exprs.Add(
@@ -211,30 +212,32 @@ auto BuildDefaultValueExpr(
                         .callee = mir::Construct{}, .arguments = {lit}},
                 .type = type};
           },
-          [&](const mir::RealType&) -> mir::Expr {
+          [&](const mir::RealType&) -> Answer {
             return block.exprs.Get(BuildRealLiteral(unit, block, type, 0.0));
           },
-          [&](const mir::ShortRealType&) -> mir::Expr {
+          [&](const mir::ShortRealType&) -> Answer {
             return block.exprs.Get(BuildRealLiteral(unit, block, type, 0.0));
           },
           // LRM Table 7-1: a fixed unpacked array defaults to every element at
           // the element type's default. One element default fills the array,
           // so stating it stays O(1) in the array's element count.
-          [&](const mir::UnpackedArrayType& ua) -> mir::Expr {
+          [&](const mir::UnpackedArrayType& ua) -> Answer {
+            Answer element = DefaultValueOf(unit, block, ua.element_type);
+            if (!element) {
+              return element;
+            }
             return BuildFixedArrayConstructionCall(
-                unit, block, type,
-                {block.exprs.Add(
-                    BuildDefaultValueExpr(unit, block, ua.element_type))});
+                unit, block, type, {block.exprs.Add(*std::move(element))});
           },
           // LRM Table 7-1: a product no declaration names defaults
           // component-wise -- each takes its own type's default, recursively.
-          [&](const mir::TupleType& t) -> mir::Expr {
+          [&](const mir::TupleType& t) -> Answer {
             return component_wise(t.elements);
           },
           // A structure or a union states its own default: a structure's
           // members at their declared initial values (LRM 7.2.2), a union's
           // first member at its default (LRM Table 7-1).
-          [&](const mir::RecordType& s) -> mir::Expr {
+          [&](const mir::RecordType& s) -> Answer {
             return mir::Expr{
                 .data =
                     mir::CallExpr{
@@ -251,21 +254,21 @@ auto BuildDefaultValueExpr(
           // LRM Table 7-1: a dynamic array's default and a queue's are the
           // empty array, which its own construction builds from a list of no
           // elements.
-          [&](const mir::DynamicArrayType&) -> mir::Expr {
+          [&](const mir::DynamicArrayType&) -> Answer {
             return BuildArrayConstructionCall(unit, block, type, {});
           },
-          [&](const mir::QueueType&) -> mir::Expr {
+          [&](const mir::QueueType&) -> Answer {
             return BuildArrayConstructionCall(unit, block, type, {});
           },
           // LRM Table 7-1: an associative array's default is empty, which is
           // its literal over no entries and no `default:` clause.
-          [&](const mir::AssociativeArrayType&) -> mir::Expr {
+          [&](const mir::AssociativeArrayType&) -> Answer {
             return BuildAssociativeConstructionCall(
                 unit, block, type, {}, std::nullopt);
           },
           // A message of a mailbox of no stated type, before one is put, holds
           // no value of any type (LRM 15.4.9).
-          [&](const mir::AnyType&) -> mir::Expr {
+          [&](const mir::AnyType&) -> Answer {
             return mir::Expr{
                 .data =
                     mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
@@ -275,7 +278,7 @@ auto BuildDefaultValueExpr(
           // not declare is a handle to it, and a handle starts out null; the
           // object type itself is what that handle points at, which a
           // construction brings into existence.
-          [&](const mir::ObjectType& o) -> mir::Expr {
+          [&](const mir::ObjectType& o) -> Answer {
             if (mir::IsDefinedElsewhere(unit, o.of)) {
               return holds_no_declared_value(
                   "an object of another unit's class");
@@ -285,40 +288,40 @@ auto BuildDefaultValueExpr(
                     mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
                 .type = type};
           },
-          [&](const mir::PointerType&) -> mir::Expr {
+          [&](const mir::PointerType&) -> Answer {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
           // A reference is bound where it is declared and is never null.
-          [&](const mir::ReferenceType&) -> mir::Expr {
+          [&](const mir::ReferenceType&) -> Answer {
             return holds_no_declared_value("a reference");
           },
           // LRM 8.4 / Table 7-1: an uninitialized class handle defaults to
           // null, and so does an event read where an array has no entry. A
           // declared event names a new object of its own (Table 6-7), which a
           // declaration states on top of this.
-          [&](const mir::ManagedRefType&) -> mir::Expr {
+          [&](const mir::ManagedRefType&) -> Answer {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
           // A weak reference starts referring to nothing (LRM 8.30), the one
           // value its construction makes.
-          [&](const mir::WeakManagedRefType&) -> mir::Expr {
+          [&](const mir::WeakManagedRefType&) -> Answer {
             return mir::Expr{
                 .data =
                     mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
                 .type = type};
           },
           // LRM 6.14: a chandle is always initialized to null.
-          [&](const mir::ChandleType&) -> mir::Expr {
+          [&](const mir::ChandleType&) -> Answer {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
           // A declaration standing for no object holds a sequence of nothing,
           // which its own constructor builds from a list of no elements.
-          [&](const mir::VectorType&) -> mir::Expr {
+          [&](const mir::VectorType&) -> Answer {
             return BuildSequenceConstructionCall(unit, block, type, {});
           },
           // A type carrying no information has exactly one value, so that
           // value is its default.
-          [&](const mir::EmptyType&) -> mir::Expr {
+          [&](const mir::EmptyType&) -> Answer {
             return mir::Expr{
                 .data =
                     mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
@@ -330,33 +333,33 @@ auto BuildDefaultValueExpr(
           // for. An index still reaches the entries of such an array, carrying
           // whatever the expression that named it carried; what it never does
           // is give a variable its type.
-          [&](const mir::WildcardIndexType&) -> mir::Expr {
+          [&](const mir::WildcardIndexType&) -> Answer {
             return holds_no_declared_value("an associative array's index");
           },
 
           // The machine vocabulary a lowering builds to carry a value: a count,
           // a flag, a host string, a sequence of operands, the address of a
           // body. Each is built where it is used, out of what it is built from.
-          [&](const mir::MachineIntType&) -> mir::Expr {
+          [&](const mir::MachineIntType&) -> Answer {
             return holds_no_declared_value("a machine integer");
           },
-          [&](const mir::MachineFloatType&) -> mir::Expr {
+          [&](const mir::MachineFloatType&) -> Answer {
             return holds_no_declared_value("a machine floating-point number");
           },
-          [&](const mir::MachineBoolType&) -> mir::Expr {
+          [&](const mir::MachineBoolType&) -> Answer {
             return holds_no_declared_value("a machine boolean");
           },
-          [&](const mir::MachineCStringType&) -> mir::Expr {
+          [&](const mir::MachineCStringType&) -> Answer {
             return holds_no_declared_value("a machine string");
           },
-          [&](const mir::MachineArrayType&) -> mir::Expr {
+          [&](const mir::MachineArrayType&) -> Answer {
             return holds_no_declared_value("a machine array of operands");
           },
-          [&](const mir::MachineFunctionType&) -> mir::Expr {
+          [&](const mir::MachineFunctionType&) -> Answer {
             return holds_no_declared_value("a machine function address");
           },
 
-          [&](const mir::RuntimeClassType&) -> mir::Expr {
+          [&](const mir::RuntimeClassType&) -> Answer {
             return holds_no_declared_value("an object of a runtime class");
           },
 
@@ -368,68 +371,68 @@ auto BuildDefaultValueExpr(
           // value of which a lowering builds where it uses one.
           // What a declaration holds is the value inside one of these, which
           // answers above.
-          [&](const mir::ObservableType&) -> mir::Expr {
+          [&](const mir::ObservableType&) -> Answer {
             return holds_no_declared_value("an observable cell");
           },
-          [&](const mir::ResolvedType&) -> mir::Expr {
+          [&](const mir::ResolvedType&) -> Answer {
             return holds_no_declared_value("a net's resolution");
           },
-          [&](const mir::DriverType&) -> mir::Expr {
+          [&](const mir::DriverType&) -> Answer {
             return holds_no_declared_value("a driver's contribution");
           },
-          [&](const mir::OpenWriteType&) -> mir::Expr {
+          [&](const mir::OpenWriteType&) -> Answer {
             return holds_no_declared_value("a write in progress");
           },
-          [&](const mir::DesignationType&) -> mir::Expr {
+          [&](const mir::DesignationType&) -> Answer {
             return holds_no_declared_value("a part a write designates");
           },
-          [&](const mir::BitsReferenceType&) -> mir::Expr {
+          [&](const mir::BitsReferenceType&) -> Answer {
             return holds_no_declared_value("a reference to bits");
           },
-          [&](const mir::ObjectWriteType&) -> mir::Expr {
+          [&](const mir::ObjectWriteType&) -> Answer {
             return holds_no_declared_value("a write into an object");
           },
-          [&](const mir::SampledHistoryType&) -> mir::Expr {
+          [&](const mir::SampledHistoryType&) -> Answer {
             return holds_no_declared_value("a sampled value's history");
           },
-          [&](const mir::EvaluationAttemptsType&) -> mir::Expr {
+          [&](const mir::EvaluationAttemptsType&) -> Answer {
             return holds_no_declared_value("an assertion's attempts");
           },
-          [&](const mir::LoopBlocksType&) -> mir::Expr {
+          [&](const mir::LoopBlocksType&) -> Answer {
             return holds_no_declared_value("the blocks a loop built");
           },
-          [&](const mir::RuntimeEffectsType&) -> mir::Expr {
+          [&](const mir::RuntimeEffectsType&) -> Answer {
             return holds_no_declared_value("the effects a body runs under");
           },
-          [&](const mir::FilesType&) -> mir::Expr {
+          [&](const mir::FilesType&) -> Answer {
             return holds_no_declared_value("the open files");
           },
-          [&](const mir::DiagnosticType&) -> mir::Expr {
+          [&](const mir::DiagnosticType&) -> Answer {
             return holds_no_declared_value("the diagnostic stream");
           },
-          [&](const mir::RuntimeLibraryType&) -> mir::Expr {
+          [&](const mir::RuntimeLibraryType&) -> Answer {
             return holds_no_declared_value("a runtime library value");
           },
 
           // Code, and the storage a body reaches through rather than holds: a
           // suspending body's frame, a closure's, and a reference bound to a
           // cell that already exists.
-          [&](const mir::CoroutineType&) -> mir::Expr {
+          [&](const mir::CoroutineType&) -> Answer {
             return holds_no_declared_value("a suspending body");
           },
-          [&](const mir::ClosureType&) -> mir::Expr {
+          [&](const mir::ClosureType&) -> Answer {
             return holds_no_declared_value("a closure");
           },
-          [&](const mir::ErasedCallableType&) -> mir::Expr {
+          [&](const mir::ErasedCallableType&) -> Answer {
             return holds_no_declared_value("a closure of no known type");
           },
-          [&](const mir::ErasedValueType&) -> mir::Expr {
+          [&](const mir::ErasedValueType&) -> Answer {
             return holds_no_declared_value("a value of no known type");
           },
-          [&](const mir::VariableRefType&) -> mir::Expr {
+          [&](const mir::VariableRefType&) -> Answer {
             return holds_no_declared_value("a reference to a cell");
           },
-          [&](const mir::ReferenceWrapperType&) -> mir::Expr {
+          [&](const mir::ReferenceWrapperType&) -> Answer {
             return holds_no_declared_value("a reference to a cell");
           },
 
@@ -437,10 +440,25 @@ auto BuildDefaultValueExpr(
           // the type holding no information, which answers above. Everywhere
           // else `void` is the absence of a result, and an absence is not
           // declared.
-          [&](const mir::VoidType&) -> mir::Expr {
+          [&](const mir::VoidType&) -> Answer {
             return holds_no_declared_value("the absence of a result");
           },
       });
+}
+
+auto BuildDefaultValueExpr(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
+    -> mir::Expr {
+  std::expected<mir::Expr, std::string_view> built =
+      DefaultValueOf(unit, block, type);
+  if (!built) {
+    throw InternalError(
+        std::format(
+            "BuildDefaultValueExpr: {} is not what a declaration holds, so "
+            "there is no initial value to state for it",
+            built.error()));
+  }
+  return *std::move(built);
 }
 
 auto BuildDeclaredStructValue(

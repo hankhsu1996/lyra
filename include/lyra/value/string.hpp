@@ -97,10 +97,6 @@ class String {
     return false;
   }
 
-  [[nodiscard]] static auto IsUnknown() -> Bit {
-    return Bit::FromBool(false);
-  }
-
   // LRM 11.4.4 relational operators on `String` (LRM 6.16).
   [[nodiscard]] auto operator<(const String& o) const -> Bit {
     return Bit::FromBool(impl_ < o.impl_);

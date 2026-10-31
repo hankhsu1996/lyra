@@ -55,8 +55,9 @@ call, and so is every whole-value question a structure's own body asks of a memb
   (6.7.1) resolves.
 - **The questions the runtime asks as predicates are entries of their own**: whether two values are
   the same bits and whether one holds an unknown bit. So is each of the net's three truth tables,
-  for the reason a net's installation is one entry per resolution. `!=` and `$isunknown`'s bit are
-  methods too, because the library asks them of every value it holds.
+  for the reason a net's installation is one entry per resolution. `!=` is a method too.
+  `$isunknown`'s bit is not, since MIR states it at the call as the unknown-bit question taken into
+  a `bit` ([builtin-call-identity](builtin-call-identity.md)).
 - **A backend compiles those methods as it compiles any declared body** and lays the structure out.
   Copying, moving, ending and assigning one go member by member, which the C++ backend takes from
   the host language and the execution backend from functions the lowering to LIR states
@@ -64,8 +65,8 @@ call, and so is every whole-value question a structure's own body asks of a memb
   derives" them). The C++ backend spells the structure as a type of the declaring unit whose members
   are its methods, each named as the library asks every value -- the operator, or the entry's own
   identifier -- and defined once, in that unit. The execution backend's runtime was compiled before
-  the type existed and holds values of it erased, so the declaring unit also hands it a table whose
-  operation slots are those methods, one table in the program for the type.
+  the type existed and holds values of it erased, so the declaring unit also hands it those methods,
+  in the type's table and the records handed to whatever asks each, one of each in the program.
 
 ## Rejected
 
@@ -98,8 +99,8 @@ call, and so is every whole-value question a structure's own body asks of a memb
 - **Functions of the unit's namespace, one per operation, which a backend makes the structure's
   members.** MIR then states a table from operation to function, and the C++ backend has to work out
   each member's name, whether it is static, its parameters, and a body forwarding to the function --
-  and to invent `!=` and `$isunknown`'s bit itself. That is a render deciding what a declaration
-  contains, which the backend contract gives to MIR.
+  and to invent `!=` itself. That is a render deciding what a declaration contains, which the
+  backend contract gives to MIR.
 
 ## Consequences
 

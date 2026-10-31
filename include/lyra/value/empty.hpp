@@ -36,9 +36,6 @@ struct Empty {
   [[nodiscard]] static auto HasUnknown() -> bool {
     return false;
   }
-  [[nodiscard]] static auto IsUnknown() -> Bit {
-    return Bit::FromBool(false);
-  }
   // LRM 20.6.2 `$bits` / 20.9 `$countbits`: a value carrying no bits.
   [[nodiscard]] static auto BitstreamWidth() -> Int {
     return Int::FromInt(0);

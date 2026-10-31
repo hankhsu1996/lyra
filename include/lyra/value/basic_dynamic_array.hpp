@@ -171,62 +171,36 @@ class BasicDynamicArray {
   // survives, and one they disagree on, or cannot know, takes the element
   // default (Table 7-1). Arms of unequal size put no elements in
   // correspondence, so the result is the array of no elements that is such an
-  // array's own default.
-  [[nodiscard]] auto MergeConditional(const BasicDynamicArray& other) const
+  // array's own default. `ops` compares two elements.
+  template <typename Ops>
+  [[nodiscard]] auto MergeConditional(
+      const BasicDynamicArray& other, const Ops& ops) const
       -> BasicDynamicArray {
     const std::size_t paired = count_ == other.count_ ? count_ : 0;
     return Built(elem_, paired, [&](std::size_t i, void* out) {
-      elem_.Copy(
-          elem_.Agree(At(i), other.At(i)) ? At(i) : elem_.Default(), out);
+      elem_.Copy(ops.Agree(At(i), other.At(i)) ? At(i) : elem_.Default(), out);
     });
   }
 
-  // Net resolution element by element under a truth table (LRM 6.6). LRM
-  // 6.7.1 composes a net over an unpacked array out of its elements' bits, so
-  // folding two contributions is folding each element pair.
-  [[nodiscard]] auto Resolved(
-      NetResolution fold, const BasicDynamicArray& other) const
-      -> BasicDynamicArray {
-    RequireNetPartner(other);
-    return Built(elem_, count_, [&](std::size_t i, void* out) {
-      elem_.Resolve(fold, At(i), other.At(i), out);
-    });
-  }
-
-  // What a stronger contribution leaves a weaker one, element by element (LRM
-  // 28.12.1).
-  [[nodiscard]] auto Dominating(const BasicDynamicArray& weaker) const
-      -> BasicDynamicArray {
-    RequireNetPartner(weaker);
-    return Built(elem_, count_, [&](std::size_t i, void* out) {
-      elem_.Dominating(At(i), weaker.At(i), out);
-    });
-  }
-
-  // These elements' shapes with every bit set to `fill` (LRM 6.7.1).
-  template <typename Fill>
-  [[nodiscard]] auto FilledLike(const Fill& fill) const -> BasicDynamicArray {
-    return Built(elem_, count_, [&](std::size_t i, void* out) {
-      elem_.FilledLike(At(i), fill, out);
-    });
-  }
-
-  // LRM 6.24.3: the elements' own streams written into `stream` below its
-  // `filled` most significant positions, the element at index 0 most
-  // significant -- the order a `foreach` traverses them in (LRM 11.4.14.1).
-  // Answers how many are filled after them.
+  // LRM 6.24.3: the elements' own streams, each written by `ops`, into
+  // `stream` below its `filled` most significant positions, the element at
+  // index 0 most significant -- the order a `foreach` traverses them in (LRM
+  // 11.4.14.1). Answers how many are filled after them.
+  template <typename Ops>
   [[nodiscard]] auto WriteToStream(
-      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
-    return detail::SequenceWriteToStream(*this, stream, filled);
+      const IntegralView& stream, std::uint64_t filled, const Ops& ops) const
+      -> std::uint64_t {
+    return detail::SequenceWriteToStream(*this, stream, filled, ops);
   }
 
   // The inverse: as many elements as fill the stream from its `taken` most
-  // significant position up to `until` replace these (LRM 6.24.3, 11.4.14.4).
-  // Answers how many positions are taken after them.
+  // significant position up to `until`, each read by `ops`, replace these (LRM
+  // 6.24.3, 11.4.14.4). Answers how many positions are taken after them.
+  template <typename Ops>
   auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
-      -> std::uint64_t {
-    const detail::ElementsRead<Elem> read(elem_, stream, taken, until);
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until,
+      const Ops& ops) -> std::uint64_t {
+    const detail::ElementsRead<Elem> read(elem_, ops, stream, taken, until);
     *this = BasicDynamicArray(elem_).Extended(read.Addresses());
     return until;
   }
@@ -235,10 +209,12 @@ class BasicDynamicArray {
   // element default where it lies outside the array; and these elements with
   // those taking `values`, element for element, the array first grown to hold
   // them. A start naming no position names no element to write.
+  template <typename Ops>
   [[nodiscard]] auto WindowToBitVec(
-      std::optional<std::int64_t> start, std::size_t count) const -> BitVec {
+      std::optional<std::int64_t> start, std::size_t count,
+      const Ops& ops) const -> BitVec {
     return detail::StreamOfElements(
-        elem_, detail::SequenceSliceElements(*this, start, count));
+        ops, detail::SequenceSliceElements(*this, start, count));
   }
   [[nodiscard]] auto WithWindow(
       std::optional<std::int64_t> start, std::size_t count,
@@ -299,16 +275,6 @@ class BasicDynamicArray {
   }
 
  private:
-  // A net fixes the shape of every contribution to it (LRM 6.7.1), so two
-  // contributions of different element counts are a lowering defect.
-  void RequireNetPartner(const BasicDynamicArray& other) const {
-    if (other.count_ != count_) {
-      throw InternalError(
-          "two contributions to one net hold different element counts -- "
-          "please report this as a bug");
-    }
-  }
-
   void Swap(BasicDynamicArray& other) noexcept {
     std::swap(elem_, other.elem_);
     std::swap(data_, other.data_);

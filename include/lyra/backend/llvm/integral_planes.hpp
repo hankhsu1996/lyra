@@ -119,7 +119,6 @@ using PlaneAnswer = std::variant<Planes, llvm::Value*>;
     case support::IntegralOp::kFromBool:
     case support::IntegralOp::kToInt64:
     case support::IntegralOp::kToPosition:
-    case support::IntegralOp::kIsUnknown:
     case support::IntegralOp::kHasUnknown:
     case support::IntegralOp::kBitIdentical:
     case support::IntegralOp::kCountBits:

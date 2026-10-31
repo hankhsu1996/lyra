@@ -134,30 +134,31 @@ void RuntimeDynamicArray::Permute(std::span<const std::size_t> order) {
 
 // An array with no element type yet holds no elements, which is all a
 // comparison with one can read.
-auto RuntimeDynamicArray::operator==(const RuntimeDynamicArray& other) const
+auto RuntimeDynamicArray::Equal(
+    const RuntimeDynamicArray& other, const ValueOperations& element) const
     -> FourStateBit {
   if (!core_.has_value() || !other.core_.has_value()) {
     return detail::ScalarOf(Count() == other.Count());
   }
-  return detail::SequenceEqual(*core_, *other.core_);
+  return detail::SequenceEqual(
+      *core_, *other.core_, WitnessedOperations(element));
 }
 
-auto RuntimeDynamicArray::operator!=(const RuntimeDynamicArray& other) const
-    -> FourStateBit {
-  return Inverted(*this == other);
-}
-
-auto RuntimeDynamicArray::CaseEqual(const RuntimeDynamicArray& other) const
+auto RuntimeDynamicArray::CaseEqual(
+    const RuntimeDynamicArray& other, const ValueOperations& element) const
     -> Bit {
   if (!core_.has_value() || !other.core_.has_value()) {
     return Bit::FromBool(Count() == other.Count());
   }
-  return detail::SequenceCaseEqual(*core_, *other.core_);
+  return detail::SequenceCaseEqual(
+      *core_, *other.core_, WitnessedOperations(element));
 }
 
 auto RuntimeDynamicArray::MergeConditional(
-    const RuntimeDynamicArray& other) const -> RuntimeDynamicArray {
-  return RuntimeDynamicArray(Core().MergeConditional(other.Core()));
+    const RuntimeDynamicArray& other, const ValueOperations& element) const
+    -> RuntimeDynamicArray {
+  return RuntimeDynamicArray(
+      Core().MergeConditional(other.Core(), WitnessedOperations(element)));
 }
 
 auto RuntimeDynamicArray::IsBitIdentical(const RuntimeDynamicArray& other) const
@@ -168,51 +169,62 @@ auto RuntimeDynamicArray::IsBitIdentical(const RuntimeDynamicArray& other) const
   return detail::SequenceBitIdentical(*core_, *other.core_);
 }
 
-auto RuntimeDynamicArray::HasUnknown() const -> bool {
-  return core_.has_value() && detail::SequenceHasUnknown(*core_);
+auto RuntimeDynamicArray::HasUnknown(const ValueOperations& element) const
+    -> bool {
+  return core_.has_value() &&
+         detail::SequenceHasUnknown(*core_, WitnessedOperations(element));
 }
 
-auto RuntimeDynamicArray::IsUnknown() const -> Bit {
-  return Bit::FromBool(HasUnknown());
-}
-
-auto RuntimeDynamicArray::BitstreamWidth() const -> Int {
-  return Int::FromInt(
-      core_.has_value() ? detail::SequenceBitstreamWidth(*core_) : 0);
-}
-
-auto RuntimeDynamicArray::CountBits(const ConstIntegralView& control_bits) const
+auto RuntimeDynamicArray::BitstreamWidth(const ValueOperations& element) const
     -> Int {
   return Int::FromInt(
-      core_.has_value() ? detail::SequenceCountBits(*core_, control_bits) : 0);
+      core_.has_value()
+          ? detail::SequenceBitstreamWidth(*core_, WitnessedOperations(element))
+          : 0);
+}
+
+auto RuntimeDynamicArray::CountBits(
+    const ConstIntegralView& control_bits, const ValueOperations& element) const
+    -> Int {
+  return Int::FromInt(
+      core_.has_value()
+          ? detail::SequenceCountBits(
+                *core_, control_bits, WitnessedOperations(element))
+          : 0);
 }
 
 auto RuntimeDynamicArray::WriteToStream(
-    const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
-  return core_.has_value() ? core_->WriteToStream(stream, filled) : filled;
+    const IntegralView& stream, std::uint64_t filled,
+    const ValueOperations& element) const -> std::uint64_t {
+  return core_.has_value() ? core_->WriteToStream(
+                                 stream, filled, WitnessedOperations(element))
+                           : filled;
 }
 
 auto RuntimeDynamicArray::ReadFromStream(
-    const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
-    -> std::uint64_t {
-  return Core().ReadFromStream(stream, taken, until);
+    const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until,
+    const ValueOperations& element) -> std::uint64_t {
+  return Core().ReadFromStream(
+      stream, taken, until, WitnessedOperations(element));
 }
 
-auto RuntimeDynamicArray::ToBitVec() const -> BitVec {
-  return StreamOf(*this);
+auto RuntimeDynamicArray::ToBitVec(const ValueOperations& element) const
+    -> BitVec {
+  return StreamOf(*this, element);
 }
 
 auto RuntimeDynamicArray::FromBitVec(
-    const value::ElementType& element, const BitVec& run)
-    -> RuntimeDynamicArray {
+    const value::ElementType& element, const BitVec& run,
+    const ValueOperations& operations) -> RuntimeDynamicArray {
   RuntimeDynamicArray out = FromElements(element, {});
-  ReadWholeStream(out, run);
+  ReadWholeStream(out, run, operations);
   return out;
 }
 
 auto RuntimeDynamicArray::WindowToBitVec(
-    std::optional<std::int64_t> start, std::size_t count) const -> BitVec {
-  return Core().WindowToBitVec(start, count);
+    std::optional<std::int64_t> start, std::size_t count,
+    const ValueOperations& element) const -> BitVec {
+  return Core().WindowToBitVec(start, count, WitnessedOperations(element));
 }
 
 auto RuntimeDynamicArray::WithWindow(

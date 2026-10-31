@@ -199,7 +199,7 @@ auto PhysicalNet::BeginTakeover(
   if (takeovers_ == nullptr) {
     takeovers_ = std::make_unique<Takeovers<NetPositions>>();
   }
-  return takeovers_->Begin(level, held);
+  return takeovers_->Begin(level, held, {});
 }
 
 auto PhysicalNet::DriveTakeover(

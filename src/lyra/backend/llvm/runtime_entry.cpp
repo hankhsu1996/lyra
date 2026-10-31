@@ -80,8 +80,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "from_elements";
     case RuntimeOp::kFromEntries:
       return "from_entries";
-    case RuntimeOp::kFromEntriesWildcard:
-      return "from_entries_wildcard";
     case RuntimeOp::kMakeSegment:
       return "make_segment";
     case RuntimeOp::kMakeTrigger:
@@ -168,15 +166,22 @@ constexpr DomainSet kFourStateIntegral =
 // of fixed extent; the other sequences and containers are objects the library
 // holds as its own.
 constexpr DomainSet kLaidOutByType{Domain::kLaidOut};
+// The kinds of value no other type parameterizes whose operations the library
+// states whole.
+constexpr DomainSet kComparedScalars{
+    Domain::kString, Domain::kReal, Domain::kShortReal, Domain::kChandle,
+    Domain::kManagedRef};
+// What the language admits as an index besides an integral value (LRM 7.8.1
+// -- 7.8.4).
+constexpr DomainSet kIndexKinds{
+    Domain::kString, Domain::kChandle, Domain::kManagedRef,
+    Domain::kWildcardIndex};
 constexpr DomainSet kLibrarySequences{Domain::kDynArray, Domain::kQueue};
 constexpr DomainSet kLibraryContainers =
     kLibrarySequences | DomainSet{Domain::kAssocArray};
 constexpr DomainSet kSequences = kLibrarySequences | kLaidOutByType;
 constexpr DomainSet kContainers = kLibraryContainers | kLaidOutByType;
 constexpr DomainSet kReals{Domain::kReal, Domain::kShortReal};
-// What a stream of bits is read out of (LRM 6.24.3) besides an integral value.
-constexpr DomainSet kBitstreams =
-    kLibraryContainers | DomainSet{Domain::kString, Domain::kManagedRef};
 // The values the library holds as an object of its own: every value that is
 // neither its bytes nor laid out by a type compiled with the design.
 constexpr DomainSet kLibraryObjects =
@@ -208,9 +213,10 @@ constexpr DomainSet kBodyValues = kVariableValues | DomainSet{Domain::kBitVec};
 // singular value (LRM 10.6.1, 10.6.2, 6.4), but no chandle, which no
 // continuous assignment may name (LRM 6.14); and a value laid out by its type,
 // of which a caller may ask for a member or an element to be forced.
+constexpr DomainSet kLibraryValuesTakenOver =
+    kIntegral | kReals | DomainSet{Domain::kString, Domain::kManagedRef};
 constexpr DomainSet kVariableValuesTakenOver =
-    kIntegral | kReals | kLaidOutByType |
-    DomainSet{Domain::kString, Domain::kManagedRef};
+    kLibraryValuesTakenOver | kLaidOutByType;
 
 constexpr std::array kForAssociativeArrays{
     RealizedFor{.domains = {Domain::kAssocArray}}};
@@ -221,6 +227,8 @@ constexpr std::array kForAssociativeArraysFromEntries{RealizedFor{
     .domains = {Domain::kAssocArray}, .told = ToldEntryType{.after = 0}}};
 constexpr std::array kForDynamicArraysAndQueues{
     RealizedFor{.domains = kLibrarySequences}};
+constexpr std::array kForDynamicArraysAndQueuesByOperations{
+    RealizedFor{.domains = kLibrarySequences, .told = ToldOperations{}}};
 constexpr std::array kForWhatDeletesWhole{
     RealizedFor{.domains = kLibraryContainers}};
 constexpr std::array kForArraysOfFixedExtent{
@@ -231,19 +239,29 @@ constexpr std::array kForQueues{RealizedFor{.domains = {Domain::kQueue}}};
 constexpr std::array kForReal{RealizedFor{.domains = {Domain::kReal}}};
 constexpr std::array kForReals{RealizedFor{.domains = kReals}};
 constexpr std::array kForStrings{RealizedFor{.domains = {Domain::kString}}};
-// What an entry answers `===`, a change of bits and an unknown bit for: every
-// value but an integral one, which the target answers itself, and one laid out
-// by its type, which that type's own operation answers.
-constexpr std::array kForWhatAnEntryComparesWhole{RealizedFor{
-    .domains =
-        kLibraryContainers | kReals |
-        DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef}}};
-constexpr std::array kForBitstreams{RealizedFor{.domains = kBitstreams}};
+// What an entry answers a change of bits for: every value but an integral one,
+// which the target answers itself, and one laid out by its type, which that
+// type's own operation answers.
+constexpr std::array kForWhatAnEntryComparesWhole{
+    RealizedFor{.domains = kLibraryContainers | kComparedScalars}};
+// The same for `===` and an unknown bit, where a container compares its
+// elements by the operations it is told.
+constexpr std::array kForWhatAnEntryComparesByOperations{
+    RealizedFor{.domains = kLibraryContainers, .told = ToldOperations{}},
+    RealizedFor{.domains = kComparedScalars}};
+constexpr std::array kForBitstreams{
+    RealizedFor{.domains = kLibraryContainers, .told = ToldOperations{}},
+    RealizedFor{.domains = DomainSet{Domain::kString, Domain::kManagedRef}}};
 // What answers its stream as a run of bits as long as the value makes it: a
 // container of the library's and a string. A class handle's stream is the
 // object's, which the library does not build.
 constexpr std::array kForRunsOfBits{
-    RealizedFor{.domains = kLibraryContainers | DomainSet{Domain::kString}}};
+    RealizedFor{.domains = kLibraryContainers, .told = ToldOperations{}},
+    RealizedFor{.domains = DomainSet{Domain::kString}}};
+// What a run of a sequence's elements is streamed or merged for, by the
+// operations of the sequence's type, which name its element's.
+constexpr std::array kForSequencesByOperations{
+    RealizedFor{.domains = kSequences, .told = ToldOperations{}}};
 constexpr std::array kForUnpackedArrays{RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForUnpackedArraysAndQueues{
     RealizedFor{.domains = kLaidOutByType | DomainSet{Domain::kQueue}}};
@@ -310,6 +328,28 @@ constexpr std::array kTakeovers{
         .wrapper = WrapperKind::kRef,
         .domains = kVariableValuesTakenOver,
         .told = ToldNothing{}}};
+// Beginning one on a value laid out by its type is told how the type takes
+// some of its positions, which the takeover shows what it holds by.
+constexpr std::array kTakeoversBegun{
+    ThroughWrapper{
+        .wrapper = WrapperKind::kCell, .domains = kLibraryValuesTakenOver},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kCell,
+        .domains = kLaidOutByType,
+        .told = ToldTakePositions{}},
+    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kFourStateIntegral},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kNet,
+        .domains = kAggregateNets,
+        .told = ToldTakePositions{}},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kRef,
+        .domains = kLibraryValuesTakenOver,
+        .told = ToldNothing{}},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kRef,
+        .domains = kLaidOutByType,
+        .told = ToldTakePositions{}}};
 // A variable's cell is installed with its declaration's value. A cell of words
 // was told its width where it was built, and one of a value laid out by its
 // type that type.
@@ -586,6 +626,11 @@ auto ToldOf(
 }
 
 auto ToldOfAnOperator(support::ValueDomain domain) -> Told {
+  // A container the library holds compares its elements by the operations it
+  // is told (LRM 11.4.5).
+  if (kLibraryContainers.Holds(domain)) {
+    return ToldOperations{};
+  }
   return ToldOfTheDomain(domain, std::nullopt);
 }
 
@@ -763,6 +808,37 @@ auto ValueTypeSymbol(support::ValueDomain domain) -> std::string {
   return Symbol(domain, kValueType);
 }
 
+auto IndexOrderSymbol(support::ValueDomain domain) -> std::string {
+  constexpr std::string_view kIndexOrder = "index_order";
+  if (kIntegral.Holds(domain)) {
+    return std::format("{}integral_{}", kRuntimeSymbolPrefix, kIndexOrder);
+  }
+  if (!kIndexKinds.Holds(domain)) {
+    throw InternalError(
+        "llvm codegen: an associative array is indexed by values the "
+        "language admits as no index -- please report this as a bug");
+  }
+  return Symbol(domain, kIndexOrder);
+}
+
+auto OperationFunctionsSymbol(support::ValueDomain domain) -> std::string {
+  if (!kLibraryContainers.Holds(domain)) {
+    throw InternalError(
+        "llvm codegen: the library states no operations of values it holds "
+        "this way -- please report this as a bug");
+  }
+  return Symbol(domain, "operation_functions");
+}
+
+auto ValueOperationsSymbol(support::ValueDomain domain) -> std::string {
+  if (!kComparedScalars.Holds(domain)) {
+    throw InternalError(
+        "llvm codegen: the library states no operations of values it holds "
+        "this way -- please report this as a bug");
+  }
+  return Symbol(domain, "value_operations");
+}
+
 auto RuntimeSymbol(support::RuntimeObject object, RuntimeOp op) -> std::string {
   return std::format(
       "{}{}_{}", kRuntimeSymbolPrefix, support::RuntimeObjectName(object),
@@ -801,15 +877,18 @@ auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
 auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told {
   switch (storage.kind) {
     // A net of an integral type is told how many positions the type has,
-    // which a layout of a narrower one does not say.
+    // which a layout of a narrower one does not say, and a net of a value laid
+    // out by its type that type and how to fold values of it.
     case support::MemberStorageKind::kResolvedNet:
       if (kFourStateIntegral.Holds(storage.domain)) {
         return ToldWidthMetadataAhead{};
       }
-      [[fallthrough]];
-    // A cell or a net of words, or of a value laid out by its type, lays the
-    // value out after itself, so it has the value's place from the moment it is
-    // built.
+      if (kLaidOutByType.Holds(storage.domain)) {
+        return ToldTypeAndNetFoldsAhead{};
+      }
+      return ToldNothing{};
+    // A cell of words, or of a value laid out by its type, lays the value out
+    // after itself, so it has the value's place from the moment it is built.
     case support::MemberStorageKind::kValueCell:
     case support::MemberStorageKind::kObservableCell:
       if (kWideIntegral.Holds(storage.domain)) {
@@ -1239,7 +1318,6 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kDefault:
     case RuntimeOp::kFromLiteral:
     case RuntimeOp::kFromEntries:
-    case RuntimeOp::kFromEntriesWildcard:
     case RuntimeOp::kMakeSegment:
     case RuntimeOp::kMakeTrigger:
     case RuntimeOp::kMakePrintValueItem:
@@ -1274,7 +1352,6 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     // many as a bound no operand states either (LRM 7.10.5).
     case RuntimeOp::kFromLiteral:
     case RuntimeOp::kFromEntries:
-    case RuntimeOp::kFromEntriesWildcard:
       return support::AnswerTold::kBuiltArray;
     // A position naming no element is answered for out of the element type,
     // which no array in hand states.
@@ -1364,7 +1441,6 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kSharedCellMake:
       return kForCellsMade;
     case RuntimeOp::kFromEntries:
-    case RuntimeOp::kFromEntriesWildcard:
       return kForAssociativeArraysFromEntries;
     case RuntimeOp::kDefault:
       return kForWhatIsBuiltHoldingNothing;
@@ -1493,7 +1569,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kIntegralCaseEqual:
     case support::BuiltinFn::kIntegralBitIdentical:
     case support::BuiltinFn::kIntegralHasUnknown:
-    case support::BuiltinFn::kIntegralIsUnknown:
     case support::BuiltinFn::kIntegralCountBits:
     case support::BuiltinFn::kIntegralResolveTriState:
     case support::BuiltinFn::kIntegralResolveWiredAnd:
@@ -1603,10 +1678,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kScanString:
       return NamedByValue{.realized = kForStrings};
 
-    case support::BuiltinFn::kCaseEqual:
     case support::BuiltinFn::kBitIdentical:
-    case support::BuiltinFn::kHasUnknown:
       return NamedByValue{.realized = kForWhatAnEntryComparesWhole};
+    case support::BuiltinFn::kCaseEqual:
+    case support::BuiltinFn::kHasUnknown:
+      return NamedByValue{.realized = kForWhatAnEntryComparesByOperations};
     case support::BuiltinFn::kBitstreamWidth:
     case support::BuiltinFn::kCountBits:
       return NamedByValue{.realized = kForBitstreams};
@@ -1615,13 +1691,13 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // LRM 11.4.14.4: a run of an array's elements, which an array of the
     // library's own answers and a fixed-size one is told its type for.
     case support::BuiltinFn::kWindowToBitVec:
+      return NamedByValue{.realized = kForSequencesByOperations};
     case support::BuiltinFn::kWithWindow:
       return NamedByValue{.realized = kForSequences};
     // What a value laid out by its type answers -- a structure, a union, a
     // fixed-size array -- which code compiled for the type answers, and
     // nothing the library holds does; an integral value's is its own entry.
     case support::BuiltinFn::kToBitstream:
-    case support::BuiltinFn::kIsUnknown:
     case support::BuiltinFn::kResolveTriState:
     case support::BuiltinFn::kResolveWiredAnd:
     case support::BuiltinFn::kResolveWiredOr:
@@ -1634,7 +1710,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kToBoundFree:
       return NamedByValue{.realized = {}};
     case support::BuiltinFn::kMergeConditional:
-      return NamedByValue{.realized = kForSequences};
+      return NamedByValue{.realized = kForSequencesByOperations};
     // What a structure's declaration states, which the structure's own
     // generated body answers and nothing the library holds does.
     case support::BuiltinFn::kDeclaredDefault:
@@ -1654,7 +1730,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // LRM 6.24.3: a dynamic array or a queue holding as many elements as fill
     // a run of bits, which is told the type of the array it builds.
     case support::BuiltinFn::kFromBitVec:
-      return NamedByResult{.realized = kForDynamicArraysAndQueues};
+      return NamedByResult{.realized = kForDynamicArraysAndQueuesByOperations};
     case support::BuiltinFn::kFromBits:
     case support::BuiltinFn::kFromInt:
       return NamedByResult{.realized = kForReals};
@@ -1688,6 +1764,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // A takeover acts on the cell it covers and carries that cell's value, so
     // the wrapper it is reached through is what names the entry (LRM 10.6).
     case support::BuiltinFn::kBeginTakeover:
+      return NamedByWrapper{.realized = kTakeoversBegun};
     case support::BuiltinFn::kDriveTakeover:
     case support::BuiltinFn::kEndTakeover:
       return NamedByWrapper{.realized = kTakeovers};
