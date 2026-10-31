@@ -3,7 +3,8 @@ name: C++ Tidy (Nightly)
 # clang-tidy re-analyzes every translation unit from scratch, so it does not
 # fit the merge-time budget. It runs on its own schedule instead, and reports
 # rather than gates: the findings are a backlog to pay down, not a wall in
-# front of a merge.
+# front of a merge. A source it could not compile is not a finding, and fails
+# the run.
 on:
   schedule:
     - cron: '0 12 * * *'
@@ -29,34 +30,50 @@ jobs:
         with:
           tools: clang-tidy
 
+      # A source is analyzed as it is compiled, against the headers the build
+      # makes: the C++ library's and generated ones such as LLVM's `.inc`.
+      # Every invocation here, the database's own included, takes the one
+      # configuration the edit loop does, so a later one neither reconfigures
+      # nor drops what an earlier one fetched; and the library's headers are
+      # built as targets of their own, since a build that finds Lyra cached
+      # never visits the action making them.
       - name: Build
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          RBE_FLAGS=""
           if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+            printf 'build --config=dev\nbuild --remote_header=x-buildbuddy-api-key=%s\nbuild --remote_download_regex=.*\\.(h|hpp|inc|def)$\n' \
+              "$BUILDBUDDY_API_KEY" > .bazelrc.user
           fi
-          bazel build //... $RBE_FLAGS
+          bazel build //... \
+            @@llvm++gcc+gcc_13_2_0//:headers_include_search_directory \
+            @@llvm++gcc+gcc_13_2_0//:generated_host_headers_include_search_directory
 
       - name: Generate compile_commands.json
         run: bazel run //:refresh_compile_commands
 
       - name: Run clang-tidy
-        id: tidy
         run: |
           # `-system-headers` is what makes this see our own headers at all:
           # the generated database reaches them through `-isystem include`, so
           # without it every diagnostic in include/lyra/** is dropped as system
           # code whatever `-header-filter` says. `run-clang-tidy` does not
           # forward the flag, so clang-tidy is driven directly.
-          set +e
+          # A source that does not compile makes clang-tidy exit nonzero; the
+          # step after this one reads that from the log instead.
           find src -name '*.cpp' -print0 \
             | xargs -0 -P "$(nproc)" -n 1 clang-tidy -p . -quiet \
                 -header-filter='^.*(src|include)/lyra/.*' \
-                -system-headers > tidy.log 2>&1
-          echo "status=$?" >> "$GITHUB_OUTPUT"
-          set -e
+                -system-headers > tidy.log 2>&1 || true
+
+      # A source clang-tidy could not compile is a source it never analyzed,
+      # and its error would otherwise be counted as one more finding.
+      - name: Check every source was read
+        run: |
+          if grep -E 'error: .*\[clang-diagnostic-error\]' tidy.log; then
+            echo "::error::clang-tidy could not compile the sources above, so it never analyzed them."
+            exit 1
+          fi
 
       - name: Summarize findings
         if: always()

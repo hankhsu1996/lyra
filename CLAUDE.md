@@ -44,10 +44,12 @@ source, so nothing the machine has installed is read, and every program the buil
 libstdc++ inside it (`docs/decisions/a-build-compiles-for-the-oldest-platform-it-supports.md`).
 `--config=gcc` names the remote image's GCC instead, with that image's own library, and runs the
 actions there because that is the only place it exists. Every warning is fatal and each compiler
-warns of things the other does not, so the merge gate builds under both. A test that drives the host
-C++ compiler finds whichever one the machine executing it has on its PATH; the remote image has GCC
-and no clang, so only a test about clang itself, or about clang and GCC side by side, is tagged to
-stay local.
+warns of things the other does not, so the merge gate builds under both; that build is checked only
+for its warnings and is not a Lyra anyone runs, so what it writes is not held to match the pinned
+clang's (`docs/decisions/the-pinned-clang-builds-the-lyra-that-is-run.md`). A test that drives the
+host C++ compiler finds whichever one the machine executing it has on its PATH; the remote image has
+GCC and no clang, so only a test about clang itself, or about clang and GCC side by side, is tagged
+to stay local.
 
 **The runtime library a program links is compiled by the clang of the LLVM release Lyra links,
 whichever compiler builds Lyra**, and one number in `MODULE.bazel` names both; by default that clang
@@ -185,11 +187,6 @@ reads follows `docs/messages.md`.
   clause is what a catch-all switches off, so it takes three rules in
   `tools/policy/check_architecture.py`: A013 for the comparison, A020 for a `default:` arm, and A021
   for a visit arm that names no alternative.
-- **Two operands of one evaluation never both build IR** -- a call's arguments, an operator's
-  operands. C++ leaves their order to the compiler and clang and GCC choose opposite ones, so the
-  nodes would be made in the host compiler's order; bind each to a local first, or build them in a
-  braced initializer. `tools/policy/check_sequencing.py` reads for it
-  (`docs/decisions/what-lyra-writes-is-the-same-whichever-compiler-built-it.md`).
 - **One namespace per directory**; a sub-namespace with no corresponding folder is not one.
 - **ASCII only in source and docs**, enforced by `tools/policy/check_ascii.py`. In markdown,
   backtick underscored SV keywords (`always_comb` and friends) or Prettier mangles them and the

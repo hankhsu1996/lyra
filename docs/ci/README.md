@@ -82,19 +82,18 @@ once, and a run on this machine reserves as many cores as it uses.
 
 Each moment answers a different question, and the answers are not interchangeable.
 
-| Moment     | Question                                | Command                                      |
-| ---------- | --------------------------------------- | -------------------------------------------- |
-| edit loop  | did that edit do what I meant           | one case, or the binary on one file directly |
-| pre-commit | will this land green                    | `bazel test //...`                           |
-| merge gate | is `main` still correct                 | `bazel test //...`                           |
-| merge gate | does it still build optimized           | `bazel build -c opt //...`                   |
-| merge gate | does it still build under GCC           | `bazel build //... --config=gcc`             |
-| nightly    | is the C++ path still correct           | `bazel test //... --config=nightly`          |
-| nightly    | is any of it reading freed bits         | `bazel test //... --config=asan`             |
-| nightly    | how far does a real design get          | `bazel test //tests:external_design_tests`   |
-| nightly    | what does each configuration answer     | `bazel run //conformance/runner:conformance` |
-| nightly    | does GCC's Lyra write what clang's does | `tools/reproducibility/compare_builds.py`    |
-| each merge | how much more work does it make         | `instruction-count.yml`, base against head   |
+| Moment     | Question                            | Command                                      |
+| ---------- | ----------------------------------- | -------------------------------------------- |
+| edit loop  | did that edit do what I meant       | one case, or the binary on one file directly |
+| pre-commit | will this land green                | `bazel test //...`                           |
+| merge gate | is `main` still correct             | `bazel test //...`                           |
+| merge gate | does it still build optimized       | `bazel build -c opt //...`                   |
+| merge gate | does it still build under GCC       | `bazel build //... --config=gcc`             |
+| nightly    | is the C++ path still correct       | `bazel test //... --config=nightly`          |
+| nightly    | is any of it reading freed bits     | `bazel test //... --config=asan`             |
+| nightly    | how far does a real design get      | `bazel test //tests:external_design_tests`   |
+| nightly    | what does each configuration answer | `bazel run //conformance/runner:conformance` |
+| each merge | how much more work does it make     | `instruction-count.yml`, base against head   |
 
 Pre-commit and the merge gate run the same tests, and that is the whole point: a green run before
 committing means "this lands green" only while the two sets are identical. Any change that makes the
@@ -344,22 +343,21 @@ because no case names a path.
 
 ## Gating workflows
 
-Each runs on pull requests, and all but `exception-policy.yml`, `architecture.yml`,
-`runtime-abi.yml` and `construction-order.yml` on push to `main` as well.
+Each runs on pull requests, and all but `exception-policy.yml`, `architecture.yml` and
+`runtime-abi.yml` on push to `main` as well.
 
-| Workflow                 | What it enforces                                                                                       |
-| ------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `bazel-build.yml`        | `bazel build //...` with warnings fatal, then the default set, the same build optimized, and under GCC |
-| `cpp-style.yml`          | `clang-format` over `src include tests`, plus C++ style policy                                         |
-| `bazel-lint.yml`         | `buildifier` formatting and lint warnings                                                              |
-| `md-format.yml`          | Prettier over every markdown file                                                                      |
-| `ascii-policy.yml`       | ASCII-only, on the diff against `origin/main`                                                          |
-| `exception-policy.yml`   | The thrown-type policy, on the same diff                                                               |
-| `architecture.yml`       | Layer boundaries between the IRs and the backends                                                      |
-| `docs-policy.yml`        | The doc claims a machine can settle (paths, links, indexes)                                            |
-| `pinned-sources.yml`     | The front end's pinned commit is on the fork's branch for its release                                  |
-| `runtime-abi.yml`        | Each runtime entry is declared, defined and published alike                                            |
-| `construction-order.yml` | No two operands of one evaluation both build IR, over the sources the change touches                   |
+| Workflow               | What it enforces                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------ |
+| `bazel-build.yml`      | `bazel build //...` with warnings fatal, then the default set, the same build optimized, and under GCC |
+| `cpp-style.yml`        | `clang-format` over `src include tests`, plus C++ style policy                                         |
+| `bazel-lint.yml`       | `buildifier` formatting and lint warnings                                                              |
+| `md-format.yml`        | Prettier over every markdown file                                                                      |
+| `ascii-policy.yml`     | ASCII-only, on the diff against `origin/main`                                                          |
+| `exception-policy.yml` | The thrown-type policy, on the same diff                                                               |
+| `architecture.yml`     | Layer boundaries between the IRs and the backends                                                      |
+| `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)                                            |
+| `pinned-sources.yml`   | The front end's pinned commit is on the fork's branch for its release                                  |
+| `runtime-abi.yml`      | Each runtime entry is declared, defined and published alike                                            |
 
 `bazel-build.yml` runs its two commands as steps of one job rather than as two jobs. The separate
 durations are worth having, but a second runner would not inherit the first's analysis: Bazel holds
@@ -396,7 +394,9 @@ deliberately no non-nightly sibling of any of them. One that gained a sibling wo
 subject at two cadences, which is a reason to reconsider the split rather than to name around it.
 
 `cpp-tidy-nightly.yml` re-analyzes every translation unit from scratch. It **reports rather than
-gates**, so its findings are a backlog to pay down and a red run is not an alarm.
+gates**, so its findings are a backlog to pay down and a red run is not an alarm -- except where a
+source did not compile, which fails the run, since a source clang-tidy could not compile was never
+analyzed and its error would otherwise read as one more finding.
 
 `host-cxx-nightly.yml` runs the `nightly` target. It **gates its own run**: a corpus case that stops
 passing is a regression, and a red nightly is the thing to act on that day. Its actions run on the
@@ -415,10 +415,10 @@ see is an execution the corpus does not reach. Under it the corpus builds every 
 `--sanitize address`, so the job watches what the compiler builds as well as the compiler: about
 half of the lifetime defects so far were in generated code or in the runtime a program drives. The
 compiler's own IR pools are not in that class, since they never move what they hold
-([arena-reference-lifetime](../decisions/arena-reference-lifetime.md)). It runs the set twice, once
-under each compiler that builds Lyra, both under remote execution where the key is set. The two
-evaluate a call's arguments and an operator's operands in opposite orders, which C++ leaves to the
-compiler, so a read in one operand of storage another one frees is reported under one of them only.
+([arena-reference-lifetime](../decisions/arena-reference-lifetime.md)). It runs on the Lyra the
+pinned clang builds, under remote execution where the key is set; GCC builds Lyra only for its
+warnings
+([the-pinned-clang-builds-the-lyra-that-is-run](../decisions/the-pinned-clang-builds-the-lyra-that-is-run.md)).
 
 Three things about it follow from what is instrumented. A program the corpus builds is checked
 because it asks to be, never because the compiler around it is: the runtime library it links is the
@@ -428,17 +428,6 @@ the targets tagged `cost` are left out of its set: each bounds what the compiler
 built, costs as it ships -- time, stack, memory -- which is not what a sanitizer build is. And every
 size's time limit is doubled, since the instrumentation makes each test about twice as slow and
 Bazel's override of the limits is meant for a condition known to be slow.
-
-`host-compiler-nightly.yml` holds Lyra to writing the same thing whichever compiler built it
-([what-lyra-writes-is-the-same-whichever-compiler-built-it](../decisions/what-lyra-writes-is-the-same-whichever-compiler-built-it.md)).
-One job reads every source for two operands of one evaluation that each build IR, which a pull
-request reads only in the sources it changes, so this reaches a header's inline code and a change to
-the reading itself. The other builds Lyra with clang and with GCC and compares what each writes for
-every conformance case, each dump, the emitted project and the linked program, reporting the
-earliest form where they part. Both **gate their own run**: a difference is a defect with a case
-that shows it. The comparison sees what the reading does not model and only what the corpus reaches;
-its time is the corpus's, which is why it is not on a pull request. GCC is the remote image's, so
-with no key the comparison builds nothing and says so.
 
 `external-designs-nightly.yml` runs `external_design_tests`, one job per case, with the compiler
 built optimized. It **gates its own run**: a case that stops somewhere other than where it is

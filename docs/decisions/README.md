@@ -271,12 +271,11 @@ the detail lives in the entry itself.
   dropped silently.
 - [lowering-organization](lowering-organization.md) -- how lowering passes organize their internal
   objects (facts, registries, builders, walk frame).
-- [what-lyra-writes-is-the-same-whichever-compiler-built-it](what-lyra-writes-is-the-same-whichever-compiler-built-it.md)
-  -- two operands of one evaluation C++ leaves unordered never both build IR, so the order nodes,
-  locals and instructions are made in is the source's and not the host compiler's; the source is
-  read for it on every pull request and each night, and Lyra built by clang and by GCC is compared
-  over the corpus each night. Renumbering the IR after the fact and a sequencing framework are
-  rejected.
+- [the-pinned-clang-builds-the-lyra-that-is-run](the-pinned-clang-builds-the-lyra-that-is-run.md) --
+  what Lyra writes is the same on every run of one build, and the build that is run and tested is
+  the pinned clang's; GCC builds Lyra for its warnings, and the order it gives two calls that build
+  IR is not compared. An order a result depends on is written as statements. Holding every
+  compiler's build to the same output, with a source reading and a nightly comparison, is rejected.
 - [a-list-the-source-writes-stands-side-by-side](a-list-the-source-writes-stands-side-by-side.md) --
   a case's items and an operation's operands stand side by side: a switch over the subject's value
   (clang's `SwitchStmt`, rustc's `SwitchInt`) where every label is a value known before the run,
