@@ -20,7 +20,7 @@ class ValueType;
 
 // What a value whose parts are ordered by position -- a fixed-size array, a
 // dynamic array, a queue (LRM 7.4, 7.5, 7.10) -- answers about them, one
-// function each, handed the value's type first as every witness is: how many
+// function each, handed the value's type first: how many
 // it holds, the type they are, and where the one at storage position
 // `position` lies, for reading and as storage a write lands in. What walks a
 // value down to its leaves -- imaging it for a foreign call (LRM H.12),
@@ -52,26 +52,15 @@ struct StatedAt {
   return std::bit_cast<void*>(std::bit_cast<std::uintptr_t>(from) + bytes);
 }
 
-// What code compiled without knowing a type needs of a value of it, one
-// function each: the storage's own lifecycle, the operations the language
-// defines on the whole value (LRM 11.4.5, 20.6.2, 20.9, 6.24.3, 6.6.1,
-// 28.12.1) and those a container's algorithms ask of an element or of what a
-// `with` clause answers (LRM 7.8, 7.12, 12.4), and the parts the value holds
-// by position, where it holds any. Each function is the type's witness for one
-// operation, Swift's word for the function showing that a type has it, and is
-// handed the type first, as Swift hands each value witness the type's
-// metadata, so one table serves every type whose functions read the rest off
-// the type.
-//
-// The table is this declaration, which generated code and the library both
-// read: generated code states one for each type it compiles the operations
-// of, placing each function where this record lays it out.
-//
-// Every value is passed as its address. Copying and moving build in `out` a
-// value the source still has to end; `assign` writes into a value already
-// there, which goes on being that value. An operation answering a value builds
-// it in `out`. One the language does not define for the type is never asked of
-// it, since the front end rejects the program asking.
+struct ValueOperations;
+
+// What the language's operations on a whole value of a type the library was
+// compiled without do, one function each, which a container's algorithms ask
+// of an element or of what a `with` clause answers (LRM 7.8, 7.12, 12.4): an
+// equality, a case equality, whether any position holds x or z, and the
+// value's stream of bits (LRM 11.4.5, 20.6.2, 20.9, 6.24.3). Each is handed
+// the operations it belongs to first, which say the type it acts on and, for a
+// container, its element's operations.
 //
 // An integral answer is built as the bytes of its type where the language fixes
 // that type -- a width's and a count's `int`. An equality answers its 0, 1 or
@@ -79,31 +68,18 @@ struct StatedAt {
 // whether it holds; whoever knows the type the comparison has holds either as
 // a value of it. A stream of bits is an integral value, which a value writes
 // its own bits into and is read back out of (LRM 6.24.3), and the control bits
-// a count is told of are one too. A fill is the bytes of a `logic`.
-struct ValueWitnessTable {
-  void (*copy)(const ValueType& type, const void* value, void* out);
-  void (*move)(const ValueType& type, void* value, void* out) noexcept;
-  void (*destroy)(const ValueType& type, void* value) noexcept;
-  void (*assign)(const ValueType& type, void* storage, const void* value);
-
+// a count is told of are one too.
+struct OperationFunctions {
   FourStateBit (*equal)(
-      const ValueType& type, const void* lhs, const void* rhs);
-  bool (*case_equal)(const ValueType& type, const void* lhs, const void* rhs);
-  bool (*bit_identical)(
-      const ValueType& type, const void* lhs, const void* rhs);
-  bool (*has_unknown)(const ValueType& type, const void* value);
+      const ValueOperations& self, const void* lhs, const void* rhs);
+  bool (*case_equal)(
+      const ValueOperations& self, const void* lhs, const void* rhs);
+  bool (*has_unknown)(const ValueOperations& self, const void* value);
 
-  // The value storage of the type holds before anything writes it, which the
-  // type alone fixes: a singular type's default (LRM 6.4, Table 6-7), an empty
-  // container, and an aggregate's parts each at what its own type builds. What
-  // a declaration states of its members (LRM 7.2.2) is written by its
-  // initialization after this. A union holds its first member at what that
-  // member's type builds, every other byte zero (LRM 7.3).
-  void (*build_default)(const ValueType& type, void* out);
-
-  void (*bitstream_width)(const ValueType& type, const void* value, void* out);
+  void (*bitstream_width)(
+      const ValueOperations& self, const void* value, void* out);
   void (*count_bits)(
-      const ValueType& type, const void* value,
+      const ValueOperations& self, const void* value,
       const ConstIntegralView& control_bits, void* out);
   // The value's bits written into a stream below its `filled` most
   // significant positions, and the value of this type the stream holds below
@@ -116,35 +92,47 @@ struct ValueWitnessTable {
   // 11.4.14.4). Each answers how many positions are filled, or taken, after
   // it.
   std::uint64_t (*write_to_stream)(
-      const ValueType& type, const void* value, const IntegralView& stream,
-      std::uint64_t filled);
+      const ValueOperations& self, const void* value,
+      const IntegralView& stream, std::uint64_t filled);
   std::uint64_t (*read_from_stream)(
-      const ValueType& type, const ConstIntegralView& stream,
+      const ValueOperations& self, const ConstIntegralView& stream,
       std::uint64_t taken, std::uint64_t until, void* out);
+};
 
-  void (*resolve_tri_state)(
-      const ValueType& type, const void* lhs, const void* rhs, void* out);
-  void (*resolve_wired_and)(
-      const ValueType& type, const void* lhs, const void* rhs, void* out);
-  void (*resolve_wired_or)(
-      const ValueType& type, const void* lhs, const void* rhs, void* out);
-  void (*dominating)(
-      const ValueType& type, const void* stronger, const void* weaker,
-      void* out);
-  void (*filled_like)(
-      const ValueType& type, const void* prototype, const void* fill,
-      void* out);
-  // `into` with the `count` positions from `first` taken from `from`, which
-  // a procedural continuous assignment holding them shows there (LRM 10.6.2):
-  // an integral value's bits, an aggregate's parts' positions one part after
-  // another, and the one position of any other value, held whole. The two
-  // numbers are machine integers, passed by address as every operand is.
-  void (*take_positions)(
-      const ValueType& type, const void* into, const void* from,
-      const std::int64_t* first, const std::int64_t* count, void* out);
+// The operations of one type, which an operation comparing or streaming values
+// of it is handed: the functions, which a library kind states once for every
+// type of it, and what they act on -- the type, and a container's element's
+// operations, as Swift instantiates a conditional conformance's witness table
+// with its arguments' tables. So generated code states only data for a type of
+// a library kind, a container of any depth included.
+struct ValueOperations {
+  const OperationFunctions* functions;
+  const ValueType* type;
+  const ValueOperations* element;
+};
 
-  // The order an associative array keeps its indices in (LRM 7.8.2, 7.8.4).
-  bool (*order_before)(const ValueType& type, const void* lhs, const void* rhs);
+// What code compiled without knowing a type needs of a value of it wherever it
+// holds one, one function each: the storage's own lifecycle, and whether a
+// value written over another changed it (LRM 9.4.2), since any variable may
+// be waited on. Each function is the type's witness for one operation,
+// Swift's word for the function showing that a type has it, and is handed the
+// type first, as Swift hands each value witness the type's metadata, so one
+// table serves every type whose functions read the rest off the type.
+//
+// The table is this declaration, which generated code and the library both
+// read: generated code states one for each type it compiles the operations
+// of, placing each function where this record lays it out.
+//
+// Every value is passed as its address. Copying and moving build in `out` a
+// value the source still has to end; `assign` writes into a value already
+// there, which goes on being that value.
+struct ValueWitnessTable {
+  void (*copy)(const ValueType& type, const void* value, void* out);
+  void (*move)(const ValueType& type, void* value, void* out) noexcept;
+  void (*destroy)(const ValueType& type, void* value) noexcept;
+  void (*assign)(const ValueType& type, void* storage, const void* value);
+  bool (*bit_identical)(
+      const ValueType& type, const void* lhs, const void* rhs);
 
   // What a value of the type answers about its parts, where they are ordered
   // by position, and nothing for a type whose parts are not.
@@ -157,32 +145,60 @@ struct ValueWitnessTable {
 // table it states.
 [[noreturn]] void LacksOperation();
 
-// The table of the witnesses `W` states: a static member for each entry, a
-// function or a lambda taking and answering what the entry does, and
-// `W::kParts` for its parts. Every table the library states is made this way,
-// so a witness is written once and the table only lists them.
+// How a net whose data type the library was compiled without resolves what
+// drives it (LRM 6.6, 6.7.1, 28.12.1), one function each, handed the type
+// first: the fold of two contributions under each truth
+// table, what a stronger contribution leaves a weaker one, and a value of the
+// prototype's shape with every bit at a scalar fill, `fill` being the bytes
+// of a `logic`. Each answers in `out`. Only a net asks these, so the net is
+// built holding the table.
+struct NetFoldTable {
+  void (*tri_state)(
+      const ValueType& type, const void* lhs, const void* rhs, void* out);
+  void (*wired_and)(
+      const ValueType& type, const void* lhs, const void* rhs, void* out);
+  void (*wired_or)(
+      const ValueType& type, const void* lhs, const void* rhs, void* out);
+  void (*dominating)(
+      const ValueType& type, const void* stronger, const void* weaker,
+      void* out);
+  void (*filled_like)(
+      const ValueType& type, const void* prototype, const void* fill,
+      void* out);
+};
+
+// `into` with the `count` positions from `first` taken from `from`, a value of
+// `type`, which a procedural continuous assignment holding them shows there
+// (LRM 10.6.2): an integral value's bits, an aggregate's parts' positions one
+// part after another, and the one position of any other value, held whole. The
+// two numbers are machine integers, passed by address as every operand is.
+// Only a takeover asks it, so a takeover is handed it where it begins.
+using TakePositionsWitness = void (*)(
+    const ValueType& type, const void* into, const void* from,
+    const std::int64_t* first, const std::int64_t* count, void* out);
+
+// The tables of the witnesses `W` states: a static member for each entry, a
+// function or a lambda taking and answering what the entry does, and, for a
+// type's table, `W::kParts` for its parts. Every such table the library states
+// for its own kinds is made this way, so a witness is written once and a table
+// only lists them.
+template <typename W>
+inline constexpr OperationFunctions kOperationFunctionsFor{
+    .equal = W::Equal,
+    .case_equal = W::CaseEqual,
+    .has_unknown = W::HasUnknown,
+    .bitstream_width = W::BitstreamWidth,
+    .count_bits = W::CountBits,
+    .write_to_stream = W::WriteToStream,
+    .read_from_stream = W::ReadFromStream};
+
 template <typename W>
 inline constexpr ValueWitnessTable kValueWitnessTableFor{
     .copy = W::Copy,
     .move = W::Move,
     .destroy = W::Destroy,
     .assign = W::Assign,
-    .equal = W::Equal,
-    .case_equal = W::CaseEqual,
     .bit_identical = W::BitIdentical,
-    .has_unknown = W::HasUnknown,
-    .build_default = W::BuildDefault,
-    .bitstream_width = W::BitstreamWidth,
-    .count_bits = W::CountBits,
-    .write_to_stream = W::WriteToStream,
-    .read_from_stream = W::ReadFromStream,
-    .resolve_tri_state = W::ResolveTriState,
-    .resolve_wired_and = W::ResolveWiredAnd,
-    .resolve_wired_or = W::ResolveWiredOr,
-    .dominating = W::Dominating,
-    .filled_like = W::FilledLike,
-    .take_positions = W::TakePositions,
-    .order_before = W::OrderBefore,
     .parts = W::kParts};
 
 // Which of the records the library reads a type through this one opens, where
@@ -247,68 +263,9 @@ class ValueType {
     witnesses_->assign(*this, storage, value);
   }
 
-  [[nodiscard]] auto Equal(const void* lhs, const void* rhs) const
-      -> FourStateBit {
-    return witnesses_->equal(*this, lhs, rhs);
-  }
-  [[nodiscard]] auto CaseEqual(const void* lhs, const void* rhs) const -> bool {
-    return witnesses_->case_equal(*this, lhs, rhs);
-  }
   [[nodiscard]] auto BitIdentical(const void* lhs, const void* rhs) const
       -> bool {
     return witnesses_->bit_identical(*this, lhs, rhs);
-  }
-  [[nodiscard]] auto HasUnknown(const void* value) const -> bool {
-    return witnesses_->has_unknown(*this, value);
-  }
-
-  void BuildDefault(void* out) const {
-    witnesses_->build_default(*this, out);
-  }
-
-  void BitstreamWidth(const void* value, void* out) const {
-    witnesses_->bitstream_width(*this, value, out);
-  }
-  void CountBits(
-      const void* value, const ConstIntegralView& control_bits,
-      void* out) const {
-    witnesses_->count_bits(*this, value, control_bits, out);
-  }
-  auto WriteToStream(
-      const void* value, const IntegralView& stream, std::uint64_t filled) const
-      -> std::uint64_t {
-    return witnesses_->write_to_stream(*this, value, stream, filled);
-  }
-  auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until,
-      void* out) const -> std::uint64_t {
-    return witnesses_->read_from_stream(*this, stream, taken, until, out);
-  }
-
-  void ResolveTriState(const void* lhs, const void* rhs, void* out) const {
-    witnesses_->resolve_tri_state(*this, lhs, rhs, out);
-  }
-  void ResolveWiredAnd(const void* lhs, const void* rhs, void* out) const {
-    witnesses_->resolve_wired_and(*this, lhs, rhs, out);
-  }
-  void ResolveWiredOr(const void* lhs, const void* rhs, void* out) const {
-    witnesses_->resolve_wired_or(*this, lhs, rhs, out);
-  }
-  void Dominating(const void* stronger, const void* weaker, void* out) const {
-    witnesses_->dominating(*this, stronger, weaker, out);
-  }
-  void FilledLike(const void* prototype, const void* fill, void* out) const {
-    witnesses_->filled_like(*this, prototype, fill, out);
-  }
-  void TakePositions(
-      const void* into, const void* from, std::int64_t first,
-      std::int64_t count, void* out) const {
-    witnesses_->take_positions(*this, into, from, &first, &count, out);
-  }
-
-  [[nodiscard]] auto OrderBefore(const void* lhs, const void* rhs) const
-      -> bool {
-    return witnesses_->order_before(*this, lhs, rhs);
   }
 
   // Whether a value of the type holds parts ordered by position, which a walk
@@ -388,7 +345,10 @@ class ValueType {
 };
 
 static_assert(std::is_standard_layout_v<PartsWitnessTable>);
+static_assert(std::is_standard_layout_v<OperationFunctions>);
+static_assert(std::is_standard_layout_v<ValueOperations>);
 static_assert(std::is_standard_layout_v<ValueWitnessTable>);
+static_assert(std::is_standard_layout_v<NetFoldTable>);
 static_assert(std::is_standard_layout_v<ValueType>);
 
 // A value the library holds of a type it was compiled without and is handed as

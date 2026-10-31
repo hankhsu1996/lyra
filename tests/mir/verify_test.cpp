@@ -1380,8 +1380,8 @@ TEST(MirVerifyTest, ACastReadsAValueAsATypeEveryTargetConvertsItTo) {
 }
 
 // A unit states operations only for a type it states them for per unit, and a
-// default for each type an array of it holds, each once, and a call names one
-// only where the unit states it.
+// default for each type an array of it holds, and may for a tuple, each once,
+// and a call names one only where the unit states it.
 TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
   const auto calling_the_default = [](bool stated) {
     return UnitWithBody([stated](CompilationUnit& u, Block& body) {
@@ -1413,14 +1413,14 @@ TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
   ExpectRefused(
       calling_the_default(false), "which its unit states no body for");
 
-  // A type no array holds has no default stated, and an element type whose
-  // other operations are the library's has no other.
+  // A type no array holds and no tuple has no default stated, and an element
+  // type whose other operations are the library's has no other.
   CompilationUnit unasked = calling_the_default(true);
   unasked.type_operations.push_back(DefaultOf(unasked.builtins.string));
   ExpectRefused(
       unasked,
       "an operation is stated for a type whose operations are not stated per "
-      "unit, or a default for a type no array holds");
+      "unit, or a default for a type that states none");
   CompilationUnit compared = calling_the_default(true);
   TypeOperation equality = DefaultOf(compared.builtins.int_type);
   equality.answers = support::ValueOperator::kEquality;
@@ -1428,7 +1428,7 @@ TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
   ExpectRefused(
       compared,
       "an operation is stated for a type whose operations are not stated per "
-      "unit, or a default for a type no array holds");
+      "unit, or a default for a type that states none");
 
   CompilationUnit unanswered = calling_the_default(true);
   std::erase_if(unanswered.type_operations, [&](const TypeOperation& stated) {
@@ -1436,6 +1436,26 @@ TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
   });
   ExpectRefused(
       unanswered, "the element type of an array has no default stated");
+
+  // A tuple has no declaration to state its default, so the unit may state
+  // one for it and need not -- unless an array holds it, which asks for its
+  // element's default as for any other.
+  CompilationUnit tupled = calling_the_default(true);
+  const TypeId tuple = tupled.types.Intern(
+      Type{TupleType{
+          .elements = {tupled.builtins.int_type, tupled.builtins.string}}});
+  EXPECT_NO_THROW(Verify(tupled));
+  tupled.type_operations.push_back(DefaultOf(tuple));
+  EXPECT_NO_THROW(Verify(tupled));
+  CompilationUnit held_tuple = calling_the_default(true);
+  const TypeId held = held_tuple.types.Intern(
+      Type{TupleType{
+          .elements = {
+              held_tuple.builtins.int_type, held_tuple.builtins.string}}});
+  held_tuple.types.Intern(
+      Type{QueueType{.element_type = held, .max_bound = std::nullopt}});
+  ExpectRefused(
+      held_tuple, "the element type of an array has no default stated");
 
   CompilationUnit twice = calling_the_default(true);
   twice.type_operations.push_back(

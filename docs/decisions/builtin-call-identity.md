@@ -204,13 +204,15 @@ X is the backend's chosen shape. The reasoning:
   backend never feeds LLVM, so it has no LLVM alignment to satisfy. Picking the unidiomatic C++ form
   for an alignment that does not exist trades emit readability for nothing.
 
-### kIsUnknown
+### `$isunknown`
 
-The MIR result type of `kIsUnknown` is a 1-bit `PackedArray` (the SV `$isunknown` shape, LRM 20.9 /
-21.3.4.3). The runtime exposes `PackedArray::IsUnknown() const -> PackedArray` returning that 1-bit,
-2-state value directly; the host-`bool` `HasUnknown()` stays as the internal X-check the operator
-implementations use, but is not what the backend names. The render emits `(x).IsUnknown()` uniformly
-with every other instance-form builtin -- no host-to-SV bridge step.
+`$isunknown` answers a `bit` that is 1 where the value holds an x or z bit (LRM 20.9), which is the
+question every value already answers as a machine boolean, since a write asks it too. MIR states it
+at the call as that answer taken into a `bit`, so the one entry per kind of value is the boolean
+question, and no library type or backend states the bit form again. Revised 2026-10-30: a method
+answering the bit directly was stated per library type beside the boolean one, and the execution
+backend had realized it only for values laid out by their type, so a dynamically sized array's
+`$isunknown` failed there.
 
 ### Where an entry's properties live
 

@@ -20,23 +20,33 @@
 
 namespace lyra::value {
 
-// LRM 7.8: the index type is what imposes the order the entries are held in.
-// For every declared index type that order is its type's own. A wildcard index
-// (LRM 7.8.1) is the one whose type cannot say it: the clause makes an index
-// self-determined and unsigned and admits the same numerical value at any
-// width, so what two indices mean to each other is fixed by the declaration
-// and is absent from both of them.
-enum class AssociativeIndexOrder : std::uint8_t {
-  kIndexValueDomain,
-  kWildcardNumeric,
-};
-
 // An index the program names, where it lies, with its type: what a lookup is
 // handed, which reads the index and keeps nothing of it.
 struct IndexView {
   const void* bytes;
   const ValueType* type;
 };
+
+// LRM 7.8: the index type imposes the order the entries are held in (LRM
+// 7.8.2 -- 7.8.4), which indices name no entry, one carrying x or z (LRM
+// 7.8.6). The array is built holding it, since nothing but the array asks it.
+// A wildcard index (LRM 7.8.1) has an order of its own too: the clause makes
+// an index self-determined and unsigned and admits one numerical value at any
+// width, so each index is read with the type it was written in.
+struct IndexOrder {
+  bool (*before)(IndexView lhs, IndexView rhs);
+  bool (*names_no_entry)(IndexView index);
+};
+
+// The order of each kind of index the language admits, which generated code
+// names by symbol where it builds an array indexed by one.
+extern "C" {
+extern const IndexOrder lyra_rt_integral_index_order;
+extern const IndexOrder lyra_rt_string_index_order;
+extern const IndexOrder lyra_rt_chandle_index_order;
+extern const IndexOrder lyra_rt_managedref_index_order;
+extern const IndexOrder lyra_rt_wildcard_index_index_order;
+}
 
 // The index of an associative array the library holds: each key is a value of
 // its own, held with its type, in the order the declaration imposes. A lookup
@@ -49,8 +59,10 @@ struct WitnessedKey {
   struct Less {
     using is_transparent = void;
 
-    AssociativeIndexOrder order;
-    [[nodiscard]] auto operator()(IndexView a, IndexView b) const -> bool;
+    const IndexOrder* order;
+    [[nodiscard]] auto operator()(IndexView a, IndexView b) const -> bool {
+      return order->before(a, b);
+    }
     [[nodiscard]] auto operator()(const AnyValue& a, const AnyValue& b) const
         -> bool {
       return (*this)(ViewOf(a), ViewOf(b));
@@ -65,14 +77,14 @@ struct WitnessedKey {
     }
   };
 
-  AssociativeIndexOrder order = AssociativeIndexOrder::kIndexValueDomain;
+  const IndexOrder* order = nullptr;
 
   [[nodiscard]] auto Order() const -> Less {
     return Less{.order = order};
   }
   // LRM 7.8.6: an index carrying x or z names no entry.
-  [[nodiscard]] static auto Invalid(IndexView key) -> bool {
-    return key.type->HasUnknown(key.bytes);
+  [[nodiscard]] auto Invalid(IndexView key) const -> bool {
+    return order->names_no_entry(key);
   }
   [[nodiscard]] static auto Owned(IndexView key) -> AnyValue {
     return AnyValue::CopyOf(*key.type, key.bytes);
@@ -96,7 +108,7 @@ class RuntimeAssociativeArray {
   // An empty array of `element`, whose absent keys read the element type's
   // default (LRM 7.8.6).
   RuntimeAssociativeArray(
-      AssociativeIndexOrder index_order, const value::ElementType& element);
+      const value::IndexOrder& index_order, const value::ElementType& element);
 
   RuntimeAssociativeArray(const RuntimeAssociativeArray&);
   RuntimeAssociativeArray(RuntimeAssociativeArray&&) noexcept;
@@ -105,7 +117,6 @@ class RuntimeAssociativeArray {
       -> RuntimeAssociativeArray&;
   ~RuntimeAssociativeArray();
 
-  [[nodiscard]] auto IndexOrder() const -> AssociativeIndexOrder;
   // The element type the array was built from, which an array built out of
   // this one's elements is built from in turn.
   [[nodiscard]] auto ElementType() const -> const value::ElementType&;
@@ -159,25 +170,30 @@ class RuntimeAssociativeArray {
   [[nodiscard]] auto Entries() const
       -> std::vector<std::pair<const AnyValue*, const void*>>;
 
-  [[nodiscard]] auto operator==(const RuntimeAssociativeArray& other) const
-      -> FourStateBit;
-  [[nodiscard]] auto operator!=(const RuntimeAssociativeArray& other) const
-      -> FourStateBit;
-  [[nodiscard]] auto CaseEqual(const RuntimeAssociativeArray& other) const
-      -> Bit;
+  // The language's operations on the whole array (LRM 11.4.5, 20.9, 20.6.2,
+  // 6.24.3), each comparing or streaming an element by `element`, the
+  // operations of the element type.
+  [[nodiscard]] auto Equal(
+      const RuntimeAssociativeArray& other,
+      const ValueOperations& element) const -> FourStateBit;
+  [[nodiscard]] auto CaseEqual(
+      const RuntimeAssociativeArray& other,
+      const ValueOperations& element) const -> Bit;
   [[nodiscard]] auto IsBitIdentical(const RuntimeAssociativeArray& other) const
       -> bool;
-  [[nodiscard]] auto HasUnknown() const -> bool;
-  [[nodiscard]] auto IsUnknown() const -> Bit;
-  [[nodiscard]] auto BitstreamWidth() const -> Int;
+  [[nodiscard]] auto HasUnknown(const ValueOperations& element) const -> bool;
+  [[nodiscard]] auto BitstreamWidth(const ValueOperations& element) const
+      -> Int;
   // LRM 6.24.3: the elements written below the `filled` most significant
   // positions of `stream`, the lowest index first, and as a run of bits of
   // their own.
   [[nodiscard]] auto WriteToStream(
-      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t;
-  [[nodiscard]] auto ToBitVec() const -> BitVec;
-  [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
-      -> Int;
+      const IntegralView& stream, std::uint64_t filled,
+      const ValueOperations& element) const -> std::uint64_t;
+  [[nodiscard]] auto ToBitVec(const ValueOperations& element) const -> BitVec;
+  [[nodiscard]] auto CountBits(
+      const ConstIntegralView& control_bits,
+      const ValueOperations& element) const -> Int;
 
  private:
   using Core = BasicAssociativeArray<WitnessedKey, WitnessedElem>;
@@ -192,8 +208,6 @@ class RuntimeAssociativeArray {
 };
 
 static_assert(LyraValue<RuntimeAssociativeArray>);
-static_assert(CaseEqualComparable<RuntimeAssociativeArray>);
 static_assert(Sized<RuntimeAssociativeArray>);
-static_assert(BitstreamSizable<RuntimeAssociativeArray, ConstIntegralView>);
 
 }  // namespace lyra::value

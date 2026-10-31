@@ -49,8 +49,6 @@ auto WordsFor(std::uint64_t width) -> std::size_t {
   return static_cast<std::size_t>((width + 63) / 64);
 }
 
-// The bits of a value of `type` at `value`, an unknown bit read as zero
-// (LRM 18.3: constraints are two-state).
 // Each member of `members` as its bits, low bit first, in declared order; none
 // for a member holding x or z, which no constraint gives a variable (LRM
 // 18.3).
@@ -73,13 +71,25 @@ auto MemberBits(const value::Enumeration& members)
   return out;
 }
 
+// The operations of the integral type `type`, which a random variable is.
+auto IntegralOperationsOf(const value::ValueType& type)
+    -> value::ValueOperations {
+  return {
+      .functions = &value::lyra_rt_integral_operation_functions,
+      .type = &type,
+      .element = nullptr};
+}
+
+// The bits of a value of `type` at `value`, an unknown bit read as zero
+// (LRM 18.3: constraints are two-state).
 auto BitsOf(const void* value, const value::ValueType& type)
     -> std::vector<bool> {
   const std::uint64_t width = WidthOf(type);
   std::vector<std::uint64_t> words(WordsFor(width), 0);
   std::vector<std::uint64_t> unknown(WordsFor(width), 0);
-  type.WriteToStream(
-      value,
+  const value::ValueOperations operations = IntegralOperationsOf(type);
+  operations.functions->write_to_stream(
+      operations, value,
       value::IntegralView{.value = words, .unknown = unknown, .width = width},
       0);
   std::vector<bool> bits(width);
@@ -141,7 +151,9 @@ void WriteBits(
     }
   }
   Scratch value(type);
-  type.ReadFromStream(
+  const value::ValueOperations operations = IntegralOperationsOf(type);
+  operations.functions->read_from_stream(
+      operations,
       value::ConstIntegralView{.value = words, .unknown = {}, .width = width},
       0, width, value.Address());
   value.MarkBuilt();

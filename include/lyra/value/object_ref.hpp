@@ -83,10 +83,6 @@ class ObjectRef {
     return ManagedRef::HasUnknown();
   }
 
-  [[nodiscard]] static auto IsUnknown() -> Bit {
-    return ManagedRef::IsUnknown();
-  }
-
   // LRM 6.24.3 streams a class object as its members, which is not carried out
   // yet; the execution backend answers a handle the same way. A structure with
   // a handle member asks these only where the program measures it.

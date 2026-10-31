@@ -222,13 +222,13 @@ auto OwnOperationCall(
 constexpr std::array kWholeValueEntries{
     support::BuiltinFn::kDeclaredDefault, support::BuiltinFn::kCaseEqual,
     support::BuiltinFn::kBitIdentical,    support::BuiltinFn::kHasUnknown,
-    support::BuiltinFn::kIsUnknown,       support::BuiltinFn::kBitstreamWidth,
-    support::BuiltinFn::kCountBits,       support::BuiltinFn::kToBitstream,
-    support::BuiltinFn::kFromBitstream,   support::BuiltinFn::kToBitVec,
-    support::BuiltinFn::kFromBitVec,      support::BuiltinFn::kResolveTriState,
-    support::BuiltinFn::kResolveWiredAnd, support::BuiltinFn::kResolveWiredOr,
-    support::BuiltinFn::kDominating,      support::BuiltinFn::kFilledLike,
-    support::BuiltinFn::kPositionCount,   support::BuiltinFn::kTakePositions,
+    support::BuiltinFn::kBitstreamWidth,  support::BuiltinFn::kCountBits,
+    support::BuiltinFn::kToBitstream,     support::BuiltinFn::kFromBitstream,
+    support::BuiltinFn::kToBitVec,        support::BuiltinFn::kFromBitVec,
+    support::BuiltinFn::kResolveTriState, support::BuiltinFn::kResolveWiredAnd,
+    support::BuiltinFn::kResolveWiredOr,  support::BuiltinFn::kDominating,
+    support::BuiltinFn::kFilledLike,      support::BuiltinFn::kPositionCount,
+    support::BuiltinFn::kTakePositions,
 };
 
 // The body answering `answers` for a value of `type`, where the type answers
@@ -536,22 +536,6 @@ class OperationBodies {
             .value_words = {holds ? 1U : 0U}, .state_words = {}});
   }
 
-  // LRM 20.9: `$isunknown` is the bit whether a value holds an unknown answers.
-  auto IsUnknown() -> mir::CallableCode {
-    const mir::TypeId bit = Unit().builtins.bit1;
-    return Body(
-        support::BuiltinFn::kIsUnknown, {whole_}, bit,
-        [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-          const mir::ExprId holds_unknown =
-              Own(block, support::BuiltinFn::kHasUnknown, Whole(block, p[0]),
-                  {}, Unit().builtins.machine_bool);
-          return block.exprs.Add(
-              mir::MakeBuiltinCall(
-                  Unit(), block, support::BuiltinFn::kFromBool, std::nullopt,
-                  {holds_unknown}, bit));
-        });
-  }
-
   // LRM 11.4.5: `!=` is the negation of `==`, unknown where that is.
   auto Inequality() -> mir::CallableCode {
     const mir::TypeId answer_type = equality_answer_;
@@ -750,7 +734,6 @@ class StructBodies : public OperationBodies {
   auto PositionCount() -> mir::CallableCode;
   auto TakePositions() -> mir::CallableCode;
   using OperationBodies::Inequality;
-  using OperationBodies::IsUnknown;
 
  private:
   // The stream this struct makes, which every method over one has.
@@ -1147,7 +1130,6 @@ class UnionBodies : public OperationBodies {
     return PositionsTakenWhole();
   }
   using OperationBodies::Inequality;
-  using OperationBodies::IsUnknown;
 
  private:
   // Member `i` of the union the parameter `local` refers to, read as its type
@@ -1328,7 +1310,6 @@ class TaggedUnionBodies : public OperationBodies {
     return PositionsTakenWhole();
   }
   using OperationBodies::Inequality;
-  using OperationBodies::IsUnknown;
 
  private:
   // What `held(taken, i)` answers where every one of the values `locals`
@@ -1512,7 +1493,6 @@ class ArrayBodies : public OperationBodies {
   auto TakePositions() -> mir::CallableCode;
   using OperationBodies::DeclaredDefault;
   using OperationBodies::Inequality;
-  using OperationBodies::IsUnknown;
 
  private:
   [[nodiscard]] auto ElementType() const -> mir::TypeId {
@@ -2014,7 +1994,6 @@ void StateWholeValue(Bodies& bodies, Add add) {
   add(support::BuiltinFn::kCaseEqual, bodies.CaseEqual());
   add(support::BuiltinFn::kBitIdentical, bodies.BitIdentical());
   add(support::BuiltinFn::kHasUnknown, bodies.HasUnknown());
-  add(support::BuiltinFn::kIsUnknown, bodies.IsUnknown());
   add(support::BuiltinFn::kTakePositions, bodies.TakePositions());
 }
 
@@ -2326,9 +2305,10 @@ auto BuildCaseComparison(
 auto BuildUnknownTest(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
     -> mir::ExprId {
-  return BuildValueOperation(
-      unit, block, support::BuiltinFn::kIsUnknown, value, {},
-      unit.builtins.bit1);
+  return block.exprs.Add(
+      mir::MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kFromBool, std::nullopt,
+          {BuildHasUnknown(unit, block, value)}, unit.builtins.bit1));
 }
 
 auto BuildBitCount(

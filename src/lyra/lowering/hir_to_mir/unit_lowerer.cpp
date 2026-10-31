@@ -5,12 +5,14 @@
 #include <cstdint>
 #include <deque>
 #include <expected>
+#include <format>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -60,6 +62,7 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/dump.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -967,26 +970,49 @@ void UnitLowerer::PublishTypeOperations() {
       }
     }
   }
-  // An element type whose operations the unit states has its default among
-  // them; every other is given one here.
+  // A type whose operations the unit states has its default among them; every
+  // other array element type is given one here, and every tuple where each of
+  // its components has one. Building one can intern a type that needs one too
+  // -- a tuple a default is built of -- so this runs until a pass interns
+  // nothing, having visited every type there is.
   const support::ValueOperation default_value =
       support::BuiltinFn::kDeclaredDefault;
-  for (const mir::TypeId element : mir::ArrayElementTypes(unit_.types)) {
-    if (mir::FindTypeOperation(unit_, element, default_value) != nullptr) {
-      continue;
+  std::size_t visited = 0;
+  while (visited != unit_.types.size()) {
+    visited = unit_.types.size();
+    std::vector<bool> is_element(visited, false);
+    for (const mir::TypeId element : mir::ArrayElementTypes(unit_.types)) {
+      is_element[element.value] = true;
     }
-    mir::CallableCode code = mir::CallableCode::Defined();
-    code.result_type = element;
-    mir::Block& block = code.Body();
-    block.AppendStmt(
-        mir::ReturnStmt{
-            .value =
-                block.exprs.Add(BuildDefaultValueExpr(unit_, block, element))});
-    unit_.type_operations.push_back(
-        mir::TypeOperation{
-            .type = element,
-            .answers = default_value,
-            .code = std::move(code)});
+    // A type a default interns is visited by the next pass.
+    for (const mir::TypeId type : unit_.types.Ids()) {
+      const bool element = is_element[type.value];
+      if ((!element && !unit_.types.Get(type).Is<mir::TupleType>()) ||
+          mir::FindTypeOperation(unit_, type, default_value) != nullptr) {
+        continue;
+      }
+      mir::CallableCode code = mir::CallableCode::Defined();
+      code.result_type = type;
+      mir::Block& block = code.Body();
+      std::expected<mir::Expr, std::string_view> built =
+          DefaultValueOf(unit_, block, type);
+      if (!built) {
+        if (!element) {
+          continue;
+        }
+        throw InternalError(
+            std::format(
+                "UnitLowerer::PublishTypeOperations: an array holds {}, which "
+                "has no default, since it holds {} -- please report this as a "
+                "bug",
+                mir::DumpType(unit_, type), built.error()));
+      }
+      block.AppendStmt(
+          mir::ReturnStmt{.value = block.exprs.Add(*std::move(built))});
+      unit_.type_operations.push_back(
+          mir::TypeOperation{
+              .type = type, .answers = default_value, .code = std::move(code)});
+    }
   }
 }
 

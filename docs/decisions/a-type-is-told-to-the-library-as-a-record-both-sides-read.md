@@ -3,7 +3,8 @@
 Date: 2026-10-16 Status: accepted. Revises the form of the table in
 [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) and of the type constant in
 [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) D4; where the
-table is told and what fills it are unchanged.
+table is told and what fills it are unchanged. Revised 2026-10-30: D2 narrows the table to what
+every holder of a value asks, and D4 and D5 say where the rest goes.
 
 ## Context
 
@@ -34,17 +35,42 @@ of its own -- a tuple type's components, a fixed-size array type's count and ele
 integral type's shape -- opens with it, so the type's address is the record's. The code generator
 places each field at the offset the declaration gives it.
 
-**D2. The table is a record of function pointers, one per operation, each handed the type first.**
-The library calls through it from ordinary member functions of the type, so code asking a type for
-an operation is unchanged. What a value answers about its parts by position is a second such record
-the table points to, of the same form. One table serves every type whose functions read the rest off
-the type, so every integral type answers through the library's one and the parts of any fixed-size
-array through the library's one, each named by a plain symbol. An operation the language does not
-define for a type is held by the library's entry failing it, the same failure the library's own
-kinds give.
+**D2. The table is a record of function pointers, each handed the type first, and it holds what
+every holder of a value asks of it: a copy, a move, an end, a write over a value already there, and
+whether a write changed the value.** The last is there because the language lets any variable be
+waited on (LRM 9.4.2), so a cell, a net or a container's element asks it on every write, whatever
+the type. What a value answers about its parts by position is a second such record the table points
+to, of the same form. One table serves every type whose functions read the rest off the type, so
+every integral type answers through the library's one and the parts of any fixed-size array through
+the library's one, each named by a plain symbol.
 
 **D3. The library defines its own kinds' types through the same declaration**, as constant data
 built from each kind's own members.
+
+**D4. Every other operation of a type is handed to what asks it, as a record of its own.** Code
+compiled once is handed only what its job reads, so no type carries an answer for a holder that
+never asks:
+
+- Comparing, testing for unknown bits, and the bit stream's width, count, writing and reading are
+  one record per type: the address of a table of those functions, the type, and the element's own
+  such record where the type is a container. A call that compares or streams a value is handed it
+  after its operands, and nothing keeps it. A container's record names its element's rather than
+  being code per container type, so comparing a queue of queues needs no function of its own.
+- How a net of an aggregate type resolves its drivers is a record the net is built holding.
+- Which positions a force or a procedural assign takes over is a function handed to where it begins.
+- How an associative array orders its keys is a record per index kind, which the library defines and
+  the array is built holding.
+
+An operation the language does not define for a type is held in its record by the library's entry
+failing it, the same failure the library's own kinds give.
+
+**D5. What a value of a type is before anything is written to it is MIR's, handed with the type.** A
+holder of storage -- a cell, a net, an array of any kind -- is built from one constant per type
+naming the type and the function MIR states for its default
+([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
+D2), and no type answers its own default. A library container type's own answer was a container with
+no element type, which is not the language's value; a tuple's default exists only where each of its
+components has one (no declaration holds a wildcard index, LRM 7.8.1).
 
 ## Survey
 
@@ -73,8 +99,20 @@ shape of the record alone: every operation is still compiled for its type, so th
 description the runtime walks that
 [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) rejects.
 
+What each record holds follows who asks it (D2, D4). Swift's value witness table holds the steps of
+a value's life and its layout and no comparison (`ValueWitness.def`); `Equatable` is a witness table
+per type and protocol, handed beside the metadata to a generic function that asks it, and an array's
+conformance is built from its element's (Swift's type metadata ABI document, the generic argument
+vector). rustc's vtable is per type and trait, opening with drop, size and align. Go keeps `Equal`
+in `abi.Type` because its runtime compares interface values and map keys whose type it learns only
+while running; Lyra keeps the change test in its table for the matching reason, that every holder
+may be waited on, and only that.
+
 ## Rejected
 
+- **One table per type holding every operation**, the form D2 narrows. Every holder was handed
+  comparison, streaming and net resolution it never asks, and a library container kind's own
+  default, which was not the language's, sat beside them.
 - **Posing as the library's C++ classes and measuring them** (the form this replaces). It rests on a
   layout no header publishes, and kept a probe class, a pointer-to-member reading and mangled table
   names to track it.

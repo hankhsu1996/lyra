@@ -1,6 +1,8 @@
 #pragma once
 
+#include <expected>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -36,6 +38,14 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto BuildDefaultValueExpr(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
     -> mir::Expr;
+
+// The same, or, for a type no declaration holds -- a reference, an index of a
+// wildcard-indexed array, the machine vocabulary -- what it is instead. A
+// product of such a type has none either, since its default is each
+// component's (LRM Table 7-1).
+[[nodiscard]] auto DefaultValueOf(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
+    -> std::expected<mir::Expr, std::string_view>;
 
 // The same for a type named as the source layer names it.
 [[nodiscard]] auto BuildDefaultValueFromHir(

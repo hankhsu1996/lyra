@@ -213,21 +213,25 @@ class BasicQueue {
     EnforceBound();
   }
 
-  // LRM 6.24.3: the elements' own streams written into `stream` below its
-  // `filled` most significant positions, the front one most significant.
-  // Answers how many are filled after them.
+  // LRM 6.24.3: the elements' own streams, each written by `ops`, into
+  // `stream` below its `filled` most significant positions, the front one most
+  // significant. Answers how many are filled after them.
+  template <typename Ops>
   [[nodiscard]] auto WriteToStream(
-      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
-    return detail::SequenceWriteToStream(*this, stream, filled);
+      const IntegralView& stream, std::uint64_t filled, const Ops& ops) const
+      -> std::uint64_t {
+    return detail::SequenceWriteToStream(*this, stream, filled, ops);
   }
 
   // The inverse: as many elements as fill the stream from its `taken` most
-  // significant position up to `until` replace these, held to the bound (LRM
-  // 6.24.3, 11.4.14.4). Answers how many positions are taken after them.
+  // significant position up to `until`, each read by `ops`, replace these,
+  // held to the bound (LRM 6.24.3, 11.4.14.4). Answers how many positions are
+  // taken after them.
+  template <typename Ops>
   auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
-      -> std::uint64_t {
-    const detail::ElementsRead<Elem> read(elem_, stream, taken, until);
+      const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until,
+      const Ops& ops) -> std::uint64_t {
+    const detail::ElementsRead<Elem> read(elem_, ops, stream, taken, until);
     Assign(read.Addresses());
     return until;
   }
@@ -237,10 +241,12 @@ class BasicQueue {
   // those taking `values`, element for element, the queue first grown to hold
   // them and then held to its bound. A start naming no position names no
   // element to write.
+  template <typename Ops>
   [[nodiscard]] auto WindowToBitVec(
-      std::optional<std::int64_t> start, std::size_t count) const -> BitVec {
+      std::optional<std::int64_t> start, std::size_t count,
+      const Ops& ops) const -> BitVec {
     return detail::StreamOfElements(
-        elem_, detail::SequenceSliceElements(*this, start, count));
+        ops, detail::SequenceSliceElements(*this, start, count));
   }
   [[nodiscard]] auto WithWindow(
       std::optional<std::int64_t> start, std::size_t count,
@@ -317,16 +323,17 @@ class BasicQueue {
   // survives, and one they disagree on, or cannot know, takes the element
   // default (Table 7-1). Arms of unequal size put no elements in
   // correspondence, so the result is the empty queue that is a queue's own
-  // default.
-  [[nodiscard]] auto MergeConditional(const BasicQueue& other) const
-      -> BasicQueue {
+  // default. `ops` compares two elements.
+  template <typename Ops>
+  [[nodiscard]] auto MergeConditional(
+      const BasicQueue& other, const Ops& ops) const -> BasicQueue {
     BasicQueue result = *this;
     if (count_ != other.count_) {
       result.Truncate(0);
       return result;
     }
     for (std::size_t i = 0; i < count_; ++i) {
-      if (!elem_.Agree(At(i), other.At(i))) {
+      if (!ops.Agree(At(i), other.At(i))) {
         elem_.Assign(result.At(i), elem_.Default());
       }
     }

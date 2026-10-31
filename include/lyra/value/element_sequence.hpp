@@ -30,41 +30,42 @@ namespace lyra::value {
 // The whole-value operations of a container whose elements are a sequence by
 // position -- a queue, a dynamic array, a fixed-size array -- written once over
 // any such container that answers its element policy, its count, and the
-// element at a position.
+// element at a position. What compares or streams one element is handed to
+// the operation that does it, since the container holds an element type only
+// for what its storage needs.
 namespace lyra::value::detail {
 
 // LRM 11.2.2 aggregate equality / 11.4.5: element-wise reduction over
 // matching positions, answering 0, 1 or x. A size mismatch yields 0; matching
 // empties yield 1 (LRM is silent on both, matching industry convention). `==`
 // propagates X / Z.
-template <typename Seq>
-[[nodiscard]] auto SequenceEqual(const Seq& lhs, const Seq& rhs)
+template <typename Seq, typename Ops>
+[[nodiscard]] auto SequenceEqual(const Seq& lhs, const Seq& rhs, const Ops& ops)
     -> FourStateBit {
-  const auto& elem = lhs.Element();
   if (lhs.Count() != rhs.Count()) {
     return FourStateBit::kZero;
   }
   FourStateBit result = FourStateBit::kOne;
   for (std::size_t i = 0; i < lhs.Count(); ++i) {
-    result = LogicalAnd(result, elem.Equal(lhs.At(i), rhs.At(i)));
+    result = LogicalAnd(result, ops.Equal(lhs.At(i), rhs.At(i)));
   }
   return result;
 }
 
 // LRM 11.4.5 `===`: matches X / Z as values and is deterministic, so it is
 // never unknown.
-template <typename Seq>
-[[nodiscard]] auto SequenceCaseEqual(const Seq& lhs, const Seq& rhs) {
-  const auto& elem = lhs.Element();
+template <typename Seq, typename Ops>
+[[nodiscard]] auto SequenceCaseEqual(
+    const Seq& lhs, const Seq& rhs, const Ops& ops) {
   if (lhs.Count() != rhs.Count()) {
-    return elem.CaseAnswer(false);
+    return ops.CaseAnswer(false);
   }
   for (std::size_t i = 0; i < lhs.Count(); ++i) {
-    if (!elem.CaseEqual(lhs.At(i), rhs.At(i))) {
-      return elem.CaseAnswer(false);
+    if (!ops.CaseEqual(lhs.At(i), rhs.At(i))) {
+      return ops.CaseAnswer(false);
     }
   }
-  return elem.CaseAnswer(true);
+  return ops.CaseAnswer(true);
 }
 
 // The address of each element of `unit`, `count` times over (LRM 10.9.1), for
@@ -137,10 +138,10 @@ template <typename Seq>
 }
 
 // LRM 20.9: any element carrying an unknown bit propagates up.
-template <typename Seq>
-[[nodiscard]] auto SequenceHasUnknown(const Seq& seq) -> bool {
+template <typename Seq, typename Ops>
+[[nodiscard]] auto SequenceHasUnknown(const Seq& seq, const Ops& ops) -> bool {
   for (std::size_t i = 0; i < seq.Count(); ++i) {
-    if (seq.Element().HasUnknown(seq.At(i))) {
+    if (ops.HasUnknown(seq.At(i))) {
       return true;
     }
   }
@@ -149,20 +150,22 @@ template <typename Seq>
 
 // LRM 20.6.2 `$bits` / LRM 20.9 `$countbits`: a container's bit stream is its
 // elements' laid end to end, so each sums its elements' own.
-template <typename Seq>
-[[nodiscard]] auto SequenceBitstreamWidth(const Seq& seq) -> std::int64_t {
+template <typename Seq, typename Ops>
+[[nodiscard]] auto SequenceBitstreamWidth(const Seq& seq, const Ops& ops)
+    -> std::int64_t {
   std::int64_t total = 0;
   for (std::size_t i = 0; i < seq.Count(); ++i) {
-    total += seq.Element().BitstreamWidth(seq.At(i));
+    total += ops.BitstreamWidth(seq.At(i));
   }
   return total;
 }
-template <typename Seq, typename Control>
+template <typename Seq, typename Control, typename Ops>
 [[nodiscard]] auto SequenceCountBits(
-    const Seq& seq, const Control& control_bits) -> std::int64_t {
+    const Seq& seq, const Control& control_bits, const Ops& ops)
+    -> std::int64_t {
   std::int64_t total = 0;
   for (std::size_t i = 0; i < seq.Count(); ++i) {
-    total += seq.Element().CountBits(seq.At(i), control_bits);
+    total += ops.CountBits(seq.At(i), control_bits);
   }
   return total;
 }
@@ -171,29 +174,29 @@ template <typename Seq, typename Control>
 // `filled` most significant positions, the one at position 0 most significant
 // -- the order a `foreach` walks them in (LRM 11.4.14.1). Answers how many are
 // filled after them.
-template <typename Seq>
+template <typename Seq, typename Ops>
 auto SequenceWriteToStream(
-    const Seq& seq, const IntegralView& stream, std::uint64_t filled)
-    -> std::uint64_t {
+    const Seq& seq, const IntegralView& stream, std::uint64_t filled,
+    const Ops& ops) -> std::uint64_t {
   for (std::size_t i = 0; i < seq.Count(); ++i) {
-    filled = seq.Element().WriteToStream(seq.At(i), stream, filled);
+    filled = ops.WriteToStream(seq.At(i), stream, filled);
   }
   return filled;
 }
 
 // LRM 11.4.14.4: the elements `elements` names written end to end into a run
 // of bits of their own, the first most significant.
-template <ElementPolicy Elem>
+template <typename Ops>
 [[nodiscard]] auto StreamOfElements(
-    const Elem& elem, std::span<const void* const> elements) -> BitVec {
+    const Ops& ops, std::span<const void* const> elements) -> BitVec {
   std::uint64_t width = 0;
   for (const void* element : elements) {
-    width += static_cast<std::uint64_t>(elem.BitstreamWidth(element));
+    width += static_cast<std::uint64_t>(ops.BitstreamWidth(element));
   }
   BitVec run = BitVec::Zeros(width);
   std::uint64_t filled = 0;
   for (const void* element : elements) {
-    filled = elem.WriteToStream(element, run.MutableView(), filled);
+    filled = ops.WriteToStream(element, run.MutableView(), filled);
   }
   return run;
 }
@@ -208,13 +211,14 @@ template <ElementPolicy Elem>
 template <ElementPolicy Elem>
 class ElementsRead {
  public:
+  template <typename Ops>
   ElementsRead(
-      const Elem& elem, const ConstIntegralView& stream, std::uint64_t taken,
-      std::uint64_t until)
+      const Elem& elem, const Ops& ops, const ConstIntegralView& stream,
+      std::uint64_t taken, std::uint64_t until)
       : read_(elem) {
     while (taken < until) {
       void* element = read_.Add(elem.Default());
-      taken = elem.ReadFromStream(stream, taken, until, element);
+      taken = ops.ReadFromStream(stream, taken, until, element);
     }
     if (taken != until) {
       throw SimulationError(

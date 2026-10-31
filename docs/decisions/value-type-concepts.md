@@ -1,6 +1,7 @@
 # Value-type concepts (composable LRM operator contracts)
 
-Date: 2026-06-17 Status: accepted
+Date: 2026-06-17 Status: accepted. Revised 2026-10-30: `LyraValue` asks only what every holder of a
+value asks, and `==`, `!=` and the unknown-bit test left it.
 
 ## Context
 
@@ -49,13 +50,10 @@ concept; LRM-specific lowering paths gate on the relevant per-family concept.
 ### Concept lattice
 
 ```
-LyraValue                -- the SV value contract every runtime value type realises
+LyraValue                -- what every value a holder keeps answers
   Storable               -- `std::copyable`, container-safe relocation
-  operator==(T) const -> PackedArray   // LRM 11.4.5 == (Any data type)
-  operator!=(T) const -> PackedArray   // LRM 11.4.5 != (Any data type)
   IsBitIdentical(T) const -> bool      // engine change-detection hook
                                        // (LRM 9.4.2 update event predicate)
-  HasUnknown() const -> bool           // LRM 20.9 $isunknown predicate
 
 CaseEqualComparable : LyraValue
   CaseEqual(T) const -> PackedArray    // LRM 11.4.5 === (Any; a real compares values)
@@ -69,7 +67,12 @@ Ordered : LyraValue
 ```
 
 The four concepts are independent refinements of `LyraValue`. Each value type opts in to the subset
-LRM defines for it.
+LRM defines for it. Every typed C++ value type -- each the table below lists -- also states `==`,
+`!=` and whether it holds an unknown bit as members of its own (LRM 11.4.5, 20.9), but `LyraValue`
+does not ask them: a value the library holds of a type it was compiled without is compared and
+streamed through the operations handed to whatever asks
+([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
+D4), so the concept asks only what every holder asks.
 
 ### Per-type concept membership
 

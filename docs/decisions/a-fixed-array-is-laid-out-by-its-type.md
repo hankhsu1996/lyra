@@ -103,9 +103,11 @@ stride, the bound and where the elements lie are decided below it (`../architect
 **D4. The prebuilt library is handed the array's type as constant data** (revised 2026-10-15). The
 code generator writes one constant per array type per unit: the count and the element's type, which
 is itself a constant stating how an element starts (D7), which is what reaching an element, a run of
-them and their order by position need. The constant's table holds the array's whole-value operations
--- copy, move, end, assign, the equalities, the bit stream, the net folds -- as code compiled for
-the array type
+them and their order by position need. The array's whole-value operations are code compiled for the
+array type -- copy, move, end, assign and the change test in the constant's table, and the
+equalities, the bit stream and the net folds in the records handed to whatever asks them
+([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
+D4)
 ([a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)).
 This revises the earlier rule that the library carried each of them out over the count and the
 element's type, which had the library interpret the type. Every unit naming an array type states its
@@ -221,7 +223,7 @@ One of these is a rejection another record makes, reversed here for an array.
 - [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) -- the product's answer, and
   the rejection reversed here for an array.
 - [a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)
-  -- the bodies an array type's table holds.
+  -- the bodies an array type's records hold.
 - [a-packed-value-is-its-words](a-packed-value-is-its-words.md) -- what code compiled once may be
   told of a type, and why a frame's size does not follow a declared size.
 - [unpacked-array-representation](unpacked-array-representation.md) -- the C++ backend's array, and

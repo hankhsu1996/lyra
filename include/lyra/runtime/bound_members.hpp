@@ -162,9 +162,11 @@ void BindReference(VariableRef<T>& member, const VariableRef<T>& bound) {
 template <class C, class Fresh, class Refer>
 auto BeginTakeoverThrough(
     const ErasedReference& reference, std::int64_t level, std::int64_t first,
-    std::int64_t count, Fresh fresh, Refer refer) -> std::int64_t {
+    std::int64_t count, TakePositionsOf<typename C::Owned> take_positions,
+    Fresh fresh, Refer refer) -> std::int64_t {
   if (!NamesAMember(reference)) {
-    return WholeVariable<C>(reference).BeginTakeover(level, first, count);
+    return WholeVariable<C>(reference).BeginTakeover(
+        level, first, count, take_positions);
   }
   ErasedReference& member = ForcedMember(reference, level);
   BoundMembers& bound = current_runtime().Bound();
@@ -186,7 +188,8 @@ auto BeginTakeoverThrough(
           [&cell, &driver] { cell.SetFrom(WholeVariable<C>(driver)); });
     });
   }
-  return WholeVariable<C>(member).BeginTakeover(level, first, count);
+  return WholeVariable<C>(member).BeginTakeover(
+      level, first, count, take_positions);
 }
 
 // `drive` states the evaluation's value to the variable under the takeover,
@@ -241,10 +244,10 @@ void EndTakeoverThrough(
 
 template <value::LyraValue T>
 auto VariableRef<T>::BeginTakeover(
-    std::int64_t level, std::int64_t first, std::int64_t count) const
-    -> std::int64_t {
+    std::int64_t level, std::int64_t first, std::int64_t count,
+    TakePositionsOf<T> take_positions) const -> std::int64_t {
   return BeginTakeoverThrough<Var<T>>(
-      erased_, level, first, count,
+      erased_, level, first, count, take_positions,
       [](const Var<T>& showing) {
         auto forced = std::make_shared<Var<T>>();
         forced->Initialize(showing.Get());

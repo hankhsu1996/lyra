@@ -37,13 +37,9 @@ class Any {
     return held_.Bytes();
   }
 
-  // Two values are equal where they are of one identity and their values are
-  // equal; a value of another identity is a different value, as values of two
-  // types the language keeps apart are never equal.
-  [[nodiscard]] auto operator==(const Any& other) const -> FourStateBit;
-  [[nodiscard]] auto operator!=(const Any& other) const -> FourStateBit;
+  // Two values are the same where they are of one identity and hold the same
+  // bits, which is whether a message a variable holds changed (LRM 9.4.2).
   [[nodiscard]] auto IsBitIdentical(const Any& other) const -> bool;
-  [[nodiscard]] auto HasUnknown() const -> bool;
 
  private:
   Any(AnyValue held, const char* identity)

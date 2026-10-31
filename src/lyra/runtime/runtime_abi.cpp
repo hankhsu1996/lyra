@@ -1,6 +1,7 @@
 #include "lyra/runtime/runtime_abi.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
@@ -420,9 +421,11 @@ auto QueueTypeAt(const void* type) -> const value::QueueType& {
   return *static_cast<const value::QueueType*>(type);
 }
 
-// The element type an entry is told: by one building a dynamic array or an
-// associative array, which is all such an array learns of its elements, and
-// by one asking what the type answers for an index naming no element.
+// A type with how a value of it starts, as an entry is told one: by one
+// building a dynamic array or an associative array, which is all such an
+// array learns of its elements, by one asking what the type answers for an
+// index naming no element, and by one building a holder or a value from
+// nothing.
 auto ElementTypeAt(const void* type) -> const value::ElementType& {
   return *static_cast<const value::ElementType*>(type);
 }
@@ -508,7 +511,7 @@ auto WideRefBeginTakeover(
     -> std::int64_t {
   using Words = typename VariableOf<T>::Type;
   return BeginTakeoverThrough<Words>(
-      ErasedAt(reference), level, first, count,
+      ErasedAt(reference), level, first, count, {},
       [](const Words& showing) {
         std::shared_ptr<Words> forced =
             MakeTailCell<typename StorageFor<T>::Type>(
@@ -530,17 +533,25 @@ auto WideRefDriveTakeover(
       });
 }
 
+// How a takeover of a value laid out by its type shows what it holds: the
+// type's own function, handed over as an address.
+auto TakePositionsAt(const void* take_positions)
+    -> TakePositionsOf<value::LaidOutValue> {
+  return {.take = std::bit_cast<value::TakePositionsWitness>(take_positions)};
+}
+
 // The same through a reference to a value laid out by its type, whose member
 // is given a cell laid out by the type of the cell it showed.
 auto LaidOutRefBeginTakeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* value_take_positions) -> std::int64_t {
   using LaidOut = VariableOf<value::LaidOutValue>::Type;
   return BeginTakeoverThrough<LaidOut>(
       ErasedAt(reference), level, first, count,
+      TakePositionsAt(value_take_positions),
       [](const LaidOut& showing) {
         std::shared_ptr<LaidOut> forced =
-            MakeTailCell<LaidOutStorage>(showing.HeldStorage().Type());
+            MakeTailCell<LaidOutStorage>(showing.HeldStorage().Held());
         forced->Initialize(showing.Bytes());
         return forced;
       },
@@ -947,6 +958,16 @@ auto TypeAt(const void* type) -> const value::ValueType& {
   return *static_cast<const value::ValueType*>(type);
 }
 
+// The operations of a type, handed over as an address, and those of a
+// container type's element, which they name.
+auto OperationsAt(const void* operations) -> const value::ValueOperations& {
+  return *static_cast<const value::ValueOperations*>(operations);
+}
+auto ElementOperationsAt(const void* operations)
+    -> const value::ValueOperations& {
+  return *OperationsAt(operations).element;
+}
+
 // A copy of a value that crossed with its type, held with that type. The value
 // is the caller's, borrowed for the call.
 auto OwnedCopy(const void* value, const void* type) -> value::AnyValue {
@@ -1263,23 +1284,6 @@ auto HasUnknown(const void* value) -> bool {
   return Read<T>(value).HasUnknown();
 }
 
-// Where a domain carries no bit stream, which of the two ways that is answered
-// -- a program that should never have reached here, or an operation not yet
-// carried out -- is decided once, by the domain's type, so these ask it rather
-// than decide again.
-template <typename T>
-auto StreamWidthOf(const void* value, void* out) -> void* {
-  value::LibraryTypeOf<T>().BitstreamWidth(value, out);
-  return out;
-}
-
-template <typename T>
-auto StreamCountBitsOf(
-    const void* value, const value::LoadedWords& control, void* out) -> void* {
-  value::LibraryTypeOf<T>().CountBits(value, control.View(), out);
-  return out;
-}
-
 // A format operand borrowing an integral value, which reads under a conversion
 // through its planes (LRM 21.2.1) as the number its shape makes of them.
 auto IntegralFormatArg(const void* value, value::IntegralShape shape)
@@ -1442,12 +1446,21 @@ auto EmplaceVisited(
   return EmplaceCompletion(out, type, std::move(components));
 }
 
-// The least or greatest index an array holds (LRM 20.7), built in `out`, or
-// the default of `answer_type` where it holds none.
+// The least or greatest index an array holds (LRM 20.7), built in `out`, or,
+// where it holds none, x in every position of `answer_type`, the integral type
+// the query answers, whatever the array holds.
 auto IndexInto(void* out, const value::AnyValue* index, const void* answer_type)
     -> void* {
   if (index == nullptr) {
-    TypeAt(answer_type).BuildDefault(out);
+    const value::IntegralValueType* answered = TypeAt(answer_type).AsIntegral();
+    if (answered == nullptr) {
+      throw InternalError(
+          "an array query answers an integral value (LRM 20.7) -- please "
+          "report this as a bug");
+    }
+    value::WrittenWords none(answered->Shape());
+    value::FillScalar(none.MutableView(), value::FourStateBit::kUnknown);
+    none.StoreTo(out);
     return out;
   }
   return ElementInto(out, index->Type(), index->Bytes());
@@ -1670,12 +1683,13 @@ void FillImage(
 }
 
 // A value of `type` laid out in `out` that an image is read back into: a
-// fixed-size unpacked array under each of `dimensions` layers, every leaf
-// built at its type's default.
+// fixed-size unpacked array under each of its `dimensions` layers, and under
+// them an integral leaf (LRM 35.5.6.1), laid out clear since the image then
+// writes every one.
 void BuildImageShape(
     const value::ValueType& type, void* out, std::size_t dimensions) {
   if (dimensions == 0) {
-    type.BuildDefault(out);
+    value::WrittenWords(ImageLeafType(type).Shape()).StoreTo(out);
     return;
   }
   const value::FixedArrayType* array = type.AsFixedArray();
@@ -2126,7 +2140,6 @@ using lyra::runtime::WaitRecollecting;
 using lyra::runtime::WaitUntil;
 using lyra::runtime::WatchedPlace;
 using lyra::runtime::WeakObjectRef;
-using lyra::value::AssociativeIndexOrder;
 using lyra::value::BitVec;
 using lyra::value::Chandle;
 using lyra::value::DpiBitBuffer;
@@ -2922,7 +2935,8 @@ auto lyra_rt_managedref_shared_cell_make(void* out) -> void* {
 
 auto lyra_rt_laidout_shared_cell_make(const void* held_type, void* out)
     -> void* {
-  return MakeSharedCell<LaidOutValue>(out, lyra::runtime::TypeAt(held_type));
+  return MakeSharedCell<LaidOutValue>(
+      out, lyra::runtime::ElementTypeAt(held_type));
 }
 
 auto lyra_rt_dynarray_shared_cell_make(void* out) -> void* {
@@ -5459,9 +5473,11 @@ void lyra_rt_laidout_cell_arm_sampling(void* cell) {
 }
 
 auto lyra_rt_laidout_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return VariableAt<LaidOutValue>(cell).BeginTakeover(level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* value_take_positions) -> std::int64_t {
+  return VariableAt<LaidOutValue>(cell).BeginTakeover(
+      level, first, count,
+      lyra::runtime::TakePositionsAt(value_take_positions));
 }
 
 auto lyra_rt_laidout_cell_drive_takeover(
@@ -5477,9 +5493,10 @@ void lyra_rt_laidout_cell_end_takeover(
 }
 
 auto lyra_rt_laidout_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return lyra::runtime::LaidOutRefBeginTakeover(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* value_take_positions) -> std::int64_t {
+  return lyra::runtime::LaidOutRefBeginTakeover(
+      reference, level, first, count, value_take_positions);
 }
 
 auto lyra_rt_laidout_ref_drive_takeover(
@@ -5502,7 +5519,8 @@ auto lyra_rt_laidout_cell_sampled_get(void* cell) -> const void* {
 }
 
 auto lyra_rt_laidout_value_cell_alloc(const void* held_type) noexcept -> void* {
-  return AllocateValueCell<LaidOutValue>(lyra::runtime::TypeAt(held_type));
+  return AllocateValueCell<LaidOutValue>(
+      lyra::runtime::ElementTypeAt(held_type));
 }
 
 // A tagged union's `void` member (LRM 7.3.2) carries a value with no bits.
@@ -5594,28 +5612,41 @@ auto lyra_rt_dynarray_size(const void* array, void* out) -> void* {
   return Emplace(out, Read<RuntimeDynamicArray>(array).Size());
 }
 
-auto lyra_rt_dynarray_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+auto lyra_rt_dynarray_eq(
+    const void* lhs, const void* rhs, const void* value_operations)
+    -> std::uint8_t {
   return Compared(
-      Read<RuntimeDynamicArray>(lhs) == Read<RuntimeDynamicArray>(rhs));
+      Read<RuntimeDynamicArray>(lhs).Equal(
+          Read<RuntimeDynamicArray>(rhs),
+          lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
-auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+auto lyra_rt_dynarray_ne(
+    const void* lhs, const void* rhs, const void* value_operations)
+    -> std::uint8_t {
   return Compared(
-      Read<RuntimeDynamicArray>(lhs) != Read<RuntimeDynamicArray>(rhs));
+      lyra::value::Inverted(
+          Read<RuntimeDynamicArray>(lhs).Equal(
+              Read<RuntimeDynamicArray>(rhs),
+              lyra::runtime::ElementOperationsAt(value_operations))));
 }
 
-auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs, void* out)
+auto lyra_rt_dynarray_case_equal(
+    const void* lhs, const void* rhs, const void* value_operations, void* out)
     -> void* {
   return Emplace(
-      out,
-      Read<RuntimeDynamicArray>(lhs).CaseEqual(Read<RuntimeDynamicArray>(rhs)));
+      out, Read<RuntimeDynamicArray>(lhs).CaseEqual(
+               Read<RuntimeDynamicArray>(rhs),
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_dynarray_merge_conditional(
-    const void* lhs, const void* rhs, void* out) -> void* {
+    const void* lhs, const void* rhs, const void* value_operations, void* out)
+    -> void* {
   return Emplace(
       out, Read<RuntimeDynamicArray>(lhs).MergeConditional(
-               Read<RuntimeDynamicArray>(rhs)));
+               Read<RuntimeDynamicArray>(rhs),
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_dynarray_cell_get(void* cell) -> const void* {
@@ -5692,14 +5723,17 @@ auto lyra_rt_queue_unpacked_array_from_array(
 }
 
 auto lyra_rt_laidout_merge_conditional(
-    const void* lhs, const void* rhs, const void* lhs_type, void* out)
+    const void* lhs, const void* rhs, const void* array_operations, void* out)
     -> void* {
-  const lyra::value::FixedArrayView left = ArrayAt(lhs, lhs_type);
-  const lyra::value::FixedArrayView right = ArrayAt(rhs, lhs_type);
+  const lyra::value::ValueOperations& operations =
+      lyra::runtime::OperationsAt(array_operations);
+  const lyra::value::FixedArrayType& type = *operations.type->AsFixedArray();
+  const lyra::value::FixedArrayView left{.type = &type, .bytes = lhs};
+  const lyra::value::FixedArrayView right{.type = &type, .bytes = rhs};
   const lyra::value::ElementType& element = left.ElementType();
-  ArrayTypeAt(lhs_type).BuildEach(out, [&](std::size_t i, void* built) {
-    const bool agree = lyra::value::Holds(
-        element.Type().Equal(left.ElementAt(i), right.ElementAt(i)));
+  const lyra::value::WitnessedOperations compared(*operations.element);
+  type.BuildEach(out, [&](std::size_t i, void* built) {
+    const bool agree = compared.Agree(left.ElementAt(i), right.ElementAt(i));
     element.Type().Copy(agree ? left.ElementAt(i) : element.Default(), built);
   });
   return out;
@@ -5722,11 +5756,14 @@ auto lyra_rt_byte_array_from_bits(
 
 auto lyra_rt_dynarray_count_bits(
     const void* value, const void* control_bits, std::int64_t control_width,
-    bool control_is_four_state, void* out) -> void* {
+    bool control_is_four_state, const void* value_operations, void* out)
+    -> void* {
   const lyra::value::LoadedWords control =
       BitsAt(control_bits, control_width, control_is_four_state);
   return Emplace(
-      out, Read<RuntimeDynamicArray>(value).CountBits(control.View()));
+      out, Read<RuntimeDynamicArray>(value).CountBits(
+               control.View(),
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_string_count_bits(
@@ -5741,19 +5778,25 @@ auto lyra_rt_string_bitstream_width(const void* value, void* out) -> void* {
   return Emplace(out, Read<String>(value).BitstreamWidth());
 }
 
-auto lyra_rt_dynarray_bitstream_width(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeDynamicArray>(value).BitstreamWidth());
+auto lyra_rt_dynarray_bitstream_width(
+    const void* value, const void* value_operations, void* out) -> void* {
+  return Emplace(
+      out, Read<RuntimeDynamicArray>(value).BitstreamWidth(
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_from_bitstream(
     const void* bits, std::int64_t bits_width, bool bits_are_four_state,
-    const void* answer_type, void* out) -> void* {
+    const void* answer_type, const void* answer_operations, void* out)
+    -> void* {
   const lyra::value::LoadedWords stream =
       BitsAt(bits, bits_width, bits_are_four_state);
-  const lyra::value::ValueType& type = lyra::runtime::TypeAt(answer_type);
-  type.BuildDefault(out);
-  type.ReadFromStream(
-      stream.View(), 0, static_cast<std::uint64_t>(bits_width), out);
+  const lyra::value::ValueOperations& operations =
+      lyra::runtime::OperationsAt(answer_operations);
+  lyra::runtime::ElementTypeAt(answer_type).BuildDefault(out);
+  operations.functions->read_from_stream(
+      operations, stream.View(), 0, static_cast<std::uint64_t>(bits_width),
+      out);
   return out;
 }
 
@@ -6027,55 +6070,83 @@ auto lyra_rt_shortreal_has_unknown(const void* value) -> bool {
 auto lyra_rt_chandle_has_unknown(const void* value) -> bool {
   return lyra::runtime::HasUnknown<Chandle>(value);
 }
-auto lyra_rt_dynarray_has_unknown(const void* value) -> bool {
-  return lyra::runtime::HasUnknown<RuntimeDynamicArray>(value);
+auto lyra_rt_dynarray_has_unknown(
+    const void* value, const void* value_operations) -> bool {
+  return Read<RuntimeDynamicArray>(value).HasUnknown(
+      lyra::runtime::ElementOperationsAt(value_operations));
 }
-auto lyra_rt_queue_has_unknown(const void* value) -> bool {
-  return lyra::runtime::HasUnknown<RuntimeQueue>(value);
+auto lyra_rt_queue_has_unknown(const void* value, const void* value_operations)
+    -> bool {
+  return Read<RuntimeQueue>(value).HasUnknown(
+      lyra::runtime::ElementOperationsAt(value_operations));
 }
-auto lyra_rt_assocarray_has_unknown(const void* value) -> bool {
-  return lyra::runtime::HasUnknown<RuntimeAssociativeArray>(value);
+auto lyra_rt_assocarray_has_unknown(
+    const void* value, const void* value_operations) -> bool {
+  return Read<RuntimeAssociativeArray>(value).HasUnknown(
+      lyra::runtime::ElementOperationsAt(value_operations));
 }
 auto lyra_rt_managedref_has_unknown(const void* value) -> bool {
   return lyra::runtime::HasUnknown<ObjectRef>(value);
 }
 
+// A class handle carries no bit stream of its own, which its operations
+// answer once, so these ask them rather than decide again.
 auto lyra_rt_managedref_bitstream_width(const void* value, void* out) -> void* {
-  return lyra::runtime::StreamWidthOf<ObjectRef>(value, out);
+  const lyra::value::ValueOperations& operations =
+      lyra::value::lyra_rt_managedref_value_operations;
+  operations.functions->bitstream_width(operations, value, out);
+  return out;
 }
 
 auto lyra_rt_managedref_count_bits(
     const void* value, const void* control_bits, std::int64_t control_width,
     bool control_is_four_state, void* out) -> void* {
-  return lyra::runtime::StreamCountBitsOf<ObjectRef>(
-      value, BitsAt(control_bits, control_width, control_is_four_state), out);
+  const lyra::value::ValueOperations& operations =
+      lyra::value::lyra_rt_managedref_value_operations;
+  operations.functions->count_bits(
+      operations, value,
+      BitsAt(control_bits, control_width, control_is_four_state).View(), out);
+  return out;
 }
 
 auto lyra_rt_string_to_bitvec(const void* value, void* out) -> void* {
   return Emplace(out, Read<String>(value).ToBitVec());
 }
-auto lyra_rt_dynarray_to_bitvec(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeDynamicArray>(value).ToBitVec());
+auto lyra_rt_dynarray_to_bitvec(
+    const void* value, const void* value_operations, void* out) -> void* {
+  return Emplace(
+      out, Read<RuntimeDynamicArray>(value).ToBitVec(
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
-auto lyra_rt_queue_to_bitvec(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeQueue>(value).ToBitVec());
+auto lyra_rt_queue_to_bitvec(
+    const void* value, const void* value_operations, void* out) -> void* {
+  return Emplace(
+      out, Read<RuntimeQueue>(value).ToBitVec(
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
-auto lyra_rt_assocarray_to_bitvec(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeAssociativeArray>(value).ToBitVec());
+auto lyra_rt_assocarray_to_bitvec(
+    const void* value, const void* value_operations, void* out) -> void* {
+  return Emplace(
+      out, Read<RuntimeAssociativeArray>(value).ToBitVec(
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_dynarray_from_bitvec(
-    const void* run, const void* answer_element_type, void* out) -> void* {
+    const void* run, const void* value_operations,
+    const void* answer_element_type, void* out) -> void* {
   return Emplace(
-      out, RuntimeDynamicArray::FromBitVec(
-               lyra::runtime::ElementTypeAt(answer_element_type),
-               Read<BitVec>(run)));
+      out,
+      RuntimeDynamicArray::FromBitVec(
+          lyra::runtime::ElementTypeAt(answer_element_type), Read<BitVec>(run),
+          lyra::runtime::ElementOperationsAt(value_operations)));
 }
 auto lyra_rt_queue_from_bitvec(
-    const void* run, const void* answer_type, void* out) -> void* {
+    const void* run, const void* value_operations, const void* answer_type,
+    void* out) -> void* {
   return Emplace(
       out, RuntimeQueue::FromBitVec(
-               lyra::runtime::QueueTypeAt(answer_type), Read<BitVec>(run)));
+               lyra::runtime::QueueTypeAt(answer_type), Read<BitVec>(run),
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 auto lyra_rt_string_from_bitvec(const void* run, void* out) -> void* {
   return Emplace(out, String::FromBitVec(Read<BitVec>(run)));
@@ -6129,27 +6200,31 @@ auto lyra_rt_bitvec_padded_to(const void* run, std::int64_t length, void* out)
 }
 
 auto lyra_rt_dynarray_window_to_bitvec(
-    const void* array, const void* start, std::int64_t count, void* out)
-    -> void* {
+    const void* array, const void* start, std::int64_t count,
+    const void* value_operations, void* out) -> void* {
   return Emplace(
       out, Read<RuntimeDynamicArray>(array).WindowToBitVec(
-               PositionNamedAt(start), lyra::value::WindowCount(count)));
+               PositionNamedAt(start), lyra::value::WindowCount(count),
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 auto lyra_rt_queue_window_to_bitvec(
-    const void* queue, const void* start, std::int64_t count, void* out)
-    -> void* {
+    const void* queue, const void* start, std::int64_t count,
+    const void* value_operations, void* out) -> void* {
   return Emplace(
       out, Read<RuntimeQueue>(queue).WindowToBitVec(
-               PositionNamedAt(start), lyra::value::WindowCount(count)));
+               PositionNamedAt(start), lyra::value::WindowCount(count),
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 auto lyra_rt_laidout_window_to_bitvec(
     const void* array, const void* start, std::int64_t count,
-    const void* array_type, void* out) -> void* {
-  const lyra::value::FixedArrayType& type = ArrayTypeAt(array_type);
+    const void* array_operations, void* out) -> void* {
+  const lyra::value::ValueOperations& operations =
+      lyra::runtime::OperationsAt(array_operations);
+  const lyra::value::FixedArrayType& type = *operations.type->AsFixedArray();
   return Emplace(
       out,
       lyra::value::detail::StreamOfElements(
-          lyra::value::WitnessedElem(type.ElementType()),
+          lyra::value::WitnessedOperations(*operations.element),
           type.SliceElements(
               array, PositionNamedAt(start), lyra::value::WindowCount(count))));
 }
@@ -6243,9 +6318,11 @@ void lyra_rt_laidout_aggregate_net_initialize_retaining(
 }
 
 auto lyra_rt_laidout_net_begin_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return NetOf<LaidOutValue>(net).BeginTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* value_take_positions) -> std::int64_t {
+  return NetOf<LaidOutValue>(net).BeginTakeover(
+      level, first, count,
+      lyra::runtime::TakePositionsAt(value_take_positions));
 }
 
 auto lyra_rt_laidout_net_drive_takeover(
@@ -6376,36 +6453,60 @@ void lyra_rt_queue_delete_index(void* queue, const void* position) {
   static_cast<RuntimeQueue*>(queue)->DeleteIndex(PositionNamedAt(position));
 }
 
-auto lyra_rt_queue_eq(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<RuntimeQueue>(lhs) == Read<RuntimeQueue>(rhs));
+auto lyra_rt_queue_eq(
+    const void* lhs, const void* rhs, const void* value_operations)
+    -> std::uint8_t {
+  return Compared(
+      Read<RuntimeQueue>(lhs).Equal(
+          Read<RuntimeQueue>(rhs),
+          lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
-auto lyra_rt_queue_ne(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<RuntimeQueue>(lhs) != Read<RuntimeQueue>(rhs));
+auto lyra_rt_queue_ne(
+    const void* lhs, const void* rhs, const void* value_operations)
+    -> std::uint8_t {
+  return Compared(
+      lyra::value::Inverted(
+          Read<RuntimeQueue>(lhs).Equal(
+              Read<RuntimeQueue>(rhs),
+              lyra::runtime::ElementOperationsAt(value_operations))));
 }
 
-auto lyra_rt_queue_case_equal(const void* lhs, const void* rhs, void* out)
+auto lyra_rt_queue_case_equal(
+    const void* lhs, const void* rhs, const void* value_operations, void* out)
     -> void* {
   return Emplace(
-      out, Read<RuntimeQueue>(lhs).CaseEqual(Read<RuntimeQueue>(rhs)));
+      out, Read<RuntimeQueue>(lhs).CaseEqual(
+               Read<RuntimeQueue>(rhs),
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_queue_merge_conditional(
-    const void* lhs, const void* rhs, void* out) -> void* {
+    const void* lhs, const void* rhs, const void* value_operations, void* out)
+    -> void* {
   return Emplace(
-      out, Read<RuntimeQueue>(lhs).MergeConditional(Read<RuntimeQueue>(rhs)));
+      out, Read<RuntimeQueue>(lhs).MergeConditional(
+               Read<RuntimeQueue>(rhs),
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
-auto lyra_rt_queue_bitstream_width(const void* queue, void* out) -> void* {
-  return Emplace(out, Read<RuntimeQueue>(queue).BitstreamWidth());
+auto lyra_rt_queue_bitstream_width(
+    const void* queue, const void* value_operations, void* out) -> void* {
+  return Emplace(
+      out, Read<RuntimeQueue>(queue).BitstreamWidth(
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_queue_count_bits(
     const void* queue, const void* control_bits, std::int64_t control_width,
-    bool control_is_four_state, void* out) -> void* {
+    bool control_is_four_state, const void* value_operations, void* out)
+    -> void* {
   const lyra::value::LoadedWords control =
       BitsAt(control_bits, control_width, control_is_four_state);
-  return Emplace(out, Read<RuntimeQueue>(queue).CountBits(control.View()));
+  return Emplace(
+      out, Read<RuntimeQueue>(queue).CountBits(
+               control.View(),
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_queue_cell_get(void* cell) -> const void* {
@@ -6443,23 +6544,13 @@ auto lyra_rt_queue_value_cell_load(void* cell) noexcept -> void* {
 // LRM 7.9.11 `'{index: value, ...}`: each entry crosses as the product of the
 // index and the element it stores, a tuple whose type states each component's
 // type, which is what a keyed container needs of both: it knows the type of
-// neither in advance.
+// neither in advance. The order the index type imposes (LRM 7.8) is the one
+// the array holds its entries in.
 auto lyra_rt_assocarray_from_entries(
-    LyraSpan entries, const void* entry_type, const void* answer_element_type,
-    void* out) -> void* {
+    LyraSpan entries, const void* entry_type, const void* key_index_order,
+    const void* answer_element_type, void* out) -> void* {
   RuntimeAssociativeArray array(
-      AssociativeIndexOrder::kIndexValueDomain,
-      lyra::runtime::ElementTypeAt(answer_element_type));
-  lyra::runtime::StoreLiteralEntries(
-      array, entries, lyra::runtime::TupleTypeAt(entry_type));
-  return Emplace(out, std::move(array));
-}
-
-auto lyra_rt_assocarray_from_entries_wildcard(
-    LyraSpan entries, const void* entry_type, const void* answer_element_type,
-    void* out) -> void* {
-  RuntimeAssociativeArray array(
-      AssociativeIndexOrder::kWildcardNumeric,
+      *static_cast<const lyra::value::IndexOrder*>(key_index_order),
       lyra::runtime::ElementTypeAt(answer_element_type));
   lyra::runtime::StoreLiteralEntries(
       array, entries, lyra::runtime::TupleTypeAt(entry_type));
@@ -6518,25 +6609,39 @@ void lyra_rt_assocarray_delete_index(
       lyra::runtime::IndexAt(index, index_type));
 }
 
-auto lyra_rt_assocarray_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+auto lyra_rt_assocarray_eq(
+    const void* lhs, const void* rhs, const void* value_operations)
+    -> std::uint8_t {
   return Compared(
-      Read<RuntimeAssociativeArray>(lhs) == Read<RuntimeAssociativeArray>(rhs));
+      Read<RuntimeAssociativeArray>(lhs).Equal(
+          Read<RuntimeAssociativeArray>(rhs),
+          lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
-auto lyra_rt_assocarray_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+auto lyra_rt_assocarray_ne(
+    const void* lhs, const void* rhs, const void* value_operations)
+    -> std::uint8_t {
   return Compared(
-      Read<RuntimeAssociativeArray>(lhs) != Read<RuntimeAssociativeArray>(rhs));
+      lyra::value::Inverted(
+          Read<RuntimeAssociativeArray>(lhs).Equal(
+              Read<RuntimeAssociativeArray>(rhs),
+              lyra::runtime::ElementOperationsAt(value_operations))));
 }
 
-auto lyra_rt_assocarray_case_equal(const void* lhs, const void* rhs, void* out)
+auto lyra_rt_assocarray_case_equal(
+    const void* lhs, const void* rhs, const void* value_operations, void* out)
     -> void* {
   return Emplace(
       out, Read<RuntimeAssociativeArray>(lhs).CaseEqual(
-               Read<RuntimeAssociativeArray>(rhs)));
+               Read<RuntimeAssociativeArray>(rhs),
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
-auto lyra_rt_assocarray_bitstream_width(const void* array, void* out) -> void* {
-  return Emplace(out, Read<RuntimeAssociativeArray>(array).BitstreamWidth());
+auto lyra_rt_assocarray_bitstream_width(
+    const void* array, const void* value_operations, void* out) -> void* {
+  return Emplace(
+      out, Read<RuntimeAssociativeArray>(array).BitstreamWidth(
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_assocarray_assoc_min_index(
@@ -6589,11 +6694,14 @@ auto lyra_rt_assocarray_assoc_prev(
 
 auto lyra_rt_assocarray_count_bits(
     const void* array, const void* control_bits, std::int64_t control_width,
-    bool control_is_four_state, void* out) -> void* {
+    bool control_is_four_state, const void* value_operations, void* out)
+    -> void* {
   const lyra::value::LoadedWords control =
       BitsAt(control_bits, control_width, control_is_four_state);
   return Emplace(
-      out, Read<RuntimeAssociativeArray>(array).CountBits(control.View()));
+      out, Read<RuntimeAssociativeArray>(array).CountBits(
+               control.View(),
+               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_assocarray_cell_get(void* cell) -> const void* {
@@ -7452,10 +7560,6 @@ void lyra_rt_wait_assign(void* storage, void* value) {
   *static_cast<Wait*>(storage) = std::move(*static_cast<Wait*>(value));
 }
 
-// A fixed-size unpacked array is laid out by the body that holds it as its
-// elements alone, so each whole-value operation on one is its type's, which
-// crosses after the array.
-
 auto lyra_rt_element_default(const void* element_type) -> const void* {
   return lyra::runtime::ElementTypeAt(element_type).Default();
 }
@@ -7715,7 +7819,7 @@ void lyra_rt_chandle_cell_construct(void* storage) {
 }
 void lyra_rt_laidout_cell_construct(const void* held_type, void* storage) {
   BuildAt<VariableOf<LaidOutValue>::Type>(
-      storage, lyra::runtime::TypeAt(held_type));
+      storage, lyra::runtime::ElementTypeAt(held_type));
 }
 
 void lyra_rt_dynarray_cell_construct(void* storage) {
@@ -7748,7 +7852,7 @@ void lyra_rt_chandle_value_cell_construct(void* storage) {
 void lyra_rt_laidout_value_cell_construct(
     const void* held_type, void* storage) {
   BuildAt<LocalOf<LaidOutValue>::Type>(
-      storage, lyra::runtime::TypeAt(held_type));
+      storage, lyra::runtime::ElementTypeAt(held_type));
 }
 
 void lyra_rt_dynarray_value_cell_construct(void* storage) {
@@ -7763,8 +7867,11 @@ void lyra_rt_assocarray_value_cell_construct(void* storage) {
 void lyra_rt_managedref_value_cell_construct(void* storage) {
   BuildAt<ValueCell<ObjectRef>>(storage);
 }
-void lyra_rt_laidout_net_construct(const void* held_type, void* storage) {
-  BuildAt<ResolvedNet<LaidOutValue>>(storage, lyra::runtime::TypeAt(held_type));
+void lyra_rt_laidout_net_construct(
+    const void* held_type, const void* held_net_folds, void* storage) {
+  BuildAt<ResolvedNet<LaidOutValue>>(
+      storage, lyra::runtime::ElementTypeAt(held_type),
+      *static_cast<const lyra::value::NetFoldTable*>(held_net_folds));
 }
 
 void lyra_rt_string_sampled_history_construct(void* storage) {

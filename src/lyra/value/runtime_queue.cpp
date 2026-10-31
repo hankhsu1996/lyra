@@ -150,27 +150,30 @@ void RuntimeQueue::Permute(std::span<const std::size_t> order) {
 
 // A queue with no type yet holds no elements, which is all a
 // comparison with one can read.
-auto RuntimeQueue::operator==(const RuntimeQueue& other) const -> FourStateBit {
+auto RuntimeQueue::Equal(
+    const RuntimeQueue& other, const ValueOperations& element) const
+    -> FourStateBit {
   if (!core_.has_value() || !other.core_.has_value()) {
     return detail::ScalarOf(Count() == other.Count());
   }
-  return detail::SequenceEqual(*core_, *other.core_);
+  return detail::SequenceEqual(
+      *core_, *other.core_, WitnessedOperations(element));
 }
 
-auto RuntimeQueue::operator!=(const RuntimeQueue& other) const -> FourStateBit {
-  return Inverted(*this == other);
-}
-
-auto RuntimeQueue::CaseEqual(const RuntimeQueue& other) const -> Bit {
+auto RuntimeQueue::CaseEqual(
+    const RuntimeQueue& other, const ValueOperations& element) const -> Bit {
   if (!core_.has_value() || !other.core_.has_value()) {
     return Bit::FromBool(Count() == other.Count());
   }
-  return detail::SequenceCaseEqual(*core_, *other.core_);
+  return detail::SequenceCaseEqual(
+      *core_, *other.core_, WitnessedOperations(element));
 }
 
-auto RuntimeQueue::MergeConditional(const RuntimeQueue& other) const
+auto RuntimeQueue::MergeConditional(
+    const RuntimeQueue& other, const ValueOperations& element) const
     -> RuntimeQueue {
-  return RuntimeQueue(Core().MergeConditional(other.Core()));
+  return RuntimeQueue(
+      Core().MergeConditional(other.Core(), WitnessedOperations(element)));
 }
 
 auto RuntimeQueue::IsBitIdentical(const RuntimeQueue& other) const -> bool {
@@ -180,50 +183,59 @@ auto RuntimeQueue::IsBitIdentical(const RuntimeQueue& other) const -> bool {
   return detail::SequenceBitIdentical(*core_, *other.core_);
 }
 
-auto RuntimeQueue::HasUnknown() const -> bool {
-  return core_.has_value() && detail::SequenceHasUnknown(*core_);
+auto RuntimeQueue::HasUnknown(const ValueOperations& element) const -> bool {
+  return core_.has_value() &&
+         detail::SequenceHasUnknown(*core_, WitnessedOperations(element));
 }
 
-auto RuntimeQueue::IsUnknown() const -> Bit {
-  return Bit::FromBool(HasUnknown());
-}
-
-auto RuntimeQueue::BitstreamWidth() const -> Int {
+auto RuntimeQueue::BitstreamWidth(const ValueOperations& element) const -> Int {
   return Int::FromInt(
-      core_.has_value() ? detail::SequenceBitstreamWidth(*core_) : 0);
+      core_.has_value()
+          ? detail::SequenceBitstreamWidth(*core_, WitnessedOperations(element))
+          : 0);
 }
 
-auto RuntimeQueue::CountBits(const ConstIntegralView& control_bits) const
+auto RuntimeQueue::CountBits(
+    const ConstIntegralView& control_bits, const ValueOperations& element) const
     -> Int {
   return Int::FromInt(
-      core_.has_value() ? detail::SequenceCountBits(*core_, control_bits) : 0);
+      core_.has_value()
+          ? detail::SequenceCountBits(
+                *core_, control_bits, WitnessedOperations(element))
+          : 0);
 }
 
 auto RuntimeQueue::WriteToStream(
-    const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
-  return core_.has_value() ? core_->WriteToStream(stream, filled) : filled;
+    const IntegralView& stream, std::uint64_t filled,
+    const ValueOperations& element) const -> std::uint64_t {
+  return core_.has_value() ? core_->WriteToStream(
+                                 stream, filled, WitnessedOperations(element))
+                           : filled;
 }
 
 auto RuntimeQueue::ReadFromStream(
-    const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
-    -> std::uint64_t {
-  return Core().ReadFromStream(stream, taken, until);
+    const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until,
+    const ValueOperations& element) -> std::uint64_t {
+  return Core().ReadFromStream(
+      stream, taken, until, WitnessedOperations(element));
 }
 
-auto RuntimeQueue::ToBitVec() const -> BitVec {
-  return StreamOf(*this);
+auto RuntimeQueue::ToBitVec(const ValueOperations& element) const -> BitVec {
+  return StreamOf(*this, element);
 }
 
-auto RuntimeQueue::FromBitVec(const QueueType& type, const BitVec& run)
+auto RuntimeQueue::FromBitVec(
+    const QueueType& type, const BitVec& run, const ValueOperations& element)
     -> RuntimeQueue {
   RuntimeQueue out = FromElements(type, {});
-  ReadWholeStream(out, run);
+  ReadWholeStream(out, run, element);
   return out;
 }
 
 auto RuntimeQueue::WindowToBitVec(
-    std::optional<std::int64_t> start, std::size_t count) const -> BitVec {
-  return Core().WindowToBitVec(start, count);
+    std::optional<std::int64_t> start, std::size_t count,
+    const ValueOperations& element) const -> BitVec {
+  return Core().WindowToBitVec(start, count, WitnessedOperations(element));
 }
 
 auto RuntimeQueue::WithWindow(

@@ -11,7 +11,9 @@
 //
 // A property of the class being constructed exists from the start, before
 // its own initializer runs: the base constructor's arguments may read it
-// (LRM 8.7, whose example this repeats).
+// (LRM 8.7, whose example this repeats), and so may the extending class's
+// method a base constructor calls -- asking an associative array's least and
+// greatest index among them (LRM 20.7) -- whatever the value it then holds.
 module Top;
   typedef class Derived;
 
@@ -23,6 +25,7 @@ module Top;
     string seen_in_base;
     string named_in_base;
     bit cast_in_base;
+    bit indexed_in_base;
 
     function new();
       Derived d;
@@ -31,6 +34,11 @@ module Top;
       n = this;
       named_in_base = n.name();
       cast_in_base = $cast(d, this);
+      indexed_in_base = indexed();
+    endfunction
+
+    virtual function bit indexed();
+      return 0;
     endfunction
 
     virtual function string who();
@@ -44,6 +52,7 @@ module Top;
 
   class Derived extends Base;
     string seen_in_initializer = who();
+    int lookup[int];
 
     function new();
       super.new();
@@ -55,6 +64,12 @@ module Top;
 
     virtual function string name();
       return "derived";
+    endfunction
+
+    virtual function bit indexed();
+      integer low = $low(lookup);
+      integer high = $high(lookup);
+      return 1;
     endfunction
   endclass
 
@@ -118,6 +133,9 @@ module Top;
              derived.named_in_base);
     if (derived.cast_in_base !== 1)
       $fatal(1, "a cast of this to the object's class failed in a base constructor");
+    if (derived.indexed_in_base !== 1)
+      $fatal(1, "a base constructor's call reading an index of %s",
+             "an associative array did not return");
     if (derived.seen_in_initializer != "Derived")
       $fatal(1, "a property initializer called %s's method, expected Derived's",
              derived.seen_in_initializer);

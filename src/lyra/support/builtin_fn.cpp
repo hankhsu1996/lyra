@@ -185,7 +185,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "from_bitstream",
           .declaration = StaticFactory{"FromBitstream"},
           .operands = {kBits},
-          .answer_told = AnswerTold::kAnswerType};
+          .answer_told = AnswerTold::kAnswerTypeAndOperations};
     case BuiltinFn::kReverseBlocks:
       return IntegralEntry(IntegralOp::kReverseBlocks, Method{"ReverseBlocks"});
     case BuiltinFn::kToBitVec:
@@ -561,13 +561,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "timer_arm",
           .declaration = Method{"Arm"},
           .takes_the_runtime_handle = true};
-    case BuiltinFn::kIsUnknown:
-      return {
-          .name = "is_unknown",
-          .declaration = Method{"IsUnknown"},
-          .over_integral_values = BuiltinFn::kIntegralIsUnknown};
-    case BuiltinFn::kIntegralIsUnknown:
-      return IntegralEntry(IntegralOp::kIsUnknown, Method{"IsUnknown"});
     case BuiltinFn::kCountBits:
       return {
           .name = "count_bits",

@@ -4,14 +4,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <type_traits>
 #include <utility>
 
-#include "lyra/value/any_value.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_type.hpp"
-#include "lyra/value/index_order.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/real.hpp"
@@ -101,11 +98,33 @@ struct ValueWitnessesOf {
     *static_cast<T*>(storage) = Of(value);
   };
 
-  static constexpr auto Equal = [](const ValueType&, const void* lhs,
+  static constexpr auto BitIdentical = [](const ValueType&, const void* lhs,
+                                          const void* rhs) -> bool {
+    return Of(lhs).IsBitIdentical(Of(rhs));
+  };
+  static constexpr const PartsWitnessTable* kParts =
+      []() -> const PartsWitnessTable* {
+    if constexpr (HoldsParts<T>) {
+      return &kPartsWitnessTableOf<T>;
+    } else {
+      return nullptr;
+    }
+  }();
+};
+
+// The language's operations on a value of `T`, a kind of value no other type
+// parameterizes, each what `T` itself does.
+template <LyraValue T>
+struct OperationsOf {
+  static auto Of(const void* value) -> const T& {
+    return *static_cast<const T*>(value);
+  }
+
+  static constexpr auto Equal = [](const ValueOperations&, const void* lhs,
                                    const void* rhs) -> FourStateBit {
     return AnswerScalar(Of(lhs) == Of(rhs));
   };
-  static constexpr auto CaseEqual = [](const ValueType&, const void* lhs,
+  static constexpr auto CaseEqual = [](const ValueOperations&, const void* lhs,
                                        const void* rhs) -> bool {
     if constexpr (CaseEqualComparable<T>) {
       return Of(lhs).CaseEqual(Of(rhs)).IsTruthy();
@@ -113,27 +132,13 @@ struct ValueWitnessesOf {
       LacksOperation();
     }
   };
-  static constexpr auto BitIdentical = [](const ValueType&, const void* lhs,
-                                          const void* rhs) -> bool {
-    return Of(lhs).IsBitIdentical(Of(rhs));
-  };
-  static constexpr auto HasUnknown = [](const ValueType&,
+  static constexpr auto HasUnknown = [](const ValueOperations&,
                                         const void* value) -> bool {
     return Of(value).HasUnknown();
   };
 
-  // A value held with the type it was written in is of no type of its own, so
-  // there is no value of it before anything writes one (LRM 7.8.1).
-  static constexpr auto BuildDefault = [](const ValueType&, void* out) {
-    if constexpr (std::is_same_v<T, AnyValue>) {
-      LacksOperation();
-    } else {
-      std::construct_at(static_cast<T*>(out));
-    }
-  };
-
-  static constexpr auto BitstreamWidth = [](const ValueType&, const void* value,
-                                            void* out) {
+  static constexpr auto BitstreamWidth = [](const ValueOperations&,
+                                            const void* value, void* out) {
     if constexpr (requires { Of(value).BitstreamWidth(); }) {
       std::construct_at(static_cast<Int*>(out), Of(value).BitstreamWidth());
     } else if constexpr (kIsBitStreamType<T>) {
@@ -142,20 +147,20 @@ struct ValueWitnessesOf {
       LacksOperation();
     }
   };
-  static constexpr auto CountBits = [](const ValueType&, const void* value,
-                                       const ConstIntegralView& control_bits,
-                                       void* out) {
-    if constexpr (requires { Of(value).CountBits(control_bits); }) {
-      std::construct_at(
-          static_cast<Int*>(out), Of(value).CountBits(control_bits));
-    } else if constexpr (kIsBitStreamType<T>) {
-      StreamNotYetSupported();
-    } else {
-      LacksOperation();
-    }
-  };
+  static constexpr auto CountBits =
+      [](const ValueOperations&, const void* value,
+         const ConstIntegralView& control_bits, void* out) {
+        if constexpr (requires { Of(value).CountBits(control_bits); }) {
+          std::construct_at(
+              static_cast<Int*>(out), Of(value).CountBits(control_bits));
+        } else if constexpr (kIsBitStreamType<T>) {
+          StreamNotYetSupported();
+        } else {
+          LacksOperation();
+        }
+      };
   static constexpr auto WriteToStream =
-      [](const ValueType&, const void* value, const IntegralView& stream,
+      [](const ValueOperations&, const void* value, const IntegralView& stream,
          std::uint64_t filled) -> std::uint64_t {
     if constexpr (WritesBitStream<T>) {
       return Of(value).WriteToStream(stream, filled);
@@ -166,8 +171,8 @@ struct ValueWitnessesOf {
     }
   };
   static constexpr auto ReadFromStream =
-      [](const ValueType&, const ConstIntegralView& stream, std::uint64_t taken,
-         std::uint64_t until, void* out) -> std::uint64_t {
+      [](const ValueOperations&, const ConstIntegralView& stream,
+         std::uint64_t taken, std::uint64_t until, void* out) -> std::uint64_t {
     if constexpr (ReadsBitStream<T>) {
       return static_cast<T*>(out)->ReadFromStream(stream, taken, until);
     } else if constexpr (kIsBitStreamType<T>) {
@@ -176,77 +181,6 @@ struct ValueWitnessesOf {
       LacksOperation();
     }
   };
-
-  static constexpr auto ResolveTriState = [](const ValueType&, const void* lhs,
-                                             const void* rhs, void* out) {
-    if constexpr (NetResolvable<T>) {
-      std::construct_at(static_cast<T*>(out), Of(lhs).ResolveTriState(Of(rhs)));
-    } else {
-      LacksOperation();
-    }
-  };
-  static constexpr auto ResolveWiredAnd = [](const ValueType&, const void* lhs,
-                                             const void* rhs, void* out) {
-    if constexpr (NetResolvable<T>) {
-      std::construct_at(static_cast<T*>(out), Of(lhs).ResolveWiredAnd(Of(rhs)));
-    } else {
-      LacksOperation();
-    }
-  };
-  static constexpr auto ResolveWiredOr = [](const ValueType&, const void* lhs,
-                                            const void* rhs, void* out) {
-    if constexpr (NetResolvable<T>) {
-      std::construct_at(static_cast<T*>(out), Of(lhs).ResolveWiredOr(Of(rhs)));
-    } else {
-      LacksOperation();
-    }
-  };
-  static constexpr auto Dominating = [](const ValueType&, const void* stronger,
-                                        const void* weaker, void* out) {
-    if constexpr (NetResolvable<T>) {
-      std::construct_at(
-          static_cast<T*>(out), Of(stronger).Dominating(Of(weaker)));
-    } else {
-      LacksOperation();
-    }
-  };
-  static constexpr auto FilledLike = [](const ValueType&, const void* prototype,
-                                        const void* fill, void* out) {
-    if constexpr (NetResolvable<T>) {
-      std::construct_at(
-          static_cast<T*>(out),
-          FilledAs(Of(prototype), *static_cast<const Logic*>(fill)));
-    } else {
-      LacksOperation();
-    }
-  };
-
-  // A value the library holds is held whole, as one position, so a run of its
-  // positions is all of it.
-  static constexpr auto TakePositions =
-      [](const ValueType&, const void*, const void* from, const std::int64_t*,
-         const std::int64_t*,
-         void* out) { std::construct_at(static_cast<T*>(out), Of(from)); };
-
-  // An index type's own order where it keys an associative array (LRM 7.8),
-  // which for a handle is no SV operator at all.
-  static constexpr auto OrderBefore = [](const ValueType&, const void* lhs,
-                                         const void* rhs) -> bool {
-    if constexpr (requires { typename AssocKeyTraits<T>::Less; }) {
-      return typename AssocKeyTraits<T>::Less{}(Of(lhs), Of(rhs));
-    } else {
-      LacksOperation();
-    }
-  };
-
-  static constexpr const PartsWitnessTable* kParts =
-      []() -> const PartsWitnessTable* {
-    if constexpr (HoldsParts<T>) {
-      return &kPartsWitnessTableOf<T>;
-    } else {
-      return nullptr;
-    }
-  }();
 };
 
 // The library's type of `T`: its numbers and its table.

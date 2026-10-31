@@ -791,7 +791,6 @@ class Integral {
   [[nodiscard]] constexpr auto Clog2() const -> Integer;
   template <IntegralValue Control>
   [[nodiscard]] constexpr auto CountBits(const Control& control) const -> Int;
-  [[nodiscard]] constexpr auto IsUnknown() const -> Bit;
 
   // LRM 6.24.3: how many bits the value is as a stream, and those bits, which
   // a stream holds unsigned.
@@ -912,13 +911,6 @@ template <IntegralValue Control>
 constexpr auto Integral<kWidthArg, kSignednessArg, kDomainArg>::CountBits(
     const Control& control) const -> Int {
   return Int::FromInt(lyra::value::CountBits(View(), control.View()));
-}
-
-template <
-    std::uint64_t kWidthArg, Signedness kSignednessArg, StateDomain kDomainArg>
-constexpr auto Integral<kWidthArg, kSignednessArg, kDomainArg>::IsUnknown()
-    const -> Bit {
-  return Bit::FromBool(HasUnknown());
 }
 
 template <

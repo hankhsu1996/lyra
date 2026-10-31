@@ -10,6 +10,7 @@
 06_data_types/a_static_variable_initialized_in_a_block_needs_static: "the program the standard rejects ran"
 08_classes/new_is_refused_as_a_returned_expression: "the program the standard rejects ran"
 08_classes/this_is_refused_in_a_property_initializer: "the program the standard rejects ran"
+20_utility/array_query_dynamic_dimensions: "$low of an int-indexed array holding none was 0"
 21_output/readmem_two_state_and_enumerated_words: "further error reports from here are not shown"
 23_hierarchy/an_input_of_no_port_kind_takes_a_net_type: "the program the standard rejects ran"
 23_hierarchy/an_unconnected_input_of_no_port_kind_is_a_floating_net: "an unconnected input read xxxx, expected zzzz"

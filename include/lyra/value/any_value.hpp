@@ -13,8 +13,8 @@ namespace lyra::value {
 
 // A value of a type the library was compiled without, in storage of its own,
 // held with its type: what Rust's `Box<dyn Trait>` and Swift's existential
-// container are. Everything it does it asks of that type, so it answers the
-// language's whole-value operations as a value of the type would.
+// container are. What a holder asks of it -- its copy, its end, whether a
+// write changed it -- it asks of that type.
 class AnyValue {
  public:
   // Holds no value: storage before whatever declares it installs one.
@@ -50,32 +50,7 @@ class AnyValue {
     return bytes_.get();
   }
 
-  [[nodiscard]] auto operator==(const AnyValue& other) const -> FourStateBit;
-  [[nodiscard]] auto operator!=(const AnyValue& other) const -> FourStateBit;
-  [[nodiscard]] auto CaseEqual(const AnyValue& other) const -> Bit;
-  [[nodiscard]] auto ResolveTriState(const AnyValue& other) const -> AnyValue;
-  [[nodiscard]] auto ResolveWiredAnd(const AnyValue& other) const -> AnyValue;
-  [[nodiscard]] auto ResolveWiredOr(const AnyValue& other) const -> AnyValue;
-  [[nodiscard]] auto Dominating(const AnyValue& weaker) const -> AnyValue;
-  // This value with the `count` positions from `first` taken from `from`, a
-  // value of its type (LRM 10.6.2).
-  [[nodiscard]] auto TakePositions(
-      const AnyValue& from, std::int64_t first, std::int64_t count) const
-      -> AnyValue;
-  [[nodiscard]] static auto FilledLike(
-      const AnyValue& prototype, const Logic& fill) -> AnyValue;
-  // Two values hold the same bits only where they are of one type; a holder
-  // with no value differs from one with a value.
   [[nodiscard]] auto IsBitIdentical(const AnyValue& other) const -> bool;
-  [[nodiscard]] auto HasUnknown() const -> bool;
-  [[nodiscard]] auto IsUnknown() const -> Bit;
-  [[nodiscard]] auto BitstreamWidth() const -> Int;
-  [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
-      -> Int;
-  // The value's bits written into a stream below its `filled` most significant
-  // positions (LRM 6.24.3), with how many positions are filled after it.
-  [[nodiscard]] auto WriteToStream(
-      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t;
 
  private:
   // Frees storage a value was being built in, for a build that did not finish:
@@ -98,13 +73,6 @@ class AnyValue {
   AnyValue(void* value, const ValueType& type) : bytes_(value, End{&type}) {
   }
 
-  // One of the type's three folds of two net contributions, which share one
-  // shape.
-  using Fold =
-      void (ValueType::*)(const void* lhs, const void* rhs, void* out) const;
-  [[nodiscard]] auto FoldedBy(Fold fold, const AnyValue& other) const
-      -> AnyValue;
-
   std::unique_ptr<void, End> bytes_;
 };
 
@@ -114,8 +82,5 @@ class AnyValue {
 [[nodiscard]] auto SameType(const ValueType& a, const ValueType& b) -> bool;
 
 static_assert(LyraValue<AnyValue>);
-static_assert(NetResolvable<AnyValue>);
-static_assert(CaseEqualComparable<AnyValue>);
-static_assert(BitstreamSizable<AnyValue, ConstIntegralView>);
 
 }  // namespace lyra::value

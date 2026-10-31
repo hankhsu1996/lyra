@@ -78,9 +78,8 @@ pass class only through the duck-typed surface and becomes one template like eve
 both lowering boundaries. The frontend's value system functions on the structural path (`$time` and
 the like) are the one form not yet wired and return an unsupported diagnostic.
 
-`$isunknown` falls out as an ordinary instance built-in call `(x).IsUnknown()` returning the SV
-`bit` shape (`builtin-call-identity.md`), now reachable in both procedural and continuous-assign
-positions.
+`$isunknown` falls out as an ordinary built-in call answering the SV `bit` shape
+(`builtin-call-identity.md`), reachable in both procedural and continuous-assign positions.
 
 ## Rejected
 
@@ -111,5 +110,5 @@ positions.
 - `runtime_model.md` -- constructor-time (structural) versus simulation-time (process) expressions;
   a continuous-assign right-hand side is simulation-time, so it carries the full value-expression
   set.
-- `builtin-call-identity.md` -- `$isunknown` lowers to a built-in method call on its operand,
-  returning the SV `bit` shape.
+- `builtin-call-identity.md` -- `$isunknown` lowers to the unknown-bit question taken into the SV
+  `bit` shape.

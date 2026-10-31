@@ -50,7 +50,7 @@ through it.
   in LIR by the lowering and the code generator translates it
   ([a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md), revising who builds it).
   The operations the language defines on the whole value are methods the structure's declaration
-  states in MIR, and the table's other slots hold them.
+  states in MIR, handed to whatever asks one beside the table.
 - **A structure's table is its declaring unit's**, one in the program, whose operation slots hold
   the structure's methods; every other unit's values of the structure carry that table. A tuple a
   lowering composes has no operations, so a table of one holds the lifecycle alone and each module
@@ -109,7 +109,7 @@ through it.
 ## Cross-references
 
 - [a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md) -- what
-  fills the table's operation slots.
+  fills the records of operations handed with the type.
 - [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md) -- a value is an object
   in its maker's frame; this sizes a tuple's by its type rather than by its domain.
 - [jit-aggregate-realization](jit-aggregate-realization.md) -- the erased realization, which unions

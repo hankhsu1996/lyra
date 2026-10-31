@@ -18,13 +18,14 @@ struct ElementScratch {
   void* discarded_write = nullptr;
 };
 
-// The type of an array's elements as code compiled before any design existed
-// is handed it: the type, and how a value of it starts (LRM Table 7-1). What a
-// position of an array holds before anything is written to it is a fact of the
-// element type alone, so no array, of whatever kind and size, holds a default
-// of its own.
+// The type of an array's elements, or of any value a holder keeps for its
+// life, as code compiled before any design existed is handed it: the type, and
+// how a value of it starts (LRM Table 6-7, 7-1). What a position of an array
+// holds before anything is written to it, and what storage holds before its
+// first write, is a fact of the type alone, so no array and no holder states
+// a default of its own.
 //
-// Each unit of generated code states one of these for each element type it
+// Each unit of generated code states one of these for each such type it
 // names, as constant data laid out as this record is.
 class ElementType {
  public:
@@ -40,6 +41,12 @@ class ElementType {
 
   [[nodiscard]] auto Type() const -> const ValueType& {
     return *type_;
+  }
+
+  // A value of the type at its default (LRM Table 6-7, 7-1), built in `out`,
+  // which holds none.
+  void BuildDefault(void* out) const {
+    build_default_(out);
   }
 
   // LRM 7.4.5: what a read through an index naming no element returns, and

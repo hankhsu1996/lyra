@@ -74,10 +74,6 @@ class ManagedRef {
     return false;
   }
 
-  [[nodiscard]] static auto IsUnknown() -> Bit {
-    return Bit::FromBool(false);
-  }
-
   // LRM 8.4: a handle tested for a boolean value is 0 when null, 1 otherwise.
   explicit operator bool() const {
     return share_ != nullptr;

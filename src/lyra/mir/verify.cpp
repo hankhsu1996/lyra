@@ -2973,11 +2973,12 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
 
 // Every element type of an array -- fixed-size, dynamic, associative or a
 // queue -- has its default stated, since the code holding the array asks for
-// it by the element type alone (LRM 7.4.5); a type whose operations are stated
-// per unit has its other operations stated; an array of any kind may have its
-// passage into and out of the form of it with no queue bounded stated (LRM
-// 7.6, 7.10.5); and no other type has any. A pair stated twice leaves which
-// body answers to chance.
+// it by the element type alone (LRM 7.4.5), and a tuple may have one; a type
+// whose operations are stated per unit has
+// its other operations stated; an array of any kind may have its passage into
+// and out of the form of it with no queue bounded stated (LRM 7.6, 7.10.5);
+// and no other type has any. A pair stated twice leaves which body answers to
+// chance.
 void VerifyTypeOperations(const CompilationUnit& unit, std::string_view when) {
   const auto refuse = [&](TypeId type, std::string_view defect) {
     throw InternalError(
@@ -2989,9 +2990,14 @@ void VerifyTypeOperations(const CompilationUnit& unit, std::string_view when) {
   const support::ValueOperation default_value =
       support::BuiltinFn::kDeclaredDefault;
   const std::vector<TypeId> elements = ArrayElementTypes(unit.types);
-  std::vector<bool> is_element(unit.types.size(), false);
-  for (const TypeId element : elements) {
-    is_element[element.value] = true;
+  std::vector<bool> may_state_default(unit.types.size(), false);
+  for (const TypeId type : elements) {
+    may_state_default[type.value] = true;
+  }
+  for (const TypeId type : unit.types.Ids()) {
+    if (unit.types.Get(type).Is<TupleType>()) {
+      may_state_default[type.value] = true;
+    }
   }
   const auto is_bound_free_passage = [&](const TypeOperation& stated) {
     return unit.types.Get(stated.type).ContainerElementType().has_value() &&
@@ -3004,11 +3010,12 @@ void VerifyTypeOperations(const CompilationUnit& unit, std::string_view when) {
   for (const TypeOperation& stated : unit.type_operations) {
     if (!OperationsAreStatedPerUnit(unit.types.Get(stated.type)) &&
         !is_bound_free_passage(stated) &&
-        (stated.answers != default_value || !is_element[stated.type.value])) {
+        (stated.answers != default_value ||
+         !may_state_default[stated.type.value])) {
       refuse(
           stated.type,
           "an operation is stated for a type whose operations are not stated "
-          "per unit, or a default for a type no array holds");
+          "per unit, or a default for a type that states none");
     }
     if (!answered.emplace(stated.type, stated.answers).second) {
       refuse(stated.type, "a type has one operation stated twice");
@@ -3018,9 +3025,9 @@ void VerifyTypeOperations(const CompilationUnit& unit, std::string_view when) {
       refuse(stated.type, "a type's default answers a value of another type");
     }
   }
-  for (const TypeId element : elements) {
-    if (!answered.contains({element, default_value})) {
-      refuse(element, "the element type of an array has no default stated");
+  for (const TypeId type : elements) {
+    if (!answered.contains({type, default_value})) {
+      refuse(type, "the element type of an array has no default stated");
     }
   }
 }

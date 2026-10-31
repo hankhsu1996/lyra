@@ -418,9 +418,19 @@ class Cell : public VariableCell {
   // Starts a procedural continuous assignment at `level` over the `count`
   // positions from `first` of the cell's value, as its type numbers them,
   // superseding whatever was driving them at that level, and answers with the
-  // generation its evaluation carries (LRM 10.6).
+  // generation its evaluation carries (LRM 10.6). `take_positions` is how the
+  // takeover shows what it holds.
+  auto BeginTakeover(
+      std::int64_t level, std::int64_t first, std::int64_t count,
+      TakePositionsOf<Owned> take_positions) -> std::int64_t;
+  // The same of a value of a type the library is compiled with, which shows
+  // what it holds by its own operations.
   auto BeginTakeover(std::int64_t level, std::int64_t first, std::int64_t count)
-      -> std::int64_t;
+      -> std::int64_t
+    requires(!value::LaidOutByType<Owned>)
+  {
+    return BeginTakeover(level, first, count, {});
+  }
 
   // States what the takeover at `level` has evaluated to, as a value of the
   // cell's type of which the positions it holds are read. It reaches the cell
@@ -1043,8 +1053,15 @@ class VariableRef {
   // member of a scope standing for what its connection drives, and the
   // assignment gives it storage of its own to name until it ends.
   [[nodiscard]] auto BeginTakeover(
+      std::int64_t level, std::int64_t first, std::int64_t count,
+      TakePositionsOf<T> take_positions) const -> std::int64_t;
+  [[nodiscard]] auto BeginTakeover(
       std::int64_t level, std::int64_t first, std::int64_t count) const
-      -> std::int64_t;
+      -> std::int64_t
+    requires(!value::LaidOutByType<T>)
+  {
+    return BeginTakeover(level, first, count, {});
+  }
   [[nodiscard]] auto DriveTakeover(
       std::int64_t level, std::int64_t generation, const T& new_val) const
       -> bool;
@@ -1297,10 +1314,10 @@ void CellRareState<HeldAs>::WritePart(OwnedCall write) {
 
 template <class HeldAs>
 auto Cell<HeldAs>::BeginTakeover(
-    std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
+    std::int64_t level, std::int64_t first, std::int64_t count,
+    TakePositionsOf<Owned> take_positions) -> std::int64_t {
   return std::int64_t{RareState().Takeovers().Begin(
-      TakeoverLevelOf(level), PositionsNamed(first, count))};
+      TakeoverLevelOf(level), PositionsNamed(first, count), take_positions)};
 }
 
 template <class HeldAs>

@@ -52,7 +52,11 @@ using PassMode = std::variant<
 // holds x or z, the constant stating a type as the element type of an array,
 // which says how a value of it starts as well (LRM Table 7-1), or the
 // constant stating a queue type, which says that of its elements and how many
-// it may hold (LRM 7.10.5).
+// it may hold (LRM 7.10.5), the type's own function taking some of the
+// positions of a value of it (LRM 10.6.2), the order an associative array
+// indexed by `key` holds its entries in, which the library states once for each
+// kind of index (LRM 7.8), or the operations the library compares and streams a
+// value of the type by.
 struct TypeConstantArg {
   lir::TypeId type;
 };
@@ -65,13 +69,24 @@ struct ElementTypeArg {
 struct QueueTypeArg {
   lir::TypeId type;
 };
-using TypeArg =
-    std::variant<TypeConstantArg, TypeExtentArg, ElementTypeArg, QueueTypeArg>;
+struct TakePositionsArg {
+  lir::TypeId type;
+};
+struct IndexOrderArg {
+  lir::TypeId key;
+};
+struct OperationsArg {
+  lir::TypeId type;
+};
+using TypeArg = std::variant<
+    TypeConstantArg, TypeExtentArg, ElementTypeArg, QueueTypeArg,
+    TakePositionsArg, IndexOrderArg, OperationsArg>;
 
 // What a callee takes ahead of the arguments a call states. An entry making
 // storage for the words of a value wider than a word is told how wide the
-// values held there are, and one making storage for a value laid out by its
-// type is told that type.
+// values held there are, one making storage for a value laid out by its type
+// is told that type with how a value of it starts, and one making a net of
+// such values is told how the net folds them as well.
 struct NoImplicitArg {};
 struct WidthMetadataArg {
   lir::TypeId of;
@@ -79,8 +94,11 @@ struct WidthMetadataArg {
 struct TypeMetadataArg {
   lir::TypeId of;
 };
-using ImplicitArg =
-    std::variant<NoImplicitArg, WidthMetadataArg, TypeMetadataArg>;
+struct TypeAndNetFoldsArg {
+  lir::TypeId of;
+};
+using ImplicitArg = std::variant<
+    NoImplicitArg, WidthMetadataArg, TypeMetadataArg, TypeAndNetFoldsArg>;
 
 // One argument of a call as it is arranged, the role of rustc's `ArgAbi`: the
 // machine type its value crosses at, and what crosses with it.

@@ -23,3 +23,7 @@ int32_t packed_query(const svOpenArrayHandle h, int32_t which) {
       return -1000;
   }
 }
+
+int32_t packed_leave(const svOpenArrayHandle h) { return svSize(h, 0); }
+
+int32_t packed_keep(const svOpenArrayHandle h) { return svSize(h, 0); }

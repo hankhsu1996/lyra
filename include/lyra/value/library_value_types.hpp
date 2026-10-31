@@ -37,6 +37,24 @@ extern const ValueType lyra_rt_dynarray_value_type;
 extern const ValueType lyra_rt_queue_value_type;
 extern const ValueType lyra_rt_assocarray_value_type;
 extern const ValueType lyra_rt_managedref_value_type;
+
+// The functions of the language's operations on a value of each kind that can
+// be compared or streamed, and for a kind no other type parameterizes, the
+// whole of its operations. A container's operations name its element's, so
+// generated code states them for each container type, naming these functions.
+extern const OperationFunctions lyra_rt_string_operation_functions;
+extern const OperationFunctions lyra_rt_real_operation_functions;
+extern const OperationFunctions lyra_rt_shortreal_operation_functions;
+extern const OperationFunctions lyra_rt_chandle_operation_functions;
+extern const OperationFunctions lyra_rt_managedref_operation_functions;
+extern const OperationFunctions lyra_rt_dynarray_operation_functions;
+extern const OperationFunctions lyra_rt_queue_operation_functions;
+extern const OperationFunctions lyra_rt_assocarray_operation_functions;
+extern const ValueOperations lyra_rt_string_value_operations;
+extern const ValueOperations lyra_rt_real_value_operations;
+extern const ValueOperations lyra_rt_shortreal_value_operations;
+extern const ValueOperations lyra_rt_chandle_value_operations;
+extern const ValueOperations lyra_rt_managedref_value_operations;
 }
 
 // The library's type of a value of its own kind `T`.

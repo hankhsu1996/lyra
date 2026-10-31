@@ -148,38 +148,35 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   [[nodiscard]] auto operator==(const Queue& other) const ->
       typename StaticElem<T>::Equality {
     return StaticElem<T>::Equality::Filled(
-        detail::SequenceEqual(core_, other.core_));
+        detail::SequenceEqual(core_, other.core_, core_.Element()));
   }
   [[nodiscard]] auto operator!=(const Queue& other) const ->
       typename StaticElem<T>::Equality {
     return !(*this == other);
   }
   [[nodiscard]] auto CaseEqual(const Queue& other) const -> Bit {
-    return detail::SequenceCaseEqual(core_, other.core_);
+    return detail::SequenceCaseEqual(core_, other.core_, core_.Element());
   }
   [[nodiscard]] auto IsBitIdentical(const Queue& other) const -> bool {
     return detail::SequenceBitIdentical(core_, other.core_);
   }
   [[nodiscard]] auto HasUnknown() const -> bool {
-    return detail::SequenceHasUnknown(core_);
-  }
-  [[nodiscard]] auto IsUnknown() const -> Bit {
-    return Bit::FromBool(HasUnknown());
+    return detail::SequenceHasUnknown(core_, core_.Element());
   }
   [[nodiscard]] auto BitstreamWidth() const -> Int {
-    return Int::FromInt(detail::SequenceBitstreamWidth(core_));
+    return Int::FromInt(detail::SequenceBitstreamWidth(core_, core_.Element()));
   }
   // LRM 6.24.3: the elements' own streams laid end to end below the `filled`
   // most significant positions of `stream`, the one at index 0 first, and the
   // inverse, as many elements as fill the stream up to `until`.
   [[nodiscard]] auto WriteToStream(
       const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
-    return core_.WriteToStream(stream, filled);
+    return core_.WriteToStream(stream, filled, core_.Element());
   }
   auto ReadFromStream(
       const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until)
       -> std::uint64_t {
-    return core_.ReadFromStream(stream, taken, until);
+    return core_.ReadFromStream(stream, taken, until, core_.Element());
   }
   // The same as a run of bits of its own, and the queue exactly that run holds.
   [[nodiscard]] auto ToBitVec() const -> BitVec {
@@ -192,10 +189,11 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   }
   template <IntegralValue Control>
   [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
-    return Int::FromInt(detail::SequenceCountBits(core_, control_bits));
+    return Int::FromInt(
+        detail::SequenceCountBits(core_, control_bits, core_.Element()));
   }
   [[nodiscard]] auto MergeConditional(const Queue& other) const -> Queue {
-    return Queue(core_.MergeConditional(other.core_));
+    return Queue(core_.MergeConditional(other.core_, core_.Element()));
   }
 
   // LRM 7.10.1 / 7.4.5: the element a position names, the element default
@@ -246,7 +244,8 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   // those elements taking `values`, grown first to hold them.
   [[nodiscard]] auto WindowToBitVec(
       const Position& lo, std::int64_t count) const -> BitVec {
-    return core_.WindowToBitVec(ReadPosition(lo), WindowCount(count));
+    return core_.WindowToBitVec(
+        ReadPosition(lo), WindowCount(count), core_.Element());
   }
   template <OrdinalElements C>
   [[nodiscard]] auto WithWindow(

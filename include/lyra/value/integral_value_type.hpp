@@ -10,11 +10,13 @@
 
 namespace lyra::value {
 
-// The table every integral type answers through: each function reads the
-// shape off the type it is handed, so generated code stating an integral type
-// names this one rather than stating a table of its own.
+// The table every integral type answers through, and the functions of the
+// language's operations on an integral value: each reads the shape off the type
+// it is handed, so generated code stating an integral type names these rather
+// than stating functions of its own.
 extern "C" {
 extern const ValueWitnessTable lyra_rt_integral_value_witness_table;
+extern const OperationFunctions lyra_rt_integral_operation_functions;
 }
 
 // The type of an integral value (LRM 6.11) as code compiled before any design

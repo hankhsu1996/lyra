@@ -150,7 +150,8 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
 auto CodeGenTypes::GetFunctionType(const FnAbi& abi) -> llvm::FunctionType* {
   // What an entry is told of a type crosses as machine values of its own: a
   // width as a count, a signedness and a state domain as a flag each, and the
-  // constant of a type as its address.
+  // constant of a type, of its operations or of how a net folds values of it,
+  // and the function taking some of a value's positions, as its address.
   llvm::Type* const count = llvm::Type::getInt64Ty(*ctx_);
   llvm::Type* const flag = llvm::Type::getInt1Ty(*ctx_);
   std::vector<llvm::Type*> params;
@@ -158,7 +159,11 @@ auto CodeGenTypes::GetFunctionType(const FnAbi& abi) -> llvm::FunctionType* {
       Overloaded{
           [](const NoImplicitArg&) {},
           [&](const WidthMetadataArg&) { params.push_back(count); },
-          [&](const TypeMetadataArg&) { params.push_back(ptr_ty_); }},
+          [&](const TypeMetadataArg&) { params.push_back(ptr_ty_); },
+          [&](const TypeAndNetFoldsArg&) {
+            params.push_back(ptr_ty_);
+            params.push_back(ptr_ty_);
+          }},
       abi.implicit_arg);
   for (std::size_t i = 0; i <= abi.args.size(); ++i) {
     if (abi.named_part.has_value() && abi.named_part->before == i) {
@@ -193,7 +198,10 @@ auto CodeGenTypes::GetFunctionType(const FnAbi& abi) -> llvm::FunctionType* {
               params.push_back(flag);
             },
             [&](const ElementTypeArg&) { params.push_back(ptr_ty_); },
-            [&](const QueueTypeArg&) { params.push_back(ptr_ty_); }},
+            [&](const QueueTypeArg&) { params.push_back(ptr_ty_); },
+            [&](const TakePositionsArg&) { params.push_back(ptr_ty_); },
+            [&](const IndexOrderArg&) { params.push_back(ptr_ty_); },
+            [&](const OperationsArg&) { params.push_back(ptr_ty_); }},
         told);
   }
   return std::visit(

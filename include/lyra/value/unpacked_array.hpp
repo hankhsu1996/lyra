@@ -364,14 +364,14 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   [[nodiscard]] auto operator==(const UnpackedArray& other) const ->
       typename StaticElem<T>::Equality {
     return StaticElem<T>::Equality::Filled(
-        detail::SequenceEqual(Run(), other.Run()));
+        detail::SequenceEqual(Run(), other.Run(), StaticElem<T>{}));
   }
   [[nodiscard]] auto operator!=(const UnpackedArray& other) const ->
       typename StaticElem<T>::Equality {
     return !(*this == other);
   }
   [[nodiscard]] auto CaseEqual(const UnpackedArray& other) const -> Bit {
-    return detail::SequenceCaseEqual(Run(), other.Run());
+    return detail::SequenceCaseEqual(Run(), other.Run(), StaticElem<T>{});
   }
 
   // LRM 9.4.2 update event predicate (engine change-detection hook): are the
@@ -461,18 +461,14 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
 
   // LRM 20.9: any element carrying an unknown bit propagates up.
   [[nodiscard]] auto HasUnknown() const -> bool {
-    return detail::SequenceHasUnknown(Run());
-  }
-
-  [[nodiscard]] auto IsUnknown() const -> Bit {
-    return Bit::FromBool(HasUnknown());
+    return detail::SequenceHasUnknown(Run(), StaticElem<T>{});
   }
 
   // LRM 20.6.2 `$bits`: the current bit count is the sum of the elements' own
   // bit counts. A fixed-size unpacked array folds at elaboration; this path
   // serves the case where an element is itself dynamically sized.
   [[nodiscard]] auto BitstreamWidth() const -> Int {
-    return Int::FromInt(detail::SequenceBitstreamWidth(Run()));
+    return Int::FromInt(detail::SequenceBitstreamWidth(Run(), StaticElem<T>{}));
   }
 
   // LRM 20.9 `$countbits`: the bit stream this value contributes is its
@@ -480,7 +476,8 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // elements' own counts under the same control bits.
   template <IntegralValue Control>
   [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
-    return Int::FromInt(detail::SequenceCountBits(Run(), control_bits));
+    return Int::FromInt(
+        detail::SequenceCountBits(Run(), control_bits, StaticElem<T>{}));
   }
 
   // LRM 6.24.3: the elements' own streams laid end to end into a stream below

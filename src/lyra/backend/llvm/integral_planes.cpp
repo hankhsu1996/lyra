@@ -1048,8 +1048,6 @@ auto LowerOnPlanes(
       const bool holds_unknown = answers_unknown();
       return words.AllXWhere(names_none, Known(position.at), holds_unknown);
     }
-    case IntegralOp::kIsUnknown:
-      return Known(words.AnySet(load(0).unknown));
     case IntegralOp::kHasUnknown:
       return words.AnySet(load(0).unknown);
     case IntegralOp::kBitIdentical:

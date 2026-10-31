@@ -39,12 +39,14 @@ by the rules a structure's methods follow.
 - The call takes each value by reference, as a structure's method does. The C++ backend spells it as
   the library template's own member, `a.UnpackedArray<T, 4>::operator==(b)`, which the host compiler
   instantiates where the call is written, and renders none of the bodies, as it renders no element
-  default. The execution backend compiles every body and fills the type's table with them, and with
-  the type's copy, move, assignment and ending, each taking every element's step, which the lowering
-  to LIR states ([a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md)).
-- A tuple's table is generated the same way: its default is its declaration's method where it is a
-  structure, and otherwise each component's type is asked for its part, as clearing above the widths
-  asks each component's.
+  default. The execution backend compiles every body into the records handed to whatever asks one
+  ([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
+  D4), and fills the type's table with its copy, move, assignment and ending, each taking every
+  element's step, which the lowering to LIR states
+  ([a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md)).
+- A tuple's records are generated the same way. Its default is its declaration's method where it is
+  a structure, and otherwise a body the unit states from each component's default, stated only where
+  every component has one (no declaration holds a wildcard index, LRM 7.8.1).
 - What the prebuilt library keeps is what needs no knowledge of the type: reaching an element, a run
   of them and their order by position, building an array from its elements and merging two under an
   ambiguous condition, for each of which the array's constant states a count and the element's
@@ -72,7 +74,9 @@ by the rules a structure's methods follow.
   keyed that way, and every unit naming one would state its bodies again. rustc makes a struct, a
   union and an enum one kind of declared type for the same reason.
 - **Only the operations a unit uses, instantiated on demand.** A value held in a variable, a net or
-  a container reaches every operation through its table, and nearly every type a unit names is held.
+  a container reaches its steps and change test through its table, and nearly every type a unit
+  names is held; an element is compared and streamed through its container's records whichever unit
+  asks.
 - **An array's loop per element type with the count an operand**, as rustc compares a slice. The
   table still needs a function of fixed parameters per array type, so the count is spelled per type
   either way.
