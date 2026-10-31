@@ -110,25 +110,27 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
     case mir::RuntimeLibraryKind::kLeasedReference:
       return "lyra::runtime::LeasedReference";
     case mir::RuntimeLibraryKind::kObjectDefinition:
-      return "lyra::runtime::ObjectDefinition";
+      return "lyra::abi::ObjectDefinition";
     case mir::RuntimeLibraryKind::kScopeInfo:
-      return "lyra::runtime::ScopeInfo";
+      return "lyra::abi::ScopeInfo";
     case mir::RuntimeLibraryKind::kScopeCallable:
-      return "lyra::runtime::ScopeCallable";
+      return "lyra::abi::ScopeCallable";
     case mir::RuntimeLibraryKind::kClassObjectInfo:
-      return "lyra::runtime::ClassObjectInfo";
+      return "lyra::abi::ClassObjectInfo";
     case mir::RuntimeLibraryKind::kInterfaceRow:
-      return "lyra::runtime::InterfaceRow";
+      return "lyra::abi::InterfaceRow";
+    case mir::RuntimeLibraryKind::kScopeMetadata:
+      return "lyra::abi::ScopeMetadata";
     case mir::RuntimeLibraryKind::kConstructionTable:
-      return "lyra::runtime::ConstructionTable";
+      return "lyra::abi::ConstructionTable";
     case mir::RuntimeLibraryKind::kInstantiation:
-      return "lyra::runtime::Instantiation";
+      return "lyra::abi::Instantiation";
     case mir::RuntimeLibraryKind::kGeneratePlaces:
-      return "lyra::runtime::GeneratePlaces";
+      return "lyra::abi::GeneratePlaces";
     case mir::RuntimeLibraryKind::kDumpEntry:
-      return "lyra::runtime::DumpEntry";
+      return "lyra::abi::DumpEntry";
     case mir::RuntimeLibraryKind::kDumpBlock:
-      return "lyra::runtime::DumpBlock";
+      return "lyra::abi::DumpBlock";
     case mir::RuntimeLibraryKind::kBitVec:
       return "lyra::value::BitVec";
     case mir::RuntimeLibraryKind::kDpiBitBuffer:
@@ -257,12 +259,15 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::MachineArrayType& m) {
             Write(out, "std::array<", type(m.element), ", ", m.size, ">");
           },
+          [&](const mir::MachineSpanType& m) {
+            Write(out, "lyra::abi::ConstantSpan<", type(m.element), ">");
+          },
           [&](const mir::MachineFunctionType& m) {
             // A pointer to a function type, spelled so that a declaration
             // names it as it names any other type. The erased function type
             // is the runtime's alias.
             if (mir::IsErasedFunction(unit.types, type_id)) {
-              out += "lyra::runtime::ErasedEntry";
+              out += "lyra::abi::ErasedEntry";
               return;
             }
             Write(out, "std::add_pointer_t<", type(m.result), "(");
@@ -593,6 +598,7 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::MachineIntType&) { return reaches_nothing(); },
           [&](const mir::MachineFloatType&) { return reaches_nothing(); },
           [&](const mir::MachineArrayType&) { return reaches_nothing(); },
+          [&](const mir::MachineSpanType&) { return reaches_nothing(); },
           [&](const mir::MachineFunctionType&) { return reaches_nothing(); },
           [&](const mir::RealType&) { return reaches_nothing(); },
           [&](const mir::ShortRealType&) { return reaches_nothing(); },
@@ -677,6 +683,7 @@ auto ReceiverSpellingAsCpp(
               [&](const mir::MachineIntType&) { return holds_no_object(); },
               [&](const mir::MachineFloatType&) { return holds_no_object(); },
               [&](const mir::MachineArrayType&) { return holds_no_object(); },
+              [&](const mir::MachineSpanType&) { return holds_no_object(); },
               [&](const mir::MachineFunctionType&) {
                 return holds_no_object();
               },
@@ -796,6 +803,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::MachineIntType& t) { by_naming_itself(t); },
           [&](const mir::MachineFloatType& t) { by_naming_itself(t); },
           [&](const mir::MachineArrayType& t) { by_naming_itself(t); },
+          [&](const mir::MachineSpanType& t) { by_naming_itself(t); },
           [&](const mir::MachineFunctionType& t) { by_naming_itself(t); },
           [&](const mir::ChandleType& t) { by_naming_itself(t); },
           [&](const mir::RealType& t) { by_naming_itself(t); },

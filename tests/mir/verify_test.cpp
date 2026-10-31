@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -32,8 +33,10 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
+#include "lyra/mir/value_build.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
@@ -1344,10 +1347,170 @@ TEST(MirVerifyTest, ACompositesPartsAreOfTheirPositionsTypes) {
       composing(Built::kNeither, {true}), "a composite of a type with no");
 }
 
+// A constant of a class is held to its types as a body is: each part of a
+// structure of the library is of the type the library declares its member at,
+// a view is built from the address of an array of its own entries, and the
+// constant is of the type it states.
+TEST(MirVerifyTest, AConstantOfAClassMeetsTheTypesItStates) {
+  enum class Wrong : std::uint8_t {
+    kNothing,
+    kEntryMember,
+    kViewOfOtherEntries,
+    kEntriesOfOtherRecord,
+    kStatedType,
+  };
+  const auto stating = [](Wrong wrong) {
+    return UnitWithBody([wrong](CompilationUnit& u, Block&) {
+      const auto library = [&](RuntimeLibraryKind kind) {
+        return u.types.Intern(Type{RuntimeLibraryType{.kind = kind}});
+      };
+      const auto read_only_pointer = [&](TypeId pointee) {
+        return u.types.Intern(
+            Type{PointerType{
+                .pointee = pointee,
+                .ownership = PointerOwnership::kBorrowed,
+                .mutability = Mutability::kReadOnly}});
+      };
+      const ClassId id = u.DeclareClass();
+      Class cls;
+      cls.base = ClassRef{ManagedObjectRootRef{}};
+      // `[{entry, table}]`: the instantiations one generate's places are made
+      // by, one of them; none where they are to be another library structure.
+      const TypeId instantiation = library(RuntimeLibraryKind::kInstantiation);
+      const TypeId viewed = wrong == Wrong::kEntriesOfOtherRecord
+                                ? library(RuntimeLibraryKind::kScopeCallable)
+                                : instantiation;
+      ValueBuild entries;
+      std::vector<ExprId> rows;
+      if (viewed == instantiation) {
+        const std::span<const TypeId> members =
+            *u.LibraryRecordMembers(RuntimeLibraryKind::kInstantiation);
+        const ExprId entry = entries.body.exprs.Add(
+            Expr{.data = NullLiteral{}, .type = members[0]});
+        const ExprId table = entries.body.exprs.Add(
+            Expr{
+                .data = NullLiteral{},
+                .type = wrong == Wrong::kEntryMember
+                            ? read_only_pointer(
+                                  library(RuntimeLibraryKind::kScopeInfo))
+                            : members[1]});
+        rows.push_back(entries.body.exprs.Add(
+            Expr{
+                .data = CompositeExpr{.parts = {entry, table}},
+                .type = instantiation}));
+      }
+      const TypeId array = MachineArrayOf(u.types, viewed, rows.size());
+      entries.value = entries.body.exprs.Add(
+          Expr{.data = CompositeExpr{.parts = std::move(rows)}, .type = array});
+      const ClassConstantId held = cls.constants.Add(
+          ClassConstantDecl{.type = array, .initializer = std::move(entries)});
+
+      // `{places}`: the generate's places, a view of that array.
+      ValueBuild build;
+      Block& block = build.body;
+      const ExprId named = block.exprs.Add(
+          Expr{
+              .data =
+                  ReferenceExpr{
+                      .target =
+                          ClassConstantRef{.owner = id, .constant = held}},
+              .type = array});
+      const ExprId address =
+          block.exprs.Add(MakeAddressOfExpr(named, read_only_pointer(array)));
+      const TypeId spanned = wrong == Wrong::kViewOfOtherEntries
+                                 ? library(RuntimeLibraryKind::kScopeCallable)
+                                 : viewed;
+      const ExprId places = block.exprs.Add(
+          Expr{
+              .data = CallExpr{.callee = Construct{}, .arguments = {address}},
+              .type =
+                  u.types.Intern(Type{MachineSpanType{.element = spanned}})});
+      const TypeId generate = library(RuntimeLibraryKind::kGeneratePlaces);
+      build.value = block.exprs.Add(
+          Expr{.data = CompositeExpr{.parts = {places}}, .type = generate});
+      cls.constants.Add(
+          ClassConstantDecl{
+              .type = wrong == Wrong::kStatedType
+                          ? library(RuntimeLibraryKind::kDumpBlock)
+                          : generate,
+              .initializer = std::move(build)});
+      u.DefineClass(id, std::move(cls));
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(stating(Wrong::kNothing)));
+  ExpectRefused(stating(Wrong::kEntryMember), "hands a part of a composite");
+  ExpectRefused(stating(Wrong::kViewOfOtherEntries), "builds a view of type");
+  ExpectRefused(
+      stating(Wrong::kEntriesOfOtherRecord), "hands a part of a composite");
+  ExpectRefused(stating(Wrong::kStatedType), "hands a constant it states");
+}
+
+// Code named as a value is of the type the code has -- every parameter it
+// takes and what it results in -- whatever type the place it is read into
+// states, which a cast reaches: a body named as itself, and a method named by
+// the entry its class gives it, which is that entry's type. A method its class
+// gives no entry is entered through none.
+TEST(MirVerifyTest, CodeNamedAsAValueIsOfTheTypeTheCodeHas) {
+  enum class Named : std::uint8_t { kBody, kEntry, kMethodWithoutEntry };
+  const auto naming = [](Named named_as, bool at_its_own_type) {
+    return UnitWithCode(
+        [named_as, at_its_own_type](CompilationUnit& u, CallableCode& code) {
+          // A body of a class of the unit taking an `int` and doing nothing,
+          // which is also the entry of itself where the class gives it one.
+          CallableCode named = CallableCode::Defined();
+          named.result_type = u.builtins.void_type;
+          named.params.push_back(named.AddLocal(u.builtins.int_type));
+          const TypeId own = FunctionTypeOf(u.types, named);
+          Class cls;
+          const CallableId slot = cls.callables.Add(
+              CallableDecl{
+                  .code = std::move(named),
+                  .foreign = std::nullopt,
+                  .virtual_dispatch = std::nullopt,
+                  .defining_unit = std::nullopt});
+          if (named_as == Named::kEntry) {
+            cls.entries.push_back(MethodEntry{.method = slot, .entry = slot});
+          }
+          const ClassId owner = u.DeclareClass();
+          u.DefineClass(owner, std::move(cls));
+          const TypeId stated =
+              at_its_own_type
+                  ? own
+                  : u.types.Intern(
+                        Type{MachineFunctionType{
+                            .params = {}, .result = u.builtins.void_type}});
+          const CallableTarget body_of{.owner = owner, .slot = slot};
+          const ReferenceTarget target =
+              named_as == Named::kBody
+                  ? ReferenceTarget{FunctionRef{.body = body_of}}
+                  : ReferenceTarget{DispatchEntryRef{.body = body_of}};
+          Block& body = code.Body();
+          const ExprId reference = body.exprs.Add(
+              Expr{.data = ReferenceExpr{.target = target}, .type = stated});
+          body.AppendStmt(
+              LocalDeclStmt{
+                  .target = code.locals.Add(LocalDecl{.type = stated}),
+                  .init = reference});
+        });
+  };
+
+  for (const Named named_as : {Named::kBody, Named::kEntry}) {
+    EXPECT_NO_THROW(Verify(naming(named_as, true)));
+    ExpectRefused(naming(named_as, false), "names code of type");
+  }
+  ExpectRefused(
+      naming(Named::kMethodWithoutEntry, true),
+      "names the entry of a method its class gives none");
+}
+
 // A cast joins only types every target converts between in its own syntax: an
 // integral value at a type laying it out alike, a value read as the machine
-// boolean a condition tests, and a machine integer at another. A value moved
-// between representations is a call.
+// boolean a condition tests, a machine integer at another, and a code address
+// as one the target enters alike -- erased for a table to hold, or handed a
+// handle of another class, or a reference to one that is as writable -- and
+// never as one handed something else. A value moved between representations
+// is a call.
 TEST(MirVerifyTest, ACastReadsAValueAsATypeEveryTargetConvertsItTo) {
   const auto casting = [](auto from, auto to) {
     return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
@@ -1372,11 +1535,53 @@ TEST(MirVerifyTest, ACastReadsAValueAsATypeEveryTargetConvertsItTo) {
     return u.builtins.machine_int64;
   };
 
+  const auto code_handed = [](auto param) {
+    return [=](CompilationUnit& u) {
+      return u.types.Intern(
+          Type{MachineFunctionType{
+              .params = {param(u)}, .result = u.builtins.void_type}});
+    };
+  };
+  const auto handle_of = [](support::RuntimeClass which) {
+    return [=](CompilationUnit& u) {
+      return u.types.Intern(
+          Type{ManagedRefType{
+              .pointee =
+                  u.types.Intern(Type{RuntimeClassType{.which = which}})}});
+    };
+  };
+  const auto erased = [](CompilationUnit& u) {
+    return ErasedFunction(u.types);
+  };
+  const auto reference_to = [](auto referent, Mutability mutability) {
+    return [=](CompilationUnit& u) {
+      return u.types.Intern(
+          Type{ReferenceType{
+              .referent = referent(u), .mutability = mutability}});
+    };
+  };
+  const auto problem = handle_of(support::RuntimeClass::kConstraintProblem);
+  const auto root = handle_of(support::RuntimeClass::kObject);
+
   EXPECT_NO_THROW(Verify(casting(int_type, machine_bool)));
   EXPECT_NO_THROW(Verify(casting(machine_int64, machine_bool)));
+  EXPECT_NO_THROW(Verify(casting(code_handed(int_type), erased)));
+  EXPECT_NO_THROW(Verify(casting(erased, code_handed(int_type))));
+  EXPECT_NO_THROW(Verify(casting(code_handed(problem), code_handed(root))));
+  EXPECT_NO_THROW(Verify(casting(
+      code_handed(reference_to(problem, Mutability::kReadOnly)),
+      code_handed(reference_to(root, Mutability::kReadOnly)))));
+  ExpectRefused(
+      casting(
+          code_handed(reference_to(problem, Mutability::kMutable)),
+          code_handed(reference_to(root, Mutability::kReadOnly))),
+      "which a cast does not join");
   ExpectRefused(casting(int_type, integer), "which a cast does not join");
   ExpectRefused(casting(int_type, string), "which a cast does not join");
   ExpectRefused(casting(int_type, machine_int64), "which a cast does not join");
+  ExpectRefused(
+      casting(code_handed(int_type), code_handed(machine_int64)),
+      "which a cast does not join");
 }
 
 // A unit states operations only for a type it states them for per unit, and a

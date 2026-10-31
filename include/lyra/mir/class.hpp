@@ -6,7 +6,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
@@ -20,7 +19,6 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -280,6 +278,18 @@ struct Class {
     for (const LibraryCallbackBody& answered : library_callbacks) {
       if (answered.body == callable) {
         return answered.callback;
+      }
+    }
+    return std::nullopt;
+  }
+
+  // The body through which `method` is entered on an object handed over as the
+  // root every object is, or nothing where the class gives it none.
+  [[nodiscard]] auto EntryOf(CallableId method) const
+      -> std::optional<CallableId> {
+    for (const MethodEntry& entry : entries) {
+      if (entry.method == method) {
+        return entry.entry;
       }
     }
     return std::nullopt;

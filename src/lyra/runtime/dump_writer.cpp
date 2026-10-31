@@ -24,7 +24,7 @@ namespace lyra::runtime {
 
 DumpWriter::~DumpWriter() = default;
 
-auto DumpReference(const DumpEntry& entry) -> std::string {
+auto DumpReference(const abi::DumpEntry& entry) -> std::string {
   std::string reference = entry.identifier;
   if (const auto range = entry.Range()) {
     reference += std::format(" [{}:{}]", range->left, range->right);
@@ -248,7 +248,7 @@ class VcdWriter final : public VcdCommandWriter {
  public:
   using VcdCommandWriter::VcdCommandWriter;
 
-  void Var(DumpCode code, const DumpEntry& entry) override {
+  void Var(DumpCode code, const abi::DumpEntry& entry) override {
     if (scalar_.size() <= code.value) {
       scalar_.resize(code.value + 1);
     }
@@ -256,7 +256,7 @@ class VcdWriter final : public VcdCommandWriter {
     Declare(code, entry);
   }
 
-  void Alias(DumpCode code, const DumpEntry& entry) override {
+  void Alias(DumpCode code, const abi::DumpEntry& entry) override {
     Declare(code, entry);
   }
 
@@ -296,7 +296,7 @@ class VcdWriter final : public VcdCommandWriter {
     return spelled;
   }
 
-  void Declare(DumpCode code, const DumpEntry& entry) {
+  void Declare(DumpCode code, const abi::DumpEntry& entry) {
     File().Put(
         std::format(
             "$var {} {} {} {} $end\n",
@@ -357,8 +357,8 @@ class ExtendedVcdWriter final : public VcdCommandWriter {
   // LRM 21.7.4.2: the size is the index range the declaration states, and
   // where it states none -- a single bit, a real, an int -- the port is
   // written as scalar, 1.
-  void Var(DumpCode code, const DumpEntry& entry) override {
-    const std::optional<DumpEntry::Connection> port = entry.Port();
+  void Var(DumpCode code, const abi::DumpEntry& entry) override {
+    const std::optional<abi::DumpEntry::Connection> port = entry.Port();
     if (!port.has_value()) {
       throw InternalError("ExtendedVcdWriter: a dumped port has a direction");
     }
@@ -376,7 +376,7 @@ class ExtendedVcdWriter final : public VcdCommandWriter {
             "$var port {} <{} {} $end\n", size, code.value, entry.identifier));
   }
 
-  void Alias(DumpCode code, const DumpEntry& entry) override {
+  void Alias(DumpCode code, const abi::DumpEntry& entry) override {
     Var(code, entry);
   }
 
@@ -440,7 +440,7 @@ class ExtendedVcdWriter final : public VcdCommandWriter {
   };
 
   // An unknown real has no position to spell, so it is spelled as one.
-  static auto UnknownWidth(const DumpEntry& entry) -> std::uint32_t {
+  static auto UnknownWidth(const abi::DumpEntry& entry) -> std::uint32_t {
     switch (support::DumpValueFormOf(entry.Kind())) {
       case support::DumpValueForm::kReal:
         return 1;
@@ -488,11 +488,11 @@ class TextWriter final : public DumpWriter {
     scopes_.pop_back();
   }
 
-  void Var(DumpCode code, const DumpEntry& entry) override {
+  void Var(DumpCode code, const abi::DumpEntry& entry) override {
     Name(code, entry);
   }
 
-  void Alias(DumpCode code, const DumpEntry& entry) override {
+  void Alias(DumpCode code, const abi::DumpEntry& entry) override {
     Name(code, entry);
   }
 
@@ -560,7 +560,7 @@ class TextWriter final : public DumpWriter {
     return joined;
   }
 
-  void Name(DumpCode code, const DumpEntry& entry) {
+  void Name(DumpCode code, const abi::DumpEntry& entry) {
     if (names_.size() <= code.value) {
       names_.resize(code.value + 1);
     }

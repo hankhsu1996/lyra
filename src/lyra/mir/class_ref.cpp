@@ -74,6 +74,7 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> ClassId {
           [&](const MachineIntType&) { return not_an_object(); },
           [&](const MachineFloatType&) { return not_an_object(); },
           [&](const MachineArrayType&) { return not_an_object(); },
+          [&](const MachineSpanType&) { return not_an_object(); },
           [&](const MachineFunctionType&) { return not_an_object(); },
           [&](const RealType&) { return not_an_object(); },
           [&](const ShortRealType&) { return not_an_object(); },

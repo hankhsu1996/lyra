@@ -77,6 +77,7 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kObjectDefinition,
   // The structures a definition is made of, which only a constant names.
   kScopeInfo,
+  kScopeMetadata,
   kScopeCallable,
   kClassObjectInfo,
   kInterfaceRow,
@@ -202,6 +203,15 @@ struct MachineArrayType {
   std::uint32_t size;
 
   auto operator==(const MachineArrayType&) const -> bool = default;
+};
+
+// A read-only view of a run of plain machine data something else owns: where
+// the first entry lies and how many there are, the pair a C program holds a
+// table as.
+struct MachineSpanType {
+  TypeId element;
+
+  auto operator==(const MachineSpanType&) const -> bool = default;
 };
 
 // A pointer to code (C `R (*)(A, B)`): the machine family's callable axis,
@@ -452,8 +462,8 @@ class Type {
       IntegralType, UnpackedArrayType, DynamicArrayType, QueueType,
       AssociativeArrayType, WildcardIndexType, StringType, AnyType,
       AnyReferenceType, MachineCStringType, MachineBoolType, MachineIntType,
-      MachineFloatType, MachineArrayType, MachineFunctionType, RealType,
-      ShortRealType, ChandleType, VoidType, EmptyType, ObjectType,
+      MachineFloatType, MachineArrayType, MachineSpanType, MachineFunctionType,
+      RealType, ShortRealType, ChandleType, VoidType, EmptyType, ObjectType,
       RuntimeClassType, ClosureType, ErasedCallableType, RuntimeEffectsType,
       FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType,
       VariableRefType, PointerType, ManagedRefType, WeakManagedRefType,

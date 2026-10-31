@@ -27,7 +27,8 @@ auto SplitFromRunning() -> DrawRng {
 ClassObject::ClassObject() : generator_(SplitFromRunning()) {
 }
 
-ClassObject::ClassObject(const ObjectDefinition& definition, DrawRng generator)
+ClassObject::ClassObject(
+    const abi::ObjectDefinition& definition, DrawRng generator)
     : GcObject(definition), generator_(generator) {
 }
 
@@ -55,9 +56,9 @@ namespace {
 template <typename... Args>
 void EnterRandomization(
     GcObject& object,
-    void (*ClassObjectInfo::*entry)(GcObject*, const Args&...),
+    void (*abi::ClassObjectInfo::*entry)(GcObject*, const Args&...),
     const Args&... args) {
-  const ClassObjectInfo* info = object.definition->class_object;
+  const abi::ClassObjectInfo* info = object.definition->class_object;
   if (info == nullptr) {
     throw InternalError(
         "ClassObject: a class object has a definition that states "
@@ -71,15 +72,15 @@ void EnterRandomization(
 }  // namespace
 
 void ObjectRandVariables(GcObject& object, const value::ObjectRef& problem) {
-  EnterRandomization(object, &ClassObjectInfo::rand_variables, problem);
+  EnterRandomization(object, &abi::ClassObjectInfo::rand_variables, problem);
 }
 
 void ObjectConstrain(GcObject& object, const value::ObjectRef& problem) {
-  EnterRandomization(object, &ClassObjectInfo::constrain, problem);
+  EnterRandomization(object, &abi::ClassObjectInfo::constrain, problem);
 }
 
 void ObjectRandObjects(GcObject& object, const value::ObjectRef& problem) {
-  EnterRandomization(object, &ClassObjectInfo::rand_objects, problem);
+  EnterRandomization(object, &abi::ClassObjectInfo::rand_objects, problem);
 }
 
 // The built-in hooks do nothing to the object (LRM 18.6.2), though a call of
@@ -101,14 +102,14 @@ void ObjectPreRandomize(GcObject* object) {
   if (object == nullptr) {
     value::RaiseNullObjectHandleAccess();
   }
-  EnterRandomization(*object, &ClassObjectInfo::pre_randomize);
+  EnterRandomization(*object, &abi::ClassObjectInfo::pre_randomize);
 }
 
 void ObjectPostRandomize(GcObject* object) {
   if (object == nullptr) {
     value::RaiseNullObjectHandleAccess();
   }
-  EnterRandomization(*object, &ClassObjectInfo::post_randomize);
+  EnterRandomization(*object, &abi::ClassObjectInfo::post_randomize);
 }
 
 void ObjectSrandom(ClassObject* object, const value::ConstIntegralView& seed) {

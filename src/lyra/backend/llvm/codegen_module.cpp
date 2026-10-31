@@ -658,32 +658,58 @@ auto CodeGenModule::RecordData(const lir::ConstantRecord& record)
             },
             [&](const lir::ConstantInt&) { return mismatch("a pointer"); },
             [&](const lir::ConstantRecord&) { return mismatch("a pointer"); },
-            [&](const lir::ConstantArray&) { return mismatch("a pointer"); }},
+            [&](const lir::ConstantArray&) { return mismatch("a pointer"); },
+            [&](const lir::ConstantSpan&) { return mismatch("a pointer"); }},
         part.value);
   };
   ConstantRecord out(*context_, layout.layout.size);
   for (std::size_t i = 0; i < layout.fields.size(); ++i) {
     const FieldLayout& field = layout.fields[i];
     const lir::Constant& part = record.parts[i];
-    switch (field.kind) {
-      case FieldKind::kInteger: {
-        const auto* integer = std::get_if<lir::ConstantInt>(&part.value);
-        if (integer == nullptr) {
-          mismatch("an integer");
-        }
-        // The two's-complement bits of the value at the field's width.
-        const std::uint64_t bits = field.size * 8;
-        const std::uint64_t mask =
-            bits == 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << bits) - 1;
-        out.Place(
-            field.offset, Int(static_cast<std::uint64_t>(integer->value) & mask,
-                              static_cast<unsigned>(field.size)));
-        break;
-      }
-      case FieldKind::kPointer:
-        out.Place(field.offset, pointer_of(part));
-        break;
-    }
+    std::visit(
+        Overloaded{
+            [&](const IntegerField& integer_field) {
+              const auto* integer = std::get_if<lir::ConstantInt>(&part.value);
+              if (integer == nullptr) {
+                mismatch("an integer");
+              }
+              // The two's-complement bits of the value at the field's width.
+              const std::uint64_t bits = integer_field.size * 8;
+              const std::uint64_t mask = bits == 64
+                                             ? ~std::uint64_t{0}
+                                             : (std::uint64_t{1} << bits) - 1;
+              out.Place(
+                  field.offset,
+                  Int(static_cast<std::uint64_t>(integer->value) & mask,
+                      static_cast<unsigned>(integer_field.size)));
+            },
+            [&](PointerField) { out.Place(field.offset, pointer_of(part)); },
+            [&](RecordField) {
+              const auto* nested =
+                  std::get_if<lir::ConstantRecord>(&part.value);
+              if (nested == nullptr) {
+                mismatch("a structure");
+              }
+              out.Place(field.offset, RecordData(*nested));
+            },
+            // A view of no entries points nowhere, as the library's own
+            // empty view does.
+            [&](const SpanField& span_field) {
+              const auto* span = std::get_if<lir::ConstantSpan>(&part.value);
+              if (span == nullptr) {
+                mismatch("a view of entries");
+              }
+              llvm::Constant* const entries =
+                  span->count == 0
+                      ? llvm::ConstantPointerNull::get(types_.Ptr())
+                      : static_cast<llvm::Constant*>(
+                            DefinitionGlobal(span->symbol));
+              out.Place(field.offset, entries);
+              out.Place(
+                  field.offset + span_field.count_at,
+                  Int(span->count, sizeof(std::uint64_t)));
+            }},
+        field.kind);
   }
   return std::move(out).Build();
 }
@@ -744,6 +770,9 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
                       },
                       [&](const lir::ConstantArray&) {
                         not_whole("an array of arrays");
+                      },
+                      [&](const lir::ConstantSpan&) {
+                        not_whole("an array of views");
                       }},
                   element.value);
             }
@@ -775,7 +804,8 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
           },
           [&](const lir::ConstantInterfaceTable&) {
             return not_whole("an address");
-          }},
+          },
+          [&](const lir::ConstantSpan&) { return not_whole("a view"); }},
       constant.initializer.value);
 }
 

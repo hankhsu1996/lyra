@@ -1088,6 +1088,7 @@ auto MemberStorageKindOf(
               case lir::RuntimeLibraryKind::kScopeCallable:
               case lir::RuntimeLibraryKind::kClassObjectInfo:
               case lir::RuntimeLibraryKind::kInterfaceRow:
+              case lir::RuntimeLibraryKind::kScopeMetadata:
               case lir::RuntimeLibraryKind::kConstructionTable:
               case lir::RuntimeLibraryKind::kInstantiation:
               case lir::RuntimeLibraryKind::kGeneratePlaces:
@@ -1150,6 +1151,7 @@ auto MemberStorageKindOf(
           [&](const lir::MachineBoolType& t) { return none(t); },
           [&](const lir::MachineFloatType& t) { return none(t); },
           [&](const lir::MachineArrayType& t) { return none(t); },
+          [&](const lir::MachineSpanType& t) { return none(t); },
           [&](const lir::VoidType& t) { return none(t); },
           [&](const lir::ObjectType& t) { return none(t); },
           [&](const lir::RuntimeClassType& t) { return none(t); },

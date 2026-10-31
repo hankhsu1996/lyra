@@ -1,6 +1,7 @@
 #include "lyra/backend/llvm/constant_record.hpp"
 
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <type_traits>
@@ -11,12 +12,9 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Type.h>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lir/type.hpp"
-#include "lyra/runtime/class_definition.hpp"
-#include "lyra/runtime/construction_table.hpp"
-#include "lyra/runtime/dump_writer.hpp"
-#include "lyra/runtime/scope_info.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -54,149 +52,34 @@ auto TypeSize(const llvm::Type* type) -> std::uint64_t {
       "LLVM's own layout -- please report this as a bug");
 }
 
-// A structure's fields are read off the structure: a structured binding takes
-// them in declaration order, each binding's address says where the field is,
-// and its type says what it holds. So the structure's own declaration is the
-// only statement of its fields, and a binding list of the wrong length does not
-// compile.
-
-template <typename Record, typename Field>
-auto OffsetIn(const Record& record, const Field& field) -> std::uint64_t {
-  return std::bit_cast<std::uintptr_t>(&field) -
-         std::bit_cast<std::uintptr_t>(&record);
-}
-
-template <typename Field>
-void AppendField(
-    std::vector<FieldLayout>& out, std::uint64_t at, const Field& field);
-
-template <typename Record, typename... Fields>
-void AppendFieldsOf(
-    std::vector<FieldLayout>& out, std::uint64_t at, const Record& record,
-    const Fields&... fields) {
-  (AppendField(out, at + OffsetIn(record, fields), fields), ...);
-}
-
-template <typename T>
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::ConstantSpan<T>& record) {
-  const auto& [data, size] = record;
-  AppendFieldsOf(out, at, record, data, size);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::ScopeMetadata& record) {
-  const auto& [time_unit_power, time_precision_power, execution, dumped_as] =
-      record;
-  AppendFieldsOf(
-      out, at, record, time_unit_power, time_precision_power, execution,
-      dumped_as);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::ScopeCallable& record) {
-  const auto& [name, entry] = record;
-  AppendFieldsOf(out, at, record, name, entry);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::ScopeInfo& record) {
-  const auto& [metadata, exports, resolve, initialize, create_processes, describe] =
-      record;
-  AppendFieldsOf(
-      out, at, record, metadata, exports, resolve, initialize, create_processes,
-      describe);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::ClassObjectInfo& record) {
-  const auto& [rand_variables, constrain, rand_objects, pre_randomize, post_randomize] =
-      record;
-  AppendFieldsOf(
-      out, at, record, rand_variables, constrain, rand_objects, pre_randomize,
-      post_randomize);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::InterfaceRow& record) {
-  const auto& [of, entries] = record;
-  AppendFieldsOf(out, at, record, of, entries);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::ObjectDefinition& record) {
-  const auto& [base, scope, class_object, end, interfaces, methods] = record;
-  AppendFieldsOf(
-      out, at, record, base, scope, class_object, end, interfaces, methods);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::Instantiation& record) {
-  const auto& [entry, table] = record;
-  AppendFieldsOf(out, at, record, entry, table);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::DumpEntry& record) {
-  const auto& [identifier, left, right, width, kind, has_range, has_port, port_direction, port_position] =
-      record;
-  AppendFieldsOf(
-      out, at, record, identifier, left, right, width, kind, has_range,
-      has_port, port_direction, port_position);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::DumpBlock& record) {
-  const auto& [identifier, kind] = record;
-  AppendFieldsOf(out, at, record, identifier, kind);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::ConstructionTable& record) {
-  const auto& [instantiations, generates] = record;
-  AppendFieldsOf(out, at, record, instantiations, generates);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::GeneratePlaces& record) {
-  const auto& [places] = record;
-  AppendFieldsOf(out, at, record, places);
-}
-
-// A field that is itself a structure stands for its own fields.
-template <typename Field>
-void AppendField(
-    std::vector<FieldLayout>& out, std::uint64_t at, const Field& field) {
-  if constexpr (std::is_integral_v<Field>) {
-    out.push_back(
-        {.offset = at, .kind = FieldKind::kInteger, .size = sizeof(Field)});
-  } else if constexpr (std::is_pointer_v<Field>) {
-    out.push_back(
-        {.offset = at, .kind = FieldKind::kPointer, .size = sizeof(void*)});
-  } else {
-    AppendRecord(out, at, field);
-  }
-}
-
+// A structure's fields are read off the structure, as the library declares
+// them: each field's address says where it lies, and its type what it holds.
 template <typename Record>
 auto LayoutOf() -> LibraryRecordLayout {
   const Record record{};
   LibraryRecordLayout layout{
       .layout = {.size = sizeof(Record), .align = alignof(Record)},
       .fields = {}};
-  AppendRecord(layout.fields, 0, record);
+  abi::ForEachField(record, [&]<typename Field>(const Field& field) {
+    const std::uint64_t offset = std::bit_cast<std::uintptr_t>(&field) -
+                                 std::bit_cast<std::uintptr_t>(&record);
+    if constexpr (std::is_integral_v<Field>) {
+      layout.fields.push_back(
+          {.offset = offset, .kind = IntegerField{.size = sizeof(Field)}});
+    } else if constexpr (std::is_pointer_v<Field>) {
+      layout.fields.push_back({.offset = offset, .kind = PointerField{}});
+    } else if constexpr (abi::kIsConstantSpan<Field>) {
+      static_assert(
+          offsetof(Field, data) == 0 && sizeof(Field::size) == 8,
+          "a view of entries is laid out as other than where the first is "
+          "and then a count of eight bytes");
+      layout.fields.push_back(
+          {.offset = offset,
+           .kind = SpanField{.count_at = offsetof(Field, size)}});
+    } else {
+      layout.fields.push_back({.offset = offset, .kind = RecordField{}});
+    }
+  });
   return layout;
 }
 
@@ -206,25 +89,27 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
     -> LibraryRecordLayout {
   switch (kind) {
     case lir::RuntimeLibraryKind::kObjectDefinition:
-      return LayoutOf<runtime::ObjectDefinition>();
+      return LayoutOf<abi::ObjectDefinition>();
     case lir::RuntimeLibraryKind::kScopeInfo:
-      return LayoutOf<runtime::ScopeInfo>();
+      return LayoutOf<abi::ScopeInfo>();
     case lir::RuntimeLibraryKind::kScopeCallable:
-      return LayoutOf<runtime::ScopeCallable>();
+      return LayoutOf<abi::ScopeCallable>();
     case lir::RuntimeLibraryKind::kClassObjectInfo:
-      return LayoutOf<runtime::ClassObjectInfo>();
+      return LayoutOf<abi::ClassObjectInfo>();
     case lir::RuntimeLibraryKind::kInterfaceRow:
-      return LayoutOf<runtime::InterfaceRow>();
+      return LayoutOf<abi::InterfaceRow>();
+    case lir::RuntimeLibraryKind::kScopeMetadata:
+      return LayoutOf<abi::ScopeMetadata>();
     case lir::RuntimeLibraryKind::kConstructionTable:
-      return LayoutOf<runtime::ConstructionTable>();
+      return LayoutOf<abi::ConstructionTable>();
     case lir::RuntimeLibraryKind::kInstantiation:
-      return LayoutOf<runtime::Instantiation>();
+      return LayoutOf<abi::Instantiation>();
     case lir::RuntimeLibraryKind::kGeneratePlaces:
-      return LayoutOf<runtime::GeneratePlaces>();
+      return LayoutOf<abi::GeneratePlaces>();
     case lir::RuntimeLibraryKind::kDumpEntry:
-      return LayoutOf<runtime::DumpEntry>();
+      return LayoutOf<abi::DumpEntry>();
     case lir::RuntimeLibraryKind::kDumpBlock:
-      return LayoutOf<runtime::DumpBlock>();
+      return LayoutOf<abi::DumpBlock>();
     case lir::RuntimeLibraryKind::kBitVec:
     case lir::RuntimeLibraryKind::kEnumeration:
     case lir::RuntimeLibraryKind::kPrintItem:

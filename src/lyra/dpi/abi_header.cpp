@@ -109,6 +109,7 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
               case mir::RuntimeLibraryKind::kScopeCallable:
               case mir::RuntimeLibraryKind::kClassObjectInfo:
               case mir::RuntimeLibraryKind::kInterfaceRow:
+              case mir::RuntimeLibraryKind::kScopeMetadata:
               case mir::RuntimeLibraryKind::kConstructionTable:
               case mir::RuntimeLibraryKind::kInstantiation:
               case mir::RuntimeLibraryKind::kGeneratePlaces:
@@ -135,6 +136,7 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           [&](const mir::ErasedValueType&) { return crosses_no_boundary(); },
           [&](const mir::MachineBoolType&) { return crosses_no_boundary(); },
           [&](const mir::MachineArrayType&) { return crosses_no_boundary(); },
+          [&](const mir::MachineSpanType&) { return crosses_no_boundary(); },
           [&](const mir::MachineFunctionType&) {
             return crosses_no_boundary();
           },

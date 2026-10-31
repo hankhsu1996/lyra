@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <variant>
 #include <vector>
 
 #include "lyra/lir/type.hpp"
@@ -15,22 +16,35 @@ class LLVMContext;
 namespace lyra::backend::llvm_backend {
 
 // The type of one field of a library structure a constant is stated as, as far
-// as emitting data needs it: an integer of some bytes, or a pointer to data or
-// to code.
-enum class FieldKind : std::uint8_t { kInteger, kPointer };
+// as emitting data needs it: an integer of some bytes, a pointer to data or to
+// code, a structure of the library's own, which the constant states as a
+// record of its own, or a view of entries, laid out as where the first is and,
+// `count_at` bytes past the field's start, how many there are.
+struct IntegerField {
+  std::uint64_t size = 0;
+};
+
+struct PointerField {};
+
+struct RecordField {};
+
+struct SpanField {
+  std::uint64_t count_at = 0;
+};
+
+using FieldKind =
+    std::variant<IntegerField, PointerField, RecordField, SpanField>;
 
 struct FieldLayout {
   std::uint64_t offset = 0;
-  FieldKind kind = FieldKind::kPointer;
-  std::uint64_t size = 0;
+  FieldKind kind;
 };
 
 // The record layout of one structure of the runtime library, as the host's C++
 // compiler computed it: its size and alignment, and the offset and type of each
-// field in declaration order, a nested structure's fields standing where it
-// does. It is what a C++ compiler holds for a class it has seen the definition
-// of; this compiler reads no C++, so it is taken from the structure itself
-// where this compiler is built against the library.
+// field in declaration order. It is what a C++ compiler holds for a class it
+// has seen the definition of; this compiler reads no C++, so it is taken from
+// the structure itself where this compiler is built against the library.
 struct LibraryRecordLayout {
   support::Layout layout;
   std::vector<FieldLayout> fields;

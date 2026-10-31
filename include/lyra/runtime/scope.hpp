@@ -5,11 +5,11 @@
 #include <string>
 #include <vector>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/rng.hpp"
-#include "lyra/runtime/scope_info.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -70,7 +70,7 @@ class Scope : public GcObject {
 
   // What this scope's class states of its instances: its timescale, the
   // DPI-C exports an instance answers, and what it does in each phase.
-  [[nodiscard]] auto Info() const -> const ScopeInfo& {
+  [[nodiscard]] auto Info() const -> const abi::ScopeInfo& {
     return *RequireScopeClass(definition)->scope;
   }
 
@@ -94,7 +94,7 @@ class Scope : public GcObject {
   // them a top-level instance of it (LRM 23.6, 23.8). The front end resolved
   // the name to a declaration of that class, so one stands there in every
   // instance that resolution covered.
-  [[nodiscard]] auto EnclosingScope(const ObjectDefinition* cls) -> Scope*;
+  [[nodiscard]] auto EnclosingScope(const abi::ObjectDefinition* cls) -> Scope*;
 
   // This instance's own source of seeds for the static processes and static
   // initializers declared within it (LRM 18.14.1). Meaningful on a module,
@@ -155,7 +155,7 @@ class Scope : public GcObject {
 
  private:
   // The body the scope's class gives one phase, entered on this scope.
-  void Enter(ScopePhase ScopeInfo::* phase);
+  void Enter(abi::ScopePhase abi::ScopeInfo::* phase);
 
   Scope* parent_ = nullptr;
   HierarchySegment segment_;

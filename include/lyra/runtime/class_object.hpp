@@ -30,7 +30,7 @@ class ClassObject : public GcObject {
   ClassObject();
   // An object of a class of this library, which states its own definition and
   // is handed the generator it starts with rather than splitting one.
-  ClassObject(const ObjectDefinition& definition, DrawRng generator);
+  ClassObject(const abi::ObjectDefinition& definition, DrawRng generator);
   ~ClassObject();
   ClassObject(const ClassObject& other);
   auto operator=(const ClassObject& other) -> ClassObject&;

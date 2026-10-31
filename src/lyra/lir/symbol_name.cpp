@@ -323,6 +323,10 @@ void SpellType(const CompilationUnit& unit, TypeId type, std::string& out) {
             number(t.size);
             of(t.element);
           },
+          [&](const MachineSpanType& t) {
+            kind('z');
+            of(t.element);
+          },
           [&](const MachineFunctionType& t) {
             kind('F');
             all(t.params);

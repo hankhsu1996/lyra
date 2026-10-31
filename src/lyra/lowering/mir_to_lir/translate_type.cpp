@@ -168,6 +168,10 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{lir::MachineArrayType{
                 .element = TranslateType(ma.element), .size = ma.size}};
           },
+          [&](const mir::MachineSpanType& ms) -> lir::Type {
+            return lir::Type{
+                lir::MachineSpanType{.element = TranslateType(ms.element)}};
+          },
           [&](const mir::MachineFunctionType& mf) -> lir::Type {
             return lir::Type{lir::MachineFunctionType{
                 .params = TranslateTypes(mf.params),
@@ -392,6 +396,8 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kClassObjectInfo);
     case mir::RuntimeLibraryKind::kInterfaceRow:
       return mirror(lir::RuntimeLibraryKind::kInterfaceRow);
+    case mir::RuntimeLibraryKind::kScopeMetadata:
+      return mirror(lir::RuntimeLibraryKind::kScopeMetadata);
     case mir::RuntimeLibraryKind::kConstructionTable:
       return mirror(lir::RuntimeLibraryKind::kConstructionTable);
     case mir::RuntimeLibraryKind::kInstantiation:

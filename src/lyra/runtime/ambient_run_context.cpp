@@ -3,6 +3,7 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/cancellation.hpp"
@@ -18,6 +19,18 @@ namespace {
 auto CurrentSlot() -> AmbientRunContext*& {
   static thread_local AmbientRunContext* context = nullptr;
   return context;
+}
+
+// The entry published under `name`, or null when the table holds none.
+auto FindInCallableTable(
+    abi::ConstantSpan<abi::ScopeCallable> table, std::string_view name)
+    -> abi::ErasedEntry {
+  for (const abi::ScopeCallable& published : table.Entries()) {
+    if (published.name == name) {
+      return published.entry;
+    }
+  }
+  return nullptr;
 }
 
 }  // namespace
@@ -71,9 +84,10 @@ auto CurrentExportScope() -> Scope* {
   return scope;
 }
 
-auto FindExportEntry(Scope* scope, const char* subroutine) -> ErasedEntry {
+auto FindExportEntry(Scope* scope, const char* subroutine) -> abi::ErasedEntry {
   const std::string_view wanted{subroutine};
-  if (ErasedEntry entry = FindInCallableTable(scope->Info().exports, wanted)) {
+  if (abi::ErasedEntry entry =
+          FindInCallableTable(scope->Info().exports, wanted)) {
     return entry;
   }
   // LRM 35.5.3.

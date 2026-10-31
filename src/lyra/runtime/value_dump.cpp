@@ -90,7 +90,7 @@ auto DumpProbe::Referent() const -> value::ObjectRef {
 }
 Describer::~Describer() = default;
 
-void Describer::BeginBlock(const DumpBlock& block) {
+void Describer::BeginBlock(const abi::DumpBlock& block) {
   enclosing_.push_back(&block);
   Entered();
 }
@@ -144,11 +144,11 @@ struct UpscopeCommand {};
 // The entry is a constant of the class it describes, which outlives the dump.
 struct VarCommand {
   DumpCode code;
-  DumpEntry entry;
+  abi::DumpEntry entry;
 };
 struct AliasCommand {
   DumpCode code;
-  DumpEntry entry;
+  abi::DumpEntry entry;
 };
 struct TimescaleCommand {
   std::int8_t precision_power;
@@ -458,7 +458,8 @@ class SelectionDescriber final : public Describer {
     }
   }
 
-  void Var(const DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
+  void Var(
+      const abi::DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
     if (!Records(probe->Member())) {
       return;
     }
@@ -478,7 +479,7 @@ class SelectionDescriber final : public Describer {
 
  private:
   void Entered() override {
-    const DumpBlock& block = *Enclosing().back();
+    const abi::DumpBlock& block = *Enclosing().back();
     pending_.push_back({.kind = block.Kind(), .name = block.identifier});
   }
 
@@ -602,8 +603,9 @@ class PortDescriber final : public Describer {
     }
   }
 
-  void Var(const DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
-    const std::optional<DumpEntry::Connection> port = entry.Port();
+  void Var(
+      const abi::DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
+    const std::optional<abi::DumpEntry::Connection> port = entry.Port();
     if (!port.has_value() || !HasPortValue(entry)) {
       return;
     }
@@ -614,7 +616,7 @@ class PortDescriber final : public Describer {
   }
 
  private:
-  static auto HasPortValue(const DumpEntry& entry) -> bool {
+  static auto HasPortValue(const abi::DumpEntry& entry) -> bool {
     switch (support::DumpValueFormOf(entry.Kind())) {
       case support::DumpValueForm::kTriggered:
         return false;
@@ -627,7 +629,7 @@ class PortDescriber final : public Describer {
 
   struct Port {
     std::uint32_t position;
-    DumpEntry entry;
+    abi::DumpEntry entry;
     std::unique_ptr<DumpProbe> probe;
   };
 

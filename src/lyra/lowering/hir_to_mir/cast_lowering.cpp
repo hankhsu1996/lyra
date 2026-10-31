@@ -447,6 +447,7 @@ auto BuildValueConversion(
           [&](const mir::MachineIntType& t) { return none(t); },
           [&](const mir::MachineFloatType& t) { return none(t); },
           [&](const mir::MachineArrayType& t) { return none(t); },
+          [&](const mir::MachineSpanType& t) { return none(t); },
           [&](const mir::MachineFunctionType& t) { return none(t); },
           [&](const mir::ChandleType& t) { return none(t); },
           [&](const mir::VoidType& t) { return none(t); },

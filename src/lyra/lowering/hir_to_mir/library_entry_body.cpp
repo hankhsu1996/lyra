@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
@@ -27,19 +28,18 @@ auto AddBody(mir::Class& cls, mir::CallableCode code) -> mir::CallableId {
 }
 
 // The entry calling `callable` of class `id` on the object, and no other body
-// in its place: handed the object as `object`, it views it as the class and
-// passes on what it takes after the object.
+// in its place, of the prototype `entry`: handed the object first, it views it
+// as the class and passes on what it takes after the object.
 auto EntryBody(
     const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
-    mir::CallableId callable, mir::TypeId object) -> mir::CallableCode {
-  const mir::CallableCode& target = cls.callables.Get(callable).code;
+    mir::CallableId callable, mir::TypeId entry) -> mir::CallableCode {
+  const auto& prototype = unit.types.Get(entry).Get<mir::MachineFunctionType>();
   mir::CallableCode code = mir::CallableCode::Defined();
-  const mir::LocalId handed = code.AddLocal(object);
-  code.params = {handed};
-  code.result_type = target.result_type;
-  for (const mir::LocalId formal : target.ParamsAfterReceiver()) {
-    code.params.push_back(code.AddLocal(target.locals.Get(formal).type));
+  for (const mir::TypeId param : prototype.params) {
+    code.params.push_back(code.AddLocal(param));
   }
+  code.result_type = prototype.result;
+  const mir::LocalId handed = code.params.front();
 
   mir::Block& body = code.Body();
   const mir::ExprId self = body.exprs.Add(
@@ -93,11 +93,28 @@ void CompleteWith(
 
 auto EntryOf(
     const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    mir::CallableId callable, mir::TypeId object) -> mir::CallableId {
+    mir::CallableId callable, mir::TypeId entry) -> mir::CallableId {
   if (!cls.callables.Get(callable).code.TakesReceiver()) {
     return callable;
   }
-  return AddBody(cls, EntryBody(unit, id, cls, callable, object));
+  return AddBody(cls, EntryBody(unit, id, cls, callable, entry));
+}
+
+auto EntryPrototypeOf(
+    const mir::CompilationUnit& unit, const mir::CallableCode& target,
+    mir::TypeId object) -> mir::TypeId {
+  if (!target.TakesReceiver()) {
+    throw InternalError(
+        "hir_to_mir: an entry is asked for of a body that takes no object -- "
+        "please report this as a bug");
+  }
+  std::vector<mir::TypeId> params{object};
+  for (const mir::LocalId formal : target.ParamsAfterReceiver()) {
+    params.push_back(target.locals.Get(formal).type);
+  }
+  return unit.types.Intern(
+      mir::Type{mir::MachineFunctionType{
+          .params = std::move(params), .result = target.result_type}});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

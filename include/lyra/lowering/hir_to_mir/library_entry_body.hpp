@@ -1,10 +1,12 @@
 #pragma once
 
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -21,10 +23,19 @@ namespace lyra::lowering::hir_to_mir {
 // The body the library enters for `callable` of `cls`, class `id` of `unit`:
 // the callable itself where it takes no receiver -- a static method (LRM 8.10)
 // -- and otherwise one such body calling exactly that callable on the object,
-// added to `cls`. `object` is the type the library hands the object over as.
+// added to `cls`, of the prototype `entry`: handed the object first, then what
+// the callable takes after its receiver.
 auto EntryOf(
     const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    mir::CallableId callable, mir::TypeId object) -> mir::CallableId;
+    mir::CallableId callable, mir::TypeId entry) -> mir::CallableId;
+
+// The prototype of the body the library enters for `target`, the code of a
+// callable taking its object as a receiver, handed the object as `object`: the
+// object, then what the callable takes after its receiver, answering what it
+// answers.
+[[nodiscard]] auto EntryPrototypeOf(
+    const mir::CompilationUnit& unit, const mir::CallableCode& target,
+    mir::TypeId object) -> mir::TypeId;
 
 // Ends `body` with `call`, a call resulting in `result`, completing as that
 // call does. A call completing as a coroutine is awaited, which completes the

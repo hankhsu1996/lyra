@@ -162,7 +162,7 @@ void WriteBits(
 
 }  // namespace
 
-const ObjectDefinition ConstraintProblem::kDefinition =
+const abi::ObjectDefinition ConstraintProblem::kDefinition =
     LibraryObjectDefinition<ConstraintProblem>();
 
 ConstraintProblem::ConstraintProblem(

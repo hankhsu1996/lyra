@@ -49,15 +49,17 @@ what the construct means.
   reaches that position by. The type is the sole carrier of the member's storage shape and, for a
   member that owns a child, of its child-scope kind and cardinality.
 - Machine data -- a machine boolean, a machine integer, a machine float, a borrowed C string, a raw
-  pointer, the fixed-size contiguous aggregate of them, and a plain code address -- as ordinary
-  types of the language, the way `bool`, `i64`, `[T; N]`, `*const c_char`, and `fn(A) -> R` are
-  Rust's. The family is closed on three axes: scalar, aggregate, and callable. The boolean is the
-  scalar a predicate reduction yields and a condition consumes; it is not a one-bit integer, and not
-  the source language's own one-bit value. It is plain machine data, distinct from the simulation
-  value types that a source language's `int`, `real`, or `string` lower to: an integral type is a
-  width, a signedness and a state domain, and carries the language's own operators, where a machine
-  integer is a number a runtime entry takes or returns. Every value a runtime entry returns as a
-  plain scalar, every table a runtime record reads as raw storage, and every value that crosses a
+  pointer, the fixed-size contiguous aggregate of them, a read-only view of such an aggregate's
+  entries, and a plain code address -- as ordinary types of the language, the way `bool`, `i64`,
+  `[T; N]`, `*const c_char`, `&[T]` and `fn(A) -> R` are Rust's. A view is built from the address of
+  the aggregate it views, and holds as many entries as that aggregate's type says. The family is
+  closed on four axes: scalar, aggregate, view, and callable. The boolean is the scalar a predicate
+  reduction yields and a condition consumes; it is not a one-bit integer, and not the source
+  language's own one-bit value. It is plain machine data, distinct from the simulation value types
+  that a source language's `int`, `real`, or `string` lower to: an integral type is a width, a
+  signedness and a state domain, and carries the language's own operators, where a machine integer
+  is a number a runtime entry takes or returns. Every value a runtime entry returns as a plain
+  scalar, every table a runtime record reads as raw storage, and every value that crosses a
   foreign-call boundary is one of these.
 - The type system: value types (integral, real, string, ...); one object type, naming a class by the
   identity the unit's class registry gives it, whichever unit defines it -- a class another

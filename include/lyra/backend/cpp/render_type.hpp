@@ -155,7 +155,7 @@ void WriteOne(TargetText& out, const CppObjectCreation& creation);
 // The library's product of a product type's components, `Tuple<Ts...>`: what a
 // tuple is spelled as.
 struct CppTupleComponents {
-  const mir::CompilationUnit* unit;
+  const mir::CompilationUnit* unit = nullptr;
   std::span<const mir::TypeId> of;
 };
 
@@ -166,8 +166,8 @@ void WriteOne(TargetText& out, const CppTupleComponents& components);
 // union's overlay, `Union<Ts...>`, with the tag a tagged one adds,
 // `TaggedUnion<Ts...>`.
 struct CppRecordBase {
-  const mir::CompilationUnit* unit;
-  const mir::RecordDecl* of;
+  const mir::CompilationUnit* unit = nullptr;
+  const mir::RecordDecl* of = nullptr;
 };
 
 void WriteOne(TargetText& out, const CppRecordBase& base);
@@ -264,8 +264,8 @@ void WriteOne(TargetText& out, const CppObjectEnd& end);
 // taking what `code` takes after its receiver, handed the object as the root
 // every object is, `std::add_pointer_t<R(lyra::runtime::GcObject*, A)>`.
 struct CppEntryPointerType {
-  const mir::CompilationUnit* unit;
-  const mir::CallableCode* code;
+  const mir::CompilationUnit* unit = nullptr;
+  const mir::CallableCode* code = nullptr;
 };
 
 void WriteOne(TargetText& out, const CppEntryPointerType& type);
@@ -279,12 +279,12 @@ void WriteOne(TargetText& out, const CppEntryPointerType& type);
 // found, `lyra::runtime::InterfaceDispatch<I::sv_table, &I::sv_table::f,
 // &I::sv_definition>`.
 struct CppDispatchCallee {
-  const mir::CompilationUnit* unit;
+  const mir::CompilationUnit* unit = nullptr;
   mir::VirtualSlot behavior;
 };
 
 struct CppInterfaceDispatchCallee {
-  const mir::CompilationUnit* unit;
+  const mir::CompilationUnit* unit = nullptr;
   mir::VirtualSlot requirement;
 };
 

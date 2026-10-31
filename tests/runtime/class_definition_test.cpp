@@ -6,28 +6,28 @@
 #include <tuple>
 #include <utility>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/scope.hpp"
-#include "lyra/runtime/scope_info.hpp"
 #include "lyra/value/object_ref.hpp"
 
 namespace {
 
 using lyra::InternalError;
 using lyra::SimulationError;
+using lyra::abi::ObjectDefinition;
+using lyra::abi::ScopeInfo;
 using lyra::runtime::AdoptObject;
 using lyra::runtime::EndObjectOf;
 using lyra::runtime::GcObject;
 using lyra::runtime::HierarchySegment;
-using lyra::runtime::ObjectDefinition;
 using lyra::runtime::ObjectOf;
 using lyra::runtime::OwnedObject;
 using lyra::runtime::RequireScopeClass;
 using lyra::runtime::Scope;
-using lyra::runtime::ScopeInfo;
 using lyra::value::ObjectRef;
 
 // A definition is a constant the unit declaring its class emits, so every one

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -83,6 +84,15 @@ auto AllocatedType(const TypePool& types, TypeId owner)
 // one, through which it is only read.
 auto ClassDefinitionType(const TypePool& types) -> TypeId;
 auto ClassDefinitionPointer(const TypePool& types) -> TypeId;
+
+// The machine function type `code` has, named as code: every parameter it
+// takes, its receiver among them, and what it results in.
+auto FunctionTypeOf(const TypePool& types, const CallableCode& code) -> TypeId;
+
+// The root every object is, and a pointer to it: how the library hands an
+// object over to a body it enters, whatever class the object is of.
+auto ObjectRootType(const TypePool& types) -> TypeId;
+auto ObjectRootPointer(const TypePool& types) -> TypeId;
 
 // The table a constructor of the design hierarchy is handed, and its address,
 // through which it is only read.

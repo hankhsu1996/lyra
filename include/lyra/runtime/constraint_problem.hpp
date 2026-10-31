@@ -64,7 +64,7 @@ class ConstraintProblem final : public GcObject {
   ~ConstraintProblem();
 
   // The definition every object of this class is created with.
-  static const ObjectDefinition kDefinition;
+  static const abi::ObjectDefinition kDefinition;
 
   // The variable `lent` names is of an enumerated type, or is an array of
   // one, declaring `members`: what it takes where the call chooses it, and

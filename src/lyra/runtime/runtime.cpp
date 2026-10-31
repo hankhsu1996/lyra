@@ -17,6 +17,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
@@ -28,7 +29,6 @@
 #include "lyra/runtime/program_threads.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
-#include "lyra/runtime/scope_info.hpp"
 #include "lyra/runtime/timer.hpp"
 #include "lyra/support/scope_execution.hpp"
 #include "lyra/value/string.hpp"
@@ -308,7 +308,7 @@ void Runtime::ResolveGlobalTimePrecision() {
   std::int8_t min_power = kDefaultTimePrecisionPower;
   design_->ForEachScope([&](Scope& scope) {
     const std::int8_t power = scope.TimePrecisionPower();
-    if (power == kUnspecifiedTimePower) {
+    if (power == abi::kUnspecifiedTimePower) {
       return;
     }
     min_power = found ? std::min(min_power, power) : power;

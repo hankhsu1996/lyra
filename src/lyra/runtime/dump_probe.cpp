@@ -65,11 +65,11 @@ auto Describing(RuntimeEffects& runtime) -> Describer& {
 
 void DescribeTo(
     Var<value::ObjectRef>& event, RuntimeEffects& runtime,
-    const DumpEntry* entry) {
+    const abi::DumpEntry* entry) {
   Describing(runtime).Var(*entry, std::make_unique<EventProbe>(event));
 }
 
-void BeginDescribedBlock(RuntimeEffects& runtime, const DumpBlock* block) {
+void BeginDescribedBlock(RuntimeEffects& runtime, const abi::DumpBlock* block) {
   Describing(runtime).BeginBlock(*block);
 }
 
@@ -78,7 +78,8 @@ void EndDescribedBlock(RuntimeEffects& runtime) {
 }
 
 void DescribeTo(
-    Var<value::Real>& cell, RuntimeEffects& runtime, const DumpEntry* entry) {
+    Var<value::Real>& cell, RuntimeEffects& runtime,
+    const abi::DumpEntry* entry) {
   Describing(runtime).Var(
       *entry,
       std::make_unique<dump_detail::VarProbe<value::Real>>(cell, entry->width));
@@ -86,7 +87,7 @@ void DescribeTo(
 
 void DescribeTo(
     Var<value::ShortReal>& cell, RuntimeEffects& runtime,
-    const DumpEntry* entry) {
+    const abi::DumpEntry* entry) {
   Describing(runtime).Var(
       *entry, std::make_unique<dump_detail::VarProbe<value::ShortReal>>(
                   cell, entry->width));
@@ -94,13 +95,13 @@ void DescribeTo(
 
 void DescribeTo(
     VariableRef<value::Real>& port, RuntimeEffects& runtime,
-    const DumpEntry* entry) {
+    const abi::DumpEntry* entry) {
   DescribeReference<value::Real>(port.Erased(), runtime, entry);
 }
 
 void DescribeTo(
     VariableRef<value::ShortReal>& port, RuntimeEffects& runtime,
-    const DumpEntry* entry) {
+    const abi::DumpEntry* entry) {
   DescribeReference<value::ShortReal>(port.Erased(), runtime, entry);
 }
 

@@ -84,9 +84,10 @@ class NameFinder final : public Describer {
   explicit NameFinder(std::string_view name) : name_(name) {
   }
 
-  void Var(const DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
+  void Var(
+      const abi::DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
     std::string path;
-    for (const DumpBlock* block : Enclosing()) {
+    for (const abi::DumpBlock* block : Enclosing()) {
       path += block->identifier;
       path.push_back('.');
     }

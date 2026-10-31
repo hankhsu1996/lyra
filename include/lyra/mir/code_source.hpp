@@ -62,6 +62,10 @@ using CodeSource = std::variant<
 [[nodiscard]] auto Describe(const CompilationUnit& unit, const CodeSource& at)
     -> std::string;
 
+// The class `owner` by what a reader of a message knows it as, the same way.
+[[nodiscard]] auto DescribeClass(const CompilationUnit& unit, ClassId owner)
+    -> std::string;
+
 // Whether the code at `at` is a subroutine the foreign program defines (LRM
 // 35.4), entered as its declaration states rather than as this program enters
 // its own bodies. The body a foreign name's scope entries share is this

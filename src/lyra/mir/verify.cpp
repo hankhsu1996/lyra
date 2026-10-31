@@ -1227,13 +1227,58 @@ void VerifyWritesLandInWritableStorage(
   }
 }
 
+// Whether a value of `parameter` is passed as one of `other` is: the same
+// type, or a handle of one class and of another, which are one object
+// whatever class it is seen as, held or borrowed alike.
+auto ArgumentAbiCompatible(
+    const TypePool& types, TypeId parameter, TypeId other) -> bool {
+  if (parameter == other) {
+    return true;
+  }
+  const Type& one = types.Get(parameter);
+  const Type& another = types.Get(other);
+  if (one.Is<ManagedRefType>() && another.Is<ManagedRefType>()) {
+    return true;
+  }
+  const auto* borrowed = one.As<ReferenceType>();
+  const auto* borrowed_other = another.As<ReferenceType>();
+  return borrowed != nullptr && borrowed_other != nullptr &&
+         borrowed->mutability == borrowed_other->mutability &&
+         types.Get(borrowed->referent).Is<ManagedRefType>() &&
+         types.Get(borrowed_other->referent).Is<ManagedRefType>();
+}
+
+// Whether a code address of prototype `from` may be read as one of `to`:
+// either is the erased prototype a table holds every body at, from which an
+// address is restored to the prototype it was erased from before any call; or
+// the target enters code of the one as it would code of the other, answering
+// alike and handed each argument alike.
+auto CodeReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
+  if (IsErasedFunction(types, from) || IsErasedFunction(types, to)) {
+    return true;
+  }
+  const auto& source = types.Get(from).Get<MachineFunctionType>();
+  const auto& destination = types.Get(to).Get<MachineFunctionType>();
+  if (source.result != destination.result ||
+      source.params.size() != destination.params.size()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < source.params.size(); ++i) {
+    if (!ArgumentAbiCompatible(
+            types, source.params[i], destination.params[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Whether a cast may read a value of `from` as a value of `to`: each pair is
 // one every target writes in its own conversion syntax -- C++'s cast notation,
 // an LLVM cast instruction -- with the value unchanged or read as the machine
 // boolean a condition tests (LRM 12.4). An integral value is read at a type
 // laying it out alike, an enumeration's and its base's; a machine integer at
-// another width; a pointer at another pointee, as a code address is at another
-// signature, and a class handle as one of another class, the same object
+// another width; a pointer at another pointee; a code address as one the
+// target enters alike; a class handle as one of another class, the same object
 // whatever class it is seen as (LRM 8.15, 8.26.5); a reference at the same
 // referent made read-only, as clang states a qualification conversion (LRM
 // 13.5.2); and a reference held as a member read as the reference it holds, at
@@ -1258,10 +1303,12 @@ auto CastReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
     return true;
   }
   if ((source.Is<PointerType>() && destination.Is<PointerType>()) ||
-      (source.Is<ManagedRefType>() && destination.Is<ManagedRefType>()) ||
-      (source.Is<MachineFunctionType>() &&
-       destination.Is<MachineFunctionType>())) {
+      (source.Is<ManagedRefType>() && destination.Is<ManagedRefType>())) {
     return true;
+  }
+  if (source.Is<MachineFunctionType>() &&
+      destination.Is<MachineFunctionType>()) {
+    return CodeReadsAsAnother(types, from, to);
   }
   const auto* to_ref = destination.As<VariableRefType>();
   if (to_ref == nullptr) return false;
@@ -1284,19 +1331,23 @@ auto ConstructorCode(const CompilationUnit& unit, ClassId cls)
   return constructor.has_value() ? &constructor->code : nullptr;
 }
 
+// The code of `target`, a body of a class, where this unit holds it; none
+// where another unit holds the signature of a class it defines.
+auto ClassBodyCode(const CompilationUnit& unit, const CallableTarget& target)
+    -> const CallableCode* {
+  const Class& owner = unit.GetClass(target.owner);
+  return owner.defining_unit.has_value()
+             ? nullptr
+             : &owner.callables.Get(target.slot).code;
+}
+
 // The code of this unit a direct call enters, or none where another unit or
 // the library holds it.
 auto CodeEntered(const CompilationUnit& unit, const Direct& direct)
     -> const CallableCode* {
   return std::visit(
       Overloaded{
-          // Another unit holds the signature of a class it defines.
-          [&](const CallableTarget& t) -> const CallableCode* {
-            const Class& owner = unit.GetClass(t.owner);
-            return owner.defining_unit.has_value()
-                       ? nullptr
-                       : &owner.callables.Get(t.slot).code;
-          },
+          [&](const CallableTarget& t) { return ClassBodyCode(unit, t); },
           [&](const ClosureTarget& t) -> const CallableCode* {
             return &unit.GetClosure(t.closure).invoke;
           },
@@ -1339,69 +1390,94 @@ auto TypeOf(const Block& in, ExprId id) -> TypeId {
   return in.exprs.Get(id).type;
 }
 
+// The code `target` names, where this unit holds it: a body of a class of this
+// unit, or the body through which such a class enters one of its methods. None
+// for code another unit holds, whose type is what that unit published, and for
+// a target that names no code. A method of a class of this unit is entered
+// only through an entry the class gives it.
+auto CodeNamed(
+    const CompilationUnit& unit, const ReferenceTarget& target,
+    const auto& describe) -> const CallableCode* {
+  const auto none = [](const auto&) -> const CallableCode* { return nullptr; };
+  return std::visit(
+      Overloaded{
+          [&](const FunctionRef& r) { return ClassBodyCode(unit, r.body); },
+          [&](const DispatchEntryRef& r) -> const CallableCode* {
+            const Class& owner = unit.GetClass(r.body.owner);
+            if (owner.defining_unit.has_value()) {
+              return nullptr;
+            }
+            const std::optional<CallableId> entry = owner.EntryOf(r.body.slot);
+            if (!entry.has_value()) {
+              throw InternalError(
+                  std::format(
+                      "mir verify: {} names the entry of a method its class "
+                      "gives none -- please report this as a bug",
+                      describe()));
+            }
+            return &owner.callables.Get(*entry).code;
+          },
+          [&](const ExternalObjectEntryRef& r) { return none(r); },
+          [&](const DestructorRef& r) { return none(r); },
+          [&](const DispatchTableRef& r) { return none(r); },
+          [&](const InterfaceTableRef& r) { return none(r); },
+          [&](const LocalRef& r) { return none(r); },
+          [&](const DefinitionRef& r) { return none(r); },
+          [&](const EnumTableRef& r) { return none(r); },
+          [&](const IntegralConstantRef& r) { return none(r); },
+          [&](const StaticPropertyRef& r) { return none(r); },
+          [&](const StaticVariableRef& r) { return none(r); },
+          [&](const ClassConstantRef& r) { return none(r); }},
+      target);
+}
+
 // The type of each position a composite of `type` fills, in order: a
-// product's components, or an element list's elements. Nothing for any other
-// type, whose positions no MIR type states.
+// product's components, an element list's elements, or the members of a
+// structure of the library. Nothing for any other type, whose positions no
+// MIR type states.
 auto PositionsOf(const CompilationUnit& unit, TypeId type)
     -> std::optional<std::vector<TypeId>> {
   if (const auto components = ProductElements(unit, type)) {
     return std::vector<TypeId>(components->begin(), components->end());
   }
-  if (const auto* elements = unit.types.Get(type).As<MachineArrayType>()) {
+  const Type& composed = unit.types.Get(type);
+  if (const auto* elements = composed.As<MachineArrayType>()) {
     return std::vector<TypeId>(elements->size, elements->element);
+  }
+  if (const auto* record = composed.As<RuntimeLibraryType>()) {
+    return unit.LibraryRecordMembers(record->kind)
+        .transform([](std::span<const TypeId> members) {
+          return std::vector<TypeId>(members.begin(), members.end());
+        });
   }
   return std::nullopt;
 }
 
-// Every value handed to something of a type it states is a value of that
-// type, as an assignment-like context converts its value to its target's type
-// (LRM 10.8): what an assignment writes and its target, what a whole write
-// through a wrapper or a reference to bits writes and what the wrapper holds
-// or the bits reach, a local's initializer, what a body answers, an arm of a
-// choice, the value a block ends with, what a capture is built from, a part of
-// a composite, an argument of a callable this unit holds, and the call of one,
-// which answers what the callable returns. A value only alike in
-// representation is converted where it is built, so one handed over as it is
-// is a value the program never stated.
-void VerifyValuesMeetTheirTypes(
-    const CompilationUnit& unit, const CallableCode& code, const Block& block,
-    const auto& describe) {
+[[noreturn]] void RefuseValueOfType(
+    const CompilationUnit& unit, std::string_view what, TypeId expected,
+    TypeId handed, const auto& describe) {
+  throw InternalError(
+      std::format(
+          "mir verify: {} hands {} a value of type {} where it states type {} "
+          "-- please report this as a bug",
+          describe(), what, DumpType(unit, handed), DumpType(unit, expected)));
+}
+
+// Every value an expression of `block` hands to something of a type it states
+// is a value of that type: what an assignment writes and its target, what a
+// whole write through a wrapper or a reference to bits writes and what the
+// wrapper holds or the bits reach, an arm of a choice, the value a block ends
+// with, code named as a value, what a capture is built from, a part of a
+// composite, a view and the array it is built from, an argument of a
+// callable this unit holds, and the call of one, which answers what the
+// callable returns. Each block is asked on its own, in a body and in what a
+// constant is built from alike.
+void VerifyExprsMeetTheirTypes(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](std::string_view what, TypeId expected,
                           TypeId handed) {
-    throw InternalError(
-        std::format(
-            "mir verify: {} hands {} a value of type {} where it states type "
-            "{} -- please report this as a bug",
-            describe(), what, DumpType(unit, handed),
-            DumpType(unit, expected)));
+    RefuseValueOfType(unit, what, expected, handed, describe);
   };
-  const Type& result = unit.types.Get(code.result_type);
-  const auto* coroutine = result.As<CoroutineType>();
-  const TypeId answered =
-      coroutine != nullptr ? coroutine->payload : code.result_type;
-  for (const Stmt& stmt : block.stmts) {
-    if (const auto* decl = std::get_if<LocalDeclStmt>(&stmt.data)) {
-      const TypeId declared = code.locals.Get(decl->target).type;
-      if (TypeOf(block, decl->init) != declared) {
-        refuse("a local's initializer", declared, TypeOf(block, decl->init));
-      }
-    }
-    if (const auto* returned = std::get_if<ReturnStmt>(&stmt.data)) {
-      // A body stating a result answers one on every way out of it, so a
-      // return handing back nothing belongs only to a body stating none.
-      if (!returned->value.has_value() && answered != unit.builtins.void_type) {
-        throw InternalError(
-            std::format(
-                "mir verify: {} returns nothing where it states type {} -- "
-                "please report this as a bug",
-                describe(), DumpType(unit, answered)));
-      }
-      if (returned->value.has_value() &&
-          TypeOf(block, *returned->value) != answered) {
-        refuse("what it answers", answered, TypeOf(block, *returned->value));
-      }
-    }
-  }
   for (const ExprId id : block.exprs.Ids()) {
     const Expr& expr = block.exprs.Get(id);
     const auto* call = std::get_if<CallExpr>(&expr.data);
@@ -1431,8 +1507,7 @@ void VerifyValuesMeetTheirTypes(
       throw InternalError(
           std::format(
               "mir verify: {} casts a value of type {} to type {}, which a "
-              "cast "
-              "does not join -- please report this as a bug",
+              "cast does not join -- please report this as a bug",
               describe(), DumpType(unit, TypeOf(block, cast->operand)),
               DumpType(unit, expr.type)));
     }
@@ -1478,6 +1553,19 @@ void VerifyValuesMeetTheirTypes(
         }
       }
     }
+    // Code named as a value is of the type the code has, as a C function's
+    // name is; reading it at another prototype is a cast.
+    if (const auto* named = std::get_if<ReferenceExpr>(&expr.data)) {
+      if (const CallableCode* code = CodeNamed(unit, named->target, describe);
+          code != nullptr && expr.type != FunctionTypeOf(unit.types, *code)) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} names code of type {} at type {} -- please "
+                "report this as a bug",
+                describe(), DumpType(unit, FunctionTypeOf(unit.types, *code)),
+                DumpType(unit, expr.type)));
+      }
+    }
     if (const auto* closure = std::get_if<ClosureExpr>(&expr.data)) {
       const ClosureDecl& decl = unit.GetClosure(closure->closure);
       for (const FieldInit& init : closure->field_inits) {
@@ -1488,6 +1576,31 @@ void VerifyValuesMeetTheirTypes(
       }
     }
     if (call == nullptr) {
+      continue;
+    }
+    // A view is built from a borrowed, read-only address of the array it
+    // views, whose entries are of the type the view's are.
+    if (const auto* span = unit.types.Get(expr.type).As<MachineSpanType>();
+        span != nullptr && std::holds_alternative<Construct>(call->callee)) {
+      const auto* pointer =
+          call->arguments.size() == 1
+              ? unit.types.Get(TypeOf(block, call->arguments.front()))
+                    .As<PointerType>()
+              : nullptr;
+      const auto* viewed =
+          pointer != nullptr &&
+                  pointer->ownership == PointerOwnership::kBorrowed &&
+                  pointer->mutability == Mutability::kReadOnly
+              ? unit.types.Get(pointer->pointee).As<MachineArrayType>()
+              : nullptr;
+      if (viewed == nullptr || viewed->element != span->element) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} builds a view of type {} from other than the "
+                "read-only address of an array of its entries -- please report "
+                "this as a bug",
+                describe(), DumpType(unit, expr.type)));
+      }
       continue;
     }
     const CallableCode* callee = nullptr;
@@ -1543,9 +1656,89 @@ void VerifyValuesMeetTheirTypes(
       }
     }
   }
+}
+
+// Every value handed to something of a type it states is a value of that
+// type, as an assignment-like context converts its value to its target's type
+// (LRM 10.8): what each expression hands over, a local's initializer, and what
+// a body answers. A value only alike in representation is converted where it
+// is built, so one handed over as it is is a value the program never stated.
+void VerifyValuesMeetTheirTypes(
+    const CompilationUnit& unit, const CallableCode& code, const Block& block,
+    const auto& describe) {
+  const Type& result = unit.types.Get(code.result_type);
+  const auto* coroutine = result.As<CoroutineType>();
+  const TypeId answered =
+      coroutine != nullptr ? coroutine->payload : code.result_type;
+  for (const Stmt& stmt : block.stmts) {
+    if (const auto* decl = std::get_if<LocalDeclStmt>(&stmt.data)) {
+      const TypeId declared = code.locals.Get(decl->target).type;
+      if (TypeOf(block, decl->init) != declared) {
+        RefuseValueOfType(
+            unit, "a local's initializer", declared, TypeOf(block, decl->init),
+            describe);
+      }
+    }
+    if (const auto* returned = std::get_if<ReturnStmt>(&stmt.data)) {
+      // A body stating a result answers one on every way out of it, so a
+      // return handing back nothing belongs only to a body stating none.
+      if (!returned->value.has_value() && answered != unit.builtins.void_type) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} returns nothing where it states type {} -- "
+                "please report this as a bug",
+                describe(), DumpType(unit, answered)));
+      }
+      if (returned->value.has_value() &&
+          TypeOf(block, *returned->value) != answered) {
+        RefuseValueOfType(
+            unit, "what it answers", answered, TypeOf(block, *returned->value),
+            describe);
+      }
+    }
+  }
+  VerifyExprsMeetTheirTypes(unit, block, describe);
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyValuesMeetTheirTypes(
         unit, code, block.child_scopes.Get(id), describe);
+  }
+}
+
+// What a constant of a class is built from meets its types as a body's
+// expressions do, and the value it is built as is of the type the constant
+// states; the definition of the class is the library's own structure for one.
+void VerifyConstantsMeetTheirTypes(
+    const CompilationUnit& unit, const Class& cls, const auto& describe) {
+  const auto each_block = [&](this const auto& self,
+                              const Block& block) -> void {
+    VerifyExprsMeetTheirTypes(unit, block, describe);
+    for (const Block& inner : block.child_scopes) {
+      self(inner);
+    }
+  };
+  for (const ClassConstantDecl& constant : cls.constants) {
+    each_block(constant.initializer.body);
+    const TypeId built =
+        TypeOf(constant.initializer.body, constant.initializer.value);
+    if (built != constant.type) {
+      RefuseValueOfType(
+          unit, "a constant it states", constant.type, built, describe);
+    }
+  }
+  const ValueBuild& definition = cls.object_definition_initializer;
+  if (definition.body.exprs.empty()) {
+    return;
+  }
+  each_block(definition.body);
+  const auto* built = unit.types.Get(TypeOf(definition.body, definition.value))
+                          .As<RuntimeLibraryType>();
+  if (built == nullptr ||
+      built->kind != RuntimeLibraryKind::kObjectDefinition) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} builds its definition as something other than "
+            "the library's structure for one -- please report this as a bug",
+            describe()));
   }
 }
 
@@ -3067,6 +3260,13 @@ void Verify(const CompilationUnit& unit, std::string_view when) {
   ForEachCode(unit, [&](const CodeSource& at, const CallableCode& code) {
     VerifyCode(unit, code, describer(at));
   });
+  for (const ClassId id : unit.classes.Ids()) {
+    const Class& cls = unit.GetClass(id);
+    VerifyConstantsMeetTheirTypes(unit, cls, [&] {
+      return std::format(
+          "the constants of {}, {}", DescribeClass(unit, id), when);
+    });
+  }
   // Every body is checked on its own first, since a closure handed over in one
   // is followed into the bodies that made what it captured.
   HandedClosures handed(unit);

@@ -2,11 +2,11 @@
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -20,68 +20,9 @@ struct DumpCode {
   std::uint32_t value = 0;
 };
 
-// What a class of the design hierarchy states of one thing a dump may record:
-// a variable, a net, a port or a named event it declares (LRM 21.7.1.2). The
-// unit declaring the class emits one as a constant per such declaration, which
-// is what an instance is described with and what a format declares the thing
-// by. A range is the declared one of a vector, which a dump writes beside its
-// name (LRM 21.7.2.3 `$var`); a port is where the thing is what a port of the
-// class connects, with the port's direction, which an extended dump reads its
-// values by, and its position among the ports, which it records them in (LRM
-// 21.7.3.1, 21.7.4.2).
-struct DumpEntry {
-  const char* identifier = nullptr;
-  std::int64_t left = 0;
-  std::int64_t right = 0;
-  std::uint32_t width = 0;
-  std::uint8_t kind = 0;
-  std::uint8_t has_range = 0;
-  std::uint8_t has_port = 0;
-  std::uint8_t port_direction = 0;
-  std::uint32_t port_position = 0;
-
-  struct Bounds {
-    std::int64_t left;
-    std::int64_t right;
-  };
-  struct Connection {
-    support::DumpPortDirection direction;
-    std::uint32_t position;
-  };
-
-  [[nodiscard]] auto Kind() const -> support::DumpVarKind {
-    return static_cast<support::DumpVarKind>(kind);
-  }
-  [[nodiscard]] auto Range() const -> std::optional<Bounds> {
-    if (has_range == 0) {
-      return std::nullopt;
-    }
-    return Bounds{.left = left, .right = right};
-  }
-  [[nodiscard]] auto Port() const -> std::optional<Connection> {
-    if (has_port == 0) {
-      return std::nullopt;
-    }
-    return Connection{
-        .direction = static_cast<support::DumpPortDirection>(port_direction),
-        .position = port_position};
-  }
-};
-
-// A named block, task or function a class declares, whose static variables
-// are the class's own storage (LRM 21.7.2.3 `$scope`).
-struct DumpBlock {
-  const char* identifier = nullptr;
-  std::uint8_t kind = 0;
-
-  [[nodiscard]] auto Kind() const -> support::DumpScopeKind {
-    return static_cast<support::DumpScopeKind>(kind);
-  }
-};
-
 // The name a declaration is written under, its declared range after it (LRM
 // 21.7.2.3 `$var` reference).
-auto DumpReference(const DumpEntry& entry) -> std::string;
+auto DumpReference(const abi::DumpEntry& entry) -> std::string;
 
 // The character LRM 21.7.2.1 `value` writes a scalar as.
 auto DumpBitCharacter(value::FourStateBit bit) -> char;
@@ -128,10 +69,10 @@ class DumpWriter {
   virtual void Timescale(std::int8_t precision_power) = 0;
   virtual void Scope(support::DumpScopeKind kind, std::string_view name) = 0;
   virtual void Upscope() = 0;
-  virtual void Var(DumpCode code, const DumpEntry& entry) = 0;
+  virtual void Var(DumpCode code, const abi::DumpEntry& entry) = 0;
   // Several names may stand for one thing (LRM 21.7.2.3 `$var` b): a port and
   // what it is connected to.
-  virtual void Alias(DumpCode code, const DumpEntry& entry) = 0;
+  virtual void Alias(DumpCode code, const abi::DumpEntry& entry) = 0;
   virtual void EndDefinitions() = 0;
   virtual void Time(SimTime time) = 0;
   virtual void Change(DumpCode code, const DumpValue& value) = 0;

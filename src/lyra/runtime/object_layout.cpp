@@ -525,8 +525,8 @@ auto LayoutOf(support::RuntimeClass klass) -> ObjectLayout {
 
 auto DefinitionLayoutOf() -> DefinitionLayout {
   return DefinitionLayout{
-      .end = offsetof(ObjectDefinition, end),
-      .methods = offsetof(ObjectDefinition, methods)};
+      .end = offsetof(abi::ObjectDefinition, end),
+      .methods = offsetof(abi::ObjectDefinition, methods)};
 }
 
 auto ClosurePart() -> support::Layout {
