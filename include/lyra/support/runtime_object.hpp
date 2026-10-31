@@ -135,10 +135,6 @@ inline constexpr ObjectLayout kBitVecStorage{
     .layout = {.size = 32, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kPrintItemStorage{
     .layout = {.size = 72, .align = 8}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kPrintLiteralItemStorage{
-    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kPrintValueItemStorage{
-    .layout = {.size = 64, .align = 8}, .ends_with_nothing_to_do = true};
 inline constexpr ObjectLayout kFormatSpecStorage{
     .layout = {.size = 20, .align = 4}, .ends_with_nothing_to_do = true};
 inline constexpr ObjectLayout kFormatArgStorage{

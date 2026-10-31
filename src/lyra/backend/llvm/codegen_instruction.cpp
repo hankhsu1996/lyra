@@ -1792,27 +1792,6 @@ auto CodeGenFunction::LowerProduct(
       return std::unexpected(std::move(component.error()));
     }
     llvm::Value* const address = ComponentAddress(result_type, out, i);
-    // A component standing where an index of a wildcard-indexed array goes
-    // has no type of its own (LRM 7.8.1), so the integral value put there is
-    // kept with the type it was written in, as the array keeps an index.
-    const lir::TypeId stated = OperandType(product.components[i]);
-    if (module_->Unit()
-            .types.Get(layout.components[i])
-            .Is<lir::WildcardIndexType>() &&
-        module_->Types().IntegralShapeOf(stated).has_value()) {
-      std::vector<ArgAbi> arranged{arranger_.ArgOf(
-          OperandReadingsOf(RuntimeOp::kMakeWildcardIndex), 0, stated)};
-      std::vector<llvm::Value*> kept;
-      auto crossed =
-          module_->BuildCallArg(arranged.front().mode, *component, kept);
-      if (!crossed) {
-        return std::unexpected(std::move(crossed.error()));
-      }
-      BuildInto(
-          RuntimeSymbol(RuntimeOp::kMakeWildcardIndex), std::move(arranged),
-          std::move(kept), address);
-      continue;
-    }
     auto copied = CopyValue(layout.components[i], *component, address);
     if (!copied) {
       return copied;

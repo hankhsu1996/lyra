@@ -28,7 +28,6 @@
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/record_decl.hpp"
-#include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -37,7 +36,6 @@
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
-#include "lyra/value/format.hpp"
 
 namespace lyra::mir {
 
@@ -418,10 +416,6 @@ class MirDumper {
                   return "RuntimeLibrary(Enumeration)";
                 case RuntimeLibraryKind::kPrintItem:
                   return "RuntimeLibrary(PrintItem)";
-                case RuntimeLibraryKind::kPrintLiteralItem:
-                  return "RuntimeLibrary(PrintLiteralItem)";
-                case RuntimeLibraryKind::kPrintValueItem:
-                  return "RuntimeLibrary(PrintValueItem)";
                 case RuntimeLibraryKind::kCancellationTarget:
                   return "RuntimeLibrary(CancellationTarget)";
                 case RuntimeLibraryKind::kTimer:
@@ -1384,92 +1378,6 @@ class MirDumper {
   void DumpClosureExpr(const ClosureExpr& construct) {
     Line(std::format("closure: Closure[{}]", construct.closure.value));
     DumpFieldInits(construct.field_inits);
-  }
-
-  void DumpRuntimePrintItem(
-      std::size_t i, const RuntimePrintItem& item, const Block& enclosing) {
-    std::visit(
-        Overloaded{
-            [&](const RuntimePrintLiteral& lit) {
-              Line(
-                  std::format(
-                      "Item[{}] Literal {}", i, FormatStringLiteral(lit.text)));
-            },
-            [&](const RuntimePrintValue& v) {
-              Line(
-                  std::format(
-                      "Item[{}] Value value=Expr[{}] type=Type[{}] "
-                      "spec=Format(kind={}, width={}, precision={}, "
-                      "zero_pad={}, "
-                      "left_align={})",
-                      i, v.value.value, v.type.value,
-                      DumpFormatKindLabel(v.spec.kind), v.spec.modifiers.width,
-                      v.spec.modifiers.precision,
-                      v.spec.modifiers.zero_pad ? "true" : "false",
-                      v.spec.modifiers.left_align ? "true" : "false"));
-              Indent();
-              Line(
-                  std::format(
-                      "Expr[{}] {}", v.value.value,
-                      FormatExpr(enclosing, v.value)));
-              Dedent();
-            },
-        },
-        item);
-  }
-
-  static auto DumpFormatKindLabel(value::FormatKind k) -> std::string_view {
-    switch (k) {
-      case value::FormatKind::kDecimal:
-        return "kDecimal";
-      case value::FormatKind::kHex:
-        return "kHex";
-      case value::FormatKind::kBinary:
-        return "kBinary";
-      case value::FormatKind::kOctal:
-        return "kOctal";
-      case value::FormatKind::kString:
-        return "kString";
-      case value::FormatKind::kChar:
-        return "kChar";
-      case value::FormatKind::kRealDecimal:
-        return "kRealDecimal";
-      case value::FormatKind::kRealExponential:
-        return "kRealExponential";
-      case value::FormatKind::kRealGeneral:
-        return "kRealGeneral";
-      case value::FormatKind::kAssignmentPattern:
-        return "kAssignmentPattern";
-      case value::FormatKind::kTime:
-        return "kTime";
-    }
-    throw InternalError("DumpFormatKindLabel: unknown value::FormatKind");
-  }
-
-  static auto FormatStringLiteral(std::string_view s) -> std::string {
-    std::string out;
-    out.push_back('"');
-    for (char c : s) {
-      switch (c) {
-        case '\n':
-          out += "\\n";
-          break;
-        case '\t':
-          out += "\\t";
-          break;
-        case '\\':
-          out += "\\\\";
-          break;
-        case '"':
-          out += "\\\"";
-          break;
-        default:
-          out.push_back(c);
-          break;
-      }
-    }
-    out.push_back('"');
-    return out;
   }
 
   void DumpForStmt(const Block& enclosing, const ForStmt& s, StmtId id) {

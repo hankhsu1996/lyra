@@ -1339,16 +1339,30 @@ auto TypeOf(const Block& in, ExprId id) -> TypeId {
   return in.exprs.Get(id).type;
 }
 
+// The type of each position a composite of `type` fills, in order: a
+// product's components, or an element list's elements. Nothing for any other
+// type, whose positions no MIR type states.
+auto PositionsOf(const CompilationUnit& unit, TypeId type)
+    -> std::optional<std::vector<TypeId>> {
+  if (const auto components = ProductElements(unit, type)) {
+    return std::vector<TypeId>(components->begin(), components->end());
+  }
+  if (const auto* elements = unit.types.Get(type).As<MachineArrayType>()) {
+    return std::vector<TypeId>(elements->size, elements->element);
+  }
+  return std::nullopt;
+}
+
 // Every value handed to something of a type it states is a value of that
 // type, as an assignment-like context converts its value to its target's type
 // (LRM 10.8): what an assignment writes and its target, what a whole write
 // through a wrapper or a reference to bits writes and what the wrapper holds
 // or the bits reach, a local's initializer, what a body answers, an arm of a
-// choice, the value a block ends with, what a capture is built from, an
-// argument of a callable this unit holds, and the call of one, which answers
-// what the callable returns. A value only alike in representation is converted
-// where it is built, so one handed over as it is is a value the program never
-// stated.
+// choice, the value a block ends with, what a capture is built from, a part of
+// a composite, an argument of a callable this unit holds, and the call of one,
+// which answers what the callable returns. A value only alike in
+// representation is converted where it is built, so one handed over as it is
+// is a value the program never stated.
 void VerifyValuesMeetTheirTypes(
     const CompilationUnit& unit, const CallableCode& code, const Block& block,
     const auto& describe) {
@@ -1435,6 +1449,33 @@ void VerifyValuesMeetTheirTypes(
         refuse(
             "the value a block ends with", expr.type,
             TypeOf(inner, steps->value));
+      }
+    }
+    if (const auto* composite = std::get_if<CompositeExpr>(&expr.data)) {
+      const std::optional<std::vector<TypeId>> held =
+          PositionsOf(unit, expr.type);
+      if (!held.has_value()) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} builds a composite of a type with no "
+                "positions, {} -- please report this as a bug",
+                describe(), DumpType(unit, expr.type)));
+      }
+      const std::vector<TypeId>& positions = *held;
+      if (positions.size() != composite->parts.size()) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} builds a composite of type {} from {} parts "
+                "for {} positions -- please report this as a bug",
+                describe(), DumpType(unit, expr.type), composite->parts.size(),
+                positions.size()));
+      }
+      for (std::size_t i = 0; i < positions.size(); ++i) {
+        if (TypeOf(block, composite->parts[i]) != positions[i]) {
+          refuse(
+              "a part of a composite", positions[i],
+              TypeOf(block, composite->parts[i]));
+        }
       }
     }
     if (const auto* closure = std::get_if<ClosureExpr>(&expr.data)) {

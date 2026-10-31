@@ -86,8 +86,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_segment";
     case RuntimeOp::kMakeTrigger:
       return "make_trigger";
-    case RuntimeOp::kMakePrintLiteralItem:
-      return "make_print_literal_item";
     case RuntimeOp::kMakePrintValueItem:
       return "make_print_value_item";
     case RuntimeOp::kMakeIntegralPrintValueItem:
@@ -984,8 +982,6 @@ auto MemberStorageKindOf(
               // what another entry answers with. An owner holds none of them
               // past the call that made one.
               case lir::RuntimeLibraryKind::kPrintItem:
-              case lir::RuntimeLibraryKind::kPrintLiteralItem:
-              case lir::RuntimeLibraryKind::kPrintValueItem:
               case lir::RuntimeLibraryKind::kFormatSpec:
               case lir::RuntimeLibraryKind::kFormatArg:
               case lir::RuntimeLibraryKind::kTimeFormat:
@@ -1246,7 +1242,6 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kFromEntriesWildcard:
     case RuntimeOp::kMakeSegment:
     case RuntimeOp::kMakeTrigger:
-    case RuntimeOp::kMakePrintLiteralItem:
     case RuntimeOp::kMakePrintValueItem:
     case RuntimeOp::kMakeFormatSpec:
     case RuntimeOp::kMakeFormatArg:
@@ -1305,7 +1300,6 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kDefault:
     case RuntimeOp::kMakeSegment:
     case RuntimeOp::kMakeTrigger:
-    case RuntimeOp::kMakePrintLiteralItem:
     case RuntimeOp::kMakePrintValueItem:
     case RuntimeOp::kMakeIntegralPrintValueItem:
     case RuntimeOp::kMakeFormatSpec:
@@ -1411,7 +1405,6 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kMakeWildcardIndex:
     case RuntimeOp::kMakeSegment:
     case RuntimeOp::kMakeTrigger:
-    case RuntimeOp::kMakePrintLiteralItem:
     case RuntimeOp::kMakeIntegralPrintValueItem:
     case RuntimeOp::kMakeFormatSpec:
     case RuntimeOp::kMakeIntegralFormatArg:
@@ -1821,6 +1814,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFormatRuntime:
     case support::BuiltinFn::kMakeRenderedFormatArg:
     case support::BuiltinFn::kMakePatternedFormatArg:
+    case support::BuiltinFn::kMakeTextPrintItem:
     case support::BuiltinFn::kWrite:
     case support::BuiltinFn::kWriteln:
     case support::BuiltinFn::kDiagnostic:

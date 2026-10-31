@@ -705,6 +705,11 @@ auto CallArranger::ConstructionOf(
             return entry_over(
                 support::ValueDomain::kChandle, result, RuntimeOp::kMake);
           },
+          // LRM 7.8.1: a wildcard index is built over the integral value it
+          // is, which keeps the type it was written in.
+          [&](const lir::WildcardIndexType&) -> Built {
+            return entry(RuntimeOp::kMakeWildcardIndex);
+          },
           [&](const lir::ClosureType&) -> Built {
             throw InternalError(
                 "llvm codegen: a closure is built by an instruction of its "
@@ -757,8 +762,6 @@ auto CallArranger::ConstructionOf(
               case lir::RuntimeLibraryKind::kBitVec:
                 return entry_over(
                     support::ValueDomain::kBitVec, result, RuntimeOp::kDefault);
-              case lir::RuntimeLibraryKind::kPrintLiteralItem:
-                return entry(RuntimeOp::kMakePrintLiteralItem);
               case lir::RuntimeLibraryKind::kHierarchySegment:
                 return entry(RuntimeOp::kMakeSegment);
               case lir::RuntimeLibraryKind::kTrigger:
@@ -767,8 +770,9 @@ auto CallArranger::ConstructionOf(
                 return entry(RuntimeOp::kMakeFormatSpec);
               // What a value formats as is the value's own answer, so both of
               // these are named by the representation of what they are built
-              // over, which each is handed a reference to.
-              case lir::RuntimeLibraryKind::kPrintValueItem:
+              // over, which each is handed a reference to. A print item made
+              // from text is made by a factory of its own.
+              case lir::RuntimeLibraryKind::kPrintItem:
                 return over_operand(
                     RuntimeOp::kMakePrintValueItem,
                     RuntimeOp::kMakeIntegralPrintValueItem);
@@ -788,8 +792,7 @@ auto CallArranger::ConstructionOf(
               case lir::RuntimeLibraryKind::kDpiOpenArray:
                 return entry(RuntimeOp::kMakeDpiOpenArray);
               // The rest come into existence some other way, so a construction
-              // naming one would have nothing to call. A print item is built as
-              // one of its two forms and never as their sum; a time format, an
+              // naming one would have nothing to call. A time format, an
               // open-array handle, a control effect, an observation and a
               // keeper a deferred closure is emplaced in are what some other
               // entry answers with, and so are a read report and a held wait; a
@@ -798,7 +801,6 @@ auto CallArranger::ConstructionOf(
               // and a channel's joint cancel state are storage the owner holds
               // and reaches by address; and a write into an object is opened by
               // the entry that opens it.
-              case lir::RuntimeLibraryKind::kPrintItem:
               case lir::RuntimeLibraryKind::kTimeFormat:
               case lir::RuntimeLibraryKind::kDpiBitChunk:
               case lir::RuntimeLibraryKind::kDpiLogicChunk:
@@ -929,9 +931,6 @@ auto CallArranger::ConstructionOf(
           // A value that is a vector of bits, or a host scalar standing beside
           // one.
           [&](const lir::IntegralType&) -> Built { return no_construct(); },
-          [&](const lir::WildcardIndexType&) -> Built {
-            return no_construct();
-          },
           [&](const lir::MachineBoolType&) -> Built { return no_construct(); },
           [&](const lir::MachineIntType&) -> Built { return no_construct(); },
           [&](const lir::MachineFloatType&) -> Built { return no_construct(); },

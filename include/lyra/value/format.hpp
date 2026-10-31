@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -291,13 +292,6 @@ struct PrintLiteralItem {
   const char* data = nullptr;
   std::uint32_t size = 0;
 
-  PrintLiteralItem() = default;
-  PrintLiteralItem(const char* data, std::uint32_t size)
-      : data(data), size(size) {
-  }
-
-  // Borrows the text bytes of `text`, which must outlive the walk, as a
-  // `FormatArg`'s value must.
   explicit PrintLiteralItem(const String& text);
 };
 
@@ -305,11 +299,10 @@ struct PrintValueItem {
   FormatSpec spec;
   FormatArg arg;
 
-  // The emit side constructs this directly (`PrintValueItem(x, spec)`). The
-  // overload set is closed on the leaf formattable types rather than a single
-  // greedy template so a non-formattable operand fails to match cleanly instead
-  // of instantiating an undefined `Formatter`. Each takes its operand by
-  // reference and borrows it, as `MakeFormatArg` does.
+  // The overload set is closed on the leaf formattable types rather than a
+  // single greedy template so a non-formattable operand fails to match cleanly
+  // instead of instantiating an undefined `Formatter`. Each takes its operand
+  // by reference and borrows it, as `MakeFormatArg` does.
   template <IntegralValue T>
   PrintValueItem(const T& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
@@ -332,7 +325,33 @@ struct PrintValueItem {
   }
 };
 
-using PrintItem = std::variant<PrintLiteralItem, PrintValueItem>;
+// One piece of what a print writes (LRM 21.2.1): a value and the specification
+// it is formatted by, or text written as it is. Constructed over the value, and
+// made from text by `Text`, so which of the two an item is never depends on how
+// many operands it was handed.
+class PrintItem {
+ public:
+  template <typename T>
+    requires std::constructible_from<PrintValueItem, const T&, FormatSpec>
+  PrintItem(const T& value, FormatSpec spec)
+      : form_(PrintValueItem(value, spec)) {
+  }
+
+  // Borrows the text bytes of `text`, which must outlive the walk, as a
+  // `FormatArg`'s value must.
+  [[nodiscard]] static auto Text(const String& text) -> PrintItem;
+
+  [[nodiscard]] auto Form() const
+      -> const std::variant<PrintLiteralItem, PrintValueItem>& {
+    return form_;
+  }
+
+ private:
+  explicit PrintItem(PrintLiteralItem text) : form_(text) {
+  }
+
+  std::variant<PrintLiteralItem, PrintValueItem> form_;
+};
 
 // Walks the print items into one SV string per their FormatSpec, appending
 // literal items verbatim and formatting each value item through the per-arg

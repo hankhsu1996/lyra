@@ -76,8 +76,8 @@ the argument vector.
   argument vector is always complete; where the forms differ by more than a default, each is its own
   entry.
 - An item-bearing effect (the `$display`, diagnostic, and `$sformat` families) flattens its items
-  into a constructed `PrintItem` array -- each item a value-build `ConstructExpr` over a
-  runtime-library value type (`PrintItem` / `FormatSpec`) -- and encodes any discrete mode (a
+  into a constructed `PrintItem` array -- each item a `PrintItem` constructed over a value and its
+  `FormatSpec`, or made from text by that type's own factory -- and encodes any discrete mode (a
   print's newline discipline, a diagnostic's severity) in the selected runtime entry rather than as
   an argument. An effect that yields a value (`$sformat`) produces it as the call's rvalue for the
   surrounding statement to place.

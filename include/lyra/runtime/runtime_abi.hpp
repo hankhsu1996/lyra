@@ -164,7 +164,8 @@ auto lyra_rt_cancellation_for(void* files, std::int64_t descriptor, void* out)
 auto lyra_rt_is_cancelled(const void* cancellation, void* out) -> void*;
 
 auto lyra_rt_string_make(void* cstr, void* out) -> void*;
-auto lyra_rt_make_print_literal_item(void* string_value, void* out) -> void*;
+// A print item writing the text of a string as it is.
+auto lyra_rt_make_text_print_item(const void* text, void* out) -> void*;
 auto lyra_rt_format(LyraSpan items, const void* time_format, void* out)
     -> void*;
 void lyra_rt_writeln(void* files, std::int64_t descriptor, void* text);

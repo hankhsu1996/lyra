@@ -626,6 +626,11 @@ enum class BuiltinFn : std::uint16_t {
   // own, so which of the two operations a construction is never depends on how
   // many operands it was handed.
   kMakePatternedFormatArg,
+  // A print item writing the text it is handed as it is (LRM 21.2.1). A
+  // factory rather than a constructor, an item being built over a value and
+  // its specification the other way, so which of the two an item is never
+  // depends on how many operands it was handed.
+  kMakeTextPrintItem,
   kWrite,
   kWriteln,
   // Diagnostic subsystem accessor and severity-fixed emit operations.

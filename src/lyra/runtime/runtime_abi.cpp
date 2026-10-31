@@ -2141,8 +2141,6 @@ using lyra::value::LaidOutValue;
 using lyra::value::MakeFormatArg;
 using lyra::value::ObjectRef;
 using lyra::value::PrintItem;
-using lyra::value::PrintLiteralItem;
-using lyra::value::PrintValueItem;
 using lyra::value::Real;
 using lyra::value::RuntimeAssociativeArray;
 using lyra::value::RuntimeDynamicArray;
@@ -2304,9 +2302,8 @@ auto lyra_rt_string_make(void* cstr, void* out) -> void* {
   return Emplace(out, String(static_cast<const char*>(cstr)));
 }
 
-auto lyra_rt_make_print_literal_item(void* string_value, void* out) -> void* {
-  return Emplace(
-      out, PrintItem(PrintLiteralItem(*static_cast<String*>(string_value))));
+auto lyra_rt_make_text_print_item(const void* text, void* out) -> void* {
+  return Emplace(out, PrintItem::Text(Read<String>(text)));
 }
 
 auto lyra_rt_format(LyraSpan items, const void* time_format, void* out)
@@ -4940,32 +4937,27 @@ auto lyra_rt_integral_make_print_value_item(
     bool value_is_four_state, const void* spec, void* out) -> void* {
   return Emplace(
       out,
-      PrintItem(PrintValueItem(
+      PrintItem(
           lyra::runtime::IntegralFormatArg(
               value, lyra::runtime::NumberShape(
                          value_width, value_is_signed, value_is_four_state)),
-          Read<FormatSpec>(spec))));
+          Read<FormatSpec>(spec)));
 }
 
 auto lyra_rt_string_make_print_value_item(
     const void* value, const void* spec, void* out) -> void* {
-  return Emplace(
-      out,
-      PrintItem(PrintValueItem(Read<String>(value), Read<FormatSpec>(spec))));
+  return Emplace(out, PrintItem(Read<String>(value), Read<FormatSpec>(spec)));
 }
 
 auto lyra_rt_chandle_make_print_value_item(
     const void* value, const void* spec, void* out) -> void* {
-  return Emplace(
-      out,
-      PrintItem(PrintValueItem(Read<Chandle>(value), Read<FormatSpec>(spec))));
+  return Emplace(out, PrintItem(Read<Chandle>(value), Read<FormatSpec>(spec)));
 }
 
 auto lyra_rt_managedref_make_print_value_item(
     const void* value, const void* spec, void* out) -> void* {
   return Emplace(
-      out, PrintItem(
-               PrintValueItem(Read<ObjectRef>(value), Read<FormatSpec>(spec))));
+      out, PrintItem(Read<ObjectRef>(value), Read<FormatSpec>(spec)));
 }
 
 auto lyra_rt_real_add(const void* lhs, const void* rhs, void* out) -> void* {
@@ -5157,9 +5149,7 @@ auto lyra_rt_real_value_cell_load(void* cell) noexcept -> void* {
 
 auto lyra_rt_real_make_print_value_item(
     const void* value, const void* spec, void* out) -> void* {
-  return Emplace(
-      out,
-      PrintItem(PrintValueItem(Read<Real>(value), Read<FormatSpec>(spec))));
+  return Emplace(out, PrintItem(Read<Real>(value), Read<FormatSpec>(spec)));
 }
 
 auto lyra_rt_real_make_format_arg(const void* value, void* out) -> void* {
@@ -5273,8 +5263,7 @@ auto lyra_rt_shortreal_value_cell_load(void* cell) noexcept -> void* {
 auto lyra_rt_shortreal_make_print_value_item(
     const void* value, const void* spec, void* out) -> void* {
   return Emplace(
-      out, PrintItem(
-               PrintValueItem(Read<ShortReal>(value), Read<FormatSpec>(spec))));
+      out, PrintItem(Read<ShortReal>(value), Read<FormatSpec>(spec)));
 }
 
 auto lyra_rt_shortreal_make_format_arg(const void* value, void* out) -> void* {

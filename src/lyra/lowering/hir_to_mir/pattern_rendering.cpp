@@ -34,10 +34,10 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/format_parse.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -98,8 +98,7 @@ class Renderer {
   auto Text(const WalkFrame& frame, std::string_view literal) -> mir::ExprId;
   auto Join(const WalkFrame& frame, std::vector<mir::ExprId> parts)
       -> mir::ExprId;
-  auto FormatLeaf(const WalkFrame& frame, mir::ExprId value, mir::TypeId type)
-      -> mir::ExprId;
+  auto FormatLeaf(const WalkFrame& frame, mir::ExprId value) -> mir::ExprId;
   auto Named(
       const WalkFrame& frame, const std::string& name, mir::ExprId element_text)
       -> mir::ExprId;
@@ -202,15 +201,13 @@ auto Renderer::Advanced(
       mir::MakeBinary(Unit(), block, mir::BinaryOp::kAdd, lhs, rhs, IntType()));
 }
 
-auto Renderer::FormatLeaf(
-    const WalkFrame& frame, mir::ExprId value, mir::TypeId type)
+auto Renderer::FormatLeaf(const WalkFrame& frame, mir::ExprId value)
     -> mir::ExprId {
   mir::Block& block = *frame.current_block;
-  const std::vector<mir::RuntimePrintItem> items = {mir::RuntimePrintValue(
-      value, type,
-      mir::FormatSpec(
-          value::FormatKind::kAssignmentPattern,
-          mir::FormatModifiers{.width = kNoField}))};
+  const std::vector<RuntimePrintItem> items = {RuntimePrintValue(
+      value, FormatSpec(
+                 value::FormatKind::kAssignmentPattern,
+                 value::FormatModifiers{.width = kNoField}))};
   const mir::ExprId array =
       block.exprs.Add(BuildPrintItemsArray(Unit(), block, items, 0));
   return block.exprs.Add(BuildFormatCallExpr(Unit(), block, array));
@@ -252,7 +249,7 @@ auto Renderer::Render(
     -> mir::ExprId {
   switch (PatternReadingOf(Owner().Hir(), type)) {
     case PatternReading::kTheValueAnswers:
-      return FormatLeaf(frame, value, Owner().TranslateType(type));
+      return FormatLeaf(frame, value);
     case PatternReading::kTheTypeNamesTheValue:
     case PatternReading::kTheTypeNamesItsMembers:
       return frame.current_block->exprs.Add(
@@ -480,8 +477,8 @@ auto Renderer::BuildEnumeration(
       frame, block.exprs.Add(BuildEnumNameCallExpr(
                  Owner(), block,
                  frame.current_block->ReadLocal(value, mir_type), type)));
-  const mir::ExprId base_text = FormatLeaf(
-      frame, frame.current_block->ReadLocal(value, mir_type), mir_type);
+  const mir::ExprId base_text =
+      FormatLeaf(frame, frame.current_block->ReadLocal(value, mir_type));
 
   const mir::ExprId length = block.exprs.Add(
       mir::Expr{

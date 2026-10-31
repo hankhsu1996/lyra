@@ -560,19 +560,14 @@ auto BuildAssociativeConstructionCall(
   tuple_ids.reserve(entries.size());
   // Each index and each value is assigned to where it lands (LRM 7.9.11,
   // 10.8), and so is a `default:`, which the front end leaves unconverted
-  // since LRM 10.8 leaves a default correspondence out. A wildcard index is
-  // kept at the type it was written in (LRM 7.8.1), so it lands as it is.
-  const bool index_kept_as_written =
-      unit.types.Get(key_type).Is<mir::WildcardIndexType>();
+  // since LRM 10.8 leaves a default correspondence out.
   for (const auto& [key_id, value_id] : entries) {
     tuple_ids.push_back(block.exprs.Add(
         mir::Expr{
             .data =
                 mir::CompositeExpr{
                     .parts =
-                        {index_kept_as_written
-                             ? key_id
-                             : AtType(unit, block, key_id, key_type),
+                        {AtType(unit, block, key_id, key_type),
                          AtType(unit, block, value_id, element_type)}},
             .type = tuple_type}));
   }

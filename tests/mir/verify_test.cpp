@@ -1295,6 +1295,55 @@ TEST(MirVerifyTest, AValueHandedMeetsTheTypeItIsHandedTo) {
   }
 }
 
+// A composite is its parts and nothing more, so each part is a value of the
+// type of the position it lands in -- a product's component, an element list's
+// element -- and there is one part for each position. A type with no positions
+// is built some other way.
+TEST(MirVerifyTest, ACompositesPartsAreOfTheirPositionsTypes) {
+  enum class Built : std::uint8_t { kProduct, kElementList, kNeither };
+  const auto composing = [](Built built, std::vector<bool> of_position_type) {
+    return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
+      const TypeId held = u.builtins.int_type;
+      TypeId type = held;
+      switch (built) {
+        case Built::kProduct:
+          type = u.types.Intern(
+              Type{TupleType{.elements = std::vector<TypeId>(2, held)}});
+          break;
+        case Built::kElementList:
+          type = MachineArrayOf(u.types, held, 2);
+          break;
+        case Built::kNeither:
+          break;
+      }
+      Block& body = code.Body();
+      std::vector<ExprId> values;
+      for (const bool of_its_type : of_position_type) {
+        values.push_back(body.exprs.Add(
+            Expr{
+                .data = NullLiteral{},
+                .type = of_its_type ? held : u.builtins.integer}));
+      }
+      const ExprId composite = body.exprs.Add(
+          Expr{
+              .data = CompositeExpr{.parts = std::move(values)}, .type = type});
+      body.AppendStmt(
+          LocalDeclStmt{
+              .target = code.locals.Add(LocalDecl{.type = type}),
+              .init = composite});
+    });
+  };
+
+  for (const Built built : {Built::kProduct, Built::kElementList}) {
+    EXPECT_NO_THROW(Verify(composing(built, {true, true})));
+    ExpectRefused(
+        composing(built, {true, false}), "hands a part of a composite");
+    ExpectRefused(composing(built, {true}), "parts for 2 positions");
+  }
+  ExpectRefused(
+      composing(Built::kNeither, {true}), "a composite of a type with no");
+}
+
 // A cast joins only types every target converts between in its own syntax: an
 // integral value at a type laying it out alike, a value read as the machine
 // boolean a condition tests, and a machine integer at another. A value moved

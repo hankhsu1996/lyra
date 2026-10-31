@@ -168,6 +168,21 @@ auto ToString(
   RefuseConversion("a string");
 }
 
+// LRM 7.8.1: a wildcard index is any integral value, kept at the type it was
+// written in and identified by its magnitude, so the index is built over the
+// value as it is.
+auto ToWildcardIndex(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    mir::TypeId destination) -> mir::Expr {
+  if (unit.types.Get(block.exprs.Get(operand).type).IsIntegral()) {
+    return mir::Expr{
+        .data =
+            mir::CallExpr{.callee = mir::Construct{}, .arguments = {operand}},
+        .type = destination};
+  }
+  RefuseConversion("a wildcard index");
+}
+
 // LRM 5.9: text left-justified from an array of bytes' left bound, an element
 // past its end left at the element type's default. `entry` is the one taking
 // the form the text arrives in.
@@ -421,7 +436,9 @@ auto BuildValueConversion(
           [&](const mir::ManagedRefType&) {
             return ToClassHandle(unit, block, operand_id, dst_type);
           },
-          [&](const mir::WildcardIndexType& t) { return none(t); },
+          [&](const mir::WildcardIndexType&) {
+            return ToWildcardIndex(unit, block, operand_id, dst_type);
+          },
           [&](const mir::AnyType& t) { return none(t); },
           [&](const mir::WeakManagedRefType& t) { return none(t); },
           [&](const mir::ErasedValueType& t) { return none(t); },

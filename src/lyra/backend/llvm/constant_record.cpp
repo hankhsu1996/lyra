@@ -228,8 +228,6 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
     case lir::RuntimeLibraryKind::kBitVec:
     case lir::RuntimeLibraryKind::kEnumeration:
     case lir::RuntimeLibraryKind::kPrintItem:
-    case lir::RuntimeLibraryKind::kPrintLiteralItem:
-    case lir::RuntimeLibraryKind::kPrintValueItem:
     case lir::RuntimeLibraryKind::kFormatSpec:
     case lir::RuntimeLibraryKind::kFormatArg:
     case lir::RuntimeLibraryKind::kChannelCancellation:
