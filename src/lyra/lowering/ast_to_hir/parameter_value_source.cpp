@@ -262,13 +262,14 @@ auto Specializations::ParametersOf(const slang::ast::InstanceSymbol& inst) const
     }
   }
 
-  // A top-level instance is built by the design root, which hands nothing, and
-  // is the only instance of its specialization, so a value it is given is
-  // compiled in.
+  // The design root builds a top as a parent leaving every parameter to its
+  // default does. A top a value was given to elsewhere has nothing to hand it
+  // that value, so its values are compiled in; its key says so, so no
+  // instance the source instantiates shares its specialization.
   ParametersOfInstance out;
   const auto supplied_here = [&](const slang::ast::ParameterSymbol& param) {
     return param.isFromGenvar() ||
-           (CanBeSupplied(param) && !inst.isTopLevel() &&
+           (CanBeSupplied(param) && !IsBuiltByTheRoot(inst) &&
             needed.contains(&param) && !HeldAsSettled(param, reads));
   };
   for (const slang::ast::ParameterSymbolBase* base : declared) {

@@ -44,6 +44,27 @@ lowers to the same thing, because the lowering reads nothing of it that the iden
    right; what replaces it keys code by the layout of its data and passes the rest as a hidden
    argument. Build systems narrow a key to what an action read by recording the reads as it runs
    (ccache's manifest, Bazel's discovered inputs), never by predicting them.
+5. The field lowers an application from its definition and its arguments and nothing of where it
+   stands: rustc's `Instance` is `{def, args}` (`rustc_middle/src/ty/instance.rs`) and a body is the
+   definition's MIR instantiated with `args`; clang finds a class template specialization by its
+   arguments and keeps the point of instantiation only as a location, [temp.point] making a program
+   whose points of instantiation mean different things ill-formed. slang shares an elaborated body
+   between instances agreeing on definition, parameter values and the instances their interface
+   ports connect to (`InstanceCacheKey`). Where SystemVerilog differs is that a body reaches out of
+   its instance -- a name searched upward (LRM 23.8), a disable naming a block outside (LRM 9.6.2),
+   a class an enclosing module declares and hands down as a type (LRM 6.20.3) -- so where it lands
+   is one of its arguments.
+6. The lowering runs under several namings, and the one specializations are compared in names an
+   instance by where it stands among those its key reaches; no function of a specialization's name
+   gives that name. So a target the front end resolved the body's text to is named through the
+   stage's naming, from the instance, which is identity.
+7. rustc puts a closure's environment into its identity: `ClosureArgsParts` holds the parent's
+   arguments, the closure kind, its signature and the tuple of its captured variables' types
+   (`rustc_type_ir/src/ty_kind/closure.rs`), and code generation reads those rather than working
+   them out again. slang shares no elaborated body that has an upward name at all
+   (`source/ast/ElabVisitors.h`). An outside review of this design held that a key one walk works
+   out and a lowering that asks the front end again are two authorities on one meaning, and that a
+   missing fact must be an error rather than a fallback to the representative instance.
 
 ## Decision
 
@@ -70,7 +91,31 @@ lands, and taking what a procedure writes out of what it reads (9.2.2.2.1 b), ar
 prefix is evaluated.
 
 **D4. Lowering every instance and comparing stays a test.** It is what finds a read D1 missed, and
-no build relies on it.
+no build relies on it. Each instance is lowered on its own, from its own body, and what it comes out
+as is held equal to its specialization; the lowering never holds two bodies at once.
+
+**D5. An instance is its body and its environment, and the lowering reads the instance through
+nothing else.** The environment is everything the body's text reaches outside itself: where each
+name it writes lands once it leaves the instance, where it starts reaching each class or covergroup
+another instance declares, the constant each parameter of another instance it reads settled to or
+that each object of that instance holds it, what the parent bound to each interface port, and which
+of its own parameters it is handed. It is worked out once per instance, by the stage that works keys
+out, and what the body reaches outside itself comes from one walk of the body that visits everything
+the lowering translates -- a disable's target, a sequence reached by a hierarchical name, the values
+an instantiation assigns a child's parameters, a loop's scheme and a name a view defines with an
+expression included. The key renders it, so instances of one key have one environment; the lowering
+is handed it, takes every out-of-body fact from it, and treats a fact it asks for and does not find
+as this compiler's defect. A name whose declaration and the head of its path stand in no other
+instance never leaves the instance and is not looked up. This is what rustc does for a closure,
+whose captured environment is a typed part of its arguments (fact 7): identity discovery and
+translation do not each ask the front end what the text means. A top a value was given to elsewhere
+has nothing to hand it that value (LRM 23.3.1), so it compiles the value in and its key says so;
+every other top is built as an instance left to its defaults is.
+
+**D6. Identity from the front end; content from what the other unit published.** The lowering names
+any instance, block or declaration the front end resolved the body's text to through the stage's
+naming (fact 6). A default a connection takes is told by the connection resolving to the port's own
+initializer, and its value is the child's published default.
 
 ## Limits
 

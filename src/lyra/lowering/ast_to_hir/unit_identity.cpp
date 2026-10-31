@@ -301,10 +301,9 @@ auto ParameterInput(
 // name different storage, so a unit bound through each reaches a different
 // place under the same spelling.
 auto InterfacePortInput(
-    const slang::ast::PortConnection& connection,
-    const UnitNamingPolicy& policy) -> UnitKeyInput {
-  const auto [instances, modport] =
-      ConnectedInterfaceOf(connection.getIfaceConn());
+    const PortBinding& binding, const UnitNamingPolicy& policy)
+    -> UnitKeyInput {
+  const auto& [instances, modport] = binding.connected;
   FixedInterface fixed{
       .specializations = {},
       .taken = {},
@@ -321,7 +320,7 @@ auto InterfacePortInput(
     }
   }
   return UnitKeyInput{
-      .name = std::string{connection.port.name}, .kind = std::move(fixed)};
+      .name = std::string{binding.port->name}, .kind = std::move(fixed)};
 }
 
 // Whether `symbol` is the scope a compilation unit is: a package (LRM 26), a
@@ -339,6 +338,14 @@ auto ConstantReadIdentity(const std::optional<std::string>& reads)
     -> std::string {
   return reads.has_value() ? std::format(" ={}:{}", reads->size(), *reads)
                            : std::string{};
+}
+
+// How a parameter of another instance the body reads is told apart: by the
+// constant it settled to, which the body's code is compiled with, or as one
+// each object of that instance holds.
+auto ForeignReadIdentity(const std::optional<slang::ConstantValue>& settled)
+    -> std::string {
+  return settled.has_value() ? ValueIdentity(*settled) : std::string{"cell"};
 }
 
 // The bytes a key folds to. Every part is written with its own delimiter, so
@@ -382,7 +389,8 @@ auto KeyBytes(const UnitKey& key) -> std::string {
             },
             [](const BoundToCell& v) {
               return std::format("<cell {}>", v.cell);
-            }},
+            },
+            [](const BuiltByTheRoot&) { return std::string{"<root>"}; }},
         input.kind);
     bytes += ';';
   }
@@ -444,6 +452,18 @@ auto OverrideInput(
 }
 
 }  // namespace
+
+auto IsBuiltByTheRoot(const slang::ast::InstanceSymbol& inst) -> bool {
+  return inst.isTopLevel() &&
+         std::ranges::any_of(
+             inst.body.getParameters(),
+             [&](const slang::ast::ParameterSymbolBase* param) {
+               const auto* value =
+                   param->symbol.as_if<slang::ast::ParameterSymbol>();
+               return value != nullptr && !value->isLocalParam() &&
+                      GivenAValue(inst.body, *value);
+             });
+}
 
 auto IsInstanceScope(const slang::ast::Scope& scope) -> bool {
   const slang::ast::SymbolKind kind = scope.asSymbol().kind;
@@ -511,16 +531,18 @@ auto SpecializationKeyOf(
     const slang::ast::InstanceSymbol& inst, const Specializations& keys,
     const UnitNamingPolicy& names) -> UnitKey {
   UnitKey key{.definition = DefinitionName(inst, names), .inputs = {}};
+  if (IsBuiltByTheRoot(inst)) {
+    key.inputs.push_back(UnitKeyInput{.name = "", .kind = BuiltByTheRoot{}});
+  }
   // A local parameter is written from the others by its own declaration, so it
   // names nothing they do not.
   for (const auto* param : inst.body.getParameters()) {
     if (param->isLocalParam()) continue;
     key.inputs.push_back(ParameterInput(param->symbol, names));
   }
-  for (const auto* connection : inst.getPortConnections()) {
-    if (connection->port.kind == slang::ast::SymbolKind::InterfacePort) {
-      key.inputs.push_back(InterfacePortInput(*connection, names));
-    }
+  const Environment& environment = keys.EnvironmentOf(inst);
+  for (const PortBinding& binding : environment.Ports()) {
+    key.inputs.push_back(InterfacePortInput(binding, names));
   }
   const InstanceContext& context = keys.ContextOf(inst);
   // A name is no parameter and declares no name of its own, so it is told
@@ -541,8 +563,9 @@ auto SpecializationKeyOf(
                       LandingOf(*blocks_passed[passed], std::nullopt, names)});
         }
       };
-  for (std::size_t written = 0; written < context.climbs.size(); ++written) {
-    const ClimbAnchor& climb = context.climbs[written];
+  const std::vector<ClimbAnchor> climbs = context.Climbs();
+  for (std::size_t written = 0; written < climbs.size(); ++written) {
+    const ClimbAnchor& climb = climbs[written];
     name_inputs(
         std::format("^{}", written), *climb.scope, climb.blocks_passed,
         climb.reads);
@@ -555,6 +578,31 @@ auto SpecializationKeyOf(
   for (const OverriddenBelow& overridden : context.overridden_below) {
     key.inputs.push_back(
         OverrideInput(overridden.path, overridden.effect, names));
+  }
+  // Where the body reaches each class another instance declares, and which
+  // parameters of another instance its objects hold, are what the lowering
+  // reads of the instance besides its names; each is told apart by its place
+  // among them.
+  for (std::size_t at = 0; at < environment.ClassHomes().size(); ++at) {
+    const std::optional<ReachStart>& start = environment.ClassHomes()[at].start;
+    const auto* from =
+        start.has_value() ? std::get_if<FromScope>(&*start) : nullptr;
+    key.inputs.push_back(
+        UnitKeyInput{
+            .name = std::format("class>{}", at),
+            .kind =
+                from != nullptr
+                    ? LandingOf(*from->scope, std::nullopt, names)
+                    : UnitKeyInputKind{FixedValue{
+                          .value = start.has_value() ? "reader" : "none"}}});
+  }
+  for (std::size_t at = 0; at < environment.ForeignParameters().size(); ++at) {
+    key.inputs.push_back(
+        UnitKeyInput{
+            .name = std::format("param>{}", at),
+            .kind = FixedValue{
+                .value = ForeignReadIdentity(
+                    environment.ForeignParameters()[at].settled)}});
   }
   return key;
 }
@@ -714,6 +762,7 @@ void Specializations::ReadBodyOf(const slang::ast::InstanceSymbol& inst) const {
   read_anyway_.insert(&inst);
   per_instance_.erase(&inst);
   context_.erase(&inst);
+  environments_.erase(&inst);
   keys_.Forget(inst);
   if (SpecializationNameOf(inst) != read_through_shared) {
     throw InternalError(

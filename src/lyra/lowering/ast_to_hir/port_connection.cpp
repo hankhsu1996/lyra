@@ -407,6 +407,16 @@ auto ConnectBidirectionalPort(
       .span = span, .sides = {*std::move(outside), std::move(inside)}};
 }
 
+// Whether the instantiation left the input `port` to its declared default
+// (LRM 23.2.2.4). The front end keeps that fact to itself and answers
+// `conn`'s expression with the port's own initializer, the very object, so the
+// two being one object is the answer.
+auto TakesTheDefault(
+    const slang::ast::PortConnection& conn, const slang::ast::PortSymbol& port)
+    -> bool {
+  return port.hasInitializer() && conn.getExpression() == port.getInitializer();
+}
+
 // Connects one data-carrying part of a port (LRM 23.3.3). The child's port is
 // held as one cross-unit reference and the connection verbatim with its
 // direction; HIR-to-MIR realizes it. `declared` is the port the part belongs
@@ -496,10 +506,9 @@ auto ConnectDataPort(
       } else {
         endpoint = cell_endpoint();
       }
-      // An omitted input port takes its declared default, which slang surfaces
-      // through the connection's expression as the port's own initializer; it
-      // is driven once, with no sensitivity.
-      if (expr == port->getInitializer()) {
+      // An omitted input port takes its declared default, which is driven
+      // once, with no sensitivity.
+      if (TakesTheDefault(conn, *port)) {
         if (!declared.default_value.has_value()) {
           throw InternalError(
               "ConnectDataPort: a port the front end filled from its default "

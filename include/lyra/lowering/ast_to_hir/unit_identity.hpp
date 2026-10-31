@@ -22,6 +22,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/lowering/ast_to_hir/environment.hpp"
 #include "lyra/lowering/ast_to_hir/instance_context.hpp"
 #include "lyra/support/bodies_read.hpp"
 #include "lyra/support/def_path.hpp"
@@ -44,19 +45,6 @@ class Type;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
-
-// Where a value parameter's value comes from, for the objects built from one
-// compiled scope. Settled at elaboration: the code reads it as the constant
-// this specialization settled it to. Supplied at construction: whoever builds
-// the object passes it -- an instance's parameter its code reads (LRM 23.10.2),
-// or the index a loop's block was built at (LRM 27.4). Computed at
-// construction: its own declaration writes it from a supplied value, directly
-// or through another such, so each object computes it when built.
-enum class ParameterValueSource {
-  kSettledAtElaboration,
-  kSuppliedAtConstruction,
-  kComputedAtConstruction,
-};
 
 // The instantiation a body was elaborated for. A body is what one application
 // of a definition produced and states no bindings apart from that application,
@@ -166,9 +154,19 @@ struct BoundToCell {
   auto operator==(const BoundToCell&) const -> bool = default;
 };
 
+// That the instance is a top a value was given to elsewhere -- by a defparam
+// or by the tool (LRM 23.10.1). Nothing instantiates a top (LRM 23.3.1), so
+// the design root builds it and leaves every parameter to its default, which
+// is what a parent leaving them all to their defaults hands too; a value given
+// elsewhere has nothing to hand it, so such a top compiles its values in and
+// is built apart from every instance a parent builds.
+struct BuiltByTheRoot {
+  auto operator==(const BuiltByTheRoot&) const -> bool = default;
+};
+
 using UnitKeyInputKind = std::variant<
     FixedValue, FixedType, FixedInterface, LandsIn, LandsBack,
-    BindInstantiation, BoundToCell>;
+    BindInstantiation, BoundToCell, BuiltByTheRoot>;
 
 // One thing the design fixed for an instance: what it named, and what it fixed
 // that to. Every input is named -- a parameter by its own name, an interface
@@ -193,6 +191,11 @@ struct UnitKey {
 
   auto operator==(const UnitKey&) const -> bool = default;
 };
+
+// Whether `inst` is a top with a value parameter given a value elsewhere, which
+// the design root, handing every top nothing, cannot hand it.
+[[nodiscard]] auto IsBuiltByTheRoot(const slang::ast::InstanceSymbol& inst)
+    -> bool;
 
 class Specializations;
 class UnitNamingPolicy;
@@ -415,15 +418,12 @@ class Specializations {
   [[nodiscard]] auto ContextOf(const slang::ast::InstanceSymbol& inst) const
       -> const InstanceContext&;
 
- private:
-  // Where each value parameter of an instance's body takes its value from, and
-  // those its objects are handed, in the order the body declares them.
-  struct ParametersOfInstance {
-    std::vector<const slang::ast::ParameterSymbol*> supplied;
-    std::unordered_map<const slang::ast::ParameterSymbol*, ParameterValueSource>
-        sources;
-  };
+  // What the body `inst` is read through reaches outside itself, worked out
+  // once and kept.
+  [[nodiscard]] auto EnvironmentOf(const slang::ast::InstanceSymbol& inst) const
+      -> const Environment&;
 
+ private:
   [[nodiscard]] auto ParametersOf(const slang::ast::InstanceSymbol& inst) const
       -> const ParametersOfInstance&;
   [[nodiscard]] auto ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn;
@@ -435,6 +435,8 @@ class Specializations {
       const slang::ast::InstanceSymbol*, ParametersOfInstance>
       per_instance_;
   mutable InstanceContexts context_;
+  mutable std::unordered_map<const slang::ast::InstanceSymbol*, Environment>
+      environments_;
   mutable KeyTable keys_;
 };
 

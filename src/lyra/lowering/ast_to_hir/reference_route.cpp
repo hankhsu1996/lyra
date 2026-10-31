@@ -495,14 +495,33 @@ auto UnitLowerer::DisableTargetOf(
       .target = hir::RoutedDisableTargetRef{.id = id}}};
 }
 
-auto UnitLowerer::ReaderInstance() const -> std::optional<ReaderClimbs> {
-  const auto* body =
-      lowering_->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
-  if (body == nullptr) return std::nullopt;
-  return ReaderClimbs{
-      .body = body,
-      .climbs = Naming().Keys().ContextOf(InstantiationOf(*body)).climbs};
+auto UnitLowerer::LowersAnInstance() const -> bool {
+  return scope_->asSymbol().kind == slang::ast::SymbolKind::InstanceBody;
 }
+
+auto UnitLowerer::StandsInAnotherInstance(const slang::ast::Scope& scope) const
+    -> bool {
+  const slang::ast::Scope* holding = scope.getContainingInstance();
+  return holding != nullptr && holding != scope_;
+}
+
+namespace {
+
+// The scope a path step stands for or is declared in: an instance's body for
+// an instance, and the scope declaring anything else. Nothing for `$root` or an
+// array of instances, which stand for no one scope.
+auto ScopeOfStep(const slang::ast::Symbol& step) -> const slang::ast::Scope* {
+  if (const auto* inst = step.as_if<slang::ast::InstanceSymbol>()) {
+    return &inst->body;
+  }
+  if (step.kind == slang::ast::SymbolKind::Root ||
+      step.kind == slang::ast::SymbolKind::InstanceArray) {
+    return nullptr;
+  }
+  return step.getParentScope();
+}
+
+}  // namespace
 
 auto NamesOwnDeclaration(const RouteOrigin& origin) -> bool {
   return std::holds_alternative<FromReader>(origin.start) &&
@@ -512,8 +531,7 @@ auto NamesOwnDeclaration(const RouteOrigin& origin) -> bool {
 auto UnitLowerer::StartOf(
     const WalkFrame& frame, const slang::ast::Symbol& found,
     const slang::ast::HierarchicalReference& written) -> RouteOrigin {
-  const std::optional<ReaderClimbs> reader = ReaderInstance();
-  if (!reader.has_value()) {
+  if (!LowersAnInstance()) {
     return RouteOrigin{.start = FromReader{}, .written = written.path};
   }
 
@@ -539,7 +557,7 @@ auto UnitLowerer::StartOf(
     // The instance the name stands in is the one bound where its selects land:
     // a port standing for one is bound to one, and the front end names the
     // element a select picks out of one carrying a range.
-    const auto connected = ConnectedInterfaceOf(port.getConnection()).instances;
+    const auto& connected = environment_.BindingOf(port).instances;
     const slang::ast::InstanceSymbol* bound =
         reach.hop.dims.empty() && connected.size() == 1 ? connected[0]
                                                         : nullptr;
@@ -584,8 +602,18 @@ auto UnitLowerer::StartOf(
   // told apart by the class of that scope, so every instance of the unit
   // starts at a scope of that class and the walk down is the one the name
   // writes. A name that never leaves the instance starts at the reader.
-  const std::optional<ClimbAnchor> climb =
-      ClimbOutOf(found, written, *reader->body);
+  // One whose declaration and the head of its path stand in no other instance
+  // never leaves it, and any other is looked up in the environment.
+  const slang::ast::Scope* found_in = ScopeOfStep(found);
+  const slang::ast::Scope* head_in =
+      ScopeOfStep(written.path.empty() ? found : *written.path.front().symbol);
+  if (found_in != nullptr && head_in != nullptr &&
+      !StandsInAnotherInstance(*found_in) &&
+      !StandsInAnotherInstance(*head_in)) {
+    return RouteOrigin{.start = FromReader{}, .written = written.path};
+  }
+  const std::optional<ClimbAnchor>& climb =
+      environment_.LandingOf(found, written);
   if (!climb.has_value()) {
     return RouteOrigin{.start = FromReader{}, .written = written.path};
   }
@@ -877,16 +905,17 @@ auto UnitLowerer::RouteToScope(
     return route;
   }
 
-  // The reader's elaborated ancestor scopes, across unit boundaries (slang's
-  // `getHierarchicalParent` crosses the boundary at the instance-body
-  // transition). The route meets the target at the deepest scope shared with
-  // the reader; a target-side hop whose parent is one of these scopes is the
-  // named child that shared ancestor exposes, which the route climbs to and
-  // descends from.
+  // The scopes enclosing the reader inside the scope this unit is lowered
+  // from, which are the ones a route climbs to: the route meets the target at
+  // the deepest of them it shares with the reader, and a target-side hop whose
+  // parent is one of them is the named child that scope exposes, which the
+  // route climbs to and descends from. A name reaching a scope enclosing the
+  // reader's instance starts where it landed.
   std::unordered_set<const slang::ast::Scope*> reader_ancestors;
   for (const slang::ast::Scope* s = frame.reader_scope; s != nullptr;
        s = s->asSymbol().getHierarchicalParent()) {
     reader_ancestors.insert(s);
+    if (s == scope_) break;
   }
 
   // Walk the target's owner chain, building the descent bottom-up. Each hop's
@@ -1281,9 +1310,11 @@ auto UnitLowerer::ReadsParameterFromCell(
     return true;
   }
   const slang::ast::Scope* holder = param.getParentScope();
-  return holder != nullptr && holder->getContainingInstance() != nullptr &&
-         Naming().Keys().ValueSourceOf(InstanceHolding(*holder), param) !=
-             ParameterValueSource::kSettledAtElaboration;
+  if (holder == nullptr || holder->getContainingInstance() == nullptr) {
+    return false;
+  }
+  if (!StandsInAnotherInstance(*holder)) return DiffersPerObject(param);
+  return !environment_.SettledValueOf(param).has_value();
 }
 
 auto UnitLowerer::ResolveValueTarget(
@@ -1333,9 +1364,8 @@ auto UnitLowerer::StartInEnclosing(const slang::ast::Scope& scope)
 
 auto UnitLowerer::StartReaching(const slang::ast::Scope& target)
     -> std::optional<RouteOrigin> {
-  const std::optional<ReaderClimbs> reader = ReaderInstance();
-  if (!reader.has_value()) return std::nullopt;
-  const auto start = StartOfReach(target, *reader->body, reader->climbs);
+  if (!LowersAnInstance()) return std::nullopt;
+  const std::optional<ReachStart>& start = environment_.ReachOf(target);
   if (!start.has_value()) return std::nullopt;
   return std::visit(
       Overloaded{

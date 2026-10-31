@@ -407,8 +407,10 @@ class Grouping {
             if (const auto* at = InstanceAt(*passed)) found.push_back(at);
           }
         };
-    for (const ClimbAnchor& climb : context.climbs) {
-      lands(*climb.scope, climb.blocks_passed);
+    for (const NameUse& use : context.uses) {
+      if (use.landing.has_value()) {
+        lands(*use.landing->scope, use.landing->blocks_passed);
+      }
     }
     for (const NameLandingBelow& name : context.names_below) {
       lands(*name.scope, name.blocks_passed);

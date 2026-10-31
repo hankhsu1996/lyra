@@ -43,9 +43,10 @@ class LowerCompilationFacts {
 // A top-level block is an auto-promoted, uninstantiated module, named three
 // times because the names answer different questions: the first two coincide
 // only when the identifier needs no escaping, the first and the unit only when
-// no parameter decides which unit it is. A top is the only instance of its
-// unit and every value it is given is in the unit's name, so it is the unit's
-// one specialization, named as the unit is.
+// no parameter decides which unit it is. The design root builds a top as a
+// parent leaving every parameter to its default would, so a top shares its
+// specialization with any instance so left, and one given a value elsewhere is
+// a specialization of its own.
 struct TopLevelUnit {
   // What the design's hierarchy shows for this top. Nothing instantiates a
   // top, so it stands under its own module identifier (LRM 23.3), and that is

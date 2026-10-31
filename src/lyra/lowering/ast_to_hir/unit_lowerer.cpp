@@ -98,38 +98,15 @@ auto SourceNameOf(const slang::ast::Symbol& home) -> std::string {
   return std::string(home.name);
 }
 
-auto HomesOf(
-    const slang::ast::Symbol& home,
-    std::span<const slang::ast::InstanceBodySymbol* const> checked_against)
-    -> std::vector<const slang::ast::Symbol*> {
-  std::vector<const slang::ast::Symbol*> homes{&home};
-  for (const slang::ast::InstanceBodySymbol* other : checked_against) {
-    if (!std::ranges::contains(homes, other)) homes.push_back(other);
-  }
-  return homes;
-}
-
-auto ScopesLoweredFor(std::span<const slang::ast::Symbol* const> homes)
-    -> std::vector<const slang::ast::Scope*> {
-  std::vector<const slang::ast::Scope*> scopes;
-  scopes.reserve(homes.size());
-  for (const slang::ast::Symbol* home : homes) {
-    scopes.push_back(&ScopeLoweredFor(*home));
-  }
-  return scopes;
-}
-
 }  // namespace
 
 UnitLowerer::UnitLowerer(
     const LoweringFacts& facts, const slang::ast::Symbol& home,
-    hir::SpecializationRef names, hir::UnitRole role,
-    std::span<const slang::ast::InstanceBodySymbol* const> checked_against)
+    Environment environment, hir::SpecializationRef names, hir::UnitRole role)
     : facts_(facts),
-      homes_(HomesOf(home, checked_against)),
-      applications_(ScopesLoweredFor(homes_)),
-      scope_(applications_.front()),
-      lowering_(scope_),
+      home_(&home),
+      scope_(&ScopeLoweredFor(home)),
+      environment_(std::move(environment)),
       unit_{std::move(names.unit), {}},
       specialization_(std::move(names.specialization)) {
   unit_.role = role;
@@ -140,7 +117,7 @@ UnitLowerer::UnitLowerer(
 }
 
 auto UnitLowerer::Owns(const slang::ast::Symbol& decl) const -> bool {
-  return std::ranges::contains(homes_, &UnitHomeOf(decl));
+  return &UnitHomeOf(decl) == home_;
 }
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
@@ -159,9 +136,7 @@ auto UnitLowerer::DeclareOwn() -> diag::Result<void> {
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
   {
     const profiling::TimeTraceScope step("declare structural identities");
-    for (const slang::ast::Scope* application : applications_) {
-      DeclareStructuralIdentities(*application, support::DefPath{});
-    }
+    DeclareStructuralIdentities(*scope_, support::DefPath{});
   }
   {
     const profiling::TimeTraceScope step("declare classes");
@@ -244,30 +219,9 @@ auto UnitLowerer::LowerBodies(
     return std::unexpected(std::move(declared.error()));
   }
   RecordPublishedScopeClasses();
-  auto own = LowerScopeOf(*scope_);
+  auto own = LowerOwnScope();
   if (!own) return std::unexpected(std::move(own.error()));
   unit_.root_scope = std::move(own->scope);
-  // Every application holds what the name it is built as holds, which includes
-  // every value it is handed and every constant its names read where they
-  // land, and the lowering reads a value only through that name or as one the
-  // object is built with, so every one of them lowers to the same scope and
-  // builds the same children.
-  for (const slang::ast::Scope* application : applications_) {
-    if (application == scope_) continue;
-    auto built = LowerScopeOf(*application);
-    if (!built) return std::unexpected(std::move(built.error()));
-    if (built->scope != unit_.root_scope ||
-        built->construction != own->construction) {
-      throw InternalError(
-          std::format(
-              "UnitLowerer::LowerBodies: '{}' is built as '{}' and lowers to "
-              "something else than '{}' does, so the lowering read a value "
-              "the name it is built as does not hold -- please report this "
-              "as a bug",
-              application->asSymbol().getHierarchicalPath(), specialization_,
-              scope_->asSymbol().getHierarchicalPath()));
-    }
-  }
   RequireEveryClassBodyLowered();
   if (auto covergroups = ReadSignaturesOfNamedCovergroups(); !covergroups) {
     return std::unexpected(std::move(covergroups.error()));
@@ -282,14 +236,12 @@ auto UnitLowerer::LowerBodies(
       .implementation = std::move(unit_)};
 }
 
-auto UnitLowerer::LowerScopeOf(const slang::ast::Scope& application)
-    -> diag::Result<BuiltScope> {
+auto UnitLowerer::LowerOwnScope() -> diag::Result<BuiltScope> {
   const profiling::TimeTraceScope span(
       "lower to HIR", [&] { return unit_.name; });
   support::RecordWork("bodies lowered");
-  lowering_ = &application;
   WalkFrame frame;
-  StructuralScopeLowerer root(*this, application);
+  StructuralScopeLowerer root(*this, *scope_);
   return root.Run(frame);
 }
 
@@ -307,20 +259,12 @@ auto UnitLowerer::InternBlockBody(hir::StructuralScope scope)
   return body;
 }
 
-auto UnitLowerer::ApplicationHolding(const slang::ast::Scope& scope) const
-    -> const slang::ast::Scope* {
+auto UnitLowerer::Holds(const slang::ast::Scope& scope) const -> bool {
   for (const slang::ast::Scope* level = &scope; level != nullptr;
        level = level->asSymbol().getParentScope()) {
-    if (std::ranges::contains(applications_, level)) return level;
+    if (level == scope_) return true;
   }
-  return nullptr;
-}
-
-auto UnitLowerer::ApplicationDeclaring(const slang::ast::ParameterSymbol& param)
-    const -> const slang::ast::Scope& {
-  const slang::ast::Scope* holding =
-      ApplicationHolding(*param.getParentScope());
-  return holding != nullptr ? *holding : *scope_;
+  return false;
 }
 
 auto UnitLowerer::InternOwnClassDeclarations() -> diag::Result<void> {
@@ -866,11 +810,10 @@ void UnitLowerer::DeclareClassStatics(
 
 auto UnitLowerer::ValueSourceOf(const slang::ast::ParameterSymbol& param) const
     -> ParameterValueSource {
-  const auto* body = ApplicationDeclaring(param)
-                         .asSymbol()
-                         .as_if<slang::ast::InstanceBodySymbol>();
-  if (body == nullptr) return ParameterValueSource::kSettledAtElaboration;
-  return Naming().Keys().ValueSourceOf(InstantiationOf(*body), param);
+  const auto& sources = environment_.Parameters().sources;
+  const auto it = sources.find(&param);
+  return it == sources.end() ? ParameterValueSource::kSettledAtElaboration
+                             : it->second;
 }
 
 auto UnitLowerer::DiffersPerObject(
