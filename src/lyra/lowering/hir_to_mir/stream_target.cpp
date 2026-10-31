@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -175,12 +176,12 @@ auto Deliver(
     const Recipient& recipient, mir::ExprId bits, const ShareSink& sink)
     -> diag::Result<void> {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   return std::visit(
       Overloaded{
           [&](const StreamVariable* variable) -> diag::Result<void> {
             const mir::ExprId value =
-                block.exprs.Get(bits).type == unit.builtins.bit_vec
+                block.Get(bits).type == unit.builtins.bit_vec
                     ? BuildFromBitVec(unit, block, bits, variable->type)
                     : BuildFromBitstream(unit, block, bits, variable->type);
             sink(
@@ -207,13 +208,13 @@ auto DistributeFixedStream(
     std::span<const FixedSegment> segments, std::uint64_t block_bits,
     mir::ExprId source, const ShareSink& sink) -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   std::uint64_t members_width = 0;
   for (const FixedSegment& segment : segments) {
     members_width += segment.shape.width;
   }
   const mir::IntegralType stream =
-      unit.types.Get(block.exprs.Get(source).type).Integral();
+      unit.types.Get(block.Get(source).type).Integral();
   if (stream.bit_width < members_width) {
     throw InternalError(
         "lvalue: the front end refuses a source with fewer bits than a "
@@ -228,14 +229,14 @@ auto DistributeFixedStream(
   const mir::ExprId held = EvaluatedOnce(
       frame, BuildReorderedStream(
                  unit, block,
-                 block.exprs.Add(BuildPackedBitsRead(
+                 block.Add(BuildPackedBitsRead(
                      unit_lowerer, block, source,
                      stream.bit_width - members_width, stream_type)),
                  block_bits));
   std::uint64_t offset = members_width;
   for (const FixedSegment& segment : segments) {
     offset -= segment.shape.width;
-    const mir::ExprId bits = block.exprs.Add(BuildPackedBitsRead(
+    const mir::ExprId bits = block.Add(BuildPackedBitsRead(
         unit_lowerer, block, held, offset,
         mir::PackedVectorOf(
             unit.types, segment.shape.width, stream.state_kind)));
@@ -254,7 +255,7 @@ auto DistributeRun(
     std::span<const Segment> segments, std::uint64_t block_bits,
     mir::ExprId source, const ShareSink& sink) -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::TypeId count_type = unit.builtins.machine_int64;
   const auto count = [&](std::uint64_t n) {
     return mir::BuildMachineCount(unit, block, n);
@@ -349,7 +350,7 @@ auto DistributeRun(
     const mir::ExprId moved = add(at_now(), given);
     block.AppendStmt(
         mir::ExprStmt{
-            .expr = block.exprs.Add(BuildStoreExpr(
+            .expr = block.Add(BuildStoreExpr(
                 unit, block, AccessPath{.owner = position, .descent = {}},
                 moved))});
   };
@@ -380,12 +381,13 @@ auto DistributeRun(
                              BuildRunExtract(unit, block, run, at_now(), bits),
                              elements));
               const mir::ExprId filled = EvaluatedOnce(
-                  frame, block.exprs.Add(
-                             mir::MakeBuiltinCall(
-                                 unit, block, support::BuiltinFn::kWithWindow,
-                                 PathValue(unit, block, windowed.array),
-                                 {window->start, window->count, read},
-                                 windowed.type)));
+                  frame,
+                  block.Add(
+                      mir::MakeBuiltinCall(
+                          unit, block.Body(), support::BuiltinFn::kWithWindow,
+                          PathValue(unit, block, windowed.array),
+                          {window->start, window->count, read},
+                          windowed.type)));
               move_at(bits);
               sink(Share{.place = windowed.array, .value = filled});
               return {};
@@ -516,7 +518,7 @@ auto DistributeStreamTarget(
     const StreamTarget& stream, mir::ExprId value, diag::SourceSpan span,
     const ShareSink& sink) -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const std::vector<Segment> segments = SegmentsOf(unit, stream);
   auto source = BuildToBitstream(unit, block, value, span);
   if (!source) return std::unexpected(std::move(source.error()));
@@ -527,7 +529,7 @@ auto DistributeStreamTarget(
     }
   }
   if (fixed.size() == segments.size() &&
-      unit.types.Get(block.exprs.Get(*source).type).IsIntegral()) {
+      unit.types.Get(block.Get(*source).type).IsIntegral()) {
     return DistributeFixedStream(
         unit_lowerer, frame, fixed, stream.block_bits, *source, sink);
   }

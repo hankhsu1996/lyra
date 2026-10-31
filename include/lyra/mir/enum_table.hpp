@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -11,6 +12,6 @@ namespace lyra::mir {
 // and 6.24.2 ask of a value are answered against. Naming the table is what puts
 // it in the unit.
 [[nodiscard]] auto BuildEnumTableRef(
-    const CompilationUnit& unit, Block& block, TypeId enumeration) -> ExprId;
+    const CompilationUnit& unit, Builder block, TypeId enumeration) -> ExprId;
 
 }  // namespace lyra::mir

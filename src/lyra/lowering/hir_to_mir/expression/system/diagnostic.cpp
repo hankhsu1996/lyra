@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -37,15 +38,15 @@ auto BuildReportCall(
       process, frame, call, support::PrintRadix::kDecimal, items_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
   auto& unit = process.Owner().Unit();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
-  const mir::ExprId items_array = block.exprs.Add(
-      BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
+  const mir::ExprId items_array =
+      block.Add(BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
   const mir::ExprId text_id =
-      block.exprs.Add(BuildFormatCallExpr(unit, block, items_array));
+      block.Add(BuildFormatCallExpr(unit, block, items_array));
   const mir::ExprId diagnostic_id =
-      block.exprs.Add(BuildDiagnosticCallExpr(unit, block));
+      block.Add(BuildDiagnosticCallExpr(unit, block));
   const mir::ExprId origin_id = BuildStringValueExpr(
       unit, block,
       diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
@@ -74,9 +75,8 @@ auto LowerDiagnosticSystemSubroutineCall(
       process, frame, call, info.builtin_fn, call.arguments.empty() ? 0 : 1,
       span);
   if (!reported) return std::unexpected(std::move(reported.error()));
-  auto& block = *frame.current_block;
-  block.AppendStmt(
-      mir::ExprStmt{.expr = block.exprs.Add(*std::move(reported))});
+  mir::Builder block = frame.Builder();
+  block.AppendStmt(mir::ExprStmt{.expr = block.Add(*std::move(reported))});
   return BuildEndRunCall(
       process, block, support::BuiltinFn::kFinish, held, span);
 }

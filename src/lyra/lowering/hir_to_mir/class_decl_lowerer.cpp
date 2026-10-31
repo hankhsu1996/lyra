@@ -41,6 +41,7 @@
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
@@ -77,7 +78,7 @@ class HookBody {
       UnitLowerer& unit_lowerer, const ClassShape& shape,
       const MakeFrame& make_frame, std::optional<mir::TypeId> problem_type)
       : unit_lowerer_(&unit_lowerer),
-        code_(mir::CallableCode::Defined()),
+        code_(mir::CallableCode::Defined(diag::SourceSpan{})),
         bindings_(unit_lowerer.Unit(), code_),
         bound_(BindImplicitParameters(
             unit_lowerer,
@@ -103,8 +104,8 @@ class HookBody {
   [[nodiscard]] auto Unit() const -> mir::CompilationUnit& {
     return unit_lowerer_->Unit();
   }
-  [[nodiscard]] auto Block() -> mir::Block& {
-    return code_.Body();
+  [[nodiscard]] auto Block() const -> mir::Builder {
+    return bound_.frame.Builder();
   }
   [[nodiscard]] auto Frame() const -> const WalkFrame& {
     return bound_.frame;
@@ -112,7 +113,7 @@ class HookBody {
 
   // The object the hook runs on, as the pointer its body holds.
   [[nodiscard]] auto Self() -> mir::ExprId {
-    return Block().exprs.Add(MakeSelfRefExpr(Frame()));
+    return Block().Add(MakeSelfRefExpr(Frame()));
   }
   // The problem, as the reference the hook was handed, and as itself.
   [[nodiscard]] auto ProblemReference() -> mir::ExprId {
@@ -126,7 +127,7 @@ class HookBody {
   }
   [[nodiscard]] auto Problem() -> mir::ExprId {
     return Block().Read(
-        Block().exprs.Add(
+        Block().Add(
             mir::MakeDerefExpr(
                 ProblemReference(), Unit().builtins.constraint_problem)));
   }
@@ -134,7 +135,7 @@ class HookBody {
   [[nodiscard]] auto Call(
       mir::Callee callee, std::vector<mir::ExprId> arguments, mir::TypeId type)
       -> mir::ExprId {
-    return Block().exprs.Add(
+    return Block().Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -157,7 +158,7 @@ class HookBody {
     mir::ExprId value;
   };
   [[nodiscard]] auto Name(const AccessPath& path, mir::TypeId type) -> Named {
-    mir::Block& block = Block();
+    mir::Builder block = Block();
     const mir::TypeId reference_type =
         *ParamTypeOf(Unit(), type, hir::ParamDirection::kRef);
     const mir::LocalId reference = bindings_.DeclareAnonymous(reference_type);
@@ -169,7 +170,7 @@ class HookBody {
                 reference_type)});
     return Named{
         .reference = block.ReadLocal(reference, reference_type),
-        .value = block.Read(block.exprs.Add(block.WrapperContents(
+        .value = block.Read(block.Add(block.WrapperContents(
             Unit().types, block.ReadLocal(reference, reference_type), type)))};
   }
 
@@ -250,8 +251,8 @@ auto LowerStaticStorageInto(
     const StorageBringUp& bring_up) -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const WalkFrame& frame = bring_up.value;
-  mir::Block& block = *frame.current_block;
-  mir::Block& install_block = *bring_up.install.current_block;
+  mir::Builder block = frame.Builder();
+  mir::Builder install_block = bring_up.install.Builder();
   ProcessLowerer lowerer(
       unit_lowerer, declaring_scope, mir_class.time_resolution,
       hir_class.static_init, std::nullopt, frame, scopes, {});
@@ -262,17 +263,15 @@ auto LowerStaticStorageInto(
                         declared.static_properties.Get(property).type));
   };
   for (const hir::StaticPropertyId prop_id : declared.static_properties.Ids()) {
-    const mir::ExprId installed =
-        install_block.exprs.Add(BuildStaticStorageAccess(
-            unit, bring_up.install,
-            shape.static_property_translation.Get(prop_id),
-            cell_type_of(prop_id), mir::EnclosingHops{}));
+    const mir::ExprId installed = install_block.Add(BuildStaticStorageAccess(
+        unit, bring_up.install, shape.static_property_translation.Get(prop_id),
+        cell_type_of(prop_id), mir::EnclosingHops{}));
     const mir::ExprId prototype = BuildDeclaredInitialValue(
         unit_lowerer, bring_up.install,
         declared.static_properties.Get(prop_id).type);
     install_block.AppendStmt(
         mir::ExprStmt{
-            .expr = install_block.exprs.Add(
+            .expr = install_block.Add(
                 mir::MakeCapabilityInstallCallExpr(
                     installed, prototype, support::BuiltinFn::kInitialize,
                     unit.builtins.void_type))});
@@ -284,13 +283,13 @@ auto LowerStaticStorageInto(
     const WalkFrame named = frame.WithScopeName(hir_class.fixed_name);
     auto value_or = lowerer.LowerExpr(value, named);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
-    const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
-    const mir::ExprId target = block.exprs.Add(BuildStaticStorageAccess(
+    const mir::ExprId value_id = block.Add(*std::move(value_or));
+    const mir::ExprId target = block.Add(BuildStaticStorageAccess(
         unit, frame, shape.static_property_translation.Get(init.target),
         cell_type_of(init.target), mir::EnclosingHops{}));
     block.AppendStmt(
         mir::ExprStmt{
-            .expr = block.exprs.Add(BuildStoreExpr(
+            .expr = block.Add(BuildStoreExpr(
                 unit, block, AccessPath{.owner = target, .descent = {}},
                 value_id))});
   }
@@ -648,7 +647,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
       walk(
           walk,
           AccessPath{
-              .owner = body.Block().exprs.Add(BuildStaticStorageAccess(
+              .owner = body.Block().Add(BuildStaticStorageAccess(
                   unit, body.Frame(), shape.static_property_translation.Get(id),
                   mir::ObservableCellOf(unit.types, type),
                   mir::EnclosingHops{})),
@@ -697,7 +696,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
           !std::holds_alternative<mir::IntroducesVirtualSlot>(*role)) {
         continue;
       }
-      mir::Block& block = body.Block();
+      mir::Builder block = body.Block();
       mir::CompilationUnit& unit = body.Unit();
       const auto name = [&](std::string text) {
         return BuildStringValueExpr(unit, block, std::move(text));
@@ -726,30 +725,31 @@ void ClassDeclLowerer::DefineRandomizationHooks(
       const mir::VirtualSlot slot =
           CanonicalVirtualSlot(class_id_, callable, *role);
       mir::Block then_block;
-      then_block.AppendStmt(
+      mir::Builder then_block_builder = block.Into(then_block);
+      then_block_builder.AppendStmt(
           mir::ExprStmt{
-              .expr = then_block.exprs.Add(
+              .expr = then_block_builder.Add(
                   mir::Expr{
                       .data =
                           mir::CallExpr{
                               .callee =
                                   mir::Virtual{
                                       .receiver = BuildObjectDeref(
-                                          unit, then_block,
+                                          unit, then_block_builder,
                                           AsIntroducer(
-                                              unit.types, then_block,
-                                              then_block.exprs.Add(
+                                              unit.types, then_block_builder,
+                                              then_block_builder.Add(
                                                   MakeSelfRefExpr(
                                                       body.Frame())),
                                               slot)),
                                       .slot = slot},
-                              .arguments = {then_block.ReadLocal(
+                              .arguments = {then_block_builder.ReadLocal(
                                   body.ProblemLocal(), body.HandedType())}},
                       .type = unit.builtins.void_type})});
       block.AppendStmt(
           mir::IfStmt{
               .condition = enabled,
-              .then_scope = block.child_scopes.Add(std::move(then_block)),
+              .then_scope = block.AddScope(std::move(then_block)),
               .else_scope = std::nullopt});
     }
     finish(body, support::LibraryCallback::kClassConstrain);
@@ -817,9 +817,10 @@ auto ClassDeclLowerer::PopulateBodies(
   mir::Class mir_class = shape.OpenClass();
   mir_class.conforming = unit_lowerer.ConformanceOf(hir_class_id_);
 
-  mir::CallableCode ctor_code = mir::CallableCode::Defined();
+  mir::CallableCode ctor_code =
+      mir::CallableCode::Defined(declaring_frame.span);
   CallableBindings ctor_bindings(unit_lowerer.Unit(), ctor_code);
-  mir::Block& ctor_block = ctor_code.Body();
+  mir::Builder ctor_block(ctor_code.Body(), declaring_frame.span);
   ScopeChainNode scope_link{};
   // The object, and then the instance it belongs to where the class belongs to
   // one, which is written into the member the object records it in for the
@@ -827,7 +828,7 @@ auto ClassDeclLowerer::PopulateBodies(
   BoundImplicitParameters bound = BindImplicitParameters(
       unit_lowerer,
       BodyFrame(declaring_frame, mir_class, scope_link)
-          .WithBlock(&ctor_block)
+          .WithBlock(&ctor_block.Body())
           .WithBindings(&ctor_bindings)
           .WithRunsAsFunctionCall(true),
       shape, CallableForm::kConstructor);
@@ -841,23 +842,23 @@ auto ClassDeclLowerer::PopulateBodies(
 
   if (const std::optional<DeclaringInstance>& instance =
           shape.declaring_instance) {
-    const mir::ExprId value = ctor_block.exprs.Add(
+    const mir::ExprId value = ctor_block.Add(
         mir::Expr{
             .data =
                 mir::CastExpr{
                     .operand = BuildEnclosingScopeReceiver(
                         frame, unit_lowerer.Unit(), mir::EnclosingHops{})},
             .type = instance->type});
-    const mir::ExprId target = ctor_block.exprs.Add(
+    const mir::ExprId target = ctor_block.Add(
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(
                 unit_lowerer.Unit(), ctor_block,
-                ctor_block.exprs.Add(MakeSelfRefExpr(frame))),
+                ctor_block.Add(MakeSelfRefExpr(frame))),
             mir::ClassFieldTarget{.owner = class_id_, .slot = instance->member},
             instance->type));
     ctor_block.AppendStmt(
         mir::ExprStmt{
-            .expr = ctor_block.exprs.Add(
+            .expr = ctor_block.Add(
                 mir::MakeAssignExpr(
                     unit_lowerer.Unit().builtins, target, value))});
   }
@@ -903,10 +904,10 @@ auto ClassDeclLowerer::PopulateBodies(
         report, unit_lowerer.Unit().builtins.read_report_ptr));
     const mir::ExprId object = BuildObjectDeref(
         unit_lowerer.Unit(), ctor_block,
-        ctor_block.exprs.Add(MakeSelfRefExpr(frame)));
+        ctor_block.Add(MakeSelfRefExpr(frame)));
     ctor_block.AppendStmt(
         mir::ExprStmt{
-            .expr = ctor_block.exprs.Add(
+            .expr = ctor_block.Add(
                 mir::MakeCallExpr(
                     mir::Direct{
                         .target =
@@ -926,17 +927,17 @@ auto ClassDeclLowerer::PopulateBodies(
   // initializer may read a property declared before it (LRM 10.5).
   const auto store = [&](hir::FieldId property, mir::ExprId value_id) {
     const mir::FieldId slot{property.value};
-    const mir::ExprId self_ref = ctor_block.exprs.Add(MakeSelfRefExpr(frame));
+    const mir::ExprId self_ref = ctor_block.Add(MakeSelfRefExpr(frame));
     const mir::ExprId self_object =
         BuildObjectDeref(unit_lowerer.Unit(), ctor_block, self_ref);
-    const mir::ExprId target = ctor_block.exprs.Add(
+    const mir::ExprId target = ctor_block.Add(
         mir::MakeFieldAccessExpr(
             self_object,
             mir::ClassFieldTarget{.owner = class_id_, .slot = slot},
             mir_class.fields.Get(slot).type));
     ctor_block.AppendStmt(
         mir::ExprStmt{
-            .expr = ctor_block.exprs.Add(
+            .expr = ctor_block.Add(
                 mir::MakeAssignExpr(
                     unit_lowerer.Unit().builtins, target, value_id))});
   };
@@ -950,7 +951,7 @@ auto ClassDeclLowerer::PopulateBodies(
     auto value_or =
         ctor_lowerer.LowerExpr(ctor.body.exprs.Get(init.value), reporting);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
-    store(init.target, ctor_block.exprs.Add(*std::move(value_or)));
+    store(init.target, ctor_block.Add(*std::move(value_or)));
   }
 
   // Each method (LRM 8.6) is lowered as a callable this class owns, at its

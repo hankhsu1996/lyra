@@ -23,6 +23,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -57,7 +58,7 @@ void OpenActivationScope(
   // synthesized carrier shares. A cell is built empty, and the local's
   // declaration initializes it where it is reached.
   const std::uint32_t site = unit_lowerer.NextSynthesizedSite();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   for (std::size_t i = 0; i < promoted.size(); ++i) {
     const mir::TypeId cell_type = mir::ObservableCellOf(
         unit.types,
@@ -74,7 +75,7 @@ void OpenActivationScope(
     block.AppendStmt(
         mir::LocalDeclStmt{
             .target = handle,
-            .init = block.exprs.Add(
+            .init = block.Add(
                 mir::Expr{
                     .data =
                         mir::CallExpr{
@@ -102,11 +103,11 @@ auto CancellationTarget(
     ProcessLowerer& process, const WalkFrame& frame,
     const StaticStorageHome& target) -> mir::ExprId {
   mir::CompilationUnit& unit = process.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::TypeId target_type = CancellationTargetType(unit);
-  const mir::ExprId member = block.exprs.Add(BuildStaticStorageAccess(
+  const mir::ExprId member = block.Add(BuildStaticStorageAccess(
       unit, frame, target, target_type, mir::EnclosingHops{}));
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data = mir::AddressOfExpr{.operand = member},
           .type = unit.types.Intern(
@@ -121,7 +122,7 @@ void EmitTargetBracket(
     ProcessLowerer& process, const WalkFrame& frame,
     const StaticStorageHome& target, support::BuiltinFn bracket) {
   AppendRuntimeEffectStmt(
-      process.Owner(), *frame.current_block, bracket,
+      process.Owner(), frame.Builder(), bracket,
       {CancellationTarget(process, frame, target)});
 }
 
@@ -132,6 +133,7 @@ auto BuildExtent(
     ProcessLowerer& process, const WalkFrame& frame, mir::Block&& body,
     const StaticStorageHome& target) -> mir::Block {
   mir::Block extent;
+  mir::Builder extent_builder(extent, frame.span);
   EmitTargetBracket(
       process, frame.WithBlock(&extent), target,
       support::BuiltinFn::kEnterTarget);
@@ -139,7 +141,7 @@ auto BuildExtent(
   EmitTargetBracket(
       process, frame.WithBlock(&cleanup), target,
       support::BuiltinFn::kLeaveTarget);
-  extent.AppendFinally(std::move(body), std::move(cleanup));
+  extent_builder.AppendFinally(std::move(body), std::move(cleanup));
   return extent;
 }
 
@@ -150,7 +152,7 @@ auto BuildRegion(
     const StaticStorageHome& target) -> mir::TryStmt {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   const mir::TypeId effect_type = unit.types.Intern(
       mir::Type{mir::RuntimeLibraryType{
@@ -163,13 +165,14 @@ auto BuildRegion(
   // The handler is a scope of its own, so its test and its raise are lowered
   // through a frame whose current block is that scope.
   mir::Block handler;
+  mir::Builder handler_builder = block.Into(handler);
   const WalkFrame handler_frame = frame.WithBlock(&handler);
-  const mir::ExprId caught_ref = handler.ReadLocal(caught, effect_type);
+  const mir::ExprId caught_ref = handler_builder.ReadLocal(caught, effect_type);
   const mir::ExprId reached =
       CancellationTarget(process, handler_frame, target);
   const mir::ExprId services =
-      handler.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  const mir::ExprId lands = handler.exprs.Add(
+      handler_builder.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  const mir::ExprId lands = handler_builder.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -178,22 +181,23 @@ auto BuildRegion(
                           .target = support::BuiltinFn::kRegionLandsEffect},
                   .arguments = {services, caught_ref, reached}},
           .type = unit.builtins.bit1});
-  const mir::ExprId declined = BuildLogicalNot(unit, handler, lands);
+  const mir::ExprId declined = BuildLogicalNot(unit, handler_builder, lands);
 
   mir::Block decline;
-  const mir::ExprId raised = decline.ReadLocal(caught, effect_type);
-  decline.AppendStmt(mir::RaiseStmt{.effect = raised});
-  handler.AppendStmt(
+  mir::Builder decline_builder(decline, frame.span);
+  const mir::ExprId raised = decline_builder.ReadLocal(caught, effect_type);
+  decline_builder.AppendStmt(mir::RaiseStmt{.effect = raised});
+  handler_builder.AppendStmt(
       mir::IfStmt{
-          .condition = ReduceToCondition(unit, handler, declined),
-          .then_scope = handler.child_scopes.Add(std::move(decline)),
+          .condition = ReduceToCondition(unit, handler_builder, declined),
+          .then_scope = handler_builder.AddScope(std::move(decline)),
           .else_scope = std::nullopt});
 
-  const mir::BlockId extent_id = block.child_scopes.Add(std::move(extent));
+  const mir::BlockId extent_id = block.AddScope(std::move(extent));
   return mir::TryStmt{
       .body = extent_id,
       .caught = caught,
-      .handler = block.child_scopes.Add(std::move(handler))};
+      .handler = block.AddScope(std::move(handler))};
 }
 
 }  // namespace
@@ -215,6 +219,7 @@ auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::BlockStmt& b) -> diag::Result<mir::Stmt> {
   mir::Block child_block;
+  mir::Builder child_block_builder(child_block, frame.span);
   // A block the source named is part of the name everything inside it reports
   // (LRM 21.2.1.5).
   const WalkFrame child_frame =
@@ -255,7 +260,7 @@ auto LowerBlockStmt(
   for (const hir::StmtId child_hir_id : b.statements) {
     auto child_or = process.LowerStmt(hir_proc.stmts.Get(child_hir_id), inside);
     if (!child_or) return std::unexpected(std::move(child_or.error()));
-    child_block.AppendStmt(*std::move(child_or));
+    child_block_builder.AppendStmt(*std::move(child_or));
   }
   end.emit(child_frame);
   // The extent is built where the block sits, not inside its body: a handler
@@ -267,7 +272,7 @@ auto LowerBlockStmt(
             process, frame, std::move(child_block), *disable_target)};
   }
   const mir::BlockId scope_id =
-      frame.current_block->child_scopes.Add(std::move(child_block));
+      frame.Builder().AddScope(std::move(child_block));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
@@ -277,7 +282,7 @@ auto LowerDisableStmt(
     const hir::DisableStmt& d) -> diag::Result<mir::Stmt> {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   // Both forms hand the statement the one thing it acts on: the target's
   // address. A scope of this body's own declaration scope is a cell reached
@@ -300,12 +305,12 @@ auto LowerDisableStmt(
           }},
       d.target);
   const mir::ExprId services =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   // One call carries the whole statement (LRM 9.6.2): it invalidates the
   // target, wakes or ends what is inside it, and -- when the disabling
   // execution is itself inside the target -- leaves from here, which is what a
   // self-disable means.
-  const mir::ExprId disable = block.exprs.Add(
+  const mir::ExprId disable = block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -320,13 +325,14 @@ auto LowerStmtIntoChildScope(
     ProcessLowerer& process, WalkFrame frame, hir::StmtId hir_stmt_id)
     -> diag::Result<mir::Block> {
   mir::Block child_block;
+  mir::Builder child_block_builder(child_block, frame.span);
   const WalkFrame child_frame = frame.WithBlock(&child_block);
   const hir::Stmt& hir_stmt = process.HirBody().stmts.Get(hir_stmt_id);
   auto lowered = process.LowerStmt(hir_stmt, child_frame);
   if (!lowered) {
     return std::unexpected(std::move(lowered.error()));
   }
-  child_block.AppendStmt(*std::move(lowered));
+  child_block_builder.AppendStmt(*std::move(lowered));
   return child_block;
 }
 

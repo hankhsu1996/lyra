@@ -9,6 +9,7 @@
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -32,29 +33,29 @@ auto PositionType(const mir::CompilationUnit& unit) -> mir::TypeId {
 }
 
 auto Arithmetic(
-    mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    mir::CompilationUnit& unit, mir::Builder block, mir::BinaryOp op,
     mir::ExprId lhs, mir::ExprId rhs) -> mir::ExprId {
   const mir::TypeId type = PositionType(unit);
-  return block.exprs.Add(mir::MakeBinary(unit, block, op, lhs, rhs, type));
+  return block.Add(mir::MakeBinary(unit, block.Body(), op, lhs, rhs, type));
 }
 
 }  // namespace
 
 auto BuildOrdinalPosition(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ordinal)
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId ordinal)
     -> mir::ExprId {
   const mir::TypeId type = PositionType(unit);
-  if (block.exprs.Get(ordinal).type == type) {
+  if (block.Get(ordinal).type == type) {
     return ordinal;
   }
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kToPosition, std::nullopt, {ordinal},
-          type));
+          unit, block.Body(), support::BuiltinFn::kToPosition, std::nullopt,
+          {ordinal}, type));
 }
 
 auto BuildPositionSum(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId base,
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId base,
     mir::ExprId offset) -> mir::ExprId {
   const mir::ExprId lhs = BuildOrdinalPosition(unit, block, base);
   const mir::ExprId rhs = BuildOrdinalPosition(unit, block, offset);
@@ -131,7 +132,7 @@ auto PositionMapOf(const UnitLowerer& unit_lowerer, hir::TypeId receiver)
 }
 
 auto BuildConstantPosition(
-    mir::CompilationUnit& unit, mir::Block& block, std::int64_t position)
+    mir::CompilationUnit& unit, mir::Builder block, std::int64_t position)
     -> mir::ExprId {
   return mir::BuildIntegralLiteral(
       unit, block, PositionType(unit),
@@ -151,18 +152,19 @@ auto LeastSignificantBitType(
 }
 
 auto BuildLeastSignificantBit(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value,
     mir::TypeId bit_type) -> mir::ExprId {
   const mir::ExprId lsb = mir::BuildIntegralLiteral(
       unit, block, PositionType(unit),
       mir::IntegralConstant{.value_words = {0}, .state_words = {0}});
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kSlice, value, {lsb}, bit_type));
+          unit, block.Body(), support::BuiltinFn::kSlice, value, {lsb},
+          bit_type));
 }
 
 auto WrapIndexAsPosition(
-    mir::CompilationUnit& unit, mir::Block& block, const PositionMap& map,
+    mir::CompilationUnit& unit, mir::Builder block, const PositionMap& map,
     mir::ExprId index, std::int64_t shift) -> mir::ExprId {
   mir::ExprId position = BuildOrdinalPosition(unit, block, index);
   if (map.reversed) {
@@ -188,7 +190,7 @@ auto WrapIndexAsPosition(
 }
 
 auto BuildSpanEnd(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId start,
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId start,
     mir::ExprId count, bool up) -> mir::ExprId {
   const mir::ExprId from = BuildOrdinalPosition(unit, block, start);
   const mir::ExprId lhs = BuildOrdinalPosition(unit, block, count);

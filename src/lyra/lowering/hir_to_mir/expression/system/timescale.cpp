@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -28,7 +29,7 @@ auto LowerTimeFormatSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     diag::SourceSpan span) -> diag::Result<mir::Expr> {
   const auto& hir_proc = process.HirBody();
-  auto& body = *frame.current_block;
+  mir::Builder body = frame.Builder();
   const auto& args = call.arguments;
   if (!args.empty() && args.size() != 4) {
     // LRM 20.4.3.
@@ -39,7 +40,7 @@ auto LowerTimeFormatSystemSubroutineCall(
 
   const auto& unit = process.Owner().Unit();
   const mir::ExprId runtime_id =
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      body.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   // Every argument but the suffix is a number the runtime keeps as its own
   // setting rather than a value of the design.
   constexpr std::size_t kSuffixPosition = 2;
@@ -51,7 +52,7 @@ auto LowerTimeFormatSystemSubroutineCall(
     }
     auto lowered = process.LowerExpr(hir_proc.exprs.Get(*args[i]), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    const mir::ExprId value = body.exprs.Add(*std::move(lowered));
+    const mir::ExprId value = body.Add(*std::move(lowered));
     call_args.push_back(
         i == kSuffixPosition ? value : BuildToInt64Call(unit, body, value));
   }
@@ -71,7 +72,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
     const ProcessLowerer& process, const WalkFrame& frame)
     -> diag::Result<mir::Expr> {
   const auto& builtins = process.Owner().Unit().builtins;
-  auto& body = *frame.current_block;
+  mir::Builder body = frame.Builder();
   const auto resolution = process.Resolution();
 
   // LRM 20.4.2 fixed format, which names the design element that is the
@@ -84,11 +85,11 @@ auto LowerPrintTimescaleSystemSubroutineCall(
       "Time scale of ({}) is {} / {}", process.Owner().Unit().source_name,
       value::TimeUnitText(resolution.unit_power),
       value::TimeUnitText(resolution.precision_power));
-  const mir::ExprId text_lit = body.exprs.Add(
+  const mir::ExprId text_lit = body.Add(
       mir::Expr{
           .data = mir::StringLiteral{.value = message},
           .type = builtins.string});
-  const mir::ExprId text_id = body.exprs.Add(
+  const mir::ExprId text_id = body.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -98,7 +99,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
   const mir::ExprId fd_id = mir::BuildMachineIntLiteral(
       process.Owner().Unit(), body, support::kStdoutFd);
   const mir::ExprId files_id =
-      body.exprs.Add(BuildFilesCallExpr(process.Owner(), body));
+      body.Add(BuildFilesCallExpr(process.Owner(), body));
   return mir::Expr{
       .data =
           mir::CallExpr{

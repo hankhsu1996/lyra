@@ -29,6 +29,7 @@
 #include "lyra/lowering/hir_to_mir/switch_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -62,14 +63,14 @@ auto LowerCatchAll(
 // only totality, or nothing at all, leaves the search stopping at the first
 // arm that holds.
 auto BuildWrappedBranching(
-    ProcessLowerer& process, const WalkFrame& frame, mir::Block& wrapper,
+    ProcessLowerer& process, const WalkFrame& frame, mir::Builder wrapper,
     std::optional<std::string> label,
     std::optional<hir::UniquePriorityCheck> check, QualifiedArmKind arm_kind,
     std::vector<SearchedArm> arms, std::optional<hir::StmtId> catch_all,
     diag::SourceSpan span) -> diag::Result<mir::Stmt> {
   UnitLowerer& owner = process.Owner();
   const mir::CompilationUnit& unit = owner.Unit();
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper.Body());
 
   auto catch_all_or = LowerCatchAll(process, wrapper_frame, catch_all);
   if (!catch_all_or) return std::unexpected(std::move(catch_all_or.error()));
@@ -97,7 +98,7 @@ auto BuildWrappedBranching(
       arms[arm].conditions = {
           [local = kept[arm], bit = unit.builtins.bit1](
               const WalkFrame& at) -> diag::Result<mir::ExprId> {
-            return at.current_block->ReadLocal(local, bit);
+            return at.Builder().ReadLocal(local, bit);
           }};
     }
   }
@@ -109,7 +110,7 @@ auto BuildWrappedBranching(
   return mir::Stmt{
       .label = std::move(label),
       .data = mir::BlockStmt{
-          .scope = frame.current_block->child_scopes.Add(std::move(wrapper))}};
+          .scope = frame.Builder().AddScope(std::move(wrapper.Body()))}};
 }
 
 // An if-else-if series: its arms in order, each the `else if` of the one
@@ -149,12 +150,12 @@ struct CaseSubject {
 auto SnapshotCaseSubject(
     ProcessLowerer& process, const WalkFrame& wrapper_frame,
     hir::ExprId subject) -> diag::Result<CaseSubject> {
-  mir::Block& wrapper = *wrapper_frame.current_block;
+  mir::Builder wrapper = wrapper_frame.Builder();
   auto lowered =
       process.LowerExpr(process.HirBody().exprs.Get(subject), wrapper_frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  const mir::ExprId value = wrapper.exprs.Add(*std::move(lowered));
-  const mir::TypeId type = wrapper.exprs.Get(value).type;
+  const mir::ExprId value = wrapper.Add(*std::move(lowered));
+  const mir::TypeId type = wrapper.Get(value).type;
   return CaseSubject{
       .local = SnapshotExprToLocal(
           process.Owner(), wrapper_frame, wrapper, type, value),
@@ -187,21 +188,21 @@ auto TakenByValue(
 // where no item is taken is the default; otherwise the items are searched in
 // order.
 auto LowerComparedCase(
-    ProcessLowerer& process, const WalkFrame& frame, mir::Block& wrapper,
+    ProcessLowerer& process, const WalkFrame& frame, mir::Builder wrapper,
     std::optional<std::string> label, const hir::CaseStmt& c,
     hir::CaseKeyword keyword, const CaseSubject& subject, diag::SourceSpan span)
     -> diag::Result<mir::Stmt> {
   const mir::CompilationUnit& unit = process.Owner().Unit();
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper.Body());
 
   const auto label_of = [&](hir::ExprId label_expr) -> Evaluation {
     return [&, label_expr](const WalkFrame& at) -> diag::Result<mir::ExprId> {
-      mir::Block& block = *at.current_block;
+      mir::Builder block = at.Builder();
       auto written =
           process.LowerAsPlace(process.HirBody().exprs.Get(label_expr), at);
       if (!written) return std::unexpected(std::move(written.error()));
       return OperandAtHandleType(
-          unit, block, block.exprs.Add(*std::move(written)), subject.type);
+          unit, block, block.Add(*std::move(written)), subject.type);
     };
   };
   const auto body_of = [&process](const hir::CaseItem& item) {
@@ -236,7 +237,7 @@ auto LowerComparedCase(
         // structure's own method borrows them at.
         lowering.conditions.emplace_back(
             [&, written](const WalkFrame& at) -> diag::Result<mir::ExprId> {
-              mir::Block& block = *at.current_block;
+              mir::Builder block = at.Builder();
               auto lowered = written(at);
               if (!lowered) return lowered;
               return BuildCaseComparison(
@@ -267,7 +268,7 @@ auto LowerComparedCase(
   return mir::Stmt{
       .label = std::move(label),
       .data = mir::BlockStmt{
-          .scope = frame.current_block->child_scopes.Add(std::move(wrapper))}};
+          .scope = frame.Builder().AddScope(std::move(wrapper.Body()))}};
 }
 
 }  // namespace
@@ -299,7 +300,7 @@ auto LowerIfStmt(
               }});
     }
     return BuildWrappedBranching(
-        process, frame, wrapper, std::move(label), i.check,
+        process, frame, declared_in.Builder(), std::move(label), i.check,
         QualifiedArmKind::kCondition, std::move(arms), series.else_arm, span);
   }
 
@@ -311,7 +312,7 @@ auto LowerIfStmt(
   const auto arm_at =
       [&](const WalkFrame& at, std::size_t arm,
           std::optional<mir::Block> otherwise) -> diag::Result<mir::IfStmt> {
-    mir::Block& block = *at.current_block;
+    mir::Builder block = at.Builder();
     auto test =
         ClauseSeriesPredicate(process, frame, series.arms[arm]->conditions)
             .evaluate(at);
@@ -321,11 +322,11 @@ auto LowerIfStmt(
     if (!body) return std::unexpected(std::move(body.error()));
     std::optional<mir::BlockId> else_scope;
     if (otherwise.has_value()) {
-      else_scope = block.child_scopes.Add(*std::move(otherwise));
+      else_scope = block.AddScope(*std::move(otherwise));
     }
     return mir::IfStmt{
         .condition = ReduceToCondition(unit, block, *test),
-        .then_scope = block.child_scopes.Add(*std::move(body)),
+        .then_scope = block.AddScope(*std::move(body)),
         .else_scope = else_scope};
   };
 
@@ -336,9 +337,10 @@ auto LowerIfStmt(
       QualifiedArmKind::kCondition, span);
   for (std::size_t arm = series.arms.size(); arm-- > 1;) {
     mir::Block level;
+    mir::Builder level_builder = frame.Builder().Into(level);
     auto nested = arm_at(frame.WithBlock(&level), arm, std::move(rest));
     if (!nested) return std::unexpected(std::move(nested.error()));
-    level.AppendStmt(*std::move(nested));
+    level_builder.AppendStmt(*std::move(nested));
     rest = std::move(level);
   }
   auto first = arm_at(frame, 0, std::move(rest));
@@ -364,8 +366,8 @@ auto LowerCaseStmt(
       Overloaded{
           [&](hir::CaseKeyword keyword) -> diag::Result<mir::Stmt> {
             return LowerComparedCase(
-                process, frame, wrapper, std::move(label), c, keyword, subject,
-                span);
+                process, frame, wrapper_frame.Builder(), std::move(label), c,
+                keyword, subject, span);
           },
           [&](hir::CaseInside) -> diag::Result<mir::Stmt> {
             const mir::CompilationUnit& unit = process.Owner().Unit();
@@ -379,21 +381,21 @@ auto LowerCaseStmt(
                   }};
               lowering.conditions.reserve(item.labels.size());
               for (const hir::ExprId label_expr : item.labels) {
-                lowering.conditions.emplace_back([&process, &unit, subject,
-                                                  label_expr](
-                                                     const WalkFrame& at) {
-                  return BuildSetMemberTest(
-                      process, at,
-                      at.current_block->ReadLocal(subject.local, subject.type),
-                      label_expr, unit.builtins.bit1);
-                });
+                lowering.conditions.emplace_back(
+                    [&process, &unit, subject,
+                     label_expr](const WalkFrame& at) {
+                      return BuildSetMemberTest(
+                          process, at,
+                          at.Builder().ReadLocal(subject.local, subject.type),
+                          label_expr, unit.builtins.bit1);
+                    });
               }
               items.push_back(std::move(lowering));
             }
             return BuildWrappedBranching(
-                process, frame, wrapper, std::move(label), c.check,
-                QualifiedArmKind::kCaseItem, std::move(items), c.default_stmt,
-                span);
+                process, frame, wrapper_frame.Builder(), std::move(label),
+                c.check, QualifiedArmKind::kCaseItem, std::move(items),
+                c.default_stmt, span);
           }},
       c.label_test);
 }
@@ -436,7 +438,7 @@ auto LowerPatternCaseStmt(
   }
 
   return BuildWrappedBranching(
-      process, frame, wrapper, std::move(label), c.check,
+      process, frame, wrapper_frame.Builder(), std::move(label), c.check,
       QualifiedArmKind::kCaseItem, std::move(items), c.default_stmt, span);
 }
 

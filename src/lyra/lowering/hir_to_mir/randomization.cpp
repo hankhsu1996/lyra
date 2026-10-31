@@ -41,6 +41,7 @@
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enum_table.hpp"
 #include "lyra/mir/expr.hpp"
@@ -130,8 +131,8 @@ class ConstraintWriter {
   [[nodiscard]] auto Unit() const -> mir::CompilationUnit& {
     return lowerer_->Owner().Unit();
   }
-  [[nodiscard]] auto Block() const -> mir::Block& {
-    return *frame_.current_block;
+  [[nodiscard]] auto Block() const -> mir::Builder {
+    return frame_.Builder();
   }
   [[nodiscard]] auto Frame() const -> const WalkFrame& {
     return frame_;
@@ -153,7 +154,7 @@ class ConstraintWriter {
   [[nodiscard]] auto Call(
       BuiltinFn fn, std::vector<mir::ExprId> arguments, mir::TypeId type) const
       -> mir::ExprId {
-    return Block().exprs.Add(
+    return Block().Add(
         mir::MakeCallExpr(
             mir::Direct{.target = fn}, std::move(arguments), type));
   }
@@ -530,7 +531,7 @@ auto ConstantTerm(const ConstraintWriter& w, hir::ExprId id)
   auto value = w.Lowerer().LowerExpr(expr, w.Frame());
   if (!value) return std::unexpected(std::move(value.error()));
   return w.Term(
-      BuiltinFn::kConstraintConstant, {w.Block().exprs.Add(*std::move(value))});
+      BuiltinFn::kConstraintConstant, {w.Block().Add(*std::move(value))});
 }
 
 // A constant term of `width` bits holding `value`, for the arithmetic a select
@@ -580,7 +581,7 @@ auto NameVariable(const ConstraintWriter& w, hir::ExprId id)
           w.Unit(), w.Block(), PathReference(w.Unit(), w.Block(), *path),
           reference_type));
   const mir::ExprId value =
-      w.Block().Read(w.Block().exprs.Add(w.Block().WrapperContents(
+      w.Block().Read(w.Block().Add(w.Block().WrapperContents(
           w.Unit().types, w.Block().ReadLocal(reference, reference_type),
           value_type)));
   return NamedVariable{
@@ -607,13 +608,13 @@ auto NameModeVariables(const ConstraintWriter& w, hir::ExprId id)
     -> diag::Result<std::vector<NamedModeVariable>> {
   UnitLowerer& unit_lowerer = w.Lowerer().Owner();
   mir::CompilationUnit& unit = w.Unit();
-  mir::Block& block = w.Block();
+  mir::Builder block = w.Block();
   auto path = w.Lowerer().LowerLhsExpr(HirExpr(w, id), w.Frame());
   if (!path) return std::unexpected(std::move(path.error()));
   const SettledPath settled =
       SettledForRead(unit_lowerer, w.Frame(), *std::move(path));
   const auto bind = [&](const AccessPath& at) {
-    const mir::TypeId value_type = PathValueType(unit, block, at);
+    const mir::TypeId value_type = PathValueType(unit, block.Body(), at);
     const mir::TypeId reference_type =
         *ParamTypeOf(unit, value_type, hir::ParamDirection::kRef);
     return block.ReadLocal(
@@ -864,7 +865,7 @@ auto PowerTerm(
         w.Term(BuiltinFn::kConstraintSelect, {bit, times, w.ReadTerm(result)});
     w.Block().AppendStmt(
         mir::ExprStmt{
-            .expr = w.Block().exprs.Add(
+            .expr = w.Block().Add(
                 mir::MakeAssignExpr(w.Unit().builtins, target, selected))});
     square = w.Bind(
         w.Unit().builtins.machine_int64,
@@ -1311,7 +1312,7 @@ auto FoldElements(
     -> diag::Result<mir::ExprId> {
   UnitLowerer& unit_lowerer = w.Lowerer().Owner();
   mir::CompilationUnit& unit = w.Unit();
-  mir::Block& block = w.Block();
+  mir::Builder block = w.Block();
   const mir::LocalId acc = w.Bind(unit.builtins.machine_int64, start);
 
   // Which positions the array has, and the index each stands for in the
@@ -1341,7 +1342,7 @@ auto FoldElements(
   const mir::ExprId count =
       fixed.has_value()
           ? mir::BuildIntLiteral(unit, block, *fixed)
-          : block.exprs.Add(
+          : block.Add(
                 mir::Expr{
                     .data =
                         mir::CallExpr{
@@ -1356,23 +1357,25 @@ auto FoldElements(
       w.Frame().bindings->DeclareAnonymous(unit.builtins.int_type);
 
   mir::Block pass;
+  mir::Builder pass_builder = block.Into(pass);
   const WalkFrame at = w.Frame().WithBlock(&pass);
   const auto read_position = [&] {
-    return pass.ReadLocal(position, unit.builtins.int_type);
+    return pass_builder.ReadLocal(position, unit.builtins.int_type);
   };
   const mir::ExprId index =
       left == 0 && step == 1
           ? read_position()
-          : pass.exprs.Add(
+          : pass_builder.Add(
                 mir::Expr{
                     .data =
                         mir::BinaryExpr{
                             .op = mir::BinaryOp::kAdd,
-                            .lhs = mir::BuildIntLiteral(unit, pass, left),
+                            .lhs =
+                                mir::BuildIntLiteral(unit, pass_builder, left),
                             .rhs =
                                 step == 1
                                     ? read_position()
-                                    : pass.exprs.Add(
+                                    : pass_builder.Add(
                                           mir::Expr{
                                               .data =
                                                   mir::UnaryExpr{
@@ -1384,12 +1387,14 @@ auto FoldElements(
                     .type = unit.builtins.int_type});
   const mir::LocalId index_local =
       at.bindings->DeclareAnonymous(unit.builtins.int_type);
-  pass.AppendStmt(mir::LocalDeclStmt{.target = index_local, .init = index});
+  pass_builder.AppendStmt(
+      mir::LocalDeclStmt{.target = index_local, .init = index});
   const mir::TypeId element_type = unit_lowerer.TranslateType(*element);
-  const AccessPath array_path = NamedIn(settled, pass);
+  const AccessPath array_path = NamedIn(settled, pass_builder);
   const DescentStep to_element = ElementStep(
-      unit_lowerer, pass, array.type,
-      pass.ReadLocal(index_local, unit.builtins.int_type), element_type);
+      unit_lowerer, pass_builder, array.type,
+      pass_builder.ReadLocal(index_local, unit.builtins.int_type),
+      element_type);
   const AccessPath element_path = DescendInto(array_path, to_element);
   const ConstraintWriter in_pass(w.Lowerer(), at);
   const mir::TypeId reference_type =
@@ -1397,12 +1402,13 @@ auto FoldElements(
   const mir::LocalId reference = in_pass.Bind(
       reference_type,
       AtType(
-          unit, pass, PathReference(unit, pass, element_path), reference_type));
+          unit, pass_builder, PathReference(unit, pass_builder, element_path),
+          reference_type));
   const mir::ExprId element_term = in_pass.Term(
       BuiltinFn::kConstraintVariable,
-      {pass.ReadLocal(reference, reference_type),
-       pass.Read(pass.exprs.Add(pass.WrapperContents(
-           unit.types, pass.ReadLocal(reference, reference_type),
+      {pass_builder.ReadLocal(reference, reference_type),
+       pass_builder.Read(pass_builder.Add(pass_builder.WrapperContents(
+           unit.types, pass_builder.ReadLocal(reference, reference_type),
            element_type)))});
   const mir::LocalId element_local =
       in_pass.Bind(unit.builtins.machine_int64, element_term);
@@ -1414,13 +1420,14 @@ auto FoldElements(
           .element = element_local,
           .index = index_local});
   if (!next) return next;
-  pass.AppendStmt(
+  pass_builder.AppendStmt(
       mir::ExprStmt{
-          .expr = pass.exprs.Add(
+          .expr = pass_builder.Add(
               mir::MakeAssignExpr(
                   unit.builtins,
-                  pass.LocalPlace(acc, unit.builtins.machine_int64), *next))});
-  const mir::BlockId body = block.child_scopes.Add(std::move(pass));
+                  pass_builder.LocalPlace(acc, unit.builtins.machine_int64),
+                  *next))});
+  const mir::BlockId body = block.AddScope(std::move(pass));
   block.AppendStmt(
       BuildCountingLoopStmt(unit, w.Frame(), block, count, position, body));
   return w.ReadTerm(acc);
@@ -1520,6 +1527,12 @@ auto LowerConstraintInto(
     const ConstraintWriter& w, hir::ConstraintId id,
     std::optional<mir::LocalId> guard) -> diag::Result<void>;
 
+// The same for `constraint`, written where `w` is, which is where the source
+// wrote it.
+auto LowerConstraintInto(
+    const ConstraintWriter& w, const hir::Constraint& constraint,
+    std::optional<mir::LocalId> guard) -> diag::Result<void>;
+
 auto Guarded(
     const ConstraintWriter& w, std::optional<mir::LocalId> guard,
     mir::ExprId condition) -> mir::ExprId {
@@ -1548,6 +1561,13 @@ auto LowerConstraintInto(
     const ConstraintWriter& w, hir::ConstraintId id,
     std::optional<mir::LocalId> guard) -> diag::Result<void> {
   const hir::Constraint& constraint = w.Lowerer().HirBody().constraints.Get(id);
+  return LowerConstraintInto(
+      w.Within(w.Frame().WithSpan(constraint.span), {}), constraint, guard);
+}
+
+auto LowerConstraintInto(
+    const ConstraintWriter& w, const hir::Constraint& constraint,
+    std::optional<mir::LocalId> guard) -> diag::Result<void> {
   return std::visit(
       Overloaded{
           [&](const hir::ConstraintList& c) -> diag::Result<void> {
@@ -1736,7 +1756,7 @@ auto OnArgument(const ConstraintWriter& w, hir::ExprId on)
   auto value = w.Lowerer().LowerExpr(HirExpr(w, on), w.Frame());
   if (!value) return std::unexpected(std::move(value.error()));
   return ReduceToCondition(
-      w.Unit(), w.Block(), w.Block().exprs.Add(*std::move(value)));
+      w.Unit(), w.Block(), w.Block().Add(*std::move(value)));
 }
 
 // The object a call acts on, as the value reaching it, read where a variable
@@ -1745,8 +1765,7 @@ auto ObjectArgument(const ConstraintWriter& w, hir::ExprId object)
     -> diag::Result<mir::ExprId> {
   auto value = w.Lowerer().LowerExpr(HirExpr(w, object), w.Frame());
   if (!value) return std::unexpected(std::move(value.error()));
-  return w.Block().AsValue(
-      w.Unit().types, w.Block().exprs.Add(*std::move(value)));
+  return w.Block().AsValue(w.Unit().types, w.Block().Add(*std::move(value)));
 }
 
 auto StringArgument(const ConstraintWriter& w, const std::string& text)
@@ -1774,8 +1793,7 @@ auto LowerConstraintStmt(
       !r) {
     return std::unexpected(std::move(r.error()));
   }
-  const mir::BlockId scope =
-      frame.current_block->child_scopes.Add(std::move(body));
+  const mir::BlockId scope = frame.Builder().AddScope(std::move(body));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope}};
 }
@@ -1795,7 +1813,7 @@ auto LowerRandomizeExpr(
           [&](const hir::RandomizedClassObject& target) -> diag::Result<void> {
             auto handle = ObjectArgument(outer, target.object);
             if (!handle) return std::unexpected(std::move(handle.error()));
-            const mir::TypeId handle_type = outer.Block().GetExprType(*handle);
+            const mir::TypeId handle_type = outer.Block().Get(*handle).type;
             object = outer.Bind(handle_type, *handle);
             const BuiltinFn begin = std::visit(
                 Overloaded{
@@ -1812,7 +1830,7 @@ auto LowerRandomizeExpr(
                 outer.Call(
                     begin,
                     {outer.Block().ReadLocal(*object, handle_type),
-                     outer.Block().exprs.Add(
+                     outer.Block().Add(
                          BuildCurrentRuntimeCallExpr(lowerer.Owner()))},
                     unit.builtins.constraint_problem));
             return {};
@@ -1824,7 +1842,7 @@ auto LowerRandomizeExpr(
                 unit.builtins.constraint_problem,
                 outer.Call(
                     BuiltinFn::kRandomizeScope,
-                    {outer.Block().exprs.Add(
+                    {outer.Block().Add(
                         BuildCurrentRuntimeCallExpr(lowerer.Owner()))},
                     unit.builtins.constraint_problem));
             return {};
@@ -1857,7 +1875,7 @@ auto LowerRandomizeExpr(
           .condition = after.Call(
               BuiltinFn::kRandomizeSettleFirst, {after.Problem()},
               unit.builtins.machine_bool),
-          .scope = after.Block().child_scopes.Add(std::move(pass))});
+          .scope = after.Block().AddScope(std::move(pass))});
   const mir::ExprId answer =
       after.Call(BuiltinFn::kRandomizeFinish, {after.Problem()}, result_type);
   return steps.Build(answer);
@@ -1875,7 +1893,7 @@ auto LowerRandModeSetExpr(
             if (!named) return std::unexpected(std::move(named.error()));
             auto on = OnArgument(w, call.on);
             if (!on) return on;
-            const mir::TypeId on_type = w.Block().GetExprType(*on);
+            const mir::TypeId on_type = w.Block().Get(*on).type;
             const mir::LocalId held = w.Bind(on_type, *on);
             // Each call but the last is a statement; the last is the value
             // the call expression answers.
@@ -1937,7 +1955,7 @@ auto ChosenValueType(const hir::TypePool& types, hir::TypeId type)
 }
 
 auto ChosenMembers(
-    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId type)
+    UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId type)
     -> std::optional<mir::ExprId> {
   const mir::TypeId value = unit_lowerer.TranslateType(
       ChosenValueType(unit_lowerer.Hir().types, type));

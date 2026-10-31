@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/block_id.hpp"
@@ -726,9 +727,13 @@ using ExprData = std::variant<
     FieldAccessExpr, ClosureExpr, CompositeExpr, UnionExpr, AwaitExpr, WaitExpr,
     VectorGetExpr>;
 
+// `span` is the piece of source the node was lowered from, or no place where
+// it was lowered from none, as the front end gave it; only the front end opens
+// it.
 struct Expr {
   ExprData data;
   TypeId type;
+  diag::SourceSpan span{};
 };
 
 [[nodiscard]] inline auto MakeLocalRefExpr(LocalId var, TypeId type) -> Expr {

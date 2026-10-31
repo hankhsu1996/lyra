@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/library_entry_body.hpp"
 #include "lyra/mir/block_body_ordinal.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -40,13 +41,13 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto BuildDefinitionRead(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId of)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId of)
     -> mir::ExprId {
-  const mir::ExprId definition = block.exprs.Add(
+  const mir::ExprId definition = block.Add(
       mir::Expr{
           .data = mir::ReferenceExpr{.target = mir::DefinitionRef{.of = of}},
           .type = mir::ClassDefinitionType(unit.types)});
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data = mir::AddressOfExpr{.operand = definition},
           .type = mir::ClassDefinitionPointer(unit.types)});
@@ -86,14 +87,14 @@ auto ReadOnlyPointerTo(const mir::CompilationUnit& unit, mir::TypeId pointee)
           .mutability = mir::Mutability::kReadOnly}});
 }
 
-auto Null(mir::Block& block, mir::TypeId type) -> mir::ExprId {
-  return block.exprs.Add(mir::Expr{.data = mir::NullLiteral{}, .type = type});
+auto Null(mir::Builder block, mir::TypeId type) -> mir::ExprId {
+  return block.Add(mir::Expr{.data = mir::NullLiteral{}, .type = type});
 }
 
 auto Name(
-    const mir::CompilationUnit& unit, mir::Block& block, std::string_view text)
+    const mir::CompilationUnit& unit, mir::Builder block, std::string_view text)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeStringLiteral(
           unit.builtins.machine_c_string, std::string{text}));
 }
@@ -133,8 +134,8 @@ class LibraryRecordBuilder {
   static constexpr mir::RuntimeLibraryKind kKind =
       mir::LibraryRecordKind<Record>();
 
-  LibraryRecordBuilder(const mir::CompilationUnit& unit, mir::Block& block)
-      : unit_(&unit), block_(&block) {
+  LibraryRecordBuilder(const mir::CompilationUnit& unit, mir::Builder block)
+      : unit_(&unit), block_(block) {
     parts_.resize(MembersOf<Record>(unit).size());
   }
 
@@ -158,7 +159,7 @@ class LibraryRecordBuilder {
   // `member` holding the number `value`, at the type of the member.
   template <typename Member>
   void SetNumber(Member Record::* member, std::int64_t value) {
-    Set(member, block_->exprs.Add(
+    Set(member, block_.Add(
                     mir::Expr{
                         .data = mir::MachineIntLiteral{.value = value},
                         .type = TypeOf(member)}));
@@ -167,7 +168,7 @@ class LibraryRecordBuilder {
   // `member` holding nothing.
   template <typename Member>
   void SetNull(Member Record::* member) {
-    Set(member, Null(*block_, TypeOf(member)));
+    Set(member, Null(block_, TypeOf(member)));
   }
 
   // The structure, once every member is given.
@@ -182,7 +183,7 @@ class LibraryRecordBuilder {
       }
       parts.push_back(*part);
     }
-    return block_->exprs.Add(
+    return block_.Add(
         mir::Expr{
             .data = mir::CompositeExpr{.parts = std::move(parts)},
             .type = LibraryType(*unit_, kKind)});
@@ -190,15 +191,15 @@ class LibraryRecordBuilder {
 
  private:
   const mir::CompilationUnit* unit_;
-  mir::Block* block_;
+  mir::Builder block_;
   std::vector<std::optional<mir::ExprId>> parts_;
 };
 
 // `callable` of class `id`, named as the code it is: `&Mid::bump_entry`.
 auto Function(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
     const mir::Class& cls, mir::CallableId callable) -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::ReferenceExpr{
@@ -213,11 +214,11 @@ auto Function(
 
 // The address of `constant`, a value of `type`, as a value of `block`.
 auto AddressOfConstant(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     const mir::ClassConstantRef& constant, mir::TypeId type) -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeAddressOfExpr(
-          block.exprs.Add(
+          block.Add(
               mir::Expr{
                   .data = mir::ReferenceExpr{.target = constant},
                   .type = type}),
@@ -227,7 +228,7 @@ auto AddressOfConstant(
 // Holds `build` as a constant of class `id`, at the type of the value it is
 // built as, and answers its address as a value of `block`.
 auto ConstantAddress(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
     mir::Class& cls, mir::ValueBuild build) -> mir::ExprId {
   const mir::TypeId type = build.body.exprs.Get(build.value).type;
   const mir::ClassConstantId constant = cls.constants.Add(
@@ -243,24 +244,25 @@ auto ConstantAddress(
 // is a view of all of that array, made from its address.
 template <typename Entry>
 auto Table(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
     mir::Class& cls, std::size_t count,
-    const std::function<mir::ExprId(mir::Block&, std::size_t)>& write)
+    const std::function<mir::ExprId(mir::Builder, std::size_t)>& write)
     -> mir::ExprId {
   const mir::TypeId entry = LibraryType(unit, mir::LibraryRecordKind<Entry>());
   mir::ValueBuild build;
+  mir::Builder record(build.body, diag::SourceSpan{});
   std::vector<mir::ExprId> elements;
   elements.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
-    elements.push_back(write(build.body, i));
+    elements.push_back(write(record, i));
   }
-  build.value = build.body.exprs.Add(
+  build.value = record.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(elements)},
           .type = mir::MachineArrayOf(unit.types, entry, count)});
   const mir::ExprId entries =
       ConstantAddress(unit, block, id, cls, std::move(build));
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{.callee = mir::Construct{}, .arguments = {entries}},
@@ -281,18 +283,18 @@ struct LibraryBody {
 // `block`; none where no body answers. The entry is named at its own prototype
 // and read at the library's.
 auto EntryOrNone(
-    mir::Block& block, const std::optional<LibraryBody>& body,
+    mir::Builder block, const std::optional<LibraryBody>& body,
     mir::TypeId member_type) -> mir::ExprId {
   if (!body.has_value()) {
     return Null(block, member_type);
   }
-  const mir::ExprId named = block.exprs.Add(
+  const mir::ExprId named = block.Add(
       mir::Expr{
           .data =
               mir::ReferenceExpr{
                   .target = mir::DispatchEntryRef{.body = body->body}},
           .type = body->prototype});
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{.data = mir::CastExpr{.operand = named}, .type = member_type});
 }
 
@@ -351,7 +353,7 @@ auto BodyFor(const LibraryBodies& bodies, support::LibraryCallback callback)
 // entry of the body answering its callback.
 template <typename Record, typename Answers>
 void SetEntries(
-    mir::Block& block, LibraryRecordBuilder<Record>& record,
+    mir::Builder block, LibraryRecordBuilder<Record>& record,
     const Answers& answers, const LibraryBodies& bodies) {
   for (const auto& [member, callback] : answers) {
     record.Set(
@@ -365,12 +367,12 @@ void SetEntries(
 // what an instance starts is run, what a dump records it as, the bodies its
 // exports name, then the body of each of its phases.
 auto ScopeInfoAddress(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
     mir::Class& cls, const LibraryBodies& bodies) -> mir::ExprId {
   using abi::ScopeInfo;
   using abi::ScopeMetadata;
   mir::ValueBuild build;
-  mir::Block& at = build.body;
+  mir::Builder at(build.body, diag::SourceSpan{});
   LibraryRecordBuilder<ScopeMetadata> metadata(unit, at);
   metadata.SetNumber(
       &ScopeMetadata::time_unit_power, cls.time_resolution.unit_power);
@@ -387,7 +389,7 @@ auto ScopeInfoAddress(
       &ScopeInfo::exports,
       Table<abi::ScopeCallable>(
           unit, at, id, cls, cls.exports.size(),
-          [&](mir::Block& entry, std::size_t i) {
+          [&](mir::Builder entry, std::size_t i) {
             using abi::ScopeCallable;
             const mir::NamedCallable& exported = cls.exports[i];
             LibraryRecordBuilder<ScopeCallable> callable(unit, entry);
@@ -395,7 +397,7 @@ auto ScopeInfoAddress(
                 &ScopeCallable::name, Name(unit, entry, exported.name));
             callable.Set(
                 &ScopeCallable::entry,
-                entry.exprs.Add(
+                entry.Add(
                     mir::Expr{
                         .data =
                             mir::CastExpr{
@@ -413,18 +415,18 @@ auto ScopeInfoAddress(
 
 //   {"count", 7, 0, 8, kReg, 1, 1, kInput, 2}
 auto DumpEntryAddress(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
     mir::Class& cls, const hir::DumpedDeclaration& declaration) -> mir::ExprId {
   using abi::DumpEntry;
   mir::ValueBuild build;
+  mir::Builder record(build.body, diag::SourceSpan{});
   const hir::DumpedDeclaration::Range range = declaration.range.value_or(
       hir::DumpedDeclaration::Range{.left = 0, .right = 0});
   const hir::DumpedDeclaration::Port port = declaration.port.value_or(
       hir::DumpedDeclaration::Port{
           .direction = support::DumpPortDirection::kInput, .position = 0});
-  LibraryRecordBuilder<DumpEntry> entry(unit, build.body);
-  entry.Set(
-      &DumpEntry::identifier, Name(unit, build.body, declaration.identifier));
+  LibraryRecordBuilder<DumpEntry> entry(unit, record);
+  entry.Set(&DumpEntry::identifier, Name(unit, record, declaration.identifier));
   entry.SetNumber(&DumpEntry::left, range.left);
   entry.SetNumber(&DumpEntry::right, range.right);
   entry.SetNumber(&DumpEntry::width, declaration.width);
@@ -441,12 +443,13 @@ auto DumpEntryAddress(
 
 //   {"blk", kBegin}
 auto DumpBlockAddress(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
     mir::Class& cls, const hir::DumpedBlock& dumped) -> mir::ExprId {
   using abi::DumpBlock;
   mir::ValueBuild build;
-  LibraryRecordBuilder<DumpBlock> entry(unit, build.body);
-  entry.Set(&DumpBlock::identifier, Name(unit, build.body, dumped.identifier));
+  mir::Builder record(build.body, diag::SourceSpan{});
+  LibraryRecordBuilder<DumpBlock> entry(unit, record);
+  entry.Set(&DumpBlock::identifier, Name(unit, record, dumped.identifier));
   entry.SetNumber(&DumpBlock::kind, static_cast<std::uint8_t>(dumped.kind));
   build.value = std::move(entry).Build();
   return ConstantAddress(unit, block, id, cls, std::move(build));
@@ -470,10 +473,10 @@ struct BodyRef {
 //
 //   (Erased)&Child::sv_create
 auto ErasedObjectEntry(
-    mir::Block& block, const BodyRef& made,
+    mir::Builder block, const BodyRef& made,
     std::optional<mir::BlockBodyOrdinal> built, mir::TypeId entry,
     mir::TypeId erased) -> mir::ExprId {
-  const mir::ExprId declared = block.exprs.Add(
+  const mir::ExprId declared = block.Add(
       mir::Expr{
           .data =
               mir::ReferenceExpr{
@@ -483,7 +486,7 @@ auto ErasedObjectEntry(
                           .body_name = made.body,
                           .block = built}},
           .type = entry});
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{.data = mir::CastExpr{.operand = declared}, .type = erased});
 }
 
@@ -700,20 +703,21 @@ class ConstructionTables {
     using abi::GeneratePlaces;
     using abi::Instantiation;
     mir::ValueBuild build;
-    LibraryRecordBuilder<ConstructionTable> table(*unit_, build.body);
+    mir::Builder record(build.body, diag::SourceSpan{});
+    LibraryRecordBuilder<ConstructionTable> table(*unit_, record);
     table.Set(
         &ConstructionTable::instantiations,
         Table<Instantiation>(
-            *unit_, build.body, id_, *cls_, content.instances.size(),
-            [&](mir::Block& entry, std::size_t i) {
+            *unit_, record, id_, *cls_, content.instances.size(),
+            [&](mir::Builder entry, std::size_t i) {
               const Entry& made = content.instances[i];
               return EntryRecord(entry, made, EntryTypeOf(made.made.unit));
             }));
     table.Set(
         &ConstructionTable::generates,
         Table<GeneratePlaces>(
-            *unit_, build.body, id_, *cls_, content.generates.size(),
-            [&](mir::Block& at_generate, std::size_t g) {
+            *unit_, record, id_, *cls_, content.generates.size(),
+            [&](mir::Builder at_generate, std::size_t g) {
               const Places& generate = content.generates[g];
               const mir::TypeId entry_type =
                   BlockEntryType(*unit_, generate.handed_an_index);
@@ -722,7 +726,7 @@ class ConstructionTables {
                   &GeneratePlaces::places,
                   Table<Instantiation>(
                       *unit_, at_generate, id_, *cls_, generate.places.size(),
-                      [&](mir::Block& entry, std::size_t k) {
+                      [&](mir::Builder entry, std::size_t k) {
                         const std::optional<Entry>& block = generate.places[k];
                         return block.has_value()
                                    ? EntryRecord(entry, *block, entry_type)
@@ -741,7 +745,8 @@ class ConstructionTables {
 
   // The record of the entry `made`, its entry read at the type `entry_type`
   // that entry has.
-  auto EntryRecord(mir::Block& entry, const Entry& made, mir::TypeId entry_type)
+  auto EntryRecord(
+      mir::Builder entry, const Entry& made, mir::TypeId entry_type)
       -> mir::ExprId {
     using abi::Instantiation;
     LibraryRecordBuilder<Instantiation> record(*unit_, entry);
@@ -759,7 +764,7 @@ class ConstructionTables {
   // A place this object built no block at -- an alternative it did not select
   // -- that no one entry fills, which holds no entry; the body's code never
   // reads one there.
-  auto NoEntryRecord(mir::Block& entry) -> mir::ExprId {
+  auto NoEntryRecord(mir::Builder entry) -> mir::ExprId {
     using abi::Instantiation;
     LibraryRecordBuilder<Instantiation> record(*unit_, entry);
     record.SetNull(&Instantiation::entry);
@@ -958,9 +963,9 @@ auto FactsOf(
 // The address of a table `id`'s dispatch is laid out in, as a value of
 // `block` of type `type`: what `target` names.
 auto TableAddress(
-    mir::Block& block, mir::ReferenceTarget target, mir::TypeId type)
+    mir::Builder block, mir::ReferenceTarget target, mir::TypeId type)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data = mir::ReferenceExpr{.target = std::move(target)},
           .type = type});
@@ -1002,12 +1007,13 @@ void AddEntries(
 // What `randomize()` asks of an object of class `id`, as a constant of the
 // class, and its address as a value of `block`.
 auto ClassObjectInfoAddress(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
     mir::Class& cls, const LibraryBodies& bodies) -> mir::ExprId {
   mir::ValueBuild build;
-  LibraryRecordBuilder<abi::ClassObjectInfo> info(unit, build.body);
-  SetEntries(build.body, info, kRandomizationOnProblem, bodies);
-  SetEntries(build.body, info, kRandomizationHooks, bodies);
+  mir::Builder record(build.body, diag::SourceSpan{});
+  LibraryRecordBuilder<abi::ClassObjectInfo> info(unit, record);
+  SetEntries(record, info, kRandomizationOnProblem, bodies);
+  SetEntries(record, info, kRandomizationHooks, bodies);
   build.value = std::move(info).Build();
   return ConstantAddress(unit, block, id, cls, std::move(build));
 }
@@ -1023,7 +1029,7 @@ auto DefinitionOf(
   using abi::InterfaceRow;
   using abi::ObjectDefinition;
   mir::ValueBuild build;
-  mir::Block& block = build.body;
+  mir::Builder block(build.body, diag::SourceSpan{});
   LibraryRecordBuilder<ObjectDefinition> definition(unit, block);
   if (const std::optional<mir::ClassId> base = mir::DeclaredBase(cls)) {
     definition.Set(
@@ -1050,7 +1056,7 @@ auto DefinitionOf(
   } else {
     definition.Set(
         &ObjectDefinition::end,
-        block.exprs.Add(
+        block.Add(
             mir::Expr{
                 .data =
                     mir::ReferenceExpr{.target = mir::DestructorRef{.of = id}},
@@ -1060,7 +1066,7 @@ auto DefinitionOf(
       &ObjectDefinition::interfaces,
       Table<InterfaceRow>(
           unit, block, id, cls, facts.interface_tables.size(),
-          [&](mir::Block& entry, std::size_t i) {
+          [&](mir::Builder entry, std::size_t i) {
             const mir::ClassId iface = facts.interface_tables[i].of;
             LibraryRecordBuilder<InterfaceRow> row(unit, entry);
             row.Set(&InterfaceRow::of, BuildDefinitionRead(unit, entry, iface));

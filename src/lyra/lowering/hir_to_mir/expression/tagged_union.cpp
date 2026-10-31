@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -40,7 +41,7 @@ auto BuildPackedTaggedValue(
     const hir::TaggedUnionExpr& t, std::optional<mir::ExprId> payload,
     mir::TypeId result_type) -> mir::Expr {
   auto& unit = lowerer.Owner().Unit();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto member_width = layout.members[t.member_index.value].bit_width;
   const auto gap_width = layout.bit_width - layout.tag_bits - member_width;
 
@@ -58,7 +59,7 @@ auto BuildPackedTaggedValue(
         mir::PackedVectorOf(unit.types, layout.tag_bits, state_kind)));
   }
   if (gap_width > 0) {
-    regions.push_back(block.exprs.Add(BuildDefaultValueExpr(
+    regions.push_back(block.Add(BuildDefaultValueExpr(
         unit, block, mir::PackedVectorOf(unit.types, gap_width, state_kind))));
   }
   if (payload.has_value()) {
@@ -78,7 +79,7 @@ auto LowerHirTaggedUnionExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::TaggedUnionExpr& t,
     hir::TypeId union_type, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const hir::Type& hir_type = lowerer.Owner().Hir().types.Get(union_type);
 
   std::optional<mir::ExprId> payload;
@@ -86,7 +87,7 @@ auto LowerHirTaggedUnionExpr(
     auto payload_or =
         lowerer.LowerExpr(lowerer.HirExprs().Get(*t.payload), frame);
     if (!payload_or) return std::unexpected(std::move(payload_or.error()));
-    payload = block.exprs.Add(*std::move(payload_or));
+    payload = block.Add(*std::move(payload_or));
   }
 
   if (hir_type.Is<hir::PackedUnionType>()) {
@@ -102,7 +103,7 @@ auto LowerHirTaggedUnionExpr(
   if (!payload.has_value()) {
     const mir::TypeId component = TaggedComponentType(
         lowerer.Owner().Unit(), result_type, t.member_index);
-    payload = block.exprs.Add(
+    payload = block.Add(
         BuildDefaultValueExpr(lowerer.Owner().Unit(), block, component));
   }
   return mir::MakeUnionExpr(*payload, t.member_index, result_type);

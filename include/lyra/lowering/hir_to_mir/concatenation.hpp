@@ -3,6 +3,7 @@
 #include <span>
 
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -30,7 +31,7 @@ namespace lyra::lowering::hir_to_mir {
 // LRM 11.8.1 makes of a source-level join -- is the caller's, reached by
 // converting the read.
 [[nodiscard]] auto BuildBitsJoin(
-    mir::CompilationUnit& unit, mir::Block& block, mir::LocalId joined,
+    mir::CompilationUnit& unit, mir::Builder block, mir::LocalId joined,
     std::span<const mir::ExprId> parts) -> mir::ExprId;
 
 // The same, into a local the steps of `frame`'s block declare.
@@ -42,7 +43,7 @@ namespace lyra::lowering::hir_to_mir {
 // (LRM 11.4.12.2), by one call over one list holding every part, however many
 // the source listed. One part is not a join, and the string is that part.
 [[nodiscard]] auto BuildStringJoin(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     std::span<const mir::ExprId> parts) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

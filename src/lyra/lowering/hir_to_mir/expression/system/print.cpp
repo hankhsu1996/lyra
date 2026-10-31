@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -34,7 +35,7 @@ namespace {
 
 // LRM 21.3.1 stdout pre-bound FD literal, used as the sink for $display /
 // $write / $strobe lowerings that don't carry a user-supplied descriptor.
-auto BuildStdoutFdLiteral(const mir::CompilationUnit& unit, mir::Block& block)
+auto BuildStdoutFdLiteral(const mir::CompilationUnit& unit, mir::Builder block)
     -> mir::ExprId {
   return mir::BuildMachineIntLiteral(unit, block, support::kStdoutFd);
 }
@@ -55,14 +56,14 @@ auto WriteCalleeFor(bool append_newline) -> support::BuiltinFn {
 // Emits the two-step composition: format the items, then write to the sink.
 // Both calls land in `block`; the returned id is the void write call.
 auto EmitFormatThenWrite(
-    ProcessLowerer& process, mir::Block& block, mir::ExprId items_array,
+    ProcessLowerer& process, mir::Builder block, mir::ExprId items_array,
     mir::ExprId fd, bool append_newline) -> mir::ExprId {
   auto& unit = process.Owner().Unit();
   const mir::ExprId text =
-      block.exprs.Add(BuildFormatCallExpr(unit, block, items_array));
+      block.Add(BuildFormatCallExpr(unit, block, items_array));
   const mir::ExprId files =
-      block.exprs.Add(BuildFilesCallExpr(process.Owner(), block));
-  return block.exprs.Add(
+      block.Add(BuildFilesCallExpr(process.Owner(), block));
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -82,7 +83,7 @@ auto LowerStrobeCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const support::PrintSystemSubroutineInfo& print)
     -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto& unit = process.Owner().Unit();
   const std::int64_t time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
@@ -96,10 +97,10 @@ auto LowerStrobeCall(
     // The descriptor names the file to ask for a cancellation token and is
     // then carried into the deferred body, and the source evaluates it once.
     outer_user_descriptor =
-        EvaluatedOnce(frame, block.exprs.Add(*std::move(desc_or)));
+        EvaluatedOnce(frame, block.Add(*std::move(desc_or)));
     const mir::ExprId outer_files =
-        block.exprs.Add(BuildFilesCallExpr(process.Owner(), block));
-    outer_cancellation = block.exprs.Add(
+        block.Add(BuildFilesCallExpr(process.Owner(), block));
+    outer_cancellation = block.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -113,7 +114,7 @@ auto LowerStrobeCall(
   }
 
   ClosureBuilder closure(unit, frame, support::ClosureKind::kFn);
-  mir::Block& body = closure.Body();
+  mir::Builder body = closure.Body();
   const WalkFrame& body_frame = closure.Frame();
 
   std::optional<mir::ExprId> body_user_descriptor;
@@ -124,7 +125,7 @@ auto LowerStrobeCall(
   if (outer_cancellation.has_value()) {
     const mir::ExprId cancellation = SnapshotValueIntoClosure(
         process.Owner(), frame, closure, *outer_cancellation);
-    const mir::ExprId is_cancelled = body.exprs.Add(
+    const mir::ExprId is_cancelled = body.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -135,11 +136,12 @@ auto LowerStrobeCall(
                     .arguments = {}},
             .type = unit.builtins.bit1});
     mir::Block guard;
-    guard.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+    mir::Builder guard_builder = body.Into(guard);
+    guard_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
     body.AppendStmt(
         mir::IfStmt{
             .condition = ReduceToCondition(unit, body, is_cancelled),
-            .then_scope = body.child_scopes.Add(std::move(guard)),
+            .then_scope = body.AddScope(std::move(guard)),
             .else_scope = std::nullopt});
   }
 
@@ -152,8 +154,8 @@ auto LowerStrobeCall(
   auto items_or = BuildDisplayListPrintItems(
       process, body_frame, call, print.radix, arg_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
-  const mir::ExprId items_array = body.exprs.Add(
-      BuildPrintItemsArray(unit, body, *items_or, time_unit_power));
+  const mir::ExprId items_array =
+      body.Add(BuildPrintItemsArray(unit, body, *items_or, time_unit_power));
 
   const mir::ExprId body_fd =
       body_user_descriptor.has_value()
@@ -179,7 +181,7 @@ auto LowerPrintSystemSubroutineCall(
     return LowerStrobeCall(process, frame, call, print);
   }
 
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto& unit = process.Owner().Unit();
   const bool is_file_sink = print.sink_kind == support::PrintSinkKind::kFile;
 
@@ -189,7 +191,7 @@ auto LowerPrintSystemSubroutineCall(
     auto desc_or = LowerDescriptor(process, frame, call);
     if (!desc_or) return std::unexpected(std::move(desc_or.error()));
     user_descriptor =
-        BuildToInt64Call(unit, block, block.exprs.Add(*std::move(desc_or)));
+        BuildToInt64Call(unit, block, block.Add(*std::move(desc_or)));
     arg_offset = 1;
   }
 
@@ -199,15 +201,15 @@ auto LowerPrintSystemSubroutineCall(
 
   const auto time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
-  const mir::ExprId items_array = block.exprs.Add(
-      BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
+  const mir::ExprId items_array =
+      block.Add(BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
   const mir::ExprId fd = user_descriptor.has_value()
                              ? *user_descriptor
                              : BuildStdoutFdLiteral(unit, block);
   const mir::ExprId write_call = EmitFormatThenWrite(
       process, block, items_array, fd, print.append_newline);
-  return block.exprs.Get(write_call);
+  return block.Get(write_call);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

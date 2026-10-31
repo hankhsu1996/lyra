@@ -11,6 +11,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -52,7 +53,7 @@ struct ObservedLeaf {
 // watches.
 template <typename Lowerer>
 [[nodiscard]] auto BuildObservableCellExpr(
-    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
+    mir::Builder block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::ValueTarget& cell) -> mir::ExprId;
 
 // What an evaluation reaches through `object` -- a class handle, or the running
@@ -74,7 +75,7 @@ template <typename Lowerer>
 // to `block`'s expressions: a body is handed one by an evaluation that states
 // what it reaches, and null by any other call.
 [[nodiscard]] auto BuildReportHanded(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId report)
     -> mir::ExprId;
 
 // The report a call or a construction made in the block `frame` is writing
@@ -112,7 +113,7 @@ auto ReportReads(
 // `entry(arguments)` acting on the report `report` holds a pointer to,
 // answering `type`, added to `block`'s expressions.
 [[nodiscard]] auto BuildReportCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId report,
     support::BuiltinFn entry, std::vector<mir::ExprId> arguments,
     mir::TypeId type) -> mir::ExprId;
 
@@ -121,9 +122,9 @@ auto ReportReads(
 // four forms (LRM 9.4.2, 9.4.2.3, 15.5) it is, because an absent half has no
 // value that could stand in for it.
 [[nodiscard]] auto DeclareObservation(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
-    support::BuiltinFn entry, std::vector<mir::ExprId> arguments)
-    -> mir::LocalId;
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::Builder block, support::BuiltinFn entry,
+    std::vector<mir::ExprId> arguments) -> mir::LocalId;
 
 // Every construct that waits for something to happen on storage converges on
 // one wait holding one trigger per leaf -- `@*` (LRM 9.4.2.2), `@(...)` (LRM
@@ -146,11 +147,11 @@ auto ReportReads(
 // exists only from its declaration on (LRM 6.21), and where it evaluates
 // anything where it is reached, which it does each time it is.
 [[nodiscard]] auto WaitStorageBlock(
-    const WalkFrame& frame, mir::Block& stop_block,
+    const WalkFrame& frame, mir::Builder stop_block,
     std::span<const hir::SensitivityEntry> cells,
     const base::Arena<hir::Expr, hir::ExprId>& exprs,
     std::span<const hir::ExprId> evaluated, bool evaluates_where_reached)
-    -> mir::Block&;
+    -> mir::Builder;
 
 // One trigger per leaf, as the machine array a wait is built on, built in
 // `target_block`. A leaf watching part of its cell names the part by the
@@ -158,7 +159,7 @@ auto ReportReads(
 // `lowerer` is the lowering that owns those expressions.
 template <typename Lowerer>
 auto BuildTriggerArray(
-    mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
+    mir::Builder target_block, const WalkFrame& frame, Lowerer& lowerer,
     std::span<const ObservedLeaf> leaves) -> diag::Result<mir::ExprId>;
 
 // The wait on `leaves` and the stop at it: reaching a leaf is a candidacy, and
@@ -167,7 +168,7 @@ auto BuildTriggerArray(
 // returned stop at it is for `stop_block`.
 template <typename Lowerer>
 auto BuildWaitOnStmt(
-    mir::Block& storage_block, mir::Block& stop_block, const WalkFrame& frame,
+    mir::Builder storage_block, mir::Builder stop_block, const WalkFrame& frame,
     Lowerer& lowerer, std::span<const ObservedLeaf> leaves)
     -> diag::Result<mir::Stmt>;
 
@@ -175,8 +176,8 @@ auto BuildWaitOnStmt(
 // change to any of them is the event: being reached is the whole condition, so
 // they share one observation saying so, declared in `block`.
 [[nodiscard]] auto BuildValueChangeLeaves(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
-    std::span<const hir::SensitivityEntry> sensitivity)
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::Builder block, std::span<const hir::SensitivityEntry> sensitivity)
     -> std::vector<ObservedLeaf>;
 
 // The wait of a construct the standard makes sensitive to the variables it
@@ -185,7 +186,7 @@ auto BuildWaitOnStmt(
 // observation that says so. The stop is for `stop_block`.
 template <typename Lowerer>
 auto BuildValueChangeWaitStmt(
-    mir::Block& stop_block, const WalkFrame& frame, Lowerer& lowerer,
+    mir::Builder stop_block, const WalkFrame& frame, Lowerer& lowerer,
     std::span<const hir::SensitivityEntry> sensitivity_list)
     -> diag::Result<mir::Stmt>;
 

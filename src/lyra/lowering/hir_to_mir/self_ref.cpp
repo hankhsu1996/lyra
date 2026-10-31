@@ -7,6 +7,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -27,44 +28,44 @@ auto MakeSelfRefExpr(const WalkFrame& frame) -> mir::Expr {
   // captures -- then named through the uniform binding path, which types it
   // as the binding was declared: the enclosing object's borrowed pointer.
   const BodyBindingRef self = frame.bindings->EnsureCarrier(ReceiverOrigin{});
-  return frame.bindings->MakeBindingPlace(self, *frame.current_block);
+  return frame.bindings->MakeBindingPlace(self, frame.Builder());
 }
 
 auto BuildObjectDeref(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reaches)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId reaches)
     -> mir::ExprId {
   // `*&x` is `x`: an object whose address was just taken to reach it is that
   // object, so the round trip is not stated.
   if (const auto* address =
-          std::get_if<mir::AddressOfExpr>(&block.exprs.Get(reaches).data)) {
+          std::get_if<mir::AddressOfExpr>(&block.Get(reaches).data)) {
     return address->operand;
   }
   const mir::TypeId object =
-      mir::ObjectReachedThrough(unit.types, block.exprs.Get(reaches).type);
+      mir::ObjectReachedThrough(unit.types, block.Get(reaches).type);
   return block.Deref(unit.types, reaches, object);
 }
 
 auto BuildObjectPointer(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reaches)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId reaches)
     -> mir::ExprId {
   const mir::ExprId object = BuildObjectDeref(unit, block, reaches);
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeAddressOfExpr(
           object, unit.types.Intern(
                       mir::Type{mir::PointerType{
-                          .pointee = block.exprs.Get(object).type,
+                          .pointee = block.Get(object).type,
                           .ownership = mir::PointerOwnership::kBorrowed,
                           .mutability = mir::Mutability::kMutable}})));
 }
 
-auto ObjectAs(mir::Block& block, mir::ExprId object, mir::TypeId pointer)
+auto ObjectAs(mir::Builder block, mir::ExprId object, mir::TypeId pointer)
     -> mir::ExprId {
   // A pointer named where it is held is read: what is cast is its value.
-  if (mir::IsPlace(block.exprs.Get(object).data)) {
+  if (mir::IsPlace(block.Get(object).data)) {
     object = block.Read(object);
   }
-  if (block.exprs.Get(object).type == pointer) return object;
-  return block.exprs.Add(
+  if (block.Get(object).type == pointer) return object;
+  return block.Add(
       mir::Expr{.data = mir::CastExpr{.operand = object}, .type = pointer});
 }
 
@@ -80,7 +81,7 @@ namespace {
 void HoldReceiverShare(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::LocalId receiver, mir::TypeId self_pointer_type) {
-  mir::Block& body = *frame.current_block;
+  mir::Builder body = frame.Builder();
   const mir::TypeId share_type = unit.types.Intern(
       mir::Type{mir::ManagedRefType{
           .pointee =
@@ -90,7 +91,7 @@ void HoldReceiverShare(
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = share,
-          .init = body.exprs.Add(
+          .init = body.Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{
@@ -151,7 +152,7 @@ auto BindImplicitParameters(
 auto BuildEnclosingScopeReceiver(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops) -> mir::ExprId {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   // Where the structural scope this body counts from sits: the body itself is
   // that scope, or it was handed the instance its class belongs to.
   mir::ExprId nav = std::visit(
@@ -163,18 +164,18 @@ auto BuildEnclosingScopeReceiver(
                 "through one");
           },
           [&](const ScopeIsSelf&) {
-            return block.Read(block.exprs.Add(MakeSelfRefExpr(frame)));
+            return block.Read(block.Add(MakeSelfRefExpr(frame)));
           },
           // The instance is held as the base every scope extends, and the
           // body viewing it is one of that scope's unit, which views it as the
           // scope's own class.
           [&](const ScopeThroughMember& through) {
-            const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
-            return block.exprs.Add(
+            const mir::ExprId self = block.Add(MakeSelfRefExpr(frame));
+            return block.Add(
                 mir::Expr{
                     .data =
                         mir::CastExpr{
-                            .operand = block.Read(block.exprs.Add(
+                            .operand = block.Read(block.Add(
                                 mir::MakeFieldAccessExpr(
                                     BuildObjectDeref(unit, block, self),
                                     mir::ClassFieldTarget{
@@ -187,12 +188,12 @@ auto BuildEnclosingScopeReceiver(
           [&](const ScopeThroughParameter&) {
             const BodyBindingRef instance =
                 frame.bindings->EnsureCarrier(DeclaringInstanceOrigin{});
-            return block.exprs.Add(
+            return block.Add(
                 mir::Expr{
                     .data =
                         mir::CastExpr{
-                            .operand = block.Read(block.exprs.Add(
-                                frame.bindings->MakeBindingPlace(
+                            .operand = block.Read(
+                                block.Add(frame.bindings->MakeBindingPlace(
                                     instance, block)))},
                     .type = frame.EnclosingClassAtHops(mir::EnclosingHops{0})
                                 .cls->self_pointer_type});
@@ -211,7 +212,7 @@ auto BuildEnclosingScopeReceiver(
           "BuildEnclosingScopeReceiver: a reference climbs out of a scope no "
           "scope of its unit encloses -- please report this as a bug");
     }
-    const mir::ExprId link = block.Read(block.exprs.Add(
+    const mir::ExprId link = block.Read(block.Add(
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(unit, block, ObjectAs(block, nav, *at.published)),
             *at.enclosing, unit.builtins.scope_ptr)));
@@ -234,13 +235,12 @@ auto BuildStructuralFieldAccessExpr(
     mir::EnclosingHops hops, const mir::ClassFieldTarget& field,
     mir::TypeId field_type) -> mir::Expr {
   const mir::ExprId receiver = BuildObjectDeref(
-      unit, *frame.current_block,
-      BuildEnclosingScopeReceiver(frame, unit, hops));
+      unit, frame.Builder(), BuildEnclosingScopeReceiver(frame, unit, hops));
   return mir::MakeFieldAccessExpr(receiver, field, field_type);
 }
 
 auto BuildReferenceArg(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId {
   const auto& pointee_ty = unit.types.Get(pointee);
   // Referencing a value that is itself a reference seals to the same final
@@ -262,7 +262,7 @@ auto BuildReferenceArg(
   const mir::TypeId ref_type = unit.types.Intern(
       mir::Type{mir::VariableRefType{
           .pointee = pointee, .mutability = mir::Mutability::kMutable}});
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{.callee = mir::Construct{}, .arguments = {cell}},
@@ -273,8 +273,8 @@ auto BuildThisHandle(const WalkFrame& frame) -> mir::Expr {
   const BodyBindingRef share =
       frame.bindings->EnsureCarrier(ReceiverShareOrigin{});
   return mir::MakeCopyExpr(
-      frame.current_block->exprs.Add(
-          frame.bindings->MakeBindingPlace(share, *frame.current_block)),
+      frame.Builder().Add(
+          frame.bindings->MakeBindingPlace(share, frame.Builder())),
       frame.bindings->TypeOf(share));
 }
 

@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/field.hpp"
 
@@ -29,7 +30,7 @@ struct ClosureDecl {
   std::vector<FieldId> field_order;
   // A closure exists only where a body is synthesized for it, so its code is
   // always a definition.
-  CallableCode invoke = CallableCode::Defined();
+  CallableCode invoke = CallableCode::Defined(diag::SourceSpan{});
 };
 
 }  // namespace lyra::mir

@@ -33,6 +33,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -77,10 +78,9 @@ auto OutsideAProcedure(diag::SourceSpan span) -> diag::Result<mir::Expr> {
 // comes out as that place, unread, as rustc's `as_place` leaves it: an access
 // to a part of it reaches the part where it lies.
 template <ExprLowerer L>
-auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+auto LowerAsPlaceAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
   constexpr bool kProcedural = std::same_as<L, ProcessLowerer>;
-  const diag::FailureContext at(expr.span);
   const mir::TypeId result_type = lowerer.Owner().TranslateType(expr.type);
   if (IsTagCheckedRead(lowerer, frame, expr)) {
     return LowerTagCheckedRead(lowerer, frame, expr);
@@ -217,7 +217,7 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             const mir::TypeId object_type =
                 *mir::AllocatedType(lowerer.Owner().Unit().types, result_type);
             return mir::MakeNewExpr(
-                frame.current_block->exprs.Add(
+                frame.Builder().Add(
                     mir::MakeObjectConstructionExpr(
                         object_type, std::move(args))),
                 result_type);
@@ -242,9 +242,9 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             auto path = CovergroupOptionPath(lowerer, frame, option);
             if (!path) return std::unexpected(std::move(path.error()));
             mir::CompilationUnit& unit = lowerer.Owner().Unit();
-            mir::Block& block = *frame.current_block;
+            mir::Builder block = frame.Builder();
             const mir::ExprId place = PathAsPlace(unit, block, *path);
-            return mir::MakeCopyExpr(place, block.exprs.Get(place).type);
+            return mir::MakeCopyExpr(place, block.Get(place).type);
           },
           // A call of `randomize()` in a structural expression -- a continuous
           // assignment, a port connection -- is refused where it is read, so
@@ -296,23 +296,30 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     // reference to a value of any type is no type a value has, as `*r` of
     // Rust's `&mut dyn Any` is `dyn Any` (LRM 15.4.9).
     const mir::TypeId held = raw_type.WrappedValueType();
-    const mir::ExprId cell_id =
-        frame.current_block->exprs.Add(*std::move(raw_or));
+    const mir::ExprId cell_id = frame.Builder().Add(*std::move(raw_or));
     // The sampled value of an expression is the expression over the sampled
     // values of the variables it reads (LRM 16.5.1), so the whole of what
     // reading one changes is which value each leaf answers with -- here, where
     // every leaf read is built.
     if (frame.reads_as_of == ReadsAsOf::kPreponed &&
         KeepsSampledValue(lowerer, expr)) {
-      return frame.current_block->SampledWrapperContents(
+      return frame.Builder().SampledWrapperContents(
           lowerer.Owner().Unit().types, cell_id, held);
     }
     // Reading what the wrapper holds names the storage it represents, which
     // is then read where a value is wanted.
-    return frame.current_block->WrapperContents(
+    return frame.Builder().WrapperContents(
         lowerer.Owner().Unit().types, cell_id, held);
   }
   return raw_or;
+}
+
+template <ExprLowerer L>
+auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<mir::Expr> {
+  const diag::FailureContext at(expr.span);
+  return mir::LoweredFrom(
+      LowerAsPlaceAt(lowerer, expr, frame.WithSpan(expr.span)), expr.span);
 }
 
 // The same expression where a value is wanted: a place standing there is read,
@@ -324,8 +331,10 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
   if (!lowered) {
     return lowered;
   }
-  return frame.current_block->AsValue(
-      lowerer.Owner().Unit().types, *std::move(lowered));
+  return mir::LoweredFrom<mir::Expr>(
+      frame.WithSpan(expr.span).Builder().AsValue(
+          lowerer.Owner().Unit().types, *std::move(lowered)),
+      expr.span);
 }
 
 // The dispatcher for an expression named as a part rather than read, shared by
@@ -338,7 +347,7 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
 // binding of a value the path is reached through where the path takes it more
 // than once.
 template <ExprLowerer L>
-auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+auto LowerAccessPathAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<AccessPath> {
   constexpr bool kProcedural = std::same_as<L, ProcessLowerer>;
   const mir::TypeId result_type = lowerer.Owner().TranslateType(expr.type);
@@ -348,8 +357,7 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
       [&](diag::Result<mir::Expr> lowered) -> diag::Result<AccessPath> {
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return AccessPath{
-        .owner = frame.current_block->exprs.Add(*std::move(lowered)),
-        .descent = {}};
+        .owner = frame.Builder().Add(*std::move(lowered)), .descent = {}};
   };
   const auto names_no_storage = []() -> diag::Result<AccessPath> {
     throw InternalError(
@@ -365,8 +373,7 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
               if (const auto* property =
                       std::get_if<hir::ClassPropertyRef>(&p.data)) {
                 return PropertyPath(
-                    lowerer, frame,
-                    frame.current_block->exprs.Add(MakeSelfRefExpr(frame)),
+                    lowerer, frame, frame.Builder().Add(MakeSelfRefExpr(frame)),
                     property->target, result_type);
               }
               return as_place(
@@ -453,6 +460,14 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
       expr.data);
 }
 
+template <ExprLowerer L>
+auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<AccessPath> {
+  const diag::FailureContext at(expr.span);
+  return diag::PlacedAt(
+      LowerAccessPathAt(lowerer, expr, frame.WithSpan(expr.span)), expr.span);
+}
+
 // An expression whose value nothing reads, shared by both pass classes. A write
 // is then the write alone, as clang's `EmitIgnoredExpr` emits an assignment
 // without its result; only where the source reads one does the lowering hold
@@ -461,11 +476,14 @@ template <ExprLowerer L>
 auto LowerIgnoredExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
   const diag::FailureContext at(expr.span);
+  const WalkFrame written = frame.WithSpan(expr.span);
   if (const auto* assign = std::get_if<hir::AssignExpr>(&expr.data)) {
-    return LowerHirAssignWrite(lowerer, frame, *assign, expr.span);
+    return mir::LoweredFrom(
+        LowerHirAssignWrite(lowerer, written, *assign, expr.span), expr.span);
   }
   if (const auto* inc = std::get_if<hir::IncDecExpr>(&expr.data)) {
-    return LowerHirIncDecWrite(lowerer, frame, *inc);
+    return mir::LoweredFrom(
+        LowerHirIncDecWrite(lowerer, written, *inc), expr.span);
   }
   return LowerExprImpl(lowerer, expr, frame);
 }
@@ -478,11 +496,12 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<AccessPath> {
   auto target = LowerAccessPathImpl(lowerer, expr, frame);
   if (!target) return std::unexpected(std::move(target.error()));
-  SettleForTagChecks(lowerer.Owner(), frame, *target);
+  const WalkFrame written = frame.WithSpan(expr.span);
+  SettleForTagChecks(lowerer.Owner(), written, *target);
   // A write to bits of a character reads the character before putting it back,
   // so the target is settled once for both (LRM 11.5.1, 6.16.2).
   if (WritesBitsOfACharacter(*target)) {
-    *target = Settled(lowerer.Owner(), frame, *std::move(target));
+    *target = Settled(lowerer.Owner(), written, *std::move(target));
   }
   return target;
 }
@@ -511,16 +530,16 @@ auto ArgumentEvaluatedEarlier(
   const WalkFrame& statement = *frame.arguments_evaluated_earlier->statement;
   auto value = lowerer.LowerExpr(expr, statement);
   if (!value) return std::unexpected(std::move(value.error()));
-  mir::Block& at = *statement.current_block;
+  mir::Builder at = statement.Builder();
   const mir::ExprId held =
-      at.AsValue(lowerer.Owner().Unit().types, at.exprs.Add(*std::move(value)));
+      at.AsValue(lowerer.Owner().Unit().types, at.Add(*std::move(value)));
   const BindingOriginId origin = SynthesizedOrigin{
       .owner_site = lowerer.Owner().NextSynthesizedSite(), .ordinal = 0};
   const mir::LocalId local =
-      statement.bindings->Declare(origin, at.exprs.Get(held).type);
+      statement.bindings->Declare(origin, at.Get(held).type);
   at.AppendStmt(mir::LocalDeclStmt{.target = local, .init = held});
   return frame.bindings->MakeBindingPlace(
-      frame.bindings->EnsureCarrier(origin), *frame.current_block);
+      frame.bindings->EnsureCarrier(origin), frame.Builder());
 }
 
 }  // namespace
@@ -530,8 +549,7 @@ auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
   if (IsArgumentEvaluatedEarlier(*this, expr, frame)) {
     auto place = ArgumentEvaluatedEarlier(*this, expr, frame);
     if (!place) return std::unexpected(std::move(place.error()));
-    return frame.current_block->AsValue(
-        Owner().Unit().types, *std::move(place));
+    return frame.Builder().AsValue(Owner().Unit().types, *std::move(place));
   }
   return LowerExprImpl(*this, expr, frame);
 }

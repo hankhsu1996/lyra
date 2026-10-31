@@ -12,6 +12,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/symbol_table.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
@@ -125,7 +126,8 @@ class CallableBindings {
   CallableBindings(
       const mir::CompilationUnit& unit, mir::ClosureDecl& decl,
       mir::ClosureId closure_id, support::ClosureKind kind,
-      CallableBindings& parent, mir::Block& capture_site, CapturePolicy policy);
+      CallableBindings& parent, mir::Builder capture_site,
+      CapturePolicy policy);
 
   CallableBindings(const CallableBindings&) = delete;
   auto operator=(const CallableBindings&) -> CallableBindings& = delete;
@@ -176,7 +178,7 @@ class CallableBindings {
   // itself, or for a captured field the field of the closure receiver, whose
   // operand is appended to `block` and which is appended to the same block.
   [[nodiscard]] auto MakeBindingPlace(
-      BodyBindingRef ref, mir::Block& block) const -> mir::Expr;
+      BodyBindingRef ref, mir::Builder block) const -> mir::Expr;
   [[nodiscard]] auto TypeOf(BodyBindingRef ref) const -> mir::TypeId;
 
   // Freeze the capture set: compute the closure's canonical field order (by
@@ -205,7 +207,7 @@ class CallableBindings {
   mir::ClosureDecl* closure_decl_ = nullptr;
   mir::ClosureId closure_id_{};
   CallableBindings* parent_ = nullptr;
-  mir::Block* capture_site_ = nullptr;
+  std::optional<mir::Builder> capture_site_;
   CapturePolicy policy_;
   mir::LocalId self_local_{};
   mir::TypeId self_ptr_type_{};

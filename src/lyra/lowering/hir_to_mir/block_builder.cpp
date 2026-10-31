@@ -17,14 +17,14 @@ BlockBuilder::BlockBuilder(const WalkFrame& enclosing)
 auto BlockBuilder::DeclareLocal(mir::TypeId type, mir::ExprId init)
     -> mir::LocalId {
   const mir::LocalId local = frame_.bindings->DeclareAnonymous(type);
-  body_.AppendStmt(mir::LocalDeclStmt{.target = local, .init = init});
+  Body().AppendStmt(mir::LocalDeclStmt{.target = local, .init = init});
   return local;
 }
 
 auto BlockBuilder::Build(mir::ExprId value) -> mir::Expr {
   // A block expression yields a value, so a place it ends with is read there.
   if (mir::IsPlace(body_.exprs.Get(value).data)) {
-    value = body_.Read(value);
+    value = Body().Read(value);
   }
   const mir::TypeId type = body_.exprs.Get(value).type;
   return mir::Expr{

@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -197,7 +198,7 @@ auto LowerBody(const Nest& nest, const WalkFrame& frame)
 auto IndexPath(const Nest& nest, const WalkFrame& frame, const Level& level)
     -> AccessPath {
   return AccessPath{
-      .owner = frame.current_block->exprs.Add(
+      .owner = frame.Builder().Add(
           LowerProceduralVarRefExpr(*nest.process, frame, level.var)),
       .descent = {}};
 }
@@ -211,7 +212,7 @@ auto IteratedValue(const Nest& nest, const WalkFrame& frame, std::size_t depth)
     -> mir::ExprId {
   UnitLowerer& unit_lowerer = nest.process->Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   if (!nest.array.has_value() || nest.levels[depth].position != depth) {
     throw InternalError(
         "IteratedValue: a dimension read while the program runs lies under a "
@@ -245,9 +246,10 @@ auto BuildLevelLoopStmt(
     -> diag::Result<mir::Stmt> {
   ProcessLowerer& process = *nest.process;
   mir::CompilationUnit& unit = process.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   mir::Block pass;
+  mir::Builder pass_builder = block.Into(pass);
   if (depth + 1 == nest.levels.size()) {
     auto body = LowerBody(nest, frame);
     if (!body) return std::unexpected(std::move(body.error()));
@@ -255,9 +257,9 @@ auto BuildLevelLoopStmt(
   } else {
     auto inner = BuildLevelLoopStmt(nest, frame.WithBlock(&pass), depth + 1);
     if (!inner) return std::unexpected(std::move(inner.error()));
-    pass.AppendStmt(*std::move(inner));
+    pass_builder.AppendStmt(*std::move(inner));
   }
-  const mir::BlockId body_scope = block.child_scopes.Add(std::move(pass));
+  const mir::BlockId body_scope = block.AddScope(std::move(pass));
   const std::optional<mir::LabelId> break_label =
       depth == 0 ? nest.leaves->Label() : std::nullopt;
 
@@ -281,7 +283,7 @@ auto BuildLevelLoopStmt(
             require_int_index();
             // The bound is read once, on entry to the dimension, the way a
             // repeat-loop's count is (LRM 12.7.3).
-            const mir::ExprId count = block.exprs.Add(
+            const mir::ExprId count = block.Add(
                 mir::Expr{
                     .data =
                         mir::CallExpr{
@@ -368,6 +370,7 @@ auto LowerForeachLoops(
   }
 
   mir::Block wrapper;
+  mir::Builder wrapper_builder(wrapper, frame.span);
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
 
   // LRM 12.7.3 makes each loop variable a variable of the implicit block around
@@ -384,7 +387,7 @@ auto LowerForeachLoops(
   for (const hir::ProceduralVarId var : loop_vars) {
     auto declared = LowerVarDeclaration(process, wrapper_frame, var);
     if (!declared) return std::unexpected(std::move(declared.error()));
-    wrapper.AppendStmt(*std::move(declared));
+    wrapper_builder.AppendStmt(*std::move(declared));
   }
 
   // The source names the array once, so what reaching it computes is evaluated
@@ -412,19 +415,19 @@ auto LowerForeachLoops(
     // written in it binds to (LRM 12.8).
     auto body = LowerBody(nest, wrapper_frame);
     if (!body) return std::unexpected(std::move(body.error()));
-    const mir::BlockId body_scope = wrapper.child_scopes.Add(*std::move(body));
-    wrapper.AppendStmt(BuildCountingLoopStmt(
-        unit, wrapper_frame, wrapper, mir::BuildIntLiteral(unit, wrapper, 1),
+    const mir::BlockId body_scope = wrapper_builder.AddScope(*std::move(body));
+    wrapper_builder.AppendStmt(BuildCountingLoopStmt(
+        unit, wrapper_frame, wrapper_builder,
+        mir::BuildIntLiteral(unit, wrapper_builder, 1),
         wrapper_frame.bindings->DeclareAnonymous(unit.builtins.int_type),
         body_scope, leaves.Label()));
   } else {
     auto outermost = BuildLevelLoopStmt(nest, wrapper_frame, 0);
     if (!outermost) return std::unexpected(std::move(outermost.error()));
-    wrapper.AppendStmt(*std::move(outermost));
+    wrapper_builder.AppendStmt(*std::move(outermost));
   }
 
-  const mir::BlockId scope =
-      frame.current_block->child_scopes.Add(std::move(wrapper));
+  const mir::BlockId scope = frame.Builder().AddScope(std::move(wrapper));
   return mir::Stmt{
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope}};
 }

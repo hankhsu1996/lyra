@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -41,20 +42,19 @@ namespace {
 // array to the type the comparison is made at; an element of an array is
 // reached only while the program runs, so it is brought there here.
 auto BuildMatch(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId left,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId left,
     mir::ExprId value) -> mir::ExprId {
-  const mir::TypeId compared_at = block.exprs.Get(left).type;
+  const mir::TypeId compared_at = block.Get(left).type;
   const mir::Type& type = unit.types.Get(compared_at);
   const bool integral = type.IsIntegral();
   if (integral || type.IsRealFamily() || type.Is<mir::StringType>()) {
     value = ConvertToType(unit, block, value, compared_at);
   }
-  return block.exprs.Add(BuildMirBinaryExpr(
+  return block.Add(BuildMirBinaryExpr(
       unit, block,
       integral ? hir::BinaryOp::kWildcardEquality : hir::BinaryOp::kEquality,
       left, value,
-      OneBitAnswerType(
-          unit, std::array{compared_at, block.exprs.Get(value).type})));
+      OneBitAnswerType(unit, std::array{compared_at, block.Get(value).type})));
 }
 
 // Whether `left` matches any single value `value` holds, both already in the
@@ -67,13 +67,13 @@ auto BuildMatchAnywhereIn(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId left,
     mir::ExprId value, hir::TypeId value_type) -> diag::Result<mir::ExprId> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
-  const mir::TypeId held = block.exprs.Get(value).type;
+  mir::Builder block = frame.Builder();
+  const mir::TypeId held = block.Get(value).type;
   if (!unit.types.Get(held).ContainerElementType().has_value()) {
     return BuildMatch(unit, block, left, value);
   }
 
-  const mir::TypeId left_type = block.exprs.Get(left).type;
+  const mir::TypeId left_type = block.Get(left).type;
   const mir::LocalId compared = DeclareLocal(frame, left);
   const WalkedArray array = WalkedArrayOf(
       unit_lowerer, frame, value, DeclaredRangeOf(unit_lowerer, value_type));
@@ -86,7 +86,7 @@ auto BuildMatchAnywhereIn(
   const mir::TypeId bit =
       mir::PackedVectorOf(unit.types, 1, mir::IntegralStateKind::kFourState);
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   const mir::LocalId any = DeclareLocal(
       steps.Frame(),
       ConvertToType(unit, body, mir::BuildBit1Literal(unit, body, false), bit));
@@ -94,7 +94,7 @@ auto BuildMatchAnywhereIn(
       unit_lowerer, steps.Frame(), array, WalkOrder::kFromFirst, std::nullopt,
       [&](const WalkFrame& at,
           const VisitedEntry& entry) -> diag::Result<void> {
-        mir::Block& b = *at.current_block;
+        mir::Builder b = at.Builder();
         auto matched = BuildMatchAnywhereIn(
             unit_lowerer, at, b.ReadLocal(compared, left_type), entry.element,
             *element_type);
@@ -103,13 +103,13 @@ auto BuildMatchAnywhereIn(
         const mir::ExprId rhs = ConvertToType(unit, b, *matched, bit);
         AssignLocal(
             unit, b, any,
-            b.exprs.Add(BuildMirBinaryExpr(
+            b.Add(BuildMirBinaryExpr(
                 unit, b, hir::BinaryOp::kBitwiseOr, lhs, rhs, bit)));
         return {};
       });
   if (!walked) return std::unexpected(std::move(walked.error()));
   body.AppendStmt(*std::move(walked));
-  return block.exprs.Add(steps.Build(body.ReadLocal(any, bit)));
+  return block.Add(steps.Build(body.ReadLocal(any, bit)));
 }
 
 }  // namespace
@@ -119,12 +119,12 @@ auto BuildSetMemberTest(
     Lowerer& lowerer, WalkFrame frame, mir::ExprId left, hir::ExprId member,
     mir::TypeId result_type) -> diag::Result<mir::ExprId> {
   const auto& hir_exprs = lowerer.HirExprs();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto& unit = lowerer.Owner().Unit();
   const auto lower = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
     auto lowered = lowerer.LowerExpr(hir_exprs.Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return block.exprs.Add(*std::move(lowered));
+    return block.Add(*std::move(lowered));
   };
 
   const auto* range =
@@ -140,13 +140,13 @@ auto BuildSetMemberTest(
 
   // A range holds what lies between its bounds, each included, and a bound the
   // source left open excludes nothing on its side (LRM 11.4.13).
-  std::vector<mir::TypeId> compared{block.exprs.Get(left).type};
+  std::vector<mir::TypeId> compared{block.Get(left).type};
   const auto bound = [&](const std::optional<hir::ExprId>& written)
       -> diag::Result<std::optional<mir::ExprId>> {
     if (!written.has_value()) return std::nullopt;
     auto value = lower(*written);
     if (!value) return std::unexpected(std::move(value.error()));
-    compared.push_back(block.exprs.Get(*value).type);
+    compared.push_back(block.Get(*value).type);
     return *value;
   };
   auto low = bound(range->lo);
@@ -159,7 +159,7 @@ auto BuildSetMemberTest(
   const auto admits = [&](hir::BinaryOp relation,
                           const std::optional<mir::ExprId>& limit) {
     if (!limit.has_value()) return;
-    tests.push_back(block.exprs.Add(
+    tests.push_back(block.Add(
         BuildMirBinaryExpr(unit, block, relation, left, *limit, type)));
   };
   admits(hir::BinaryOp::kGreaterEqual, *low);

@@ -10,6 +10,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -40,9 +41,9 @@ auto JoinedBitsType(
 }
 
 auto BuildBitsJoin(
-    mir::CompilationUnit& unit, mir::Block& block, mir::LocalId joined,
+    mir::CompilationUnit& unit, mir::Builder block, mir::LocalId joined,
     std::span<const mir::ExprId> parts) -> mir::ExprId {
-  const mir::TypeId type = JoinedBitsType(unit, block, parts);
+  const mir::TypeId type = JoinedBitsType(unit, block.Body(), parts);
   block.AppendStmt(
       mir::LocalDeclStmt{
           .target = joined,
@@ -52,11 +53,11 @@ auto BuildBitsJoin(
   // before it, so the last takes the least significant bits.
   std::uint64_t above = unit.types.Get(type).Integral().bit_width;
   for (const mir::ExprId part : parts) {
-    const mir::TypeId part_type = block.exprs.Get(part).type;
+    const mir::TypeId part_type = block.Get(part).type;
     above -= unit.types.Get(part_type).Integral().bit_width;
     block.AppendStmt(
         mir::ExprStmt{
-            .expr = block.exprs.Add(BuildStoreExpr(
+            .expr = block.Add(BuildStoreExpr(
                 unit, block,
                 AccessPath{
                     .owner = block.LocalPlace(joined, type),
@@ -75,15 +76,16 @@ auto BuildBitsJoin(
 auto BuildBitsJoin(
     mir::CompilationUnit& unit, const WalkFrame& frame,
     std::span<const mir::ExprId> parts) -> mir::ExprId {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   return BuildBitsJoin(
       unit, block,
-      frame.bindings->DeclareAnonymous(JoinedBitsType(unit, block, parts)),
+      frame.bindings->DeclareAnonymous(
+          JoinedBitsType(unit, block.Body(), parts)),
       parts);
 }
 
 auto BuildStringJoin(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     std::span<const mir::ExprId> parts) -> mir::ExprId {
   if (parts.empty()) {
     throw InternalError("BuildStringJoin: a join has at least one part");
@@ -92,16 +94,16 @@ auto BuildStringJoin(
     return parts.front();
   }
   const mir::TypeId string = unit.builtins.string;
-  const mir::ExprId listed = block.exprs.Add(
+  const mir::ExprId listed = block.Add(
       mir::Expr{
           .data =
               mir::CompositeExpr{
                   .parts =
                       std::vector<mir::ExprId>(parts.begin(), parts.end())},
           .type = mir::MachineArrayOf(unit.types, string, parts.size())});
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kConcatStrings, std::nullopt,
+          unit, block.Body(), support::BuiltinFn::kConcatStrings, std::nullopt,
           {listed}, string));
 }
 

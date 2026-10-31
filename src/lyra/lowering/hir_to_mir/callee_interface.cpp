@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -292,10 +293,10 @@ auto PrototypeOf(
 }
 
 auto ProjectCompletionComponent(
-    mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,
+    mir::Builder block, mir::LocalId completion, mir::TypeId payload_type,
     base::ComponentIndex index, mir::TypeId component_type) -> mir::ExprId {
   const mir::ExprId payload = block.LocalPlace(completion, payload_type);
-  return block.Read(block.exprs.Add(
+  return block.Read(block.Add(
       mir::MakeFieldAccessExpr(
           payload, mir::ComponentFieldTarget{.position = index},
           component_type)));
@@ -306,11 +307,11 @@ auto BindCompletion(
     mir::TypeId payload_type, std::span<const CompletionWriteback> writebacks)
     -> diag::Result<mir::LocalId> {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& body = *frame.current_block;
-  const mir::ExprId call_id = body.exprs.Add(std::move(call));
+  mir::Builder body = frame.Builder();
+  const mir::ExprId call_id = body.Add(std::move(call));
   const mir::ExprId completion_value =
-      unit.types.Get(body.exprs.Get(call_id).type).Is<mir::CoroutineType>()
-          ? body.exprs.Add(
+      unit.types.Get(body.Get(call_id).type).Is<mir::CoroutineType>()
+          ? body.Add(
                 mir::Expr{
                     .data = mir::AwaitExpr{.execution = call_id},
                     .type = payload_type})

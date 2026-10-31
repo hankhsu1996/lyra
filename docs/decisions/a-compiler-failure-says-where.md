@@ -54,8 +54,9 @@ reach the failure in F3.
 ## Decision
 
 1. **Whoever walks says what it is working on, as an object on its stack.** The unit step names the
-   unit; each lowering names the declaration, the statement and the expression it is translating;
-   each stage below names the function. No failing site says anything.
+   unit; each lowering names the declaration, the statement and the expression it is translating, by
+   the place in the source each was lowered from where it was lowered from one; each stage below HIR
+   also names the function. No failing site says anything.
 
 2. **A failure collects what was said above it.** An exception leaving such an object adds what the
    object said to its thread's trail, innermost first. Nothing is composed unless that happens.
@@ -87,9 +88,9 @@ reach the failure in F3.
   siblings lower anyway; a body that broke an invariant ends its unit, because a refusal returns in
   order and a broken invariant says the lowering's own state may be wrong. Only the unit boundary
   shares nothing.
-- Below HIR a body is named by the name it has there, because MIR and LIR state no source location.
-  For a subroutine that is the name the source gave it; for a process it is a name the compiler
-  made.
+- Below HIR a body is named by the name it has there, beside the place of the node being translated,
+  since a node the compiler made itself was lowered from no source and stands at none. For a
+  subroutine that is the name the source gave it; for a process it is a name the compiler made.
 - A failure that is not a thrown error -- a fault in memory, an abort, a fatal error inside the code
   generator -- unwinds nothing, so it collects nothing and names no place. No real design has met
   one, and reporting it needs a signal handler reading the work still in progress, which nothing

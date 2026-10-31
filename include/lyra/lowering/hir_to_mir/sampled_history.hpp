@@ -5,6 +5,7 @@
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/expr.hpp"
 
@@ -15,7 +16,7 @@ namespace lyra::lowering::hir_to_mir {
 // reads it, so the storage and the reader are always the same scope (LRM
 // 16.9.3).
 [[nodiscard]] auto BuildSampledHistoryExpr(
-    mir::Block& block, const WalkFrame& frame,
+    mir::Builder block, const WalkFrame& frame,
     const StructuralScopeLowerer& lowerer, hir::SampledHistoryId id)
     -> mir::ExprId;
 

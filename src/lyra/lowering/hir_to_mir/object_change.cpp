@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -19,10 +20,10 @@ namespace {
 // the value reaching it, so where that is named where it lies -- the running
 // method's own object, a handle held in a variable -- it is read.
 auto Call(
-    const mir::CompilationUnit& unit, mir::Block& block, support::BuiltinFn fn,
+    const mir::CompilationUnit& unit, mir::Builder block, support::BuiltinFn fn,
     std::optional<mir::CallPart> part, mir::ExprId object, mir::TypeId type)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -34,7 +35,7 @@ auto Call(
 }  // namespace
 
 auto ObjectEventSourceOf(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object)
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object)
     -> mir::ExprId {
   return Call(
       unit, block, support::BuiltinFn::kObjectEventSource, std::nullopt, object,
@@ -42,16 +43,16 @@ auto ObjectEventSourceOf(
 }
 
 auto PropertyStorage(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object,
     const mir::ClassFieldTarget& property, mir::TypeId type) -> mir::Expr {
   return mir::MakeFieldAccessExpr(
       BuildObjectDeref(unit, block, object), property, type);
 }
 
 auto OpenObjectWrite(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId receiver)
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -60,11 +61,11 @@ auto OpenObjectWrite(
           .type = unit.types.Intern(
               mir::Type{mir::ObjectWriteType{
                   .object = mir::ObjectReachedThrough(
-                      unit.types, block.exprs.Get(receiver).type)}})});
+                      unit.types, block.Get(receiver).type)}})});
 }
 
 auto PropertyReference(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId receiver,
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver,
     const mir::ClassFieldTarget& property, mir::TypeId type) -> mir::ExprId {
   const mir::TypeId reference = unit.types.Intern(
       mir::Type{mir::VariableRefType{

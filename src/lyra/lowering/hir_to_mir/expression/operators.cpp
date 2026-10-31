@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -96,7 +97,7 @@ auto LowerAndAddOperand(
     -> diag::Result<mir::ExprId> {
   auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(id), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  return frame.current_block->exprs.Add(*std::move(lowered));
+  return frame.Builder().Add(*std::move(lowered));
 }
 
 // The same operand named rather than read -- a place where it names storage --
@@ -107,16 +108,16 @@ auto LowerAndAddNamed(Lowerer& lowerer, const WalkFrame& frame, hir::ExprId id)
     -> diag::Result<mir::ExprId> {
   auto lowered = lowerer.LowerAsPlace(lowerer.HirExprs().Get(id), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  return frame.current_block->exprs.Add(*std::move(lowered));
+  return frame.Builder().Add(*std::move(lowered));
 }
 
 // An operand as what a logical operation of the target or of a library takes:
 // such an operation reads an integral operand's truth for itself, whatever its
 // width, so only a value of another kind is read for it first.
 auto BuildLogicalOperand(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand)
     -> mir::ExprId {
-  return unit.types.Get(block.exprs.Get(operand).type).IsIntegral()
+  return unit.types.Get(block.Get(operand).type).IsIntegral()
              ? operand
              : BuildTruth(unit, block, operand);
 }
@@ -124,7 +125,7 @@ auto BuildLogicalOperand(
 // `tests` folded by a logical operator that evaluates both of its operands,
 // answering with the operator's identity where there is nothing to fold.
 auto BuildLogicalFold(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::BinaryOp op,
     bool identity, mir::TypeId type, std::span<const mir::ExprId> tests)
     -> mir::ExprId {
   if (tests.empty()) {
@@ -134,7 +135,7 @@ auto BuildLogicalFold(
   mir::ExprId folded = tests.front();
   for (const mir::ExprId test : tests.subspan(1)) {
     folded =
-        block.exprs.Add(mir::MakeBinary(unit, block, op, folded, test, type));
+        block.Add(mir::MakeBinary(unit, block.Body(), op, folded, test, type));
   }
   return folded;
 }
@@ -143,18 +144,18 @@ auto BuildLogicalFold(
 // expression rather than an id because an operator that names nothing answers
 // with it, and interning it first would leave a node nothing reaches.
 auto BuildMirUnaryExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, hir::UnaryOp op,
+    const mir::CompilationUnit& unit, mir::Builder block, hir::UnaryOp op,
     mir::Expr operand, mir::TypeId result_type) -> mir::Expr {
   const auto apply = [&](mir::UnaryOp value_op) {
     return mir::MakeUnary(
-        unit, block, value_op, block.exprs.Add(std::move(operand)),
+        unit, block.Body(), value_op, block.Add(std::move(operand)),
         result_type);
   };
   // LRM 11.4.9: a reduction is an operation over the operand's bits, which a
   // library performs and no target spells as an operator on a value.
   const auto reduce = [&](support::BuiltinFn entry) {
     return mir::MakeBuiltinCall(
-        unit, block, entry, block.exprs.Add(std::move(operand)), {},
+        unit, block.Body(), entry, block.Add(std::move(operand)), {},
         result_type);
   };
   switch (op) {
@@ -170,8 +171,8 @@ auto BuildMirUnaryExpr(
     // handle (LRM 6.14, 8.4) has one as well as an integral value does.
     case hir::UnaryOp::kLogicalNot:
       return mir::MakeUnary(
-          unit, block, mir::UnaryOp::kLogicalNot,
-          BuildLogicalOperand(unit, block, block.exprs.Add(std::move(operand))),
+          unit, block.Body(), mir::UnaryOp::kLogicalNot,
+          BuildLogicalOperand(unit, block, block.Add(std::move(operand))),
           result_type);
     case hir::UnaryOp::kReductionAnd:
       return reduce(support::BuiltinFn::kReductionAnd);
@@ -192,36 +193,37 @@ auto BuildMirUnaryExpr(
 }  // namespace
 
 auto BuildMirLogicalAnd(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type,
     std::span<const mir::ExprId> tests) -> mir::ExprId {
   return BuildLogicalFold(
       unit, block, mir::BinaryOp::kLogicalAnd, true, type, tests);
 }
 
 auto BuildMirLogicalOr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type,
     std::span<const mir::ExprId> tests) -> mir::ExprId {
   return BuildLogicalFold(
       unit, block, mir::BinaryOp::kLogicalOr, false, type, tests);
 }
 
 auto AccumulateMirBinary(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::BinaryOp op,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::BinaryOp op,
     mir::ExprId identity, mir::LocalId held, mir::TypeId type,
     std::span<const mir::ExprId> terms) -> mir::ExprId {
   block.AppendStmt(mir::LocalDeclStmt{.target = held, .init = identity});
   for (const mir::ExprId term : terms) {
     AssignLocal(
         unit, block, held,
-        block.exprs.Add(
+        block.Add(
             mir::MakeBinary(
-                unit, block, op, block.ReadLocal(held, type), term, type)));
+                unit, block.Body(), op, block.ReadLocal(held, type), term,
+                type)));
   }
   return block.ReadLocal(held, type);
 }
 
 auto AccumulateMirLogicalAnd(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId held,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId held,
     mir::TypeId type, std::span<const mir::ExprId> tests) -> mir::ExprId {
   return AccumulateMirBinary(
       unit, block, mir::BinaryOp::kLogicalAnd,
@@ -231,7 +233,7 @@ auto AccumulateMirLogicalAnd(
 }
 
 auto AccumulateMirLogicalOr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId held,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId held,
     mir::TypeId type, std::span<const mir::ExprId> tests) -> mir::ExprId {
   return AccumulateMirBinary(
       unit, block, mir::BinaryOp::kLogicalOr,
@@ -241,11 +243,11 @@ auto AccumulateMirLogicalOr(
 }
 
 auto BuildMirBinaryExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, hir::BinaryOp op,
+    const mir::CompilationUnit& unit, mir::Builder block, hir::BinaryOp op,
     mir::ExprId lhs_named, mir::ExprId rhs_named, mir::TypeId result_type)
     -> mir::Expr {
-  const mir::TypeId lhs_type = block.exprs.Get(lhs_named).type;
-  const mir::TypeId rhs_type = block.exprs.Get(rhs_named).type;
+  const mir::TypeId lhs_type = block.Get(lhs_named).type;
+  const mir::TypeId rhs_type = block.Get(rhs_named).type;
   // An equality takes its operands as named, since a type with operations of
   // its own compares them where they lie; every other operator takes their
   // values.
@@ -253,12 +255,12 @@ auto BuildMirBinaryExpr(
   const auto rhs_value = [&] { return block.AsValue(unit.types, rhs_named); };
 
   const auto at_result_type = [&](mir::ExprId answer) {
-    return block.exprs.Get(ConvertToType(unit, block, answer, result_type));
+    return block.Get(ConvertToType(unit, block, answer, result_type));
   };
   const auto apply = [&](mir::BinaryOp value_op) {
     const mir::ExprId lhs = lhs_value();
     const mir::ExprId rhs = rhs_value();
-    return mir::MakeBinary(unit, block, value_op, lhs, rhs, result_type);
+    return mir::MakeBinary(unit, block.Body(), value_op, lhs, rhs, result_type);
   };
   // The entry that performs an operator a target cannot apply to two values of
   // one type. Three reasons put one here: its operands are not two values of
@@ -269,7 +271,8 @@ auto BuildMirBinaryExpr(
   const auto library = [&](support::BuiltinFn entry) {
     const mir::ExprId lhs = lhs_value();
     const mir::ExprId rhs = rhs_value();
-    return mir::MakeBuiltinCall(unit, block, entry, lhs, {rhs}, result_type);
+    return mir::MakeBuiltinCall(
+        unit, block.Body(), entry, lhs, {rhs}, result_type);
   };
   // LRM 11.4.6 `==?`: the answer can be unknown exactly where an operand can,
   // so it is stated at the one-bit type of the operands' own state domain, and
@@ -277,9 +280,9 @@ auto BuildMirBinaryExpr(
   const auto wildcard_equality = [&] {
     const mir::ExprId lhs = lhs_value();
     const mir::ExprId rhs = rhs_value();
-    return block.exprs.Add(
+    return block.Add(
         mir::MakeBuiltinCall(
-            unit, block, support::BuiltinFn::kWildcardEquals, lhs, {rhs},
+            unit, block.Body(), support::BuiltinFn::kWildcardEquals, lhs, {rhs},
             OneBitAnswerType(unit, std::array{lhs_type, rhs_type})));
   };
 
@@ -302,7 +305,7 @@ auto BuildMirBinaryExpr(
   // LRM 11.4.5 `==` and `!=`.
   const auto logical_equality = [&](support::ValueOperator comparison) {
     const Comparands compared = comparands();
-    return block.exprs.Get(BuildEquality(
+    return block.Get(BuildEquality(
         unit, block, comparison, compared.lhs, compared.rhs, result_type));
   };
   // LRM 11.4.5 `===` over any data type, an aggregate included. The clause
@@ -358,10 +361,10 @@ auto BuildMirBinaryExpr(
     case hir::BinaryOp::kLogicalEquivalence: {
       const mir::ExprId lhs = BuildLogicalOperand(unit, block, lhs_value());
       const mir::ExprId rhs = BuildLogicalOperand(unit, block, rhs_value());
-      return at_result_type(block.exprs.Add(
+      return at_result_type(block.Add(
           mir::MakeBuiltinCall(
-              unit, block, support::BuiltinFn::kLogicalEquivalence, lhs, {rhs},
-              OneBitAnswerType(unit, std::array{lhs_type, rhs_type}))));
+              unit, block.Body(), support::BuiltinFn::kLogicalEquivalence, lhs,
+              {rhs}, OneBitAnswerType(unit, std::array{lhs_type, rhs_type}))));
     }
     case hir::BinaryOp::kLogicalAnd:
     case hir::BinaryOp::kLogicalOr:
@@ -382,8 +385,8 @@ auto LowerHirUnaryExpr(
     return std::unexpected(std::move(operand_or.error()));
   }
   return BuildMirUnaryExpr(
-      lowerer.Owner().Unit(), *frame.current_block, u.op,
-      *std::move(operand_or), result_type);
+      lowerer.Owner().Unit(), frame.Builder(), u.op, *std::move(operand_or),
+      result_type);
 }
 
 // The operands of the run `root` heads, in the order the source wrote them: an
@@ -420,13 +423,13 @@ auto LowerHirBinaryExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::BinaryExpr& b,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto search =
       [&](SettledBy rule,
           std::span<const Predicate> terms) -> diag::Result<mir::Expr> {
     auto answer_or = BuildSearch(unit, frame, rule, terms, result_type);
     if (!answer_or) return std::unexpected(std::move(answer_or.error()));
-    return block.exprs.Get(*answer_or);
+    return block.Get(*answer_or);
   };
   const auto terms_of = [&](std::span<const hir::ExprId> operands) {
     std::vector<Predicate> terms;
@@ -468,10 +471,10 @@ auto LowerHirBinaryExpr(
       for (const hir::ExprId next : std::span(operands).subspan(1)) {
         auto next_or = LowerAndAddOperand(lowerer, frame, next);
         if (!next_or) return std::unexpected(std::move(next_or.error()));
-        answer = block.exprs.Add(BuildMirBinaryExpr(
+        answer = block.Add(BuildMirBinaryExpr(
             unit, block, b.op, answer, *next_or, result_type));
       }
-      return block.exprs.Get(answer);
+      return block.Get(answer);
     }
     case hir::BinaryOp::kAdd:
     case hir::BinaryOp::kSub:
@@ -526,7 +529,7 @@ auto LowerHirConditionalExpr(
             result_type](const WalkFrame& at) -> diag::Result<mir::ExprId> {
       auto value_or = LowerAndAddOperand(lowerer, at, value);
       if (!value_or) return value_or;
-      return ConvertToType(unit, *at.current_block, *value_or, result_type);
+      return ConvertToType(unit, at.Builder(), *value_or, result_type);
     };
   };
   std::vector<SelectionArm> arms;
@@ -560,7 +563,7 @@ auto LowerHirConversionExpr(
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const mir::ExprId named = *operand_or;
   const auto& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto value = [&] { return block.AsValue(unit.types, named); };
   switch (cv.kind) {
     case hir::ConversionKind::kPropagated:
@@ -580,7 +583,7 @@ auto LowerHirConversionExpr(
     case hir::ConversionKind::kBitstreamCast: {
       auto packed_or = BuildToBitstream(unit, block, named, span);
       if (!packed_or) return std::unexpected(std::move(packed_or.error()));
-      return block.exprs.Get(
+      return block.Get(
           BuildFromBitstreamCast(unit, frame, *packed_or, result_type));
     }
     // LRM 11.4.14 streaming operators, which slang marks as a conversion when
@@ -588,7 +591,7 @@ auto LowerHirConversionExpr(
     // built, so what is left is the target's own half of the clause: widen to
     // what it takes, then read the bits back as a value of it.
     case hir::ConversionKind::kStreamingConcat:
-      return block.exprs.Get(
+      return block.Get(
           BuildFromStreamAssigned(unit, frame, value(), result_type));
   }
   throw InternalError("LowerHirConversionExpr: unknown hir::ConversionKind");

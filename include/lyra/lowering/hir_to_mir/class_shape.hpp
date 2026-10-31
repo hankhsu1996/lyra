@@ -11,6 +11,7 @@
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/static_property_id.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -51,7 +52,7 @@ struct CallableSignature {
 // the same whichever class it is seen as (LRM 8.15, 8.26.5), so only its type
 // changes. A receiver already of that class is left as it is.
 [[nodiscard]] auto AsIntroducer(
-    const mir::TypePool& types, mir::Block& block, mir::ExprId receiver,
+    const mir::TypePool& types, mir::Builder block, mir::ExprId receiver,
     const mir::VirtualSlot& slot) -> mir::ExprId;
 
 // Which kind of callable of a class a body is, as far as what it takes ahead of

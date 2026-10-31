@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/diag/source_span.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
@@ -22,10 +23,21 @@ struct RebuildRules;
 // named afresh and its operands by their new names; a node nothing reaches from
 // the statements asked for is not carried over at all. Arenas are never edited,
 // so this is how a rewrite of MIR changes a body: it builds the one that
-// replaces it.
+// replaces it. A node carried over keeps the piece of source it names, and one
+// the rewrite builds while answering a node of the block rebuilt from names
+// that node's, as a rewrite's work stands for the node it replaces.
 class BlockRebuild {
  public:
-  BlockRebuild(const mir::Block& from, const RebuildRules& rules);
+  // A rebuild of `from`, whose work answering no node of its own is lowered
+  // from `around`: the body `from` is, or none.
+  BlockRebuild(
+      const mir::Block& from, const RebuildRules& rules,
+      diag::SourceSpan around);
+
+  // A rebuild of `from`, a block nested in the node this one is answering, so
+  // what the rewrite builds there names that node's piece of source until it
+  // answers a node of its own.
+  [[nodiscard]] auto Within(const mir::Block& from) const -> BlockRebuild;
 
   // The new name of `old`, a node of the block rebuilt from, carrying it over
   // the first time it is asked for.
@@ -47,6 +59,9 @@ class BlockRebuild {
   auto Add(mir::Expr expr) -> mir::ExprId;
   auto Add(mir::StmtData data) -> mir::StmtId;
   auto Add(mir::Block block) -> mir::BlockId;
+  // `data`, built in place of `old`, a statement of the block rebuilt from, so
+  // it names the piece of source `old` does.
+  auto AddInPlaceOf(mir::StmtId old, mir::StmtData data) -> mir::StmtId;
 
   // `data`, a node of the block rebuilt from, with each of its operands
   // replaced by what `take` answers for it, a node of the block being built.
@@ -83,6 +98,8 @@ class BlockRebuild {
   std::vector<std::optional<mir::StmtId>> carried_stmts_;
   // What runs before the statement being answered, placed when it is.
   std::vector<mir::StmtId> preceding_;
+  // The piece of source the node being answered names.
+  diag::SourceSpan span_;
 };
 
 // What a rewrite says about the nodes of a block being rebuilt. Each is asked

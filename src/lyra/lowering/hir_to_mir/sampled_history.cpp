@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/callable_bounds.hpp"
@@ -71,11 +72,11 @@ auto BuildPriorTickRead(
     }
   }();
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::ExprId history = BuildSampledHistoryExpr(block, frame, scope, id);
   return mir::MakeSampledHistoryAtCallExpr(
       history, ticks_back,
-      unit.types.Get(block.exprs.Get(history).type)
+      unit.types.Get(block.Get(history).type)
           .Get<mir::SampledHistoryType>()
           .value);
 }
@@ -83,14 +84,14 @@ auto BuildPriorTickRead(
 }  // namespace
 
 auto BuildSampledHistoryExpr(
-    mir::Block& block, const WalkFrame& frame,
+    mir::Builder block, const WalkFrame& frame,
     const StructuralScopeLowerer& lowerer, hir::SampledHistoryId id)
     -> mir::ExprId {
   const mir::FieldId field = lowerer.TranslateSampledHistory(id);
-  const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
+  const mir::ExprId self = block.Add(MakeSelfRefExpr(frame));
   const mir::ExprId object =
       BuildObjectDeref(lowerer.Owner().Unit(), block, self);
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeFieldAccessExpr(
           object,
           mir::ClassFieldTarget{.owner = frame.current_class.id, .slot = field},
@@ -107,7 +108,7 @@ auto LowerSampledHistorySampler(
       ctor_frame.current_class.cls->self_pointer_type;
   const mir::TypeId void_type = unit.builtins.void_type;
 
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(ctor_frame.span);
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id =
       bindings.Declare(ReceiverOrigin{}, self_ptr_type);
@@ -115,15 +116,16 @@ auto LowerSampledHistorySampler(
   mir::Block body_block;
   const WalkFrame body_frame =
       ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
+  mir::Builder body_block_builder = body_frame.Builder();
 
   // The tick comes first. A continuous assignment evaluates before its first
   // wait because it owes a value at time zero; a history owes none, because it
   // was installed full of the default sampled value the standard asks for until
   // a tick has happened (LRM 16.9.3).
-  auto wait_or =
-      BuildEventWaitStmt(lowerer, body_frame, body_block, history.clock);
+  auto wait_or = BuildEventWaitStmt(
+      lowerer, body_frame, body_block_builder, history.clock);
   if (!wait_or) return std::unexpected(std::move(wait_or.error()));
-  body_block.AppendStmt(*std::move(wait_or));
+  body_block_builder.AppendStmt(*std::move(wait_or));
 
   // What the tick settles is the subject over its variables' sampled values
   // (LRM 16.5.1), read here rather than where the answer is used: a call in the
@@ -134,7 +136,7 @@ auto LowerSampledHistorySampler(
       body_frame.WithReadsAsOf(ReadsAsOf::kPreponed);
   auto settled_or = lowerer.LowerExpr(subject, sampled_frame);
   if (!settled_or) return std::unexpected(std::move(settled_or.error()));
-  const mir::ExprId settled = body_block.exprs.Add(*std::move(settled_or));
+  const mir::ExprId settled = body_block_builder.Add(*std::move(settled_or));
 
   // Recording is held to the Postponed region of this same time step, so the
   // tick a reader in this step sees is never this one -- which is what makes
@@ -144,28 +146,29 @@ auto LowerSampledHistorySampler(
       SnapshotValueIntoClosure(lowerer.Owner(), body_frame, closure, settled);
   closure.Body().AppendStmt(
       mir::ExprStmt{
-          .expr = closure.Body().exprs.Add(
+          .expr = closure.Body().Add(
               mir::MakeSampledHistoryPushCallExpr(
                   BuildSampledHistoryExpr(
                       closure.Body(), closure.Frame(), lowerer, id),
                   captured, void_type))});
 
   mir::Expr keeper = BuildRegionEffectsCallExpr(
-      lowerer.Owner(), body_block, support::BuiltinFn::kPostponedEffects);
-  const mir::ExprId kept = body_block.exprs.Add(BuildEmplacedClosure(
+      lowerer.Owner(), body_block_builder,
+      support::BuiltinFn::kPostponedEffects);
+  const mir::ExprId kept = body_block_builder.Add(BuildEmplacedClosure(
       lowerer.Owner().Unit(), body_frame, std::move(keeper),
       closure.BuildVoid()));
-  body_block.AppendStmt(mir::ExprStmt{.expr = kept});
+  body_block_builder.AppendStmt(mir::ExprStmt{.expr = kept});
 
-  const mir::BlockId body_scope_id =
-      code.Body().child_scopes.Add(std::move(body_block));
-  code.Body().AppendStmt(
+  mir::Builder entry(code.Body(), ctor_frame.span);
+  const mir::BlockId body_scope_id = entry.AddScope(std::move(body_block));
+  entry.AppendStmt(
       mir::ForStmt{
           .init = {},
           .condition = std::nullopt,
           .step = {},
           .scope = body_scope_id});
-  code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  entry.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
   return mir::CallableDecl{
@@ -187,11 +190,11 @@ auto LowerPastValueCall(
   auto back_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(*call.arguments.front()), frame);
   if (!back_or) return std::unexpected(std::move(back_or.error()));
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   return BuildPriorTickRead(
       lowerer, frame, ref.history,
       BuildToInt64Call(
-          lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(back_or))));
+          lowerer.Owner().Unit(), block, block.Add(*std::move(back_or))));
 }
 
 template <ExprLowerer Lowerer>
@@ -205,15 +208,15 @@ auto LowerValueChangeCall(
         "whose change it reports");
   }
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   // A value change function names no distance: LRM 16.9.3 defines it against
   // the most recent strictly prior tick, so the one here is this compiler's own
   // rather than anything the source wrote.
-  const mir::ExprId prior = block.exprs.Add(BuildPriorTickRead(
+  const mir::ExprId prior = block.Add(BuildPriorTickRead(
       lowerer, frame, ref.history,
       mir::BuildMachineIntLiteral(unit, block, 1)));
-  const mir::TypeId value_type = block.exprs.Get(prior).type;
+  const mir::TypeId value_type = block.Get(prior).type;
 
   // The current side is the sampled value of this time step, which is what
   // `$sampled` answers with and is read the same way (LRM 16.9.3, 16.5.1).
@@ -221,7 +224,7 @@ auto LowerValueChangeCall(
   const WalkFrame sampled_frame = frame.WithReadsAsOf(ReadsAsOf::kPreponed);
   auto current_or = lowerer.LowerExpr(argument, sampled_frame);
   if (!current_or) return std::unexpected(std::move(current_or.error()));
-  const mir::ExprId current = block.exprs.Add(*std::move(current_or));
+  const mir::ExprId current = block.Add(*std::move(current_or));
 
   return std::visit(
       Overloaded{
@@ -244,15 +247,15 @@ auto LowerValueChangeCall(
                 mir::IntegralConstant{
                     .value_words = {bit.reached_one ? 1ULL : 0ULL},
                     .state_words = {}});
-            const mir::ExprId reached = block.exprs.Add(BuildMirBinaryExpr(
+            const mir::ExprId reached = block.Add(BuildMirBinaryExpr(
                 unit, block, hir::BinaryOp::kCaseEquality,
                 BuildLeastSignificantBit(unit, block, current, *bit_type),
                 target, result_type));
-            const mir::ExprId held_before = block.exprs.Add(BuildMirBinaryExpr(
+            const mir::ExprId held_before = block.Add(BuildMirBinaryExpr(
                 unit, block, hir::BinaryOp::kCaseInequality,
                 BuildLeastSignificantBit(unit, block, prior, *bit_type), target,
                 result_type));
-            return block.exprs.Get(BuildMirLogicalAnd(
+            return block.Get(BuildMirLogicalAnd(
                 unit, block, result_type, std::array{reached, held_before}));
           }},
       ComparisonOf(ref.reading));

@@ -157,7 +157,8 @@ class BodyBoxing {
         .result_type = WithParamsBoxed(*unit_, code_->result_type),
         .locals = BoxedLocals(),
         .named_locals = code_->named_locals,
-        .body = RewrittenBody()};
+        .body = RewrittenBody(),
+        .span = code_->span};
   }
 
   // Whether the rewrite changes the body at all.
@@ -202,7 +203,7 @@ class BodyBoxing {
                     const mir::Stmt& stmt) { return Statement(rebuild, stmt); },
         .type =
             [this](mir::TypeId type) { return WithParamsBoxed(*unit_, type); }};
-    BlockRebuild rebuild(*code_->body, rules);
+    BlockRebuild rebuild(*code_->body, rules, code_->span);
     std::vector<mir::StmtId> stmts = rebuild.Stmts(code_->body->root_stmts);
     return std::move(rebuild).Finish(std::move(stmts));
   }
@@ -307,7 +308,7 @@ auto BoxedBuild(const mir::CompilationUnit& unit, const mir::ValueBuild& build)
   }
   const RebuildRules rules{
       .type = [&](mir::TypeId type) { return WithParamsBoxed(unit, type); }};
-  BlockRebuild rebuild(build.body, rules);
+  BlockRebuild rebuild(build.body, rules, diag::SourceSpan{});
   std::vector<mir::StmtId> stmts = rebuild.Stmts(build.body.root_stmts);
   const mir::ExprId value = rebuild.Expr(build.value);
   return mir::ValueBuild{

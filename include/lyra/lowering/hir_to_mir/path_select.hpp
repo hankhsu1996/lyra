@@ -8,6 +8,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -25,9 +26,9 @@ auto EvaluateSelectsIn(Lowerer& lowerer, const WalkFrame& frame)
   return [&lowerer, frame](hir::ExprId position) -> diag::Result<mir::ExprId> {
     auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(position), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    mir::Block& block = *frame.current_block;
+    mir::Builder block = frame.Builder();
     return BuildToInt64Call(
-        lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(lowered)));
+        lowerer.Owner().Unit(), block, block.Add(*std::move(lowered)));
   };
 }
 

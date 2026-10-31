@@ -32,6 +32,7 @@
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/lowering/hir_to_mir/switch_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -46,9 +47,9 @@ namespace {
 // reached through its address, so the receiver is the member place and nothing
 // reads it as a value.
 auto AttemptsCall(
-    mir::Block& block, support::BuiltinFn fn, mir::ExprId attempts,
+    mir::Builder block, support::BuiltinFn fn, mir::ExprId attempts,
     std::vector<mir::ExprId> arguments, mir::TypeId result) -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -57,9 +58,9 @@ auto AttemptsCall(
           .type = result});
 }
 
-auto Word(mir::Block& block, mir::TypeId type, std::uint64_t value)
+auto Word(mir::Builder block, mir::TypeId type, std::uint64_t value)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::MachineIntLiteral{.value = static_cast<std::int64_t>(value)},
@@ -67,17 +68,17 @@ auto Word(mir::Block& block, mir::TypeId type, std::uint64_t value)
 }
 
 auto Op(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type,
     mir::BinaryOp op, mir::ExprId lhs, mir::ExprId rhs) -> mir::ExprId {
-  return block.exprs.Add(mir::MakeBinary(unit, block, op, lhs, rhs, type));
+  return block.Add(mir::MakeBinary(unit, block.Body(), op, lhs, rhs, type));
 }
 
 void Assign(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId local,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId local,
     mir::TypeId type, mir::ExprId value) {
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.exprs.Add(
+          .expr = block.Add(
               mir::MakeAssignExpr(
                   unit.builtins, block.LocalPlace(local, type), value))});
 }
@@ -86,7 +87,7 @@ void Assign(
 // set operation is then the same sequence of word operations wherever it
 // appears, and a one-word automaton is that sequence at length one.
 auto DeclareWords(
-    CallableBindings& bindings, mir::Block& block, mir::TypeId type,
+    CallableBindings& bindings, mir::Builder block, mir::TypeId type,
     const PositionSet& initial) -> std::vector<mir::LocalId> {
   std::vector<mir::LocalId> locals;
   locals.reserve(initial.size());
@@ -102,7 +103,7 @@ auto DeclareWords(
 // Whether any position of `mask` is set in `words`, as one predicate over every
 // word of the set.
 auto AnyOf(
-    mir::Block& block, const mir::CompilationUnit& unit,
+    mir::Builder block, const mir::CompilationUnit& unit,
     const std::vector<mir::LocalId>& words, const PositionSet& mask)
     -> mir::ExprId {
   const mir::TypeId type = unit.builtins.machine_word;
@@ -121,7 +122,7 @@ auto AnyOf(
 
 // `words |= mask`, one word at a time.
 void OrInto(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type,
     const std::vector<mir::LocalId>& words, const PositionSet& mask) {
   for (std::size_t word = 0; word < words.size(); ++word) {
     const mir::ExprId lhs = block.ReadLocal(words[word], type);
@@ -132,8 +133,9 @@ void OrInto(
   }
 }
 
-void AppendIf(mir::Block& block, mir::ExprId condition, mir::Block then_block) {
-  const mir::BlockId scope = block.child_scopes.Add(std::move(then_block));
+void AppendIf(
+    mir::Builder block, mir::ExprId condition, mir::Block then_block) {
+  const mir::BlockId scope = block.AddScope(std::move(then_block));
   block.AppendStmt(
       mir::IfStmt{
           .condition = condition,
@@ -223,7 +225,7 @@ auto LowerActionArm(
     ProcessLowerer& action, const WalkFrame& parent, const ActionArm& arm,
     diag::SourceSpan span) -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = action.Owner().Unit();
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(span);
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
       ReceiverOrigin{}, parent.current_class.cls->self_pointer_type);
@@ -240,24 +242,25 @@ auto LowerActionArm(
             auto lowered = action.LowerStmt(
                 action.HirBody().stmts.Get(statements.stmt), frame);
             if (!lowered) return std::unexpected(std::move(lowered.error()));
-            code.Body().AppendStmt(*std::move(lowered));
+            frame.Builder().AppendStmt(*std::move(lowered));
             return {};
           },
           [&](const RunsDefaultReport& report) -> diag::Result<void> {
-            AppendDefaultReport(action, code.Body(), report.directive, span);
+            AppendDefaultReport(
+                action, frame.Builder(), report.directive, span);
             return {};
           },
           [](const RunsNothing&) -> diag::Result<void> { return {}; }},
       arm);
   if (!appended) return std::unexpected(std::move(appended.error()));
-  code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  frame.Builder().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   return code;
 }
 
 auto Choose(
-    mir::Block& block, mir::TypeId type, mir::ExprId condition,
+    mir::Builder block, mir::TypeId type, mir::ExprId condition,
     mir::ExprId then_value, mir::ExprId else_value) -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::ConditionalExpr{
@@ -268,7 +271,7 @@ auto Choose(
 }
 
 auto AnswerWord(
-    mir::Block& block, mir::TypeId type, support::PropertyAnswer answer)
+    mir::Builder block, mir::TypeId type, support::PropertyAnswer answer)
     -> mir::ExprId {
   return Word(block, type, static_cast<std::uint64_t>(answer));
 }
@@ -276,7 +279,7 @@ auto AnswerWord(
 // The least answer an implication's instances reached, for the evaluation the
 // code being built answers.
 using ImplicationAnswerOf =
-    std::function<mir::ExprId(mir::Block&, std::uint32_t)>;
+    std::function<mir::ExprId(mir::Builder, std::uint32_t)>;
 
 // What one part answers for one evaluation (Annex F.5.3.2), from the positions
 // `bits` it is live at once the tick has stepped it and from what its
@@ -286,7 +289,7 @@ using ImplicationAnswerOf =
 // -- `iff` reads each operand twice -- so each is held in a local of its own.
 auto BuildPartAnswer(
     const mir::CompilationUnit& unit, CallableBindings& bindings,
-    mir::Block& block, const AutomatonPart& part,
+    mir::Builder block, const AutomatonPart& part,
     const std::vector<mir::LocalId>& bits,
     const ImplicationAnswerOf& implication_answer) -> mir::LocalId {
   const mir::TypeId type = unit.builtins.machine_word;
@@ -400,7 +403,7 @@ auto StartsOf(const ImplicationSeed& seed, const AssertionAutomaton& automaton)
 
 // The storage holding the attempts a tick steps, as the place a call on it acts
 // through, built in whichever block the call is made in.
-using AttemptsPlace = std::function<mir::ExprId(mir::Block&)>;
+using AttemptsPlace = std::function<mir::ExprId(mir::Builder)>;
 
 // One tick of every evaluation in flight, as a block run in the Observed
 // region. Reading the design's Boolean expressions and stepping the positions
@@ -414,19 +417,20 @@ auto LowerTick(
     -> diag::Result<mir::Block> {
   mir::Block body;
   const WalkFrame frame = parent.WithBlock(&body);
+  mir::Builder body_builder = frame.Builder();
   mir::CompilationUnit& unit = action.Owner().Unit();
   const mir::TypeId word_type = unit.builtins.machine_word;
   const mir::TypeId index_type = unit.builtins.machine_int64;
   const mir::TypeId void_type = unit.builtins.void_type;
   const PositionSet empty(automaton.words, 0);
 
-  const auto call = [&](mir::Block& block, support::BuiltinFn fn,
+  const auto call = [&](mir::Builder block, support::BuiltinFn fn,
                         std::vector<mir::ExprId> arguments,
                         mir::TypeId result) {
     return AttemptsCall(
         block, fn, attempts(block), std::move(arguments), result);
   };
-  const auto call_stmt = [&](mir::Block& block, support::BuiltinFn fn,
+  const auto call_stmt = [&](mir::Builder block, support::BuiltinFn fn,
                              std::vector<mir::ExprId> arguments) {
     block.AppendStmt(
         mir::ExprStmt{
@@ -436,37 +440,40 @@ auto LowerTick(
     return PositionSetOf(static_cast<std::uint32_t>(position), automaton.words);
   };
 
-  call_stmt(body, support::BuiltinFn::kEvaluationAttemptsBeginTick, {});
+  call_stmt(body_builder, support::BuiltinFn::kEvaluationAttemptsBeginTick, {});
 
   // What this tick has to read: every position an unstepped evaluation is live
   // at, and the ones a seed would start, since every seed starts its instance
   // at the tick of the match.
   const std::vector<mir::LocalId> need =
-      DeclareWords(bindings, body, word_type, empty);
+      DeclareWords(bindings, body_builder, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     Assign(
-        unit, body, need[word], word_type,
+        unit, body_builder, need[word], word_type,
         call(
-            body, support::BuiltinFn::kEvaluationAttemptsLiveWord,
-            {Word(body, word_type, word)}, word_type));
+            body_builder, support::BuiltinFn::kEvaluationAttemptsLiveWord,
+            {Word(body_builder, word_type, word)}, word_type));
   }
   for (const ImplicationSeed& seed : automaton.seeds) {
     mir::Block reached;
-    OrInto(unit, reached, word_type, need, StartsOf(seed, automaton));
-    const mir::ExprId condition = AnyOf(body, unit, need, seed.matches);
-    AppendIf(body, condition, std::move(reached));
+    OrInto(
+        unit, body_builder.Into(reached), word_type, need,
+        StartsOf(seed, automaton));
+    const mir::ExprId condition = AnyOf(body_builder, unit, need, seed.matches);
+    AppendIf(body_builder, condition, std::move(reached));
   }
 
   // The design's own Boolean expressions, as of the Preponed region of this
   // tick's time step (LRM 16.5.1), and only where something waits on them.
   const std::vector<mir::LocalId> hold =
-      DeclareWords(bindings, body, word_type, empty);
+      DeclareWords(bindings, body_builder, word_type, empty);
   for (std::size_t position = 0; position < automaton.positions.size();
        ++position) {
     const PositionSet at = bit_at(position);
     mir::Block reached;
     const WalkFrame sampled =
         frame.WithBlock(&reached).WithReadsAsOf(ReadsAsOf::kPreponed);
+    mir::Builder reached_builder = sampled.Builder();
     // Each conjunct is a step that runs while the ones before it held, so the
     // steps stand beside each other however many conjuncts a position has.
     std::vector<Evaluation> conjuncts;
@@ -477,77 +484,85 @@ auto LowerTick(
             auto lowered =
                 action.LowerExpr(action.HirBody().exprs.Get(conjunct), tried);
             if (!lowered) return std::unexpected(std::move(lowered.error()));
-            return tried.current_block->exprs.Add(*std::move(lowered));
+            return tried.Builder().Add(*std::move(lowered));
           });
     }
     const mir::LocalId all_hold =
-        DeclareLocal(sampled, BuildMachineBool(unit, reached, true));
+        DeclareLocal(sampled, BuildMachineBool(unit, reached_builder, true));
     auto assigned = AssignAllHoldInOrder(unit, sampled, all_hold, conjuncts);
     if (!assigned) return std::unexpected(std::move(assigned.error()));
     // A position with no conjunct matches whatever the design does there, so
     // its bit is set whenever it is reached.
     mir::Block held;
-    OrInto(unit, held, word_type, hold, at);
+    OrInto(unit, reached_builder.Into(held), word_type, hold, at);
     const mir::ExprId all_held =
-        reached.ReadLocal(all_hold, unit.builtins.machine_bool);
-    AppendIf(reached, all_held, std::move(held));
-    const mir::ExprId condition = AnyOf(body, unit, need, at);
-    AppendIf(body, condition, std::move(reached));
+        reached_builder.ReadLocal(all_hold, unit.builtins.machine_bool);
+    AppendIf(reached_builder, all_held, std::move(held));
+    const mir::ExprId condition = AnyOf(body_builder, unit, need, at);
+    AppendIf(body_builder, condition, std::move(reached));
   }
 
   // Every evaluation this tick has not stepped, including the ones seeded
   // during the sweep, which is what reads a consequent at the very tick its
   // antecedent matched (LRM 16.12.7).
   const mir::LocalId cursor = bindings.DeclareAnonymous(index_type);
-  body.AppendStmt(
+  body_builder.AppendStmt(
       mir::LocalDeclStmt{
           .target = cursor,
           .init = call(
-              body, support::BuiltinFn::kEvaluationAttemptsNextUnstepped, {},
+              body_builder,
+              support::BuiltinFn::kEvaluationAttemptsNextUnstepped, {},
               index_type)});
 
   mir::Block sweep;
+  mir::Builder sweep_builder = body_builder.Into(sweep);
   const std::vector<mir::LocalId> bits =
-      DeclareWords(bindings, sweep, word_type, empty);
+      DeclareWords(bindings, sweep_builder, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     Assign(
-        unit, sweep, bits[word], word_type,
+        unit, sweep_builder, bits[word], word_type,
         call(
-            sweep, support::BuiltinFn::kEvaluationAttemptsBitsAt,
-            {sweep.ReadLocal(cursor, index_type), Word(sweep, word_type, word)},
+            sweep_builder, support::BuiltinFn::kEvaluationAttemptsBitsAt,
+            {sweep_builder.ReadLocal(cursor, index_type),
+             Word(sweep_builder, word_type, word)},
             word_type));
   }
   const std::vector<mir::LocalId> matched =
-      DeclareWords(bindings, sweep, word_type, empty);
+      DeclareWords(bindings, sweep_builder, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
-    const mir::ExprId lhs = sweep.ReadLocal(bits[word], word_type);
-    const mir::ExprId rhs = sweep.ReadLocal(hold[word], word_type);
+    const mir::ExprId lhs = sweep_builder.ReadLocal(bits[word], word_type);
+    const mir::ExprId rhs = sweep_builder.ReadLocal(hold[word], word_type);
     Assign(
-        unit, sweep, matched[word], word_type,
-        Op(unit, sweep, word_type, mir::BinaryOp::kBitwiseAnd, lhs, rhs));
+        unit, sweep_builder, matched[word], word_type,
+        Op(unit, sweep_builder, word_type, mir::BinaryOp::kBitwiseAnd, lhs,
+           rhs));
   }
   const std::vector<mir::LocalId> next =
-      DeclareWords(bindings, sweep, word_type, empty);
+      DeclareWords(bindings, sweep_builder, word_type, empty);
   for (std::size_t position = 0; position < automaton.positions.size();
        ++position) {
     mir::Block advanced;
-    OrInto(unit, advanced, word_type, next, automaton.follow[position]);
-    const mir::ExprId condition = AnyOf(sweep, unit, matched, bit_at(position));
-    AppendIf(sweep, condition, std::move(advanced));
+    OrInto(
+        unit, sweep_builder.Into(advanced), word_type, next,
+        automaton.follow[position]);
+    const mir::ExprId condition =
+        AnyOf(sweep_builder, unit, matched, bit_at(position));
+    AppendIf(sweep_builder, condition, std::move(advanced));
   }
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     call_stmt(
-        sweep, support::BuiltinFn::kEvaluationAttemptsSetWord,
-        {sweep.ReadLocal(cursor, index_type), Word(sweep, word_type, word),
-         sweep.ReadLocal(next[word], word_type)});
+        sweep_builder, support::BuiltinFn::kEvaluationAttemptsSetWord,
+        {sweep_builder.ReadLocal(cursor, index_type),
+         Word(sweep_builder, word_type, word),
+         sweep_builder.ReadLocal(next[word], word_type)});
   }
   call_stmt(
-      sweep, support::BuiltinFn::kEvaluationAttemptsStep,
-      {sweep.ReadLocal(cursor, index_type)});
+      sweep_builder, support::BuiltinFn::kEvaluationAttemptsStep,
+      {sweep_builder.ReadLocal(cursor, index_type)});
 
   // An instance of `part` for `implication` of the evaluation just stepped,
   // read at this same tick.
-  const auto seed_into = [&](mir::Block& block, std::uint32_t implication,
+  const auto seed_into = [&](mir::Builder block, std::uint32_t implication,
                              std::uint32_t part) {
     for (std::uint32_t word = 0; word < automaton.words; ++word) {
       call_stmt(
@@ -566,48 +581,55 @@ auto LowerTick(
       [&](const WalkFrame& at, hir::ExprId expr) -> diag::Result<mir::ExprId> {
     auto lowered = action.LowerExpr(action.HirBody().exprs.Get(expr), at);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return at.current_block->exprs.Add(*std::move(lowered));
+    return at.Builder().Add(*std::move(lowered));
   };
   for (const ImplicationSeed& seed : automaton.seeds) {
     mir::Block seeded;
     const WalkFrame at =
         frame.WithBlock(&seeded).WithReadsAsOf(ReadsAsOf::kPreponed);
+    mir::Builder seeded_builder = at.Builder();
     auto filled = std::visit(
         Overloaded{
             [&](const MatchSeed& match) -> diag::Result<void> {
-              seed_into(seeded, seed.implication, match.part);
+              seed_into(seeded_builder, seed.implication, match.part);
               return {};
             },
             [&](const ConditionSeed& condition) -> diag::Result<void> {
               auto value = lower_sampled(at, condition.condition);
               if (!value) return std::unexpected(std::move(value.error()));
               mir::Block then_block;
-              seed_into(then_block, seed.implication, condition.then_part);
+              seed_into(
+                  seeded_builder.Into(then_block), seed.implication,
+                  condition.then_part);
               std::optional<mir::BlockId> else_scope;
               if (condition.else_part.has_value()) {
                 mir::Block else_block;
-                seed_into(else_block, seed.implication, *condition.else_part);
-                else_scope = seeded.child_scopes.Add(std::move(else_block));
+                seed_into(
+                    seeded_builder.Into(else_block), seed.implication,
+                    *condition.else_part);
+                else_scope = seeded_builder.AddScope(std::move(else_block));
               }
-              seeded.AppendStmt(
+              seeded_builder.AppendStmt(
                   mir::IfStmt{
-                      .condition = ReduceToCondition(unit, seeded, *value),
+                      .condition =
+                          ReduceToCondition(unit, seeded_builder, *value),
                       .then_scope =
-                          seeded.child_scopes.Add(std::move(then_block)),
+                          seeded_builder.AddScope(std::move(then_block)),
                       .else_scope = else_scope});
               return {};
             },
             [&](const CaseSeed& selection) -> diag::Result<void> {
               auto subject = lower_sampled(at, selection.subject);
               if (!subject) return std::unexpected(std::move(subject.error()));
-              const mir::TypeId subject_type = seeded.exprs.Get(*subject).type;
+              const mir::TypeId subject_type =
+                  seeded_builder.Get(*subject).type;
               const mir::LocalId subject_local = SnapshotExprToLocal(
-                  action.Owner(), at, seeded, subject_type, *subject);
+                  action.Owner(), at, seeded_builder, subject_type, *subject);
               const auto starting =
                   [&, implication = seed.implication](std::uint32_t part) {
-                    return [&, implication, part](const WalkFrame&) {
+                    return [&, implication, part](const WalkFrame& in) {
                       mir::Block block;
-                      seed_into(block, implication, part);
+                      seed_into(in.Builder().Into(block), implication, part);
                       return diag::Result<mir::Block>{std::move(block)};
                     };
                   };
@@ -621,7 +643,7 @@ auto LowerTick(
                           const WalkFrame& tried) -> diag::Result<mir::ExprId> {
                         auto written = lower_sampled(tried, label);
                         if (!written) return written;
-                        mir::Block& block = *tried.current_block;
+                        mir::Builder block = tried.Builder();
                         const mir::ExprId held_subject =
                             block.LocalPlace(subject_local, subject_type);
                         const mir::ExprId label_value = OperandAtHandleType(
@@ -637,58 +659,64 @@ auto LowerTick(
               if (selection.default_part.has_value()) {
                 otherwise = mir::Block{};
                 seed_into(
-                    *otherwise, seed.implication, *selection.default_part);
+                    seeded_builder.Into(*otherwise), seed.implication,
+                    *selection.default_part);
               }
               auto search =
                   BuildArmSearch(unit, at, items, std::move(otherwise));
               if (!search) return std::unexpected(std::move(search.error()));
-              seeded.AppendStmt(*std::move(search));
+              seeded_builder.AppendStmt(*std::move(search));
               return {};
             }},
         seed.starts);
     if (!filled) return std::unexpected(std::move(filled.error()));
-    const mir::ExprId condition = AnyOf(sweep, unit, matched, seed.matches);
-    AppendIf(sweep, condition, std::move(seeded));
+    const mir::ExprId condition =
+        AnyOf(sweep_builder, unit, matched, seed.matches);
+    AppendIf(sweep_builder, condition, std::move(seeded));
   }
   Assign(
-      unit, sweep, cursor, index_type,
+      unit, sweep_builder, cursor, index_type,
       call(
-          sweep, support::BuiltinFn::kEvaluationAttemptsNextUnstepped, {},
-          index_type));
-  const mir::ExprId unstepped = body.ReadLocal(cursor, index_type);
-  const mir::ExprId first_index = Word(body, index_type, 0);
-  body.AppendStmt(
+          sweep_builder, support::BuiltinFn::kEvaluationAttemptsNextUnstepped,
+          {}, index_type));
+  const mir::ExprId unstepped = body_builder.ReadLocal(cursor, index_type);
+  const mir::ExprId first_index = Word(body_builder, index_type, 0);
+  body_builder.AppendStmt(
       mir::WhileStmt{
           .condition =
-              Op(unit, body, unit.builtins.machine_bool,
+              Op(unit, body_builder, unit.builtins.machine_bool,
                  mir::BinaryOp::kGreaterEqual, unstepped, first_index),
-          .scope = body.child_scopes.Add(std::move(sweep))});
+          .scope = body_builder.AddScope(std::move(sweep))});
 
   // Every evaluation answers, from the last back, so the instances of an
   // implication have answered before the evaluation holding it does.
   const mir::LocalId answering = bindings.DeclareAnonymous(index_type);
-  const mir::ExprId count =
-      call(body, support::BuiltinFn::kEvaluationAttemptsCount, {}, index_type);
-  const mir::ExprId one = Word(body, index_type, 1);
-  body.AppendStmt(
+  const mir::ExprId count = call(
+      body_builder, support::BuiltinFn::kEvaluationAttemptsCount, {},
+      index_type);
+  const mir::ExprId one = Word(body_builder, index_type, 1);
+  body_builder.AppendStmt(
       mir::LocalDeclStmt{
           .target = answering,
-          .init = Op(unit, body, index_type, mir::BinaryOp::kSub, count, one)});
+          .init =
+              Op(unit, body_builder, index_type, mir::BinaryOp::kSub, count,
+                 one)});
   mir::Block resolve;
   const WalkFrame resolve_frame = frame.WithBlock(&resolve);
+  mir::Builder resolve_builder = resolve_frame.Builder();
   const std::vector<mir::LocalId> stepped =
-      DeclareWords(bindings, resolve, word_type, empty);
+      DeclareWords(bindings, resolve_builder, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     Assign(
-        unit, resolve, stepped[word], word_type,
+        unit, resolve_builder, stepped[word], word_type,
         call(
-            resolve, support::BuiltinFn::kEvaluationAttemptsBitsAt,
-            {resolve.ReadLocal(answering, index_type),
-             Word(resolve, word_type, word)},
+            resolve_builder, support::BuiltinFn::kEvaluationAttemptsBitsAt,
+            {resolve_builder.ReadLocal(answering, index_type),
+             Word(resolve_builder, word_type, word)},
             word_type));
   }
   const ImplicationAnswerOf implication_answer =
-      [&](mir::Block& block, std::uint32_t implication) {
+      [&](mir::Builder block, std::uint32_t implication) {
         return call(
             block, support::BuiltinFn::kEvaluationAttemptsImplicationAnswer,
             {block.ReadLocal(answering, index_type),
@@ -701,56 +729,56 @@ auto LowerTick(
     arms.push_back(
         ValueArm{
             .values = {static_cast<std::int64_t>(part)},
-            .body = [&, part](const WalkFrame&) -> diag::Result<mir::Block> {
+            .body = [&, part](const WalkFrame& in) -> diag::Result<mir::Block> {
               mir::Block block;
+              mir::Builder answered = in.Builder().Into(block);
               const mir::LocalId answer = BuildPartAnswer(
-                  unit, bindings, block, automaton.parts[part], stepped,
+                  unit, bindings, answered, automaton.parts[part], stepped,
                   implication_answer);
               call_stmt(
-                  block, support::BuiltinFn::kEvaluationAttemptsResolve,
-                  {block.ReadLocal(answering, index_type),
-                   block.ReadLocal(answer, word_type)});
+                  answered, support::BuiltinFn::kEvaluationAttemptsResolve,
+                  {answered.ReadLocal(answering, index_type),
+                   answered.ReadLocal(answer, word_type)});
               return block;
             }});
   }
   auto dispatched = BuildValueSwitch(
       resolve_frame,
       call(
-          resolve, support::BuiltinFn::kEvaluationAttemptsPartOf,
-          {resolve.ReadLocal(answering, index_type)}, word_type),
+          resolve_builder, support::BuiltinFn::kEvaluationAttemptsPartOf,
+          {resolve_builder.ReadLocal(answering, index_type)}, word_type),
       arms, std::nullopt);
   if (!dispatched) return std::unexpected(std::move(dispatched.error()));
-  resolve.AppendStmt(*std::move(dispatched));
-  const mir::ExprId lhs = resolve.ReadLocal(answering, index_type);
-  const mir::ExprId rhs = Word(resolve, index_type, 1);
+  resolve_builder.AppendStmt(*std::move(dispatched));
+  const mir::ExprId lhs = resolve_builder.ReadLocal(answering, index_type);
+  const mir::ExprId rhs = Word(resolve_builder, index_type, 1);
   Assign(
-      unit, resolve, answering, index_type,
-      Op(unit, resolve, index_type, mir::BinaryOp::kSub, lhs, rhs));
-  const mir::ExprId unanswered = body.ReadLocal(answering, index_type);
-  const mir::ExprId lowest_index = Word(body, index_type, 0);
-  body.AppendStmt(
+      unit, resolve_builder, answering, index_type,
+      Op(unit, resolve_builder, index_type, mir::BinaryOp::kSub, lhs, rhs));
+  const mir::ExprId unanswered = body_builder.ReadLocal(answering, index_type);
+  const mir::ExprId lowest_index = Word(body_builder, index_type, 0);
+  body_builder.AppendStmt(
       mir::WhileStmt{
           .condition =
-              Op(unit, body, unit.builtins.machine_bool,
+              Op(unit, body_builder, unit.builtins.machine_bool,
                  mir::BinaryOp::kGreaterEqual, unanswered, lowest_index),
-          .scope = body.child_scopes.Add(std::move(resolve))});
+          .scope = body_builder.AddScope(std::move(resolve))});
 
   call_stmt(
-      body, support::BuiltinFn::kEvaluationAttemptsSettle,
-      {body.exprs.Add(BuildCurrentRuntimeCallExpr(action.Owner()))});
+      body_builder, support::BuiltinFn::kEvaluationAttemptsSettle,
+      {body_builder.Add(BuildCurrentRuntimeCallExpr(action.Owner()))});
   return body;
 }
 
 // `block` as a statement of `into`, in a scope of its own.
-void AppendBlock(mir::Block& into, mir::Block block) {
-  into.AppendStmt(
-      mir::BlockStmt{.scope = into.child_scopes.Add(std::move(block))});
+void AppendBlock(mir::Builder into, mir::Block block) {
+  into.AppendStmt(mir::BlockStmt{.scope = into.AddScope(std::move(block))});
 }
 
 // Opens an attempt on the start of the whole property, as a tick of a declared
 // assertion and the reaching of an expect statement each do.
 void AppendOpenAttempt(
-    mir::Block& body, const mir::CompilationUnit& unit,
+    mir::Builder body, const mir::CompilationUnit& unit,
     const AttemptsPlace& attempts, const AssertionAutomaton& automaton) {
   const mir::TypeId word_type = unit.builtins.machine_word;
   const mir::TypeId void_type = unit.builtins.void_type;
@@ -781,17 +809,17 @@ auto LowerAdvance(
   mir::CompilationUnit& unit = action.Owner().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
 
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(parent.span);
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
       ReceiverOrigin{}, parent.current_class.cls->self_pointer_type);
   code.params = {self_id};
   code.result_type = void_type;
 
-  mir::Block& body = code.Body();
-  const WalkFrame frame =
-      action.InRootScope(parent.WithBlock(&body).WithBindings(&bindings));
-  const AttemptsPlace attempts = [&](mir::Block& block) {
+  const WalkFrame frame = action.InRootScope(
+      parent.WithBlock(&code.Body()).WithBindings(&bindings));
+  mir::Builder body = frame.Builder();
+  const AttemptsPlace attempts = [&](mir::Builder block) {
     return BuildEvaluationAttemptsExpr(block, frame, lowerer, id);
   };
 
@@ -804,14 +832,16 @@ auto LowerAdvance(
         action.HirBody().exprs.Get(spec.disable->condition), frame);
     if (!condition) return std::unexpected(std::move(condition.error()));
     const mir::ExprId reduced =
-        ReduceToCondition(unit, body, body.exprs.Add(*std::move(condition)));
+        ReduceToCondition(unit, body, body.Add(*std::move(condition)));
     mir::Block preempted;
-    preempted.AppendStmt(
+    mir::Builder preempted_builder(preempted, frame.span);
+    preempted_builder.AppendStmt(
         mir::ExprStmt{
             .expr = AttemptsCall(
-                preempted, support::BuiltinFn::kEvaluationAttemptsDisableTick,
-                attempts(preempted), {}, void_type)});
-    preempted.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+                preempted_builder,
+                support::BuiltinFn::kEvaluationAttemptsDisableTick,
+                attempts(preempted_builder), {}, void_type)});
+    preempted_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
     AppendIf(body, reduced, std::move(preempted));
   }
 
@@ -837,7 +867,7 @@ auto LowerDisableWatcher(
   mir::CompilationUnit& unit = action.Owner().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
 
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(ctor_frame.span);
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
       ReceiverOrigin{}, ctor_frame.current_class.cls->self_pointer_type);
@@ -845,36 +875,41 @@ auto LowerDisableWatcher(
   mir::Block body_block;
   const WalkFrame body_frame =
       ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
+  mir::Builder body_block_builder = body_frame.Builder();
   // What the condition reads is stated beside it, in the action's own body.
   auto waited = BuildValueChangeWaitStmt(
-      body_block, body_frame, action, disable.sensitivity);
+      body_block_builder, body_frame, action, disable.sensitivity);
   if (!waited) return std::unexpected(std::move(waited.error()));
-  body_block.AppendStmt(*std::move(waited));
+  body_block_builder.AppendStmt(*std::move(waited));
 
   auto condition = action.LowerExpr(
       action.HirBody().exprs.Get(disable.condition), body_frame);
   if (!condition) return std::unexpected(std::move(condition.error()));
   const mir::ExprId reduced = ReduceToCondition(
-      unit, body_block, body_block.exprs.Add(*std::move(condition)));
+      unit, body_block_builder, body_block_builder.Add(*std::move(condition)));
 
   mir::Block preempted;
-  preempted.AppendStmt(
+  mir::Builder preempted_builder(preempted, body_frame.span);
+  preempted_builder.AppendStmt(
       mir::ExprStmt{
           .expr = AttemptsCall(
-              preempted, support::BuiltinFn::kEvaluationAttemptsDisableTick,
-              BuildEvaluationAttemptsExpr(preempted, body_frame, lowerer, id),
+              preempted_builder,
+              support::BuiltinFn::kEvaluationAttemptsDisableTick,
+              BuildEvaluationAttemptsExpr(
+                  preempted_builder, body_frame, lowerer, id),
               {}, void_type)});
-  AppendIf(body_block, reduced, std::move(preempted));
+  AppendIf(body_block_builder, reduced, std::move(preempted));
 
+  mir::Builder entry_builder(code.Body(), body_frame.span);
   const mir::BlockId body_scope_id =
-      code.Body().child_scopes.Add(std::move(body_block));
-  code.Body().AppendStmt(
+      entry_builder.AddScope(std::move(body_block));
+  entry_builder.AppendStmt(
       mir::ForStmt{
           .init = {},
           .condition = std::nullopt,
           .step = {},
           .scope = body_scope_id});
-  code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  entry_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
   return mir::CallableDecl{
@@ -898,7 +933,7 @@ auto LowerProcess(
   const mir::TypeId self_ptr_type =
       ctor_frame.current_class.cls->self_pointer_type;
 
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(ctor_frame.span);
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id =
       bindings.Declare(ReceiverOrigin{}, self_ptr_type);
@@ -906,18 +941,19 @@ auto LowerProcess(
   mir::Block body_block;
   const WalkFrame body_frame =
       ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
+  mir::Builder body_block_builder = body_frame.Builder();
 
   // The clock's own expression lives in the assertion's body, beside the
   // Booleans the property reads, so it is that body's lowering that resolves
   // it.
-  auto wait = BuildEventWaitStmt(action, body_frame, body_block, clock);
+  auto wait = BuildEventWaitStmt(action, body_frame, body_block_builder, clock);
   if (!wait) return std::unexpected(std::move(wait.error()));
-  body_block.AppendStmt(*std::move(wait));
+  body_block_builder.AppendStmt(*std::move(wait));
 
   ClosureBuilder closure(unit, body_frame, support::ClosureKind::kFn);
   closure.Body().AppendStmt(
       mir::ExprStmt{
-          .expr = closure.Body().exprs.Add(
+          .expr = closure.Body().Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{
@@ -929,27 +965,29 @@ auto LowerProcess(
                                           .slot = advance},
                                   .receiver = BuildObjectDeref(
                                       unit, closure.Body(),
-                                      closure.Body().exprs.Add(
+                                      closure.Body().Add(
                                           MakeSelfRefExpr(closure.Frame())))},
                           .arguments = {}},
                   .type = void_type})});
 
   mir::Expr keeper = BuildRegionEffectsCallExpr(
-      lowerer.Owner(), body_block, support::BuiltinFn::kObservedEffects);
-  const mir::ExprId kept = body_block.exprs.Add(BuildEmplacedClosure(
+      lowerer.Owner(), body_block_builder,
+      support::BuiltinFn::kObservedEffects);
+  const mir::ExprId kept = body_block_builder.Add(BuildEmplacedClosure(
       lowerer.Owner().Unit(), body_frame, std::move(keeper),
       closure.BuildVoid()));
-  body_block.AppendStmt(mir::ExprStmt{.expr = kept});
+  body_block_builder.AppendStmt(mir::ExprStmt{.expr = kept});
 
+  mir::Builder entry_builder(code.Body(), body_frame.span);
   const mir::BlockId body_scope_id =
-      code.Body().child_scopes.Add(std::move(body_block));
-  code.Body().AppendStmt(
+      entry_builder.AddScope(std::move(body_block));
+  entry_builder.AppendStmt(
       mir::ForStmt{
           .init = {},
           .condition = std::nullopt,
           .step = {},
           .scope = body_scope_id});
-  code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  entry_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
   return mir::CallableDecl{
@@ -962,14 +1000,14 @@ auto LowerProcess(
 }  // namespace
 
 auto BuildEvaluationAttemptsExpr(
-    mir::Block& block, const WalkFrame& frame,
+    mir::Builder block, const WalkFrame& frame,
     const StructuralScopeLowerer& lowerer, hir::ConcurrentAssertionId id)
     -> mir::ExprId {
   const mir::FieldId field = lowerer.TranslateConcurrentAssertion(id);
-  const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
+  const mir::ExprId self = block.Add(MakeSelfRefExpr(frame));
   const mir::ExprId object =
       BuildObjectDeref(lowerer.Owner().Unit(), block, self);
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeFieldAccessExpr(
           object,
           mir::ClassFieldTarget{.owner = frame.current_class.id, .slot = field},
@@ -1072,30 +1110,33 @@ auto LowerExpectStmt(
   // local of, however the process leaves it (LRM 16.17).
   mir::Block scope;
   const WalkFrame inner = frame.WithBlock(&scope);
+  mir::Builder scope_builder = inner.Builder();
   auto clock_leaves = BuildEventLeaves(process, inner, expect.spec.clock);
   if (!clock_leaves) return std::unexpected(std::move(clock_leaves.error()));
-  auto clock = BuildTriggerArray(scope, inner, process, *clock_leaves);
+  auto clock = BuildTriggerArray(scope_builder, inner, process, *clock_leaves);
   if (!clock) return std::unexpected(std::move(clock.error()));
   std::vector<ObservedLeaf> disable_leaves;
   if (expect.spec.disable.has_value()) {
     disable_leaves = BuildValueChangeLeaves(
-        unit, inner, scope, expect.spec.disable->sensitivity);
+        unit, inner, scope_builder, expect.spec.disable->sensitivity);
   }
-  auto disable_reads = BuildTriggerArray(scope, inner, process, disable_leaves);
+  auto disable_reads =
+      BuildTriggerArray(scope_builder, inner, process, disable_leaves);
   if (!disable_reads) return std::unexpected(std::move(disable_reads.error()));
   const mir::LocalId wait = DeclareLocal(
       inner,
-      scope.exprs.Add(
+      scope_builder.Add(
           mir::MakeCallExpr(
               mir::Direct{
                   .target = support::BuiltinFn::kWaitOnPropertyEvaluation},
-              {scope.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner())),
-               *clock, *disable_reads, Word(scope, word_type, automaton.words)},
+              {scope_builder.Add(BuildCurrentRuntimeCallExpr(process.Owner())),
+               *clock, *disable_reads,
+               Word(scope_builder, word_type, automaton.words)},
               unit.builtins.wait)));
   const mir::LocalId wait_pointer = DeclareLocal(
-      inner, scope.exprs.Add(
+      inner, scope_builder.Add(
                  mir::MakeAddressOfExpr(
-                     scope.LocalPlace(wait, unit.builtins.wait),
+                     scope_builder.LocalPlace(wait, unit.builtins.wait),
                      unit.builtins.wait_ptr)));
 
   const mir::TypeId attempts_type =
@@ -1107,23 +1148,24 @@ auto LowerExpectStmt(
   // The attempt the wait holds, which stays where it is for as long as the
   // wait does, so it is looked up once.
   const mir::LocalId attempts_held = DeclareLocal(
-      inner, scope.exprs.Add(
-                 mir::MakeCallExpr(
-                     mir::Direct{.target = support::BuiltinFn::kAttemptsOf},
-                     {scope.ReadLocal(wait_pointer, unit.builtins.wait_ptr)},
-                     attempts_pointer)));
+      inner,
+      scope_builder.Add(
+          mir::MakeCallExpr(
+              mir::Direct{.target = support::BuiltinFn::kAttemptsOf},
+              {scope_builder.ReadLocal(wait_pointer, unit.builtins.wait_ptr)},
+              attempts_pointer)));
   // The attempt, through the local `pointer` holding its address.
   const auto attempts_at = [&](mir::LocalId pointer) -> AttemptsPlace {
     return
-        [&unit, attempts_type, attempts_pointer, pointer](mir::Block& block) {
-          return block.exprs.Add(
+        [&unit, attempts_type, attempts_pointer, pointer](mir::Builder block) {
+          return block.Add(
               mir::MakeDerefExpr(
                   block.DerefOperand(
                       unit.types, block.ReadLocal(pointer, attempts_pointer)),
                   attempts_type));
         };
   };
-  const auto call_on_wait = [&](mir::Block& block, support::BuiltinFn fn,
+  const auto call_on_wait = [&](mir::Builder block, support::BuiltinFn fn,
                                 mir::LocalId pointer,
                                 std::vector<mir::ExprId> rest) {
     std::vector<mir::ExprId> arguments{
@@ -1131,7 +1173,7 @@ auto LowerExpectStmt(
     arguments.insert(arguments.end(), rest.begin(), rest.end());
     block.AppendStmt(
         mir::ExprStmt{
-            .expr = block.exprs.Add(
+            .expr = block.Add(
                 mir::MakeCallExpr(
                     mir::Direct{.target = fn}, std::move(arguments),
                     void_type))});
@@ -1149,7 +1191,8 @@ auto LowerExpectStmt(
         mir::LocalDeclStmt{
             .target = pointer,
             .init = SnapshotValueIntoClosure(
-                process.Owner(), inner, closure, scope.ReadLocal(held, type))});
+                process.Owner(), inner, closure,
+                scope_builder.ReadLocal(held, type))});
     return pointer;
   };
   // The disable condition, tested where the closure stands: held, the
@@ -1163,11 +1206,13 @@ auto LowerExpectStmt(
         closure.Frame());
     if (!condition) return std::unexpected(std::move(condition.error()));
     const mir::ExprId reduced = ReduceToCondition(
-        unit, closure.Body(), closure.Body().exprs.Add(*std::move(condition)));
+        unit, closure.Body(), closure.Body().Add(*std::move(condition)));
     mir::Block disabled;
+    mir::Builder disabled_builder(disabled, inner.span);
     call_on_wait(
-        disabled, support::BuiltinFn::kDisablePropertyEvaluation, pointer, {});
-    disabled.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+        disabled_builder, support::BuiltinFn::kDisablePropertyEvaluation,
+        pointer, {});
+    disabled_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
     AppendIf(closure.Body(), reduced, std::move(disabled));
     return {};
   };
@@ -1184,23 +1229,24 @@ auto LowerExpectStmt(
   if (!ticked) return std::unexpected(std::move(ticked.error()));
   AppendBlock(step.Body(), *std::move(ticked));
   const mir::ExprId step_closure =
-      BuildKeptClosure(unit, scope, step.BuildVoid());
+      BuildKeptClosure(unit, scope_builder, step.BuildVoid());
 
   ClosureBuilder test(unit, inner, support::ClosureKind::kFn);
   if (auto tested = test_disable(test); !tested) {
     return std::unexpected(std::move(tested.error()));
   }
   const mir::ExprId test_closure =
-      BuildKeptClosure(unit, scope, test.BuildVoid());
+      BuildKeptClosure(unit, scope_builder, test.BuildVoid());
 
   // The first evaluation is at the next tick of the clock (LRM 16.17).
-  AppendOpenAttempt(scope, unit, attempts_at(attempts_held), automaton);
+  AppendOpenAttempt(scope_builder, unit, attempts_at(attempts_held), automaton);
   call_on_wait(
-      scope, support::BuiltinFn::kBindPropertyEvaluation, wait_pointer,
+      scope_builder, support::BuiltinFn::kBindPropertyEvaluation, wait_pointer,
       {step_closure, test_closure});
-  scope.AppendStmt(BuildParkStmt(process.Owner(), scope, wait));
+  scope_builder.AppendStmt(BuildParkStmt(process.Owner(), scope_builder, wait));
 
-  const auto answer_is = [&](mir::Block& block, support::AttemptAnswer answer) {
+  const auto answer_is = [&](mir::Builder block,
+                             support::AttemptAnswer answer) {
     const mir::ExprId lhs = AttemptsCall(
         block, support::BuiltinFn::kEvaluationAttemptsAnswer,
         attempts_at(attempts_held)(block), {}, word_type);
@@ -1217,22 +1263,23 @@ auto LowerExpectStmt(
   diag::Result<mir::Block> fail = mir::Block{};
   if (!expect.fail_stmt.has_value()) {
     AppendToolReportStmt(
-        process.Owner(), *fail, support::BuiltinFn::kEmitError,
-        base::DiagMessage("expect failed"), span);
+        process.Owner(), inner.Builder().Into(*fail),
+        support::BuiltinFn::kEmitError, base::DiagMessage("expect failed"),
+        span);
   } else if (HasRealArm(process.HirBody(), expect.fail_stmt)) {
     fail = LowerStmtIntoChildScope(process, inner, *expect.fail_stmt);
   }
   if (!fail) return std::unexpected(std::move(fail.error()));
-  scope.AppendStmt(
+  scope_builder.AppendStmt(
       mir::IfStmt{
-          .condition = answer_is(scope, support::AttemptAnswer::kFails),
-          .then_scope = scope.child_scopes.Add(*std::move(fail)),
-          .else_scope = scope.child_scopes.Add(*std::move(pass))});
+          .condition = answer_is(scope_builder, support::AttemptAnswer::kFails),
+          .then_scope = scope_builder.AddScope(*std::move(fail)),
+          .else_scope = scope_builder.AddScope(*std::move(pass))});
 
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::BlockStmt{
-          .scope = frame.current_block->child_scopes.Add(std::move(scope))}};
+      .data =
+          mir::BlockStmt{.scope = frame.Builder().AddScope(std::move(scope))}};
 }
 
 void AppendConcurrentAssertionInstall(
@@ -1240,7 +1287,7 @@ void AppendConcurrentAssertionInstall(
     hir::ConcurrentAssertionId id,
     const InstalledConcurrentAssertion& installed) {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *activate_frame.current_block;
+  mir::Builder block = activate_frame.Builder();
   const mir::TypeId void_type = unit.builtins.void_type;
 
   // Both arms are the same for every attempt, so the storage holds one of each
@@ -1263,7 +1310,7 @@ void AppendConcurrentAssertionInstall(
       mir::ExprStmt{
           .expr = AttemptsCall(
               block, support::BuiltinFn::kEvaluationAttemptsInstall, attempts,
-              {block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())),
+              {block.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())),
                Word(block, unit.builtins.machine_word, installed.words),
                arm(installed.pass_action), arm(installed.fail_action)},
               void_type)});

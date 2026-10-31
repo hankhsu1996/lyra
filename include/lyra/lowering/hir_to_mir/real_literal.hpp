@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -16,7 +17,7 @@ namespace lyra::lowering::hir_to_mir {
 //
 // `real_type` must be a real-family type; nothing else is built this way.
 [[nodiscard]] auto BuildRealLiteral(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId real_type,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId real_type,
     double value) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

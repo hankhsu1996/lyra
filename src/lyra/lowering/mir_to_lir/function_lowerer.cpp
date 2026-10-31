@@ -324,6 +324,7 @@ FunctionLowerer::FunctionLowerer(
       code_(&code),
       closure_(nullptr),
       name_(std::move(name)),
+      span_(code.span),
       variable_slot_(code.locals.size(), std::nullopt),
       locals_(code.locals.size(), std::nullopt) {
 }
@@ -334,6 +335,7 @@ FunctionLowerer::FunctionLowerer(
       code_(&closure.invoke),
       closure_(&closure),
       name_(std::move(name)),
+      span_(closure.invoke.span),
       variable_slot_(closure.invoke.locals.size(), std::nullopt),
       locals_(closure.invoke.locals.size(), std::nullopt) {
 }
@@ -796,7 +798,7 @@ void FunctionLowerer::Terminate(lir::TerminatorData data) {
   if (terminator.has_value()) {
     throw InternalError("mir_to_lir: block terminated twice");
   }
-  terminator = lir::Terminator{.data = data};
+  terminator = lir::Terminator{.data = data, .span = span_};
 }
 
 auto FunctionLowerer::Terminated() const -> bool {
@@ -844,9 +846,11 @@ void FunctionLowerer::Assign(lir::Destination destination, lir::Rvalue value) {
       OwningTransient(destination, lir::MakesValue(value));
   blocks_[current_.value].instrs.push_back(
       lir::Instr{
-          .data = lir::AssignInstr{
-              .destination = std::move(destination),
-              .value = std::move(value)}});
+          .data =
+              lir::AssignInstr{
+                  .destination = std::move(destination),
+                  .value = std::move(value)},
+          .span = span_});
   if (owner.has_value()) {
     OpenScope(ValueEnd{.value = *owner});
   }
@@ -871,7 +875,7 @@ auto FunctionLowerer::VoidValue() -> lir::Operand {
 
 void FunctionLowerer::EmitStatement(lir::InstrData statement) {
   blocks_[current_.value].instrs.push_back(
-      lir::Instr{.data = std::move(statement)});
+      lir::Instr{.data = std::move(statement), .span = span_});
 }
 
 void FunctionLowerer::EndValue(lir::Operand value) {
@@ -1030,14 +1034,17 @@ auto FunctionLowerer::AllocateCompletionFor(lir::TypeId payload)
   // fresh one behind on every iteration.
   blocks_[stretch_start_.value].instrs.push_back(
       lir::Instr{
-          .data = lir::AssignInstr{
-              .destination = lir::Transient{.value = result},
-              .value = lir::CallInstr{
-                  .target =
-                      lir::ValueCellTarget{
-                          .op = lir::ValueCellTarget::Op::kAllocate,
-                          .value = payload},
-                  .args = {}}}});
+          .data =
+              lir::AssignInstr{
+                  .destination = lir::Transient{.value = result},
+                  .value =
+                      lir::CallInstr{
+                          .target =
+                              lir::ValueCellTarget{
+                                  .op = lir::ValueCellTarget::Op::kAllocate,
+                                  .value = payload},
+                          .args = {}}},
+          .span = span_});
   return lir::Use{.value = result};
 }
 
@@ -1309,7 +1316,8 @@ auto FunctionLowerer::LowerStatementsInto(const mir::Block& block)
 
 auto FunctionLowerer::LowerStmtInto(
     const mir::Block& block, const mir::Stmt& stmt) -> diag::Result<void> {
-  return std::visit(
+  const diag::ApplySourceSpan from(span_, stmt.span);
+  diag::Result<void> lowered = std::visit(
       Overloaded{
           [](const mir::EmptyStmt&) -> diag::Result<void> { return {}; },
           [&](const mir::ExprStmt& s) -> diag::Result<void> {
@@ -1321,10 +1329,10 @@ auto FunctionLowerer::LowerStmtInto(
           [&](const mir::TryStmt& s) -> diag::Result<void> {
             return LowerTryInto(block, s);
           },
-          // A raise says the region holding this departure declines it, never
-          // that a new effect starts here, so what carries on outward is the
-          // one the statement names -- which is the departure the region
-          // received, and not always what the unwinder brought it.
+          // A raise says the region holding this departure declines it,
+          // never that a new effect starts here, so what carries on outward
+          // is the one the statement names -- which is the departure the
+          // region received, and not always what the unwinder brought it.
           [&](const mir::RaiseStmt& s) -> diag::Result<void> {
             auto effect = LowerExpr(block, s.effect);
             if (!effect) {
@@ -1363,6 +1371,7 @@ auto FunctionLowerer::LowerStmtInto(
             return LowerReturnInto(block, s);
           }},
       stmt.data);
+  return diag::PlacedAt(std::move(lowered), span_);
 }
 
 auto FunctionLowerer::LowerIfInto(
@@ -2364,11 +2373,12 @@ auto FunctionLowerer::LowerPlace(
     const mir::Block& block, mir::ExprId id, Reach reach)
     -> diag::Result<lir::Place> {
   const mir::Expr& expr = block.exprs.Get(id);
+  const diag::ApplySourceSpan from(span_, expr.span);
   const auto names_no_place =
       [](std::string_view form) -> diag::Result<lir::Place> {
     return Unsupported("{} names no place", form);
   };
-  return std::visit(
+  diag::Result<lir::Place> lowered = std::visit(
       Overloaded{
           [&](const mir::ReferenceExpr& reference) -> diag::Result<lir::Place> {
             return ReferencePlace(reference.target, expr.type, reach);
@@ -2463,6 +2473,7 @@ auto FunctionLowerer::LowerPlace(
             return names_no_place("the member a tagged union holds");
           }},
       expr.data);
+  return diag::PlacedAt(std::move(lowered), span_);
 }
 
 auto FunctionLowerer::LowerRead(const mir::Block& block, mir::ExprId place)
@@ -3426,6 +3437,7 @@ auto FunctionLowerer::LowerConditionalInto(
 auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
     -> diag::Result<lir::Operand> {
   const mir::Expr& expr = block.exprs.Get(id);
+  const diag::ApplySourceSpan from(span_, expr.span);
   const mir::TypeId type = expr.type;
   using Lowered = diag::Result<lir::Operand>;
   // A form computed by one step of its own computes it into a transient.
@@ -3442,7 +3454,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
         "mir_to_lir: a place stands as a value outside a read -- please "
         "report this as a bug");
   };
-  return std::visit(
+  Lowered lowered = std::visit(
       Overloaded{
           [&](const mir::StringLiteral& lit) -> Lowered {
             return lir::Operand{lir::StrConst{
@@ -3499,13 +3511,13 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return LowerBlockExpr(block.child_scopes.Get(be.scope), be.value);
           },
           [&](const mir::MoveExpr& m) -> Lowered {
-            // A move is a last use; it changes neither the value nor its type,
-            // so it reads its operand as a copy does. An owned value moved out
-            // of a local's slot takes the local's end with it, so whatever
-            // takes the value owns it and the local, ending, releases nothing,
-            // as rustc's drop elaboration leaves a place moved out of with
-            // nothing to drop. A value only lent to this body owes no end
-            // here, and what takes it copies it.
+            // A move is a last use; it changes neither the value nor its
+            // type, so it reads its operand as a copy does. An owned value
+            // moved out of a local's slot takes the local's end with it, so
+            // whatever takes the value owns it and the local, ending,
+            // releases nothing, as rustc's drop elaboration leaves a place
+            // moved out of with nothing to drop. A value only lent to this
+            // body owes no end here, and what takes it copies it.
             auto value = LowerRead(block, m.operand);
             if (!value || !unit_->Types()
                                .Get(lir::OperandType(fn_, *value))
@@ -3526,13 +3538,13 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return LowerCoroutineAwait(block, await, type);
           },
           [&](const mir::WaitExpr& wait) -> Lowered {
-            // The call has already parked this execution and answered whether
-            // it must give up control; where it must, a control edge hands
-            // control back to the scheduler, which resumes at the next block.
-            // Every wait differs only in the call that precedes it. That call
-            // is lowered like any other -- what it answers is the machine
-            // boolean MIR gave it, and the suspend edge is what this adds
-            // around it.
+            // The call has already parked this execution and answered
+            // whether it must give up control; where it must, a control
+            // edge hands control back to the scheduler, which resumes at
+            // the next block. Every wait differs only in the call that
+            // precedes it. That call is lowered like any other -- what it
+            // answers is the machine boolean MIR gave it, and the suspend
+            // edge is what this adds around it.
             auto park = LowerExpr(block, wait.park);
             if (!park) {
               return std::unexpected(std::move(park.error()));
@@ -3541,8 +3553,9 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             if (!suspended) {
               return std::unexpected(std::move(suspended.error()));
             }
-            // Resuming is a point where this execution regains control, so a
-            // target it is inside may have been disabled while it was away.
+            // Resuming is a point where this execution regains control, so
+            // a target it is inside may have been disabled while it was
+            // away.
             auto checked = TakeDepartureIfDue();
             if (!checked) {
               return std::unexpected(std::move(checked.error()));
@@ -3563,6 +3576,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           [&](const mir::BinaryExpr&) -> Lowered { return computed(); },
       },
       expr.data);
+  return diag::PlacedAt(std::move(lowered), span_);
 }
 
 auto FunctionLowerer::LowerReadAsAnother(
@@ -3585,6 +3599,7 @@ auto FunctionLowerer::LowerReadAsAnother(
 auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
     -> diag::Result<TypedRvalue> {
   const mir::Expr& expr = block.exprs.Get(id);
+  const diag::ApplySourceSpan from(span_, expr.span);
   const mir::TypeId type = expr.type;
   using Lowered = diag::Result<TypedRvalue>;
   const auto of_type = [&](lir::Rvalue value) -> Lowered {
@@ -3615,7 +3630,7 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
     }
     return of_type(lir::OverlaidLoadInstr{.place = *std::move(named)});
   };
-  return std::visit(
+  Lowered lowered = std::visit(
       Overloaded{
           // A reference is the address of its referent: storage where it
           // lies, and a value in a slot that lasts to the end of the
@@ -3633,12 +3648,12 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
             return of_type(lir::AddrOfInstr{.place = *std::move(referent)});
           },
           [&](const mir::AddressOfExpr& addr) -> Lowered {
-            // A reference carries which form of storage it names rather than
-            // stating it (LRM 13.5.2), and the two forms are different storage
-            // with one type between them -- so an address taken through one
-            // would name whichever form the type does not admit. Reading and
-            // writing through a reference are its own operations, and so is
-            // what a wait on it enrols on.
+            // A reference carries which form of storage it names rather
+            // than stating it (LRM 13.5.2), and the two forms are different
+            // storage with one type between them -- so an address taken
+            // through one would name whichever form the type does not
+            // admit. Reading and writing through a reference are its own
+            // operations, and so is what a wait on it enrols on.
             if (const auto* opened = std::get_if<mir::DerefExpr>(
                     &block.exprs.Get(addr.operand).data);
                 opened != nullptr &&
@@ -3646,7 +3661,8 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
                     .types.Get(block.exprs.Get(opened->pointer).type)
                     .IsVariableRef()) {
               throw InternalError(
-                  "mir_to_lir: an address was taken through a reference, where "
+                  "mir_to_lir: an address was taken through a reference, "
+                  "where "
                   "the reference's own operations reach its storage");
             }
             auto place = LowerPlace(block, addr.operand, Reach::kWhole);
@@ -3708,16 +3724,17 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
                     .vector = *std::move(vector), .index = *std::move(index)});
           },
           [&](const mir::ClosureExpr& cl) -> Lowered {
-            // Constructing a closure builds the storage its captures live in,
-            // and nothing else: which body a call runs is already fixed by the
-            // type, so no code identity is stored alongside them. Initializers
-            // are evaluated in the order they are listed -- their
-            // source-semantic order -- and each lands at the capture it
-            // targets, since the two orders need not agree.
+            // Constructing a closure builds the storage its captures live
+            // in, and nothing else: which body a call runs is already fixed
+            // by the type, so no code identity is stored alongside them.
+            // Initializers are evaluated in the order they are listed --
+            // their source-semantic order -- and each lands at the capture
+            // it targets, since the two orders need not agree.
             const mir::ClosureDecl& decl = unit_->Mir().GetClosure(cl.closure);
             if (cl.field_inits.size() != decl.fields.size()) {
               throw InternalError(
-                  "mir_to_lir: closure construction does not initialize every "
+                  "mir_to_lir: closure construction does not initialize "
+                  "every "
                   "capture");
             }
             std::vector<lir::Operand> captures(decl.fields.size());
@@ -3744,10 +3761,10 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
               return std::unexpected(std::move(operand.error()));
             }
             const lir::UnaryOp op = TranslateUnaryOp(un.op);
-            // A logical-not over a machine boolean -- the reduced predicate a
-            // real- or chandle-family `!` produces before `from_bool` widens it
-            // back -- stays a machine boolean; its surface 1-bit type is
-            // restored by the enclosing `from_bool`.
+            // A logical-not over a machine boolean -- the reduced predicate
+            // a real- or chandle-family `!` produces before `from_bool`
+            // widens it back -- stays a machine boolean; its surface 1-bit
+            // type is restored by the enclosing `from_bool`.
             const lir::TypeId result_type =
                 (op == lir::UnaryOp::kLogicalNot &&
                  lir::OperandType(fn_, *operand) == unit_->MachineBoolType())
@@ -3791,12 +3808,14 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
           [&](const mir::WaitExpr&) { return used(); },
       },
       expr.data);
+  return diag::PlacedAt(std::move(lowered), span_);
 }
 
 auto FunctionLowerer::LowerExprInto(
     const mir::Block& block, mir::ExprId id,
     const lir::Destination& destination) -> diag::Result<void> {
   const mir::Expr& expr = block.exprs.Get(id);
+  const diag::ApplySourceSpan from(span_, expr.span);
   using Lowered = diag::Result<void>;
   // Every other form computes its value by one step put where it goes, as
   // rustc's `expr_into_dest` assigns what `as_rvalue` answers. A step that
@@ -3815,7 +3834,7 @@ auto FunctionLowerer::LowerExprInto(
     Assign(destination, std::move(value->value));
     return {};
   };
-  return std::visit(
+  diag::Result<void> lowered = std::visit(
       Overloaded{
           [&](const mir::CallExpr& call) -> Lowered {
             return LowerCallInto(block, call, expr.type, destination);
@@ -3859,6 +3878,7 @@ auto FunctionLowerer::LowerExprInto(
           [&](const mir::WaitExpr&) { return assigned(); },
       },
       expr.data);
+  return diag::PlacedAt(std::move(lowered), span_);
 }
 
 // An execution answers through its completion rather than to a caller standing

@@ -10,6 +10,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_decl.hpp"
@@ -26,13 +27,13 @@ namespace lyra::lowering::hir_to_mir {
 CallableBindings::CallableBindings(
     const mir::CompilationUnit& unit, mir::ClosureDecl& decl,
     mir::ClosureId closure_id, support::ClosureKind kind,
-    CallableBindings& parent, mir::Block& capture_site, CapturePolicy policy)
+    CallableBindings& parent, mir::Builder capture_site, CapturePolicy policy)
     : unit_(&unit),
       code_(&decl.invoke),
       closure_decl_(&decl),
       closure_id_(closure_id),
       parent_(&parent),
-      capture_site_(&capture_site),
+      capture_site_(capture_site),
       policy_(std::move(policy)),
       self_ptr_type_(mir::ClosureReceiverType(unit.types, closure_id, kind)) {
   // The closure receiver is the invoke body's `locals[0]`. A captured read is a
@@ -96,14 +97,14 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
   // construction site (a block of the parent), then add a captured field here.
   const BodyBindingRef parent_ref = parent_->EnsureCarrier(origin);
   const mir::TypeId parent_type = parent_->TypeOf(parent_ref);
-  const mir::ExprId read = capture_site_->exprs.Add(
-      parent_->MakeBindingPlace(parent_ref, *capture_site_));
+  const mir::ExprId read =
+      capture_site_->Add(parent_->MakeBindingPlace(parent_ref, *capture_site_));
 
   mir::ExprId source = read;
   mir::TypeId field_type = parent_type;
   if (CapturesByReference(policy_.ViewFor(origin))) {
     source = BuildReferenceArg(*unit_, *capture_site_, read, parent_type);
-    field_type = capture_site_->exprs.Get(source).type;
+    field_type = capture_site_->Get(source).type;
   } else if (
       const auto* cell =
           unit_->types.Get(parent_type).As<mir::ObservableType>()) {
@@ -111,7 +112,7 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
     // is built, and belongs to the closure alone; no other process reaches it,
     // so it is the value rather than a cell that reports its writes.
     field_type = cell->value;
-    source = capture_site_->Read(capture_site_->exprs.Add(
+    source = capture_site_->Read(capture_site_->Add(
         capture_site_->WrapperContents(unit_->types, read, field_type)));
   } else {
     source = capture_site_->Read(read);
@@ -139,26 +140,26 @@ auto CallableBindings::ReceiverThroughShare() -> BodyBindingRef {
           .pointee = object,
           .ownership = mir::PointerOwnership::kBorrowed,
           .mutability = mir::Mutability::kMutable}});
-  mir::Block& entry = code_->Body();
-  const mir::ExprId handle = entry.exprs.Add(MakeBindingPlace(share, entry));
+  mir::Builder entry(code_->Body(), diag::SourceSpan{});
+  const mir::ExprId handle = entry.Add(MakeBindingPlace(share, entry));
   const mir::ExprId object_place = entry.Deref(unit_->types, handle, object);
   const mir::ExprId address =
-      entry.exprs.Add(mir::MakeAddressOfExpr(object_place, pointer));
+      entry.Add(mir::MakeAddressOfExpr(object_place, pointer));
   const mir::LocalId self = code_->AddLocal(pointer);
   // Ahead of every statement already lowered, any of which may be the first to
   // reach the object.
-  const mir::StmtId declared = entry.stmts.Add(
+  const mir::StmtId declared = entry.Body().stmts.Add(
       mir::Stmt{
           .label = std::nullopt,
           .data = mir::LocalDeclStmt{.target = self, .init = address}});
-  entry.root_stmts.insert(entry.root_stmts.begin(), declared);
+  entry.Body().root_stmts.insert(entry.Body().root_stmts.begin(), declared);
   const BodyBindingRef result{.ref = self};
   available_.insert_or_assign(ReceiverOrigin{}, result);
   return result;
 }
 
 auto CallableBindings::MakeBindingPlace(
-    BodyBindingRef ref, mir::Block& block) const -> mir::Expr {
+    BodyBindingRef ref, mir::Builder block) const -> mir::Expr {
   return std::visit(
       Overloaded{
           [&](mir::LocalId id) -> mir::Expr {

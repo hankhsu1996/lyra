@@ -53,6 +53,7 @@
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/storage_part.hpp"
@@ -87,12 +88,12 @@ auto LowerAssociativeTraversal(
       unit_lowerer.TranslateType(hir_exprs.Get(idx_hir).type);
 
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   const WalkFrame& step_frame = steps.Frame();
 
   auto map_read_or = lowerer.LowerExpr(hir_exprs.Get(recv_hir), step_frame);
   if (!map_read_or) return std::unexpected(std::move(map_read_or.error()));
-  const mir::ExprId map_read_id = body.exprs.Add(*std::move(map_read_or));
+  const mir::ExprId map_read_id = body.Add(*std::move(map_read_or));
   auto idx_lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(idx_hir), step_frame);
   if (!idx_lhs_or) return std::unexpected(std::move(idx_lhs_or.error()));
   return BuildAssociativeTraversal(
@@ -146,7 +147,7 @@ auto LowerSystemSubroutineCall(
               -> diag::Result<mir::Expr> {
             if constexpr (kProcedural) {
               return LowerProgramControlSystemSubroutineCall(
-                  lowerer, *frame.current_block, span);
+                  lowerer, frame.Builder(), span);
             } else {
               return RejectStructuralEffect(span);
             }
@@ -290,7 +291,7 @@ auto LowerSystemSubroutineCall(
 // passed into its formal (LRM 7.10.2, 13.5.1), so it is brought to the element
 // type. Every other operand is stated as it stands.
 auto StatedAsRead(
-    mir::CompilationUnit& unit, mir::Block& block,
+    mir::CompilationUnit& unit, mir::Builder block,
     support::OperandReading reading, std::optional<mir::TypeId> element,
     mir::ExprId operand) -> mir::ExprId {
   switch (reading) {
@@ -350,7 +351,7 @@ auto LowerBuiltinMethodCall(
                              : std::nullopt;
   const auto lower_operands =
       [&](WalkFrame at) -> diag::Result<std::vector<mir::ExprId>> {
-    mir::Block& into = *at.current_block;
+    mir::Builder into = at.Builder();
     std::vector<mir::ExprId> args;
     args.reserve(c.arguments.size() + 1);
     if (entry.takes_the_read_report) {
@@ -359,7 +360,7 @@ auto LowerBuiltinMethodCall(
     for (const hir::ExprId operand : RequiredOperands(c)) {
       auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operand), at);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      mir::ExprId lowered = into.exprs.Add(*std::move(arg_or));
+      mir::ExprId lowered = into.Add(*std::move(arg_or));
       // An entry acting on an object it is handed as its first operand is
       // handed the value reaching that object, read where a variable holds
       // it, as an access's receiver is.
@@ -372,7 +373,7 @@ auto LowerBuiltinMethodCall(
     }
     return args;
   };
-  const auto call_on = [&](mir::Block& into,
+  const auto call_on = [&](mir::Builder into,
                            std::optional<mir::ExprId> receiver,
                            std::vector<mir::ExprId> args) -> mir::Expr {
     // A question asked of a whole value is asked as every such question is:
@@ -380,14 +381,14 @@ auto LowerBuiltinMethodCall(
     // union's method, the body a unit states for an array -- and of the
     // library otherwise.
     if (receiver.has_value() && IsWholeValueOperation(b.method)) {
-      return into.exprs.Get(BuildValueOperation(
+      return into.Get(BuildValueOperation(
           unit, into, b.method, receiver, std::move(args), result_type));
     }
     return BuildBuiltinMethodCall(
         unit_lowerer, into, b.method, receiver, std::move(args), result_type);
   };
 
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   // A method that changes the object it acts on takes the place that object
   // stands in, so the change lands where the source named it; one that does not
   // is entered on the object where it lies, and reads it there if it takes it
@@ -404,7 +405,7 @@ auto LowerBuiltinMethodCall(
       if (ReachesOverlaidStorage(*recv_or)) {
         ReadThenWritten changed =
             ReadThenWrite(lowerer.Owner(), frame, *std::move(recv_or));
-        const mir::TypeId type = block.exprs.Get(changed.incoming).type;
+        const mir::TypeId type = block.Get(changed.incoming).type;
         receiver =
             block.LocalPlace(DeclareLocal(frame, changed.incoming), type);
         written_back = std::move(changed.place);
@@ -420,19 +421,19 @@ auto LowerBuiltinMethodCall(
           lowerer, frame, object,
           [&](BlockBuilder& steps,
               const AccessPath& path) -> diag::Result<mir::ExprId> {
-            mir::Block& body = steps.Body();
+            mir::Builder body = steps.Body();
             auto args = lower_operands(steps.Frame());
             if (!args) return std::unexpected(std::move(args.error()));
             const mir::ExprId object_place = PathAsPlace(unit, body, path);
-            return body.exprs.Add(call_on(
+            return body.Add(call_on(
                 body, mir::ReadIfOverlaid(unit, body, object_place),
                 *std::move(args)));
           });
     } else {
       auto recv_or = lowerer.LowerAsPlace(object, frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      receiver = mir::ReadIfOverlaid(
-          unit, block, block.exprs.Add(*std::move(recv_or)));
+      receiver =
+          mir::ReadIfOverlaid(unit, block, block.Add(*std::move(recv_or)));
     }
   }
   auto args = lower_operands(frame);
@@ -450,7 +451,7 @@ auto LowerBuiltinMethodCall(
         "LowerBuiltinMethodCall: a method changing overlaid storage answers a "
         "value");
   }
-  block.AppendStmt(mir::ExprStmt{.expr = block.exprs.Add(std::move(call))});
+  block.AppendStmt(mir::ExprStmt{.expr = block.Add(std::move(call))});
   return BuildStoreExpr(unit, block, *written_back, block.Read(*receiver));
 }
 
@@ -468,7 +469,7 @@ auto LowerLibraryHookCall(
     -> diag::Result<mir::Expr> {
   const UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const bool runs_objects_hook =
       unit_lowerer.Hir().classes.IsInterfaceClass(hook.cls);
   const support::BuiltinFn fn = [&] {
@@ -488,14 +489,13 @@ auto LowerLibraryHookCall(
             auto lowered =
                 lowerer.LowerExpr(lowerer.HirExprs().Get(handle.expr), frame);
             if (!lowered) return std::unexpected(std::move(lowered.error()));
-            return block.AsValue(
-                unit.types, block.exprs.Add(*std::move(lowered)));
+            return block.AsValue(unit.types, block.Add(*std::move(lowered)));
           },
           [&](const hir::SelfReceiver&) -> diag::Result<mir::ExprId> {
-            return block.exprs.Add(BuildThisHandle(frame));
+            return block.Add(BuildThisHandle(frame));
           },
           [&](const hir::SuperReceiver&) -> diag::Result<mir::ExprId> {
-            return block.exprs.Add(BuildThisHandle(frame));
+            return block.Add(BuildThisHandle(frame));
           }},
       ref.receiver);
   if (!object) return std::unexpected(std::move(object.error()));
@@ -510,7 +510,7 @@ auto LowerLibraryHookCall(
 }  // namespace
 
 auto BuildBuiltinMethodCall(
-    const UnitLowerer& unit_lowerer, mir::Block& block,
+    const UnitLowerer& unit_lowerer, mir::Builder block,
     support::BuiltinFn method, std::optional<mir::ExprId> receiver,
     std::vector<mir::ExprId> operands, mir::TypeId result_type) -> mir::Expr {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(method);
@@ -521,8 +521,7 @@ auto BuildBuiltinMethodCall(
   std::vector<mir::ExprId> arguments;
   arguments.reserve(operands.size() + 2);
   if (entry.takes_the_runtime_handle) {
-    arguments.push_back(
-        block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
+    arguments.push_back(block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
   }
   arguments.insert(arguments.end(), operands.begin(), operands.end());
 
@@ -533,7 +532,7 @@ auto BuildBuiltinMethodCall(
   const mir::TypeId answered =
       entry.answers_a_wait ? unit_lowerer.Unit().builtins.wait : result_type;
   return mir::MakeBuiltinCall(
-      unit_lowerer.Unit(), block, method, receiver, std::move(arguments),
+      unit_lowerer.Unit(), block.Body(), method, receiver, std::move(arguments),
       answered);
 }
 
@@ -542,7 +541,7 @@ auto BuildAssociativeTraversal(
     mir::ExprId array, AccessPath index, mir::TypeId key_type,
     mir::TypeId result_type) -> mir::Expr {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   // `first` / `last` ignore the index's current value and `next` / `prev` read
   // it as the search bound, so every form takes it as an ordinary operand. The
   // index is then written with the one visited, so it is read and written
@@ -552,7 +551,7 @@ auto BuildAssociativeTraversal(
 
   const mir::TypeId payload_type =
       CompletionPayloadType(unit, {result_type, key_type});
-  const mir::ExprId query_id = body.exprs.Add(
+  const mir::ExprId query_id = body.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -567,7 +566,7 @@ auto BuildAssociativeTraversal(
       body, completion, payload_type, kTraversalVisitedIndex, key_type);
   body.AppendStmt(
       mir::ExprStmt{
-          .expr = body.exprs.Add(
+          .expr = body.Add(
               BuildStoreExpr(unit, body, visited_into.place, visited_id))});
 
   return steps.Build(ProjectCompletionComponent(

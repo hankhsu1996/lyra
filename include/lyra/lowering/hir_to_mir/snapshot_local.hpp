@@ -6,6 +6,7 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -24,7 +25,7 @@ namespace lyra::lowering::hir_to_mir {
 // closure can forward it; without one it is anonymous (used only within
 // `wrapper`).
 auto SnapshotExprToLocal(
-    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block& wrapper,
+    const UnitLowerer& unit_lowerer, WalkFrame frame, mir::Builder wrapper,
     mir::TypeId type, mir::ExprId expr_id,
     std::optional<BindingOriginId> origin = std::nullopt) -> mir::LocalId;
 
@@ -36,7 +37,7 @@ auto SnapshotExprToLocal(
 // `local = value`, appended to `block` as a statement; `value` is already of
 // the local's type.
 void AssignLocal(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId local,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId local,
     mir::ExprId value);
 
 // `value` as a node that may stand at several places. A node that computes is

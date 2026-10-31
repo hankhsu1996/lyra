@@ -14,6 +14,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -24,7 +25,7 @@ namespace lyra::lowering::hir_to_mir {
 // fresh scope for a simple assertion, the deferred closure body for a deferred
 // one, and the fail action for a concurrent one.
 void AppendDefaultReport(
-    ProcessLowerer& process, mir::Block& block,
+    ProcessLowerer& process, mir::Builder block,
     hir::AssertionDirective directive, diag::SourceSpan span);
 
 // Whether an action arm carries a statement to run. An omitted pass arm arrives

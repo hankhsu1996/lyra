@@ -9,6 +9,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/stmt.hpp"
 
@@ -28,7 +29,9 @@ auto PayloadOf(mir::CompilationUnit& unit, std::optional<mir::TypeId> type)
 SynthesizedFunction::SynthesizedFunction(
     UnitLowerer& unit_lowerer, const WalkFrame& owner, const ClassShape& shape,
     CallableForm form)
-    : unit_lowerer_(&unit_lowerer), bindings_(unit_lowerer.Unit(), code_) {
+    : unit_lowerer_(&unit_lowerer),
+      code_(mir::CallableCode::Defined(owner.span)),
+      bindings_(unit_lowerer.Unit(), code_) {
   BoundImplicitParameters bound = BindImplicitParameters(
       unit_lowerer,
       owner.WithBlock(&code_.Body())
@@ -58,9 +61,9 @@ auto SynthesizedFunction::Finish(std::optional<mir::ExprId> result)
       }));
   std::vector<mir::ExprId> parts;
   if (result.has_value()) parts.push_back(*result);
-  code_.Body().AppendStmt(
+  Body().AppendStmt(
       mir::ReturnStmt{
-          .value = code_.Body().exprs.Add(
+          .value = Body().Add(
               mir::Expr{
                   .data = mir::CompositeExpr{.parts = std::move(parts)},
                   .type = payload})});
@@ -74,9 +77,9 @@ auto BuildFunctionCall(
     mir::CompilationUnit& unit, const WalkFrame& frame, mir::Callee callee,
     std::vector<mir::ExprId> arguments, std::optional<mir::TypeId> result)
     -> mir::ExprId {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   arguments.push_back(BuildReportHandedOn(unit, frame));
-  const mir::ExprId call = block.exprs.Add(
+  const mir::ExprId call = block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -87,7 +90,7 @@ auto BuildFunctionCall(
   if (!result.has_value()) return call;
   return block.AsValue(
       unit.types,
-      block.exprs.Add(
+      block.Add(
           mir::MakeFieldAccessExpr(
               call, mir::ComponentFieldTarget{.position = kCompletionResult},
               *result)));

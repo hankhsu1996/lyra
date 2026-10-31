@@ -57,6 +57,7 @@
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/block_body_ordinal.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
@@ -165,17 +166,17 @@ auto PopulateNamespaceOwnStorage(
     const DeclaredScopes& scopes, const WalkFrame& install_frame,
     const WalkFrame& value_frame) -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& install_block = *install_frame.current_block;
-  mir::Block& value_block = *value_frame.current_block;
+  mir::Builder install_block = install_frame.Builder();
+  mir::Builder value_block = value_frame.Builder();
 
   // The package root scope is an ExprLowerer over its own expressions: a
   // variable initializer's operands are literals, operators, and by-name
   // package symbols, none of which reach a class or a `self`.
   const StructuralScopeLowerer expr_lowerer(unit_lowerer, scope);
 
-  const auto make_cell = [&](mir::Block& block, mir::StaticVariableId variable,
+  const auto make_cell = [&](mir::Builder block, mir::StaticVariableId variable,
                              mir::TypeId cell_type) -> mir::ExprId {
-    return block.exprs.Add(
+    return block.Add(
         mir::Expr{
             .data =
                 mir::ReferenceExpr{
@@ -214,7 +215,7 @@ auto PopulateNamespaceOwnStorage(
         BuildDeclaredInitialValue(unit_lowerer, install_frame, d.type);
     install_block.AppendStmt(
         mir::ExprStmt{
-            .expr = install_block.exprs.Add(
+            .expr = install_block.Add(
                 mir::MakeCapabilityInstallCallExpr(
                     make_cell(install_block, variable, cell_type), prototype,
                     support::BuiltinFn::kInitialize,
@@ -226,10 +227,10 @@ auto PopulateNamespaceOwnStorage(
       auto value_or = expr_lowerer.LowerExpr(
           scope.exprs.Get(*var->initializer), value_frame);
       if (!value_or) return std::unexpected(std::move(value_or.error()));
-      const mir::ExprId value_id = value_block.exprs.Add(*std::move(value_or));
+      const mir::ExprId value_id = value_block.Add(*std::move(value_or));
       value_block.AppendStmt(
           mir::ExprStmt{
-              .expr = value_block.exprs.Add(BuildStoreExpr(
+              .expr = value_block.Add(BuildStoreExpr(
                   unit, value_block,
                   AccessPath{
                       .owner = make_cell(value_block, variable, cell_type),
@@ -271,17 +272,19 @@ void WrapInNamespaceStaticInitExtent(
     const UnitLowerer& unit_lowerer, mir::CompilationUnit& unit,
     mir::CallableCode& code) {
   mir::Block extent;
-  const mir::ExprId name = extent.exprs.Add(
+  mir::Builder extent_builder(extent, diag::SourceSpan{});
+  const mir::ExprId name = extent_builder.Add(
       mir::MakeStringLiteral(unit.builtins.machine_c_string, unit.name));
   AppendRuntimeEffectStmt(
-      unit_lowerer, extent, support::BuiltinFn::kEnterNamespaceStaticInit,
-      {name});
+      unit_lowerer, extent_builder,
+      support::BuiltinFn::kEnterNamespaceStaticInit, {name});
 
   mir::Block cleanup;
   AppendRuntimeEffectStmt(
-      unit_lowerer, cleanup, support::BuiltinFn::kLeaveStaticInit, {});
+      unit_lowerer, extent_builder.Into(cleanup),
+      support::BuiltinFn::kLeaveStaticInit, {});
 
-  extent.AppendFinally(std::move(code.Body()), std::move(cleanup));
+  extent_builder.AppendFinally(std::move(code.Body()), std::move(cleanup));
   code.Body() = std::move(extent);
 }
 
@@ -299,11 +302,12 @@ void GuardNamespaceInitialization(
     const UnitLowerer& unit_lowerer, mir::CompilationUnit& unit,
     mir::CallableCode& code, std::span<const std::string> reads) {
   mir::Block outer;
+  mir::Builder outer_builder(outer, diag::SourceSpan{});
   const mir::ExprId runtime =
-      outer.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  const mir::ExprId name = outer.exprs.Add(
+      outer_builder.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  const mir::ExprId name = outer_builder.Add(
       mir::MakeStringLiteral(unit.builtins.machine_c_string, unit.name));
-  const mir::ExprId claimed = outer.exprs.Add(
+  const mir::ExprId claimed = outer_builder.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -313,17 +317,18 @@ void GuardNamespaceInitialization(
                               support::BuiltinFn::kClaimNamespaceInitialize},
                   .arguments = {runtime, name}},
           .type = unit.builtins.machine_int64});
-  const mir::ExprId took_it = outer.exprs.Add(
+  const mir::ExprId took_it = outer_builder.Add(
       mir::MakeBinary(
           unit, outer, mir::BinaryOp::kInequality, claimed,
-          mir::BuildMachineIntLiteral(unit, outer, 0),
+          mir::BuildMachineIntLiteral(unit, outer_builder, 0),
           unit.builtins.machine_bool));
 
   mir::Block bring_up;
+  mir::Builder bring_up_builder(bring_up, diag::SourceSpan{});
   for (const std::string& read : reads) {
-    bring_up.AppendStmt(
+    bring_up_builder.AppendStmt(
         mir::ExprStmt{
-            .expr = bring_up.exprs.Add(
+            .expr = bring_up_builder.Add(
                 mir::Expr{
                     .data =
                         mir::CallExpr{
@@ -338,11 +343,11 @@ void GuardNamespaceInitialization(
                     .type = unit.builtins.void_type})});
   }
   const mir::BlockId initializers =
-      bring_up.child_scopes.Add(std::move(code.Body()));
-  bring_up.AppendStmt(mir::BlockStmt{.scope = initializers});
+      bring_up_builder.AddScope(std::move(code.Body()));
+  bring_up_builder.AppendStmt(mir::BlockStmt{.scope = initializers});
 
-  const mir::BlockId bring_up_id = outer.child_scopes.Add(std::move(bring_up));
-  outer.AppendStmt(
+  const mir::BlockId bring_up_id = outer_builder.AddScope(std::move(bring_up));
+  outer_builder.AppendStmt(
       mir::IfStmt{
           .condition = took_it,
           .then_scope = bring_up_id,
@@ -405,14 +410,14 @@ auto PublishObjectEntry(
   const mir::TypeId made = owning_pointer(root);
   const mir::TypeId owning = owning_pointer(published);
 
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   const mir::TypeId table_type = mir::ConstructionTablePointer(unit.types);
   const mir::LocalId parent = code.AddLocal(unit.builtins.scope_ptr);
   const mir::LocalId segment = code.AddLocal(unit.builtins.hierarchy_segment);
   code.params = {parent, segment};
   code.result_type = owning;
 
-  mir::Block& body = code.Body();
+  mir::Builder body(code.Body(), diag::SourceSpan{});
   std::vector<mir::ExprId> arguments{
       body.ReadLocal(parent, unit.builtins.scope_ptr),
       body.ReadLocal(segment, unit.builtins.hierarchy_segment),
@@ -424,9 +429,9 @@ auto PublishObjectEntry(
                 return body.ReadLocal(handed_in, table_type);
               },
               [&](const mir::ClassConstantRef& own) {
-                return body.exprs.Add(
+                return body.Add(
                     mir::MakeAddressOfExpr(
-                        body.exprs.Add(
+                        body.Add(
                             mir::Expr{
                                 .data = mir::ReferenceExpr{.target = own},
                                 .type =
@@ -439,9 +444,9 @@ auto PublishObjectEntry(
     code.params.push_back(param);
     arguments.push_back(body.ReadLocal(param, value.type));
   }
-  const mir::ExprId built = body.exprs.Add(
+  const mir::ExprId built = body.Add(
       mir::MakeNewExpr(
-          body.exprs.Add(
+          body.Add(
               mir::MakeObjectConstructionExpr(
                   object_of(root), std::move(arguments))),
           made));
@@ -991,9 +996,9 @@ void UnitLowerer::PublishTypeOperations() {
           mir::FindTypeOperation(unit_, type, default_value) != nullptr) {
         continue;
       }
-      mir::CallableCode code = mir::CallableCode::Defined();
+      mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
       code.result_type = type;
-      mir::Block& block = code.Body();
+      mir::Builder block(code.Body(), diag::SourceSpan{});
       std::expected<mir::Expr, std::string_view> built =
           DefaultValueOf(unit_, block, type);
       if (!built) {
@@ -1007,8 +1012,7 @@ void UnitLowerer::PublishTypeOperations() {
                 "bug",
                 mir::DumpType(unit_, type), built.error()));
       }
-      block.AppendStmt(
-          mir::ReturnStmt{.value = block.exprs.Add(*std::move(built))});
+      block.AppendStmt(mir::ReturnStmt{.value = block.Add(*std::move(built))});
       unit_.type_operations.push_back(
           mir::TypeOperation{
               .type = type, .answers = default_value, .code = std::move(code)});
@@ -1166,14 +1170,16 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   // anything that fills them, because everything the namespace owns comes up in
   // them -- its own variables and the type-associated cells of the classes it
   // declares -- and the class lowering writes into them as it goes.
-  mir::CallableCode install_code = mir::CallableCode::Defined();
+  mir::CallableCode install_code =
+      mir::CallableCode::Defined(namespace_frame.span);
   install_code.result_type = unit_.builtins.void_type;
   CallableBindings install_bindings(unit_, install_code);
   const WalkFrame install_frame =
       namespace_frame.WithBlock(&install_code.Body())
           .WithBindings(&install_bindings);
 
-  mir::CallableCode value_code = mir::CallableCode::Defined();
+  mir::CallableCode value_code =
+      mir::CallableCode::Defined(namespace_frame.span);
   value_code.result_type = unit_.builtins.void_type;
   CallableBindings value_bindings(unit_, value_code);
   const WalkFrame value_frame = namespace_frame.WithBlock(&value_code.Body())

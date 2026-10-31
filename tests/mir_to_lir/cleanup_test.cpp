@@ -6,9 +6,11 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/verify.hpp"
 #include "lyra/lowering/mir_to_lir/lower.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -22,7 +24,7 @@ namespace lyra::lowering::mir_to_lir {
 namespace {
 
 auto AddEmptyBody(mir::CompilationUnit& unit) -> mir::CallableId {
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
   return unit.callables.Add(
       mir::CallableDecl{
@@ -43,17 +45,19 @@ auto UnitWithCleanupCalling(support::BuiltinFn in_cleanup)
   unit.content = mir::BroughtUpNamespace{
       .install_storage = AddEmptyBody(unit),
       .initialize_storage = AddEmptyBody(unit)};
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
   mir::Block cleanup;
-  const mir::ExprId call = cleanup.exprs.Add(
+  mir::Builder cleanup_at(cleanup, diag::SourceSpan{});
+  const mir::ExprId call = cleanup_at.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Direct{.target = in_cleanup}, .arguments = {}},
           .type = unit.builtins.void_type});
-  cleanup.AppendStmt(mir::ExprStmt{.expr = call});
-  code.Body().AppendFinally(mir::Block{}, std::move(cleanup));
+  cleanup_at.AppendStmt(mir::ExprStmt{.expr = call});
+  mir::Builder code_body(code.Body(), diag::SourceSpan{});
+  code_body.AppendFinally(mir::Block{}, std::move(cleanup));
   const mir::CallableId id = unit.callables.Add(
       mir::CallableDecl{
           .code = std::move(code),
@@ -74,16 +78,17 @@ auto UnitCallingTwice(support::BuiltinFn callee) -> mir::CompilationUnit {
   unit.content = mir::BroughtUpNamespace{
       .install_storage = AddEmptyBody(unit),
       .initialize_storage = AddEmptyBody(unit)};
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
   for (int i = 0; i < 2; ++i) {
-    const mir::ExprId call = code.Body().exprs.Add(
+    mir::Builder code_body(code.Body(), diag::SourceSpan{});
+    const mir::ExprId call = code_body.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
                     .callee = mir::Direct{.target = callee}, .arguments = {}},
             .type = unit.builtins.void_type});
-    code.Body().AppendStmt(mir::ExprStmt{.expr = call});
+    code_body.AppendStmt(mir::ExprStmt{.expr = call});
   }
   const mir::CallableId id = unit.callables.Add(
       mir::CallableDecl{

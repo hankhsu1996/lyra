@@ -12,6 +12,7 @@
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -234,6 +235,7 @@ void RenderDoWhileStmt(
 // after an `else`, or on a line the caller already started.
 void RenderStmtInPlace(
     const ScopeView& view, const mir::Stmt& stmt, TargetText& out) {
+  const diag::ApplySourceSpan at = view.WritingFrom(stmt.span);
   if (stmt.label.has_value()) {
     Write(out, *stmt.label, ":\n");
     out.OpenLine();

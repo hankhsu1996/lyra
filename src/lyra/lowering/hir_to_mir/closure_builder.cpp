@@ -7,6 +7,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_signature.hpp"
@@ -28,11 +29,10 @@ namespace {
 
 // `closure` added to `block` made in a box of its own.
 auto BuildClosureBox(
-    mir::CompilationUnit& unit, mir::Block& block, mir::Expr closure)
+    mir::CompilationUnit& unit, mir::Builder block, mir::Expr closure)
     -> mir::ExprId {
   const mir::TypeId box = mir::BoxOf(unit.types, closure.type);
-  return block.exprs.Add(
-      mir::MakeNewExpr(block.exprs.Add(std::move(closure)), box));
+  return block.Add(mir::MakeNewExpr(block.Add(std::move(closure)), box));
 }
 
 // What a closure of `closure_type` is once its type is no longer known: a
@@ -49,9 +49,9 @@ auto ErasedOf(const mir::CompilationUnit& unit, mir::TypeId closure_type)
 // `held`, a box or a borrow of a closure, made one of the closure of no known
 // type `erased`, holding it as `type` does.
 auto Unsized(
-    mir::Block& block, mir::ExprId held, mir::TypeId erased, mir::TypeId type)
+    mir::Builder block, mir::ExprId held, mir::TypeId erased, mir::TypeId type)
     -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeCallExpr(
           mir::Direct{
               .target = support::BuiltinFn::kUnsize,
@@ -65,11 +65,14 @@ ClosureBuilder::ClosureBuilder(
     mir::CompilationUnit& unit, const WalkFrame& enclosing,
     support::ClosureKind kind, CapturePolicy policy)
     : unit_(&unit),
-      outer_(enclosing.current_block),
-      closure_decl_{},
+      outer_(enclosing.Builder()),
+      closure_decl_{
+          .fields = {},
+          .field_order = {},
+          .invoke = mir::CallableCode::Defined(enclosing.span)},
       closure_id_(unit.DeclareClosure()),
       bindings_(
-          unit, closure_decl_, closure_id_, kind, *enclosing.bindings, *outer_,
+          unit, closure_decl_, closure_id_, kind, *enclosing.bindings, outer_,
           std::move(policy)),
       frame_(enclosing.WithBlock(&closure_decl_.invoke.Body())
                  .WithBindings(&bindings_)
@@ -99,7 +102,7 @@ auto ClosureBuilder::Finish(mir::TypeId result_type) -> mir::Expr {
 auto ClosureBuilder::Build(mir::ExprId result) -> mir::Expr {
   const mir::TypeId result_type =
       closure_decl_.invoke.Body().exprs.Get(result).type;
-  closure_decl_.invoke.Body().AppendStmt(mir::ReturnStmt{.value = result});
+  Body().AppendStmt(mir::ReturnStmt{.value = result});
   return Finish(result_type);
 }
 
@@ -108,10 +111,9 @@ auto ClosureBuilder::BuildVoid() -> mir::Expr {
 }
 
 auto ClosureBuilder::BuildCallOnce() -> mir::Expr {
-  closure_decl_.invoke.Body().AppendStmt(
-      mir::ReturnStmt{.value = std::nullopt});
+  Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   const mir::TypeId result_type = unit_->builtins.coroutine_void;
-  const mir::ExprId box = BuildClosureBox(*unit_, *outer_, Finish(result_type));
+  const mir::ExprId box = BuildClosureBox(*unit_, outer_, Finish(result_type));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -124,7 +126,7 @@ auto ClosureBuilder::BuildCallOnce() -> mir::Expr {
 }
 
 auto BuildKeptClosure(
-    mir::CompilationUnit& unit, mir::Block& block, mir::Expr closure)
+    mir::CompilationUnit& unit, mir::Builder block, mir::Expr closure)
     -> mir::ExprId {
   const mir::TypeId erased = ErasedOf(unit, closure.type);
   const mir::ExprId box = BuildClosureBox(unit, block, std::move(closure));
@@ -135,7 +137,7 @@ auto BuildEmplacedClosure(
     mir::CompilationUnit& unit, const WalkFrame& frame, mir::Expr keeper,
     mir::Expr closure) -> mir::Expr {
   const mir::TypePool& types = unit.types;
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto& effect = std::get<mir::ClosureExpr>(closure.data);
 
   // A value the effect is made of that its source makes is held in this frame
@@ -145,9 +147,9 @@ auto BuildEmplacedClosure(
   // and storage a delay can write -- a design's variable, a property, what a
   // `ref` binds -- is read by a call that makes its value.
   for (mir::FieldInit& init : effect.field_inits) {
-    if (!mir::ValueLiesInStorage(unit, block, init.value)) {
+    if (!mir::ValueLiesInStorage(unit, block.Body(), init.value)) {
       const mir::LocalId local = DeclareLocal(frame, init.value);
-      init.value = block.ReadLocal(local, block.exprs.Get(init.value).type);
+      init.value = block.ReadLocal(local, block.Get(init.value).type);
     }
   }
 
@@ -163,17 +165,16 @@ auto BuildEmplacedClosure(
         "hir_to_mir: an effect is made in what keeps no deferred effects -- "
         "please report this as a bug");
   }
-  const mir::LocalId held =
-      DeclareLocal(frame, block.exprs.Add(std::move(keeper)));
+  const mir::LocalId held = DeclareLocal(frame, block.Add(std::move(keeper)));
   const mir::TypeId effect_type = closure.type;
-  const mir::ExprId closure_value = block.exprs.Add(std::move(closure));
+  const mir::ExprId closure_value = block.Add(std::move(closure));
   const mir::ExprId keeper_value = block.ReadLocal(held, keeper_pointer);
   const mir::TypeId effect_pointer = types.Intern(
       mir::Type{mir::PointerType{
           .pointee = effect_type,
           .ownership = mir::PointerOwnership::kBorrowed,
           .mutability = mir::Mutability::kMutable}});
-  const mir::ExprId made = block.exprs.Add(
+  const mir::ExprId made = block.Add(
       mir::MakePlacementNewExpr(
           closure_value,
           mir::PlacementAllocation{
@@ -188,9 +189,9 @@ auto BuildEmplacedClosure(
 }
 
 auto BuildBorrowedClosure(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId closure)
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId closure)
     -> mir::ExprId {
-  const mir::TypeId closure_type = block.exprs.Get(closure).type;
+  const mir::TypeId closure_type = block.Get(closure).type;
   const mir::ExprId borrowed = mir::Borrow(unit, block, closure);
   const mir::TypeId erased = ErasedOf(unit, closure_type);
   return Unsized(

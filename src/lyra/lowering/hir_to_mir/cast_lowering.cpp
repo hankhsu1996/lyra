@@ -11,6 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -102,9 +103,9 @@ auto IsArrayOfBytes(
 }
 
 auto ToReal(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
-  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
+  const mir::Type& source = unit.types.Get(block.Get(operand).type);
   // LRM 6.12.1: crossing precisions is the destination type's own conversion.
   if (source.IsRealFamily()) {
     return MakeRealConversionCall(
@@ -119,31 +120,32 @@ auto ToReal(
 }
 
 auto ToIntegral(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
-  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
+  const mir::Type& source = unit.types.Get(block.Get(operand).type);
   if (source.IsRealFamily()) {
-    const mir::ExprId rounded = block.exprs.Add(MakeRoundCall(unit, operand));
+    const mir::ExprId rounded = block.Add(MakeRoundCall(unit, operand));
     return mir::MakeBuiltinCall(
-        unit, block, support::BuiltinFn::kIntegralFromInt, std::nullopt,
+        unit, block.Body(), support::BuiltinFn::kIntegralFromInt, std::nullopt,
         {rounded}, destination);
   }
   if (source.IsIntegral()) {
-    return mir::MakeIntegralConversion(unit, block, operand, destination);
+    return mir::MakeIntegralConversion(
+        unit, block.Body(), operand, destination);
   }
   // LRM 5.9: right-justified into the destination type.
   if (source.Is<mir::StringType>()) {
     return mir::MakeBuiltinCall(
-        unit, block, support::BuiltinFn::kIntegralFromString, std::nullopt,
-        {operand}, destination);
+        unit, block.Body(), support::BuiltinFn::kIntegralFromString,
+        std::nullopt, {operand}, destination);
   }
   RefuseConversion("an integral type");
 }
 
 auto ToString(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
-  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
+  const mir::Type& source = unit.types.Get(block.Get(operand).type);
   // LRM 21.3.4.3: an unpacked array of bytes read as a string.
   if (source.Is<mir::UnpackedArrayType>()) {
     return MakeStringFromFactory(
@@ -153,12 +155,12 @@ auto ToString(
   // before the program runs, so its string is stated as the string it is.
   if (source.IsIntegral()) {
     if (std::optional<std::string> text =
-            mir::FoldStringFromBits(unit, block.exprs.Get(operand))) {
+            mir::FoldStringFromBits(unit, block.Get(operand))) {
       return mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Construct{},
-                  .arguments = {block.exprs.Add(
+                  .arguments = {block.Add(
                       mir::MakeStringLiteral(destination, *std::move(text)))}},
           .type = destination};
     }
@@ -172,9 +174,9 @@ auto ToString(
 // written in and identified by its magnitude, so the index is built over the
 // value as it is.
 auto ToWildcardIndex(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
-  if (unit.types.Get(block.exprs.Get(operand).type).IsIntegral()) {
+  if (unit.types.Get(block.Get(operand).type).IsIntegral()) {
     return mir::Expr{
         .data =
             mir::CallExpr{.callee = mir::Construct{}, .arguments = {operand}},
@@ -253,7 +255,7 @@ auto FromArrayEntry(const mir::Type& destination) -> support::BuiltinFn {
 // The operation `type`'s body answers, asked of `operand`, as a value of
 // `result`: the body borrows what it is asked of.
 auto CallBoundFreeOperation(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::BuiltinFn operation, mir::TypeId type, mir::ExprId operand,
     mir::TypeId result) -> mir::Expr {
   const mir::ExprId borrowed = mir::Borrow(unit, block, operand);
@@ -284,11 +286,11 @@ auto CallBoundFreeOperation(
 // queue bounded, which every type equivalent to it shares, each element built
 // afresh on the way out.
 auto ToArrayOfAnotherType(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
-  const mir::TypeId source = block.exprs.Get(operand).type;
+  const mir::TypeId source = block.Get(operand).type;
   if (source == destination) {
-    return block.exprs.Get(operand);
+    return block.Get(operand);
   }
   const mir::Type& from = unit.types.Get(source);
   const mir::Type& to = unit.types.Get(destination);
@@ -300,8 +302,7 @@ auto ToArrayOfAnotherType(
     if (reshaped == destination) {
       return built;
     }
-    return ToArrayOfAnotherType(
-        unit, block, block.exprs.Add(built), destination);
+    return ToArrayOfAnotherType(unit, block, block.Add(built), destination);
   }
   if (element == *to.ContainerElementType()) {
     return BuildArrayFromArrayCall(FromArrayEntry(to), operand, destination);
@@ -310,7 +311,7 @@ auto ToArrayOfAnotherType(
   if (bound_free != WithoutQueueBounds(unit.types, destination)) {
     RefuseConversion("an array of a type not equivalent to it");
   }
-  const mir::ExprId freed = block.exprs.Add(
+  const mir::ExprId freed = block.Add(
       HoldsBoundedQueueBelow(unit.types, source)
           ? CallBoundFreeOperation(
                 unit, block, support::BuiltinFn::kToBoundFree, source, operand,
@@ -325,9 +326,9 @@ auto ToArrayOfAnotherType(
 }
 
 auto ToFixedSizeArray(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
-  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
+  const mir::Type& source = unit.types.Get(block.Get(operand).type);
   const auto& array = unit.types.Get(destination).Get<mir::UnpackedArrayType>();
   if (IsUnpackedArrayKind(source)) {
     return ToArrayOfAnotherType(unit, block, operand, destination);
@@ -351,9 +352,9 @@ auto ToFixedSizeArray(
 // A dynamic array, a queue or an associative array is assigned only another
 // array (LRM 7.6, 7.9.9).
 auto ToContainer(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
-  if (!IsUnpackedArrayKind(unit.types.Get(block.exprs.Get(operand).type))) {
+  if (!IsUnpackedArrayKind(unit.types.Get(block.Get(operand).type))) {
     RefuseConversion("an array");
   }
   return ToArrayOfAnotherType(unit, block, operand, destination);
@@ -364,9 +365,9 @@ auto ToContainer(
 // one declared with an interface class it implements (LRM 8.26.5). The object
 // is unchanged and only the handle's declared class differs.
 auto ToClassHandle(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
-  if (unit.types.Get(block.exprs.Get(operand).type).Is<mir::ManagedRefType>()) {
+  if (unit.types.Get(block.Get(operand).type).Is<mir::ManagedRefType>()) {
     return mir::Expr{
         .data = mir::CastExpr{.operand = operand}, .type = destination};
   }
@@ -376,18 +377,18 @@ auto ToClassHandle(
 }  // namespace
 
 auto BuildToInt64Call(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id)
-    -> mir::ExprId {
-  return block.exprs.Add(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id) -> mir::ExprId {
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kToInt64, operand_id, {},
+          unit, block.Body(), support::BuiltinFn::kToInt64, operand_id, {},
           unit.builtins.machine_int64));
 }
 
 auto BuildValueConversion(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId dst_type) -> mir::Expr {
-  const mir::Expr& operand_expr = block.exprs.Get(operand_id);
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId dst_type) -> mir::Expr {
+  const mir::Expr& operand_expr = block.Get(operand_id);
   if (operand_expr.type == dst_type) {
     return operand_expr;
   }
@@ -469,7 +470,7 @@ auto BuildValueConversion(
               return none(t);
             }
             return mir::MakeSameRepresentationCast(
-                unit, block, operand_id, dst_type);
+                unit, block.Body(), operand_id, dst_type);
           },
           [&](const mir::ReferenceWrapperType& t) { return none(t); },
           [&](const mir::PointerType& t) { return none(t); },
@@ -494,9 +495,9 @@ auto BuildValueConversion(
 }
 
 auto BuildPropagatedConversion(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId dst_type) -> mir::Expr {
-  const auto& src_ty = unit.types.Get(block.exprs.Get(operand_id).type);
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId dst_type) -> mir::Expr {
+  const auto& src_ty = unit.types.Get(block.Get(operand_id).type);
   const auto& dst_ty = unit.types.Get(dst_type);
   if (src_ty.IsIntegral() && dst_ty.IsIntegral()) {
     const mir::Signedness propagated = dst_ty.Integral().signedness;
@@ -514,40 +515,39 @@ auto BuildPropagatedConversion(
 }
 
 auto ConvertToType(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId dst_type) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId dst_type) -> mir::ExprId {
   // A conversion acts on a value, so a place it is handed is read first.
   operand_id = block.AsValue(unit.types, operand_id);
-  if (block.exprs.Get(operand_id).type == dst_type) {
+  if (block.Get(operand_id).type == dst_type) {
     return operand_id;
   }
-  return block.exprs.Add(
-      BuildValueConversion(unit, block, operand_id, dst_type));
+  return block.Add(BuildValueConversion(unit, block, operand_id, dst_type));
 }
 
 auto AtType(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId type) -> mir::ExprId {
-  if (block.exprs.Get(operand_id).type == type) {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId type) -> mir::ExprId {
+  if (block.Get(operand_id).type == type) {
     return operand_id;
   }
   return ConvertToType(unit, block, operand_id, type);
 }
 
 auto ConvertToPropagatedType(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId dst_type) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId dst_type) -> mir::ExprId {
   operand_id = block.AsValue(unit.types, operand_id);
-  if (block.exprs.Get(operand_id).type == dst_type) {
+  if (block.Get(operand_id).type == dst_type) {
     return operand_id;
   }
-  return block.exprs.Add(
+  return block.Add(
       BuildPropagatedConversion(unit, block, operand_id, dst_type));
 }
 
 auto OperandAtHandleType(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
-    mir::TypeId compared_with) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId operand_id, mir::TypeId compared_with) -> mir::ExprId {
   if (!unit.types.Get(compared_with).Is<mir::ManagedRefType>()) {
     return operand_id;
   }

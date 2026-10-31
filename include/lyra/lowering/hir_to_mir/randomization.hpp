@@ -12,6 +12,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -32,7 +33,7 @@ class UnitLowerer;
 // it is made of one, which are all a chosen one takes (LRM 18.5); nothing for
 // any other type.
 [[nodiscard]] auto ChosenMembers(
-    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId type)
+    UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId type)
     -> std::optional<mir::ExprId>;
 
 // The name the mode of the static constraint block `block` is kept under, which

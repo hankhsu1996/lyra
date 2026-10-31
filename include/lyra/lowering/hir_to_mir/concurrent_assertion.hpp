@@ -12,6 +12,7 @@
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -24,7 +25,7 @@ namespace lyra::lowering::hir_to_mir {
 // on the scope that declares it, so the storage and everything that reaches it
 // are always the same scope.
 [[nodiscard]] auto BuildEvaluationAttemptsExpr(
-    mir::Block& block, const WalkFrame& frame,
+    mir::Builder block, const WalkFrame& frame,
     const StructuralScopeLowerer& lowerer, hir::ConcurrentAssertionId id)
     -> mir::ExprId;
 

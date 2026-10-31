@@ -24,6 +24,7 @@
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
@@ -118,13 +119,19 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
   for (std::uint32_t i = 0; i < fn_->blocks.size(); ++i) {
     builder_.SetInsertPoint(blocks_[i]);
     const lir::BasicBlock& block = fn_->blocks[i];
+    // Each instruction and terminator is generated for the piece of source it
+    // was lowered from, so a failure or a refusal while generating it stands
+    // there.
     for (const lir::Instr& instr : block.instrs) {
-      auto lowered = LowerInstrInto(instr);
+      const diag::FailureContext at(instr.span);
+      auto lowered = diag::PlacedAt(LowerInstrInto(instr), instr.span);
       if (!lowered) {
         return std::unexpected(std::move(lowered.error()));
       }
     }
-    auto terminated = LowerTerminatorInto(block.terminator);
+    const diag::FailureContext at(block.terminator.span);
+    auto terminated = diag::PlacedAt(
+        LowerTerminatorInto(block.terminator), block.terminator.span);
     if (!terminated) {
       return std::unexpected(std::move(terminated.error()));
     }

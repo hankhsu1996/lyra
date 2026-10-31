@@ -11,6 +11,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -85,7 +86,7 @@ struct NamedStaticProperty {
 struct ConstructorDecl {
   // A class that states a construction defines it, so this code is always a
   // definition; an empty body is a class that constructs nothing.
-  CallableCode code = CallableCode::Defined();
+  CallableCode code = CallableCode::Defined(diag::SourceSpan{});
 };
 
 // One behavior of an interface class a class answers (LRM 8.26.2), and the

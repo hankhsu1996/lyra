@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -31,12 +32,12 @@ namespace {
 // A call of the library entry `entry` on what `receiver` names, answering
 // `result`.
 auto EntryCall(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::BuiltinFn entry, std::optional<mir::ExprId> receiver,
     std::vector<mir::ExprId> arguments, mir::TypeId result) -> mir::ExprId {
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeBuiltinCall(
-          unit, block, entry, receiver, std::move(arguments), result));
+          unit, block.Body(), entry, receiver, std::move(arguments), result));
 }
 
 // The body answering `answers` with a value of `to` built out of the value of
@@ -49,7 +50,7 @@ auto ConversionBody(
     UnitLowerer& lowerer, support::BuiltinFn answers, mir::TypeId from,
     mir::TypeId to) -> mir::CallableCode {
   mir::CompilationUnit& unit = lowerer.Unit();
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   CallableBindings bindings(unit, code);
   const mir::TypeId reference = ReferenceTo(unit, from);
   const mir::LocalId param = code.AddLocal(reference);
@@ -65,7 +66,7 @@ auto ConversionBody(
   WalkFrame frame;
   frame.bindings = &bindings;
   frame.current_block = &code.Body();
-  mir::Block& block = code.Body();
+  mir::Builder block = frame.Builder();
 
   const mir::Type& to_type = unit.types.Get(to);
   const mir::TypeId element = *to_type.ContainerElementType();
@@ -95,13 +96,13 @@ auto ConversionBody(
                        {BuildToInt64Call(
                            unit, block, EntryCount(unit, block, walked))},
                        to)
-                 : block.exprs.Add(BuildDefaultValueExpr(unit, block, to)));
+                 : block.Add(BuildDefaultValueExpr(unit, block, to)));
 
   auto loop = BuildEntryLoopStmt(
       lowerer, frame, walked, WalkOrder::kFromFirst, std::nullopt,
       [&](const WalkFrame& at,
           const VisitedEntry& entry) -> diag::Result<void> {
-        mir::Block& b = *at.current_block;
+        mir::Builder b = at.Builder();
         const mir::ExprId value =
             ConvertToType(unit, b, entry.element, element);
         if (to_type.Is<mir::QueueType>()) {
@@ -112,8 +113,7 @@ auto ConversionBody(
         DescentStep step = StepToVisited(unit, b, entry.place, element);
         const AccessPath into = DescendInto(std::move(whole), std::move(step));
         b.AppendStmt(
-            mir::ExprStmt{
-                .expr = b.exprs.Add(BuildStoreExpr(unit, b, into, value))});
+            mir::ExprStmt{.expr = b.Add(BuildStoreExpr(unit, b, into, value))});
         return {};
       });
   if (!loop) {
@@ -127,15 +127,18 @@ auto ConversionBody(
     const mir::TypeId from_element =
         *unit.types.Get(from).ContainerElementType();
     mir::Block given;
+    mir::Builder given_builder = block.Into(given);
     const mir::ExprId absent = EntryCall(
-        unit, given, support::BuiltinFn::kAssocAbsentValue,
-        PathPlace(unit, given, NamedIn(walked.path, given)), {}, from_element);
-    const mir::ExprId held = given.ReadLocal(built, to);
-    const mir::ExprId converted = ConvertToType(unit, given, absent, element);
+        unit, given_builder, support::BuiltinFn::kAssocAbsentValue,
+        PathPlace(unit, given_builder, NamedIn(walked.path, given_builder)), {},
+        from_element);
+    const mir::ExprId held = given_builder.ReadLocal(built, to);
+    const mir::ExprId converted =
+        ConvertToType(unit, given_builder, absent, element);
     AssignLocal(
-        unit, given, built,
+        unit, given_builder, built,
         EntryCall(
-            unit, given, support::BuiltinFn::kAssocWithDefault, held,
+            unit, given_builder, support::BuiltinFn::kAssocWithDefault, held,
             {converted}, to));
     block.AppendIfThen(
         EntryCall(

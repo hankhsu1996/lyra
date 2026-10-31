@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/path_select.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -27,7 +28,7 @@ namespace lyra::lowering::hir_to_mir {
 // unit's record of that class laid the member out at. The answer is a borrowed
 // pointer to that storage.
 auto ReadPublishedMember(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
     hir::ScopeClassId scope_class, hir::PublishedMemberId member)
     -> mir::ExprId;
 
@@ -39,14 +40,14 @@ auto ReadPublishedMember(
 // pointer type its member holds; a generate block (LRM 27) is viewed as the
 // class the element says it was published as.
 auto StepThroughPublished(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
     const hir::PublishedScopeRef& names, std::span<const std::uint32_t> selects,
     const SelectEvaluator& evaluate_select) -> diag::Result<mir::ExprId>;
 
 // What a `disable` of a block or task another unit published terminates (LRM
 // 9.6.2), on the object `object` points at, as a borrowed pointer.
 auto ReachPublishedDisableTarget(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
     const hir::PublishedDisableTargetLeaf& leaf) -> mir::ExprId;
 
 // The rest of reaching the instance a virtual interface holds, given the handle
@@ -78,8 +79,8 @@ auto HeldInterfaceObject(
   auto handle_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(access.handle), steps.Frame());
   if (!handle_or) return std::unexpected(std::move(handle_or.error()));
-  mir::Block& block = *frame.current_block;
-  mir::ExprId reached = block.exprs.Add(
+  mir::Builder block = frame.Builder();
+  mir::ExprId reached = block.Add(
       ReachHeldInterface(unit, steps, *std::move(handle_or), object_pointer));
   const SelectEvaluator evaluate_select = EvaluateSelectsIn(lowerer, frame);
   for (const hir::PublishedStep& step : access.steps) {
@@ -102,7 +103,7 @@ auto HeldInterfaceMember(
   auto reached = HeldInterfaceObject(lowerer, frame, access.instance);
   if (!reached) return std::unexpected(std::move(reached.error()));
   return ReadPublishedMember(
-      lowerer.Owner(), *frame.current_block, *reached, access.scope_class,
+      lowerer.Owner(), frame.Builder(), *reached, access.scope_class,
       access.member);
 }
 
@@ -110,7 +111,7 @@ auto HeldInterfaceMember(
 // object: the value a virtual interface holds, built from that address -- which
 // instance it is, and nothing about what reaching into it needs.
 auto InterfaceValueOf(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object,
     mir::TypeId type) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -98,9 +98,11 @@ end is behind it.
 - A design's sources are in memory once.
 - A place means something only in the run that read the source, so it is never written into anything
   kept across runs.
-- The forms after the first hold no place, so what they refuse is still reported with none. That is
-  a limit of those forms and not of this decision; the same value can be carried further when they
-  need it.
+- The forms after the first carry the same value: each expression and statement of MIR, and each
+  instruction and terminator of LIR, holds the place of the source it was lowered from, so what a
+  later layer refuses or fails on is reported where the source wrote it. Until they carried it, this
+  line recorded that they held none, which left refusals and compiler failures past the first form
+  with no line to point at.
 
 ## Rejected
 

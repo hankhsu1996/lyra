@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -102,17 +103,16 @@ auto BuildUnpackedConcatSteps(
   const mir::TypeId queue_type =
       result.Is<mir::QueueType>() ? result_type : QueueOf(unit, element_type);
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   const mir::LocalId appended = steps.DeclareLocal(
       queue_type,
-      body.exprs.Add(BuildArrayConstructionCall(unit, body, queue_type, {})));
+      body.Add(BuildArrayConstructionCall(unit, body, queue_type, {})));
   for (const hir::ExprId id : parts) {
     const hir::Expr& part = lowerer.HirExprs().Get(id);
     auto lowered = lowerer.LowerExpr(part, steps.Frame());
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    const mir::ExprId value = body.exprs.Add(*std::move(lowered));
-    if (!ContributesItsElements(
-            unit, body.exprs.Get(value).type, element_type)) {
+    const mir::ExprId value = body.Add(*std::move(lowered));
+    if (!ContributesItsElements(unit, body.Get(value).type, element_type)) {
       AppendPushBack(owner, body, appended, queue_type, value);
       continue;
     }
@@ -123,7 +123,7 @@ auto BuildUnpackedConcatSteps(
         [&](const WalkFrame& at,
             const VisitedEntry& entry) -> diag::Result<void> {
           AppendPushBack(
-              owner, *at.current_block, appended, queue_type, entry.element);
+              owner, at.Builder(), appended, queue_type, entry.element);
           return {};
         });
     if (!walked) return std::unexpected(std::move(walked.error()));
@@ -134,7 +134,7 @@ auto BuildUnpackedConcatSteps(
     return steps.Build(held);
   }
   return steps.Build(
-      body.exprs.Add(BuildValueConversion(unit, body, held, result_type)));
+      body.Add(BuildValueConversion(unit, body, held, result_type)));
 }
 
 }  // namespace
@@ -143,7 +143,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& result_ty = unit.types.Get(result_type);
   // A queue or a dynamic array is grown from the parts, and so is a fixed-size
@@ -168,13 +168,13 @@ auto LowerHirConcatExpr(
   for (const auto& id : c.operands) {
     auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    operand_ids.push_back(block.exprs.Add(*std::move(lowered)));
+    operand_ids.push_back(block.Add(*std::move(lowered)));
   }
   // What the operator joins -- bits, characters, elements -- differs by operand
   // family, so which operation this is settles here, where the family is known,
   // rather than at each consumer.
   if (result_ty.Is<mir::StringType>()) {
-    return block.exprs.Get(BuildStringJoin(unit, block, operand_ids));
+    return block.Get(BuildStringJoin(unit, block, operand_ids));
   }
   if (result_ty.Is<mir::UnpackedArrayType>()) {
     return BuildArrayConstructionCall(
@@ -188,7 +188,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirStreamingConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::StreamingConcatExpr& s)
     -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   // LRM 11.4.14.1: each operand contributes its own bits, appended to the right
   // of what the operands before it contributed, so the first is most
@@ -200,14 +200,14 @@ auto LowerHirStreamingConcatExpr(
     if (operand.with.has_value()) {
       auto window = LowerStreamWindowRun(lowerer, frame, operand);
       if (!window) return std::unexpected(std::move(window.error()));
-      parts.push_back(block.exprs.Add(*std::move(window)));
+      parts.push_back(block.Add(*std::move(window)));
       continue;
     }
     const hir::Expr& value = lowerer.HirExprs().Get(operand.value);
     auto lowered = lowerer.LowerAsPlace(value, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     auto part = BuildToBitstream(
-        unit, block, block.exprs.Add(*std::move(lowered)), value.span);
+        unit, block, block.Add(*std::move(lowered)), value.span);
     if (!part) return std::unexpected(std::move(part.error()));
     parts.push_back(block.AsValue(unit.types, *part));
   }
@@ -215,7 +215,7 @@ auto LowerHirStreamingConcatExpr(
   // one, and otherwise an integral value as wide as the parts together.
   const bool any_part_is_run =
       std::ranges::any_of(parts, [&](mir::ExprId part) {
-        return block.exprs.Get(part).type == unit.builtins.bit_vec;
+        return block.Get(part).type == unit.builtins.bit_vec;
       });
   const mir::ExprId joined =
       any_part_is_run
@@ -223,27 +223,26 @@ auto LowerHirStreamingConcatExpr(
                 unit, block,
                 frame.bindings->DeclareAnonymous(unit.builtins.bit_vec), parts)
           : BuildBitsJoin(unit, frame, parts);
-  return block.exprs.Get(
-      BuildReorderedStream(unit, block, joined, s.block_bits));
+  return block.Get(BuildReorderedStream(unit, block, joined, s.block_bits));
 }
 
 template <ExprLowerer Lowerer>
 auto LowerHirReplicationExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ReplicationExpr& r,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto concat_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.concat), frame);
   if (!concat_or) return std::unexpected(std::move(concat_or.error()));
-  const mir::ExprId concat_id = block.exprs.Add(*std::move(concat_or));
+  const mir::ExprId concat_id = block.Add(*std::move(concat_or));
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   if (unit.types.Get(result_type).IsIntegral()) {
-    return BuildBitsReplication(unit, block, concat_id, result_type);
+    return BuildBitsReplication(unit, block.Body(), concat_id, result_type);
   }
   // Characters are repeated as many times as the multiplier evaluates to, which
   // for a string need not be a constant (LRM 11.4.12.2).
   auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.count), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
-  const mir::ExprId value_id = block.exprs.Add(*std::move(count_or));
+  const mir::ExprId value_id = block.Add(*std::move(count_or));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -258,7 +257,7 @@ auto LowerHirReplicationExpr(
 auto BuildPositionalAggregate(
     mir::CompilationUnit& unit, const WalkFrame& frame, mir::TypeId result_type,
     std::vector<mir::ExprId> elements) -> mir::Expr {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto& result_ty = unit.types.Get(result_type);
   if (BuildsFromAnElementList(result_ty)) {
     return BuildArrayConstructionCall(
@@ -293,13 +292,13 @@ template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternExpr& a,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   std::vector<mir::ExprId> element_ids;
   element_ids.reserve(a.elements.size());
   for (const auto& id : a.elements) {
     auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    element_ids.push_back(block.exprs.Add(*std::move(lowered)));
+    element_ids.push_back(block.Add(*std::move(lowered)));
   }
   return BuildPositionalAggregate(
       lowerer.Owner().Unit(), frame, result_type, std::move(element_ids));
@@ -320,7 +319,7 @@ auto BuildKeyedPatternBase(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternKeyedExpr& k,
     hir::TypeId hir_result_type, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   if (!k.default_value.has_value()) {
     return BuildDefaultValueFromHir(lowerer.Owner(), block, hir_result_type);
@@ -328,7 +327,7 @@ auto BuildKeyedPatternBase(
   auto fill_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(*k.default_value), frame);
   if (!fill_or) return std::unexpected(std::move(fill_or.error()));
-  const mir::ExprId fill = block.exprs.Add(*std::move(fill_or));
+  const mir::ExprId fill = block.Add(*std::move(fill_or));
 
   const auto& hir_ty = lowerer.Owner().Hir().types.Get(hir_result_type);
   if (hir_ty.template Is<hir::PackedArrayType>()) {
@@ -338,7 +337,7 @@ auto BuildKeyedPatternBase(
         unit.types, result_integral.bit_width, result_integral.state_kind);
     return BuildValueConversion(
         unit, block,
-        block.exprs.Add(BuildBitsReplication(unit, block, fill, copies)),
+        block.Add(BuildBitsReplication(unit, block.Body(), fill, copies)),
         result_type);
   }
   return BuildFixedArrayConstructionCall(unit, block, result_type, {fill});
@@ -387,15 +386,14 @@ auto LowerHirAssignmentPatternKeyedExpr(
   }
 
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   const WalkFrame& step_frame = steps.Frame();
 
   auto base = build_base(step_frame);
   if (!base) return std::unexpected(std::move(base.error()));
   const mir::LocalId built = steps.Bindings().DeclareAnonymous(result_type);
   body.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = built, .init = body.exprs.Add(*std::move(base))});
+      mir::LocalDeclStmt{.target = built, .init = body.Add(*std::move(base))});
 
   for (const auto& entry : k.entries) {
     auto index =
@@ -404,8 +402,8 @@ auto LowerHirAssignmentPatternKeyedExpr(
     auto value =
         lowerer.LowerExpr(lowerer.HirExprs().Get(entry.value), step_frame);
     if (!value) return std::unexpected(std::move(value.error()));
-    const mir::ExprId index_id = body.exprs.Add(*std::move(index));
-    const mir::ExprId value_id = body.exprs.Add(*std::move(value));
+    const mir::ExprId index_id = body.Add(*std::move(index));
+    const mir::ExprId value_id = body.Add(*std::move(value));
     const mir::ExprId owner = body.LocalPlace(built, result_type);
     const AccessPath target = DescendInto(
         AccessPath{.owner = owner, .descent = {}},
@@ -413,8 +411,7 @@ auto LowerHirAssignmentPatternKeyedExpr(
             lowerer.Owner(), body, hir_result_type, index_id, element_type));
     body.AppendStmt(
         mir::ExprStmt{
-            .expr =
-                body.exprs.Add(BuildStoreExpr(unit, body, target, value_id))});
+            .expr = body.Add(BuildStoreExpr(unit, body, target, value_id))});
   }
 
   return steps.Build(body.LocalPlace(built, result_type));
@@ -425,12 +422,12 @@ auto LowerHirAssignmentPatternReplicationExpr(
     Lowerer& lowerer, WalkFrame frame,
     const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto lower_item = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
     auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return block.exprs.Add(*std::move(lowered));
+    return block.Add(*std::move(lowered));
   };
 
   // A structure's members differ in type, so there is no repeat for the target
@@ -473,7 +470,7 @@ auto LowerHirAssignmentPatternReplicationExpr(
   if (BuildsFromAnElementList(result_ty)) {
     auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.count), frame);
     if (!count_or) return std::unexpected(std::move(count_or.error()));
-    const mir::ExprId count_value = block.exprs.Add(*std::move(count_or));
+    const mir::ExprId count_value = block.Add(*std::move(count_or));
     const mir::ExprId count_id = BuildToInt64Call(unit, block, count_value);
     return BuildArrayRepeatCall(
         unit, block, result_type, std::move(item_ids), count_id);
@@ -482,11 +479,11 @@ auto LowerHirAssignmentPatternReplicationExpr(
   // type states.
   const mir::ExprId inner_id = BuildBitsJoin(unit, frame, item_ids);
   const mir::IntegralStateKind inner_state =
-      unit.types.Get(block.exprs.Get(inner_id).type).Integral().state_kind;
+      unit.types.Get(block.Get(inner_id).type).Integral().state_kind;
   const mir::TypeId copies = mir::PackedVectorOf(
       unit.types, result_ty.Integral().bit_width, inner_state);
   const mir::ExprId repl_id =
-      block.exprs.Add(BuildBitsReplication(unit, block, inner_id, copies));
+      block.Add(BuildBitsReplication(unit, block.Body(), inner_id, copies));
   return BuildValueConversion(unit, block, repl_id, result_type);
 }
 
@@ -499,7 +496,7 @@ auto LowerHirDynamicArrayNewExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
     hir::TypeId hir_result_type, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::TypeId element = unit_lowerer.Hir()
@@ -508,7 +505,7 @@ auto LowerHirDynamicArrayNewExpr(
                                   ->element_type;
   auto size_or = lowerer.LowerExpr(lowerer.HirExprs().Get(n.size), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
-  const mir::ExprId size = block.exprs.Add(*std::move(size_or));
+  const mir::ExprId size = block.Add(*std::move(size_or));
   std::optional<mir::ExprId> source;
   if (n.initializer.has_value()) {
     auto init_or =
@@ -516,8 +513,8 @@ auto LowerHirDynamicArrayNewExpr(
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     // The new array's elements are assigned the source's (LRM 7.5.1), so the
     // source is brought to its type.
-    source = ConvertToType(
-        unit, block, block.exprs.Add(*std::move(init_or)), result_type);
+    source =
+        ConvertToType(unit, block, block.Add(*std::move(init_or)), result_type);
   }
   const auto made = [&](mir::ExprId count, std::optional<mir::ExprId> from) {
     std::vector<mir::ExprId> args{BuildToInt64Call(unit, block, count)};
@@ -544,12 +541,12 @@ auto LowerHirDynamicArrayNewExpr(
   // makes. The count and the source are read a second time for that, so each
   // is evaluated once, into a local.
   const mir::TypeId int_type = unit.builtins.int_type;
-  const mir::TypeId size_type = block.exprs.Get(size).type;
+  const mir::TypeId size_type = block.Get(size).type;
   const mir::LocalId held_size = DeclareLocal(frame, size);
   std::optional<mir::LocalId> held_source;
   mir::TypeId source_type{};
   if (source.has_value()) {
-    source_type = block.exprs.Get(*source).type;
+    source_type = block.Get(*source).type;
     held_source = DeclareLocal(frame, *source);
   }
   const mir::ExprId read_size = block.ReadLocal(held_size, size_type);
@@ -558,10 +555,10 @@ auto LowerHirDynamicArrayNewExpr(
     read_source = block.ReadLocal(*held_source, source_type);
   }
   const mir::LocalId array =
-      DeclareLocal(frame, block.exprs.Add(made(read_size, read_source)));
+      DeclareLocal(frame, block.Add(made(read_size, read_source)));
   const mir::LocalId given = DeclareLocal(
       frame, held_source.has_value()
-                 ? block.exprs.Add(
+                 ? block.Add(
                        mir::MakeCallExpr(
                            mir::Direct{
                                .target = support::BuiltinFn::kSize,
@@ -573,11 +570,12 @@ auto LowerHirDynamicArrayNewExpr(
   const mir::ExprId lhs = ConvertToType(
       unit, block, block.ReadLocal(held_size, size_type), int_type);
   const mir::ExprId rhs = block.ReadLocal(given, int_type);
-  const mir::ExprId count = block.exprs.Add(
-      mir::MakeBinary(unit, block, mir::BinaryOp::kSub, lhs, rhs, int_type));
+  const mir::ExprId count = block.Add(
+      mir::MakeBinary(
+          unit, block.Body(), mir::BinaryOp::kSub, lhs, rhs, int_type));
   GiveElementsNewEvents(
       unit_lowerer, frame, array, result_type, element, first, count);
-  return block.exprs.Get(block.ReadLocal(array, result_type));
+  return block.Get(block.ReadLocal(array, result_type));
 }
 
 // LRM 7.9.11 associative literal. Each (key, value) entry is lowered into a
@@ -589,18 +587,18 @@ auto LowerHirAssociativeAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame,
     const hir::AssociativeAssignmentPatternExpr& a, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   std::vector<std::pair<mir::ExprId, mir::ExprId>> entries;
   entries.reserve(a.entries.size());
   for (const auto& entry : a.entries) {
     auto key_or = lowerer.LowerExpr(lowerer.HirExprs().Get(entry.key), frame);
     if (!key_or) return std::unexpected(std::move(key_or.error()));
-    const mir::ExprId key_id = block.exprs.Add(*std::move(key_or));
+    const mir::ExprId key_id = block.Add(*std::move(key_or));
     auto value_or =
         lowerer.LowerExpr(lowerer.HirExprs().Get(entry.value), frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
-    const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
+    const mir::ExprId value_id = block.Add(*std::move(value_or));
     entries.emplace_back(key_id, value_id);
   }
   std::optional<mir::ExprId> stated_default;
@@ -608,7 +606,7 @@ auto LowerHirAssociativeAssignmentPatternExpr(
     auto default_or =
         lowerer.LowerExpr(lowerer.HirExprs().Get(*a.default_value), frame);
     if (!default_or) return std::unexpected(std::move(default_or.error()));
-    stated_default = block.exprs.Add(*std::move(default_or));
+    stated_default = block.Add(*std::move(default_or));
   }
   return BuildAssociativeConstructionCall(
       unit, block, result_type, std::move(entries), stated_default);

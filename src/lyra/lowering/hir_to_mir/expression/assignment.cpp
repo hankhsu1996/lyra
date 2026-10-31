@@ -27,6 +27,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -146,7 +147,7 @@ auto FrozenOwner(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, const PathOwner& owner) -> PathOwner {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& outer_block = *outer_frame.current_block;
+  mir::Builder outer_block = outer_frame.Builder();
   const auto captured = [&](mir::ExprId id) {
     return SnapshotValueIntoClosure(unit_lowerer, outer_frame, closure, id);
   };
@@ -156,8 +157,7 @@ auto FrozenOwner(
             return SnapshotPlaceIntoClosure(
                 unit_lowerer, outer_frame, closure,
                 BuildReferenceArg(
-                    unit, outer_block, place,
-                    outer_block.exprs.Get(place).type));
+                    unit, outer_block, place, outer_block.Get(place).type));
           },
           [&](const ObjectProperty& property) -> PathOwner {
             return ObjectProperty{
@@ -242,7 +242,7 @@ auto BuildDeferredStores(
     std::span<const Share> shares) -> diag::Result<mir::Expr> {
   for (const Share& share : shares) {
     auto outlives = CheckTargetOutlivesUpdate(
-        *frame.current_block, share.place.owner, span);
+        frame.Builder().Body(), share.place.owner, span);
     if (!outlives) return std::unexpected(std::move(outlives.error()));
   }
   return BuildDeferredEffect(
@@ -256,11 +256,11 @@ auto BuildDeferredStores(
         }
         return frozen;
       },
-      [&](mir::Block& body, const std::vector<Share>& frozen) {
+      [&](mir::Builder body, const std::vector<Share>& frozen) {
         for (const Share& share : frozen) {
           body.AppendStmt(
               mir::ExprStmt{
-                  .expr = body.exprs.Add(BuildStoreExpr(
+                  .expr = body.Add(BuildStoreExpr(
                       process.Owner().Unit(), body, share.place,
                       share.value))});
         }
@@ -281,7 +281,7 @@ auto StepOperator(hir::IncDecOp op) -> hir::BinaryOp {
   throw InternalError("StepOperator: unknown increment or decrement operator");
 }
 
-auto One(const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
+auto One(const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type)
     -> mir::ExprId {
   return ConvertToType(unit, block, mir::BuildIntLiteral(unit, block, 1), type);
 }
@@ -293,10 +293,10 @@ auto One(const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
 // operand is (LRM 11.8.2). The answer is of that type, and assigning it is
 // what brings it to the target's.
 auto AppliedTo(
-    mir::CompilationUnit& unit, mir::Block& block,
+    mir::CompilationUnit& unit, mir::Builder block,
     const hir::CompoundAssignOperator& compound, mir::TypeId applied_at,
     mir::ExprId held, mir::ExprId operand) -> mir::ExprId {
-  return block.exprs.Add(BuildMirBinaryExpr(
+  return block.Add(BuildMirBinaryExpr(
       unit, block, compound.op,
       ConvertToPropagatedType(unit, block, held, applied_at), operand,
       applied_at));
@@ -321,7 +321,7 @@ auto StoreOf(
   ReadThenWritten settled =
       ReadThenWrite(unit_lowerer, frame, std::move(target));
   const mir::ExprId applied = AppliedTo(
-      unit_lowerer.Unit(), *frame.current_block, *assign.compound,
+      unit_lowerer.Unit(), frame.Builder(), *assign.compound,
       unit_lowerer.TranslateType(assign.compound->applied_at), settled.incoming,
       rhs);
   return AssignedStore{.target = std::move(settled.place), .stored = applied};
@@ -342,7 +342,7 @@ auto StepJoin(
     const hir::Expr& target, std::optional<mir::TypeId> type)
     -> diag::Result<SteppedJoin> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto lvalue = LowerLvalue(lowerer, target, frame);
   if (!lvalue) return std::unexpected(std::move(lvalue.error()));
   auto settled = ReadThenWrite(lowerer.Owner(), frame, *std::move(lvalue));
@@ -351,7 +351,7 @@ auto StepJoin(
   const mir::ExprId before = EvaluatedOnce(
       frame, ConvertToType(unit, block, settled->incoming, stepped_at));
   const mir::ExprId after = EvaluatedOnce(
-      frame, block.exprs.Add(BuildMirBinaryExpr(
+      frame, block.Add(BuildMirBinaryExpr(
                  unit, block, StepOperator(inc.op), before,
                  One(unit, block, stepped_at), stepped_at)));
   auto stored = AppendStores(lowerer.Owner(), frame, settled->lvalue, after);
@@ -367,12 +367,12 @@ auto AssignToJoin(
     const hir::Expr& lhs, diag::SourceSpan span) -> diag::Result<mir::ExprId> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto* deferred = std::get_if<hir::NonBlockingEffect>(&assign.timing);
 
   auto rhs_or = lowerer.LowerExpr(lowerer.HirExprs().Get(assign.rhs), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  mir::ExprId stored = block.exprs.Add(*std::move(rhs_or));
+  mir::ExprId stored = block.Add(*std::move(rhs_or));
   auto lvalue_or = LowerLvalue(lowerer, lhs, frame);
   if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
   Lvalue lvalue = *std::move(lvalue_or);
@@ -406,8 +406,7 @@ auto AssignToJoin(
     auto update =
         BuildDeferredStores(lowerer, frame, span, deferred->control, *shares);
     if (!update) return std::unexpected(std::move(update.error()));
-    block.AppendStmt(
-        mir::ExprStmt{.expr = block.exprs.Add(*std::move(update))});
+    block.AppendStmt(mir::ExprStmt{.expr = block.Add(*std::move(update))});
     return value;
   } else {
     throw InternalError(
@@ -435,11 +434,11 @@ auto LowerHirAssignWrite(
     if (!value) return std::unexpected(std::move(value.error()));
     return steps.Build(*value);
   }
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
 
   auto rhs_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.rhs), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const mir::ExprId rhs_id = block.exprs.Add(*std::move(rhs_or));
+  const mir::ExprId rhs_id = block.Add(*std::move(rhs_or));
   auto lhs_or = lowerer.LowerLhsExpr(lhs, frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
 
@@ -473,7 +472,7 @@ auto LowerHirAssignExpr(
   }
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   const hir::Expr& lhs = lowerer.HirExprs().Get(a.lhs);
   if (IsJoin(lhs)) {
     auto value = AssignToJoin(lowerer, steps.Frame(), a, lhs, span);
@@ -483,7 +482,7 @@ auto LowerHirAssignExpr(
 
   auto rhs_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.rhs), steps.Frame());
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const mir::ExprId rhs_id = body.exprs.Add(*std::move(rhs_or));
+  const mir::ExprId rhs_id = body.Add(*std::move(rhs_or));
   auto target_or = lowerer.LowerLhsExpr(lhs, steps.Frame());
   if (!target_or) return std::unexpected(std::move(target_or.error()));
 
@@ -497,8 +496,7 @@ auto LowerHirAssignExpr(
   const auto read_value = [&] { return body.ReadLocal(value, result_type); };
   body.AppendStmt(
       mir::ExprStmt{
-          .expr = body.exprs.Add(
-              BuildStoreExpr(unit, body, target, read_value()))});
+          .expr = body.Add(BuildStoreExpr(unit, body, target, read_value()))});
   return steps.Build(read_value());
 }
 
@@ -507,7 +505,7 @@ auto LowerHirIncDecWrite(
     Lowerer& lowerer, WalkFrame frame, const hir::IncDecExpr& inc)
     -> diag::Result<mir::Expr> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const hir::Expr& target = lowerer.HirExprs().Get(inc.target);
   if (IsJoin(target)) {
     BlockBuilder steps(frame);
@@ -520,10 +518,10 @@ auto LowerHirIncDecWrite(
   // The target is settled once for the read and the write (LRM 11.4.2).
   const ReadThenWritten settled =
       ReadThenWrite(lowerer.Owner(), frame, *std::move(target_or));
-  const mir::TypeId type = block.exprs.Get(settled.incoming).type;
+  const mir::TypeId type = block.Get(settled.incoming).type;
   return BuildStoreExpr(
       unit, block, settled.place,
-      block.exprs.Add(BuildMirBinaryExpr(
+      block.Add(BuildMirBinaryExpr(
           unit, block, StepOperator(inc.op), settled.incoming,
           One(unit, block, type), type)));
 }
@@ -534,7 +532,7 @@ auto LowerHirIncDecExpr(
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   const bool yields_before =
       inc.op == hir::IncDecOp::kPostInc || inc.op == hir::IncDecOp::kPostDec;
   const hir::Expr& target = lowerer.HirExprs().Get(inc.target);
@@ -560,11 +558,11 @@ auto LowerHirIncDecExpr(
   const mir::ExprId rhs = One(unit, body, result_type);
   const mir::LocalId after = steps.DeclareLocal(
       result_type,
-      body.exprs.Add(BuildMirBinaryExpr(
+      body.Add(BuildMirBinaryExpr(
           unit, body, StepOperator(inc.op), lhs, rhs, result_type)));
   body.AppendStmt(
       mir::ExprStmt{
-          .expr = body.exprs.Add(
+          .expr = body.Add(
               BuildStoreExpr(unit, body, settled.place, read(after)))});
   return steps.Build(read(yields_before ? before : after));
 }

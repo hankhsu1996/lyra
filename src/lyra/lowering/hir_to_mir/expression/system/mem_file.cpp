@@ -30,6 +30,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enum_table.hpp"
 #include "lyra/mir/expr.hpp"
@@ -60,7 +61,7 @@ auto DescribeMemory(
     diag::SourceSpan span) -> diag::Result<MemAddressing> {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  auto& wrapper = *wrapper_frame.current_block;
+  mir::Builder wrapper = wrapper_frame.Builder();
   const auto not_a_memory = [&]() -> diag::Result<MemAddressing> {
     throw InternalError(
         std::format(
@@ -195,7 +196,7 @@ auto MemoryIndicesOf(
     mir::CompilationUnit& unit, const WalkFrame& frame,
     std::span<const hir::UnpackedRange> dims,
     const std::optional<SliceIndices>& slice) -> MemoryIndices {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto number = [&](std::int64_t index) {
     return mir::BuildMachineIntLiteral(unit, block, index);
   };
@@ -220,7 +221,7 @@ auto MemoryIndicesOf(
   // type keeps (LRM 7.4.5).
   const bool descending = highest.left > highest.right;
   return MemoryIndices{
-      .ranges = block.exprs.Add(
+      .ranges = block.Add(
           mir::Expr{
               .data = mir::CompositeExpr{.parts = std::move(bounds)},
               .type = type}),
@@ -248,14 +249,14 @@ auto LowerMemFileSystemSubroutineCallStmt(
 
   BlockBuilder steps(frame);
   const WalkFrame& step_frame = steps.Frame();
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
 
   auto name_or = process.LowerExpr(hir_proc.exprs.Get(head[0]), step_frame);
   if (!name_or) return std::unexpected(std::move(name_or.error()));
   // The file name is an SV string; a string literal reaches here as a packed
   // value, so route it to the runtime's String type (LRM 21.4 / 21.5).
   const mir::ExprId name_id = ConvertToType(
-      unit, body, body.exprs.Add(*std::move(name_or)), unit.builtins.string);
+      unit, body, body.Add(*std::move(name_or)), unit.builtins.string);
 
   auto memory = NameMemory(process, step_frame, mem_hir);
   if (!memory) return std::unexpected(std::move(memory.error()));
@@ -300,7 +301,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
       !is_store && unit.types.Get(elem_mir).Is<mir::EnumType>();
 
   std::vector<mir::ExprId> operands;
-  operands.push_back(body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
+  operands.push_back(body.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
   operands.push_back(mem_value);
   if (enumerated) {
     operands.push_back(mir::BuildEnumTableRef(unit, body, elem_mir));
@@ -321,7 +322,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
     auto start_or = process.LowerExpr(hir_proc.exprs.Get(*start), step_frame);
     if (!start_or) return std::unexpected(std::move(start_or.error()));
     operands.push_back(
-        BuildToInt64Call(unit, body, body.exprs.Add(*std::move(start_or))));
+        BuildToInt64Call(unit, body, body.Add(*std::move(start_or))));
   } else {
     if (finish.has_value()) {
       throw InternalError(
@@ -336,7 +337,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
     auto finish_or = process.LowerExpr(hir_proc.exprs.Get(*finish), step_frame);
     if (!finish_or) return std::unexpected(std::move(finish_or.error()));
     operands.push_back(
-        BuildToInt64Call(unit, body, body.exprs.Add(*std::move(finish_or))));
+        BuildToInt64Call(unit, body, body.Add(*std::move(finish_or))));
   }
 
   const bool windowed = finish.has_value();
@@ -346,7 +347,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
   if (is_store) {
     body.AppendStmt(
         mir::ExprStmt{
-            .expr = body.exprs.Add(
+            .expr = body.Add(
                 mir::Expr{
                     .data =
                         mir::CallExpr{

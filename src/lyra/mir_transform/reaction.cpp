@@ -377,6 +377,7 @@ auto PartCodeOf(
   code.params = {object, wait};
   code.result_type = unit.builtins.machine_bool;
   code.named_locals = process.named_locals;
+  code.span = process.span;
   return PartCode{.code = std::move(code), .object = object, .wait = wait};
 }
 
@@ -456,18 +457,19 @@ auto LoopBody(const mir::Block& body, const ReactionShape& shape)
 // The block the loop runs, running `stmts` of it, the stop among them
 // answering whether its wait has still to end instead of stopping there.
 auto LoopBodyReturningAtStop(
-    const mir::CompilationUnit& unit, const mir::Block& loop,
-    const ReactionShape& shape, std::span<const mir::StmtId> stmts)
-    -> mir::Block {
+    const mir::CompilationUnit& unit, const mir::CallableCode& process,
+    const mir::Block& loop, const ReactionShape& shape,
+    std::span<const mir::StmtId> stmts) -> mir::Block {
   const RebuildRules rules{
       .expr = ReachWaitThroughPointer(unit, shape.wait_local)};
-  BlockRebuild rebuild(loop, rules);
+  BlockRebuild rebuild(loop, rules, process.span);
   std::vector<mir::StmtId> ran;
   ran.reserve(stmts.size());
   for (const mir::StmtId id : stmts) {
     ran.push_back(
         id == shape.stop
-            ? rebuild.Add(mir::ReturnStmt{.value = rebuild.Expr(shape.park)})
+            ? rebuild.AddInPlaceOf(
+                  id, mir::ReturnStmt{.value = rebuild.Expr(shape.park)})
             : rebuild.Stmt(id));
   }
   return std::move(rebuild).Finish(std::move(ran));
@@ -503,7 +505,7 @@ auto SetupOf(
                     unit.builtins, place, rebuild.Expr(decl->init)))};
       }};
 
-  BlockRebuild rebuild(body, rules);
+  BlockRebuild rebuild(body, rules, process.span);
   std::vector<mir::StmtId> stmts =
       RestoreErasedParameters(unit, process, shape.wait_local, part, rebuild);
   std::ranges::copy(
@@ -518,7 +520,7 @@ auto SetupOf(
       stmts.push_back(rebuild.Add(
           mir::BlockStmt{
               .scope = rebuild.Add(LoopBodyReturningAtStop(
-                  unit, LoopBody(body, shape), shape, stop))}));
+                  unit, process, LoopBody(body, shape), shape, stop))}));
       break;
     }
   }
@@ -545,13 +547,13 @@ auto PassOf(
 
   const mir::Block empty;
   const RebuildRules rules;
-  BlockRebuild rebuild(empty, rules);
+  BlockRebuild rebuild(empty, rules, process.span);
   std::vector<mir::StmtId> stmts =
       RestoreErasedParameters(unit, process, shape.wait_local, part, rebuild);
   stmts.push_back(rebuild.Add(
       mir::BlockStmt{
-          .scope =
-              rebuild.Add(LoopBodyReturningAtStop(unit, loop, shape, once))}));
+          .scope = rebuild.Add(
+              LoopBodyReturningAtStop(unit, process, loop, shape, once))}));
   part.code.body = std::move(rebuild).Finish(std::move(stmts));
   return std::move(part.code);
 }

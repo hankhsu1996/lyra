@@ -43,8 +43,8 @@ class BlockBuilder {
   [[nodiscard]] auto Frame() const -> const WalkFrame& {
     return frame_;
   }
-  [[nodiscard]] auto Body() -> mir::Block& {
-    return body_;
+  [[nodiscard]] auto Body() const -> mir::Builder {
+    return frame_.Builder();
   }
   // The enclosing callable's binding context, for a caller that declares a
   // local of its own.

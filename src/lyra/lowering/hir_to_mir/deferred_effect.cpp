@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -42,13 +43,12 @@ auto BuildNbaEffectsAfterCall(
     ProcessLowerer& process, WalkFrame frame, const hir::DelayControl& delay)
     -> diag::Result<mir::Expr> {
   auto& unit = process.Owner().Unit();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto duration_or =
       process.LowerExpr(process.HirBody().exprs.Get(delay.duration), frame);
   if (!duration_or) return std::unexpected(std::move(duration_or.error()));
-  mir::ExprId duration_id = block.exprs.Add(*std::move(duration_or));
-  const mir::Type& duration_type =
-      unit.types.Get(block.exprs.Get(duration_id).type);
+  mir::ExprId duration_id = block.Add(*std::move(duration_or));
+  const mir::Type& duration_type = unit.types.Get(block.Get(duration_id).type);
   const bool is_real = duration_type.IsRealFamily();
   if (duration_type.Is<mir::ShortRealType>()) {
     // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
@@ -76,7 +76,7 @@ auto BuildDueSlotWaitStmt(
     const hir::DelayOrEventControl& control) -> diag::Result<mir::Stmt> {
   UnitLowerer& unit_lowerer = process.Owner();
   const WalkFrame carrier_frame = carrier.Frame();
-  mir::Block& body = carrier.Body();
+  mir::Builder body = carrier.Body();
   return std::visit(
       Overloaded{
           [&](const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
@@ -88,16 +88,17 @@ auto BuildDueSlotWaitStmt(
             if (!count_or) return std::unexpected(std::move(count_or.error()));
             const mir::ExprId count = SnapshotValueIntoClosure(
                 unit_lowerer, outer_frame, carrier,
-                outer_frame.current_block->exprs.Add(*std::move(count_or)));
+                outer_frame.Builder().Add(*std::move(count_or)));
             mir::Block loop_body;
+            mir::Builder loop_body_builder = body.Into(loop_body);
             const WalkFrame loop_frame = carrier_frame.WithBlock(&loop_body);
-            auto wait_or =
-                BuildEventWaitStmt(process, loop_frame, loop_body, r.event);
+            auto wait_or = BuildEventWaitStmt(
+                process, loop_frame, loop_body_builder, r.event);
             if (!wait_or) return std::unexpected(std::move(wait_or.error()));
-            loop_body.AppendStmt(*std::move(wait_or));
+            loop_body_builder.AppendStmt(*std::move(wait_or));
             return BuildRepeatLoopStmt(
                 unit_lowerer.Unit(), carrier_frame, body, count,
-                body.child_scopes.Add(std::move(loop_body)));
+                body.AddScope(std::move(loop_body)));
           },
           [](const hir::DelayControl&) -> diag::Result<mir::Stmt> {
             throw InternalError(
@@ -118,7 +119,7 @@ auto KeepInDueRegion(
   auto effects = delay.has_value()
                      ? BuildNbaEffectsAfterCall(process, frame, *delay)
                      : diag::Result<mir::Expr>(BuildRegionEffectsCallExpr(
-                           process.Owner(), *frame.current_block,
+                           process.Owner(), frame.Builder(),
                            support::BuiltinFn::kNbaEffects));
   if (!effects) return std::unexpected(std::move(effects.error()));
   return BuildEmplacedClosure(
@@ -130,7 +131,7 @@ auto AppendArrivalAtDueRegion(
     const hir::DelayOrEventControl& control) -> diag::Result<void> {
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& body = carrier.Body();
+  mir::Builder body = carrier.Body();
 
   auto wait_or = BuildDueSlotWaitStmt(process, outer_frame, carrier, control);
   if (!wait_or) return std::unexpected(std::move(wait_or.error()));
@@ -139,7 +140,7 @@ auto AppendArrivalAtDueRegion(
   // The event has named the slot; the region within it is the one every
   // nonblocking effect lands in, so the carrier goes there before applying it
   // (LRM 4.4.2.4).
-  const mir::ExprId region_wait_id = body.exprs.Add(
+  const mir::ExprId region_wait_id = body.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = support::BuiltinFn::kResumeInNbaRegion}, {},
           unit.builtins.wait));
@@ -149,10 +150,10 @@ auto AppendArrivalAtDueRegion(
 
 auto RunCarrierDetached(
     ProcessLowerer& process, WalkFrame frame, mir::Expr started) -> mir::Expr {
-  auto& block = *frame.current_block;
-  const mir::ExprId started_id = block.exprs.Add(std::move(started));
+  mir::Builder block = frame.Builder();
+  const mir::ExprId started_id = block.Add(std::move(started));
   const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   return mir::Expr{
       .data =
           mir::CallExpr{

@@ -9,6 +9,7 @@
 #include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -36,7 +37,7 @@ namespace lyra::lowering::hir_to_mir {
 // sugar is decomposed into a primitive Expr at the HIR-to-MIR boundary so
 // downstream layers see one shape (an Expr) instead of two.
 [[nodiscard]] auto BuildDefaultValueExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type)
     -> mir::Expr;
 
 // The same, or, for a type no declaration holds -- a reference, an index of a
@@ -44,12 +45,12 @@ namespace lyra::lowering::hir_to_mir {
 // product of such a type has none either, since its default is each
 // component's (LRM Table 7-1).
 [[nodiscard]] auto DefaultValueOf(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type)
     -> std::expected<mir::Expr, std::string_view>;
 
 // The same for a type named as the source layer names it.
 [[nodiscard]] auto BuildDefaultValueFromHir(
-    const UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId hir_type)
+    const UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId hir_type)
     -> mir::Expr;
 
 // LRM Table 7-1's unpacked-struct row, as a value of `structure`: each member
@@ -57,7 +58,7 @@ namespace lyra::lowering::hir_to_mir {
 // the table gives its own type where it assigns none. This is the body of what
 // a structure answers its declared default with, and nothing else states it.
 [[nodiscard]] auto BuildDeclaredStructValue(
-    const UnitLowerer& unit_lowerer, mir::Block& block,
+    const UnitLowerer& unit_lowerer, mir::Builder block,
     const hir::UnpackedStructDefinition& source, mir::TypeId structure)
     -> mir::Expr;
 
@@ -77,16 +78,16 @@ namespace lyra::lowering::hir_to_mir {
 // O(repeat_unit) however large the array is. The unit holds at least one
 // element and a whole number of them fills the array.
 [[nodiscard]] auto BuildFixedArrayConstructionCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    std::vector<mir::ExprId> repeat_unit) -> mir::Expr;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::TypeId array_type, std::vector<mir::ExprId> repeat_unit) -> mir::Expr;
 
 // Builds an array-shaped container from an explicit element list, laid down
 // once. A fixed-size unpacked array is the construction above over the whole
 // list. A queue and a dynamic array have no size of their own, so their
 // arguments are `[elements, 1]`.
 [[nodiscard]] auto BuildArrayConstructionCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    std::vector<mir::ExprId> elements) -> mir::Expr;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::TypeId array_type, std::vector<mir::ExprId> elements) -> mir::Expr;
 
 // Builds a queue or a dynamic array holding `count` replications of
 // `repeat_unit` (LRM 10.9.1), in the argument shape of the construction call
@@ -94,15 +95,16 @@ namespace lyra::lowering::hir_to_mir {
 // O(repeat_unit) rather than O(repeat_unit * count). A fixed-size unpacked
 // array states no count and is built by its own construction.
 [[nodiscard]] auto BuildArrayRepeatCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    std::vector<mir::ExprId> repeat_unit, mir::ExprId count_id) -> mir::Expr;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::TypeId array_type, std::vector<mir::ExprId> repeat_unit,
+    mir::ExprId count_id) -> mir::Expr;
 
 // Builds the construction call for a sequence: the values it holds, in order.
 // A sequence is built from its values alone and repeats nothing, so the element
 // list is the constructor's one argument, and a sequence holding nothing is
 // that list with no elements rather than a second form of the call.
 [[nodiscard]] auto BuildSequenceConstructionCall(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     mir::TypeId sequence_type, std::vector<mir::ExprId> elements) -> mir::Expr;
 
 // Builds the value of an associative-array literal (LRM 7.9.11). Each (key,
@@ -113,7 +115,8 @@ namespace lyra::lowering::hir_to_mir {
 // array is then given it by the operation that says so. Where it writes none,
 // such a read returns what the element type says and nothing is stated for it.
 [[nodiscard]] auto BuildAssociativeConstructionCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
     std::optional<mir::ExprId> stated_default) -> mir::Expr;
 

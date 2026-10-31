@@ -10,6 +10,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -22,11 +23,11 @@ auto LowerRealConversionCall(
     const hir::BuiltinMethodRef& b, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   const auto& unit_lowerer = lowerer.Owner();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const auto lower = [&](hir::ExprId source) -> diag::Result<mir::ExprId> {
     auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(source), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return block.exprs.Add(*std::move(lowered));
+    return block.Add(*std::move(lowered));
   };
 
   // Reading a pattern back names the destination precision's own factory: it
@@ -55,7 +56,7 @@ auto LowerRealConversionCall(
   // is.
   auto subject = lower(ObjectActedOn(b));
   if (!subject) return std::unexpected(std::move(subject.error()));
-  const mir::ExprId read_out = block.exprs.Add(
+  const mir::ExprId read_out = block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -64,7 +65,7 @@ auto LowerRealConversionCall(
                   .arguments = {}},
           .type = unit_lowerer.Unit().builtins.machine_int64});
   return mir::MakeBuiltinCall(
-      unit_lowerer.Unit(), block, support::BuiltinFn::kIntegralFromInt,
+      unit_lowerer.Unit(), block.Body(), support::BuiltinFn::kIntegralFromInt,
       std::nullopt, {read_out}, result_type);
 }
 

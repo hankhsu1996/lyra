@@ -7,6 +7,7 @@
 
 #include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/type_definition.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/record_decl.hpp"
@@ -81,7 +82,7 @@ class UnitLowerer;
 // operand's conversion once overload resolution chose the callee, and the
 // library's entry takes each operand's value.
 [[nodiscard]] auto BuildValueOperation(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::BuiltinFn entry, std::optional<mir::ExprId> receiver,
     std::vector<mir::ExprId> operands, mir::TypeId result) -> mir::ExprId;
 
@@ -100,7 +101,7 @@ class UnitLowerer;
 // operand type's own body where it has one, which takes each operand where it
 // lies, and otherwise the operator on the two values.
 [[nodiscard]] auto BuildEquality(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::ValueOperator comparison, mir::ExprId lhs, mir::ExprId rhs,
     mir::TypeId result) -> mir::ExprId;
 
@@ -108,12 +109,12 @@ class UnitLowerer;
 // a machine boolean: the type's own comparison, whether it asks if a value
 // changed or if two keys are one value.
 [[nodiscard]] auto BuildBitIdentity(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId lhs,
     mir::ExprId rhs) -> mir::ExprId;
 
 // LRM 11.4.5 `===`, a known bit.
 [[nodiscard]] auto BuildCaseEquality(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId lhs,
     mir::ExprId rhs) -> mir::ExprId;
 
 // Whether `value` matches `label` as a case statement of `keyword` compares
@@ -121,23 +122,23 @@ class UnitLowerer;
 // bits a form skips is the form's own business, so each form is a question of
 // its own rather than an operator a target applies.
 [[nodiscard]] auto BuildCaseComparison(
-    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     hir::CaseKeyword keyword, mir::ExprId value, mir::ExprId label)
     -> mir::ExprId;
 
 // LRM 20.9 `$isunknown`, a known bit.
 [[nodiscard]] auto BuildUnknownTest(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId;
 
 // LRM 20.9 `$countbits` of `value` under the control set `control`, an `int`.
 [[nodiscard]] auto BuildBitCount(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value,
     mir::ExprId control) -> mir::ExprId;
 
 // LRM 20.6.2 `$bits` of what `value` holds, an `int`.
 [[nodiscard]] auto BuildBitWidth(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value)
     -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

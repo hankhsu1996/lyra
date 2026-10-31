@@ -29,6 +29,7 @@
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -101,18 +102,17 @@ template <ExprLowerer Lowerer>
 auto QueueSpan(
     Lowerer& lowerer, WalkFrame frame, hir::ExprId base, hir::ExprId width,
     bool up) -> diag::Result<QueueBounds> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto base_or = lowerer.LowerExpr(lowerer.HirExprs().Get(base), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   // The base is one bound and the other is counted from it, so the position it
   // names is evaluated once and both read that.
   const mir::ExprId base_id = EvaluatedOnce(
-      frame,
-      BuildOrdinalPosition(unit, block, block.exprs.Add(*std::move(base_or))));
+      frame, BuildOrdinalPosition(unit, block, block.Add(*std::move(base_or))));
   auto width_or = lowerer.LowerExpr(lowerer.HirExprs().Get(width), frame);
   if (!width_or) return std::unexpected(std::move(width_or.error()));
-  const mir::ExprId width_id = block.exprs.Add(*std::move(width_or));
+  const mir::ExprId width_id = block.Add(*std::move(width_or));
   const mir::ExprId other = BuildSpanEnd(unit, block, base_id, width_id, up);
   return up ? QueueBounds{.lo = base_id, .hi = other}
             : QueueBounds{.lo = other, .hi = base_id};
@@ -125,7 +125,7 @@ template <ExprLowerer Lowerer>
 auto QueueSliceStep(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeBounds& bounds,
     mir::TypeId result_type) -> diag::Result<DescentStep> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   auto queue_bounds = std::visit(
       Overloaded{
@@ -133,15 +133,15 @@ auto QueueSliceStep(
             auto lo =
                 lowerer.LowerExpr(lowerer.HirExprs().Get(c.left_bound), frame);
             if (!lo) return std::unexpected(std::move(lo.error()));
-            const mir::ExprId lo_id = BuildOrdinalPosition(
-                unit, block, block.exprs.Add(*std::move(lo)));
+            const mir::ExprId lo_id =
+                BuildOrdinalPosition(unit, block, block.Add(*std::move(lo)));
             auto hi =
                 lowerer.LowerExpr(lowerer.HirExprs().Get(c.right_bound), frame);
             if (!hi) return std::unexpected(std::move(hi.error()));
             return QueueBounds{
                 .lo = lo_id,
                 .hi = BuildOrdinalPosition(
-                    unit, block, block.exprs.Add(*std::move(hi)))};
+                    unit, block, block.Add(*std::move(hi)))};
           },
           [&](const hir::RangeIndexedUpBounds& c) {
             return QueueSpan(lowerer, frame, c.base_index, c.width, true);
@@ -210,7 +210,7 @@ auto SliceStartOf(
 // The step a slice of `count` positions takes from the index `index_id` its
 // start names.
 auto SliceStepAt(
-    mir::CompilationUnit& unit, mir::Block& block, const PositionMap& map,
+    mir::CompilationUnit& unit, mir::Builder block, const PositionMap& map,
     const SliceStart& start, mir::ExprId index_id, std::uint64_t count,
     mir::TypeId result_type) -> DescentStep {
   const mir::ExprId position =
@@ -234,7 +234,7 @@ auto RangeStep(
     -> diag::Result<DescentStep> {
   const UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   if (unit_lowerer.Hir().types.Get(receiver_type).Is<hir::QueueType>()) {
     return QueueSliceStep(lowerer, frame, bounds, result_type);
   }
@@ -245,7 +245,7 @@ auto RangeStep(
   auto index = lowerer.LowerExpr(lowerer.HirExprs().Get(start.index), frame);
   if (!index) return std::unexpected(std::move(index.error()));
   return SliceStepAt(
-      unit, block, map, start, block.exprs.Add(*std::move(index)), count,
+      unit, block, map, start, block.Add(*std::move(index)), count,
       result_type);
 }
 
@@ -281,7 +281,7 @@ auto TagRequiredByMember(
 // aggregate's vector the member occupies (LRM 7.2.1, 7.3.1), and the tag the
 // step needs the aggregate to carry, where it needs one.
 auto PackedMemberStep(
-    mir::CompilationUnit& unit, mir::Block& block,
+    mir::CompilationUnit& unit, mir::Builder block,
     const PackedProjection& projection, base::ComponentIndex index,
     mir::TypeId part_type, std::optional<TagInBits> required_tag)
     -> DescentStep {
@@ -304,11 +304,11 @@ auto PackedMemberStep(
 // aggregate, the X-to-0 collapse into its narrower state domain. A no-op when
 // the value already carries the declared type.
 auto WrapSliceToDeclaredType(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::Expr owned,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::Expr owned,
     mir::TypeId final_type) -> mir::Expr {
   if (owned.type == final_type) return owned;
   const mir::ExprId owned_id =
-      block.AsValue(unit.types, block.exprs.Add(std::move(owned)));
+      block.AsValue(unit.types, block.Add(std::move(owned)));
   return BuildValueConversion(unit, block, owned_id, final_type);
 }
 
@@ -319,7 +319,7 @@ auto WrapSliceToDeclaredType(
 // array"), so it is read at its part-select natural type and brought to the
 // declared type.
 auto ReadMember(
-    UnitLowerer& unit_lowerer, mir::Block& block, const DescentStep& step,
+    UnitLowerer& unit_lowerer, mir::Builder block, const DescentStep& step,
     mir::ExprId base_id, mir::TypeId result_type) -> mir::Expr {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   return WrapSliceToDeclaredType(
@@ -443,7 +443,7 @@ auto EvaluateSelectedBase(
     Lowerer& lowerer, const WalkFrame& at, const hir::Expr& base)
     -> diag::Result<SelectedBase> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
-  mir::Block& block = *at.current_block;
+  mir::Builder block = at.Builder();
   // A sampled read answers with the value each cell kept (LRM 16.5.1), which
   // is a question a read of the value asks and a path does not.
   const StorageFound found = at.reads_as_of == ReadsAsOf::kNow
@@ -471,9 +471,9 @@ auto EvaluateSelectedBase(
   return SelectedBase{
       .path =
           SettledPath{
-              .named_in = &block,
+              .named_in = &block.Body(),
               .owner = block.LocalPlace(
-                  DeclareLocal(at, block.exprs.Add(*std::move(value))), type),
+                  DeclareLocal(at, block.Add(*std::move(value))), type),
               .descent = {}},
       .outlives_the_steps = false};
 }
@@ -525,7 +525,7 @@ auto LowerStreamWindow(
     Lowerer& lowerer, const WalkFrame& frame, hir::TypeId array_type,
     const hir::StreamRange& range) -> diag::Result<StreamWindow> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const PositionMap map = PositionMapOf(lowerer.Owner(), array_type);
   // A bound written in the array's declared numbering as a position in its own,
   // formed as a select forms one, so a bound holding x or z names none.
@@ -534,7 +534,7 @@ auto LowerStreamWindow(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return EvaluatedOnce(
         frame, WrapIndexAsPosition(
-                   unit, block, map, block.exprs.Add(*std::move(lowered)), 0));
+                   unit, block, map, block.Add(*std::move(lowered)), 0));
   };
   // The far end of `width` elements counted from `base`, up or down the
   // declared numbering, which runs against the array's own where it is
@@ -545,7 +545,7 @@ auto LowerStreamWindow(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return EvaluatedOnce(
         frame, BuildSpanEnd(
-                   unit, block, base, block.exprs.Add(*std::move(lowered)),
+                   unit, block, base, block.Add(*std::move(lowered)),
                    up != map.reversed));
   };
   // The window's lowest and highest positions in the array's own numbering.
@@ -609,18 +609,18 @@ auto LowerStreamWindow(
   // 7.10.1): the positions between the two ends, read as a count, none where
   // that is not positive, and x read as no position.
   const mir::TypeId position_type = mir::PositionType(unit.types);
-  const mir::ExprId lhs = block.exprs.Add(
+  const mir::ExprId lhs = block.Add(
       mir::MakeBinary(
-          unit, block, mir::BinaryOp::kSub, ends->highest, ends->lowest,
+          unit, block.Body(), mir::BinaryOp::kSub, ends->highest, ends->lowest,
           position_type));
   const mir::ExprId rhs = BuildConstantPosition(unit, block, 1);
   const mir::ExprId spanned = EvaluatedOnce(
-      frame,
-      BuildToInt64Call(
-          unit, block,
-          block.exprs.Add(
-              mir::MakeBinary(
-                  unit, block, mir::BinaryOp::kAdd, lhs, rhs, position_type))));
+      frame, BuildToInt64Call(
+                 unit, block,
+                 block.Add(
+                     mir::MakeBinary(
+                         unit, block.Body(), mir::BinaryOp::kAdd, lhs, rhs,
+                         position_type))));
   const mir::ExprId condition = mir::BuildMachineIntComparison(
       unit, block, mir::BinaryOp::kLessEqual, spanned,
       mir::BuildMachineIntLiteral(unit, block, 0));
@@ -637,7 +637,7 @@ auto LowerStreamWindowRun(
     Lowerer& lowerer, const WalkFrame& frame, const hir::StreamOperand& operand)
     -> diag::Result<mir::Expr> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const hir::Expr& array = lowerer.HirExprs().Get(operand.value);
   const UnitLowerer& unit_lowerer = lowerer.Owner();
   if (HoldsClassHandle(unit, unit_lowerer.TranslateType(array.type))) {
@@ -654,13 +654,13 @@ auto LowerStreamWindowRun(
       *operand.with);
   if (!window) return std::unexpected(std::move(window.error()));
   return mir::MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kWindowToBitVec,
+      unit, block.Body(), support::BuiltinFn::kWindowToBitVec,
       PathAsPlace(unit, block, NamedIn(base->path, block)),
       {window->start, window->count}, unit.builtins.bit_vec);
 }
 
 auto MemberStep(
-    UnitLowerer& unit_lowerer, mir::Block& block, const hir::Type& aggregate,
+    UnitLowerer& unit_lowerer, mir::Builder block, const hir::Type& aggregate,
     base::ComponentIndex index, mir::TypeId part_type) -> DescentStep {
   if (aggregate.Is<hir::UnpackedStructType>()) {
     return DescentStep{
@@ -682,7 +682,7 @@ auto MemberStep(
 }
 
 auto BuildHoldsMember(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId subject,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId subject,
     hir::TypeId subject_type, base::ComponentIndex index,
     hir::CaseKeyword keyword) -> mir::ExprId {
   const std::optional<TagRequirement> tag = TagRequiredByMember(
@@ -694,7 +694,7 @@ auto BuildHoldsMember(
 }
 
 auto ElementStep(
-    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId receiver_type,
+    UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId receiver_type,
     mir::ExprId idx_id, mir::TypeId part_type) -> DescentStep {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::Type& receiver = unit_lowerer.Hir().types.Get(receiver_type);
@@ -724,7 +724,7 @@ auto ElementStep(
 }
 
 auto BuildElementAccessCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId base_id,
     hir::TypeId base_type, mir::ExprId idx_id, mir::TypeId result_type)
     -> mir::Expr {
   const DescentStep step =
@@ -733,7 +733,7 @@ auto BuildElementAccessCallExpr(
 }
 
 auto BuildPackedBitsRead(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId base,
     std::uint64_t bit_offset, mir::TypeId result_type) -> mir::Expr {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const DescentStep step = BitsStep(
@@ -743,12 +743,12 @@ auto BuildPackedBitsRead(
 }
 
 auto BuildPackedMemberRead(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId base,
     const PackedProjection& projection, base::ComponentIndex index,
     mir::TypeId result_type) -> mir::Expr {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::TypeId natural =
-      PartSelectNaturalType(unit, block.exprs.Get(base).type, result_type);
+      PartSelectNaturalType(unit, block.Get(base).type, result_type);
   return ReadMember(
       unit_lowerer, block,
       PackedMemberStep(unit, block, projection, index, natural, std::nullopt),
@@ -769,7 +769,7 @@ auto LowerHirElementSelectExpr(
   // where it lies in a local of theirs, they yield the element's value.
   if (unit_lowerer.Hir().types.Get(base_expr.type).Is<hir::QueueType>()) {
     BlockBuilder steps(frame);
-    mir::Block& body = steps.Body();
+    mir::Builder body = steps.Body();
     auto queue = EvaluateSelectedBase(lowerer, steps.Frame(), base_expr);
     if (!queue) return std::unexpected(std::move(queue.error()));
     const mir::ExprId queue_id =
@@ -778,25 +778,24 @@ auto LowerHirElementSelectExpr(
     const WalkFrame index_frame = steps.Frame().WithSelectedQueue(&queue->path);
     auto index = lowerer.LowerExpr(index_expr, index_frame);
     if (!index) return std::unexpected(std::move(index.error()));
-    const mir::ExprId index_id = body.exprs.Add(*std::move(index));
+    const mir::ExprId index_id = body.Add(*std::move(index));
     const DescentStep element =
         ElementStep(unit_lowerer, body, base_expr.type, index_id, result_type);
     if (!queue->outlives_the_steps) {
-      return steps.Build(body.exprs.Add(
-          StepRead(unit_lowerer.Unit(), body, element, queue_id)));
+      return steps.Build(
+          body.Add(StepRead(unit_lowerer.Unit(), body, element, queue_id)));
     }
-    const mir::ExprId reference =
-        frame.current_block->exprs.Add(steps.Build(body.exprs.Add(
-            ElementReference(unit_lowerer.Unit(), body, element, queue_id))));
+    const mir::ExprId reference = frame.Builder().Add(steps.Build(body.Add(
+        ElementReference(unit_lowerer.Unit(), body, element, queue_id))));
     return mir::MakeDerefExpr(reference, result_type);
   }
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto base_or = lowerer.LowerAsPlace(base_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+  const mir::ExprId base_id = block.Add(*std::move(base_or));
   auto idx_or = lowerer.LowerExpr(exprs.Get(sel.index), frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
+  const mir::ExprId idx_id = block.Add(*std::move(idx_or));
 
   // The element is named where it lies, and read only where a value is wanted.
   return StepForRead(
@@ -818,7 +817,7 @@ auto LowerHirRangeSelectExpr(
   // written, and the read is what those steps yield.
   if (unit_lowerer.Hir().types.Get(base_expr.type).Is<hir::QueueType>()) {
     BlockBuilder steps(frame);
-    mir::Block& body = steps.Body();
+    mir::Builder body = steps.Body();
     auto queue = EvaluateSelectedBase(lowerer, steps.Frame(), base_expr);
     if (!queue) return std::unexpected(std::move(queue.error()));
     const mir::ExprId queue_id =
@@ -827,12 +826,12 @@ auto LowerHirRangeSelectExpr(
         lowerer, steps.Frame().WithSelectedQueue(&queue->path), sel.bounds,
         base_expr.type, result_type);
     if (!step) return std::unexpected(std::move(step.error()));
-    return steps.Build(body.exprs.Add(StepRead(unit, body, *step, queue_id)));
+    return steps.Build(body.Add(StepRead(unit, body, *step, queue_id)));
   }
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto base_or = lowerer.LowerAsPlace(base_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+  const mir::ExprId base_id = block.Add(*std::move(base_or));
   auto step =
       RangeStep(lowerer, frame, sel.bounds, base_expr.type, result_type);
   if (!step) return std::unexpected(std::move(step.error()));
@@ -847,10 +846,10 @@ auto LowerHirMemberAccessExpr(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::Expr& base_expr = lowerer.HirExprs().Get(sel.base_value);
   const hir::Type& aggregate = unit_lowerer.Hir().types.Get(base_expr.type);
-  mir::Block& block = *frame.current_block;
-  const auto read_member = [&](mir::Block& into, mir::ExprId base_id) {
+  mir::Builder block = frame.Builder();
+  const auto read_member = [&](mir::Builder into, mir::ExprId base_id) {
     const mir::TypeId natural =
-        PartSelectNaturalType(unit, into.exprs.Get(base_id).type, result_type);
+        PartSelectNaturalType(unit, into.Get(base_id).type, result_type);
     return ReadMember(
         unit_lowerer, into,
         MemberStep(unit_lowerer, into, aggregate, sel.field_index, natural),
@@ -864,25 +863,24 @@ auto LowerHirMemberAccessExpr(
   if (TagRequiredByMember(unit_lowerer, aggregate, sel.field_index)
           .has_value()) {
     BlockBuilder steps(frame);
-    mir::Block& body = steps.Body();
+    mir::Builder body = steps.Body();
     auto base = lowerer.LowerExpr(base_expr, steps.Frame());
     if (!base) return std::unexpected(std::move(base.error()));
     const mir::TypeId union_type = base->type;
     const mir::ExprId held_union = body.LocalPlace(
-        DeclareLocal(steps.Frame(), body.exprs.Add(*std::move(base))),
-        union_type);
+        DeclareLocal(steps.Frame(), body.Add(*std::move(base))), union_type);
     const DescentStep member = MemberStep(
         unit_lowerer, body, aggregate, sel.field_index,
         PartSelectNaturalType(unit, union_type, result_type));
     AppendReadChecks(
         unit, body, AccessPath{.owner = held_union, .descent = {member}});
     return steps.Build(body.AsValue(
-        unit.types, body.exprs.Add(ReadMember(
+        unit.types, body.Add(ReadMember(
                         unit_lowerer, body, member, held_union, result_type))));
   }
   auto base_or = lowerer.LowerAsPlace(base_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  return read_member(block, block.exprs.Add(*std::move(base_or)));
+  return read_member(block, block.Add(*std::move(base_or)));
 }
 
 // LRM 8.4: a class property read reaches the object through the handle.
@@ -894,11 +892,11 @@ template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   auto base_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(sel.base_value), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+  const mir::ExprId base_id = block.Add(*std::move(base_or));
   return BuildClassPropertyAccess(
       lowerer, frame, base_id, sel.target, result_type);
 }
@@ -908,7 +906,7 @@ auto LowerHirElementSelectExprPath(
     Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<AccessPath> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
-  auto& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const hir::Expr& base_expr = lowerer.HirExprs().Get(sel.base_value);
   auto base = lowerer.LowerAccessPath(base_expr, frame);
   if (!base) return std::unexpected(std::move(base.error()));
@@ -919,7 +917,7 @@ auto LowerHirElementSelectExprPath(
       queue.has_value() ? frame.WithSelectedQueue(&*queue) : frame;
   auto idx_or = lowerer.LowerExpr(index_expr, index_frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
+  const mir::ExprId idx_id = block.Add(*std::move(idx_or));
   return DescendInto(
       *std::move(base),
       ElementStep(unit_lowerer, block, base_expr.type, idx_id, result_type));
@@ -947,7 +945,7 @@ auto LowerHirArraySliceWithIndices(
     mir::TypeId result_type) -> diag::Result<NamedMemory> {
   const UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const hir::Expr& base_expr = lowerer.HirExprs().Get(sel.base_value);
   auto base = lowerer.LowerAccessPath(base_expr, frame);
   if (!base) return std::unexpected(std::move(base.error()));
@@ -957,7 +955,7 @@ auto LowerHirArraySliceWithIndices(
   auto index = lowerer.LowerExpr(lowerer.HirExprs().Get(start.index), frame);
   if (!index) return std::unexpected(std::move(index.error()));
   const mir::ExprId index_id =
-      EvaluatedOnce(frame, block.exprs.Add(*std::move(index)));
+      EvaluatedOnce(frame, block.Add(*std::move(index)));
   // The array's index at the slice's leftmost position, and at its rightmost,
   // which lies `count - 1` positions on: an index falls as positions grow
   // where the array is declared descending (LRM 7.4.5).
@@ -990,7 +988,7 @@ auto LowerHirMemberAccessExprPath(
   if (!base) return std::unexpected(std::move(base.error()));
   return DescendInto(
       *std::move(base), MemberStep(
-                            unit_lowerer, *frame.current_block,
+                            unit_lowerer, frame.Builder(),
                             unit_lowerer.Hir().types.Get(base_expr.type),
                             sel.field_index, result_type));
 }
@@ -1008,7 +1006,7 @@ auto LowerTagCheckedUse(
     Lowerer& lowerer, WalkFrame frame, const hir::Expr& select,
     const TagCheckedUse& use) -> diag::Result<mir::Expr> {
   BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   auto path = lowerer.LowerAccessPath(select, steps.Frame());
   if (!path) return std::unexpected(std::move(path.error()));
   const SettledPath settled =
@@ -1029,9 +1027,9 @@ auto LowerTagCheckedRead(
           const AccessPath& path) -> diag::Result<mir::ExprId> {
         // A read answers with the storage it reached until its value is kept,
         // so the value is kept here, before the steps end.
-        mir::Block& body = steps.Body();
+        mir::Builder body = steps.Body();
         const mir::ExprId value = PathValueAsDeclared(unit, body, path);
-        const mir::TypeId type = body.exprs.Get(value).type;
+        const mir::TypeId type = body.Get(value).type;
         return body.ReadLocal(steps.DeclareLocal(type, value), type);
       });
 }
@@ -1062,8 +1060,8 @@ auto LowerHirClassPropertyAccessExprPath(
       lowerer.LowerExpr(lowerer.HirExprs().Get(sel.base_value), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   return PropertyPath(
-      lowerer, frame, frame.current_block->exprs.Add(*std::move(base_or)),
-      sel.target, result_type);
+      lowerer, frame, frame.Builder().Add(*std::move(base_or)), sel.target,
+      result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -1074,8 +1072,7 @@ auto LowerHirInterfaceMemberAccessExpr(
   if (!held) return std::unexpected(std::move(held.error()));
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::ExprId storage = ReportedPlace(unit, frame, *held);
-  const mir::ExprId pointer =
-      frame.current_block->DerefOperand(unit.types, storage);
+  const mir::ExprId pointer = frame.Builder().DerefOperand(unit.types, storage);
   return mir::MakeDerefExpr(
       pointer, unit.types.Get(frame.current_block->exprs.Get(storage).type)
                    .template Get<mir::PointerType>()
@@ -1090,7 +1087,7 @@ auto LowerHirInterfaceInstanceAccessExpr(
   auto object = HeldInterfaceObject(lowerer, frame, sel);
   if (!object) return std::unexpected(std::move(object.error()));
   return InterfaceValueOf(
-      lowerer.Owner().Unit(), *frame.current_block, *object, result_type);
+      lowerer.Owner().Unit(), frame.Builder(), *object, result_type);
 }
 
 // One concrete instantiation per pass class. The handler templates are defined

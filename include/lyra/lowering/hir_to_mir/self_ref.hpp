@@ -7,6 +7,7 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -63,14 +64,14 @@ auto BuildThisHandle(const WalkFrame& frame) -> mir::Expr;
 // reached on an object, so this is what a field access or a call is made on
 // wherever a handle, a pointer, or a write in progress reaches it.
 auto BuildObjectDeref(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reaches)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId reaches)
     -> mir::ExprId;
 
 // A borrowed pointer to the object `reaches` designates -- a handle, a
 // pointer, or a write in progress -- as a call dispatching on the object or
 // viewing it as a class it extends takes the object.
 auto BuildObjectPointer(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reaches)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId reaches)
     -> mir::ExprId;
 
 // `object`, a pointer to an object, as `pointer`, a pointer to a class that
@@ -80,7 +81,7 @@ auto BuildObjectPointer(
 // holds objects of several classes holds each as the scope it is, and a use
 // naming the class views it as that class.
 [[nodiscard]] auto ObjectAs(
-    mir::Block& block, mir::ExprId object, mir::TypeId pointer) -> mir::ExprId;
+    mir::Builder block, mir::ExprId object, mir::TypeId pointer) -> mir::ExprId;
 
 // A pointer to the object of the scope `hops` scopes out from the one the
 // current body counts from (LRM 23.9), as that scope's class. At hops 0 it is
@@ -111,11 +112,11 @@ auto BuildImplicitInstanceArgument(
             return lowerer.RouteEnd(frame, routed.id);
           }},
       reach);
-  return frame.current_block->exprs.Add(
+  return frame.Builder().Add(
       mir::Expr{
           .data =
               mir::CastExpr{
-                  .operand = frame.current_block->AsValue(unit.types, reached)},
+                  .operand = frame.Builder().AsValue(unit.types, reached)},
           .type = unit.builtins.scope_ptr});
 }
 
@@ -147,7 +148,7 @@ auto BuildStructuralFieldAccessExpr(
 // cell through it. Used for a `ref` / `const ref` actual and for a
 // by-reference closure capture.
 auto BuildReferenceArg(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

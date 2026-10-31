@@ -31,6 +31,7 @@
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/expr.hpp"
@@ -439,7 +440,7 @@ auto BuildClassPropertyAccess(
     const hir::ClassPropertyTarget& target, mir::TypeId reached) -> mir::Expr {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   return PropertyStorage(
-      unit, *frame.current_block, ReportedObject(unit, frame, receiver),
+      unit, frame.Builder(), ReportedObject(unit, frame, receiver),
       PropertyNameOf(lowerer, target), reached);
 }
 
@@ -470,7 +471,7 @@ struct ReachedObject {
 // as a value the design computes, and a value standing for one object takes no
 // select and comes back as it went in.
 auto ApplyInstanceSelects(
-    UnitLowerer& unit_lowerer, mir::Block& block, ReachedObject reached,
+    UnitLowerer& unit_lowerer, mir::Builder block, ReachedObject reached,
     std::span<const std::uint32_t> selects) -> ReachedObject;
 
 // The call `start` makes of `body`, a callable of the scope `frame` stands on

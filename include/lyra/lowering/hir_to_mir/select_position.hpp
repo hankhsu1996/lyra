@@ -5,6 +5,7 @@
 
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -45,14 +46,14 @@ struct PositionMap {
 // can ask for wraps it. A constant index yields a constant position, which the
 // unit states rather than the program computing it.
 [[nodiscard]] auto WrapIndexAsPosition(
-    mir::CompilationUnit& unit, mir::Block& block, const PositionMap& map,
+    mir::CompilationUnit& unit, mir::Builder block, const PositionMap& map,
     mir::ExprId index, std::int64_t shift) -> mir::ExprId;
 
 // The position a zero-based ordinal names, in the position type: an index a
 // method takes (LRM 6.16.2, 7.10.2), a bound of a queue's slice (LRM 7.10.1).
 // An ordinal too wide to name a position, or holding x or z, names none.
 [[nodiscard]] auto BuildOrdinalPosition(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ordinal)
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId ordinal)
     -> mir::ExprId;
 
 // The far end of `count` parts in a row that start at position `start` and
@@ -61,19 +62,19 @@ struct PositionMap {
 // indexed slice spans (LRM 7.10.1), where the count is a constant the source
 // wrote rather than a width a result type states.
 [[nodiscard]] auto BuildSpanEnd(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId start,
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId start,
     mir::ExprId count, bool up) -> mir::ExprId;
 
 // The position `offset` positions past `base`, in the position type: where a
 // part of a part starts, counted in the numbering of the value both lie in.
 [[nodiscard]] auto BuildPositionSum(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId base,
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId base,
     mir::ExprId offset) -> mir::ExprId;
 
 // A position the lowering computed itself -- a packed member's place in its
 // aggregate, the tag above them -- as a constant of the position type.
 [[nodiscard]] auto BuildConstantPosition(
-    mir::CompilationUnit& unit, mir::Block& block, std::int64_t position)
+    mir::CompilationUnit& unit, mir::Builder block, std::int64_t position)
     -> mir::ExprId;
 
 // The type the least significant bit of a value of `value_type` is read at:
@@ -88,7 +89,7 @@ struct PositionMap {
 // an edge and `$rose` / `$fell` read of one (LRM 9.4.2, 16.9.3): the one bit
 // at the value's own position zero, whatever range it was declared with.
 [[nodiscard]] auto BuildLeastSignificantBit(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value,
     mir::TypeId bit_type) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

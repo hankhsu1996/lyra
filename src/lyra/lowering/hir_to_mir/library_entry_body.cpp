@@ -7,6 +7,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -34,15 +35,15 @@ auto EntryBody(
     const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
     mir::CallableId callable, mir::TypeId entry) -> mir::CallableCode {
   const auto& prototype = unit.types.Get(entry).Get<mir::MachineFunctionType>();
-  mir::CallableCode code = mir::CallableCode::Defined();
+  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   for (const mir::TypeId param : prototype.params) {
     code.params.push_back(code.AddLocal(param));
   }
   code.result_type = prototype.result;
   const mir::LocalId handed = code.params.front();
 
-  mir::Block& body = code.Body();
-  const mir::ExprId self = body.exprs.Add(
+  mir::Builder body(code.Body(), diag::SourceSpan{});
+  const mir::ExprId self = body.Add(
       mir::Expr{
           .data =
               mir::CastExpr{
@@ -53,7 +54,7 @@ auto EntryBody(
   for (const mir::LocalId param : std::span{code.params}.subspan(1)) {
     args.push_back(body.ReadLocal(param, code.locals.Get(param).type));
   }
-  const mir::ExprId call = body.exprs.Add(
+  const mir::ExprId call = body.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -72,13 +73,13 @@ auto EntryBody(
 }  // namespace
 
 void CompleteWith(
-    const mir::CompilationUnit& unit, mir::Block& body, mir::ExprId call,
+    const mir::CompilationUnit& unit, mir::Builder body, mir::ExprId call,
     mir::TypeId result) {
   const auto* coroutine = unit.types.Get(result).As<mir::CoroutineType>();
   const mir::TypeId completion =
       coroutine != nullptr ? coroutine->payload : result;
   const mir::ExprId completed =
-      coroutine != nullptr ? body.exprs.Add(
+      coroutine != nullptr ? body.Add(
                                  mir::Expr{
                                      .data = mir::AwaitExpr{.execution = call},
                                      .type = completion})

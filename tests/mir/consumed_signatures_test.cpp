@@ -8,6 +8,8 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/diag/source_span.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -57,9 +59,9 @@ auto UnitReading(const Read& read) -> CompilationUnit {
   derived_class.identity = PathOf("Derived");
   derived_class.base = ClassRef{base};
   unit.DefineClass(derived, std::move(derived_class));
-  CallableCode code = CallableCode::Defined();
+  CallableCode code = CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
-  read(unit, code.Body(), derived);
+  read(unit, Builder(code.Body(), diag::SourceSpan{}), derived);
   unit.callables.Add(
       CallableDecl{
           .code = std::move(code),
@@ -92,23 +94,24 @@ auto Classes(const std::vector<ConsumedSignature>& consumed)
 // whose layout and dispatch positions it follows.
 TEST(ConsumedSignaturesTest, AHandleReadsNothingAndAReadClassBringsItsLineage) {
   const CompilationUnit holding = UnitReading([](CompilationUnit& u,
-                                                 Block& body, ClassId derived) {
+                                                 Builder body,
+                                                 ClassId derived) {
     body.AppendStmt(
         ExprStmt{
-            .expr = body.exprs.Add(
+            .expr = body.Add(
                 Expr{.data = NullLiteral{}, .type = HandleTo(u, derived)})});
   });
   EXPECT_TRUE(ConsumedSignaturesOf(holding).empty());
 
   const CompilationUnit reaching =
-      UnitReading([](CompilationUnit& u, Block& body, ClassId derived) {
-        const ExprId object = body.exprs.Add(
+      UnitReading([](CompilationUnit& u, Builder body, ClassId derived) {
+        const ExprId object = body.Add(
             Expr{
                 .data = NullLiteral{},
                 .type = u.types.Intern(Type{ObjectType{.of = derived}})});
         body.AppendStmt(
             ExprStmt{
-                .expr = body.Read(body.exprs.Add(MakeFieldAccessExpr(
+                .expr = body.Read(body.Add(MakeFieldAccessExpr(
                     object,
                     ClassFieldTarget{
                         .owner = ClassId{.value = 0}, .slot = FieldId{}},
@@ -124,23 +127,22 @@ TEST(ConsumedSignaturesTest, AHandleReadsNothingAndAReadClassBringsItsLineage) {
 TEST(ConsumedSignaturesTest, EveryReachIntoAClassReadsItWithItsLineage) {
   const auto reads_derived = [](const auto& reach) {
     const CompilationUnit unit =
-        UnitReading([&](CompilationUnit& u, Block& body, ClassId derived) {
-          body.AppendStmt(
-              ExprStmt{.expr = body.exprs.Add(reach(u, body, derived))});
+        UnitReading([&](CompilationUnit& u, Builder body, ClassId derived) {
+          body.AppendStmt(ExprStmt{.expr = body.Add(reach(u, body, derived))});
         });
     return Classes(ConsumedSignaturesOf(unit)) ==
            std::vector<std::string>{"P::Derived", "P::Base"};
   };
-  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Block& body, ClassId cls) {
-    const ExprId object = body.exprs.Add(
-        Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Builder body, ClassId cls) {
+    const ExprId object =
+        body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
     return MakeFieldAccessExpr(
         object, ClassFieldTarget{.owner = cls, .slot = FieldId{}},
         u.builtins.int_type);
   })) << "a member accessed";
-  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Block& body, ClassId cls) {
-    const ExprId receiver = body.exprs.Add(
-        Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Builder body, ClassId cls) {
+    const ExprId receiver =
+        body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
     return Expr{
         .data =
             CallExpr{
@@ -153,12 +155,12 @@ TEST(ConsumedSignaturesTest, EveryReachIntoAClassReadsItWithItsLineage) {
                 .arguments = {}},
         .type = u.builtins.void_type};
   })) << "a behavior dispatched on";
-  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Block&, ClassId cls) {
+  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Builder, ClassId cls) {
     return MakeCallExpr(
         Direct{.target = ConstructorTarget{.cls = cls}}, {},
         u.builtins.void_type);
   })) << "a construction entered";
-  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Block&, ClassId cls) {
+  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Builder, ClassId cls) {
     return Expr{
         .data =
             ReferenceExpr{
@@ -174,7 +176,7 @@ TEST(ConsumedSignaturesTest, EveryReachIntoAClassReadsItWithItsLineage) {
 // where a body names it.
 TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
   CompilationUnit owning =
-      UnitReading([](CompilationUnit&, Block&, ClassId) {});
+      UnitReading([](CompilationUnit&, Builder, ClassId) {});
   Class holder;
   holder.base = ClassRef{ManagedObjectRootRef{}};
   holder.fields.Add(
@@ -190,8 +192,8 @@ TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
       Classes(ConsumedSignaturesOf(owning)),
       (std::vector<std::string>{"P::Derived", "P::Base"}));
 
-  const CompilationUnit naming = UnitReading([](CompilationUnit& u, Block& body,
-                                                ClassId) {
+  const CompilationUnit naming = UnitReading([](CompilationUnit& u,
+                                                Builder body, ClassId) {
     const RecordId record = u.records.Add(
         RecordDecl{
             .defining_unit = "R",
@@ -200,7 +202,7 @@ TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
             .elements = {}});
     body.AppendStmt(
         ExprStmt{
-            .expr = body.exprs.Add(
+            .expr = body.Add(
                 Expr{
                     .data = NullLiteral{},
                     .type = u.types.Intern(
@@ -209,7 +211,7 @@ TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
         StaticVariableDecl{.type = u.builtins.int_type, .defining_unit = "Q"});
     body.AppendStmt(
         ExprStmt{
-            .expr = body.exprs.Add(
+            .expr = body.Add(
                 Expr{
                     .data =
                         ReferenceExpr{
@@ -217,7 +219,7 @@ TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
                     .type = u.builtins.int_type})});
     body.AppendStmt(
         ExprStmt{
-            .expr = body.exprs.Add(
+            .expr = body.Add(
                 Expr{
                     .data =
                         ReferenceExpr{
@@ -241,32 +243,32 @@ TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
 // class's definition alone; neither reads anything the classes declare.
 TEST(ConsumedSignaturesTest, AConversionBetweenClassesReadsNeither) {
   const CompilationUnit seen_as =
-      UnitReading([](CompilationUnit& u, Block& body, ClassId derived) {
-        const ExprId handle = body.exprs.Add(
-            Expr{.data = NullLiteral{}, .type = HandleTo(u, derived)});
+      UnitReading([](CompilationUnit& u, Builder body, ClassId derived) {
+        const ExprId handle =
+            body.Add(Expr{.data = NullLiteral{}, .type = HandleTo(u, derived)});
         body.AppendStmt(
             ExprStmt{
-                .expr = body.exprs.Add(
+                .expr = body.Add(
                     Expr{
                         .data = CastExpr{.operand = handle},
                         .type = HandleTo(u, ClassId{.value = 0})})});
       });
   EXPECT_TRUE(Classes(ConsumedSignaturesOf(seen_as)).empty());
 
-  const CompilationUnit cast = UnitReading([](CompilationUnit& u, Block& body,
+  const CompilationUnit cast = UnitReading([](CompilationUnit& u, Builder body,
                                               ClassId derived) {
     const TypeId base_handle = HandleTo(u, ClassId{.value = 0});
     const ExprId handle =
-        body.exprs.Add(Expr{.data = NullLiteral{}, .type = base_handle});
-    const ExprId definition = body.exprs.Add(MakeAddressOfExpr(
-        body.exprs.Add(
+        body.Add(Expr{.data = NullLiteral{}, .type = base_handle});
+    const ExprId definition = body.Add(MakeAddressOfExpr(
+        body.Add(
             Expr{
                 .data = ReferenceExpr{.target = DefinitionRef{.of = derived}},
                 .type = ClassDefinitionType(u.types)}),
         ClassDefinitionPointer(u.types)));
     body.AppendStmt(
         ExprStmt{
-            .expr = body.exprs.Add(MakeCallExpr(
+            .expr = body.Add(MakeCallExpr(
                 Direct{.target = support::BuiltinFn::kDynamicCast},
                 {handle, definition}, HandleTo(u, derived)))});
   });
@@ -277,7 +279,7 @@ TEST(ConsumedSignaturesTest, AConversionBetweenClassesReadsNeither) {
 // the unit's own namespace is no dependency of itself.
 TEST(ConsumedSignaturesTest, ANamespaceMemberOfAnotherUnitIsReadWhereNamed) {
   const CompilationUnit calling = UnitReading([](CompilationUnit& u,
-                                                 Block& body, ClassId) {
+                                                 Builder body, ClassId) {
     const CallableId declared = u.callables.Add(
         CallableDecl{
             .code = CallableCode{},
@@ -287,12 +289,12 @@ TEST(ConsumedSignaturesTest, ANamespaceMemberOfAnotherUnitIsReadWhereNamed) {
     u.named_callables.push_back(NamedCallable{.name = "g", .body = declared});
     body.AppendStmt(
         ExprStmt{
-            .expr = body.exprs.Add(MakeCallExpr(
+            .expr = body.Add(MakeCallExpr(
                 Direct{.target = UnitCallableTarget{.slot = declared}}, {},
                 u.builtins.void_type))});
     body.AppendStmt(
         ExprStmt{
-            .expr = body.exprs.Add(MakeCallExpr(
+            .expr = body.Add(MakeCallExpr(
                 Direct{
                     .target =
                         ExternalBringUpTarget{

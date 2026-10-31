@@ -8,13 +8,13 @@
 namespace lyra::mir {
 
 auto BuildEnumTableRef(
-    const CompilationUnit& unit, Block& block, TypeId enumeration) -> ExprId {
+    const CompilationUnit& unit, Builder block, TypeId enumeration) -> ExprId {
   const auto* declared = unit.types.Get(enumeration).As<EnumType>();
   if (declared == nullptr) {
     throw InternalError("mir: only an enumeration declares members");
   }
   const EnumTableId table = unit.enum_tables.Intern(*declared);
-  return block.exprs.Add(
+  return block.Add(
       Expr{
           .data = ReferenceExpr{.target = EnumTableRef{.table = table}},
           .type = unit.builtins.enumeration});

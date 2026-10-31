@@ -121,6 +121,9 @@ below LIR, at LIR-to-LLVM.
   convention and no departure comes out of it, though the release of a stack waiting beneath it
   unwinds through it, so both are called as calls that can be unwound out of.
 - The boundary protocol to the scheduling runtime (entry, suspend, resume, abandonment, completion).
+- Where in the source each instruction and terminator came from, as rustc's MIR statements and
+  terminators carry a span: that of the innermost MIR node naming one whose lowering emitted it, so
+  what the code generator fails on or refuses is reported there.
 
 ## Does Not Own
 

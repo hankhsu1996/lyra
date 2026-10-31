@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -55,7 +56,7 @@ inline constexpr base::ComponentIndex kCompletionResult{0};
 
 // Reads one payload component out of a completion value bound to `completion`.
 auto ProjectCompletionComponent(
-    mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,
+    mir::Builder block, mir::LocalId completion, mir::TypeId payload_type,
     base::ComponentIndex index, mir::TypeId component_type) -> mir::ExprId;
 
 // Where one payload component lands: the lvalue the call named for it, bound

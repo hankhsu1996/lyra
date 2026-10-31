@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -33,7 +34,7 @@ namespace lyra::lowering::hir_to_mir {
 // named the element by key, so what a container needs is answered from its
 // type in one place.
 [[nodiscard]] auto ElementStep(
-    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId receiver_type,
+    UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId receiver_type,
     mir::ExprId idx_id, mir::TypeId part_type) -> DescentStep;
 
 // The step `aggregate.member` takes (LRM 7.2, 7.3). An unpacked aggregate's
@@ -42,7 +43,7 @@ namespace lyra::lowering::hir_to_mir {
 // with no identity of its own. A packed aggregate's member is bits of the one
 // vector the aggregate is.
 [[nodiscard]] auto MemberStep(
-    UnitLowerer& unit_lowerer, mir::Block& block, const hir::Type& aggregate,
+    UnitLowerer& unit_lowerer, mir::Builder block, const hir::Type& aggregate,
     base::ComponentIndex index, mir::TypeId part_type) -> DescentStep;
 
 // LRM 11.4.14.4: the elements a `with` names of an array of `array_type`:
@@ -70,7 +71,7 @@ template <ExprLowerer Lowerer>
 // `arr[i]` read as a value: the read the element step takes from `base_id`, a
 // value of `base_type`.
 [[nodiscard]] auto BuildElementAccessCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId base_id,
     hir::TypeId base_type, mir::ExprId idx_id, mir::TypeId result_type)
     -> mir::Expr;
 
@@ -81,7 +82,7 @@ template <ExprLowerer Lowerer>
 // statement governing it, and what `%p` prints (LRM 21.2.1.6), exactly, both
 // ask it.
 [[nodiscard]] auto BuildHoldsMember(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId subject,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId subject,
     hir::TypeId subject_type, base::ComponentIndex index,
     hir::CaseKeyword keyword) -> mir::ExprId;
 
@@ -93,14 +94,14 @@ template <ExprLowerer Lowerer>
 // value of that type. Nothing is checked: the caller states which bits it
 // wants.
 [[nodiscard]] auto BuildPackedBitsRead(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId base,
     std::uint64_t bit_offset, mir::TypeId result_type) -> mir::Expr;
 
 // Member `index` of the aggregate `projection` describes, at `result_type`.
 // Nothing is checked: a caller reaching a member of a tagged union this way
 // has already tested the tag names it (LRM 11.9, 12.6).
 [[nodiscard]] auto BuildPackedMemberRead(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId base,
     const PackedProjection& projection, base::ComponentIndex index,
     mir::TypeId result_type) -> mir::Expr;
 

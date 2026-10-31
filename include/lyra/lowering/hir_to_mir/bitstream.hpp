@@ -7,6 +7,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -79,12 +80,12 @@ struct StreamFill {
 // stands, a place or a value; a packed one already is its stream, and a run of
 // bits is its own.
 [[nodiscard]] auto BuildToBitstream(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value_id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value_id,
     diag::SourceSpan span) -> diag::Result<mir::ExprId>;
 
 // The stream `stream`, integral or a run of bits, as a run of bits.
 [[nodiscard]] auto BuildRunOf(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId stream)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId stream)
     -> mir::ExprId;
 
 // A run of `width` bits, a machine count, every bit 0; and the run of bits
@@ -92,17 +93,17 @@ struct StreamFill {
 // its most significant end, a machine count, which is how a run whose width is
 // known before its parts are is built in one pass.
 [[nodiscard]] auto BuildRunOfZeros(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId width)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId width)
     -> mir::ExprId;
 void InsertIntoRun(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId run,
     mir::ExprId at, mir::ExprId part);
 
 // The streams `parts` names, each an integral stream or a run of bits, laid
 // end to end into a run of bits the local `run` is declared holding, the first
 // most significant (LRM 11.4.14.1); answers a read of it.
 [[nodiscard]] auto BuildRunJoin(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId run,
     std::span<const mir::ExprId> parts) -> mir::ExprId;
 
 // LRM 11.4.14.2: `stream_id` divided into `block_bits`-wide blocks whose order
@@ -111,22 +112,22 @@ void InsertIntoRun(
 // the operator states which of the two a program asked for and nothing below
 // reads the operator itself.
 [[nodiscard]] auto BuildReorderedStream(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId stream_id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId stream_id,
     std::uint64_t block_bits) -> mir::ExprId;
 
 // How many bits the run of bits `run` holds, as a machine count.
 [[nodiscard]] auto BuildRunLength(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId run)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run)
     -> mir::ExprId;
 
 // The `count` bits `at` positions from the most significant end of the run of
 // bits `run`, both machine counts, as a run of their own; and the bits from
 // `at` as an integral value of `shape`.
 [[nodiscard]] auto BuildRunExtract(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run,
     mir::ExprId at, mir::ExprId count) -> mir::ExprId;
 [[nodiscard]] auto BuildRunLoad(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run,
     mir::ExprId at, StreamShape shape) -> mir::ExprId;
 
 // `bits_id`, an integral stream, read back as a value of `dst_type`, whose
@@ -135,7 +136,7 @@ void InsertIntoRun(
 // left-aligns a stream in a wider target -- the opposite end from where an
 // ordinary assignment extends its right-hand side.
 [[nodiscard]] auto BuildFromBitstream(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId bits_id,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId bits_id,
     mir::TypeId dst_type) -> mir::ExprId;
 
 // LRM 11.4.14: a stream, integral or a run of bits, assigned to a value of
@@ -156,7 +157,7 @@ void InsertIntoRun(
 // The value of `dst_type`, a type holding a part whose width the program
 // decides, that the run of bits `run` holds exactly.
 [[nodiscard]] auto BuildFromBitVec(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId run,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run,
     mir::TypeId dst_type) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

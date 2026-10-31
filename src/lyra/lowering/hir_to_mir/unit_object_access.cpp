@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -41,10 +42,10 @@ auto ObjectPointerOf(UnitLowerer& unit_lowerer, hir::ScopeClassId scope_class)
 // design hierarchy, which the caller views as the class it knows the block to
 // be. Which block that is was settled by the object running the loop.
 auto ReachLoopBlock(
-    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId blocks,
+    const UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId blocks,
     mir::ExprId position) -> mir::ExprId {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -64,13 +65,13 @@ auto ReachLoopBlock(
 // is what the route stated by naming the class here.
 template <typename PlaceOf>
 auto AccessPublishedSlot(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
     hir::ScopeClassId scope_class, PlaceOf place_of) -> mir::ExprId {
   const ScopeClassLayout& record = unit_lowerer.ScopeClassLayoutOf(scope_class);
   const mir::FieldId slot = place_of(record.published);
   const mir::ExprId of_class =
       ObjectAs(block, object, ObjectPointerOf(unit_lowerer, scope_class));
-  return block.exprs.Add(
+  return block.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit_lowerer.Unit(), block, of_class),
           mir::ClassFieldTarget{.owner = record.cls, .slot = slot},
@@ -80,23 +81,23 @@ auto AccessPublishedSlot(
 // The same field, addressed.
 template <typename PlaceOf>
 auto AddressPublishedSlot(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
     hir::ScopeClassId scope_class, PlaceOf place_of) -> mir::ExprId {
   const mir::ExprId access =
       AccessPublishedSlot(unit_lowerer, block, object, scope_class, place_of);
-  return block.exprs.Add(
+  return block.Add(
       mir::Expr{
           .data = mir::AddressOfExpr{.operand = access},
           .type = unit_lowerer.Unit().types.Intern(
               mir::Type{mir::PointerType{
-                  .pointee = block.exprs.Get(access).type,
+                  .pointee = block.Get(access).type,
                   .ownership = mir::PointerOwnership::kBorrowed}})});
 }
 
 }  // namespace
 
 auto ReadPublishedMember(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
     hir::ScopeClassId scope_class, hir::PublishedMemberId member)
     -> mir::ExprId {
   return AddressPublishedSlot(
@@ -107,7 +108,7 @@ auto ReadPublishedMember(
 }
 
 auto ReachPublishedDisableTarget(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
     const hir::PublishedDisableTargetLeaf& leaf) -> mir::ExprId {
   return AddressPublishedSlot(
       unit_lowerer, block, object, leaf.scope_class,
@@ -117,13 +118,13 @@ auto ReachPublishedDisableTarget(
 }
 
 auto StepThroughPublished(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
     const hir::PublishedScopeRef& names, std::span<const std::uint32_t> selects,
     const SelectEvaluator& evaluate_select) -> diag::Result<mir::ExprId> {
   const auto selected = [&](mir::ExprId held) {
     return ApplyInstanceSelects(
                unit_lowerer, block,
-               ReachedObject{.expr = held, .type = block.exprs.Get(held).type},
+               ReachedObject{.expr = held, .type = block.Get(held).type},
                selects)
         .expr;
   };
@@ -174,9 +175,9 @@ auto StepThroughPublished(
 }
 
 auto InterfaceValueOf(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object,
     mir::TypeId type) -> mir::Expr {
-  const mir::ExprId address = block.exprs.Add(
+  const mir::ExprId address = block.Add(
       mir::Expr{
           .data = mir::CastExpr{.operand = block.AsValue(unit.types, object)},
           .type = mir::ErasedPointer(unit.types)});
@@ -188,12 +189,12 @@ auto InterfaceValueOf(
 auto ReachHeldInterface(
     mir::CompilationUnit& unit, BlockBuilder& steps, mir::Expr handle,
     mir::TypeId object_pointer) -> mir::Expr {
-  mir::Block& body = steps.Body();
+  mir::Builder body = steps.Body();
   // The handle is tested and then reached through, and the source wrote it
   // once.
   const mir::ExprId held =
-      EvaluatedOnce(steps.Frame(), body.exprs.Add(std::move(handle)));
-  const mir::ExprId present = body.exprs.Add(
+      EvaluatedOnce(steps.Frame(), body.Add(std::move(handle)));
+  const mir::ExprId present = body.Add(
       mir::Expr{
           .data = mir::CastExpr{.operand = held},
           .type = unit.builtins.machine_bool});
@@ -202,7 +203,7 @@ auto ReachHeldInterface(
       base::DiagMessage("use of a null virtual interface").TakeText());
   // The handle is a value holding the instance's address, so reaching the
   // instance reads that address out and states which unit's object it is.
-  const mir::ExprId address = body.exprs.Add(
+  const mir::ExprId address = body.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -212,7 +213,7 @@ auto ReachHeldInterface(
                           .receiver = held},
                   .arguments = {}},
           .type = mir::ErasedPointer(unit.types)});
-  return steps.Build(body.exprs.Add(
+  return steps.Build(body.Add(
       mir::Expr{
           .data = mir::CastExpr{.operand = address}, .type = object_pointer}));
 }

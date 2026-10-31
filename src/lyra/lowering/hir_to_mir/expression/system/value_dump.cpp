@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -35,10 +36,10 @@ namespace {
 
 // A call of `entry`, handed the runtime and then `operands`.
 auto DumpCall(
-    ProcessLowerer& process, mir::Block& block, support::BuiltinFn entry,
+    ProcessLowerer& process, mir::Builder block, support::BuiltinFn entry,
     std::vector<mir::ExprId> operands) -> mir::Expr {
   std::vector<mir::ExprId> arguments{
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()))};
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()))};
   arguments.insert(arguments.end(), operands.begin(), operands.end());
   return mir::Expr{
       .data =
@@ -55,9 +56,9 @@ auto MachineIntOperand(
     -> diag::Result<mir::ExprId> {
   auto lowered = process.LowerExpr(process.HirBody().exprs.Get(operand), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   return BuildToInt64Call(
-      process.Owner().Unit(), block, block.exprs.Add(*std::move(lowered)));
+      process.Owner().Unit(), block, block.Add(*std::move(lowered)));
 }
 
 // The instance an argument names, none where it names something else.
@@ -74,14 +75,14 @@ auto FileNameOperand(
     std::optional<hir::ExprId> named, std::string_view otherwise)
     -> diag::Result<mir::ExprId> {
   auto& unit = process.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   if (!named.has_value()) {
     return BuildStringValueExpr(unit, block, std::string(otherwise));
   }
   auto lowered = process.LowerExpr(process.HirBody().exprs.Get(*named), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   return ConvertToType(
-      unit, block, block.exprs.Add(*std::move(lowered)), unit.builtins.string);
+      unit, block, block.Add(*std::move(lowered)), unit.builtins.string);
 }
 
 // One item a `$dumpvars` names after its levels (LRM 21.7.1.2): an instance,
@@ -92,7 +93,7 @@ auto DumpVarsItem(
     ProcessLowerer& process, const WalkFrame& frame, mir::ExprId levels,
     hir::ExprId item) -> diag::Result<mir::Expr> {
   const hir::Expr& named = process.HirBody().exprs.Get(item);
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   if (const hir::RoutedObjectRef* instance = NamedInstance(named)) {
     return DumpCall(
         process, block, support::BuiltinFn::kDumpVarsOf,
@@ -111,11 +112,11 @@ auto DumpVarsItem(
   auto& unit = process.Owner().Unit();
   const mir::TypeId pointer = unit.types.Intern(
       mir::Type{mir::PointerType{
-          .pointee = block.exprs.Get(member).type,
+          .pointee = block.Get(member).type,
           .ownership = mir::PointerOwnership::kBorrowed}});
   return DumpCall(
       process, block, support::BuiltinFn::kDumpVarsOfVariable,
-      {block.exprs.Add(mir::MakeAddressOfExpr(member, pointer))});
+      {block.Add(mir::MakeAddressOfExpr(member, pointer))});
 }
 
 // LRM 21.7.1.2: no arguments is the whole design, levels alone that many
@@ -124,7 +125,7 @@ auto DumpVarsItem(
 auto LowerDumpVars(
     ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   const std::vector<hir::ExprId> operands = RequiredOperands(call);
   if (operands.empty()) {
     return DumpCall(process, block, support::BuiltinFn::kDumpVars, {});
@@ -138,8 +139,7 @@ auto LowerDumpVars(
   std::optional<mir::Expr> last;
   for (std::size_t i = 1; i < operands.size(); ++i) {
     if (last.has_value()) {
-      block.AppendStmt(
-          mir::ExprStmt{.expr = block.exprs.Add(*std::move(last))});
+      block.AppendStmt(mir::ExprStmt{.expr = block.Add(*std::move(last))});
     }
     auto item = DumpVarsItem(process, frame, *levels, operands[i]);
     if (!item) return std::unexpected(std::move(item.error()));
@@ -175,7 +175,7 @@ auto LowerDumpPorts(
     ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call,
     diag::SourceSpan span) -> diag::Result<mir::Expr> {
   auto& unit = process.Owner().Unit();
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   std::vector<mir::ExprId> instances;
   std::optional<hir::ExprId> file;
   for (const std::optional<hir::ExprId>& argument : call.arguments) {
@@ -201,7 +201,7 @@ auto LowerDumpPorts(
   for (std::size_t i = 0; i + 1 < instances.size(); ++i) {
     block.AppendStmt(
         mir::ExprStmt{
-            .expr = block.exprs.Add(DumpCall(
+            .expr = block.Add(DumpCall(
                 process, block, support::BuiltinFn::kDumpPortsOf,
                 {instances[i], *name}))});
   }
@@ -218,7 +218,7 @@ auto LowerDumpPortsControl(
   auto name = FileNameOperand(
       process, frame, OptionalOperand(call, at), kEveryPortFile);
   if (!name) return std::unexpected(std::move(name.error()));
-  return DumpCall(process, *frame.current_block, entry, {*name});
+  return DumpCall(process, frame.Builder(), entry, {*name});
 }
 
 }  // namespace
@@ -227,7 +227,7 @@ auto LowerValueDumpSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const support::ValueDumpSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
-  mir::Block& block = *frame.current_block;
+  mir::Builder block = frame.Builder();
   switch (info.task) {
     case support::ValueDumpTask::kDumpFile: {
       // LRM 21.7.1.1: the file is `dump.vcd` where the call names none.

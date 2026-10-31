@@ -4,6 +4,7 @@
 
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
@@ -66,9 +67,10 @@ class ClosureBuilder {
   [[nodiscard]] auto Frame() const -> const WalkFrame& {
     return frame_;
   }
-  // The body block to append statements / exprs into.
-  [[nodiscard]] auto Body() -> mir::Block& {
-    return closure_decl_.invoke.Body();
+  // What builds into the body block, from the piece of source the closure is
+  // lowered from.
+  [[nodiscard]] auto Body() const -> mir::Builder {
+    return frame_.Builder();
   }
   // The body's binding context, for a caller that materializes a binding by
   // hand (a receiver for a deferred check, an explicit carrier).
@@ -98,7 +100,7 @@ class ClosureBuilder {
   auto Finish(mir::TypeId result_type) -> mir::Expr;
 
   mir::CompilationUnit* unit_;
-  mir::Block* outer_;
+  mir::Builder outer_;
   mir::ClosureDecl closure_decl_;
   mir::ClosureId closure_id_;
   CallableBindings bindings_;
@@ -114,7 +116,7 @@ class ClosureBuilder {
 // body takes and answering what its body answers, as the library asks of it.
 // `block` is the one the closure's captures were read in.
 auto BuildKeptClosure(
-    mir::CompilationUnit& unit, mir::Block& block, mir::Expr closure)
+    mir::CompilationUnit& unit, mir::Builder block, mir::Expr closure)
     -> mir::ExprId;
 
 // `closure`, a synchronous closure value, made in the storage `keeper`, a
@@ -137,7 +139,7 @@ auto BuildEmplacedClosure(
 // hands `sort_by` a `&dyn Fn`. The body reads what it captured, so it is
 // called only while the closure lies where it was made.
 auto BuildBorrowedClosure(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId closure)
+    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId closure)
     -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

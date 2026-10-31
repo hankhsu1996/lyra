@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
@@ -41,7 +42,7 @@ auto EntryOf(
 // call does. A call completing as a coroutine is awaited, which completes the
 // body as a coroutine too, with what that one completed with.
 void CompleteWith(
-    const mir::CompilationUnit& unit, mir::Block& body, mir::ExprId call,
+    const mir::CompilationUnit& unit, mir::Builder body, mir::ExprId call,
     mir::TypeId result);
 
 }  // namespace lyra::lowering::hir_to_mir

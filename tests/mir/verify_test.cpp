@@ -10,8 +10,10 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_id.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -59,18 +61,20 @@ void Verify(const CompilationUnit& unit) {
 // lowering writes most statements into a child scope rather than the body's
 // top level.
 void AddAwaitingBody(CompilationUnit& unit, TypeId result) {
-  CallableCode code = CallableCode::Defined();
+  CallableCode code = CallableCode::Defined(diag::SourceSpan{});
   code.result_type = result;
   Block inner;
-  const ExprId park = inner.exprs.Add(
+  Builder inner_at(inner, diag::SourceSpan{});
+  const ExprId park = inner_at.Add(
       Expr{
           .data = MachineBoolLiteral{.value = true},
           .type = unit.builtins.machine_bool});
-  const ExprId wait = inner.exprs.Add(
+  const ExprId wait = inner_at.Add(
       Expr{.data = WaitExpr{.park = park}, .type = unit.builtins.void_type});
-  inner.AppendStmt(ExprStmt{.expr = wait});
+  inner_at.AppendStmt(ExprStmt{.expr = wait});
   const BlockId scope = code.Body().child_scopes.Add(std::move(inner));
-  code.Body().AppendStmt(BlockStmt{.scope = scope});
+  Builder code_body(code.Body(), diag::SourceSpan{});
+  code_body.AppendStmt(BlockStmt{.scope = scope});
   const CallableId id = unit.callables.Add(
       CallableDecl{
           .code = std::move(code),
@@ -109,17 +113,18 @@ TEST(MirVerifyTest, ASuspensionIsRefusedOnlyWhereNothingCouldResumeIt) {
 TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
   CompilationUnit unit;
   unit.name = "U";
-  CallableCode code = CallableCode::Defined();
+  CallableCode code = CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.coroutine_void;
-  const ExprId answer = code.Body().exprs.Add(
+  Builder code_body(code.Body(), diag::SourceSpan{});
+  const ExprId answer = code_body.Add(
       Expr{
           .data = MachineBoolLiteral{.value = true},
           .type = unit.builtins.machine_bool});
-  const ExprId await = code.Body().exprs.Add(
+  const ExprId await = code_body.Add(
       Expr{
           .data = AwaitExpr{.execution = answer},
           .type = unit.builtins.void_type});
-  code.Body().AppendStmt(ExprStmt{.expr = await});
+  code_body.AppendStmt(ExprStmt{.expr = await});
   unit.callables.Add(
       CallableDecl{
           .code = std::move(code),
@@ -139,12 +144,12 @@ TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
 // stated operation to is the type it is stated for, so a value standing in for
 // one the program computes is the body.
 auto DefaultOf(TypeId type) -> TypeOperation {
-  CallableCode code = CallableCode::Defined();
+  CallableCode code = CallableCode::Defined(diag::SourceSpan{});
   code.result_type = type;
-  Block& block = code.Body();
+  Builder block(code.Body(), diag::SourceSpan{});
   block.AppendStmt(
       ReturnStmt{
-          .value = block.exprs.Add(Expr{.data = NullLiteral{}, .type = type})});
+          .value = block.Add(Expr{.data = NullLiteral{}, .type = type})});
   return TypeOperation{
       .type = type,
       .answers = support::BuiltinFn::kDeclaredDefault,
@@ -156,7 +161,7 @@ template <typename Fill>
 auto UnitWithCode(const Fill& fill) -> CompilationUnit {
   CompilationUnit unit;
   unit.name = "U";
-  CallableCode code = CallableCode::Defined();
+  CallableCode code = CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
   fill(unit, code);
   // Every unit states the default of each type an array it holds has as its
@@ -181,7 +186,7 @@ auto UnitWithCode(const Fill& fill) -> CompilationUnit {
 template <typename Fill>
 auto UnitWithBody(const Fill& fill) -> CompilationUnit {
   return UnitWithCode([&](CompilationUnit& unit, CallableCode& code) {
-    fill(unit, code.Body());
+    fill(unit, Builder(code.Body(), diag::SourceSpan{}));
   });
 }
 
@@ -197,13 +202,13 @@ void ExpectRefused(const CompilationUnit& unit, std::string_view why) {
   }
 }
 
-auto AddCall(const CompilationUnit& unit, Block& block) -> ExprId {
-  return block.exprs.Add(MakeCurrentRuntimeCallExpr(unit.builtins.effects));
+auto AddCall(const CompilationUnit& unit, Builder block) -> ExprId {
+  return block.Add(MakeCurrentRuntimeCallExpr(unit.builtins.effects));
 }
 
-auto AddSum(const CompilationUnit& unit, Block& block, ExprId lhs, ExprId rhs)
+auto AddSum(const CompilationUnit& unit, Builder block, ExprId lhs, ExprId rhs)
     -> ExprId {
-  return block.exprs.Add(
+  return block.Add(
       Expr{
           .data = BinaryExpr{.op = BinaryOp::kAdd, .lhs = lhs, .rhs = rhs},
           .type = unit.builtins.int_type});
@@ -211,13 +216,13 @@ auto AddSum(const CompilationUnit& unit, Block& block, ExprId lhs, ExprId rhs)
 
 // A node that computes without running code, so the order of two places
 // reaching it is not what a check of it asks about.
-auto AddComputation(const CompilationUnit& unit, Block& block) -> ExprId {
-  return block.exprs.Add(
+auto AddComputation(const CompilationUnit& unit, Builder block) -> ExprId {
+  return block.Add(
       Expr{
           .data =
               UnaryExpr{
                   .op = UnaryOp::kMinus,
-                  .operand = block.exprs.Add(
+                  .operand = block.Add(
                       Expr{
                           .data = NullLiteral{},
                           .type = unit.builtins.int_type})},
@@ -241,7 +246,7 @@ auto RefusedFor(const CompilationUnit& unit, std::string_view reason) -> bool {
 // code, so nothing about the order of the two places is what is refused.
 TEST(MirVerifyTest, AComputationOneRunReachesTwiceIsRefused) {
   const CompilationUnit unit =
-      UnitWithBody([](const CompilationUnit& u, Block& body) {
+      UnitWithBody([](const CompilationUnit& u, Builder body) {
         const ExprId computed = AddComputation(u, body);
         body.AppendStmt(ExprStmt{.expr = AddSum(u, body, computed, computed)});
       });
@@ -263,26 +268,26 @@ TEST(MirVerifyTest, AComputationOneRunReachesTwiceIsRefused) {
 // a run can both take, so one node may stand at both; under the same arm, or
 // with one of them the condition, a run takes both.
 TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
-  const auto conditional = [](Block& body, ExprId condition, ExprId then_value,
+  const auto conditional = [](Builder body, ExprId condition, ExprId then_value,
                               ExprId else_value) {
-    return body.exprs.Add(
+    return body.Add(
         Expr{
             .data =
                 ConditionalExpr{
                     .condition = condition,
                     .then_value = then_value,
                     .else_value = else_value},
-            .type = body.exprs.Get(then_value).type});
+            .type = body.Get(then_value).type});
   };
-  const auto flag = [](const CompilationUnit& u, Block& body) {
-    return body.exprs.Add(
+  const auto flag = [](const CompilationUnit& u, Builder body) {
+    return body.Add(
         Expr{
             .data = MachineBoolLiteral{.value = true},
             .type = u.builtins.machine_bool});
   };
 
   EXPECT_NO_THROW(
-      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
+      Verify(UnitWithBody([&](const CompilationUnit& u, Builder body) {
         const ExprId call = AddCall(u, body);
         const ExprId inner =
             conditional(body, flag(u, body), call, AddCall(u, body));
@@ -291,27 +296,27 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
       })));
 
   EXPECT_TRUE(RefusedFor(
-      UnitWithBody([&](const CompilationUnit& u, Block& body) {
+      UnitWithBody([&](const CompilationUnit& u, Builder body) {
         const ExprId computed = AddComputation(u, body);
         const ExprId sum = AddSum(u, body, computed, computed);
         body.AppendStmt(
             ExprStmt{
                 .expr = conditional(
                     body, flag(u, body), sum,
-                    body.exprs.Add(
+                    body.Add(
                         Expr{
                             .data = NullLiteral{},
-                            .type = body.exprs.Get(sum).type}))});
+                            .type = body.Get(sum).type}))});
       }),
       "one run evaluates it at two of them"));
 
   EXPECT_THROW(
-      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
-        const ExprId test = body.exprs.Add(
+      Verify(UnitWithBody([&](const CompilationUnit& u, Builder body) {
+        const ExprId test = body.Add(
             Expr{
                 .data = CastExpr{.operand = AddCall(u, body)},
                 .type = u.builtins.machine_bool});
-        const ExprId as_value = body.exprs.Add(
+        const ExprId as_value = body.Add(
             Expr{
                 .data = CastExpr{.operand = test},
                 .type = u.builtins.int_type});
@@ -319,7 +324,7 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
             ExprStmt{
                 .expr = conditional(
                     body, test, as_value,
-                    body.exprs.Add(
+                    body.Add(
                         Expr{
                             .data = NullLiteral{},
                             .type = u.builtins.int_type}))});
@@ -333,27 +338,27 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
 // each.
 TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
   EXPECT_NO_THROW(
-      Verify(UnitWithBody([](const CompilationUnit& u, Block& body) {
-        const ExprId literal = body.exprs.Add(
+      Verify(UnitWithBody([](const CompilationUnit& u, Builder body) {
+        const ExprId literal = body.Add(
             Expr{
                 .data = MachineIntLiteral{.value = 1},
                 .type = u.builtins.int_type});
         body.AppendStmt(ExprStmt{.expr = AddSum(u, body, literal, literal)});
       })));
 
-  const auto place_over = [](const CompilationUnit& u, Block& body,
+  const auto place_over = [](const CompilationUnit& u, Builder body,
                              ExprId pointer) {
-    return body.exprs.Add(MakeDerefExpr(pointer, u.builtins.int_type));
+    return body.Add(MakeDerefExpr(pointer, u.builtins.int_type));
   };
   EXPECT_NO_THROW(
-      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
-        const ExprId null = body.exprs.Add(
-            Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+      Verify(UnitWithBody([&](const CompilationUnit& u, Builder body) {
+        const ExprId null =
+            body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
         const ExprId read = body.Read(place_over(u, body, null));
         body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
       })));
   EXPECT_TRUE(RefusedFor(
-      UnitWithBody([&](const CompilationUnit& u, Block& body) {
+      UnitWithBody([&](const CompilationUnit& u, Builder body) {
         const ExprId read =
             body.Read(place_over(u, body, AddComputation(u, body)));
         body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
@@ -367,14 +372,14 @@ TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
 // side effects stay where they are.
 TEST(MirVerifyTest, TwoOperandsATargetCouldReorderAreRefused) {
   EXPECT_TRUE(RefusedFor(
-      UnitWithBody([](const CompilationUnit& u, Block& body) {
+      UnitWithBody([](const CompilationUnit& u, Builder body) {
         body.AppendStmt(
             ExprStmt{
                 .expr = AddSum(u, body, AddCall(u, body), AddCall(u, body))});
       }),
       "an operand a target could run in the other order to another answer"));
   EXPECT_NO_THROW(Verify(UnitWithBody([](const CompilationUnit& u,
-                                         Block& body) {
+                                         Builder body) {
     body.AppendStmt(
         ExprStmt{
             .expr = AddSum(
@@ -386,41 +391,40 @@ TEST(MirVerifyTest, TwoOperandsATargetCouldReorderAreRefused) {
 // place, and what takes the storage itself -- a borrow here -- is handed the
 // place and not a read of it, which would have it act on a copy.
 TEST(MirVerifyTest, StorageIsReadOnlyWhereAReadSaysSo) {
-  const auto storage = [](const CompilationUnit& u, Block& body) {
-    const ExprId null = body.exprs.Add(
-        Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
-    return body.exprs.Add(MakeDerefExpr(null, u.builtins.int_type));
+  const auto storage = [](const CompilationUnit& u, Builder body) {
+    const ExprId null =
+        body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+    return body.Add(MakeDerefExpr(null, u.builtins.int_type));
   };
 
   EXPECT_NO_THROW(
-      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
+      Verify(UnitWithBody([&](const CompilationUnit& u, Builder body) {
         const ExprId read = body.Read(storage(u, body));
         body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
       })));
   ExpectRefused(
-      UnitWithBody([&](const CompilationUnit& u, Block& body) {
+      UnitWithBody([&](const CompilationUnit& u, Builder body) {
         const ExprId place = storage(u, body);
         body.AppendStmt(ExprStmt{.expr = AddSum(u, body, place, place)});
       }),
       "a place stands as one only under a read");
   ExpectRefused(
-      UnitWithBody([&](const CompilationUnit& u, Block& body) {
-        const ExprId literal = body.exprs.Add(
+      UnitWithBody([&](const CompilationUnit& u, Builder body) {
+        const ExprId literal = body.Add(
             Expr{
                 .data = MachineIntLiteral{.value = 1},
                 .type = u.builtins.int_type});
         body.AppendStmt(
             ExprStmt{
-                .expr = body.exprs.Add(
-                    MakeCopyExpr(literal, u.builtins.int_type))});
+                .expr = body.Add(MakeCopyExpr(literal, u.builtins.int_type))});
       }),
       "names no place");
   ExpectRefused(
-      UnitWithBody([&](const CompilationUnit& u, Block& body) {
+      UnitWithBody([&](const CompilationUnit& u, Builder body) {
         const ExprId read = body.Read(storage(u, body));
         body.AppendStmt(
             ExprStmt{
-                .expr = body.exprs.Add(
+                .expr = body.Add(
                     Expr{
                         .data = BorrowExpr{.operand = read},
                         .type = u.builtins.int_type})});
@@ -433,7 +437,7 @@ TEST(MirVerifyTest, StorageIsReadOnlyWhereAReadSaysSo) {
 // enters `operator*` on; a move moves out of a place.
 TEST(MirVerifyTest, ADereferenceReadsAPointerAndNotAnOwner) {
   const auto opening = [](PointerOwnership ownership, bool read) {
-    return UnitWithBody([ownership, read](CompilationUnit& u, Block& body) {
+    return UnitWithBody([ownership, read](CompilationUnit& u, Builder body) {
       const TypeId pointer = u.types.Intern(
           Type{PointerType{
               .pointee = u.builtins.int_type, .ownership = ownership}});
@@ -441,9 +445,9 @@ TEST(MirVerifyTest, ADereferenceReadsAPointerAndNotAnOwner) {
           Type{PointerType{
               .pointee = pointer, .ownership = PointerOwnership::kBorrowed}});
       const ExprId null =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = to_pointer});
-      const ExprId held = body.exprs.Add(MakeDerefExpr(null, pointer));
-      const ExprId opened = body.exprs.Add(
+          body.Add(Expr{.data = NullLiteral{}, .type = to_pointer});
+      const ExprId held = body.Add(MakeDerefExpr(null, pointer));
+      const ExprId opened = body.Add(
           MakeDerefExpr(read ? body.Read(held) : held, u.builtins.int_type));
       body.AppendStmt(ExprStmt{.expr = body.Read(opened)});
     });
@@ -457,14 +461,14 @@ TEST(MirVerifyTest, ADereferenceReadsAPointerAndNotAnOwner) {
   ExpectRefused(
       opening(PointerOwnership::kUnique, true), "would act on a copy");
   ExpectRefused(
-      UnitWithBody([](const CompilationUnit& u, Block& body) {
-        const ExprId literal = body.exprs.Add(
+      UnitWithBody([](const CompilationUnit& u, Builder body) {
+        const ExprId literal = body.Add(
             Expr{
                 .data = MachineIntLiteral{.value = 1},
                 .type = u.builtins.int_type});
         body.AppendStmt(
             ExprStmt{
-                .expr = body.exprs.Add(
+                .expr = body.Add(
                     Expr{
                         .data = MoveExpr{.operand = literal},
                         .type = u.builtins.int_type})});
@@ -477,33 +481,35 @@ TEST(MirVerifyTest, ADereferenceReadsAPointerAndNotAnOwner) {
 // its steps.
 TEST(MirVerifyTest, AValueBoundAmongStepsIsNamedAtEachPlace) {
   EXPECT_NO_THROW(
-      Verify(UnitWithBody([](const CompilationUnit& u, Block& body) {
+      Verify(UnitWithBody([](const CompilationUnit& u, Builder body) {
         Block steps;
-        const ExprId call = AddCall(u, steps);
-        steps.AppendStmt(ExprStmt{.expr = call});
-        const ExprId literal = steps.exprs.Add(
+        Builder steps_at(steps, diag::SourceSpan{});
+        const ExprId call = AddCall(u, steps_at);
+        steps_at.AppendStmt(ExprStmt{.expr = call});
+        const ExprId literal = steps_at.Add(
             Expr{
                 .data = MachineIntLiteral{.value = 1},
                 .type = u.builtins.int_type});
-        const ExprId value = AddSum(u, steps, literal, literal);
-        const BlockId scope = body.child_scopes.Add(std::move(steps));
+        const ExprId value = AddSum(u, steps_at, literal, literal);
+        const BlockId scope = body.AddScope(std::move(steps));
         body.AppendStmt(
             ExprStmt{
-                .expr = body.exprs.Add(
+                .expr = body.Add(
                     Expr{
                         .data = BlockExpr{.scope = scope, .value = value},
                         .type = u.builtins.int_type})});
       })));
 
   EXPECT_THROW(
-      Verify(UnitWithBody([](const CompilationUnit& u, Block& body) {
+      Verify(UnitWithBody([](const CompilationUnit& u, Builder body) {
         Block steps;
-        const ExprId call = AddCall(u, steps);
-        steps.AppendStmt(ExprStmt{.expr = call});
-        const BlockId scope = body.child_scopes.Add(std::move(steps));
+        Builder steps_at(steps, diag::SourceSpan{});
+        const ExprId call = AddCall(u, steps_at);
+        steps_at.AppendStmt(ExprStmt{.expr = call});
+        const BlockId scope = body.AddScope(std::move(steps));
         body.AppendStmt(
             ExprStmt{
-                .expr = body.exprs.Add(
+                .expr = body.Add(
                     Expr{
                         .data = BlockExpr{.scope = scope, .value = call},
                         .type = u.builtins.int_type})});
@@ -516,27 +522,28 @@ TEST(MirVerifyTest, AValueBoundAmongStepsIsNamedAtEachPlace) {
 // nested block, where a lowering writes most statements.
 TEST(MirVerifyTest, AFieldIsAccessedOnTheObjectAPointerReaches) {
   const auto access_on = [](bool dereferenced) {
-    return UnitWithBody([dereferenced](CompilationUnit& u, Block& body) {
+    return UnitWithBody([dereferenced](CompilationUnit& u, Builder body) {
       const TypeId pointer_type = u.types.Intern(
           Type{PointerType{
               .pointee = u.builtins.int_type,
               .ownership = PointerOwnership::kBorrowed}});
       Block inner;
+      Builder inner_at(inner, diag::SourceSpan{});
       const ExprId pointer =
-          inner.exprs.Add(Expr{.data = NullLiteral{}, .type = pointer_type});
+          inner_at.Add(Expr{.data = NullLiteral{}, .type = pointer_type});
       const ExprId receiver =
           dereferenced
-              ? inner.exprs.Add(MakeDerefExpr(pointer, u.builtins.int_type))
+              ? inner_at.Add(MakeDerefExpr(pointer, u.builtins.int_type))
               : pointer;
-      inner.AppendStmt(
+      inner_at.AppendStmt(
           ExprStmt{
-              .expr = inner.Read(inner.exprs.Add(MakeFieldAccessExpr(
+              .expr = inner_at.Read(inner_at.Add(MakeFieldAccessExpr(
                   receiver,
                   ClassFieldTarget{
                       .owner = ClassId{.value = 0},
                       .slot = FieldId{.value = 0}},
                   u.builtins.int_type)))});
-      const BlockId scope = body.child_scopes.Add(std::move(inner));
+      const BlockId scope = body.AddScope(std::move(inner));
       body.AppendStmt(BlockStmt{.scope = scope});
     });
   };
@@ -560,21 +567,20 @@ TEST(MirVerifyTest, AFieldIsAccessedOnTheObjectAPointerReaches) {
 // not.
 TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
   const auto call_on = [](bool dereferenced) {
-    return UnitWithBody([dereferenced](CompilationUnit& u, Block& body) {
+    return UnitWithBody([dereferenced](CompilationUnit& u, Builder body) {
       const TypeId pointer_type = u.types.Intern(
           Type{PointerType{
               .pointee = u.builtins.int_type,
               .ownership = PointerOwnership::kBorrowed}});
       const ExprId pointer =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = pointer_type});
+          body.Add(Expr{.data = NullLiteral{}, .type = pointer_type});
       const ExprId receiver =
-          dereferenced
-              ? body.exprs.Add(MakeDerefExpr(pointer, u.builtins.int_type))
-              : pointer;
+          dereferenced ? body.Add(MakeDerefExpr(pointer, u.builtins.int_type))
+                       : pointer;
       // The member function called, of a class of the unit, entered on its
       // object alone, with a body that does nothing.
       Class cls;
-      CallableCode member = CallableCode::Defined();
+      CallableCode member = CallableCode::Defined(diag::SourceSpan{});
       member.result_type = u.builtins.void_type;
       cls.callables.Add(
           CallableDecl{
@@ -585,7 +591,7 @@ TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
       u.DefineClass(u.DeclareClass(), std::move(cls));
       body.AppendStmt(
           ExprStmt{
-              .expr = body.exprs.Add(
+              .expr = body.Add(
                   Expr{
                       .data =
                           CallExpr{
@@ -610,7 +616,7 @@ TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
 // binding of a reference bound as it was created are refused.
 TEST(MirVerifyTest, OnlyABindingOfAMemberMakesAReferenceNameOtherStorage) {
   const auto binding = [](bool through_store, bool of_member) {
-    return UnitWithBody([=](CompilationUnit& u, Block& body) {
+    return UnitWithBody([=](CompilationUnit& u, Builder body) {
       const TypeId reference_type = u.types.Intern(
           Type{VariableRefType{
               .pointee = u.builtins.int_type,
@@ -626,19 +632,19 @@ TEST(MirVerifyTest, OnlyABindingOfAMemberMakesAReferenceNameOtherStorage) {
           Type{PointerType{
               .pointee = target_type,
               .ownership = PointerOwnership::kBorrowed}});
-      const ExprId target = body.exprs.Add(MakeDerefExpr(
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = to_target}),
+      const ExprId target = body.Add(MakeDerefExpr(
+          body.Add(Expr{.data = NullLiteral{}, .type = to_target}),
           target_type));
       // A store hands its target a value of the target's own type, and a
       // binding hands it the reference it binds.
-      const ExprId bound = body.exprs.Add(
+      const ExprId bound = body.Add(
           Expr{
               .data = NullLiteral{},
               .type = through_store ? target_type : reference_type});
       const ExprId operation =
           through_store
-              ? body.exprs.Add(MakeAssignExpr(u.builtins, target, bound))
-              : body.exprs.Add(MakeCallExpr(
+              ? body.Add(MakeAssignExpr(u.builtins, target, bound))
+              : body.Add(MakeCallExpr(
                     Direct{.target = support::BuiltinFn::kBindAlias},
                     {body.Read(target), bound}, u.builtins.void_type));
       body.AppendStmt(ExprStmt{.expr = operation});
@@ -658,7 +664,7 @@ TEST(MirVerifyTest, OnlyABindingOfAMemberMakesAReferenceNameOtherStorage) {
 // 7.8).
 TEST(MirVerifyTest, AnOrdinalIsStatedAsAPosition) {
   const auto element_of = [](bool keyed, bool as_position) {
-    return UnitWithBody([keyed, as_position](CompilationUnit& u, Block& body) {
+    return UnitWithBody([keyed, as_position](CompilationUnit& u, Builder body) {
       const TypeId element = u.builtins.int_type;
       const TypeId container =
           keyed
@@ -672,12 +678,12 @@ TEST(MirVerifyTest, AnOrdinalIsStatedAsAPosition) {
       const TypeId index_type =
           as_position ? PositionType(u.types) : u.builtins.int_type;
       const ExprId array =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = container});
+          body.Add(Expr{.data = NullLiteral{}, .type = container});
       const ExprId at =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = index_type});
+          body.Add(Expr{.data = NullLiteral{}, .type = index_type});
       body.AppendStmt(
           ExprStmt{
-              .expr = body.exprs.Add(
+              .expr = body.Add(
                   Expr{
                       .data =
                           CallExpr{
@@ -704,17 +710,17 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
   const auto element_write = [](support::BuiltinFn entry, Mutability mutability,
                                 bool as_reference) {
     return UnitWithBody([entry, mutability, as_reference](
-                            CompilationUnit& u, Block& body) {
+                            CompilationUnit& u, Builder body) {
       const TypeId element = u.builtins.int_type;
       const TypeId container =
           u.types.Intern(Type{DynamicArrayType{.element_type = element}});
       const ExprId array =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = container});
-      const ExprId at = body.exprs.Add(
-          Expr{.data = NullLiteral{}, .type = PositionType(u.types)});
+          body.Add(Expr{.data = NullLiteral{}, .type = container});
+      const ExprId at =
+          body.Add(Expr{.data = NullLiteral{}, .type = PositionType(u.types)});
       const TypeId reference = u.types.Intern(
           Type{ReferenceType{.referent = element, .mutability = mutability}});
-      const ExprId reached = body.exprs.Add(
+      const ExprId reached = body.Add(
           Expr{
               .data =
                   CallExpr{
@@ -727,13 +733,12 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
         body.AppendStmt(ExprStmt{.expr = reached});
         return;
       }
-      const ExprId target = body.exprs.Add(MakeDerefExpr(reached, element));
+      const ExprId target = body.Add(MakeDerefExpr(reached, element));
       const ExprId value =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = element});
+          body.Add(Expr{.data = NullLiteral{}, .type = element});
       body.AppendStmt(
           ExprStmt{
-              .expr =
-                  body.exprs.Add(MakeAssignExpr(u.builtins, target, value))});
+              .expr = body.Add(MakeAssignExpr(u.builtins, target, value))});
     });
   };
 
@@ -755,19 +760,18 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
   const auto nested_write = [](support::BuiltinFn inner,
                                Mutability inner_mutability) {
     return UnitWithBody([inner, inner_mutability](
-                            CompilationUnit& u, Block& body) {
+                            CompilationUnit& u, Builder body) {
       const TypeId element = u.builtins.int_type;
       const TypeId row =
           u.types.Intern(Type{DynamicArrayType{.element_type = element}});
       const TypeId rows =
           u.types.Intern(Type{DynamicArrayType{.element_type = row}});
-      const ExprId array =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = rows});
+      const ExprId array = body.Add(Expr{.data = NullLiteral{}, .type = rows});
       const auto position = [&] {
-        return body.exprs.Add(
+        return body.Add(
             Expr{.data = NullLiteral{}, .type = PositionType(u.types)});
       };
-      const ExprId row_reference = body.exprs.Add(
+      const ExprId row_reference = body.Add(
           Expr{
               .data =
                   CallExpr{
@@ -776,9 +780,8 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
               .type = u.types.Intern(
                   Type{ReferenceType{
                       .referent = row, .mutability = inner_mutability}})});
-      const ExprId row_place =
-          body.exprs.Add(MakeDerefExpr(row_reference, row));
-      const ExprId element_reference = body.exprs.Add(
+      const ExprId row_place = body.Add(MakeDerefExpr(row_reference, row));
+      const ExprId element_reference = body.Add(
           Expr{
               .data =
                   CallExpr{
@@ -791,14 +794,12 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
                   Type{ReferenceType{
                       .referent = element,
                       .mutability = Mutability::kMutable}})});
-      const ExprId target =
-          body.exprs.Add(MakeDerefExpr(element_reference, element));
+      const ExprId target = body.Add(MakeDerefExpr(element_reference, element));
       const ExprId value =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = element});
+          body.Add(Expr{.data = NullLiteral{}, .type = element});
       body.AppendStmt(
           ExprStmt{
-              .expr =
-                  body.exprs.Add(MakeAssignExpr(u.builtins, target, value))});
+              .expr = body.Add(MakeAssignExpr(u.builtins, target, value))});
     });
   };
 
@@ -816,7 +817,7 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
 TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
   const auto bits_written = [](support::BuiltinFn entry,
                                Mutability mutability) {
-    return UnitWithBody([entry, mutability](CompilationUnit& u, Block& body) {
+    return UnitWithBody([entry, mutability](CompilationUnit& u, Builder body) {
       const TypeId byte =
           PackedVectorOf(u.types, 8, IntegralStateKind::kFourState);
       const TypeId nibble =
@@ -824,11 +825,11 @@ TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
       const TypeId container =
           u.types.Intern(Type{DynamicArrayType{.element_type = byte}});
       const ExprId array =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = container});
-      const ExprId at = body.exprs.Add(
-          Expr{.data = NullLiteral{}, .type = PositionType(u.types)});
-      const ExprId element = body.exprs.Add(MakeDerefExpr(
-          body.exprs.Add(
+          body.Add(Expr{.data = NullLiteral{}, .type = container});
+      const ExprId at =
+          body.Add(Expr{.data = NullLiteral{}, .type = PositionType(u.types)});
+      const ExprId element = body.Add(MakeDerefExpr(
+          body.Add(
               Expr{
                   .data =
                       CallExpr{
@@ -838,7 +839,7 @@ TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
                       Type{ReferenceType{
                           .referent = byte, .mutability = mutability}})}),
           byte));
-      const ExprId bits = body.exprs.Add(
+      const ExprId bits = body.Add(
           Expr{
               .data =
                   CallExpr{
@@ -850,10 +851,10 @@ TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
                       .arguments = {at}},
               .type = u.types.Intern(Type{BitsReferenceType{.bits = nibble}})});
       const ExprId value =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = nibble});
+          body.Add(Expr{.data = NullLiteral{}, .type = nibble});
       body.AppendStmt(
           ExprStmt{
-              .expr = body.exprs.Add(
+              .expr = body.Add(
                   Expr{
                       .data =
                           CallExpr{
@@ -878,18 +879,18 @@ TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
 // write through it would land on a copy.
 TEST(MirVerifyTest, AReferenceBindsStorageNeverARead) {
   const auto referred_to = [](bool read_first) {
-    return UnitWithBody([read_first](CompilationUnit& u, Block& body) {
+    return UnitWithBody([read_first](CompilationUnit& u, Builder body) {
       const TypeId byte =
           PackedVectorOf(u.types, 8, IntegralStateKind::kFourState);
       const TypeId pointer = u.types.Intern(
           Type{PointerType{
               .pointee = byte, .ownership = PointerOwnership::kBorrowed}});
-      const ExprId place = body.exprs.Add(MakeDerefExpr(
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = pointer}), byte));
+      const ExprId place = body.Add(MakeDerefExpr(
+          body.Add(Expr{.data = NullLiteral{}, .type = pointer}), byte));
       const ExprId bound = read_first ? body.Read(place) : place;
       body.AppendStmt(
           ExprStmt{
-              .expr = body.exprs.Add(
+              .expr = body.Add(
                   Expr{
                       .data =
                           CallExpr{.callee = Construct{}, .arguments = {bound}},
@@ -909,14 +910,14 @@ TEST(MirVerifyTest, AReferenceBindsStorageNeverARead) {
 auto UnitCalling(
     support::BuiltinFn entry, const auto& container_of, const auto& argument_of,
     const auto& answer_of) -> CompilationUnit {
-  return UnitWithBody([&](CompilationUnit& u, Block& body) {
+  return UnitWithBody([&](CompilationUnit& u, Builder body) {
     const ExprId receiver =
-        body.exprs.Add(Expr{.data = NullLiteral{}, .type = container_of(u)});
+        body.Add(Expr{.data = NullLiteral{}, .type = container_of(u)});
     const ExprId argument =
-        body.exprs.Add(Expr{.data = NullLiteral{}, .type = argument_of(u)});
+        body.Add(Expr{.data = NullLiteral{}, .type = argument_of(u)});
     body.AppendStmt(
         ExprStmt{
-            .expr = body.exprs.Add(
+            .expr = body.Add(
                 Expr{
                     .data =
                         CallExpr{
@@ -991,8 +992,8 @@ TEST(MirVerifyTest, ACallIsHeldToItsEntrysOneDeclaration) {
 // as the constant it evaluates to, so one left standing as an operation is
 // refused; the same operation over a value the program computes stands.
 TEST(MirVerifyTest, AnOperationOverConstantsIsStatedAsItsConstant) {
-  const auto one = [](const CompilationUnit& u, Block& body) {
-    return body.exprs.Add(
+  const auto one = [](const CompilationUnit& u, Builder body) {
+    return body.Add(
         Expr{
             .data =
                 ReferenceExpr{
@@ -1007,18 +1008,17 @@ TEST(MirVerifyTest, AnOperationOverConstantsIsStatedAsItsConstant) {
                                             .state_words = {}}})}},
             .type = u.builtins.int_type});
   };
-  const auto computed = [](const CompilationUnit& u, Block& body) {
-    return body.exprs.Add(
-        Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+  const auto computed = [](const CompilationUnit& u, Builder body) {
+    return body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
   };
 
   EXPECT_NO_THROW(
-      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
+      Verify(UnitWithBody([&](const CompilationUnit& u, Builder body) {
         body.AppendStmt(
             ExprStmt{.expr = AddSum(u, body, one(u, body), computed(u, body))});
       })));
   ExpectRefused(
-      UnitWithBody([&](const CompilationUnit& u, Block& body) {
+      UnitWithBody([&](const CompilationUnit& u, Builder body) {
         body.AppendStmt(
             ExprStmt{.expr = AddSum(u, body, one(u, body), one(u, body))});
       }),
@@ -1030,12 +1030,12 @@ TEST(MirVerifyTest, AnOperationOverConstantsIsStatedAsItsConstant) {
 // of the pointer itself is refused.
 TEST(MirVerifyTest, OwnedStorageIsAllocatedOnlyByANewExpression) {
   const auto allocating = [](bool by_new, bool same_type) {
-    return UnitWithBody([by_new, same_type](CompilationUnit& u, Block& body) {
+    return UnitWithBody([by_new, same_type](CompilationUnit& u, Builder body) {
       const TypeId owner = u.types.Intern(
           Type{PointerType{
               .pointee = u.builtins.int_type,
               .ownership = PointerOwnership::kUnique}});
-      const ExprId value = body.exprs.Add(
+      const ExprId value = body.Add(
           Expr{
               .data = NullLiteral{},
               .type = same_type ? u.builtins.int_type : u.builtins.string});
@@ -1046,7 +1046,7 @@ TEST(MirVerifyTest, OwnedStorageIsAllocatedOnlyByANewExpression) {
                     .data =
                         CallExpr{.callee = Construct{}, .arguments = {value}},
                     .type = owner};
-      body.AppendStmt(ExprStmt{.expr = body.exprs.Add(allocation)});
+      body.AppendStmt(ExprStmt{.expr = body.Add(allocation)});
     });
   };
 
@@ -1070,13 +1070,12 @@ auto TooLargeForAFrame(CompilationUnit& unit) -> TypeId {
 // allocates, so neither a local nor a value made in the frame holds one.
 TEST(MirVerifyTest, AValueTooLargeForAFrameLiesInAllocatedStorage) {
   const auto made = [](bool by_new) {
-    return UnitWithBody([by_new](CompilationUnit& u, Block& body) {
+    return UnitWithBody([by_new](CompilationUnit& u, Builder body) {
       const TypeId large = TooLargeForAFrame(u);
-      const ExprId value =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = large});
+      const ExprId value = body.Add(Expr{.data = NullLiteral{}, .type = large});
       const ExprId kept =
           by_new
-              ? body.exprs.Add(MakeNewExpr(
+              ? body.Add(MakeNewExpr(
                     value, u.types.Intern(
                                Type{PointerType{
                                    .pointee = large,
@@ -1107,21 +1106,20 @@ TEST(MirVerifyTest, AnAssignmentLandsOnAPlace) {
     return UnitWithCode([to_a_place](CompilationUnit& u, CallableCode& code) {
       const LocalId local =
           code.locals.Add(LocalDecl{.type = u.builtins.int_type});
-      Block& body = code.Body();
+      Builder body(code.Body(), diag::SourceSpan{});
       const ExprId named =
-          body.exprs.Add(MakeLocalRefExpr(local, u.builtins.int_type));
+          body.Add(MakeLocalRefExpr(local, u.builtins.int_type));
       const ExprId target =
           to_a_place
               ? named
               : AddSum(
-                    u, body,
-                    body.exprs.Add(MakeCopyExpr(named, u.builtins.int_type)),
-                    body.exprs.Add(MakeCopyExpr(named, u.builtins.int_type)));
-      const ExprId value = body.exprs.Add(
-          Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+                    u, body, body.Add(MakeCopyExpr(named, u.builtins.int_type)),
+                    body.Add(MakeCopyExpr(named, u.builtins.int_type)));
+      const ExprId value =
+          body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
       body.AppendStmt(
           ExprStmt{
-              .expr = body.exprs.Add(
+              .expr = body.Add(
                   Expr{
                       .data = AssignExpr{.target = target, .value = value},
                       .type = u.builtins.int_type})});
@@ -1154,70 +1152,67 @@ TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
       const TypeId type = u.builtins.int_type;
       const LocalId moved = code.locals.Add(LocalDecl{.type = type});
       const LocalId taker = code.locals.Add(LocalDecl{.type = type});
-      Block& body = code.Body();
+      Builder body(code.Body(), diag::SourceSpan{});
       body.AppendStmt(
           LocalDeclStmt{
               .target = moved,
-              .init =
-                  body.exprs.Add(Expr{.data = NullLiteral{}, .type = type})});
+              .init = body.Add(Expr{.data = NullLiteral{}, .type = type})});
       const bool inside = shape == Shape::kInABlockStatement ||
                           shape == Shape::kInABranch ||
                           shape == Shape::kInALoopBody;
       Block inner;
-      Block& at = inside ? inner : body;
-      ExprId taken = at.exprs.Add(
+      Builder inner_at(inner, diag::SourceSpan{});
+      Builder at = inside ? inner_at : body;
+      ExprId taken = at.Add(
           Expr{
               .data =
-                  MoveExpr{
-                      .operand = at.exprs.Add(MakeLocalRefExpr(moved, type))},
+                  MoveExpr{.operand = at.Add(MakeLocalRefExpr(moved, type))},
               .type = type});
       if (shape == Shape::kUnderAnArm) {
-        taken = at.exprs.Add(
+        taken = at.Add(
             Expr{
                 .data =
                     ConditionalExpr{
-                        .condition = at.exprs.Add(
+                        .condition = at.Add(
                             Expr{
                                 .data = NullLiteral{},
                                 .type = u.builtins.machine_bool}),
                         .then_value = taken,
-                        .else_value = at.exprs.Add(
-                            Expr{.data = NullLiteral{}, .type = type})},
+                        .else_value =
+                            at.Add(Expr{.data = NullLiteral{}, .type = type})},
                 .type = type});
       }
       if (shape == Shape::kInALoopTest) {
         body.AppendStmt(
-            WhileStmt{
-                .condition = taken, .scope = body.child_scopes.Add(Block{})});
+            WhileStmt{.condition = taken, .scope = body.AddScope(Block{})});
         return;
       }
       at.AppendStmt(LocalDeclStmt{.target = taker, .init = taken});
       if (shape == Shape::kInALoopBody) {
-        const ExprId condition = body.exprs.Add(
+        const ExprId condition = body.Add(
             Expr{.data = NullLiteral{}, .type = u.builtins.machine_bool});
         body.AppendStmt(
             WhileStmt{
                 .condition = condition,
-                .scope = body.child_scopes.Add(std::move(inner))});
+                .scope = body.AddScope(std::move(inner))});
       }
       if (shape == Shape::kInABlockStatement) {
-        body.AppendStmt(
-            BlockStmt{.scope = body.child_scopes.Add(std::move(inner))});
+        body.AppendStmt(BlockStmt{.scope = body.AddScope(std::move(inner))});
       }
       if (shape == Shape::kInABranch) {
-        const ExprId condition = body.exprs.Add(
+        const ExprId condition = body.Add(
             Expr{.data = NullLiteral{}, .type = u.builtins.machine_bool});
         body.AppendStmt(
             IfStmt{
                 .condition = condition,
-                .then_scope = body.child_scopes.Add(std::move(inner)),
+                .then_scope = body.AddScope(std::move(inner)),
                 .else_scope = std::nullopt});
       }
       if (shape == Shape::kNamedAgain) {
         body.AppendStmt(
             ExprStmt{
-                .expr = body.exprs.Add(MakeCopyExpr(
-                    body.exprs.Add(MakeLocalRefExpr(moved, type)), type))});
+                .expr = body.Add(MakeCopyExpr(
+                    body.Add(MakeLocalRefExpr(moved, type)), type))});
       }
     });
   };
@@ -1249,14 +1244,14 @@ TEST(MirVerifyTest, AValueHandedMeetsTheTypeItIsHandedTo) {
     return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
       const TypeId held = u.builtins.int_type;
       code.result_type = held;
-      Block& body = code.Body();
-      const ExprId value = body.exprs.Add(
+      Builder body(code.Body(), diag::SourceSpan{});
+      const ExprId value = body.Add(
           Expr{
               .data = NullLiteral{},
               .type = of_its_type ? held : u.builtins.integer});
       const auto written = [&](TypeId local_type) {
         const LocalId local = code.locals.Add(LocalDecl{.type = local_type});
-        return body.exprs.Add(MakeLocalRefExpr(local, local_type));
+        return body.Add(MakeLocalRefExpr(local, local_type));
       };
       switch (to) {
         case HandedTo::kLocal:
@@ -1271,13 +1266,13 @@ TEST(MirVerifyTest, AValueHandedMeetsTheTypeItIsHandedTo) {
         case HandedTo::kAssignment:
           body.AppendStmt(
               ExprStmt{
-                  .expr = body.exprs.Add(
+                  .expr = body.Add(
                       MakeAssignExpr(u.builtins, written(held), value))});
           return;
         case HandedTo::kWrapper:
           body.AppendStmt(
               ExprStmt{
-                  .expr = body.exprs.Add(MakeCallExpr(
+                  .expr = body.Add(MakeCallExpr(
                       Direct{
                           .target = support::BuiltinFn::kSet,
                           .receiver = written(u.types.Intern(
@@ -1319,15 +1314,15 @@ TEST(MirVerifyTest, ACompositesPartsAreOfTheirPositionsTypes) {
         case Built::kNeither:
           break;
       }
-      Block& body = code.Body();
+      Builder body(code.Body(), diag::SourceSpan{});
       std::vector<ExprId> values;
       for (const bool of_its_type : of_position_type) {
-        values.push_back(body.exprs.Add(
+        values.push_back(body.Add(
             Expr{
                 .data = NullLiteral{},
                 .type = of_its_type ? held : u.builtins.integer}));
       }
-      const ExprId composite = body.exprs.Add(
+      const ExprId composite = body.Add(
           Expr{
               .data = CompositeExpr{.parts = std::move(values)}, .type = type});
       body.AppendStmt(
@@ -1360,7 +1355,7 @@ TEST(MirVerifyTest, AConstantOfAClassMeetsTheTypesItStates) {
     kStatedType,
   };
   const auto stating = [](Wrong wrong) {
-    return UnitWithBody([wrong](CompilationUnit& u, Block&) {
+    return UnitWithBody([wrong](CompilationUnit& u, Builder) {
       const auto library = [&](RuntimeLibraryKind kind) {
         return u.types.Intern(Type{RuntimeLibraryType{.kind = kind}});
       };
@@ -1458,7 +1453,7 @@ TEST(MirVerifyTest, CodeNamedAsAValueIsOfTheTypeTheCodeHas) {
         [named_as, at_its_own_type](CompilationUnit& u, CallableCode& code) {
           // A body of a class of the unit taking an `int` and doing nothing,
           // which is also the entry of itself where the class gives it one.
-          CallableCode named = CallableCode::Defined();
+          CallableCode named = CallableCode::Defined(diag::SourceSpan{});
           named.result_type = u.builtins.void_type;
           named.params.push_back(named.AddLocal(u.builtins.int_type));
           const TypeId own = FunctionTypeOf(u.types, named);
@@ -1485,8 +1480,8 @@ TEST(MirVerifyTest, CodeNamedAsAValueIsOfTheTypeTheCodeHas) {
               named_as == Named::kBody
                   ? ReferenceTarget{FunctionRef{.body = body_of}}
                   : ReferenceTarget{DispatchEntryRef{.body = body_of}};
-          Block& body = code.Body();
-          const ExprId reference = body.exprs.Add(
+          Builder body(code.Body(), diag::SourceSpan{});
+          const ExprId reference = body.Add(
               Expr{.data = ReferenceExpr{.target = target}, .type = stated});
           body.AppendStmt(
               LocalDeclStmt{
@@ -1514,11 +1509,11 @@ TEST(MirVerifyTest, CodeNamedAsAValueIsOfTheTypeTheCodeHas) {
 TEST(MirVerifyTest, ACastReadsAValueAsATypeEveryTargetConvertsItTo) {
   const auto casting = [](auto from, auto to) {
     return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
-      Block& body = code.Body();
+      Builder body(code.Body(), diag::SourceSpan{});
       const ExprId value =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = from(u)});
-      const ExprId cast = body.exprs.Add(
-          Expr{.data = CastExpr{.operand = value}, .type = to(u)});
+          body.Add(Expr{.data = NullLiteral{}, .type = from(u)});
+      const ExprId cast =
+          body.Add(Expr{.data = CastExpr{.operand = value}, .type = to(u)});
       body.AppendStmt(
           LocalDeclStmt{
               .target = code.locals.Add(LocalDecl{.type = to(u)}),
@@ -1589,7 +1584,7 @@ TEST(MirVerifyTest, ACastReadsAValueAsATypeEveryTargetConvertsItTo) {
 // and a call names one only where the unit states it.
 TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
   const auto calling_the_default = [](bool stated) {
-    return UnitWithBody([stated](CompilationUnit& u, Block& body) {
+    return UnitWithBody([stated](CompilationUnit& u, Builder body) {
       const TypeId array = u.types.Intern(
           Type{UnpackedArrayType{
               .element_type = u.builtins.int_type, .count = 4}});
@@ -1598,7 +1593,7 @@ TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
       }
       body.AppendStmt(
           ExprStmt{
-              .expr = body.exprs.Add(
+              .expr = body.Add(
                   Expr{
                       .data =
                           CallExpr{
@@ -1680,7 +1675,7 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
   struct Yielding {
     CompilationUnit* unit = nullptr;
     CallableCode* code = nullptr;
-    Block* steps = nullptr;
+    Builder* steps = nullptr;
     TypeId array;
     LocalId outer;
     LocalId own;
@@ -1690,41 +1685,41 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
     return UnitWithCode([&](CompilationUnit& u, CallableCode& code) {
       const TypeId array = u.types.Intern(
           Type{DynamicArrayType{.element_type = u.builtins.int_type}});
-      Block& body = code.Body();
+      Builder body(code.Body(), diag::SourceSpan{});
       const LocalId outer = code.locals.Add(LocalDecl{.type = array});
       body.AppendStmt(
           LocalDeclStmt{
               .target = outer,
-              .init =
-                  body.exprs.Add(Expr{.data = NullLiteral{}, .type = array})});
+              .init = body.Add(Expr{.data = NullLiteral{}, .type = array})});
       Block steps;
+      Builder steps_at(steps, diag::SourceSpan{});
       const LocalId own = code.locals.Add(LocalDecl{.type = array});
-      steps.AppendStmt(
+      steps_at.AppendStmt(
           LocalDeclStmt{
               .target = own,
               .init =
-                  steps.exprs.Add(Expr{.data = NullLiteral{}, .type = array})});
+                  steps_at.Add(Expr{.data = NullLiteral{}, .type = array})});
       const LocalId at =
           code.locals.Add(LocalDecl{.type = PositionType(u.types)});
-      steps.AppendStmt(
+      steps_at.AppendStmt(
           LocalDeclStmt{
               .target = at,
-              .init = steps.exprs.Add(
+              .init = steps_at.Add(
                   Expr{.data = NullLiteral{}, .type = PositionType(u.types)})});
       Yielding given{
           .unit = &u,
           .code = &code,
-          .steps = &steps,
+          .steps = &steps_at,
           .array = array,
           .outer = outer,
           .own = own,
           .at = at};
       const ExprId value = yield(given);
       const TypeId type = steps.exprs.Get(value).type;
-      const BlockId scope = body.child_scopes.Add(std::move(steps));
+      const BlockId scope = body.AddScope(std::move(steps));
       body.AppendStmt(
           ExprStmt{
-              .expr = body.exprs.Add(
+              .expr = body.Add(
                   Expr{
                       .data = BlockExpr{.scope = scope, .value = value},
                       .type = type})});
@@ -1736,14 +1731,14 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
             .referent = referent, .mutability = Mutability::kReadOnly}});
   };
   const auto borrow = [&](const Yielding& y, ExprId operand) {
-    return y.steps->exprs.Add(
+    return y.steps->Add(
         Expr{
             .data = BorrowExpr{.operand = operand},
-            .type = reference_to(*y.unit, y.steps->exprs.Get(operand).type)});
+            .type = reference_to(*y.unit, y.steps->Get(operand).type)});
   };
   // An element of what `receiver` names, at the position the steps hold.
   const auto element_of = [&](const Yielding& y, ExprId receiver) {
-    return y.steps->exprs.Add(
+    return y.steps->Add(
         Expr{
             .data =
                 CallExpr{
@@ -1759,11 +1754,11 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
   // out of it.
   const auto held = [&](const Yielding& y, LocalId bound, bool moved) {
     const ExprId reference = borrow(y, y.steps->LocalPlace(bound, y.array));
-    const TypeId type = y.steps->exprs.Get(reference).type;
+    const TypeId type = y.steps->Get(reference).type;
     const LocalId holder = y.code->locals.Add(LocalDecl{.type = type});
     y.steps->AppendStmt(LocalDeclStmt{.target = holder, .init = reference});
     const ExprId place = y.steps->LocalPlace(holder, type);
-    return moved ? y.steps->exprs.Add(
+    return moved ? y.steps->Add(
                        Expr{.data = MoveExpr{.operand = place}, .type = type})
                  : y.steps->Read(place);
   };
@@ -1777,7 +1772,7 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
       kWhy);
   ExpectRefused(
       yielding([&](const Yielding& y) {
-        const ExprId literal = y.steps->exprs.Add(
+        const ExprId literal = y.steps->Add(
             Expr{
                 .data = MachineIntLiteral{.value = 1},
                 .type = y.unit->builtins.int_type});
@@ -1787,12 +1782,12 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
   ExpectRefused(
       yielding([&](const Yielding& y) {
         const ExprId reference = borrow(y, y.steps->LocalPlace(y.own, y.array));
-        return y.steps->exprs.Add(
+        return y.steps->Add(
             Expr{
                 .data = CompositeExpr{.parts = {reference}},
                 .type = y.unit->types.Intern(
                     Type{TupleType{
-                        .elements = {y.steps->exprs.Get(reference).type}}})});
+                        .elements = {y.steps->Get(reference).type}}})});
       }),
       kWhy);
   ExpectRefused(
@@ -1803,8 +1798,7 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
   ExpectRefused(
       yielding([&](const Yielding& y) {
         return element_of(
-            y,
-            y.steps->exprs.Add(Expr{.data = NullLiteral{}, .type = y.array}));
+            y, y.steps->Add(Expr{.data = NullLiteral{}, .type = y.array}));
       }),
       kWhy);
   ExpectRefused(
@@ -1830,10 +1824,10 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
 // library entry is generic over one, and answers what the callable returns.
 TEST(MirVerifyTest, ACallableOfTheUnitIsCalledAtNoTypesAndAnswersItsResult) {
   const auto calling_itself = [](bool at_a_type, bool answering_void) {
-    return UnitWithBody([=](CompilationUnit& u, Block& body) {
+    return UnitWithBody([=](CompilationUnit& u, Builder body) {
       body.AppendStmt(
           ExprStmt{
-              .expr = body.exprs.Add(
+              .expr = body.Add(
                   Expr{
                       .data =
                           CallExpr{
@@ -1868,14 +1862,14 @@ TEST(MirVerifyTest, ACallableOfTheUnitIsCalledAtNoTypesAndAnswersItsResult) {
 TEST(MirVerifyTest, APlacementMakesItsValueInStorageItDoesNotOwn) {
   const auto placing = [](support::BuiltinFn allocate,
                           PointerOwnership answered) {
-    return UnitWithBody([=](CompilationUnit& u, Block& body) {
-      const ExprId keeper = body.exprs.Add(
+    return UnitWithBody([=](CompilationUnit& u, Builder body) {
+      const ExprId keeper = body.Add(
           Expr{.data = NullLiteral{}, .type = u.builtins.deferred_effects_ptr});
-      const ExprId value = body.exprs.Add(
-          Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+      const ExprId value =
+          body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
       body.AppendStmt(
           ExprStmt{
-              .expr = body.exprs.Add(MakePlacementNewExpr(
+              .expr = body.Add(MakePlacementNewExpr(
                   value,
                   PlacementAllocation{
                       .allocate = allocate, .arguments = {keeper}},
@@ -1906,10 +1900,10 @@ TEST(MirVerifyTest, APlacementMakesItsValueInStorageItDoesNotOwn) {
       "allocates by");
 
   const CompilationUnit calling =
-      UnitWithBody([](CompilationUnit& u, Block& body) {
+      UnitWithBody([](CompilationUnit& u, Builder body) {
         body.AppendStmt(
             ExprStmt{
-                .expr = body.exprs.Add(
+                .expr = body.Add(
                     Expr{
                         .data =
                             CallExpr{
@@ -1950,34 +1944,35 @@ TEST(MirVerifyTest, AnEffectMadeInAKeeperRefersToNothingItsFrameEnds) {
               .ownership = PointerOwnership::kUnique,
               .mutability = Mutability::kMutable}}));
       effect.invoke.result_type = u.builtins.void_type;
-      effect.invoke.Body().AppendStmt(ReturnStmt{.value = std::nullopt});
+      Builder(effect.invoke.Body(), diag::SourceSpan{})
+          .AppendStmt(ReturnStmt{.value = std::nullopt});
       u.DefineClosure(id, std::move(effect));
 
-      Block& body = code.Body();
+      Builder body(code.Body(), diag::SourceSpan{});
       const LocalId value = code.AddLocal(value_type);
       body.AppendStmt(
           LocalDeclStmt{
               .target = value,
-              .init = body.exprs.Add(
-                  Expr{.data = NullLiteral{}, .type = value_type})});
+              .init =
+                  body.Add(Expr{.data = NullLiteral{}, .type = value_type})});
       const TypeId keeper_pointer = u.builtins.deferred_effects_ptr;
       const LocalId keeper = code.AddLocal(keeper_pointer);
       body.AppendStmt(
           LocalDeclStmt{
               .target = keeper,
-              .init = body.exprs.Add(
+              .init = body.Add(
                   Expr{.data = NullLiteral{}, .type = keeper_pointer})});
       const ExprId capture =
           captures_a_reference
-              ? body.exprs.Add(
+              ? body.Add(
                     Expr{
                         .data =
                             BorrowExpr{
                                 .operand = body.LocalPlace(value, value_type)},
                         .type = captured})
               : body.ReadLocal(value, value_type);
-      const ExprId made = body.exprs.Add(MakePlacementNewExpr(
-          body.exprs.Add(
+      const ExprId made = body.Add(MakePlacementNewExpr(
+          body.Add(
               Expr{
                   .data =
                       ClosureExpr{
@@ -1994,7 +1989,7 @@ TEST(MirVerifyTest, AnEffectMadeInAKeeperRefersToNothingItsFrameEnds) {
                   .mutability = Mutability::kMutable}})));
       body.AppendStmt(
           ExprStmt{
-              .expr = body.exprs.Add(
+              .expr = body.Add(
                   Expr{
                       .data =
                           CallExpr{
@@ -2032,7 +2027,7 @@ TEST(MirVerifyTest, AnEntryAnotherUnitDefinesHoldsNothingOfItsOwn) {
     bool named = true;
   };
   const auto unit_declaring = [](Declared declared) {
-    return UnitWithBody([&](CompilationUnit& u, Block&) {
+    return UnitWithBody([&](CompilationUnit& u, Builder) {
       const std::string defining = declared.own_unit ? u.name : "Pkg";
       u.records.Add(
           RecordDecl{
@@ -2042,15 +2037,17 @@ TEST(MirVerifyTest, AnEntryAnotherUnitDefinesHoldsNothingOfItsOwn) {
               .elements = {}});
       u.record_methods.Declare();
       u.record_methods.Define(
-          RecordId{0}, declared.record_methods
-                           ? RecordMethods{RecordMethod{
-                                 .answers = support::ValueOperator::kEquality,
-                                 .code = CallableCode::Defined()}}
-                           : RecordMethods{});
+          RecordId{0},
+          declared.record_methods
+              ? RecordMethods{RecordMethod{
+                    .answers = support::ValueOperator::kEquality,
+                    .code = CallableCode::Defined(diag::SourceSpan{})}}
+              : RecordMethods{});
       const CallableId subroutine = u.callables.Add(
           CallableDecl{
-              .code = declared.subroutine_body ? CallableCode::Defined()
-                                               : CallableCode{},
+              .code = declared.subroutine_body
+                          ? CallableCode::Defined(diag::SourceSpan{})
+                          : CallableCode{},
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
               .defining_unit = defining});
@@ -2095,7 +2092,7 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
     bool own_subroutine_without_body = false;
   };
   const auto unit_declaring = [](Declared declared) {
-    return UnitWithBody([&](CompilationUnit& u, Block&) {
+    return UnitWithBody([&](CompilationUnit& u, Builder) {
       const auto declare = [&] {
         Class cls;
         cls.defining_unit = declared.own_unit ? u.name : "Pkg";
@@ -2106,15 +2103,17 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
         if (declared.method_body) {
           cls.callables.Add(
               CallableDecl{
-                  .code = CallableCode::Defined(),
+                  .code = CallableCode::Defined(diag::SourceSpan{}),
                   .foreign = std::nullopt,
                   .virtual_dispatch = std::nullopt,
                   .defining_unit = std::nullopt});
         }
         if (declared.object_record) {
           cls.object_definition_initializer.value =
-              cls.object_definition_initializer.body.exprs.Add(
-                  Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+              Builder(
+                  cls.object_definition_initializer.body, diag::SourceSpan{})
+                  .Add(
+                      Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
         }
         u.DefineClass(u.DeclareClass(), std::move(cls));
       };
