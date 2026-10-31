@@ -9,9 +9,10 @@
 // @each-adds: units 1, files, bytes, bodies lowered 1,
 // @each-adds: mir.classes, mir.constructors, mir.callables, mir.fields,
 // @each-adds: mir.class constants, mir.integral constants, mir.types,
-// @each-adds: mir.consumed signatures 1,
+// @each-adds: mir.type operations, mir.consumed signatures 1,
 // @each-adds: lir.classes, lir.constants, lir.functions,
-// @each-adds: lir.integral constants, lir.members, lir.type steps, lir.types
+// @each-adds: lir.integral constants, lir.members, lir.type operations,
+// @each-adds: lir.type steps, lir.types
 module Child #(parameter int P = 0) (input logic [63:0] d, output logic [63:0] q);
   always_comb q = 64'(d[P:0]);
 endmodule
