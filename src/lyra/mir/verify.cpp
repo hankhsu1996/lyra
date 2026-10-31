@@ -1704,20 +1704,23 @@ void VerifyValuesMeetTheirTypes(
   }
 }
 
+// What `block` and every block inside it hand over meets the types it states,
+// as in a body.
+void VerifyBuildMeetsItsTypes(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  VerifyExprsMeetTheirTypes(unit, block, describe);
+  for (const Block& inner : block.child_scopes) {
+    VerifyBuildMeetsItsTypes(unit, inner, describe);
+  }
+}
+
 // What a constant of a class is built from meets its types as a body's
 // expressions do, and the value it is built as is of the type the constant
 // states; the definition of the class is the library's own structure for one.
 void VerifyConstantsMeetTheirTypes(
     const CompilationUnit& unit, const Class& cls, const auto& describe) {
-  const auto each_block = [&](this const auto& self,
-                              const Block& block) -> void {
-    VerifyExprsMeetTheirTypes(unit, block, describe);
-    for (const Block& inner : block.child_scopes) {
-      self(inner);
-    }
-  };
   for (const ClassConstantDecl& constant : cls.constants) {
-    each_block(constant.initializer.body);
+    VerifyBuildMeetsItsTypes(unit, constant.initializer.body, describe);
     const TypeId built =
         TypeOf(constant.initializer.body, constant.initializer.value);
     if (built != constant.type) {
@@ -1729,7 +1732,7 @@ void VerifyConstantsMeetTheirTypes(
   if (definition.body.exprs.empty()) {
     return;
   }
-  each_block(definition.body);
+  VerifyBuildMeetsItsTypes(unit, definition.body, describe);
   const auto* built = unit.types.Get(TypeOf(definition.body, definition.value))
                           .As<RuntimeLibraryType>();
   if (built == nullptr ||
