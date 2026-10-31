@@ -134,8 +134,10 @@ instantiation's expression is lowered where it is written, while a value given e
 in another scope, so the parent hands the constant it settled to, which its own key holds
 ([specialization-identity](specialization-identity.md) decision 1). So such a parameter is not kept
 in the key: what the parent hands differs from what the parameter holds as an expression, never as
-the constant. A top-level instance is built by the design root, which hands nothing, and is the only
-instance of its unit, so every value it is given is compiled in.
+the constant. Nothing instantiates a top-level instance (LRM 23.3.1), so the design root builds it
+as a parent leaving every parameter to its default does, and it shares its specialization with any
+instance so left. A top a value was given to elsewhere -- a defparam, or the tool's own override --
+has nothing to hand it that value, so it compiles its values in and its key says so.
 
 A class specialization or a virtual interface is chosen by the values a site hands it and shared by
 every site handing the same ones, so a parameter whose value is read into one is an argument; the

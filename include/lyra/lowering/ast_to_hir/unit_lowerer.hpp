@@ -678,17 +678,15 @@ class UnitLowerer {
   // holds nothing of that scope but itself.
   //
   // A design element's body is one text every application of it shares, and
-  // `home` is the body of one of them. `checked_against` holds the bodies of
-  // others, which the body is lowered from as well and has to come out the
-  // same from: what is compiled is a function of the body's name, so an
-  // application lowering to anything else is a defect of how the name was
-  // worked out. A build asks for none; the check of the compile against itself
-  // asks for every instance.
+  // `home` is the body of one of them, and `environment` is everything that
+  // text reaches outside itself. What is compiled is a function of the two, so
+  // lowering any other application with an equal environment gives the same
+  // unit. A namespace's body reaches outside itself through no instance,
+  // and its environment holds nothing.
   UnitLowerer(
       const LoweringFacts& facts, const slang::ast::Symbol& home,
-      hir::SpecializationRef names, hir::UnitRole role,
-      std::span<const slang::ast::InstanceBodySymbol* const> checked_against =
-          {});
+      Environment environment, hir::SpecializationRef names,
+      hir::UnitRole role);
 
   // The declaration phase: everything this unit states about itself, including
   // the signature it publishes. Reads no other unit, so a body that later
@@ -1711,14 +1709,14 @@ class UnitLowerer {
   // What `Declare` and `DescribeForGrouping` both do.
   auto DeclareOwn() -> diag::Result<void>;
 
-  // The instance this unit lowers and where each name it writes lands once it
-  // leaves that instance, or nothing for a namespace unit, which has no
-  // instance for a name to leave.
-  struct ReaderClimbs {
-    const slang::ast::InstanceBodySymbol* body = nullptr;
-    std::span<const ClimbAnchor> climbs;
-  };
-  [[nodiscard]] auto ReaderInstance() const -> std::optional<ReaderClimbs>;
+  // Whether this unit is lowered from an instance's body, which a name can
+  // leave, rather than a namespace's, which has no instance to leave.
+  [[nodiscard]] auto LowersAnInstance() const -> bool;
+
+  // Whether `scope` stands in an instance other than the one this unit's body
+  // was elaborated for; a namespace's scope stands in none.
+  [[nodiscard]] auto StandsInAnotherInstance(
+      const slang::ast::Scope& scope) const -> bool;
 
   // Derives what this unit publishes from its own declarations: the object an
   // instance of it is and the class each generate block it elaborates is, each
@@ -1921,40 +1919,26 @@ class UnitLowerer {
       const slang::ast::ParameterSymbol& param) const -> bool;
 
   // Hands `visit` every declaration outside a body this unit holds, each before
-  // anything inside it, in every application the body is lowered from: those
-  // its scope declares, then each specialization placed in it from a generic
-  // another unit declares. Each application holds its own copy of a
-  // declaration, so one declaration may be handed over once per application.
+  // anything inside it: those its scope declares, then each specialization
+  // placed in it from a generic another unit declares.
   template <typename Visit>
   auto WalkOwnDeclarations(Visit& visit)
       -> std::invoke_result_t<Visit&, const slang::ast::Symbol&>;
 
-  // The application of this unit that `scope` is or sits inside, or nothing
-  // where it is in none of them.
-  [[nodiscard]] auto ApplicationHolding(const slang::ast::Scope& scope) const
-      -> const slang::ast::Scope*;
+  // Whether `scope` is the scope this unit is lowered from or sits inside it.
+  [[nodiscard]] auto Holds(const slang::ast::Scope& scope) const -> bool;
 
-  // The application of this unit that declares `param`, or the one the unit is
-  // named for where none of them does.
-  [[nodiscard]] auto ApplicationDeclaring(
-      const slang::ast::ParameterSymbol& param) const
-      -> const slang::ast::Scope&;
-
-  // The unit's own scope as `application` built it, and how that object
-  // builds its children.
-  auto LowerScopeOf(const slang::ast::Scope& application)
-      -> diag::Result<BuiltScope>;
+  // The unit's own scope, and how its objects build their children.
+  auto LowerOwnScope() -> diag::Result<BuiltScope>;
 
   LoweringFacts facts_;
-  // The homes whose declarations this unit holds, the one it is named for
-  // first.
-  std::vector<const slang::ast::Symbol*> homes_;
-  // The scope each home is lowered and declared from, in the same order.
-  std::vector<const slang::ast::Scope*> applications_;
+  // The symbol whose declarations this unit holds.
+  const slang::ast::Symbol* home_;
+  // The scope `home_` is lowered and declared from.
   const slang::ast::Scope* scope_;
-  // The application being read, which is what a name leaving the instance is
-  // resolved from.
-  const slang::ast::Scope* lowering_;
+  // What the body reaches outside itself, which is everything the lowering
+  // learns of the instance it was elaborated for.
+  Environment environment_;
 
   hir::CompilationUnit unit_;
   // Each block body of `unit_`, by a digest of what it states, which sorts
@@ -2070,25 +2054,21 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
     return UnitName(cls, Naming());
   };
   if constexpr (std::is_void_v<Result>) {
-    for (const slang::ast::Scope* application : applications_) {
-      WalkDeclarationScopes(*application, owned, name_of);
-      for (const slang::ast::ClassType* spec :
-           facts_.PlacedIn(application->asSymbol())) {
-        owned(*spec);
-        WalkDeclarationScopes(*spec, owned, name_of);
-      }
+    WalkDeclarationScopes(*scope_, owned, name_of);
+    for (const slang::ast::ClassType* spec :
+         facts_.PlacedIn(scope_->asSymbol())) {
+      owned(*spec);
+      WalkDeclarationScopes(*spec, owned, name_of);
     }
   } else {
-    for (const slang::ast::Scope* application : applications_) {
-      if (auto r = WalkDeclarationScopes(*application, owned, name_of); !r) {
+    if (auto r = WalkDeclarationScopes(*scope_, owned, name_of); !r) {
+      return r;
+    }
+    for (const slang::ast::ClassType* spec :
+         facts_.PlacedIn(scope_->asSymbol())) {
+      if (auto r = owned(*spec); !r) return r;
+      if (auto r = WalkDeclarationScopes(*spec, owned, name_of); !r) {
         return r;
-      }
-      for (const slang::ast::ClassType* spec :
-           facts_.PlacedIn(application->asSymbol())) {
-        if (auto r = owned(*spec); !r) return r;
-        if (auto r = WalkDeclarationScopes(*spec, owned, name_of); !r) {
-          return r;
-        }
       }
     }
     return {};

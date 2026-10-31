@@ -25,7 +25,9 @@ namespace slang::ast {
 class GenerateBlockSymbol;
 class InstanceBodySymbol;
 class InstanceSymbol;
+class ParameterSymbol;
 class Scope;
+class Symbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -52,14 +54,32 @@ struct OverriddenBelow {
   OverrideEffect effect;
 };
 
-// `climbs` is where each name the instance's own body writes lands once it
-// leaves the instance, in the order the body writes them. The other two are
-// what the instances below it fix for it: the names they write that leave it
-// too, and what is written elsewhere about them.
+// One name the instance's own body writes: the declaration the front end found,
+// the symbol each step of the path written to it names, and where it lands once
+// it leaves the instance, nothing where it stays inside.
+struct NameUse {
+  const slang::ast::Symbol* found = nullptr;
+  std::vector<const slang::ast::Symbol*> path;
+  std::optional<ClimbAnchor> landing;
+};
+
+// What one walk of the instance's own body finds it reaching outside itself:
+// `uses`, every name it writes, in the order it writes them; `class_scopes`,
+// the scope of each class and covergroup another instance declares that a type
+// it states holds; and `foreign_parameters`, each parameter of another
+// instance it reads. The other two are what the instances below it fix for
+// it: the names they write that leave it too, and what is written elsewhere
+// about them.
 struct InstanceContext {
-  std::vector<ClimbAnchor> climbs;
+  std::vector<NameUse> uses;
+  std::vector<const slang::ast::Scope*> class_scopes;
+  std::vector<const slang::ast::ParameterSymbol*> foreign_parameters;
   std::vector<NameLandingBelow> names_below;
   std::vector<OverriddenBelow> overridden_below;
+
+  // Where each name of `uses` that leaves the instance lands, in the order the
+  // body writes them.
+  [[nodiscard]] auto Climbs() const -> std::vector<ClimbAnchor>;
 };
 
 using InstanceContexts =

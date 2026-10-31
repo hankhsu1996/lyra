@@ -114,23 +114,33 @@ auto BuildDesignRootHir(
   std::vector<hir::PublishedDecl> instances;
   for (const lowering::ast_to_hir::TopLevelUnit& top : tops) {
     // The root reaches a top the way any parent reaches a child it builds:
-    // through its own record of the class that unit's signature published. A
-    // top is handed nothing, since nothing instantiates it.
+    // through its own record of the class that unit's signature published.
+    // Nothing instantiates a top (LRM 23.3.1), so the root builds it as a
+    // parent leaving every parameter to its default does, handing no value for
+    // each one the unit takes.
     const hir::UnitSignature& signature =
         signatures.Instantiated(top.unit_name);
-    const hir::ScopeClassSignature& instance_class =
-        hir::DesignElementOf(signature).instance_class;
+    const hir::PublishedDesignElement& element =
+        hir::DesignElementOf(signature);
+    const hir::ScopeClassSignature& instance_class = element.instance_class;
     const hir::ScopeClassId scope_class = root.scope_classes.Import(
         hir::ScopeClassKey{
             .unit_name = top.unit_name,
             .class_path = instance_class.class_path});
+    hir::TypeImportMemo memo;
+    hir::TypeImporter importer = hir::ReaderImporter(
+        signature, root.types, root.classes, root.covergroups,
+        root.scope_classes, memo);
     if (!root.scope_classes.IsRecorded(scope_class)) {
-      hir::TypeImportMemo memo;
-      hir::TypeImporter importer = hir::ReaderImporter(
-          signature, root.types, root.classes, root.covergroups,
-          root.scope_classes, memo);
       root.scope_classes.Record(
           scope_class, hir::ImportScopeClass(importer, instance_class));
+    }
+    std::vector<hir::ParameterValueAssignment> left_to_default;
+    left_to_default.reserve(element.handed.size());
+    for (const hir::TypeId handed : element.handed) {
+      left_to_default.push_back(
+          hir::ParameterValueAssignment{
+              .type = importer.Import(handed), .value = std::nullopt});
     }
     const hir::InstanceMemberId instance =
         root.root_scope.instance_members.Declare();
@@ -139,7 +149,8 @@ auto BuildDesignRootHir(
                       .instance_name = top.name_in_a_path,
                       .array_dims = {},
                       .alternatives = {hir::InstanceAlternative{
-                          .scope_class = scope_class, .assignments = {}}},
+                          .scope_class = scope_class,
+                          .assignments = std::move(left_to_default)}},
                       .taken = {0}});
     lowered.construction.instances.push_back({hir::SpecializationRef{
         .unit = top.unit_name, .specialization = top.specialization}});
