@@ -36,6 +36,13 @@ void EndForLackOfMemoryInCodeGenerator(void*, const char*, bool) {
   lyra::base::EndForLackOfMemory();
 }
 
+// What the command had written to standard output reaches it before the
+// process ends for lack of memory. A refused request arrives in ordinary code,
+// where the standard streams may be flushed.
+void DeliverWhatTheCommandWrote() noexcept {
+  std::fflush(stdout);
+}
+
 auto RunLyra(int argc, char** argv) -> int {
   const std::span<char* const> raw_args(argv, static_cast<std::size_t>(argc));
   const std::string program_path =
@@ -133,7 +140,8 @@ auto ShowFailure(const std::exception& failure) -> int {
 // Everything a command does is done on a thread with the stack compiling
 // takes, so the process's own limit stays what its invoker set.
 auto main(int argc, char** argv) -> int {
-  lyra::base::InstallOutOfMemoryHandler(kOutOfMemory);
+  lyra::base::InstallOutOfMemoryHandler(
+      kOutOfMemory, DeliverWhatTheCommandWrote);
   llvm::install_bad_alloc_error_handler(EndForLackOfMemoryInCodeGenerator);
   try {
     lyra::driver::EndOnSignal();

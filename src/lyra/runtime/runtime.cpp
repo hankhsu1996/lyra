@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <ctime>
 #include <format>
-#include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
@@ -30,6 +29,7 @@
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/timer.hpp"
+#include "lyra/support/file_descriptor.hpp"
 #include "lyra/support/scope_execution.hpp"
 #include "lyra/value/string.hpp"
 
@@ -200,7 +200,7 @@ void Runtime::ReportDesignError(const base::DiagMessage& message) {
 
 void Runtime::ReportToolFailure(std::string_view message) {
   tool_failed_ = true;
-  DiagnosticDispatcher::Line(std::format("error: {}", message));
+  diagnostic_.Line(std::format("error: {}", message));
   RequestToolStop();
 }
 
@@ -222,7 +222,7 @@ void Runtime::ReportSimulationControl(
   if (selected == 2) {
     line += std::format(", {:.3f}s of processor time", ProcessorSeconds());
   }
-  DiagnosticDispatcher::Line(line);
+  diagnostic_.Line(line);
 }
 
 auto Runtime::ReportContext() const -> DiagnosticDispatcher::Context {
@@ -275,21 +275,21 @@ void Runtime::ReportUnsettledSlot(std::span<const NotedProcedure> ran) {
                   " in '{}'",
                   std::string_view{
                       one.procedure.scope->HierarchicalPath().View()});
-    DiagnosticDispatcher::Line(
+    diagnostic_.Line(
         std::format(
             "{}{}note: this procedure{} ran {} in the last {} passes",
             written_at, written_at.empty() ? "" : ": ", where, Times(one.runs),
             kNotedRegionPasses));
   }
   if (named < counted.size()) {
-    DiagnosticDispatcher::Line(
+    diagnostic_.Line(
         std::format("note: and {} more procedures", counted.size() - named));
   }
 }
 
 void Runtime::ReportCoverage() {
   for (const std::string& line : coverage_.Report()) {
-    std::cout << line << '\n';
+    files_.Writeln(support::kStdoutFd, value::String{line});
   }
 }
 

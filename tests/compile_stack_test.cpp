@@ -77,14 +77,18 @@ auto WriteLongSum(const std::filesystem::path& path, int operands) -> void {
   out << ";\nendmodule\n";
 }
 
-// A design whose one function calls itself without end.
+// A design that prints a line, then calls a function that calls itself without
+// end.
 constexpr std::string_view kRecursesWithoutEnd = R"(
 module Test;
   function automatic int deeper(int n);
     return deeper(n + 1) + 1;
   endfunction
   int reached;
-  initial reached = deeper(0);
+  initial begin
+    $display("about to recurse");
+    reached = deeper(0);
+  end
 endmodule
 )";
 
@@ -153,7 +157,8 @@ TEST(CompileStack, RunningOutIsSaidInWords) {
 }
 
 // A design whose subroutines call one another past the stack the program was
-// started with ends, and says why before it does.
+// started with ends, and says why before it does. What it printed before then
+// is delivered, though the program ends by the fault.
 TEST(CompileStack, ASimulationRunningOutIsSaidInWords) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -161,21 +166,20 @@ TEST(CompileStack, ASimulationRunningOutIsSaidInWords) {
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
   const auto src = *tmp_or / "test.sv";
   std::ofstream(src) << kRecursesWithoutEnd;
-  const std::vector<std::string> args = {
-      "run",
-      "--backend",
-      "llvm",
-      "--top",
-      "Test",
-      "--cache-dir",
-      (*tmp_or / "cache").string(),
-      src.string()};
-  const auto ran = RunChildProcess(lyra, args);
-  EXPECT_THAT(ran, Not(ExitedWithCode(0))) << ran.stdout_text;
-  EXPECT_NE(
-      ran.stderr_text.find("error: the simulation ran out of stack"),
-      std::string::npos)
-      << ran.stderr_text;
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const std::vector<std::string> args = {
+        "run",  "--backend",   std::string(backend),         "--top",
+        "Test", "--cache-dir", (*tmp_or / "cache").string(), src.string()};
+    const auto ran = RunChildProcess(lyra, args);
+    EXPECT_THAT(ran, Not(ExitedWithCode(0)))
+        << backend << ": " << ran.stdout_text;
+    EXPECT_NE(
+        ran.stderr_text.find("error: the simulation ran out of stack"),
+        std::string::npos)
+        << backend << ": " << ran.stderr_text;
+    EXPECT_EQ(ran.stdout_text, "about to recurse\n")
+        << backend << ": " << ran.stdout_text;
+  }
 }
 
 }  // namespace

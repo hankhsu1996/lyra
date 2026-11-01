@@ -13,6 +13,8 @@
 
 namespace lyra::runtime {
 
+class FileTable;
+
 enum class Severity : std::uint8_t {
   kInfo,
   kWarning,
@@ -49,7 +51,11 @@ class DiagnosticDispatcher {
   // Zero disables rate limiting.
   static constexpr std::uint32_t kDefaultRateLimit = 10;
 
-  explicit DiagnosticDispatcher(std::uint32_t rate_limit = kDefaultRateLimit);
+  // Every report goes to the error stream of `files`, which hands what the
+  // design wrote to standard output over first, so a report follows what was
+  // printed before it wherever the two streams meet.
+  explicit DiagnosticDispatcher(
+      FileTable& files, std::uint32_t rate_limit = kDefaultRateLimit);
 
   // The run has to exist before it can be asked where it is, so the source is
   // installed rather than taken at construction.
@@ -76,7 +82,7 @@ class DiagnosticDispatcher {
   // own word: what a simulation control task did (LRM 20.2, Table 20-1), what
   // kept a time slot from ending, and why the tool could not carry on. It is
   // written every time, having no call site to attribute or to count.
-  static void Line(std::string_view line);
+  void Line(std::string_view line);
 
   // LRM 20.10: a fatal report terminates the simulation with an error code, so
   // whether one was made is what the run's exit status answers to.
@@ -86,9 +92,7 @@ class DiagnosticDispatcher {
   void Emit(
       Severity severity, std::string_view word, std::string_view origin,
       std::string_view body, std::span<const base::DiagMessage> notes = {});
-  // Every report goes to the process's error stream, which C++ ties to its
-  // standard output, so a report follows what the design printed before it.
-  static void Write(std::string_view text);
+  void Write(std::string_view text);
 
   struct CountKey {
     std::string place;
@@ -101,6 +105,7 @@ class DiagnosticDispatcher {
     auto operator()(const CountKey& k) const noexcept -> std::size_t;
   };
 
+  FileTable* files_;
   ContextSource context_;
   std::uint32_t rate_limit_;
   bool reported_fatal_ = false;

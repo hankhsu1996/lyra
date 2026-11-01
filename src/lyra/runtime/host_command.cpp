@@ -1,6 +1,5 @@
 #include "lyra/runtime/host_command.hpp"
 
-#include <cstdio>
 #include <cstdlib>
 #include <string>
 
@@ -19,7 +18,6 @@ namespace {
 // wrote would reach the command incomplete.
 void PublishPendingOutput(RuntimeEffects& runtime) {
   runtime.Files().FlushAll();
-  std::fflush(nullptr);
 }
 
 }  // namespace

@@ -7,7 +7,11 @@ again 2026-10-21: D9's error becomes a departure at the first landing that takes
 the activation's own, where it named a cleanup's landing too; a cleanup's landing only passes what
 arrived on, as the C++ backend's already did. Revised 2026-10-24: the last program ending is a stop
 only while the simulation runs, so a final procedure that ends it leaves the other final procedures
-to run, where it used to stop them.
+to run, where it used to stop them. Revised 2026-10-31: every ending the process can still act on
+delivers what the design had written, to standard output and to the files it opened, where a signal
+from outside, a fault or the checker's report used to lose whatever had not reached its destination;
+standard output gains a buffer of the runtime's own for that, which the 2026-10-21 revision had said
+it has none of.
 
 ## Why this decision matters
 
@@ -138,11 +142,30 @@ D5. What decides whether `final` procedures run is whether the simulation reache
 
     One ending pays none of that: a request for memory the host refuses. Whatever runs after it
     may ask again -- composing a report, leaving a frame, stopping the engine -- so the request is
-    where the program ends, having written one line it needed nothing to write and everything the
-    design wrote to standard output. The cover report and what a file the design opened still holds
-    are not delivered. LLVM's own handler and Rust's standard library end a program the same way
+    where the program ends, having written one line it needed nothing to write. The cover report
+    is not delivered. LLVM's own handler and Rust's standard library end a program the same way
     and for that reason; the status is a failing exit rather than their signal, because who acts on
     it is the design's author, and a signal is how a defect of the tool reads.
+
+    What the design had written is delivered on every ending the process can still act on,
+    that one included -- a signal from outside, a fault, the checker's report, the refused
+    request -- because the last lines a run printed are what say where it was, and the run that
+    is stopped from outside is the one that was not going to end. A finished output call's bytes
+    are held by the runtime in a buffer of its own, one per file, which publishes how much of it
+    is finished as each call completes; an ending hands that part over with `write` alone, which
+    is what a signal handler may call where it may call no library (glibc stopped flushing its
+    streams in `abort` for the deadlocks and corruption that caused). The buffer is handed over
+    before anything else writes the same destination -- a report on the error stream, foreign
+    code through the C library's stream (LRM 35), a command the design runs (LRM 20.17.1) -- so
+    order is kept, and it is the one thing an ending nothing can act on loses: a kill from outside
+    or the kernel's, which runs no code, loses at most one buffer per file, the same bound the
+    runtime's own note of where the run was already has. A run's writing costs a copy per call
+    and a system call per buffer, which is the cost of the C library's own block buffering, and
+    not a system call per line. A helper process draining a shared journal would survive that
+    kill too; it was not taken, because every simulator in the field runs in one process and
+    loses its buffer the same way, and the facilities it leans on -- shared memory, a second
+    process kept clear of the terminal's signals, a bridge for the foreign side's stream -- are
+    weighed against porting and against what is the compiler's own work.
 
 D6. `$stop` ends the run where a tool has no interactive mode, and the diagnostic is the whole of
     what separates it from `$finish`. LRM 20.2 has `$stop` suspend the simulation and `$finish` exit
@@ -230,9 +253,8 @@ not whether the execution was in error.
 - **Aborting where an internal inconsistency is raised, to keep the stack.** The reader of one is a
   Lyra developer, and the raise site is what they want; a signal delivers it and an unwind has
   already lost it. It is rejected because the message that asks for a bug report, and the rendering
-  that makes it legible, are worth more to that reader than a core file -- and because a run that
-  aborts leaves its output unflushed, so the last thing the design printed before the compiler
-  contradicted itself is the thing most likely to explain it.
+  that makes it legible, are worth more to that reader than a core file. What the design printed
+  before the contradiction is delivered either way, since an abort is a fault the run acts on (D5).
 
 ## Consequences
 

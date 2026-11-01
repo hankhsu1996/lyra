@@ -8,6 +8,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/dpi_scope_handles.hpp"
+#include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -110,6 +111,10 @@ void CheckExportReachable(RuntimeEffects& effects) {
       base::DiagMessage(
           "foreign code called an exported subroutine after its execution "
           "thread entered the disabled state"));
+}
+
+void BeforeForeignCodeRuns(RuntimeEffects& effects) {
+  effects.Files().BeforeForeignCodeRuns();
 }
 
 void RequireAContextImportCall(RuntimeEffects& effects) {

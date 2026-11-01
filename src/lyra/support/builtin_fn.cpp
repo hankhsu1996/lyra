@@ -2008,6 +2008,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "check_export_reachable",
           .declaration = RuntimeFunction("CheckExportReachable"),
           .takes_the_runtime_handle = true};
+    case BuiltinFn::kBeforeForeignCodeRuns:
+      return {
+          .name = "before_foreign_code_runs",
+          .declaration = RuntimeFunction("BeforeForeignCodeRuns"),
+          .takes_the_runtime_handle = true,
+          .ending = CallEnding::kReturns};
     case BuiltinFn::kTakeDepartureIfDue:
       return {
           .name = "take_departure_if_due",

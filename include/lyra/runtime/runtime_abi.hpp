@@ -259,6 +259,7 @@ void lyra_rt_check_import_task_acknowledged(
     void* runtime, std::int32_t returned);
 void lyra_rt_check_import_function_acknowledged(void* runtime);
 void lyra_rt_check_export_reachable(void* runtime);
+void lyra_rt_before_foreign_code_runs(void* runtime) noexcept;
 
 // A string an export hands to its foreign caller (LRM Annex H.8.10), kept by
 // the run until the import call that let that caller in returns.

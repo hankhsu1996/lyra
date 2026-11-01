@@ -1210,6 +1210,10 @@ enum class BuiltinFn : std::uint16_t {
   kCheckImportTaskAcknowledged,
   kCheckImportFunctionAcknowledged,
   kCheckExportReachable,
+  // Foreign code is about to run (LRM 35) -- at an import call that may write,
+  // and where an export returns to its foreign caller -- so each side hands
+  // over the standard output it holds and the two print in the order written.
+  kBeforeForeignCodeRuns,
   // Where a foreign call hands control back, this execution takes the departure
   // owed to it, if one is (LRM 9.6.2, 9.7). Every other point an execution
   // regains control is a resumption, which each backend already asks its own

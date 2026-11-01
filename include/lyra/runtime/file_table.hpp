@@ -3,12 +3,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <fstream>
+#include <cstdio>
 #include <functional>
-#include <istream>
 #include <memory>
 #include <optional>
-#include <ostream>
 #include <span>
 #include <stop_token>
 #include <string>
@@ -16,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/runtime/file.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/scan.hpp"
 #include "lyra/value/string.hpp"
@@ -69,12 +68,15 @@ using BinaryRead = value::Tuple<value::Int, Destination>;
 //   bits 0..30 a channel, so several OR-ed together send one write to each.
 // - A file descriptor (`$fopen` given a mode): bit 31 set, the rest an index.
 //
-// Either names files of this table, and every operation acts on the streams
-// of the files it names. Standard input, output and error are pre-opened
-// (LRM 21.3.1): file descriptors 0, 1 and 2, and channel 0 of a multichannel
-// descriptor, are files holding the process's own standard streams. C code the
-// design calls shares those streams, so what either writes comes out in the
-// order it was written, and a flush of one is a flush of the stream both use.
+// Either names files of this table, and every operation acts on the files it
+// names. Standard input, output and error are pre-opened (LRM 21.3.1): file
+// descriptors 0, 1 and 2 hold the process's own standard streams, channel 0 of
+// a multichannel descriptor is standard output as well, and nothing closes
+// them. The table holds what every file has been written and not yet handed
+// to its descriptor, and hands it over before anything else writes the same
+// destination -- a report on the error stream, foreign code (LRM 35), a
+// command the design runs (LRM 20.17.1) -- and on every ending of the run the
+// process can still act on.
 //
 // Each file also owns a `std::stop_source` -- the LRM 21.3.2 cancel signal for
 // the postponed operations tied to the channel, such as `$fstrobe`'s. Closing
@@ -88,27 +90,8 @@ class FileTable {
     std::string message;
   };
 
-  // What a descriptor names. A read takes bytes from `reads` and a write puts
-  // them in `writes`; either is absent where the file was not opened for it
-  // (LRM 21.3.1 Table 21-6). Both point into `owned` for a file `$fopen`
-  // opened, and at the process's standard streams for the pre-opened files,
-  // which nothing closes. A file neither reads nor writes once closed, and a
-  // later `$fopen` may take its place.
-  struct File {
-    std::unique_ptr<std::fstream> owned;
-    std::istream* reads = nullptr;
-    std::ostream* writes = nullptr;
-    ErrorRecord error;
-    std::stop_source cancel_source;
-    // LRM 21.3.4.1 + 21.3.5 single-byte putback. Held on the file rather
-    // than in the stream's own putback area because the C++ library rejects
-    // pushback on a freshly-opened stream and leaves seek-cancel behaviour
-    // implementation-defined -- neither matches the LRM contract.
-    std::optional<char> putback;
-  };
-
   FileTable();
-  ~FileTable() = default;
+  ~FileTable();
   FileTable(const FileTable&) = delete;
   auto operator=(const FileTable&) -> FileTable& = delete;
   FileTable(FileTable&&) = delete;
@@ -117,9 +100,8 @@ class FileTable {
   // Returns descriptor value per LRM 21.3.1, or 0 on failure (file cannot
   // be opened, every channel in use, or unknown mode string). `mode`
   // absent -> MCD (bit 31 clear, single bit set in 1..30, file opened in
-  // write-truncate mode). `mode` present -> FD (bit 31 set), opened with
-  // the `std::ios_base::openmode` derived from the string (LRM 21.3.1
-  // Table 21-6).
+  // write-truncate mode). `mode` present -> FD (bit 31 set), opened as the
+  // string says (LRM 21.3.1 Table 21-6).
   auto Open(std::string_view name, std::optional<std::string_view> mode)
       -> std::int32_t;
 
@@ -153,6 +135,17 @@ class FileTable {
   // appends a trailing newline.
   void Write(std::int64_t descriptor, const lyra::value::String& text);
   void Writeln(std::int64_t descriptor, const lyra::value::String& text);
+
+  // Writes `text` to the error stream, after what the design wrote to
+  // standard output has reached it, so that where the two streams are one
+  // destination a report follows what was printed before it.
+  void WriteToStandardError(std::string_view text);
+
+  // Foreign code is about to run (LRM 35): what the design wrote to standard
+  // output reaches it first, and what the foreign side then writes to the C
+  // library's stream reaches it before the design writes standard output
+  // again.
+  void BeforeForeignCodeRuns();
 
   // LRM 21.3.1 $fopen. Opening without a mode yields a multichannel
   // descriptor (MCD form) and opening with one yields a single file
@@ -233,34 +226,72 @@ class FileTable {
 
   // LRM 21.3.6 $fflush. Flushing every open file and flushing the files a
   // descriptor names -- a single FD, or every set-bit MCD channel -- are two
-  // requests, so each has a name of its own.
+  // requests, so each has a name of its own. Flushing every file also flushes
+  // what foreign code wrote to the C library's streams.
   void FlushAll();
   void Flush(std::int64_t descriptor);
 
  private:
   // LRM 21.3.1: at most 31 MCD channels, bits 0..30.
   static constexpr std::size_t kChannelCount = 31;
+  // The pre-opened files: standard input, output and error (LRM 21.3.1), the
+  // first three file descriptors.
+  static constexpr std::size_t kPreOpenedCount = 3;
 
+  // The C stream a file was opened as, closed with it, which closes its
+  // descriptor.
+  using OpenedStream = std::unique_ptr<std::FILE, decltype(&std::fclose)>;
+
+  // What a descriptor names: the file while it is open, the C stream the
+  // descriptor was opened as (none for a pre-opened file, which is never
+  // closed), the last error recorded on it, and the cancel signal of the
+  // operations tied to it.
+  struct Slot {
+    std::unique_ptr<File> file;
+    OpenedStream opened_as{nullptr, &std::fclose};
+    ErrorRecord error;
+    std::stop_source cancel_source;
+  };
+
+  // The slot a file descriptor names, open or not, or null for a value that
+  // is no file descriptor of this table.
+  auto SlotOf(std::int32_t fd) -> Slot*;
+  [[nodiscard]] auto SlotOf(std::int32_t fd) const -> const Slot*;
   // The open file a file descriptor names, or null.
   auto FileIfOpen(std::int32_t fd) -> File*;
+  [[nodiscard]] auto IsPreOpened(const Slot& slot) const -> bool;
 
   void WriteTo(std::int64_t descriptor, std::string_view text, bool newline);
 
   template <typename Visit>
-  void ForEachOpenFile(std::int64_t descriptor, Visit visit);
+  void ForEachOpenSlot(std::int64_t descriptor, Visit visit);
 
-  std::array<File, kChannelCount> channel_files_{};
-  std::vector<File> fd_files_;
+  // What finished output calls wrote to every open file reaches it, with
+  // `write` alone.
+  void DeliverFinished() noexcept;
+  friend void DeliverFinishedOutput() noexcept;
+
+  // Indexed by the low bits of a file descriptor; the first three are the
+  // pre-opened files.
+  std::vector<Slot> fd_slots_;
+  // Indexed by channel; channel 0 is standard output and its slot unused.
+  std::array<Slot, kChannelCount> channel_slots_;
 };
 
-// What `$fscanf` reads (LRM 21.3.4.3): a file's stream from where it stands, a
-// byte pushed back by `$ungetc` first, with a null character ordinary input
-// (LRM 21.3.4.3(a)). A byte the scan ungets becomes the file's pushed-back
-// byte, so the next read of any kind takes it. A file that cannot be read is
-// an input with no bytes.
+// What finished output calls wrote to every open file of the run reaches it,
+// with nothing but `write`: what an ending the process can still act on does
+// before it ends, from a signal handler or wherever else nothing may be
+// called.
+void DeliverFinishedOutput() noexcept;
+
+// What `$fscanf` reads (LRM 21.3.4.3): a file from where it stands, a byte
+// pushed back by `$ungetc` first, with a null character ordinary input (LRM
+// 21.3.4.3(a)). A byte the scan ungets becomes the file's pushed-back byte, so
+// the next read of any kind takes it. A file that cannot be read is an input
+// with no bytes.
 class FileScanInput final : public value::ScanInput {
  public:
-  explicit FileScanInput(FileTable::File* file)
+  explicit FileScanInput(File* file)
       : ScanInput(value::NullByte::kOrdinary), file_(file) {
   }
 
@@ -269,7 +300,7 @@ class FileScanInput final : public value::ScanInput {
   void Unget(int byte) override;
 
  private:
-  FileTable::File* file_;
+  File* file_;
 };
 
 // LRM 21.3.4.4 memory load, over whatever holds the words. Reads from

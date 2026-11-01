@@ -84,4 +84,8 @@ void CheckImportTaskAcknowledged(
 void CheckImportFunctionAcknowledged(RuntimeEffects& effects);
 void CheckExportReachable(RuntimeEffects& effects);
 
+// Foreign code is about to run (LRM 35): each side hands over the standard
+// output it holds, so the two print in the order written.
+void BeforeForeignCodeRuns(RuntimeEffects& effects);
+
 }  // namespace lyra::runtime
