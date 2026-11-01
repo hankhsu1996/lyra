@@ -66,8 +66,8 @@ spans land in the same lanes. A span shorter than `--time-trace-granularity` mic
 out, 500 when not given, which is clang's default.
 
 `--stats-file <file>` writes JSON holding what a span cannot: how many units ran at once, each stage
-that runs alone with its peak resident memory, each unit with every file it left behind and whether
-this run made it or took it from the store, each unit with how many of each kind of thing it holds
+that runs alone with its peak resident memory, each body with every file it left behind and whether
+this run made it or took it from the store, each body with how many of each kind of thing it holds
 in each form it passed through, how many times each kind of work ran over the whole run, and each
 tool the build ran with its wall time and CPU time.
 

@@ -1,6 +1,10 @@
 // One module instantiated once per block of a generate loop, each instance
 // reading a variable of the block holding it by the block's own name (LRM
 // 23.8). N is how many blocks there are.
+//
+// The front end shares no elaborated body a name leaves upward, so each
+// instance is lowered to HIR on its own and found to come out as the one body.
+// @each-adds: lowerings 1
 module Leaf (input var bit c, output int o);
   always @(posedge c) o <= cell_block.seed;
 endmodule

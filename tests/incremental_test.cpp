@@ -134,7 +134,7 @@ auto EmittedCompileInputs(
     return std::unexpected("the emit wrote no report of itself");
   }
   std::map<std::string, std::string> inputs;
-  for (const nlohmann::json& unit : report.at("units")) {
+  for (const nlohmann::json& unit : report.at("bodies")) {
     std::string& input = inputs[unit.at("name").get<std::string>()];
     for (const nlohmann::json& artifact : unit.at("artifacts")) {
       if (artifact.at("kind").get<std::string>() == "C++ source") {
@@ -208,7 +208,7 @@ auto UnitsMadeAgain(
       if (report.is_discarded()) {
         return std::unexpected("the build wrote no report of itself");
       }
-      for (const nlohmann::json& unit : report.at("units")) {
+      for (const nlohmann::json& unit : report.at("bodies")) {
         for (const nlohmann::json& artifact : unit.at("artifacts")) {
           if (artifact.at("made").get<bool>()) {
             made_again.insert(unit.at("name").get<std::string>());

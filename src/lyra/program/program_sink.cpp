@@ -2157,7 +2157,7 @@ auto BuildUnit(
   if (!artifact) {
     return std::unexpected(std::move(artifact.error()));
   }
-  support::RecordUnit(unit.body_name, {*std::move(artifact)});
+  support::RecordBody(unit.body_name, {*std::move(artifact)});
   return BuiltUnit{
       .object = *std::move(object), .dpi_fragment = dpi::AbiFragmentOf(unit)};
 }
@@ -2197,7 +2197,7 @@ auto ProgramSink::Finish(
     }
     artifacts.push_back(*std::move(artifact));
   }
-  support::RecordUnit(root.body_name, std::move(artifacts));
+  support::RecordBody(root.body_name, std::move(artifacts));
   program_.objects.push_back(*std::move(root_object));
   program_.objects.push_back(*std::move(entry_object));
   return std::move(program_);

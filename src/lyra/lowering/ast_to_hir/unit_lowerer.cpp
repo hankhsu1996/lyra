@@ -240,7 +240,7 @@ auto UnitLowerer::LowerBodies(
 auto UnitLowerer::LowerOwnScope() -> diag::Result<BuiltScope> {
   const profiling::TimeTraceScope span(
       "lower to HIR", [&] { return unit_.name; });
-  support::RecordWork("bodies lowered");
+  support::RecordWork("lowerings");
   WalkFrame frame;
   StructuralScopeLowerer root(*this, *scope_);
   return root.Run(frame);

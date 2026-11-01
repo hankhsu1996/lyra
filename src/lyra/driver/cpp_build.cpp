@@ -1039,7 +1039,7 @@ auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
   if (auto r = WriteArtifact(artifacts.code); !r) {
     return std::unexpected(std::move(r.error()));
   }
-  support::RecordUnit(
+  support::RecordBody(
       unit.body_name, {support::Artifact{
                           .kind = support::ArtifactKind::kCppSource,
                           .name = artifacts.code.relpath,
@@ -1086,7 +1086,7 @@ void CppProjectSink::WriteDeclarations(WrittenUnit& written) {
             .bytes = declaration.content.size(),
             .made = true});
   }
-  support::RecordUnit(written.body_name, std::move(recorded));
+  support::RecordBody(written.body_name, std::move(recorded));
 }
 
 void CppProjectSink::Collect(EmittedUnit unit) {

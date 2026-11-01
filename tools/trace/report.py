@@ -7,12 +7,12 @@ reading is wanted depends on who is reading. This is two of those readings.
 
 `summary` prints one run: the stages that ran alone with their time and peak
 memory, the time each per-unit stage took summed over units with the slowest
-unit, the units by what they left behind, how often each kind of work ran, and
+unit, the bodies by what they left behind, how often each kind of work ran, and
 how long each tool the build ran took.
 
 `compare` holds a run against a base and exits with the number of regressions,
-so a check can be built on it. Counts -- units, files per unit, how many of
-each kind of thing a unit holds in each of its forms, and how often each kind
+so a check can be built on it. Counts -- bodies, files per body, how many of
+each kind of thing a body holds in each of its forms, and how often each kind
 of work ran -- are exact and any growth is a regression. A size or a peak
 regresses only past both a percentage and an absolute floor, so noise on a
 small number is not reported.
@@ -114,9 +114,9 @@ def summary(args):
                 )
 
     print()
-    print("units")
+    print("bodies")
     for unit in sorted(
-        stats["units"],
+        stats["bodies"],
         key=lambda u: sum(a["bytes"] for a in u["artifacts"]),
         reverse=True,
     ):
@@ -154,12 +154,12 @@ def compare(args):
     now = load(args.stats)
     regressions = []
 
-    base_units = {u["name"]: u for u in base["units"]}
-    now_units = {u["name"]: u for u in now["units"]}
-    if len(now_units) > len(base_units):
-        regressions.append(f"units: {len(base_units)} -> {len(now_units)}")
-    for name, unit in now_units.items():
-        before = base_units.get(name)
+    base_bodies = {u["name"]: u for u in base["bodies"]}
+    now_bodies = {u["name"]: u for u in now["bodies"]}
+    if len(now_bodies) > len(base_bodies):
+        regressions.append(f"bodies: {len(base_bodies)} -> {len(now_bodies)}")
+    for name, unit in now_bodies.items():
+        before = base_bodies.get(name)
         if before is None:
             continue
         artifacts = unit["artifacts"]

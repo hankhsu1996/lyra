@@ -355,7 +355,7 @@ class HirDumper {
   auto Dump(const Lowering& lowered) -> std::string {
     Line(
         std::format(
-            R"(Specialization "{}" of implementation "{}")", lowered.name,
+            R"(Lowering "{}" of body "{}")", lowered.name,
             lowered.body.body_name));
     Indent();
     DumpUnit(lowered.body);

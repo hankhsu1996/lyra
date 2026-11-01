@@ -9,7 +9,7 @@
 // by what it declares, is one class. Each instance is handed a value of its
 // own, so each is a specialization of its own, lowered to HIR on its own and
 // built from a table entry of its own; that is what each step adds.
-// @each-adds: bytes, bodies lowered 1
+// @each-adds: bytes, lowerings 1
 module Leaf #(parameter int K = 0) (input var bit c, output int o);
   localparam bit ODD = K % 2 != 0;
   int stages [4];
