@@ -551,6 +551,7 @@ auto UnitLowerer::SettlePublishedScope(
       settled != published_scopes_.end()) {
     return settled->second.layout.published;
   }
+  DeclareExternBindings(published, std::nullopt, signature);
   ClassShape shape;
   shape.identity = signature.class_path;
   shape.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
@@ -578,6 +579,16 @@ auto UnitLowerer::SettlePublishedScope(
             .name = callable.name,
             .prototype =
                 PrototypeOf(*this, callable, shape.self_pointer_type)});
+  }
+
+  // Then the method a definer hands each subroutine the scope leaves to a
+  // connected module to, at the position every reader of the signature gives
+  // it, since each of those calls it.
+  for (std::size_t i = 0; i < ExternBindingsOf(published).size(); ++i) {
+    methods.Take();
+    signatures.push_back(
+        CallableSignature{
+            .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true}});
   }
 
   // Then one virtual method per operation of each class the unit declares in
@@ -1468,6 +1479,67 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
   unit_.DefineClass(id, std::move(declared));
 }
 
+void UnitLowerer::DeclareExternBindings(
+    mir::ClassId published, const std::optional<std::string>& defining_unit,
+    const hir::ScopeClassSignature& scope) {
+  const mir::TypeId scope_pointer = SelfPointerTo(published);
+  base::IdAllocator<mir::CallableId> methods;
+  std::ranges::for_each(
+      scope.callables.Ids(), [&](hir::PublishedCallableId) { methods.Take(); });
+  std::vector<ExternBinding> bindings;
+  bindings.reserve(scope.externs.size());
+  for (const hir::PublishedExtern& declared : scope.externs) {
+    const hir::SubroutinePrototype& subroutine =
+        scope.callables.Get(declared.callable);
+    const mir::ClassId callback = unit_.DeclareClass();
+    mir::CallableCode invoke =
+        PrototypeOf(*this, subroutine, SelfPointerTo(callback));
+
+    // Every unit names the callback class by the path of the subroutine it
+    // stands for, and the unit publishing the scope is the one defining it.
+    mir::Class stated{};
+    stated.defining_unit = defining_unit;
+    stated.identity = support::Extended(
+        support::Extended(
+            scope.class_path, support::SubroutineStep{.name = subroutine.name}),
+        support::ClassStep{.name = "callback", .arguments = std::nullopt});
+    stated.self_pointer_type = SelfPointerTo(callback);
+    stated.is_interface = true;
+    stated.named_callables.push_back(
+        mir::NamedCallable{
+            .name = "invoke",
+            .body = stated.callables.Add(
+                mir::CallableDecl{
+                    .code = invoke,
+                    .foreign = std::nullopt,
+                    .virtual_dispatch =
+                        mir::IntroducesVirtualSlot{.is_pure = true},
+                    .defining_unit = std::nullopt})});
+    unit_.DefineClass(callback, std::move(stated));
+
+    const mir::TypeId handle = unit_.types.Intern(
+        mir::Type{mir::ManagedRefType{
+            .pointee = unit_.types.Intern(
+                mir::Type{mir::ObjectType{.of = callback}})}});
+    mir::CallableCode bind;
+    const mir::LocalId self = bind.AddLocal(scope_pointer);
+    const mir::LocalId definition = bind.AddLocal(handle);
+    bind.params = {self, definition};
+    bind.receiver = self;
+    bind.result_type = unit_.builtins.void_type;
+    bindings.push_back(
+        ExternBinding{
+            .callback = callback,
+            .invoke = std::move(invoke),
+            .bind = methods.Take(),
+            .bind_name = std::format("{} bind", subroutine.name),
+            .bind_prototype = std::move(bind),
+            .handle = handle,
+            .form = declared.form});
+  }
+  extern_bindings_.emplace(published, std::move(bindings));
+}
+
 auto UnitLowerer::DeclarePublishedScopeClass(
     hir::ScopeClassId hir_id, const hir::ScopeClassSignature& scope) -> void {
   const hir::ScopeClassKey& key = hir_->scope_classes.KeyOf(hir_id);
@@ -1507,6 +1579,19 @@ auto UnitLowerer::DeclarePublishedScopeClass(
     declared.named_callables.push_back(
         mir::NamedCallable{
             .name = callable.name,
+            .body = declared.callables.Add(
+                mir::CallableDecl{
+                    .code = {},
+                    .foreign = std::nullopt,
+                    .virtual_dispatch =
+                        mir::IntroducesVirtualSlot{.is_pure = true},
+                    .defining_unit = std::nullopt})});
+  }
+  DeclareExternBindings(id, key.unit_name, scope);
+  for (const ExternBinding& binding : ExternBindingsOf(id)) {
+    declared.named_callables.push_back(
+        mir::NamedCallable{
+            .name = binding.bind_name,
             .body = declared.callables.Add(
                 mir::CallableDecl{
                     .code = {},
@@ -1581,14 +1666,14 @@ auto UnitLowerer::ClassFieldsOf(const hir::ClassDeclaration& declared) const
 auto UnitLowerer::StateDeclaredLayout(hir::ClassId cls, mir::Class& stated)
     const -> std::optional<DeclaringInstance> {
   const hir::ClassDeclaration& declared = hir_->classes.Declaration(cls);
-  stated.is_interface_class = declared.is_interface_class;
+  stated.is_interface = declared.is_interface_class;
   // A class extending nothing the source wrote extends the root every built
   // object does. An interface class holds no storage and no value is built of
   // one, so nothing is placed after it (LRM 8.26).
   if (!declared.is_interface_class) {
     stated.base = declared.base.has_value()
                       ? mir::ClassRef{ClassIdentity(*declared.base)}
-                      : mir::ClassRef{mir::ManagedObjectRootRef{}};
+                      : mir::ClassRef{mir::ClassObjectRootRef{}};
   }
   for (const hir::ClassId iface : declared.implements) {
     stated.implements.push_back(ClassIdentity(iface));

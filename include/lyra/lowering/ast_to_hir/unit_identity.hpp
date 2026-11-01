@@ -34,6 +34,7 @@ class InstanceBodySymbol;
 class InstanceSymbol;
 class ParameterSymbol;
 class Scope;
+class SubroutineSymbol;
 class Symbol;
 class Type;
 }  // namespace slang::ast
@@ -200,6 +201,21 @@ auto UnitName(const slang::ast::ClassType& cls, const InstanceNames& names)
 // port.
 [[nodiscard]] auto InterfaceIdentity(
     const slang::ast::InstanceSymbol& iface, const InstanceNames& names)
+    -> std::string;
+
+// The port or the instance a module's definition of an interface's subroutine
+// is written through (LRM 25.7), the `b` of `b.Get`, or nothing for any other
+// subroutine.
+auto ExternDefinitionPrefix(const slang::ast::SubroutineSymbol& subroutine)
+    -> std::optional<std::string_view>;
+
+// The name a subroutine is declared under in the scope holding it: its own,
+// or, for one a module defines for an interface it reaches (LRM 25.7), both
+// parts of the name it was written as, with a space between them, which no
+// identifier holds (LRM 5.6.1). A scope may define one interface subroutine
+// through two ports, declare one of that name itself and one whose escaped name
+// spells `b.Get`, and each is a subroutine of the scope apart from the others.
+auto SubroutineNameOf(const slang::ast::SubroutineSymbol& subroutine)
     -> std::string;
 
 // The step a subroutine or a block of statements is in the scope holding it:

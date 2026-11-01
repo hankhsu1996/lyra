@@ -109,6 +109,7 @@ auto BuildDesignRootHir(
       .loops = {},
       .choices = {},
       .disable_targets = {},
+      .externs = {},
       .modports = {},
       .clocking_blocks = {}};
   std::vector<hir::PublishedDecl> instances;

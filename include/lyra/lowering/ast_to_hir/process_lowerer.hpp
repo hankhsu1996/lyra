@@ -88,6 +88,10 @@ class ProcessLowerer {
       std::span<const slang::ast::VariableSymbol* const> declared_ahead,
       const slang::ast::Statement& body);
 
+  // Extends the lifetime of `vars` whatever the body does with them, for a body
+  // whose processes the source does not write.
+  void ExtendLifetimes(std::span<const slang::ast::VariableSymbol* const> vars);
+
   // Mints the identity of a name the body declares -- a local, or a constant
   // it holds -- and registers it: the slang-to-HIR binding for `var`, and
   // membership in the lexical scope the walk frame is building. A static and a

@@ -351,7 +351,7 @@ class CodeGenModule {
   auto RecordData(const lir::ConstantRecord& record) -> llvm::Constant*;
   // What code generation reads of a class a value holds part of, of this unit
   // or another: the symbol its definition is linked under; what it extends,
-  // which is nothing for an interface class, of which no value is built, and
+  // which is nothing for an interface, of which no value is built, and
   // the part the library builds where it extends no declared class; its own
   // members; and the behaviors an object of it dispatches on.
   struct Declared {
@@ -363,7 +363,7 @@ class CodeGenModule {
   [[nodiscard]] auto DeclarationOf(lir::TypeId type) const -> Declared;
   // Emits the tables an object of the class `cls` of this unit dispatches
   // through: its own, the body of each behavior in the order the class states
-  // them, and one for each interface class it implements.
+  // them, and one for each interface it implements.
   void EmitTables(const lir::Class& cls, const Declared& declared);
   // The address of what `body`, a code address a class states, names.
   auto EntryAddress(const std::optional<lir::TableBody>& body)

@@ -225,7 +225,7 @@ auto ClassConstantSymbol(std::string_view definition, std::uint32_t ordinal)
     -> std::string;
 
 // The symbols of the table a value of a class dispatches through and of the
-// one it gives an interface class it implements, composed over the symbols
+// one it gives an interface it implements, composed over the symbols
 // the definitions are linked under.
 auto DispatchTableSymbol(std::string_view definition) -> std::string;
 auto InterfaceTableSymbol(

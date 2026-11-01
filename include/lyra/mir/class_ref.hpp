@@ -26,16 +26,27 @@ struct ObjectTreeRootRef {
 // owns and a handle can name. It is not a class of the design hierarchy, so
 // extending it roots nothing in the runtime's tree, and each target realizes it
 // in its own terms.
-struct ManagedObjectRootRef {
-  auto operator==(const ManagedObjectRootRef&) const -> bool = default;
+struct ClassObjectRootRef {
+  auto operator==(const ClassObjectRootRef&) const -> bool = default;
+};
+
+// The root of an object the lowering builds for its own use and a handle can
+// name: an object the simulator owns and nothing more. A class object is one
+// and has more, what the language gives every class (LRM 8.3, 18.14), which is
+// why it can be made only where something is running; this can be made in any
+// phase of a run.
+struct ObjectRootRef {
+  auto operator==(const ObjectRootRef&) const -> bool = default;
 };
 
 // A reference to the class an object extends: a class some unit declares,
 // which this unit names by the identity its registry gives it whichever unit
-// defines it, the root of the design hierarchy, or the root of every object the
-// program builds. A class is a registry entry and each root is a target's own
-// realization, so each is its own arm.
-using ClassRef = std::variant<ClassId, ObjectTreeRootRef, ManagedObjectRootRef>;
+// defines it, the root of the design hierarchy, the root of every object the
+// program builds, or the root of an object only the lowering builds. A class
+// is a registry entry and each root is a target's own realization, so each is
+// its own arm.
+using ClassRef =
+    std::variant<ClassId, ObjectTreeRootRef, ClassObjectRootRef, ObjectRootRef>;
 
 // The class a value of type `object` is an object of -- which is how a
 // construction of that value names what it builds. Only a class some unit
@@ -56,7 +67,7 @@ using ClassRef = std::variant<ClassId, ObjectTreeRootRef, ManagedObjectRootRef>;
 // chain. The slot's canonical identity is this method's own declaration
 // identity, because a slot carries nothing beyond what the introducer's
 // declaration holds -- a name, a signature, participation in dispatch. Which
-// behavior answers an interface class's slot is stated by the class answering
+// behavior answers an interface's slot is stated by the class answering
 // it, not by the slot. Pure where the class declares it with no body (LRM
 // 8.21), leaving it to what extends the class.
 struct IntroducesVirtualSlot {

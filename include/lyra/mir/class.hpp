@@ -89,7 +89,7 @@ struct ConstructorDecl {
   CallableCode code = CallableCode::Defined(diag::SourceSpan{});
 };
 
-// One behavior of an interface class a class answers (LRM 8.26.2), and the
+// One behavior of an interface a class answers (LRM 8.26.2), and the
 // behavior of the class's lineage answering it, each named the way a call
 // names one. A class extending this one that takes the answering behavior over
 // answers the interface's with its own body too. Nothing answers it where an
@@ -126,7 +126,7 @@ struct DispatchedBehavior {
   std::optional<CallableTarget> answered_by;
 };
 
-// What an object of a class answers the methods one interface class declares
+// What an object of a class answers the methods one interface declares
 // itself with (LRM 8.26.5), in the order it declares them: for each, the method
 // of the class's lineage whose entry answers it, or none where an abstract
 // class leaves it.
@@ -157,7 +157,7 @@ struct Class {
   // extend, and of whatever its base is; none of that is restated here.
   std::vector<ClassId> implements;
   // For each behavior of each interface a value of this class is also a value
-  // of, what answers it. Empty for an interface class, which answers nothing.
+  // of, what answers it. Empty for an interface, which answers nothing.
   std::vector<ConformingBehavior> conforming;
   // The entry of each method of this class that takes part in dispatch or
   // answers what the runtime library asks of an object. Empty for a class
@@ -169,13 +169,13 @@ struct Class {
   // lists each of the other's behaviors in the same order. A class another unit
   // defines lists its behaviors and answers none.
   std::vector<DispatchedBehavior> dispatch;
-  // What an object of the class answers each interface class it is also an
-  // object of with (LRM 8.26), each interface class once however many ways it
-  // is reached (LRM 8.26.6.3). Empty for an interface class and for a class
+  // What an object of the class answers each interface it is also an
+  // object of with (LRM 8.26), each interface once however many ways it
+  // is reached (LRM 8.26.6.3). Empty for an interface and for a class
   // another unit defines.
   std::vector<InterfaceTable> interface_tables;
   bool is_final = false;
-  bool is_interface_class = false;
+  bool is_interface = false;
   TypeId self_pointer_type;
   // The class's resolved time unit and precision (LRM 3.14.2). The runtime is
   // told both where a class standing in the design hierarchy is declared, so
@@ -197,7 +197,7 @@ struct Class {
   // class answers rather than one a consumer reads out of a spelling.
   std::vector<NamedField> named_fields;
   // How an object of this class is built, absent for a class no object is ever
-  // built of: an interface class (LRM 8.26) holds no storage and is never
+  // built of: an interface (LRM 8.26) holds no storage and is never
   // constructed, so it has no construction to state.
   std::optional<ConstructorDecl> constructor;
   // The classes this one structurally owns -- the children it builds. Each
@@ -254,7 +254,7 @@ struct Class {
   // where the asker is compiled -- what the class extends, how an object of it
   // ends, what an instance of the design hierarchy does in each phase and the
   // DPI-C exports it answers, what `randomize()` asks of an object of a source
-  // class, the interface classes it implements, and the body each behavior it
+  // class, the interfaces it implements, and the body each behavior it
   // dispatches on runs. Other units name it by the class, which is why it is
   // not among `constants`, and its type is the same for every class, which is
   // why only its value is here. It is stated once every class of the unit is,
@@ -297,9 +297,9 @@ struct Class {
   }
 
   // The callables introducing the behaviors this class adds to dispatch (LRM
-  // 8.20), or the methods an interface class declares itself (LRM 8.26), in the
+  // 8.20), or the methods an interface declares itself (LRM 8.26), in the
   // order the class declares them. It is the one order a class's table, an
-  // interface class's table and every position a dispatch names are read in,
+  // interface's table and every position a dispatch names are read in,
   // whichever layer lays the table out.
   [[nodiscard]] auto IntroducedBehaviors() const -> std::vector<CallableId> {
     std::vector<CallableId> introduced;

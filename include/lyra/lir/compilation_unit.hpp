@@ -64,7 +64,7 @@ struct ConstantDispatchTable {
   TypeId cls;
 };
 
-// The same for the table it gives the interface class `iface`.
+// The same for the table it gives the interface `iface`.
 struct ConstantInterfaceTable {
   TypeId cls;
   TypeId iface;
@@ -148,7 +148,7 @@ struct DispatchedBehavior {
   std::optional<TableBody> answered_by;
 };
 
-// What an object of a class answers the methods one interface class declares
+// What an object of a class answers the methods one interface declares
 // itself with (LRM 8.26.5), in the order it declares them.
 struct InterfaceTable {
   TypeId of;
@@ -182,7 +182,7 @@ struct Class {
   Linkage linkage = Linkage::kExternal;
   // The type of what this class's members are placed after -- the class it
   // extends, of this unit or another, or a class of the runtime library -- and
-  // absent for an interface class, which holds no storage and of which no value
+  // absent for an interface, which holds no storage and of which no value
   // is built.
   std::optional<TypeId> base;
   std::vector<Member> members;
@@ -190,7 +190,7 @@ struct Class {
   // extends first, in that class's order, then those it introduces, in the
   // order it declares them.
   std::vector<DispatchedBehavior> dispatch;
-  // Each interface class an object of the class is also an object of, once
+  // Each interface an object of the class is also an object of, once
   // however many ways it is reached (LRM 8.26.6.3). Empty for a class another
   // unit defines.
   std::vector<InterfaceTable> interface_tables;

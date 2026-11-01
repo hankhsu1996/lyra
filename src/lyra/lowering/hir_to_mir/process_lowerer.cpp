@@ -517,7 +517,8 @@ auto ProcessLowerer::LowerSubroutine(
     // `disable` reach them all (LRM 9.6.2).
     mir::Block body_block;
     const WalkFrame inner_frame = body_frame.WithBlock(&body_block);
-    auto lowered = LowerStraightLineBodyInto(*this, inner_frame);
+    auto lowered = body_writer_ ? body_writer_(*this, inner_frame)
+                                : LowerStraightLineBodyInto(*this, inner_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     body_frame.Builder().AppendStmt(BuildTargetExtent(
         *this, body_frame, std::move(body_block), *disable_target));

@@ -7,7 +7,6 @@
 #include <format>
 #include <limits>
 #include <optional>
-#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -35,6 +34,8 @@
 #include <slang/ast/types/Type.h>
 #include <slang/numeric/ConstantValue.h>
 #include <slang/numeric/SVInt.h>
+#include <slang/parsing/TokenKind.h>
+#include <slang/syntax/AllSyntax.h>
 #include <slang/text/SourceManager.h>
 
 #include "lyra/base/internal_error.hpp"
@@ -754,9 +755,36 @@ auto StepOf(const slang::ast::Symbol& scope, const InstanceNames& names)
 
 }  // namespace
 
+auto ExternDefinitionPrefix(const slang::ast::SubroutineSymbol& subroutine)
+    -> std::optional<std::string_view> {
+  const auto* syntax =
+      subroutine.getSyntax() == nullptr
+          ? nullptr
+          : subroutine.getSyntax()
+                ->as_if<slang::syntax::FunctionDeclarationSyntax>();
+  const auto* scoped =
+      syntax == nullptr
+          ? nullptr
+          : syntax->prototype->name->as_if<slang::syntax::ScopedNameSyntax>();
+  if (scoped == nullptr ||
+      scoped->separator.kind != slang::parsing::TokenKind::Dot) {
+    return std::nullopt;
+  }
+  return scoped->left->getFirstToken().valueText();
+}
+
+auto SubroutineNameOf(const slang::ast::SubroutineSymbol& subroutine)
+    -> std::string {
+  const std::optional<std::string_view> prefix =
+      ExternDefinitionPrefix(subroutine);
+  return prefix.has_value() ? std::format("{} {}", *prefix, subroutine.name)
+                            : std::string{subroutine.name};
+}
+
 auto ProceduralStepOf(const slang::ast::Symbol& scope) -> support::DefPathData {
   if (scope.kind == slang::ast::SymbolKind::Subroutine) {
-    return support::SubroutineStep{.name = std::string{scope.name}};
+    return support::SubroutineStep{
+        .name = SubroutineNameOf(scope.as<slang::ast::SubroutineSymbol>())};
   }
   if (scope.kind != slang::ast::SymbolKind::StatementBlock) {
     throw InternalError(

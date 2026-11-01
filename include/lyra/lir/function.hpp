@@ -230,8 +230,8 @@ struct DispatchTarget {
   StatedDispatchRef method;
 };
 
-// The same for a method an interface class declares itself (LRM 8.26.5),
-// answered by the table the value's class gives that interface class, found
+// The same for a method an interface declares itself (LRM 8.26.5),
+// answered by the table the value's class gives that interface, found
 // among those its class implements.
 struct InterfaceDispatchTarget {
   StatedDispatchRef requirement;

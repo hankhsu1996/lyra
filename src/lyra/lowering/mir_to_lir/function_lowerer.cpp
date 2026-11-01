@@ -303,13 +303,13 @@ auto FunctionLowerer::LowerCallTarget(
           // that introduced it, and which of that declaration's introductions
           // it is (LRM 8.20) -- and where that lands in a value is settled with
           // the whole lineage in hand, which is nowhere near this pass. A
-          // behavior an interface class introduced is found instead among the
-          // tables of the interface classes the object's class implements (LRM
+          // behavior an interface introduced is found instead among the
+          // tables of the interfaces the object's class implements (LRM
           // 8.26.5), as Swift's `witness_method` stands beside its
           // `class_method`. The receiver is already the call's first argument,
           // as it is for a method named outright.
           [&](const mir::Virtual& v) -> diag::Result<lir::CallTarget> {
-            if (unit_->Mir().GetClass(v.slot.owner_class).is_interface_class) {
+            if (unit_->Mir().GetClass(v.slot.owner_class).is_interface) {
               return lir::CallTarget{lir::InterfaceDispatchTarget{
                   .requirement = unit_->SlotRef(v.slot)}};
             }

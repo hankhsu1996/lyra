@@ -60,7 +60,7 @@ enum class RuntimeOp : std::uint8_t {
   kObjectAdopt,
   kSharedCellMake,
   kSharedPointerDeref,
-  // The table of the bodies an object's class answers one interface class it
+  // The table of the bodies an object's class answers one interface it
   // implements with, found among those its definition lists.
   kInterfaceTable,
   // The part of an object the runtime library defines, built and ended where

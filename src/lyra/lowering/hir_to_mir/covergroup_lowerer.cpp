@@ -593,7 +593,7 @@ void StateCovergroupLayout(
   stated.base = cls.published->base.has_value()
                     ? mir::ClassRef{unit_lowerer.CovergroupClassIdentity(
                           *cls.published->base)}
-                    : mir::ClassRef{mir::ManagedObjectRootRef{}};
+                    : mir::ClassRef{mir::ClassObjectRootRef{}};
   for (std::size_t i = 0; i < cls.layout.properties.size(); ++i) {
     stated.named_fields.push_back(
         mir::NamedField{
@@ -2057,7 +2057,7 @@ void CovergroupLowerer::DeclareShape(
       .base = decl_->base.has_value()
                   ? mir::ClassRef(
                         unit_lowerer.CovergroupClassIdentity(*decl_->base))
-                  : mir::ClassRef{mir::ManagedObjectRootRef{}},
+                  : mir::ClassRef{mir::ClassObjectRootRef{}},
       .implements = {},
       .self_pointer_type = unit_lowerer.SelfPointerTo(class_id_),
       .declaring_instance = std::nullopt,
@@ -2074,7 +2074,7 @@ void CovergroupLowerer::DeclareShape(
       .static_property_translation = {},
       .contained = {},
       .is_final = false,
-      .is_interface_class = false};
+      .is_interface = false};
   // The properties sit where the layout every unit computes places them, so
   // a property's position is its index in the layout.
   for (std::size_t i = 0; i < own.layout.properties.size(); ++i) {

@@ -221,7 +221,7 @@ void RenderClassCallableDecl(
 // first, as its base, then a member for each behavior the class introduces, in
 // the order it introduces them, each a pointer to an entry -- so a table of a
 // class extending another holds the other's members first, where they lie in
-// the other's (LRM 8.20). An interface class's table holds a member for each
+// the other's (LRM 8.20). An interface's table holds a member for each
 // method it declares itself (LRM 8.26).
 //
 //   struct sv_table : B::sv_table {
@@ -306,7 +306,7 @@ void WriteOwnTable(
 }
 
 // The tables an object of the class lays the bodies of its behaviors out in:
-// its own, then one for each interface class it implements, each declared in
+// its own, then one for each interface it implements, each declared in
 // the class and defined beside its bodies with the entries the class states.
 //
 //   static const sv_table sv_methods;
@@ -314,7 +314,7 @@ void WriteOwnTable(
 void RenderDispatchTables(
     const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s,
     std::string_view specifiers, TargetText& out, TargetText& code) {
-  if (!s.is_interface_class) {
+  if (!s.is_interface) {
     out.OpenLine();
     Write(
         out, "static const ", CppDispatchTableTypeName(), " ",
@@ -522,7 +522,7 @@ void RenderClass(
   if (s.is_final) {
     out += " final";
   }
-  // The class it extends (LRM 8.13) is its one C++ base. The interface classes
+  // The class it extends (LRM 8.13) is its one C++ base. The interfaces
   // it implements are none: which body answers one of their methods is read
   // off the object's definition, and no object is laid out with a part for
   // one (LRM 8.26).

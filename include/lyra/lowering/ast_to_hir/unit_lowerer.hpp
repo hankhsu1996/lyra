@@ -284,6 +284,13 @@ struct ScopePublicationRecord {
     support::DefPath path;
   };
 
+  // A subroutine the scope leaves to a connected module to define (LRM 25.7),
+  // and whether every connected module may define it (LRM 25.7.4).
+  struct Extern {
+    const slang::ast::SubroutineSymbol* symbol = nullptr;
+    hir::ExternForm form = hir::ExternForm::kExtern;
+  };
+
   // A name a view defines with an expression of its own (LRM 25.5.4): one
   // designating storage, or one offered only for reading, which the scope's
   // callable for it computes.
@@ -320,6 +327,7 @@ struct ScopePublicationRecord {
   std::vector<Callable> callables;
   std::vector<Construct> generates;
   std::vector<DisableTarget> disable_targets;
+  std::vector<Extern> externs;
   std::vector<View> views;
   std::vector<Clocking> clockings;
 
@@ -1528,6 +1536,12 @@ class UnitLowerer {
   [[nodiscard]] auto DisableTargetOf(
       const WalkFrame& frame, const slang::ast::Symbol& target,
       const slang::ast::HierarchicalReference& reference, diag::SourceSpan span)
+      -> diag::Result<std::optional<hir::DisableTarget>>;
+
+  // The same, for a name whose start is already known.
+  [[nodiscard]] auto DisableTargetFrom(
+      const WalkFrame& frame, const slang::ast::Symbol& target,
+      const RouteOrigin& origin, diag::SourceSpan span)
       -> diag::Result<hir::DisableTarget>;
 
   // Where a declaration's cell lives, as this unit reaches it. One answer
@@ -1878,6 +1892,10 @@ class UnitLowerer {
   void DeclareSubroutine(
       const slang::ast::SubroutineSymbol& sub, ScopeDeclarations& decls,
       ScopePublicationRecord& published, ScopeFrameId frame);
+  void DeclareExternSubroutine(
+      const slang::ast::MethodPrototypeSymbol& prototype,
+      ScopeDeclarations& decls, ScopePublicationRecord& published,
+      ScopeFrameId frame);
   void DeclareModportEvaluators(
       const slang::ast::ModportSymbol& modport, ScopeDeclarations& decls,
       ScopePublicationRecord& published);

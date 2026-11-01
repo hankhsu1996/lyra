@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <iterator>
@@ -421,9 +422,85 @@ auto UnitLowerer::MakeRoutedObjectRef(
   return hir::RoutedObjectRef{.id = id};
 }
 
+namespace {
+
+// The steps of `inst.port.task` past the instance.
+constexpr std::size_t kPortAndTask = 2;
+
+// The interface port a `disable` of a task the interface leaves to its modules
+// names the task through, where it reaches the task through a module instance,
+// `inst.port.task`. Any other name of the task names the interface's.
+auto PortNamedThroughAnInstance(
+    const slang::ast::Symbol& target,
+    const slang::ast::HierarchicalReference& reference)
+    -> const slang::ast::InterfacePortSymbol* {
+  const auto* task = target.as_if<slang::ast::SubroutineSymbol>();
+  if (task == nullptr ||
+      !task->flags.has(slang::ast::MethodFlags::InterfaceExtern) ||
+      reference.path.size() <= kPortAndTask) {
+    return nullptr;
+  }
+  const std::span written = reference.path.last(kPortAndTask + 1);
+  const slang::ast::Symbol& instance = *written[0].symbol;
+  const slang::ast::Symbol& port = *written[1].symbol;
+  const slang::ast::Symbol& named = *written[2].symbol;
+  if (&named != &target || instance.kind != slang::ast::SymbolKind::Instance) {
+    return nullptr;
+  }
+  return port.as_if<slang::ast::InterfacePortSymbol>();
+}
+
+// What the module holding `port` defines of the task `prototype` declares.
+auto DefinitionThrough(
+    const slang::ast::MethodPrototypeSymbol& prototype,
+    const slang::ast::InterfacePortSymbol& port)
+    -> const slang::ast::SubroutineSymbol* {
+  for (const auto* defined = prototype.getFirstExternImpl(); defined != nullptr;
+       defined = defined->getNextImpl()) {
+    const slang::ast::SubroutineSymbol& definition = *defined->impl;
+    if (definition.getParentScope() == port.getParentScope() &&
+        ExternDefinitionPrefix(definition) == port.name) {
+      return &definition;
+    }
+  }
+  return nullptr;
+}
+
+}  // namespace
+
 auto UnitLowerer::DisableTargetOf(
     const WalkFrame& frame, const slang::ast::Symbol& target,
     const slang::ast::HierarchicalReference& reference, diag::SourceSpan span)
+    -> diag::Result<std::optional<hir::DisableTarget>> {
+  // The name starts where it was written to, whatever it turns out to end at.
+  RouteOrigin origin = StartOf(frame, target, reference);
+  const slang::ast::InterfacePortSymbol* port =
+      PortNamedThroughAnInstance(target, reference);
+  if (port == nullptr) return DisableTargetFrom(frame, target, origin, span);
+
+  // Named through a module instance it is that module's definition alone, and
+  // of a task every connected module may define, a module defining none has no
+  // call to end (LRM 25.7.4).
+  const slang::ast::MethodPrototypeSymbol& prototype =
+      *target.as<slang::ast::SubroutineSymbol>().getPrototype();
+  const slang::ast::SubroutineSymbol* definition =
+      DefinitionThrough(prototype, *port);
+  if (definition != nullptr) {
+    std::vector<slang::ast::HierarchicalReference::Element> path(
+        reference.path.begin(), reference.path.end() - kPortAndTask);
+    path.emplace_back(*definition);
+    origin.written = path;
+    return DisableTargetFrom(frame, *definition, origin, span);
+  }
+  if (prototype.flags.has(slang::ast::MethodFlags::ForkJoin)) {
+    return std::nullopt;
+  }
+  return DisableTargetFrom(frame, target, origin, span);
+}
+
+auto UnitLowerer::DisableTargetFrom(
+    const WalkFrame& frame, const slang::ast::Symbol& target,
+    const RouteOrigin& origin, diag::SourceSpan span)
     -> diag::Result<hir::DisableTarget> {
   const auto refuse = [&] {
     return diag::Fail(
@@ -433,7 +510,6 @@ auto UnitLowerer::DisableTargetOf(
   // A name leaving the instance or passing a generate block reaches a target
   // only its publication says anything about, whatever this unit minted for
   // the scope it resolved to here.
-  RouteOrigin origin = StartOf(frame, target, reference);
   const auto minted = NamesOwnDeclaration(origin)
                           ? LookupMintedProceduralScope(target)
                           : std::nullopt;

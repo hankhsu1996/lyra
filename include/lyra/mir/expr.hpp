@@ -373,8 +373,8 @@ struct Indirect {
 
 // A virtually-dispatched call: the receiver -- the object, as a direct call's
 // is -- is evaluated once and then the body the object's class gives the
-// behavior `slot` runs (LRM 8.20). A behavior an interface class introduces is
-// one too, which the object's class answers for that interface class (LRM
+// behavior `slot` runs (LRM 8.20). A behavior an interface introduces is
+// one too, which the object's class answers for that interface (LRM
 // 8.26.5); where that body is found is the realization's, as clang's one
 // member call becomes a table load only in code generation. The receiver rides
 // here, distinct from user-supplied `CallExpr::arguments`, so the call carries
@@ -681,7 +681,7 @@ struct DispatchEntryRef {
 // What ends an object of the class `of`: each member, the class's own and then
 // those of what it extends, and then the storage the object was created in, as
 // a deleting destructor does. `of` is a class some unit declares that is no
-// interface class, whichever unit defines it. `Expr::type` is its machine
+// interface, whichever unit defines it. `Expr::type` is its machine
 // function type, taking the object as the root every object is.
 struct DestructorRef {
   ClassId of;
@@ -689,7 +689,7 @@ struct DestructorRef {
 
 // The table of the bodies an object of the class `of` runs for the behaviors
 // it dispatches on (LRM 8.20), and the table of those answering what the
-// interface class `iface` declares itself on an object of `of` (LRM 8.26.5),
+// interface `iface` declares itself on an object of `of` (LRM 8.26.5),
 // each as the address the class's definition holds. Which entry fills each
 // place is what `of` states of its dispatch; how a table is laid out is the
 // target's to decide, so neither is a value this layer builds. `of` is a class

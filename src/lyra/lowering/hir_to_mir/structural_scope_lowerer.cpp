@@ -47,6 +47,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/extern_binding.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/path_select.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
@@ -180,7 +181,8 @@ struct BuiltPublishedClass {
 // tree, so what the tree's class is entered with is entered here.
 auto BuildPublishedClass(
     const mir::CompilationUnit& unit, const ClassShape& shape,
-    const PublishedScope& published) -> BuiltPublishedClass {
+    const PublishedScope& published, std::span<const ExternBinding> externs)
+    -> BuiltPublishedClass {
   mir::CallableCode ctor = mir::CallableCode::Defined(diag::SourceSpan{});
   const mir::LocalId ctor_self = ctor.AddLocal(shape.self_pointer_type);
   std::vector<mir::LocalId> prefix;
@@ -205,6 +207,17 @@ auto BuildPublishedClass(
                 .defining_unit = std::nullopt});
     cls.named_callables.push_back(
         mir::NamedCallable{.name = subroutine.name, .body = id});
+  }
+  for (const ExternBinding& binding : externs) {
+    cls.callables.Define(
+        binding.bind,
+        mir::CallableDecl{
+            .code = binding.bind_prototype,
+            .foreign = std::nullopt,
+            .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true},
+            .defining_unit = std::nullopt});
+    cls.named_callables.push_back(
+        mir::NamedCallable{.name = binding.bind_name, .body = binding.bind});
   }
   for (const ClassCodeSlot& code : published.class_code) {
     cls.callables.Define(
@@ -1529,6 +1542,72 @@ auto BuildNetJoinStmt(
                   unit.builtins.void_type))}};
 }
 
+// Which of the subroutines `published` leaves to a connected module the
+// subroutine `subroutine` of the scope is.
+auto ExternOf(
+    const hir::ScopePublication& published,
+    hir::StructuralSubroutineId subroutine) -> hir::PublishedExternId {
+  for (const hir::PublishedExternId id : published.signature.externs.Ids()) {
+    if (published.callables.Get(published.signature.externs.Get(id).callable) ==
+        subroutine) {
+      return id;
+    }
+  }
+  throw InternalError(
+      "hir_to_mir: a subroutine with no body is one its scope leaves to a "
+      "connected module -- please report this as a bug");
+}
+
+// Makes the callback for `definition`, the method of the scope's class lowering
+// `defined`, on the object being resolved, and hands it to the interface's
+// object, which keeps it.
+void InstallExternDefinition(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame,
+    const hir::ExternDefinition& defined, mir::CallableId definition) {
+  UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::ClassId published =
+      unit_lowerer.ScopeClassIdentity(defined.scope_class);
+  const ExternBinding& binding =
+      unit_lowerer.ExternBindingsOf(published)[defined.of.value];
+  const mir::ClassId callback = DefineExternCallback(
+      unit_lowerer, lowerer.ClassId(), definition, binding);
+  const mir::ExprId interface =
+      lowerer.RouteEnd(resolve_frame, defined.target.id);
+
+  mir::Builder block = resolve_frame.Builder();
+  const mir::TypeId callback_handle = unit.types.Intern(
+      mir::Type{mir::ManagedRefType{
+          .pointee =
+              unit.types.Intern(mir::Type{mir::ObjectType{.of = callback}})}});
+  const mir::ExprId made = block.Add(
+      mir::MakeNewExpr(
+          block.Add(
+              mir::MakeObjectConstructionExpr(
+                  *mir::AllocatedType(unit.types, callback_handle),
+                  {block.Read(block.Add(MakeSelfRefExpr(resolve_frame)))})),
+          callback_handle));
+  const mir::ExprId handed = block.Add(
+      mir::Expr{
+          .data = mir::CastExpr{.operand = made}, .type = binding.handle});
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Virtual{
+                                  .receiver =
+                                      BuildObjectDeref(unit, block, interface),
+                                  .slot =
+                                      mir::VirtualSlot{
+                                          .owner_class = published,
+                                          .slot = binding.bind}},
+                          .arguments = {handed}},
+                  .type = unit.builtins.void_type})});
+}
+
 // Realizes the positions of nets this scope's constructs place in one
 // resolution (LRM 23.3.3.7, 10.11), as statements in the resolve body, beside
 // the `ref` port's bind: no driver is attached and no process is registered,
@@ -2756,8 +2835,23 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                     .placed = placed_subroutine_statics[sub_id.value]},
                 s.body)});
   }
-  shape.callable_signatures = {
-      hir_scope.structural_subroutines.size(), std::move(signatures)};
+  // What a definer hands the object is kept here, and the method taking it
+  // overrides the one the published class introduced for it.
+  for (const ExternBinding& binding :
+       unit_lowerer.ExternBindingsOf(published_class_id_)) {
+    extern_realizations_.push_back(
+        ExternRealization{
+            .field =
+                shape.AddField(ExternStorageType(unit_lowerer.Unit(), binding)),
+            .bind = subroutine_ids.Take()});
+    signatures.push_back(
+        CallableSignature{
+            .virtual_dispatch = mir::OverridesVirtualSlot{
+                .overridden = mir::VirtualSlot{
+                    .owner_class = published_class_id_,
+                    .slot = binding.bind}}});
+  }
+  shape.callable_signatures = {signatures.size(), std::move(signatures)};
   declared_subroutines_ = {
       hir_scope.structural_subroutines.size(), std::move(declared_subroutines)};
 
@@ -2851,9 +2945,14 @@ void ConstructBaseFirst(
           [](const mir::ObjectTreeRootRef&) -> mir::DirectTarget {
             return support::BuiltinFn::kSetScopePlace;
           },
-          [](const mir::ManagedObjectRootRef&) -> mir::DirectTarget {
+          [](const mir::ClassObjectRootRef&) -> mir::DirectTarget {
             throw InternalError(
                 "hir_to_mir: a scope extends the root of objects the program "
+                "builds -- please report this as a bug");
+          },
+          [](const mir::ObjectRootRef&) -> mir::DirectTarget {
+            throw InternalError(
+                "hir_to_mir: a scope extends the root of objects the lowering "
                 "builds -- please report this as a bug");
           }},
       base);
@@ -3284,9 +3383,41 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     // published class's method of that name.
     mir_class.named_callables.push_back(
         mir::NamedCallable{.name = src.name, .body = declared.callable});
+    // A subroutine with no body is one the scope leaves to a connected module
+    // (LRM 25.7). A function is only the call of what was bound to it; a task
+    // is a body of its own, which a `disable` of it ends.
+    ProcessLowerer::BodyWriter write_body;
+    if (!src.root_stmt.has_value()) {
+      const hir::PublishedExternId of = ExternOf(hir_scope.published, sub_id);
+      const ExternBinding& binding =
+          unit_lowerer.ExternBindingsOf(published_class_id_)[of.value];
+      const mir::FieldId field = extern_realizations_[of.value].field;
+      if (!unit_lowerer.Unit()
+               .types.Get(binding.invoke.result_type)
+               .Is<mir::CoroutineType>()) {
+        mir_class.callables.Define(
+            declared.callable,
+            mir::CallableDecl{
+                .code =
+                    ExternFunctionCode(unit_lowerer, class_id_, field, binding),
+                .foreign = std::nullopt,
+                .virtual_dispatch =
+                    unit_lowerer.GetClassShape(class_id_)
+                        .callable_signatures.Get(declared.callable)
+                        .virtual_dispatch,
+                .defining_unit = std::nullopt});
+        subroutine_callables.push_back(declared.callable);
+        continue;
+      }
+      write_body = [&, field, binding = &binding](
+                       ProcessLowerer& process, WalkFrame frame) {
+        return WriteExternTaskBody(
+            process, frame, src, class_id_, field, *binding);
+      };
+    }
     ProcessLowerer subroutine_lowerer(
         unit_lowerer, this, hir_scope.time_resolution, src.body, src.root_stmt,
-        ctor_frame, scopes_, declared.statics);
+        ctor_frame, scopes_, declared.statics, std::move(write_body));
     auto code_or = subroutine_lowerer.Run(
         src, CallableForm::kInstanceMember, std::nullopt);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
@@ -3307,6 +3438,26 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
           binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
+  }
+
+  const std::vector<ExternBinding>& extern_bindings =
+      unit_lowerer.ExternBindingsOf(published_class_id_);
+  for (std::size_t i = 0; i < extern_bindings.size(); ++i) {
+    InitializeExternStorage(
+        unit_lowerer.Unit(), ctor_frame, class_id_,
+        extern_realizations_[i].field, extern_bindings[i]);
+    mir_class.callables.Define(
+        extern_realizations_[i].bind,
+        mir::CallableDecl{
+            .code = ExternBindCode(
+                unit_lowerer, class_id_, extern_realizations_[i].field,
+                extern_bindings[i]),
+            .foreign = std::nullopt,
+            .virtual_dispatch =
+                unit_lowerer.GetClassShape(class_id_)
+                    .callable_signatures.Get(extern_realizations_[i].bind)
+                    .virtual_dispatch,
+            .defining_unit = std::nullopt});
   }
 
   // An exported subroutine's C entry point calls that method on the receiver
@@ -3410,6 +3561,14 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   // that is already bound.
   auto routes = InstallScopeRoutes(*this, resolve_frame);
   if (!routes) return std::unexpected(std::move(routes.error()));
+
+  // What this scope defines for an interface it reaches is handed to that
+  // interface's object once the routes are bound (LRM 25.7).
+  for (const hir::ExternDefinition& defined : hir_scope.extern_definitions) {
+    InstallExternDefinition(
+        *this, resolve_frame, defined,
+        subroutine_callables[defined.definition.value]);
+  }
 
   for (const hir::ContinuousAssignId id : hir_scope.continuous_assigns.Ids()) {
     const hir::ContinuousAssign& assign = hir_scope.continuous_assigns.Get(id);
@@ -3682,8 +3841,9 @@ auto StructuralScopeLowerer::PublishBlockEntry() const -> mir::CallableId {
 void StructuralScopeLowerer::DefinePublishedClasses(UnitLowerer& unit_lowerer) {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   for (const auto& [id, scope] : unit_lowerer.PublishedScopes()) {
-    BuiltPublishedClass published =
-        BuildPublishedClass(unit, unit_lowerer.GetClassShape(id), scope);
+    BuiltPublishedClass published = BuildPublishedClass(
+        unit, unit_lowerer.GetClassShape(id), scope,
+        unit_lowerer.ExternBindingsOf(id));
     ConstructBaseFirst(
         unit, published.cls.base.value(), published.ctor,
         published.ctor.params.front(), published.ctor_prefix);

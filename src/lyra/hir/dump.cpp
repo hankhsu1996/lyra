@@ -197,6 +197,16 @@ auto FormatPublishedStorage(const PublishedStorage& storage) -> std::string {
       storage);
 }
 
+auto FormatExternForm(ExternForm form) -> std::string_view {
+  switch (form) {
+    case ExternForm::kExtern:
+      return "";
+    case ExternForm::kExternForkJoin:
+      return " forkjoin";
+  }
+  throw InternalError("hir dump: unknown ExternForm");
+}
+
 auto FormatStructuralDataObject(const StructuralDataObjectDecl& decl)
     -> std::string {
   return std::visit(
@@ -1786,6 +1796,14 @@ class HirDumper {
                   "[{}] \"{}\" : Type[{}]{}", member_id.value, member.name,
                   member.type.value, FormatPublishedStorage(member.storage)));
         }
+        for (const PublishedExternId extern_id : record.externs.Ids()) {
+          const PublishedExtern& published = record.externs.Get(extern_id);
+          Line(
+              std::format(
+                  "extern[{}] \"{}\"{}", extern_id.value,
+                  record.callables.Get(published.callable).name,
+                  FormatExternForm(published.form)));
+        }
         Dedent();
       }
       Dedent();
@@ -2366,6 +2384,14 @@ class HirDumper {
       DumpSubroutine(
           "StructuralSubroutine", id.value, s.structural_subroutines.Get(id),
           s.procedural_scopes, "");
+    }
+    for (const ExternDefinition& defined : s.extern_definitions) {
+      Line(
+          std::format(
+              "ExternDefinition StructuralSubroutine[{}] defines "
+              "ScopeClass[{}].extern[{}] on RoutedObjectRef[{}]",
+              defined.definition.value, defined.scope_class.value,
+              defined.of.value, defined.target.id.value));
     }
     for (const ForeignExportDecl& exported : s.foreign_exports) {
       Line(

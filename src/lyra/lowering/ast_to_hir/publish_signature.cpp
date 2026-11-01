@@ -383,7 +383,7 @@ auto UnitLowerer::PublishedCallableOf(
               return std::unexpected(std::move(result_type.error()));
             }
             return hir::SubroutinePrototype{
-                .name = std::string{sym.name},
+                .name = SubroutineNameOf(sym),
                 .interface = *std::move(interface),
                 .result_type = *result_type};
           },
@@ -400,7 +400,8 @@ auto UnitLowerer::PublishedCallableOf(
           [&](const ScopePublicationRecord::ArgumentDefault& argument) {
             return evaluator(
                 ArgumentDefaultName(
-                    argument.subroutine->name, argument.formal->name),
+                    SubroutineNameOf(*argument.subroutine),
+                    argument.formal->name),
                 InternDeclaredType(*argument.formal));
           },
           [&](const ScopePublicationRecord::ClockingExpression& clocking) {
@@ -630,6 +631,7 @@ auto UnitLowerer::PublishScopeClass(const slang::ast::Scope& scope)
       .loops = {},
       .choices = {},
       .disable_targets = {},
+      .externs = {},
       .modports = {},
       .clocking_blocks = {}};
 
@@ -803,6 +805,18 @@ auto UnitLowerer::PublishScopeClass(const slang::ast::Scope& scope)
   for (const ScopePublicationRecord::DisableTarget& target :
        published.disable_targets) {
     cls.disable_targets.Add(hir::PublishedDisableTarget{.path = target.path});
+  }
+
+  for (const ScopePublicationRecord::Extern& declared : published.externs) {
+    const std::optional<hir::PublishedCallableId> callable =
+        published.CallableOf(*declared.symbol);
+    if (!callable.has_value()) {
+      throw InternalError(
+          "PublishScopeClass: a subroutine the scope leaves to a connected "
+          "module was not published -- please report this as a bug");
+    }
+    cls.externs.Add(
+        hir::PublishedExtern{.callable = *callable, .form = declared.form});
   }
 
   // The member a declaration a view names stands for. LRM 25.5 confines those

@@ -1357,7 +1357,7 @@ TEST(MirVerifyTest, AConstantOfAClassMeetsTheTypesItStates) {
       };
       const ClassId id = u.DeclareClass();
       Class cls;
-      cls.base = ClassRef{ManagedObjectRootRef{}};
+      cls.base = ClassRef{ClassObjectRootRef{}};
       // `[{entry, table}]`: the instantiations one generate's places are made
       // by, one of them; none where they are to be another library structure.
       const TypeId instantiation =
@@ -2090,7 +2090,7 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
         cls.identity = support::DefPath{
             .data = {
                 support::ClassStep{.name = "C", .arguments = std::nullopt}}};
-        cls.base = ClassRef{ManagedObjectRootRef{}};
+        cls.base = ClassRef{ClassObjectRootRef{}};
         if (declared.method_body) {
           cls.callables.Add(
               CallableDecl{
@@ -2112,7 +2112,7 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
       if (declared.twice) declare();
       if (declared.own_method_without_body) {
         Class own;
-        own.base = ClassRef{ManagedObjectRootRef{}};
+        own.base = ClassRef{ClassObjectRootRef{}};
         own.callables.Add(
             CallableDecl{
                 .code = CallableCode{},

@@ -302,8 +302,9 @@ class MirDumper {
             [](const ObjectTreeRootRef&) -> std::string {
               return "ObjectTreeRoot";
             },
-            [](const ManagedObjectRootRef&) -> std::string {
-              return "ManagedObjectRoot";
+            [](const ObjectRootRef&) -> std::string { return "ObjectRoot"; },
+            [](const ClassObjectRootRef&) -> std::string {
+              return "ClassObjectRoot";
             }},
         ref);
   }
@@ -899,7 +900,7 @@ class MirDumper {
   void DumpClass(ClassId id, const Class& s) {
     dumped_.insert(id.value);
     scope_stack_.push_back(&s);
-    const std::string kind = s.is_interface_class ? "InterfaceClass" : "Class";
+    const std::string kind = s.is_interface ? "Interface" : "Class";
     Line(
         std::format("{}{} (#{})", kind, FormatClassName(s.identity), id.value));
     Indent();

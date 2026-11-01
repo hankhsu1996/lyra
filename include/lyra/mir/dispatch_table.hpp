@@ -37,14 +37,14 @@ namespace lyra::mir {
     const CompilationUnit& unit, ClassId cls, support::LibraryCallback callback)
     -> std::optional<CallableTarget>;
 
-// Every interface class an object of `cls` is also an object of (LRM 8.26),
+// Every interface an object of `cls` is also an object of (LRM 8.26),
 // each once however many ways it is reached (LRM 8.26.6.3): those of the class
 // it extends first, then each the class names in the order it names them, each
 // followed by those it extends.
 [[nodiscard]] auto InterfacesOf(const CompilationUnit& unit, ClassId cls)
     -> std::vector<ClassId>;
 
-// The behaviors the interface class `iface` introduces itself, in the order it
+// The behaviors the interface `iface` introduces itself, in the order it
 // declares them: what one row of an implementing class's definition holds a
 // body for each of.
 [[nodiscard]] auto RequirementsOf(const CompilationUnit& unit, ClassId iface)

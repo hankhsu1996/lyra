@@ -178,9 +178,13 @@ auto LowerDisableStmt(
   auto target =
       proc.Owner().DisableTargetOf(frame, *named.symbol, named.hierRef, span);
   if (!target) return std::unexpected(std::move(target.error()));
+  if (!target->has_value()) {
+    return hir::Stmt{
+        .label = std::nullopt, .data = hir::EmptyStmt{}, .span = span};
+  }
   return hir::Stmt{
       .label = std::nullopt,
-      .data = hir::DisableStmt{.target = *std::move(target)},
+      .data = hir::DisableStmt{.target = **std::move(target)},
       .span = span};
 }
 

@@ -311,7 +311,7 @@ void RenderReferenceExpr(
                 out, "&", CppClassPath(view.Unit(), r.of),
                 "::", CppDispatchTableName());
           },
-          // `&C::sv_methods_0`, the class's table for the interface class.
+          // `&C::sv_methods_0`, the class's table for the interface.
           [&](const mir::InterfaceTableRef& r) {
             const std::vector<mir::InterfaceTable>& tables =
                 view.Unit().GetClass(r.of).interface_tables;
@@ -321,7 +321,7 @@ void RenderReferenceExpr(
                 });
             if (row == tables.end()) {
               throw InternalError(
-                  "backend::cpp: a table names an interface class its class "
+                  "backend::cpp: a table names an interface its class "
                   "does not implement -- please report this as a bug");
             }
             Write(

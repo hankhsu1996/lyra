@@ -259,7 +259,7 @@ class UnitLowerer {
   auto LowerDeclaredClass(const mir::Class& cls) -> lir::Class;
 
   // What an object of `cls` dispatches on and what answers each behavior of
-  // every interface class it is an object of, as its unit stated them.
+  // every interface it is an object of, as its unit stated them.
   auto LowerDispatch(const mir::Class& cls)
       -> std::vector<lir::DispatchedBehavior>;
   auto LowerInterfaceTables(const mir::Class& cls)

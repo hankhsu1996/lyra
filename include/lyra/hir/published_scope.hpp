@@ -82,18 +82,49 @@ struct PublishedDisableTargetId {
       -> std::strong_ordering = default;
 };
 
+// How many modules connected to an interface instance define a subroutine the
+// interface leaves to them (LRM 25.7): exactly one for an `extern` one, and
+// any number, a call running every one, for an `extern forkjoin` task (LRM
+// 25.7.4).
+enum class ExternForm : std::uint8_t {
+  kExtern,
+  kExternForkJoin,
+};
+
+// A subroutine the scope declares and leaves to a module connected to it to
+// define (LRM 25.7): which of the scope's published subroutines it is, and how
+// many definitions it takes. A caller calls it like any other subroutine of the
+// scope; what a definer needs beyond that is this, to hand its definition to
+// the object it is connected to.
+struct PublishedExtern {
+  PublishedCallableId callable;
+  ExternForm form = ExternForm::kExtern;
+
+  auto operator==(const PublishedExtern&) const -> bool = default;
+};
+
+// Which of the subroutines a scope leaves to a connected module, by its
+// position among them.
+struct PublishedExternId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const PublishedExternId&) const
+      -> std::strong_ordering = default;
+};
+
 // The class of a scope of a unit -- an instance of the unit, or one of the
 // generate blocks inside it (LRM 23.6 reaches a declaration of either by name):
 // which class of the unit it is, the members another unit may name on it, the
 // subroutines another unit may call on it, the generate constructs a name steps
 // through into their blocks -- its loops, and the constructs that build at most
-// one block -- what a `disable` of one of its named blocks or tasks ends, the
-// clocking blocks it declares, and, for an instance, the views it offers over
-// those members. A unit's name and the name of the class it builds are two
-// facts, so a referrer reads the class it reaches here rather than deriving it
-// from the unit it reached through.
-// Every type here is one of the pool of whoever holds the record: the unit's
-// signature, the unit's own scope, or a referrer's record of it.
+// one block -- what a `disable` of one of its named blocks or tasks ends, which
+// of its subroutines a connected module defines, the clocking blocks it
+// declares, and, for an instance, the views it offers over those members. A
+// unit's name and the name of the class it builds are two facts, so a referrer
+// reads the class it reaches here rather than deriving it from the unit it
+// reached through. Every type here is one of the pool of whoever holds the
+// record: the unit's signature, the unit's own scope, or a referrer's record of
+// it.
 //
 // The class places the members first, then one member per loop, holding its
 // blocks by the value each one's index stood at, then one per construct
@@ -114,6 +145,7 @@ struct ScopeClassSignature {
   base::Arena<PublishedLoop, PublishedLoopId> loops;
   base::Arena<PublishedChoice, PublishedChoiceId> choices;
   base::Arena<PublishedDisableTarget, PublishedDisableTargetId> disable_targets;
+  base::Arena<PublishedExtern, PublishedExternId> externs;
   std::vector<PublishedModport> modports;
   std::vector<PublishedClockingBlock> clocking_blocks;
 
@@ -145,6 +177,17 @@ struct ScopeClassSignature {
       -> std::optional<PublishedCallableId> {
     for (const PublishedCallableId id : callables.Ids()) {
       if (callables.Get(id).name == name) return id;
+    }
+    return std::nullopt;
+  }
+
+  // Which of the subroutines the scope leaves to a connected module the
+  // published subroutine `callable` is, or nothing where the scope defines it
+  // itself.
+  [[nodiscard]] auto FindExtern(PublishedCallableId callable) const
+      -> std::optional<PublishedExternId> {
+    for (const PublishedExternId id : externs.Ids()) {
+      if (externs.Get(id).callable == callable) return id;
     }
     return std::nullopt;
   }

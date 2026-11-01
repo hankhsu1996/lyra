@@ -818,7 +818,7 @@ class ConstructionTables {
 // before any class of the unit is changed, since stating the definition adds
 // to the class it states.
 struct LineageFacts {
-  bool is_interface_class = false;
+  bool is_interface = false;
   bool is_class_object = false;
   // Whether instances of the class stand in the design hierarchy and are built
   // of it, which a body for its first phase says.
@@ -830,7 +830,7 @@ struct LineageFacts {
   std::vector<mir::InterfaceTable> interface_tables;
 };
 
-// The root a class's lineage ends at, where it ends at one: an interface class
+// The root a class's lineage ends at, where it ends at one: an interface
 // extends none (LRM 8.26).
 auto RootOf(const mir::CompilationUnit& unit, mir::ClassId id)
     -> std::optional<mir::ClassRef> {
@@ -906,19 +906,19 @@ auto FactsOf(
     const CallbackPrototypes& prototypes) -> LineageFacts {
   const mir::Class& cls = unit.GetClass(id);
   LineageFacts facts{
-      .is_interface_class = cls.is_interface_class,
+      .is_interface = cls.is_interface,
       .is_class_object = false,
       .stands_in_hierarchy = false,
       .bodies = {},
       .dispatch = {},
       .interface_tables = {}};
-  if (cls.is_interface_class) {
+  if (cls.is_interface) {
     return facts;
   }
   const std::optional<mir::ClassRef> root = RootOf(unit, id);
   facts.is_class_object =
       root.has_value() &&
-      std::holds_alternative<mir::ManagedObjectRootRef>(*root);
+      std::holds_alternative<mir::ClassObjectRootRef>(*root);
   // Only a class an instance is built of gives its phases a body; what a unit
   // published of its object is built of no instance alone.
   facts.stands_in_hierarchy =
@@ -1050,7 +1050,7 @@ auto DefinitionOf(
   } else {
     definition.SetNull(&ObjectDefinition::class_object);
   }
-  if (facts.is_interface_class) {
+  if (facts.is_interface) {
     definition.SetNull(&ObjectDefinition::end);
   } else {
     definition.Set(
@@ -1076,7 +1076,7 @@ auto DefinitionOf(
                     row.TypeOf(&InterfaceRow::table)));
             return std::move(row).Build();
           }));
-  if (facts.is_interface_class) {
+  if (facts.is_interface) {
     definition.SetNull(&ObjectDefinition::methods);
   } else {
     definition.Set(
@@ -1118,7 +1118,7 @@ void StateObjectDefinitions(mir::CompilationUnit& unit) {
         elsewhere ? std::nullopt
                   : std::optional<LineageFacts>{FactsOf(unit, id, prototypes)});
     declared.push_back(
-        elsewhere && !unit.GetClass(id).is_interface_class
+        elsewhere && !unit.GetClass(id).is_interface
             ? DeclaredDispatchOf(unit, id)
             : std::vector<mir::DispatchedBehavior>{});
   }

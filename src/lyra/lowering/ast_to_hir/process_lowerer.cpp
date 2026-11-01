@@ -34,6 +34,11 @@ void ProcessLowerer::AnalyzeLifetimeExtended(
   lifetime_extended_ = CollectLifetimeExtendedVars(declared_ahead, body);
 }
 
+void ProcessLowerer::ExtendLifetimes(
+    std::span<const slang::ast::VariableSymbol* const> vars) {
+  lifetime_extended_.insert(vars.begin(), vars.end());
+}
+
 ProcessLowerer::ProcessLowerer(
     UnitLowerer& unit_lowerer, const slang::ast::Symbol& containing_symbol,
     ConsumedBodyExpressions consumed_body_exprs)
