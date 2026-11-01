@@ -30,6 +30,16 @@ one unit published, throwing where they differed. This record replaces the predi
 comparison: what referrers compile against is what a specialization publishes, so the class it is
 belongs to every specialization publishing alike.
 
+D1, D8 and D9 revised 2026-10-31 by
+[every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md):
+no key is worked out before lowering. An instance's body is the one the front end elaborated for it
+or the one it left the instance pointing at, every such body is lowered once for its own instance,
+and a body is found among those lowerings by HIR equality as D6 says, named by its unit and its
+ordinal among the unit's bodies rather than for a specialization, so the second Limit narrows to a
+new distinct body coming out earlier; a lowering is named by its instance's place, and the design
+root's tables are stated per place. D2 to D7 otherwise stand, the outside instances D2 writes by
+their place being those the instance's environment reaches.
+
 2026-10-30: D5 was a limit of how a class's methods were named, and stated as one. A class's code
 now belongs to the body that compiled it and is reached through the instance its object belongs to
 ([class-declared-in-a-structural-scope](class-declared-in-a-structural-scope.md)), so D5, its Limit

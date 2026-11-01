@@ -120,7 +120,7 @@ auto SymbolPartOf(const support::DefPath& path) -> SymbolPart {
               if (block.disambiguator != 0) {
                 part += std::format("~{};", block.disambiguator);
               }
-              return part + bound(block.arguments);
+              return part + bound(block.distinguisher);
             },
             [&](const support::ClassStep& cls) {
               const std::string name = named('c', cls.name);

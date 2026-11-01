@@ -39,8 +39,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/lowering.hpp"
 #include "lyra/hir/scope_construction.hpp"
-#include "lyra/hir/specialization.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -52,7 +52,7 @@ namespace {
 
 // Every unit of a design, lowered to HIR. The command line holds one unit at a
 // time; a probe holds them all, so it can ask anything any unit says.
-using LoweredUnits = std::vector<lyra::hir::Specialization>;
+using LoweredUnits = std::vector<lyra::hir::Lowering>;
 
 // The design `source` states, its units declared through the same entries the
 // command line uses, handed to `use` with the source text its spans resolve
@@ -104,13 +104,12 @@ auto LowerDesign(std::string_view source) -> std::optional<LoweredUnits> {
           const lyra::diag::SourceManager&, lyra::diag::DiagnosticSink& sink) {
         lyra::compiler::LowerToHir(
             design, sink, 1,
-            [](lyra::hir::Specialization lowered)
-                -> lyra::diag::Result<
-                    std::optional<lyra::hir::Specialization>> {
-              if (!lowered.IsFirstOfItsImplementation()) return std::nullopt;
+            [](lyra::hir::Lowering lowered)
+                -> lyra::diag::Result<std::optional<lyra::hir::Lowering>> {
+              if (!lowered.compiles_its_body) return std::nullopt;
               return lowered;
             },
-            [&units](std::optional<lyra::hir::Specialization> lowered) {
+            [&units](std::optional<lyra::hir::Lowering> lowered) {
               if (lowered.has_value()) units.push_back(*std::move(lowered));
             });
       });
@@ -127,13 +126,13 @@ auto IsOf(const lyra::hir::CompilationUnit& unit, std::string_view definition)
           name.substr(definition.size()).starts_with("__"));
 }
 
-// How many units `definition` was compiled into: one per specialization,
-// whatever the number of instances.
+// How many units `definition` was compiled into: one per class, whatever the
+// number of instances.
 auto UnitsOf(const LoweredUnits& design, std::string_view definition)
     -> std::size_t {
   std::set<std::string_view> units;
-  for (const lyra::hir::Specialization& lowered : design) {
-    const lyra::hir::CompilationUnit& unit = lowered.implementation;
+  for (const lyra::hir::Lowering& lowered : design) {
+    const lyra::hir::CompilationUnit& unit = lowered.body;
     if (IsOf(unit, definition)) units.insert(unit.name);
   }
   return units.size();
@@ -144,8 +143,8 @@ auto UnitsOf(const LoweredUnits& design, std::string_view definition)
 auto BodiesOf(const LoweredUnits& design, std::string_view definition)
     -> std::size_t {
   std::size_t count = 0;
-  for (const lyra::hir::Specialization& lowered : design) {
-    if (IsOf(lowered.implementation, definition)) ++count;
+  for (const lyra::hir::Lowering& lowered : design) {
+    if (IsOf(lowered.body, definition)) ++count;
   }
   return count;
 }
@@ -158,7 +157,7 @@ auto BodiesOf(const LoweredUnits& design, std::string_view definition)
 // loop is reached.
 auto BodiesOfGenerate(const LoweredUnits& design, std::size_t depth)
     -> std::size_t {
-  for (const lyra::hir::Specialization& unit : design) {
+  for (const lyra::hir::Lowering& unit : design) {
     std::vector<const lyra::hir::ScopeConstruction*> level{&unit.construction};
     for (std::size_t at = 0;; ++at) {
       std::set<std::uint32_t> bodies;
@@ -1741,8 +1740,8 @@ endmodule
 // Whether a unit of `design` declares a class named `name`.
 auto DeclaresAClassNamed(const LoweredUnits& design, std::string_view name)
     -> bool {
-  for (const lyra::hir::Specialization& lowered : design) {
-    const lyra::hir::CompilationUnit& unit = lowered.implementation;
+  for (const lyra::hir::Lowering& lowered : design) {
+    const lyra::hir::CompilationUnit& unit = lowered.body;
     for (const lyra::hir::ClassId id : unit.classes.OwnIds()) {
       if (lyra::support::DisplayOf(unit.classes.PathOf(id)) == name) {
         return true;

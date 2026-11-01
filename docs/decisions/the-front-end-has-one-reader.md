@@ -11,6 +11,12 @@ Accepted. Moves lowering a unit's bodies to HIR into that unit's own pipeline, w
 told, and records what reading the front end from several units at once requires, and why until then
 it is read one unit at a time.
 
+Its rejection of lowering a duplicate instance through the body it duplicates on the front end's
+word is reversed 2026-10-31 by
+[every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md):
+the front end's record of which elaborations are alike is read as given, and a share it gets wrong
+is its defect, corrected there. The rest stands.
+
 ## Why this decision matters
 
 Every unit's bodies were lowered to HIR before any unit went further, so the barrier held the

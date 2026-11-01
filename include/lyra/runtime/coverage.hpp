@@ -15,8 +15,9 @@ namespace lyra::runtime {
 //
 // A site is the statement's own source location. Two cover statements are two
 // goals; one statement reached from two instances of its module is one goal
-// here, because the code a specialization compiles is shared across its
-// instances and nothing at the point of the call names which one reached it.
+// here, because the code a body compiles is shared across every instance whose
+// code came out as it, and nothing at the point of the call names which one
+// reached it.
 // Telling those apart is what the assertion API of LRM Clause 39 is for.
 class CoverageLog {
  public:

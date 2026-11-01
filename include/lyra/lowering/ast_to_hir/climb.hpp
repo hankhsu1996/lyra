@@ -2,7 +2,6 @@
 
 #include <optional>
 #include <span>
-#include <string>
 #include <variant>
 #include <vector>
 
@@ -36,17 +35,11 @@ namespace lyra::lowering::ast_to_hir {
 // instances whose names land in scopes of one class compile differently where
 // the blocks they pass below it differ. The last block of a run names those
 // before it, which enclose it in one instance.
-//
-// `reads` is the value the name reads where it names a constant -- a parameter
-// or an enumeration's member -- which the reader's code is compiled with, so
-// two instances landing in scopes of one class whose constants differ there
-// compile differently.
 struct ClimbAnchor {
   const slang::ast::Scope* scope = nullptr;
   std::vector<const slang::ast::Scope*> blocks_passed;
   const slang::ast::InstanceBodySymbol* instance = nullptr;
   std::vector<const slang::ast::Scope*> carries;
-  std::optional<std::string> reads;
 };
 
 // Where a name written in `reader` lands once it leaves `reader`, or nothing

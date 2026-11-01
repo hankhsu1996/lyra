@@ -9,7 +9,7 @@
 
 namespace lyra::hir {
 
-// The value a parameter holds in one specialization (LRM 6.20), as a constant
+// The value a parameter holds in one lowering (LRM 6.20), as a constant
 // a unit reading the parameter by name folds where it reads it. The parameter
 // is named by its own name and the scope of the unit declaring it, `holder`.
 struct PublishedParameter {
@@ -20,15 +20,15 @@ struct PublishedParameter {
   auto operator==(const PublishedParameter&) const -> bool = default;
 };
 
-// What a specialization holds that the unit it belongs to does not: the value
-// of each parameter it declares. Specializations of one unit publish one
+// What a lowering holds that the unit it belongs to does not: the value
+// of each parameter it declares. Lowerings of one unit publish one
 // structure and may hold different values, so these are kept by the
-// specialization a reader reached rather than by the unit.
-struct SpecializationValues {
+// lowering a reader reached rather than by the unit.
+struct LoweringValues {
   std::vector<PublishedParameter> parameters;
 
   // The value of the parameter `name` of the scope `holder`, or nothing where
-  // the specialization published none for it.
+  // the lowering published none for it.
   [[nodiscard]] auto FindParameter(
       std::string_view name, const support::DefPath& holder) const
       -> const ConstantValue* {
@@ -40,7 +40,7 @@ struct SpecializationValues {
     return nullptr;
   }
 
-  auto operator==(const SpecializationValues&) const -> bool = default;
+  auto operator==(const LoweringValues&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

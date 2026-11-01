@@ -33,8 +33,8 @@ fingerprint covers.
 
 ## The tension this addresses
 
-The frontend elaborates per instance and Lyra compiles per specialization, so one call carries two
-facts that must not be confused.
+The frontend elaborates per instance and Lyra compiles per body, so one call carries two facts that
+must not be confused.
 
 What a call's target states is which instance: `p.Write(...)` in a module bound to one bus and
 `q.Write(...)` in the same module bound to another resolve to two different declarations. That is

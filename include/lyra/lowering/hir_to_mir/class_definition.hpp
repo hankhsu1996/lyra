@@ -6,8 +6,8 @@
 #include <string>
 
 #include "lyra/hir/dumped_declaration.hpp"
+#include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/owned_child_step.hpp"
-#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/builder.hpp"
@@ -64,17 +64,16 @@ auto BlockEntryType(mir::CompilationUnit& unit, bool handed_its_index)
 }
 
 // States, as constants of class `id` of the design's root unit, the
-// construction table of the root's own specialization `root`, which it answers
-// with, and of every specialization `instantiations` holds that an object is
-// made of below it. Each specialization's table is stated once however many
+// construction table of the root's own lowering `root`, which it answers
+// with, and of every lowering `instantiations` holds that an object is
+// made of below it. Each lowering's table is stated once however many
 // instantiations make it. An instantiation's entry holds the object entry of
-// the implementation that specialization is, at the type `entry_types` gives
-// its unit's entry, and a block's the entry that implementation publishes for
+// the body that lowering is, at the type `entry_types` gives
+// its unit's entry, and a block's the entry that body publishes for
 // the block body built there, each with its prototype erased.
 auto StateConstructionTables(
     mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    const hir::SpecializationRef& root,
-    const DesignInstantiations& instantiations,
+    const hir::LoweringRef& root, const DesignInstantiations& instantiations,
     const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
     -> mir::ClassConstantRef;
 

@@ -39,6 +39,10 @@ its unit publishes either. The requirement above stands, and does not select D1:
 are chosen from values handed at construction, so instances that built different blocks are one unit
 publishing every block class any of them built, and a body is still a function of its name.
 
+D3's check of the compile against itself removed 2026-10-31 by
+[every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md):
+every body the front end did not share is lowered in the build, from its own instance.
+
 ## Requirement
 
 A compiled body is a function of its name. Two instances of one name compile to the same artifact,

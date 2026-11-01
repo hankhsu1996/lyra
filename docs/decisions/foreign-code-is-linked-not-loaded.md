@@ -100,11 +100,11 @@ party resolving names, which is the state the decision above replaced.
 
 ### A scope publishes what it answers, per name space
 
-An exported subroutine is compiled once per specialization of the scope declaring it, while the
-symbol is program-global (LRM 35.4), so the symbol resolves an entry against the scope the call
-chain established. Each scope therefore states what it answers a foreign name with, beside what it
-answers a hierarchical name with: two name spaces over one mechanism, and one declaration may answer
-in both under different spellings.
+An exported subroutine is compiled once per body of the scope declaring it, while the symbol is
+program-global (LRM 35.4), so the symbol resolves an entry against the scope the call chain
+established. Each scope therefore states what it answers a foreign name with, beside what it answers
+a hierarchical name with: two name spaces over one mechanism, and one declaration may answer in both
+under different spellings.
 
 The two tables are not filled the same way, and the reason is the entry rather than the table. What
 a foreign name reaches is a body that converts between the boundary carriers and the subroutine's

@@ -57,7 +57,6 @@
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/program/program_sink.hpp"
 #include "lyra/status/status.hpp"
-#include "lyra/support/bodies_read.hpp"
 #include "lyra/support/statistics.hpp"
 
 namespace lyra::cli {
@@ -177,10 +176,7 @@ auto DesignOf(const CommandContext& ctx)
   const status::Phase phase("Elaborating");
   return compiler::DeclareUnits(
       std::move(ctx.elaborated->compilation),
-      compiler::LoweringPolicy{
-          .assertions = ctx.args->assertions,
-          .bodies_read = support::BodiesRead::kOnePerName},
-      *ctx.sink);
+      compiler::LoweringPolicy{.assertions = ctx.args->assertions}, *ctx.sink);
 }
 
 // Writes the design's emitted C++ sources into `dir` and answers with what
@@ -228,7 +224,7 @@ auto RunDumpHir(const CommandContext& ctx) -> int {
   }
   compiler::LowerToHir(
       *design, *ctx.sink, ctx.args->compile_width,
-      [](const hir::Specialization& lowered) -> diag::Result<std::string> {
+      [](const hir::Lowering& lowered) -> diag::Result<std::string> {
         return hir::DumpHir(lowered);
       },
       [](const std::string& text) { fmt::print("{}", text); });

@@ -25,8 +25,7 @@ absence cannot tell "this path refuses the construct" from "nobody has tagged it
 A compiler bug is neither. A run that reports one fails whatever the records say, because "not
 implemented yet" and "implemented wrongly" recorded the same way would leave nothing able to report
 coverage. Every case is lowered with Lyra's verification of its middle form after each rewrite, and
-also reading each instance through a body of its own, each held to the compiled unit it shares; one
-that lowers differently fails as a compiler bug. A foreign source is compiled after the header Lyra
+one that fails it fails as a compiler bug. A foreign source is compiled after the header Lyra
 generates for the design, so a prototype that header gets wrong is a failure of the case even though
 the case never includes it.
 

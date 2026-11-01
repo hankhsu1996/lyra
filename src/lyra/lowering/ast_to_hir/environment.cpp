@@ -15,19 +15,17 @@
 #include <slang/numeric/ConstantValue.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/lowering/ast_to_hir/canonical_body.hpp"
+#include "lyra/lowering/ast_to_hir/elaborated_instances.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
-auto Specializations::EnvironmentOf(
-    const slang::ast::InstanceSymbol& inst) const -> const Environment& {
-  if (const auto kept = environments_.find(&inst);
-      kept != environments_.end()) {
-    return kept->second;
-  }
-  const slang::ast::InstanceBodySymbol& body =
-      HasBodyOfItsOwn(inst) ? inst.body : *inst.getCanonicalBody();
-  const InstanceContext& context = ContextOf(inst);
+auto EnvironmentOf(
+    const slang::ast::InstanceSymbol& inst,
+    const ElaboratedInstances& instances) -> Environment {
+  const slang::ast::InstanceBodySymbol& body = CanonicalBodyOf(inst);
+  const OutsideReach& context = instances.OutsideReachOf(inst);
   const std::vector<ClimbAnchor> climbs = context.Climbs();
 
   std::vector<ClassHome> homes;
@@ -41,7 +39,8 @@ auto Specializations::EnvironmentOf(
   foreign.reserve(context.foreign_parameters.size());
   for (const slang::ast::ParameterSymbol* param : context.foreign_parameters) {
     const bool held_by_each_object =
-        ValueSourceOf(InstanceHolding(*param->getParentScope()), *param) !=
+        instances.ValueSourceOf(
+            InstanceHolding(*param->getParentScope()), *param) !=
         ParameterValueSource::kSettledAtElaboration;
     foreign.push_back(
         ForeignParameter{
@@ -64,12 +63,9 @@ auto Specializations::EnvironmentOf(
             .connected = ConnectedInterfaceOf(connection->getIfaceConn())});
   }
 
-  return environments_
-      .emplace(
-          &inst, Environment(
-                     context.uses, ParametersOf(inst), std::move(homes),
-                     std::move(foreign), std::move(ports)))
-      .first->second;
+  return Environment(
+      context.uses, instances.ParametersOf(inst), std::move(homes),
+      std::move(foreign), std::move(ports));
 }
 
 auto Environment::LandingOf(
@@ -89,7 +85,8 @@ auto Environment::LandingOf(
   throw InternalError(
       std::format(
           "Environment: the name '{}' was lowered but never recorded where it "
-          "lands, so what identifies its unit did not hold it -- please report "
+          "lands, so the walk filling its environment missed it -- please "
+          "report "
           "this as a bug",
           found.name));
 }
@@ -102,7 +99,7 @@ auto Environment::ReachOf(const slang::ast::Scope& scope) const
   throw InternalError(
       std::format(
           "Environment: a class of '{}' was lowered but never recorded as one "
-          "the body reaches, so what identifies its unit did not hold it -- "
+          "the body reaches, so the walk filling its environment missed it -- "
           "please report this as a bug",
           scope.asSymbol().name));
 }
@@ -115,7 +112,7 @@ auto Environment::SettledValueOf(const slang::ast::ParameterSymbol& parameter)
   throw InternalError(
       std::format(
           "Environment: the parameter '{}' of another instance was lowered but "
-          "never recorded as read, so what identifies its unit did not hold "
+          "never recorded as read, so the walk filling its environment missed "
           "it -- please report this as a bug",
           parameter.name));
 }

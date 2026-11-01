@@ -1192,7 +1192,7 @@ auto LowerSubroutineCall(
   // are where it is stated. The call's result type is the enclosing
   // expression's own type and is not recorded again here.
   if (const auto* unit = DeclaringNamespaceUnit(*sym)) {
-    std::string unit_name = CompilationUnitName(*unit, unit_lowerer.Naming());
+    std::string unit_name = CompilationUnitName(*unit, unit_lowerer.Names());
     auto interface =
         unit_lowerer.NamespaceCalleeInterface(unit_name, *sym, span);
     if (!interface) return std::unexpected(std::move(interface.error()));

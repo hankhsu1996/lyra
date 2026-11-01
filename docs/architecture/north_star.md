@@ -13,9 +13,9 @@ document conflicts with a North Star principle, the lower-level document is wron
 
 ## Does Not Own
 
-- Mechanism-level rules (identity schemes, IR boundaries, specialization keys, frontend boundaries).
-  Those live in the lower-level documents and are constrained by, but are not the content of, North
-  Star.
+- Mechanism-level rules (identity schemes, IR boundaries, specialization identity, frontend
+  boundaries). Those live in the lower-level documents and are constrained by, but are not the
+  content of, North Star.
 - Per-layer contracts. Each IR layer's shape is defined in its own doc (`hir.md`, `mir.md`,
   `lir.md`).
 - Implementation strategy. North Star constrains design, not code.
@@ -31,12 +31,12 @@ document conflicts with a North Star principle, the lower-level document is wron
    `for`, `case`) are constructor-time logic the runtime executes to build the object graph at time
    zero. Compile-time artifacts are class-level and shared across every instance; per-instance data
    (parameter values, wiring, hierarchical position) flows in at runtime construction. The count of
-   compile-time **artifacts** scales with the count of distinct unit specializations, not with
-   instance count. Compile-time **work** is a different axis and is not this invariant's subject: a
-   front end that elaborates every instance it does not find alike an earlier one makes some work
-   proportional to instance count whatever is built above it, and what the artifacts go on to cost
-   dominates it by orders of magnitude. A design that produces more artifacts in order to do less
-   per-instance work has traded the wrong way.
+   compile-time **artifacts** scales with the count of distinct units and bodies the design comes
+   out as, not with instance count. Compile-time **work** is a different axis and is not this
+   invariant's subject: a front end that elaborates every instance it does not find alike an earlier
+   one makes some work proportional to instance count whatever is built above it, and what the
+   artifacts go on to cost dominates it by orders of magnitude. A design that produces more
+   artifacts in order to do less per-instance work has traded the wrong way.
 3. **Correctness is independent of optimization.** The compiler produces correct output for every
    accepted program; the per-unit sharing of invariant 2 is admitted only when behavior-preserving,
    and a correct program is never rejected because an optimization cannot be applied.
@@ -61,8 +61,10 @@ document conflicts with a North Star principle, the lower-level document is wron
   overall turnaround budget.
 - Letting per-instance compile-time artifacts become the steady state, or foreclosing the per-unit
   shared form.
-- Making the frontend-elaborated instance graph the compilation model, or the authority for unit or
-  specialization identity.
+- Making the frontend-elaborated instance graph the compilation model: an artifact per instance, or
+  a class told apart by where its instances stand. Which elaborations the frontend found alike is
+  read as given; which of them publish alike, and which lower to equal code, is this compiler's own
+  comparison.
 - Making an optimization a correctness precondition: rejecting or mis-lowering a correct program
   because it cannot be shared.
 - Hidden or implicit cross-unit dependencies that break incremental or parallel compilation.

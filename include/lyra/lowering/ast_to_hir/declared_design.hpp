@@ -10,10 +10,9 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
-#include "lyra/hir/specialization.hpp"
+#include "lyra/hir/lowering.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/support/assertion_policy.hpp"
-#include "lyra/support/bodies_read.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -40,13 +39,15 @@ class LowerCompilationFacts {
   support::AssertionPolicy assertion_policy_;
 };
 
-// A top-level block is an auto-promoted, uninstantiated module, named three
+// A top-level block is an auto-promoted, uninstantiated module, named four
 // times because the names answer different questions: the first two coincide
 // only when the identifier needs no escaping, the first and the unit only when
-// no parameter decides which unit it is. The design root builds a top as a
-// parent leaving every parameter to its default would, so a top shares its
-// specialization with any instance so left, and one given a value elsewhere is
-// a specialization of its own.
+// the definition has one unit in the design, and the second and the lowering
+// unless the front end left the top pointing at an earlier instance's body.
+// The design root builds a top as a parent leaving every parameter to its
+// default would, so an instance so left that the front end found alike the top
+// is served by one lowering with it, and one given a value elsewhere is an
+// elaborated body of its own.
 struct TopLevelUnit {
   // What the design's hierarchy shows for this top. Nothing instantiates a
   // top, so it stands under its own module identifier (LRM 23.3), and that is
@@ -55,18 +56,18 @@ struct TopLevelUnit {
   // That identifier as a hierarchical name writes it (LRM 23.6), which is what
   // the top reports as its own name.
   std::string name_in_a_path;
-  // The compiled unit it is an instance of, which names its class.
+  // The unit it is an instance of, which names its published class.
   std::string unit_name;
-  // The specialization it is an application of, which says how it is built.
-  std::string specialization;
+  // The lowering it is built from, by that lowering's name.
+  std::string lowering;
 };
 
 // The design once every unit has declared itself and before any unit's bodies
 // are lowered: where the design begins, every namespace the design declares,
-// then every distinct specialization of a design element reachable from the
-// tops, each tagged with whether its instances exist as objects, together with
-// what each published. A unit reads only its own scope, the frontend, and what
-// the other units published -- never their bodies -- so its bodies lower into a
+// then every lowering of a design element reachable from the tops, each tagged
+// with whether its instances exist as objects, together with what each
+// published. A unit reads only its own scope, the frontend, and what the other
+// units published -- never their bodies -- so its bodies lower into a
 // self-contained unit with no cross-unit HIR references.
 //
 // What each unit holds between the two steps is its declarations, so what is
@@ -97,19 +98,13 @@ class DeclaredDesign {
   // module declaring either is a design element and not a design, and is
   // reported.
   //
-  // Instances are one specialization where they agree on its name: what the
-  // language fixes in the unit, the generate blocks each built (LRM 27.4,
-  // 27.5), and every value each is handed. A specialization is lowered from
-  // the one instance it is named for, and specializations whose HIR comes out
-  // equal share one implementation. `bodies_read` says whether the compile
-  // checks itself: where it does, each other instance of a specialization is
-  // lowered too and has to come out the same, and a block class is published
-  // from its last block rather than its first; one that does not come out the
-  // same is this compiler's defect, thrown as one.
+  // Each elaborated body the front end did not share is lowered once, for the
+  // instance it was elaborated for; an instance the front end left pointing at
+  // an earlier instance's body is served by that one's lowering. Lowerings
+  // whose HIR comes out equal are one body.
   static auto Declare(
       std::unique_ptr<slang::ast::Compilation> front_end,
-      support::AssertionPolicy assertion_policy,
-      support::BodiesRead bodies_read, diag::DiagnosticSink& sink)
+      support::AssertionPolicy assertion_policy, diag::DiagnosticSink& sink)
       -> std::optional<DeclaredDesign>;
 
   DeclaredDesign(DeclaredDesign&&) noexcept;
@@ -122,16 +117,15 @@ class DeclaredDesign {
   // only through instantiation is compiled but is not a top.
   [[nodiscard]] auto Tops() const -> std::span<const TopLevelUnit>;
 
-  [[nodiscard]] auto SpecializationCount() const -> std::size_t;
+  [[nodiscard]] auto LoweringCount() const -> std::size_t;
 
-  // Lowers the specialization at `index`, once, and releases everything it
-  // held for it. Calls for different indices may come from several threads;
-  // they read the frontend one at a time and in index order. Its
-  // implementation is named for the first specialization of its unit, in that
-  // order, that came out as it; the specializations of one unit stand at
+  // Lowers the lowering at `index`, once, and releases everything it held for
+  // it. Calls for different indices may come from several threads; they read
+  // the frontend one at a time and in index order. What it comes out as is one
+  // body of its unit, shared with every earlier lowering of the unit, in that
+  // order, that came out as it; the lowerings of one unit stand at
   // consecutive indices, so what is held to compare against is one unit's.
-  auto LowerSpecialization(std::size_t index)
-      -> diag::Result<hir::Specialization>;
+  auto LowerAt(std::size_t index) -> diag::Result<hir::Lowering>;
 
   // What the design's units published, which is read by every unit's bodies
   // and by whatever composes the design from its units.

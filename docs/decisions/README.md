@@ -472,7 +472,9 @@ the detail lives in the entry itself.
   one as a fact, why an operation's result is typed by its width and numbered from zero through one
   function, and why a read set is collected from the text rather than from the front end's flow
   analysis. Keying on every evaluation the front end made, predicting which queries the lowering
-  answers, recording every fact's provenance, and patching the flow analysis are rejected.
+  answers, recording every fact's provenance, and patching the flow analysis are rejected. **Its D4,
+  lowering every instance as a test, and D5's key are revised by
+  [every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md).**
 - [hierarchical-reference-routing](hierarchical-reference-routing.md) -- one semantic shape per
   hierarchical reference; per-segment classification by layout visibility; sealed endpoint on the
   hot path. **Its D2 is reversed by
@@ -505,7 +507,9 @@ the detail lives in the entry itself.
 - [specialization-identity](specialization-identity.md) -- a specialization's identity is the module
   name plus a content hash of what the design fixed for the instance -- its bindings, and what
   follows from where it stands -- computed independently by producer and consumer, and enough to
-  settle the identity of every instance below.
+  settle the identity of every instance below. **Its key is gone since
+  [every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md);
+  what stands is how a definition, a value and a type are spelled.**
 - [reference-as-data-type](reference-as-data-type.md) -- a reference is a direction at HIR and a
   data type at MIR; one type serves `ref` formals and `ref` ports, preserving the observable-cell
   protocol.
@@ -1149,8 +1153,10 @@ the detail lives in the entry itself.
   HIR as the first step of its own pipeline, so no unit's HIR waits for another's and the peak no
   longer holds all of them, but the elaborated AST is read by one unit at a time: the front end
   elaborates what a reader first touches, and a unit reads past its own body wherever a name lands.
-  Reading a frozen AST from every worker, turning instance caching off to make that sound, and
-  reading a duplicate instance through the body it duplicates are rejected.
+  Reading a frozen AST from every worker and turning instance caching off to make that sound are
+  rejected. **Its rejection of reading a duplicate instance through the body it duplicates is
+  reversed by
+  [every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md).**
 - [a-precompiled-header-is-an-attempt](a-precompiled-header-is-an-attempt.md) -- making a build
   faster may not change whether it succeeds or what it produces, so a header compiled in advance is
   offered to a compile and never required by one: a compile that failed with one is run again
@@ -1324,7 +1330,9 @@ the detail lives in the entry itself.
   naming a child by its body's hash, grouping by comparing across the design, declaring every
   parameter, and keeping a definition whole where its instances lower apart. **Its D1 and D2 are
   revised by
-  [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md).**
+  [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md),
+  and D2's check of the compile against itself is removed by
+  [every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md).**
 - [a-unit-is-compiled-to-one-body-per-distinct-code](a-unit-is-compiled-to-one-body-per-distinct-code.md)
   -- a unit is named by the values of the parameters what it declares relies on, a specialization by
   every value its instances are handed, and specializations whose code comes out alike are one body,
@@ -1335,7 +1343,11 @@ the detail lives in the entry itself.
   class has one body per value its code relies on, and why a value handed to a child's construction
   is no part of the building scope's code. Naming a body before it lowers, a name holding the
   constants settled at each place, naming a body by a digest, trusting a digest alone, a unit of its
-  own for what is published, and every body in one compilation are rejected.
+  own for what is published, and every body in one compilation are rejected. **Its D1, D3's naming
+  of a body for a specialization, and D6 are revised by
+  [every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md):
+  nothing names a specialization before it is lowered, a body is named by its unit and its ordinal
+  among the unit's bodies, and the root's tables are stated per lowering.**
 - [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
   -- which generate blocks an instance built is part of its unit's name, as the branch an
   `if constexpr` keeps is part of a C++ instantiation: an alternative not selected is not
@@ -1347,7 +1359,24 @@ the detail lives in the entry itself.
   why reading what an instance built off its elaboration evaluates the instance's own generate
   scheme rather than taking the instance graph as authority. D1 and D4 are reversed by
   [a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md):
-  which blocks an instance built is no part of its unit.
+  which blocks an instance built is no part of its unit. **D3's check of the compile against itself
+  is removed by
+  [every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md).**
+- [every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md)
+  -- an instance's body is the one the front end elaborated for it or the earlier instance's body it
+  was found alike and left pointing at, read as given, with a wrong share the front end's defect;
+  every body nothing points at is lowered once for its own instance under its own environment, and a
+  body is the lowerings of one unit whose HIR is equal, named for the first in the design's order by
+  the unit's name and then its ordinal; a lowering is named by its instance's hierarchical path, and
+  the design root's tables are stated per lowering. Read it for why no key is worked out before
+  lowering, why the front end's sharing is not checked, and why a body is not named by a digest of
+  its HIR. **Revises the two entries above, the entry below,
+  [specialization-identity](specialization-identity.md) decisions 1, 6 and 7,
+  [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md)
+  D4 and D5,
+  [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
+  D2's check, and [the-front-end-has-one-reader](the-front-end-has-one-reader.md)'s rejection of
+  reading a duplicate through the body it duplicates.**
 - [a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md)
   -- a specialization is its definition and everything the design fixed for it, nothing predicted,
   and a class is the specializations whose published structure reads alike once each reference to
@@ -1363,7 +1392,8 @@ the detail lives in the entry itself.
   as. Predicting what a declaration relies on, a class per application, a body named by its least
   key, and supplying a local parameter through construction data are rejected. **Revises the three
   entries above and
-  [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D4 and D7.**
+  [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D4 and D7;
+  its D1, D8 and D9 are revised by the entry above.**
 - [a-part-is-the-select-the-source-wrote](a-part-is-the-select-the-source-wrote.md) -- a part of a
   vector a genvar or a parameter selects -- the bits a wait watches, a part-select's type, the
   positions a connection joins -- is stated as the select the source wrote, so constructions

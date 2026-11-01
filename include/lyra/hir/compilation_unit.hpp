@@ -75,16 +75,18 @@ struct BuiltinHirTypes {
   auto operator==(const BuiltinHirTypes&) const -> bool = default;
 };
 
+// What one lowering of a unit came out as, which is one body of the unit.
 struct CompilationUnit {
   // The unit, which is what it publishes and what every referrer names.
   std::string name;
-  // The implementation this is, named for the first specialization of the
-  // unit, in the design's order, whose code came out as it: specializations
-  // whose code comes out alike are one body.
+  // Which body of the unit this is: the unit's name for the first distinct
+  // body of the unit in the design's order, and for each later one the unit's
+  // name with the body's ordinal after; lowerings whose code comes out alike
+  // are one body.
   std::string body_name;
   // The identifier the source declares this unit's design element, package or
   // class under, which is what its author knows it by. Units of one definition
-  // compiled once per specialization share it, and a unit the source gave no
+  // compiled to more than one unit share it, and a unit the source gave no
   // identifier has none.
   std::string source_name;
   // The library and cell the unit's text was compiled into, as `library.cell`

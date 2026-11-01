@@ -10,7 +10,7 @@ Define what a compilation unit is, what it owns, and the rules that make it self
 - The enumeration of compilation-unit kinds: module, package, interface, and a package generic's
   specialization no instance replicates.
 - The rule that a compilation unit compiles independently, given only its own contents and what the
-  units it references publish: their signatures, and the parameter values of each specialization it
+  units it references publish: their signatures, and the parameter values of each lowering it
   reaches.
 - The signature a unit publishes across the compilation boundary: the declarations other units may
   name, produced by the unit from its own contents and consumed by other units by name. What a
@@ -45,9 +45,9 @@ Define what a compilation unit is, what it owns, and the rules that make it self
 6. Instance records carry only per-instance data: wiring, hierarchical position, parameter values,
    and runtime object identity.
 7. The fully elaborated instance graph is not the compile-time model. The frontend may produce a
-   full elaboration, but the compiler operates on compilation units and specializations. Instance
-   expansion does not drive compilation, and compile-time identity does not depend on instance
-   enumeration.
+   full elaboration, but what is compiled is a unit and its bodies, and a lowering exists only for a
+   body the frontend did not share. Instance expansion does not drive what is compiled, and
+   compile-time identity does not depend on instance enumeration.
 8. A unit's only cross-boundary surface is what it publishes: its signature, the set of declarations
    it publishes, whose content follows the unit's kind -- a package publishes its declarations, and
    a module or an interface publishes every declaration a hierarchical name may reach (LRM 23.6):
@@ -60,13 +60,13 @@ Define what a compilation unit is, what it owns, and the rules that make it self
    included and unnamed, and every method with its prototype -- so a class of another unit extending
    it is laid out at compile time and a call to one of its methods reads the callee there. An
    enumeration, an unpacked structure or an unpacked union it declares is published as what it
-   declares, under the declaration a type naming it names. Beside the signature, each specialization
-   publishes the value of every value parameter it declares, since specializations one signature
-   covers may hold different values. The unit produces its signature from its own contents, so
-   nothing it publishes can contradict what it is. A unit that instantiates or references another
-   depends only on that signature, identified by name, never on the other unit's body or internal
-   ids. Units compile independently and in any order and are combined by matching names; they share
-   no identifier space and exchange no internal state.
+   declares, under the declaration a type naming it names. Beside the signature, each lowering
+   publishes the value of every value parameter it declares, since lowerings one signature covers
+   may hold different values. The unit produces its signature from its own contents, so nothing it
+   publishes can contradict what it is. A unit that instantiates or references another depends only
+   on that signature, identified by name, never on the other unit's body or internal ids. Units
+   compile independently and in any order and are combined by matching names; they share no
+   identifier space and exchange no internal state.
 9. A signature names each class it publishes, and names which of them a referrer instantiates. A
    unit's name, the name of a class it declares, and where a backend places the emitted code are
    three separate facts; none substitutes for another, and a published class is never identified by
@@ -136,12 +136,13 @@ Define what a compilation unit is, what it owns, and the rules that make it self
   contents; who depends on that signature is not part of the unit and is never visible to it.
   Resolution is always pulled by the referrer, never pushed by the target.
 - Treating "the design" as a compilation unit.
-- Treating the frontend as the authority for compilation-unit identity, membership, or boundary. The
-  frontend is input; the compiler is authority.
+- Treating the frontend as the authority for compilation-unit identity, membership, or boundary.
+  Which elaborations the frontend found alike is read as given; which of them are one unit is this
+  compiler's own comparison.
 - Treating the elaborated instance graph as the compilation model, or allowing instance count to
   drive the number of compilation artifacts.
-- Per-instance compilation: forking a compile-time artifact per instance rather than per
-  specialization.
+- Per-instance compilation: forking a compile-time artifact per instance rather than per class and
+  per body.
 
 ## Notes / Examples
 

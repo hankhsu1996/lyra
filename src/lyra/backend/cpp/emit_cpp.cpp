@@ -162,7 +162,7 @@ auto HeaderOf(
 
 // A unit becomes one C++ namespace, named after it, and each body of it is
 // written across these files, `Body` being the body's name, which is the
-// unit's where the body's code uses no parameter value:
+// unit's for the unit's first body:
 //
 //   Top.<Record>.types.hpp  one per struct or union the unit declares
 //   Top.forward.hpp         the classes other units may name, declared

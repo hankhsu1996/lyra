@@ -160,10 +160,13 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // printable non-space character in an escaped identifier (LRM 5.6.1), while C++
 // allows letters, digits and underscores and reserves some words. A name C++
 // accepts, and that does not start with `sv_`, is written as is: `count` stays
-// `count`. Anything else becomes `sv_esc_` and its bytes in hex, so `\a.b `
-// becomes `sv_esc_612e62`. Replacing the bad characters instead (`a.b` ->
-// `a_b`) could turn two different source names into one C++ name, and the
-// escaped form can collide with neither a plain name nor a made-up one.
+// `count`. Anything else becomes `sv_esc_` and its bytes, each letter or digit
+// as itself, an underscore doubled and any other byte as an underscore and two
+// hex digits, so `\a.b ` becomes `sv_esc_a_2eb_20` and a unit's second body
+// `Leaf#1` becomes `sv_esc_Leaf_231`. Replacing the bad characters instead
+// (`a.b` -> `a_b`) could turn two different source names into one C++ name,
+// and the escaped form can collide with neither a plain name nor a made-up
+// one.
 //
 // Names C++ reserves to the implementation but still compiles -- a double
 // underscore, an underscore before a capital -- are left plain.
@@ -286,9 +289,9 @@ void WriteOne(TargetText& out, UnitScope scope);
 // The namespace what only one body of a unit states is in: one inside the
 // unit's, named after the body, so the body's own text sees the unit's
 // declarations and another body's stands apart from it. A body named as the
-// unit is -- one whose code uses no parameter value -- has the unit's
-// namespace, since a namespace inside it of the same name would be taken by
-// the class of the unit's instance.
+// unit is -- the first distinct body of the unit in the design's order -- has
+// the unit's namespace, since a namespace inside it of the same name would be
+// taken by the class of the unit's instance.
 [[nodiscard]] inline auto BodyNamespaceOf(
     std::string_view unit_name, std::string_view body_name)
     -> std::optional<SourceName> {
@@ -338,8 +341,8 @@ void WriteOne(TargetText& out, BodyScope scope);
 }
 
 // `Body.body.hpp`: the entry that makes an object of one body, which only that
-// body writes. A body whose code uses no parameter value is named as its unit
-// is, so this name stands apart from the unit's files by its kind alone.
+// body writes. The first body of a unit is named as its unit is, so this name
+// stands apart from the unit's files by its kind alone.
 [[nodiscard]] inline auto BodyHeaderFileOf(std::string_view body_name)
     -> std::string {
   return TextOf(ToCppName(body_name), ".body.hpp");
@@ -538,11 +541,11 @@ void WriteOne(TargetText& out, BodyScope scope);
 [[nodiscard]] inline auto CppNestedClassName(
     const CppName& enclosing, const support::GenerateBlockStep& block,
     std::size_t depth) -> CppName {
-  CppName named = block.disambiguator != 0 || block.arguments.has_value()
+  CppName named = block.disambiguator != 0 || block.distinguisher.has_value()
                       ? CppName{MintedAppliedName{
                             .what = "gen",
                             .disambiguator = block.disambiguator,
-                            .arguments = block.arguments,
+                            .arguments = block.distinguisher,
                             .source = block.label}}
                       : ToCppName(block.label);
   if (TextOf(named) == TextOf(enclosing)) {

@@ -12,12 +12,12 @@
 
 #include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/lowering.hpp"
+#include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/scope_instantiations.hpp"
-#include "lyra/hir/specialization.hpp"
-#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
@@ -90,16 +90,16 @@ void LeaveInputsUnconnected(
 // submodule, so no code path is special-cased for the top level. Its HIR
 // carries only this source-faithful structure; reaching the packages' bring-up
 // entries is settled at lowering, not HIR content. It is its unit's one
-// specialization, building each top's one specialization.
+// lowering, building each top's one lowering.
 auto BuildDesignRootHir(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
-    const hir::UnitSignatures& signatures) -> hir::Specialization {
-  hir::Specialization lowered{
+    const hir::UnitSignatures& signatures) -> hir::Lowering {
+  hir::Lowering lowered{
       .name = std::string{kDesignRootUnitName},
       .construction = {},
-      .implementation = hir::CompilationUnit{
+      .body = hir::CompilationUnit{
           std::string{kDesignRootUnitName}, std::string{kDesignRootUnitName}}};
-  hir::CompilationUnit& root = lowered.implementation;
+  hir::CompilationUnit& root = lowered.body;
   // Like any module, its object is published as the class an instance of the
   // unit is, and what it publishes is every instance it builds (LRM 23.6).
   hir::ScopeClassSignature published{
@@ -152,8 +152,8 @@ auto BuildDesignRootHir(
                           .scope_class = scope_class,
                           .assignments = std::move(left_to_default)}},
                       .taken = {0}});
-    lowered.construction.instances.push_back({hir::SpecializationRef{
-        .unit = top.unit_name, .specialization = top.specialization}});
+    lowered.construction.instances.push_back(
+        {hir::LoweringRef{.unit = top.unit_name, .lowering = top.lowering}});
     LeaveInputsUnconnected(root, signature, scope_class, instance);
     const std::array kind{hir::UnitObjectType{.scope_class = scope_class}};
     published.members.Add(
@@ -177,12 +177,12 @@ auto BuildDesignRootHir(
   return lowered;
 }
 
-// Hands `take` the unit of every specialization made at an instantiation of the
+// Hands `take` the unit of every lowering made at an instantiation of the
 // scope laid out as `layout`, or of any block below it.
 template <typename Take>
 void TakeEachUnitMade(
     const hir::ScopeInstantiations& layout, const Take& take) {
-  for (const hir::SpecializationRef& made : layout.Instantiated()) {
+  for (const hir::LoweringRef& made : layout.Instantiated()) {
     take(made.unit);
   }
   for (const hir::GeneratePlaces& generate : layout.Generates()) {
@@ -223,8 +223,8 @@ auto PublishedObjectEntries(
                   .published_class = published_class,
                   .handed = hir::ImportTypes(importer, element.handed)});
   };
-  for (const auto& [_, specialization] : instantiations.by_specialization) {
-    TakeEachUnitMade(specialization.made, take);
+  for (const auto& [_, lowering] : instantiations.by_lowering) {
+    TakeEachUnitMade(lowering.made, take);
   }
   return entries;
 }
@@ -257,12 +257,11 @@ auto SynthesizeDesignRoot(
     const diag::SourceManager& source_manager,
     const mir_transform::PassOptions& passes)
     -> diag::Result<mir::CompilationUnit> {
-  hir::Specialization root_hir = BuildDesignRootHir(tops, signatures);
-  instantiations.by_specialization.emplace(
-      root_hir.name, lowering::hir_to_mir::SpecializationMade::Of(root_hir));
-  hir::SpecializationRef root{
-      .unit = root_hir.implementation.name, .specialization = root_hir.name};
-  hir::CompilationUnit& root_unit = root_hir.implementation;
+  hir::Lowering root_hir = BuildDesignRootHir(tops, signatures);
+  instantiations.by_lowering.emplace(
+      root_hir.name, lowering::hir_to_mir::LoweringMade::Of(root_hir));
+  hir::LoweringRef root{.unit = root_hir.body.name, .lowering = root_hir.name};
+  hir::CompilationUnit& root_unit = root_hir.body;
   auto object_entries = PublishedObjectEntries(
       signatures, instantiations, root_unit.types, root_unit.classes,
       root_unit.covergroups, root_unit.scope_classes);

@@ -2,21 +2,12 @@
 // repeating does not show it: nothing below the first semantic form reads where
 // that form put each of its parts, so two lowerings that differ only there
 // write the same text. What does read it is holding two lowerings of one body
-// equal position for position, which the check of the compile against itself
-// does -- so a form that moves on its own refuses a correct design there, and
-// nothing a design simulates or a build writes reports it elsewhere.
+// equal position for position, so a form that moves on its own is caught here,
+// and nothing a design simulates or a build writes reports it elsewhere.
 //
-// What is compared is each specialization's own form, by that equality, in
-// the order the design lists them.
-//
-// The two lowerings also differ in which instances they read. The first reads
-// the bodies the front end elaborated and names every other instance where it
-// is written, and publishes each block class from the first block declaring
-// it, as a build does. The second reads every instance's body, publishes from
-// the last, and holds each to the specialization it shares, so a design where
-// an instance left unread would have lowered apart from its specialization
-// stops there, and the two are then held to having found the same
-// specializations stating the same things.
+// What is compared is each lowering's own form, by that equality, in the
+// order the design lists them. The two differ in how many units lower at once,
+// so an order that depends on which unit finished first is caught too.
 
 #include <cstddef>
 #include <gtest/gtest.h>
@@ -35,26 +26,24 @@
 #include "lyra/diag/sink.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/dump.hpp"
-#include "lyra/hir/specialization.hpp"
+#include "lyra/hir/lowering.hpp"
 #include "tests/compiled_twice.hpp"
 
 namespace {
 
 using conformance::framework::Case;
-using lyra::support::BodiesRead;
 using lyra::test::Compilation;
 using lyra::test::Elaborate;
 using lyra::test::FirstDifference;
 using lyra::test::kWide;
 using lyra::test::ScratchDirectory;
 
-using LoweredUnits = std::vector<lyra::hir::Specialization>;
+using LoweredUnits = std::vector<lyra::hir::Lowering>;
 
-// Every specialization of this compilation's design, reading the instances
-// `bodies_read` says and lowering `width` at once. Nothing where the design did
-// not lower, which is what a design this path refuses comes to and is not this
-// test's subject.
-auto Lower(Compilation& compilation, std::size_t width, BodiesRead bodies_read)
+// Every lowering of this compilation's design, lowering `width` at once.
+// Nothing where the design did not lower, which is what a design this path
+// refuses comes to and is not this test's subject.
+auto Lower(Compilation& compilation, std::size_t width)
     -> std::optional<LoweredUnits> {
   if (!compilation.front.elaborated.has_value()) {
     return std::nullopt;
@@ -64,8 +53,7 @@ auto Lower(Compilation& compilation, std::size_t width, BodiesRead bodies_read)
   auto design = lyra::compiler::DeclareUnits(
       std::move(compilation.front.elaborated->compilation),
       lyra::compiler::LoweringPolicy{
-          .assertions = lyra::support::AssertionPolicy::kCheck,
-          .bodies_read = bodies_read},
+          .assertions = lyra::support::AssertionPolicy::kCheck},
       sink);
   if (!design.has_value()) {
     return std::nullopt;
@@ -74,9 +62,9 @@ auto Lower(Compilation& compilation, std::size_t width, BodiesRead bodies_read)
   LoweredUnits units;
   lyra::compiler::LowerToHir(
       *design, sink, width,
-      [](lyra::hir::Specialization lowered)
-          -> lyra::diag::Result<lyra::hir::Specialization> { return lowered; },
-      [&units](lyra::hir::Specialization lowered) {
+      [](lyra::hir::Lowering lowered)
+          -> lyra::diag::Result<lyra::hir::Lowering> { return lowered; },
+      [&units](lyra::hir::Lowering lowered) {
         units.push_back(std::move(lowered));
       });
   if (sink.HasErrors()) {
@@ -97,7 +85,7 @@ auto Describe(const LoweredUnits& first, const LoweredUnits& second)
       continue;
     }
     return fmt::format(
-        "specialization '{}' differs at {}", first[at].name,
+        "lowering '{}' differs at {}", first[at].name,
         FirstDifference(
             lyra::hir::DumpHir(first[at]), lyra::hir::DumpHir(second[at])));
   }
@@ -113,10 +101,8 @@ class RepeatableLoweringTest : public testing::Test {
     Compilation first = Elaborate(*case_);
     Compilation second = Elaborate(*case_);
 
-    const std::optional<LoweredUnits> first_units =
-        Lower(first, 1, BodiesRead::kOnePerName);
-    const std::optional<LoweredUnits> second_units =
-        Lower(second, kWide, BodiesRead::kEveryInstance);
+    const std::optional<LoweredUnits> first_units = Lower(first, 1);
+    const std::optional<LoweredUnits> second_units = Lower(second, kWide);
     if (!first_units.has_value() && !second_units.has_value()) {
       GTEST_SKIP() << "this path does not lower '" << case_->id << "'";
     }
@@ -146,10 +132,8 @@ TEST(RepeatableLowering, ADesignWrittenToShowAnOrderingStatesOneThing) {
   Compilation first = Elaborate(design);
   Compilation second = Elaborate(design);
 
-  const std::optional<LoweredUnits> first_units =
-      Lower(first, 1, BodiesRead::kOnePerName);
-  const std::optional<LoweredUnits> second_units =
-      Lower(second, kWide, BodiesRead::kEveryInstance);
+  const std::optional<LoweredUnits> first_units = Lower(first, 1);
+  const std::optional<LoweredUnits> second_units = Lower(second, kWide);
   ASSERT_TRUE(first_units.has_value() && second_units.has_value())
       << "the design written to exercise this check no longer lowers";
 

@@ -6,7 +6,12 @@
 
 ## Status
 
-Accepted
+Accepted. Decisions 1, 6 and 7 and the findings F4 and F6 behind them revised 2026-10-31 by
+[every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md):
+no key is worked out before lowering for an instance of a design element, the front end's record of
+which elaborations are alike is taken as given, and every body it did not share is lowered. What
+stands is F8's spelling of a definition and decision 2's spelling of a value and a type, which still
+name the arguments of a class specialization (LRM 8.25).
 
 ## Why this decision matters
 

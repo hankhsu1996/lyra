@@ -195,8 +195,7 @@ auto LowerPackedUnion(
 // enclosing struct is default-constructed. It is held in the member's
 // value-form metadata, the shape an enum member carries its value in: the
 // default is a value the type holds, not an expression. The front end
-// evaluated it when the type was declared, which is what records the
-// parameters it was computed from, so the value read here is that one.
+// evaluated it when the type was declared, so the value read here is that one.
 auto LowerMemberDefault(
     const slang::ast::FieldSymbol& field, diag::SourceSpan span)
     -> diag::Result<std::optional<hir::ConstantValue>> {
@@ -284,8 +283,8 @@ auto TypeDeclarationOf(
     -> hir::TypeDeclarationRef {
   return hir::TypeDeclarationRef{
       .unit_name =
-          CompilationUnitName(UnitHomeOf(declared), unit_lowerer.Naming()),
-      .path = DefPathOf(declared, unit_lowerer.Naming())};
+          CompilationUnitName(UnitHomeOf(declared), unit_lowerer.Names()),
+      .path = DefPathOf(declared, unit_lowerer.Names())};
 }
 
 auto LowerUnpackedStruct(
@@ -596,7 +595,7 @@ auto TranslateType(
     // publishes, so it names the interface's unit.
     case slang::ast::SymbolKind::VirtualInterfaceType:
       return hir::Type{hir::VirtualInterfaceType{
-          .unit_name = unit_lowerer.Naming().NameOf(
+          .unit_name = unit_lowerer.Names().NameOf(
               canonical.as<slang::ast::VirtualInterfaceType>().iface)}};
     default:
       return diag::Fail(
@@ -992,8 +991,8 @@ auto UnitLowerer::ResolveClass(
   if (!Owns(cls)) {
     const hir::ClassId id = unit_.classes.Import(
         hir::ClassKey{
-            .unit_name = CompilationUnitName(UnitHomeOf(cls), Naming()),
-            .class_path = DefPathOf(cls, Naming())});
+            .unit_name = CompilationUnitName(UnitHomeOf(cls), Names()),
+            .class_path = DefPathOf(cls, Names())});
     class_cache_.emplace(&cls, id);
     return id;
   }
@@ -1034,7 +1033,7 @@ auto UnitLowerer::InternOwnClass(
   // path declares the same thing. So a copy at a path already declared is that
   // class, built again here so what it names is named alike; its code is the
   // replicating scope's, lowered with that scope.
-  const hir::ClassId id = unit_.classes.DeclareOwn(DefPathOf(cls, Naming()));
+  const hir::ClassId id = unit_.classes.DeclareOwn(DefPathOf(cls, Names()));
   class_cache_.emplace(&cls, id);
 
   auto decl_owner = std::make_unique<hir::ClassDecl>();
@@ -1502,7 +1501,7 @@ void UnitLowerer::RequireEveryClassBodyLowered() const {
       if (classes_with_code_.contains(body.id)) continue;
       left += std::format(
           "{}'{}' in '{}'", left.empty() ? "" : ", ",
-          UnitName(*body.cls, Naming()), scope->asSymbol().name);
+          UnitName(*body.cls, Names()), scope->asSymbol().name);
     }
   }
   if (left.empty()) return;

@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/hir/specialization_values.hpp"
+#include "lyra/hir/lowering_values.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/support/def_path.hpp"
@@ -17,14 +17,15 @@
 namespace lyra::hir {
 
 // What every unit in the design publishes, and the values each of its
-// specializations holds: filled by the declaration phase and read by the body
+// lowerings holds: filled by the declaration phase and read by the body
 // phase. Holding them in one place is what makes the set of facts that crossed
 // enumerable, rather than whatever the frontend's whole-design graph happened
 // to reach.
 //
-// A unit is found by name, and a specialization's values by the
-// specialization's name, which is the identity a reference carries across the
-// boundary; there is no shared table of ids to match on. Which units a unit
+// A unit is found by name, which is the identity a reference carries across
+// the boundary, and a lowering's values by the lowering's name, the place of
+// the instance it was lowered for, which is what a construction names it by;
+// there is no shared table of ids to match on. Which units a unit
 // ends up depending on is read off what it compiled to rather than decided in
 // advance -- a set decided in advance would be an approximation, and it
 // cannot be one: a class first named inside a body is
@@ -32,11 +33,10 @@ namespace lyra::hir {
 // whether or not the reader declared anything.
 class UnitSignatures {
  public:
-  // Records what one specialization of a unit publishes, under the unit's
-  // name. The first one the design declares publishes for the unit, and each
-  // later one adds the generate blocks its objects built that none before it
-  // did.
-  void PublishSpecialization(UnitSignature signature) {
+  // Records what one lowering of a unit publishes, under the unit's name. The
+  // first one the design declares publishes for the unit, and each later one
+  // adds the generate blocks its objects built that none before it did.
+  void PublishSignature(UnitSignature signature) {
     const auto published = by_name_.find(signature.unit_name);
     if (published == by_name_.end()) {
       std::string name = signature.unit_name;
@@ -103,34 +103,33 @@ class UnitSignatures {
     return names;
   }
 
-  // Records what the specialization named `specialization` holds.
-  void PublishValues(std::string specialization, SpecializationValues values) {
-    if (!values_.emplace(std::move(specialization), std::move(values)).second) {
+  // Records the values the lowering named `lowering` holds.
+  void PublishValues(std::string lowering, LoweringValues values) {
+    if (!values_.emplace(std::move(lowering), std::move(values)).second) {
       throw InternalError(
-          "UnitSignatures::PublishValues: one specialization publishes its "
+          "UnitSignatures::PublishValues: one lowering publishes its "
           "values once");
     }
   }
 
-  // What the specialization named `specialization` holds. Every
-  // specialization of the design publishes, so an absent one is a compiler
-  // bug.
-  [[nodiscard]] auto ValuesOf(const std::string& specialization) const
-      -> const SpecializationValues& {
-    const auto it = values_.find(specialization);
+  // The values the lowering named `lowering` holds. Every lowering of the
+  // design publishes, so an absent one is a compiler bug.
+  [[nodiscard]] auto ValuesOf(const std::string& lowering) const
+      -> const LoweringValues& {
+    const auto it = values_.find(lowering);
     if (it == values_.end()) {
       throw InternalError(
           std::format(
-              "UnitSignatures::ValuesOf: specialization '{}' published no "
-              "values; every specialization of the design publishes",
-              specialization));
+              "UnitSignatures::ValuesOf: lowering '{}' published no "
+              "values; every lowering of the design publishes",
+              lowering));
     }
     return it->second;
   }
 
  private:
   std::unordered_map<std::string, UnitSignature> by_name_;
-  std::unordered_map<std::string, SpecializationValues> values_;
+  std::unordered_map<std::string, LoweringValues> values_;
 };
 
 }  // namespace lyra::hir

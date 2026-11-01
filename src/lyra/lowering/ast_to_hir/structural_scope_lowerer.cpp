@@ -42,6 +42,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/ast_to_hir/canonical_body.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
@@ -288,24 +289,25 @@ struct ArgumentSource {
   std::variant<WrittenAtInstantiation, GivenElsewhere, LeftToDefault> from;
 };
 
-// How one instance is built: what it is built as, and where each parameter it
-// takes at construction gets its value, in the unit's own order.
+// How one instance is built: the unit and the lowering it is made as, and
+// where each parameter it takes at construction gets its value, in the unit's
+// own order.
 struct InstanceConstruction {
-  hir::SpecializationRef made;
+  hir::LoweringRef made;
   std::vector<ArgumentSource> arguments;
 };
 
 auto ConstructionOf(
-    const slang::ast::InstanceSymbol& instance, const UnitNamingPolicy& policy,
-    const BuiltAsQuery& built_as) -> InstanceConstruction {
+    const slang::ast::InstanceSymbol& instance, const InstanceNames& names,
+    const ElaboratedInstances& instances) -> InstanceConstruction {
   InstanceConstruction built{
       .made =
-          hir::SpecializationRef{
-              .unit = policy.NameOf(instance),
-              .specialization = built_as.NameOf(instance)},
+          hir::LoweringRef{
+              .unit = names.NameOf(instance),
+              .lowering = LoweringNameOf(instance)},
       .arguments = {}};
   for (const slang::ast::ParameterSymbol* param :
-       policy.Keys().SuppliedParametersOf(instance)) {
+       instances.SuppliedParametersOf(instance)) {
     ArgumentSource source{.parameter = param, .from = LeftToDefault{}};
     if (ValueWrittenAtInstantiation(instance, *param) != nullptr) {
       source.from = WrittenAtInstantiation{};
@@ -422,7 +424,7 @@ auto StructuralScopeLowerer::BuildInstanceMember(
   std::vector<InstanceConstruction> distinct;
   for (const slang::ast::InstanceSymbol* element : elements) {
     InstanceConstruction built =
-        ConstructionOf(*element, owner_->Naming(), owner_->BuiltAs());
+        ConstructionOf(*element, owner_->Names(), owner_->Instances());
     built_member.made.push_back(built.made);
     const auto known =
         std::ranges::find_if(distinct, [&](const InstanceConstruction& other) {

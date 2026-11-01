@@ -263,9 +263,9 @@ auto RenderSection(
 
 // Everything the unit states about the foreign name space. A name the unit
 // supplies a body for is an entry point the C side calls; one the foreign
-// program defines is what the C side must define. An
-// entry that sits on a scope is compiled once per specialization of that scope,
-// so it is not among the unit's callables and is walked separately.
+// program defines is what the C side must define. An entry that sits on a
+// scope is compiled once per body of the scope's unit, so it is not among the
+// unit's callables and is walked separately.
 auto SurfaceOf(const mir::CompilationUnit& unit) -> ForeignSurface {
   ForeignSurface surface;
   for (const mir::CallableDecl& callable : unit.callables) {

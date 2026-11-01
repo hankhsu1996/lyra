@@ -7,10 +7,10 @@
 #include <format>
 #include <limits>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -40,11 +40,9 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/frontend/library_texts.hpp"
-#include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
-#include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
-#include "lyra/lowering/ast_to_hir/instance_context.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
+#include "lyra/lowering/ast_to_hir/outside_reach.hpp"
 #include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/support/def_path.hpp"
 
@@ -94,23 +92,6 @@ auto IsIdentifiedByDeclaration(const slang::ast::Type& type) -> bool {
   }
 }
 
-// The compilation unit `unit`, as part of a key being worked out. An instance
-// whose own key is in progress has no name to give, and what is being worked
-// out may be asked about something it holds itself: a type it declares and
-// fixes a local parameter to (LRM 6.20.4), or a design element nested in it
-// (LRM 23.4). Such an instance is told by how far out on the chain of keys in
-// progress it stands, which is all two instances could differ in there.
-auto UnitWhileNaming(
-    const slang::ast::Symbol& unit, const UnitNamingPolicy& policy)
-    -> std::string {
-  if (const auto* body = unit.as_if<slang::ast::InstanceBodySymbol>()) {
-    if (const auto levels = policy.LevelsOutTo(*body)) {
-      return std::format("^{}", *levels);
-    }
-  }
-  return CompilationUnitName(unit, policy);
-}
-
 // One type's identity. A declared type answers with the unit declaring it and
 // which declaration of that unit it is. A type built out of others answers with
 // its own form over the identities of what it holds (LRM 6.22.1 f), and a
@@ -119,15 +100,15 @@ auto UnitWhileNaming(
 // Every arm answers with an identity rather than adding to one under
 // construction, so a form this does not spell cannot contribute nothing and
 // leave two types looking alike.
-auto TypeIdentity(const slang::ast::Type& type, const UnitNamingPolicy& policy)
+auto TypeIdentity(const slang::ast::Type& type, const InstanceNames& names)
     -> std::string {
   using slang::ast::SymbolKind;
   const slang::ast::Type& canonical = type.getCanonicalType();
   if (IsIdentifiedByDeclaration(canonical)) {
-    const std::string unit = UnitWhileNaming(UnitHomeOf(canonical), policy);
+    const std::string unit = CompilationUnitName(UnitHomeOf(canonical), names);
     return std::format(
         "declared {}:{} {}", unit.size(), unit,
-        support::DefPathIdentity(DefPathOf(canonical, policy)));
+        support::DefPathIdentity(DefPathOf(canonical, names)));
   }
 
   switch (canonical.kind) {
@@ -146,38 +127,38 @@ auto TypeIdentity(const slang::ast::Type& type, const UnitNamingPolicy& policy)
       const auto& array = canonical.as<slang::ast::PackedArrayType>();
       return std::format(
           "packed[{}:{}]{}", array.range.left, array.range.right,
-          TypeIdentity(array.elementType, policy));
+          TypeIdentity(array.elementType, names));
     }
     case SymbolKind::FixedSizeUnpackedArrayType: {
       const auto& array =
           canonical.as<slang::ast::FixedSizeUnpackedArrayType>();
       return std::format(
           "[{}:{}]{}", array.range.left, array.range.right,
-          TypeIdentity(array.elementType, policy));
+          TypeIdentity(array.elementType, names));
     }
     case SymbolKind::DynamicArrayType:
       return "[]" +
              TypeIdentity(
                  canonical.as<slang::ast::DynamicArrayType>().elementType,
-                 policy);
+                 names);
     case SymbolKind::QueueType: {
       const auto& queue = canonical.as<slang::ast::QueueType>();
       return std::format(
-          "[${}]{}", queue.maxBound, TypeIdentity(queue.elementType, policy));
+          "[${}]{}", queue.maxBound, TypeIdentity(queue.elementType, names));
     }
     case SymbolKind::AssociativeArrayType: {
       const auto& assoc = canonical.as<slang::ast::AssociativeArrayType>();
       const std::string index = assoc.indexType == nullptr
                                     ? std::string{"*"}
-                                    : TypeIdentity(*assoc.indexType, policy);
+                                    : TypeIdentity(*assoc.indexType, names);
       return std::format(
-          "[{}]{}", index, TypeIdentity(assoc.elementType, policy));
+          "[{}]{}", index, TypeIdentity(assoc.elementType, names));
     }
     // LRM 25.9: the type names the interface together with the parameters it
     // was given, and the view it is taken through.
     case SymbolKind::VirtualInterfaceType: {
       const auto& handle = canonical.as<slang::ast::VirtualInterfaceType>();
-      const std::string unit = policy.NameOf(handle.iface);
+      const std::string unit = names.NameOf(handle.iface);
       return std::format(
           "virtual {}:{} {}", unit.size(), unit,
           handle.modport == nullptr ? std::string_view{}
@@ -268,59 +249,22 @@ namespace {
 // arrives as its concrete Symbol so this serves both spaces the frontend
 // exposes bindings through -- a module body's parameter list and a class
 // specialization's generic parameters.
-//
-// Reading the settled value is not a choice about where it enters the artifact
-// here: what the value varies with is the specialization, and the
-// specialization is what this computes.
 auto ParameterInput(
-    const slang::ast::Symbol& symbol, const UnitNamingPolicy& policy)
-    -> UnitKeyInput {
+    const slang::ast::Symbol& symbol, const InstanceNames& names)
+    -> ClassKeyInput {
   if (symbol.kind == slang::ast::SymbolKind::Parameter) {
-    return UnitKeyInput{
+    return ClassKeyInput{
         .name = std::string{symbol.name},
-        .kind = FixedValue{
+        .kind = BoundValue{
             .value = ValueIdentity(
                 symbol.as<slang::ast::ParameterSymbol>().getValue())}};
   }
-  return UnitKeyInput{
+  return ClassKeyInput{
       .name = std::string{symbol.name},
-      .kind = FixedType{
+      .kind = BoundType{
           .type = TypeIdentity(
               symbol.as<slang::ast::TypeParameterSymbol>().targetType.getType(),
-              policy)}};
-}
-
-// Which interface an interface port carries (LRM 25.3), named by the
-// specialization that interface instance is. Everything reached through the
-// port takes its types and positions from there, so two instantiations bound to
-// different interfaces build different objects, exactly as two parameter
-// bindings do. A port carrying a range carries one interface per
-// element, each its own, so the answer is which unit stands at each position.
-// A modport belongs to the same answer, and not merely because it narrows: a
-// view also names things of its own (LRM 25.5.4), and two views may give one
-// name different storage, so a unit bound through each reaches a different
-// place under the same spelling.
-auto InterfacePortInput(
-    const PortBinding& binding, const UnitNamingPolicy& policy)
-    -> UnitKeyInput {
-  const auto& [instances, modport] = binding.connected;
-  FixedInterface fixed{
-      .specializations = {},
-      .taken = {},
-      .modport =
-          modport == nullptr ? std::string{} : std::string{modport->name}};
-  fixed.taken.reserve(instances.size());
-  for (const slang::ast::InstanceSymbol* instance : instances) {
-    std::string named = policy.NameOf(*instance);
-    const auto known = std::ranges::find(fixed.specializations, named);
-    fixed.taken.push_back(
-        static_cast<std::uint32_t>(known - fixed.specializations.begin()));
-    if (known == fixed.specializations.end()) {
-      fixed.specializations.push_back(std::move(named));
-    }
-  }
-  return UnitKeyInput{
-      .name = std::string{binding.port->name}, .kind = std::move(fixed)};
+              names)}};
 }
 
 // Whether `symbol` is the scope a compilation unit is: a package (LRM 26), a
@@ -332,138 +276,25 @@ auto IsCompilationUnit(const slang::ast::Symbol& symbol) -> bool {
          symbol.kind == slang::ast::SymbolKind::CompilationUnit;
 }
 
-// The constant a name reads where it lands, behind a mark no path is written
-// with, or nothing where it reads none.
-auto ConstantReadIdentity(const std::optional<std::string>& reads)
-    -> std::string {
-  return reads.has_value() ? std::format(" ={}:{}", reads->size(), *reads)
-                           : std::string{};
-}
-
-// How a parameter of another instance the body reads is told apart: by the
-// constant it settled to, which the body's code is compiled with, or as one
-// each object of that instance holds.
-auto ForeignReadIdentity(const std::optional<slang::ConstantValue>& settled)
-    -> std::string {
-  return settled.has_value() ? ValueIdentity(*settled) : std::string{"cell"};
-}
-
 // The bytes a key folds to. Every part is written with its own delimiter, so
 // two keys that differ anywhere differ here; nothing rests on this being read
 // back, and nothing compares keys through it -- a key answers that itself.
-auto KeyBytes(const UnitKey& key) -> std::string {
+auto KeyBytes(const ClassKey& key) -> std::string {
   std::string bytes;
-  for (const UnitKeyInput& input : key.inputs) {
+  for (const ClassKeyInput& input : key.inputs) {
     bytes += input.name;
     bytes += '=';
     bytes += std::visit(
         Overloaded{
-            [](const FixedValue& v) { return v.value; },
-            [](const FixedType& v) { return v.type; },
-            [](const FixedInterface& v) {
-              std::string at = "<";
-              for (const std::string& named : v.specializations) {
-                at += named;
-                at += ',';
-              }
-              at += '|';
-              for (const std::uint32_t taken : v.taken) {
-                at += std::format("{},", taken);
-              }
-              return std::format("{}|{}>", at, v.modport);
-            },
-            [](const LandsIn& v) {
-              return std::format(
-                  "<in {}:{} {}{}>", v.specialization.size(), v.specialization,
-                  support::DefPathIdentity(v.scope),
-                  ConstantReadIdentity(v.reads));
-            },
-            [](const LandsBack& v) {
-              return std::format(
-                  "<back {} {}{}>", v.levels,
-                  support::DefPathIdentity(v.blocks),
-                  ConstantReadIdentity(v.reads));
-            },
-            [](const BindInstantiation& v) {
-              return std::format("<bound by {}>", v.directive);
-            },
-            [](const BoundToCell& v) {
-              return std::format("<cell {}>", v.cell);
-            },
-            [](const BuiltByTheRoot&) { return std::string{"<root>"}; }},
+            [](const BoundValue& v) { return v.value; },
+            [](const BoundType& v) { return v.type; }},
         input.kind);
     bytes += ';';
   }
   return bytes;
 }
 
-// Where a name that left an instance lands, as one input to that instance's
-// key, or a block it passes below that: the specialization holding the scope
-// `scope` and the scope's path there, or where it stands relative to an
-// instance whose key is being worked out, and the constant `reads` the name
-// reads there.
-auto LandingOf(
-    const slang::ast::Scope& scope, const std::optional<std::string>& reads,
-    const UnitNamingPolicy& policy) -> UnitKeyInputKind {
-  support::DefPath blocks;
-  const slang::ast::Symbol* at = &scope.asSymbol();
-  while (at->kind != slang::ast::SymbolKind::InstanceBody) {
-    if (const auto* block = at->as_if<slang::ast::GenerateBlockSymbol>()) {
-      blocks.data.emplace_back(policy.BlockStepOf(*block));
-    }
-    at = &at->getHierarchicalParent()->asSymbol();
-  }
-  if (const auto levels =
-          policy.LevelsOutTo(at->as<slang::ast::InstanceBodySymbol>())) {
-    std::ranges::reverse(blocks.data);
-    return LandsBack{
-        .levels = *levels, .blocks = std::move(blocks), .reads = reads};
-  }
-  return LandsIn{
-      .specialization = policy.NameOf(
-          InstantiationOf(at->as<slang::ast::InstanceBodySymbol>())),
-      .scope = DefPathOf(scope.asSymbol(), policy),
-      .reads = reads};
-}
-
-// Something written elsewhere about the instance at `path`, as a part of the
-// key of whatever holds that instance.
-auto OverrideInput(
-    const std::string& path, const OverrideEffect& effect,
-    const UnitNamingPolicy& policy) -> UnitKeyInput {
-  return std::visit(
-      Overloaded{
-          [&](const ParameterGivenElsewhere& given) {
-            UnitKeyInput input = ParameterInput(*given.parameter, policy);
-            input.name = std::format("{}.{}", path, input.name);
-            return input;
-          },
-          [&](const InsertedByBind& bound) {
-            return UnitKeyInput{
-                .name = path,
-                .kind = BindInstantiation{.directive = bound.directive}};
-          },
-          [&](const CellChosenByConfiguration& chosen) {
-            return UnitKeyInput{
-                .name = path,
-                .kind = BoundToCell{.cell = CellName(*chosen.cell)}};
-          }},
-      effect);
-}
-
 }  // namespace
-
-auto IsBuiltByTheRoot(const slang::ast::InstanceSymbol& inst) -> bool {
-  return inst.isTopLevel() &&
-         std::ranges::any_of(
-             inst.body.getParameters(),
-             [&](const slang::ast::ParameterSymbolBase* param) {
-               const auto* value =
-                   param->symbol.as_if<slang::ast::ParameterSymbol>();
-               return value != nullptr && !value->isLocalParam() &&
-                      GivenAValue(inst.body, *value);
-             });
-}
 
 auto IsInstanceScope(const slang::ast::Scope& scope) -> bool {
   const slang::ast::SymbolKind kind = scope.asSymbol().kind;
@@ -504,118 +335,18 @@ auto InstanceHolding(const slang::ast::Scope& scope)
   return InstantiationOf(InstanceBodyHolding(scope));
 }
 
-namespace {
-
-// Which design element `inst` is an instance of. A name alone does not say: a
-// library cell is found by its library and its name (LRM 33.2.1), and a module
-// declared inside another by the module declaring it and its name (LRM 23.4).
-// The nested one reads the parameters of the element declaring it (LRM 23.9),
-// so it is named after the unit that element's instance is, the way everything
-// else a unit declares is.
-auto DefinitionName(
-    const slang::ast::InstanceSymbol& inst, const UnitNamingPolicy& policy)
-    -> std::string {
+auto DefinitionNameOf(const slang::ast::InstanceSymbol& inst) -> std::string {
   const slang::ast::DefinitionSymbol& definition = inst.getDefinition();
   if (IsLibraryCell(definition)) return CellName(definition);
 
   // A nested declaration is one of the body declaring it, and that body is one
   // the instance stands in, since the name is visible nowhere else.
   return std::format(
-      "{}::{}", UnitWhileNaming(BodyDeclaring(definition), policy),
+      "{}::{}", DefinitionNameOf(InstantiationOf(BodyDeclaring(definition))),
       definition.name);
 }
 
-// What `inst` is an application of, read off the body it is read through, with
-// every other instance and every block in it named as `names` names them.
-auto SpecializationKeyOf(
-    const slang::ast::InstanceSymbol& inst, const Specializations& keys,
-    const UnitNamingPolicy& names) -> UnitKey {
-  UnitKey key{.definition = DefinitionName(inst, names), .inputs = {}};
-  if (IsBuiltByTheRoot(inst)) {
-    key.inputs.push_back(UnitKeyInput{.name = "", .kind = BuiltByTheRoot{}});
-  }
-  // A local parameter is written from the others by its own declaration, so it
-  // names nothing they do not.
-  for (const auto* param : inst.body.getParameters()) {
-    if (param->isLocalParam()) continue;
-    key.inputs.push_back(ParameterInput(param->symbol, names));
-  }
-  const Environment& environment = keys.EnvironmentOf(inst);
-  for (const PortBinding& binding : environment.Ports()) {
-    key.inputs.push_back(InterfacePortInput(binding, names));
-  }
-  const InstanceContext& context = keys.ContextOf(inst);
-  // A name is no parameter and declares no name of its own, so it is told
-  // apart from its writer's other names by its place among them, and each
-  // block it passes below where it lands by its place along the name.
-  const auto name_inputs =
-      [&](const std::string& name, const slang::ast::Scope& landed,
-          std::span<const slang::ast::Scope* const> blocks_passed,
-          const std::optional<std::string>& reads) {
-        key.inputs.push_back(
-            UnitKeyInput{
-                .name = name, .kind = LandingOf(landed, reads, names)});
-        for (std::size_t passed = 0; passed < blocks_passed.size(); ++passed) {
-          key.inputs.push_back(
-              UnitKeyInput{
-                  .name = std::format("{}>{}", name, passed),
-                  .kind =
-                      LandingOf(*blocks_passed[passed], std::nullopt, names)});
-        }
-      };
-  const std::vector<ClimbAnchor> climbs = context.Climbs();
-  for (std::size_t written = 0; written < climbs.size(); ++written) {
-    const ClimbAnchor& climb = climbs[written];
-    name_inputs(
-        std::format("^{}", written), *climb.scope, climb.blocks_passed,
-        climb.reads);
-  }
-  for (const NameLandingBelow& name : context.names_below) {
-    name_inputs(
-        std::format("{}.^{}", name.path, name.written), *name.scope,
-        name.blocks_passed, name.reads);
-  }
-  for (const OverriddenBelow& overridden : context.overridden_below) {
-    key.inputs.push_back(
-        OverrideInput(overridden.path, overridden.effect, names));
-  }
-  // Where the body reaches each class another instance declares, and which
-  // parameters of another instance its objects hold, are what the lowering
-  // reads of the instance besides its names; each is told apart by its place
-  // among them.
-  for (std::size_t at = 0; at < environment.ClassHomes().size(); ++at) {
-    const std::optional<ReachStart>& start = environment.ClassHomes()[at].start;
-    const auto* from =
-        start.has_value() ? std::get_if<FromScope>(&*start) : nullptr;
-    key.inputs.push_back(
-        UnitKeyInput{
-            .name = std::format("class>{}", at),
-            .kind =
-                from != nullptr
-                    ? LandingOf(*from->scope, std::nullopt, names)
-                    : UnitKeyInputKind{FixedValue{
-                          .value = start.has_value() ? "reader" : "none"}}});
-  }
-  for (std::size_t at = 0; at < environment.ForeignParameters().size(); ++at) {
-    key.inputs.push_back(
-        UnitKeyInput{
-            .name = std::format("param>{}", at),
-            .kind = FixedValue{
-                .value = ForeignReadIdentity(
-                    environment.ForeignParameters()[at].settled)}});
-  }
-  return key;
-}
-
-}  // namespace
-
-auto SpecializationNames::NameOf(const slang::ast::InstanceSymbol& inst) const
-    -> std::string {
-  return Keys().SpecializationNameOf(inst);
-}
-
-auto SpecializationNames::BlockStepOf(
-    const slang::ast::GenerateBlockSymbol& block) const
+auto PathStepOf(const slang::ast::GenerateBlockSymbol& block)
     -> support::GenerateBlockStep {
   const std::optional<std::uint64_t> index =
       block.getArrayIndex() == nullptr
@@ -624,174 +355,25 @@ auto SpecializationNames::BlockStepOf(
   return support::GenerateBlockStep{
       .label = GenerateBlockLabel(block),
       .disambiguator = LabelDisambiguatorOf(block),
-      .arguments = index};
+      .distinguisher = index};
 }
 
-auto KeyTable::AnswersNow(const KeptKey& kept) const -> bool {
-  return std::ranges::none_of(
-      chain_, [&](const slang::ast::InstanceBodySymbol* body) {
-        return kept.depends_on.contains(body);
-      });
-}
-
-auto KeyTable::LevelsOutTo(const slang::ast::InstanceBodySymbol& body)
-    -> std::optional<std::uint32_t> {
-  for (std::size_t out = 0; out < chain_.size(); ++out) {
-    const std::size_t at = chain_.size() - 1 - out;
-    if (chain_[at] == &body) {
-      for (KeyInProgress& asking : in_progress_) {
-        if (asking.chain_at_start > at) asking.met_nothing_outside = false;
-      }
-      return static_cast<std::uint32_t>(out);
-    }
-  }
-  for (KeyInProgress& asking : in_progress_) {
-    asking.depends_on.insert(&body);
-  }
-  return std::nullopt;
-}
-
-auto KeyTable::NameOf(const slang::ast::InstanceSymbol& inst) -> std::string {
-  if (const auto kept = kept_.find(&inst);
-      kept != kept_.end() && AnswersNow(kept->second)) {
-    for (KeyInProgress& asking : in_progress_) {
-      asking.depends_on.insert(
-          kept->second.depends_on.begin(), kept->second.depends_on.end());
-    }
-    return kept->second.name;
-  }
-  in_progress_.push_back(
-      KeyInProgress{
-          .chain_at_start = chain_.size(),
-          .met_nothing_outside = true,
-          .depends_on = {}});
-  // Every part may ask for another instance's key, and that key may lead back
-  // here: an interface this instance carries may itself carry one that stands
-  // inside it (LRM 25.3). So the instance is among those being worked out for
-  // the whole of its key.
-  chain_.push_back(&inst.body);
-  UnitKey key = SpecializationKeyOf(inst, naming_->Keys(), *naming_);
-  chain_.pop_back();
-  KeyInProgress worked_out = std::move(in_progress_.back());
-  in_progress_.pop_back();
-  std::string name = UnitName(key);
-  // A key asked while another is being worked out can differ from the one the
-  // instance has alone, where a name it writes lands in an instance still
-  // being worked out, so it is kept only when nothing it met lay outside
-  // itself; it answers a later asking only while none of the instances it
-  // looked for and did not find is being worked out.
-  if (!worked_out.met_nothing_outside) return name;
-  if (const auto folded = folded_.find(name); folded == folded_.end()) {
-    folded_.emplace(name, key);
-  } else if (folded->second != key) {
-    throw InternalError(
-        "KeyTable: two keys reached one name, so the name no longer tells the "
-        "instances apart");
-  }
-  kept_.insert_or_assign(
-      &inst, KeptKey{
-                 .key = std::move(key),
-                 .name = name,
-                 .depends_on = std::move(worked_out.depends_on)});
-  return name;
-}
-
-auto KeyTable::KeyNamed(const std::string& name) const -> const UnitKey& {
-  const auto folded = folded_.find(name);
-  if (folded == folded_.end()) {
-    throw InternalError(
-        std::format(
-            "KeyTable: '{}' names no key kept, so it was asked for while the "
-            "key it names was still being worked out",
-            name));
-  }
-  return folded->second;
-}
-
-void KeyTable::Forget(const slang::ast::InstanceSymbol& inst) {
-  kept_.erase(&inst);
-}
-
-auto Specializations::FixesNothing(const slang::ast::InstanceSymbol& inst) const
-    -> bool {
-  return keys_.KeyNamed(SpecializationNameOf(inst)).inputs.empty();
-}
-
-auto Specializations::DefinitionOf(const slang::ast::InstanceSymbol& inst) const
+auto PathNames::NameOf(const slang::ast::InstanceSymbol& inst) const
     -> std::string {
-  return keys_.KeyNamed(SpecializationNameOf(inst)).definition;
+  return inst.getHierarchicalPath();
 }
 
-auto Specializations::SpecializationNameOf(
-    const slang::ast::InstanceSymbol& inst) const -> std::string {
-  return keys_.NameOf(inst);
+auto PathNames::BlockStepOf(const slang::ast::GenerateBlockSymbol& block) const
+    -> support::GenerateBlockStep {
+  return PathStepOf(block);
 }
 
-auto Specializations::ChecksItself() const -> bool {
-  switch (bodies_read_) {
-    case support::BodiesRead::kOnePerName:
-      return false;
-    case support::BodiesRead::kEveryInstance:
-      return true;
-  }
-  return false;
-}
-
-auto Specializations::HasBodyOfItsOwn(
-    const slang::ast::InstanceSymbol& inst) const -> bool {
-  const slang::ast::InstanceBodySymbol* shared = inst.getCanonicalBody();
-  if (ChecksItself() || shared == nullptr || read_anyway_.contains(&inst)) {
-    return true;
-  }
-  // What is written elsewhere reaches one instance and not another (LRM
-  // 23.10.1, 23.11, 33.4), so where the shared body has any of it below, this
-  // instance is read through its own body like one the front end elaborated.
-  return !ContextOf(InstantiationOf(*shared)).overridden_below.empty();
-}
-
-void Specializations::ReadBodyOf(const slang::ast::InstanceSymbol& inst) const {
-  if (read_anyway_.contains(&inst)) return;
-  // The front end shares a body only between instances that elaborate alike,
-  // so the shared body and the instance's own state one key; what is dropped
-  // pointed into the shared one, and the key is worked out again from the own
-  // body with nothing of it kept. A key that moves here is an input the shared
-  // body did not state. What an enclosing instance's key takes of this one --
-  // the names leaving it, what is written about what is below it -- is a part
-  // of this key, so it cannot move either.
-  const std::string read_through_shared = SpecializationNameOf(inst);
-  read_anyway_.insert(&inst);
-  per_instance_.erase(&inst);
-  context_.erase(&inst);
-  environments_.erase(&inst);
-  keys_.Forget(inst);
-  if (SpecializationNameOf(inst) != read_through_shared) {
-    throw InternalError(
-        std::format(
-            "Specializations: '{}' is a different specialization read through "
-            "its own body than through the body the front end shared, so the "
-            "shared body did not state everything that tells it apart -- "
-            "please report this as a bug",
-            inst.getHierarchicalPath()));
-  }
-}
-
-auto Specializations::ContextOf(const slang::ast::InstanceSymbol& inst) const
-    -> const InstanceContext& {
-  return InstanceContextOf(inst, context_, ReadThroughItsOwnBody());
-}
-
-auto Specializations::ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn {
-  return [this](const slang::ast::InstanceSymbol& inst) {
-    return HasBodyOfItsOwn(inst);
-  };
-}
-
-auto ArgumentsDigest(const UnitKey& key) -> std::optional<std::uint64_t> {
+auto ArgumentsDigest(const ClassKey& key) -> std::optional<std::uint64_t> {
   if (key.inputs.empty()) return std::nullopt;
   return NameDigest(KeyBytes(key));
 }
 
-auto UnitName(const UnitKey& key) -> std::string {
+auto UnitName(const ClassKey& key) -> std::string {
   return WithDigest(key.definition, ArgumentsDigest(key));
 }
 
@@ -801,13 +383,13 @@ namespace {
 // told from others by wherever the key is used.
 auto ClassKeyUnder(
     std::string definition, const slang::ast::ClassType& cls,
-    const UnitNamingPolicy& policy) -> UnitKey {
-  UnitKey key{.definition = std::move(definition), .inputs = {}};
+    const InstanceNames& names) -> ClassKey {
+  ClassKey key{.definition = std::move(definition), .inputs = {}};
   if (cls.genericClass == nullptr) {
     return key;
   }
   for (const auto* sym : cls.genericParameters) {
-    key.inputs.push_back(ParameterInput(*sym, policy));
+    key.inputs.push_back(ParameterInput(*sym, names));
   }
   return key;
 }
@@ -816,18 +398,18 @@ auto ClassKeyUnder(
 // another class (LRM 8.3, A.1.4, A.1.9), so no other scope stands above one.
 [[noreturn]] void ThrowClassDeclaredIn(std::string_view what) {
   throw InternalError(
-      std::format("UnitKeyOf: a class is declared inside {}", what));
+      std::format("ClassKeyOf: a class is declared inside {}", what));
 }
 
 }  // namespace
 
-auto UnitKeyOf(const slang::ast::ClassType& cls, const UnitNamingPolicy& policy)
-    -> UnitKey {
+auto ClassKeyOf(const slang::ast::ClassType& cls, const InstanceNames& names)
+    -> ClassKey {
   // The key names a class inside its compilation unit by one string, and the
   // source name alone does not: SystemVerilog scopes the declaration, so
   // sibling generate blocks may each declare the same one (LRM 27.3), and so
   // may two classes (LRM 8.23).
-  const support::DefPath path = DefPathOf(cls, policy);
+  const support::DefPath path = DefPathOf(cls, names);
   std::string definition;
   for (const support::DefPathData& enclosing :
        std::span{path.data}.first(path.data.size() - 1)) {
@@ -838,7 +420,7 @@ auto UnitKeyOf(const slang::ast::ClassType& cls, const UnitNamingPolicy& policy)
               if (block.disambiguator != 0) {
                 text += std::format("#{}", block.disambiguator);
               }
-              return WithDigest(std::move(text), block.arguments);
+              return WithDigest(std::move(text), block.distinguisher);
             },
             [](const support::ClassStep& outer) -> std::string {
               return WithDigest(outer.name, outer.arguments);
@@ -862,12 +444,12 @@ auto UnitKeyOf(const slang::ast::ClassType& cls, const UnitNamingPolicy& policy)
     definition += '_';
   }
   definition += cls.name;
-  return ClassKeyUnder(std::move(definition), cls, policy);
+  return ClassKeyUnder(std::move(definition), cls, names);
 }
 
-auto UnitName(const slang::ast::ClassType& cls, const UnitNamingPolicy& policy)
+auto UnitName(const slang::ast::ClassType& cls, const InstanceNames& names)
     -> std::string {
-  return UnitName(UnitKeyOf(cls, policy));
+  return UnitName(ClassKeyOf(cls, names));
 }
 
 auto DeclaringNamespaceUnit(const slang::ast::Symbol& decl)
@@ -1019,20 +601,19 @@ auto BelongsToAnInstance(const slang::ast::Symbol& type) -> bool {
 }
 
 auto CompilationUnitName(
-    const slang::ast::Symbol& unit, const UnitNamingPolicy& policy)
-    -> std::string {
+    const slang::ast::Symbol& unit, const InstanceNames& names) -> std::string {
   using slang::ast::SymbolKind;
   if (unit.kind == SymbolKind::Package) {
     return std::string(unit.name);
   }
   if (unit.kind == SymbolKind::InstanceBody) {
-    return policy.NameOf(
+    return names.NameOf(
         InstantiationOf(unit.as<slang::ast::InstanceBodySymbol>()));
   }
   if (const auto* spec = unit.as_if<slang::ast::ClassType>()) {
     return std::format(
-        "{}__{}", CompilationUnitName(DeclaringCompilationUnit(*spec), policy),
-        UnitName(*spec, policy));
+        "{}__{}", CompilationUnitName(DeclaringCompilationUnit(*spec), names),
+        UnitName(*spec, names));
   }
   if (unit.kind == SymbolKind::CompilationUnit) {
     // The anonymous $unit scope has no source name; its distinguishing identity
@@ -1103,7 +684,7 @@ auto TypeStepOf(const slang::ast::Type& type) -> support::DefPathData {
 // no declaration stands in: a loop generate, whose blocks each already answer
 // to the loop's label (LRM 27.4), and an anonymous program, whose items share
 // the name space of the scope around it (LRM 24.6).
-auto StepOf(const slang::ast::Symbol& scope, const UnitNamingPolicy& policy)
+auto StepOf(const slang::ast::Symbol& scope, const InstanceNames& names)
     -> std::optional<support::DefPathData> {
   using slang::ast::SymbolKind;
   if (scope.kind == SymbolKind::GenerateBlockArray ||
@@ -1111,7 +692,7 @@ auto StepOf(const slang::ast::Symbol& scope, const UnitNamingPolicy& policy)
     return std::nullopt;
   }
   if (const auto* block = scope.as_if<slang::ast::GenerateBlockSymbol>()) {
-    return policy.BlockStepOf(*block);
+    return names.BlockStepOf(*block);
   }
   // A class is told from the others of its scope by its name and, for a
   // specialization of a generic class, what its parameters were bound to
@@ -1120,7 +701,7 @@ auto StepOf(const slang::ast::Symbol& scope, const UnitNamingPolicy& policy)
     return support::ClassStep{
         .name = std::string{cls->name},
         .arguments = ArgumentsDigest(
-            ClassKeyUnder(std::string{cls->name}, *cls, policy))};
+            ClassKeyUnder(std::string{cls->name}, *cls, names))};
   }
   // A covergroup is a type of its scope as a class is (LRM 19.3), in the same
   // name space, so it is told from the others by its name the same way.
@@ -1184,11 +765,11 @@ auto CovergroupNameOf(const slang::ast::CovergroupType& covergroup)
 }
 
 auto DefPathOf(
-    const slang::ast::Symbol& declaration, const UnitNamingPolicy& policy)
+    const slang::ast::Symbol& declaration, const InstanceNames& names)
     -> support::DefPath {
   support::DefPath path;
   for (const slang::ast::Symbol* at = &declaration; !IsCompilationUnit(*at);) {
-    if (auto step = StepOf(*at, policy)) {
+    if (auto step = StepOf(*at, names)) {
       path.data.push_back(*std::move(step));
     }
     const slang::ast::Scope* holder = at->getParentScope();

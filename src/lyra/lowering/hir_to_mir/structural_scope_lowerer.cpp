@@ -3315,7 +3315,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
         subroutine_callables[export_decl.subroutine.value];
     const mir::TypeId method_result_type =
         mir_class.callables.Get(method_id).code.result_type;
-    // The subroutine is compiled once per specialization of this scope while
+    // The subroutine is compiled once per body of this scope's unit while
     // the DPI-C name is one program-global symbol, so the scope publishes the
     // entry and the symbol resolves against whichever scope the foreign call
     // chain established. So the entry is the scope's own: it takes the scope

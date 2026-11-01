@@ -10,13 +10,12 @@
 // its code and its captures.
 //
 // The record is worked out once, from the instance, before any unit is
-// lowered; what identifies the instance is rendered from it, and the lowering
-// of the body takes every such fact from it and from nowhere else. A fact the
-// lowering asks for and the record does not hold is a fact the identity never
-// held either, which is this compiler's defect and is reported as one.
+// lowered, and the lowering of the body takes every such fact from it and
+// from nowhere else. A fact the lowering asks for and the record does not
+// hold is one the walk filling the record missed, which is this compiler's
+// defect and is reported as one.
 
 #include <optional>
-#include <span>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -25,37 +24,18 @@
 
 #include "lyra/lowering/ast_to_hir/climb.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
-#include "lyra/lowering/ast_to_hir/instance_context.hpp"
+#include "lyra/lowering/ast_to_hir/outside_reach.hpp"
+#include "lyra/lowering/ast_to_hir/parameter_value_source.hpp"
 
 namespace slang::ast {
 class HierarchicalReference;
+class InstanceSymbol;
 class ParameterSymbol;
 class Scope;
 class Symbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
-
-// Where a value parameter's value comes from, for the objects built from one
-// compiled scope. Settled at elaboration: the code reads it as the constant
-// this specialization settled it to. Supplied at construction: whoever builds
-// the object passes it -- an instance's parameter its code reads (LRM 23.10.2),
-// or the index a loop's block was built at (LRM 27.4). Computed at
-// construction: its own declaration writes it from a supplied value, directly
-// or through another such, so each object computes it when built.
-enum class ParameterValueSource {
-  kSettledAtElaboration,
-  kSuppliedAtConstruction,
-  kComputedAtConstruction,
-};
-
-// Where each value parameter of an instance's body takes its value from, and
-// those its objects are handed, in the order the body declares them.
-struct ParametersOfInstance {
-  std::vector<const slang::ast::ParameterSymbol*> supplied;
-  std::unordered_map<const slang::ast::ParameterSymbol*, ParameterValueSource>
-      sources;
-};
 
 // The scope declaring a class or covergroup the body uses that stands in
 // another instance, and where the body starts reaching it, or nothing where it
@@ -124,17 +104,6 @@ class Environment {
     return parameters_;
   }
 
-  [[nodiscard]] auto ClassHomes() const -> std::span<const ClassHome> {
-    return class_homes_;
-  }
-  [[nodiscard]] auto ForeignParameters() const
-      -> std::span<const ForeignParameter> {
-    return foreign_parameters_;
-  }
-  [[nodiscard]] auto Ports() const -> std::span<const PortBinding> {
-    return ports_;
-  }
-
  private:
   std::vector<NameUse> names_;
   ParametersOfInstance parameters_;
@@ -142,5 +111,15 @@ class Environment {
   std::vector<ForeignParameter> foreign_parameters_;
   std::vector<PortBinding> ports_;
 };
+
+class ElaboratedInstances;
+
+// What the body `inst` is read through reaches outside itself, resolved for
+// `inst`: where each name it writes lands, where it starts reaching each class
+// another instance declares, what each parameter of another instance it reads
+// settled to, and what each of its interface ports is bound to.
+[[nodiscard]] auto EnvironmentOf(
+    const slang::ast::InstanceSymbol& inst,
+    const ElaboratedInstances& instances) -> Environment;
 
 }  // namespace lyra::lowering::ast_to_hir

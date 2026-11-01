@@ -170,22 +170,6 @@ namespace lyra::lowering::ast_to_hir {
       "holding it");
 }
 
-// One block instance as the path of an instance below it spells it: its label,
-// which one it is among the blocks of its scope sharing that label where it is
-// not the first (LRM 27.5), and for a loop's block the index it elaborated at
-// (LRM 27.4).
-[[nodiscard]] inline auto BlockInstancePathName(
-    const slang::ast::GenerateBlockSymbol& block) -> std::string {
-  std::string name = GenerateBlockLabel(block);
-  if (const std::uint32_t which = LabelDisambiguatorOf(block); which != 0) {
-    name += std::format("#{}", which);
-  }
-  if (block.getArrayIndex() != nullptr) {
-    name += std::format("[{}]", LoopIndexOf(block));
-  }
-  return name;
-}
-
 // Whether the visit at this block is the visit that handles its construct,
 // which is the first block the construct produced. A block no conditional
 // produced is a construct of one and always answers yes.

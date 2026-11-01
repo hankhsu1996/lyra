@@ -182,28 +182,27 @@ auto ImportPorts(TypeImporter& importer, std::vector<PortDecl> ports)
 
 }  // namespace
 
-void PublishBlocksBuiltBy(
-    UnitSignature& unit, const UnitSignature& specialization) {
+void PublishBlocksBuiltBy(UnitSignature& unit, const UnitSignature& later) {
   TypeImportMemo memo;
   TypeImporter importer(
-      specialization.types, unit.types, memo,
-      [&](ClassId id) { return unit.ClassIdOf(specialization.ClassKeyOf(id)); },
+      later.types, unit.types, memo,
+      [&](ClassId id) { return unit.ClassIdOf(later.ClassKeyOf(id)); },
       [&](CovergroupId id) {
-        return unit.CovergroupIdOf(specialization.CovergroupKeyOf(id));
+        return unit.CovergroupIdOf(later.CovergroupKeyOf(id));
       },
       [&](ScopeClassId id) {
-        return unit.ScopeClassIdOf(specialization.ScopeClassKeyOf(id));
+        return unit.ScopeClassIdOf(later.ScopeClassKeyOf(id));
       });
   const auto differs = [&](const support::DefPath& path) {
     throw InternalError(
         std::format(
-            "hir::PublishBlocksBuiltBy: two specializations grouped into unit "
+            "hir::PublishBlocksBuiltBy: two lowerings grouped into unit "
             "'{}' publish '{}' differently, so the grouping compared less than "
             "they publish -- please report this as a bug",
             unit.unit_name, support::DisplayOf(path)));
   };
   // Each declaration either is one the unit publishes already, which the
-  // later specialization must publish alike, or is declared in a block only
+  // later later must publish alike, or is declared in a block only
   // the later one built, and joins what the unit publishes.
   const auto publish = [&](const auto* held, auto taken, auto add,
                            const support::DefPath& path) {
@@ -213,8 +212,7 @@ void PublishBlocksBuiltBy(
       differs(path);
     }
   };
-  for (const auto& [declaration, definition] :
-       specialization.type_definitions) {
+  for (const auto& [declaration, definition] : later.type_definitions) {
     publish(
         unit.type_definitions.Find(declaration),
         ImportTypeDefinition(importer, definition),
@@ -223,7 +221,7 @@ void PublishBlocksBuiltBy(
         },
         declaration.path);
   }
-  for (const ClassDeclaration& declared : specialization.classes) {
+  for (const ClassDeclaration& declared : later.classes) {
     publish(
         unit.FindClass(declared.class_path),
         ImportClassDeclaration(importer, declared),
@@ -232,7 +230,7 @@ void PublishBlocksBuiltBy(
         },
         declared.class_path);
   }
-  for (const PublishedCovergroup& declared : specialization.covergroups) {
+  for (const PublishedCovergroup& declared : later.covergroups) {
     publish(
         unit.FindCovergroup(declared.path), importer.Import(declared),
         [&](PublishedCovergroup taken) {
@@ -240,33 +238,31 @@ void PublishBlocksBuiltBy(
         },
         declared.path);
   }
-  // What the unit declares outside every block, each specialization declares.
+  // What the unit declares outside every block, each later declares.
   const auto lacks = [](const support::DefPath& path, bool found) {
     return !found && support::DeclaringScopeClassOf(path).data.empty();
   };
   for (const auto& [declaration, _] : unit.type_definitions) {
     if (lacks(
             declaration.path,
-            specialization.type_definitions.Find(declaration) != nullptr)) {
+            later.type_definitions.Find(declaration) != nullptr)) {
       differs(declaration.path);
     }
   }
   for (const ClassDeclaration& declared : unit.classes) {
     if (lacks(
             declared.class_path,
-            specialization.FindClass(declared.class_path) != nullptr)) {
+            later.FindClass(declared.class_path) != nullptr)) {
       differs(declared.class_path);
     }
   }
   for (const PublishedCovergroup& declared : unit.covergroups) {
-    if (lacks(
-            declared.path,
-            specialization.FindCovergroup(declared.path) != nullptr)) {
+    if (lacks(declared.path, later.FindCovergroup(declared.path) != nullptr)) {
       differs(declared.path);
     }
   }
   // A namespace builds no block.
-  const auto* built = std::get_if<PublishedDesignElement>(&specialization.unit);
+  const auto* built = std::get_if<PublishedDesignElement>(&later.unit);
   auto* element = std::get_if<PublishedDesignElement>(&unit.unit);
   if (built == nullptr || element == nullptr) return;
   if (element->instance_class !=

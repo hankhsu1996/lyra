@@ -30,11 +30,11 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/field_id.hpp"
+#include "lyra/hir/lowering.hpp"
+#include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/published_callable.hpp"
-#include "lyra/hir/specialization.hpp"
-#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -43,11 +43,11 @@
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/lowering/ast_to_hir/built_as.hpp"
+#include "lyra/lowering/ast_to_hir/bodies.hpp"
 #include "lyra/lowering/ast_to_hir/climb.hpp"
 #include "lyra/lowering/ast_to_hir/coverage_library.hpp"
 #include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
-#include "lyra/lowering/ast_to_hir/implementations.hpp"
+#include "lyra/lowering/ast_to_hir/elaborated_instances.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
@@ -599,12 +599,14 @@ class LoweringFacts {
  public:
   LoweringFacts(
       SensitivityAnalyzer& sensitivity_analyzer,
-      support::AssertionPolicy assertion_policy, const UnitNamingPolicy& naming,
-      const PlacedSpecializations& placed, const StdDefinitions& std_classes,
+      support::AssertionPolicy assertion_policy, const InstanceNames& names,
+      const ElaboratedInstances& instances, const PlacedSpecializations& placed,
+      const StdDefinitions& std_classes,
       const std::optional<CoverageLibrary>& coverage)
       : sensitivity_analyzer_(&sensitivity_analyzer),
         assertion_policy_(assertion_policy),
-        naming_(&naming),
+        names_(&names),
+        instances_(&instances),
         placed_(&placed),
         std_classes_(&std_classes),
         coverage_(&coverage) {
@@ -646,14 +648,20 @@ class LoweringFacts {
     return assertion_policy_;
   }
 
-  [[nodiscard]] auto Naming() const -> const UnitNamingPolicy& {
-    return *naming_;
+  [[nodiscard]] auto Names() const -> const InstanceNames& {
+    return *names_;
+  }
+
+  // What every instance's elaboration answers, kept once for the design.
+  [[nodiscard]] auto Instances() const -> const ElaboratedInstances& {
+    return *instances_;
   }
 
  private:
   SensitivityAnalyzer* sensitivity_analyzer_;
   support::AssertionPolicy assertion_policy_;
-  const UnitNamingPolicy* naming_;
+  const InstanceNames* names_;
+  const ElaboratedInstances* instances_;
   const PlacedSpecializations* placed_;
   const StdDefinitions* std_classes_;
   const std::optional<CoverageLibrary>* coverage_;
@@ -685,8 +693,7 @@ class UnitLowerer {
   // and its environment holds nothing.
   UnitLowerer(
       const LoweringFacts& facts, const slang::ast::Symbol& home,
-      Environment environment, hir::SpecializationRef names,
-      hir::UnitRole role);
+      Environment environment, hir::LoweringRef names, hir::UnitRole role);
 
   // The declaration phase: everything this unit states about itself, including
   // the signature it publishes. Reads no other unit, so a body that later
@@ -704,21 +711,20 @@ class UnitLowerer {
 
   // What this specialization holds that its unit does not, under its name,
   // moved out with the signature.
-  [[nodiscard]] auto SpecializationName() const -> const std::string& {
-    return specialization_;
+  [[nodiscard]] auto LoweringName() const -> const std::string& {
+    return lowering_;
   }
-  [[nodiscard]] auto TakeValues() -> hir::SpecializationValues;
+  [[nodiscard]] auto TakeValues() -> hir::LoweringValues;
 
   // The body phase: everything this unit executes, resolved against what the
-  // design's units published and what `built_as` says each instance is built
-  // as. Which of those publications this unit ends up depending on is the set
-  // it reads, so nothing decides that set in advance. The unit's own scope is
-  // lowered from the instance it is named for, and comes back as the
-  // implementation it is, named as `implementations` names it, beside how its
-  // objects are built.
+  // design's units published. Which of those publications this unit ends up
+  // depending on is the set it reads, so nothing decides that set in advance.
+  // The unit's own scope is lowered from the instance it is named for, and
+  // comes back as the implementation it is, named as `implementations` names
+  // it, beside how its objects are built.
   auto LowerBodies(
-      const hir::UnitSignatures& signatures, const BuiltAsQuery& built_as,
-      Implementations& implementations) -> diag::Result<hir::Specialization>;
+      const hir::UnitSignatures& signatures, Bodies& implementations)
+      -> diag::Result<hir::Lowering>;
 
   // Read access to the in-progress unit. Handlers reach the unit's type vocab
   // and builtins through this accessor; downstream consumers post-Run use the
@@ -1120,20 +1126,12 @@ class UnitLowerer {
     return facts_.Coverage();
   }
 
-  [[nodiscard]] auto Naming() const -> const UnitNamingPolicy& {
-    return facts_.Naming();
+  [[nodiscard]] auto Names() const -> const InstanceNames& {
+    return facts_.Names();
   }
 
-  // What each instance is built as, which a body's construction and its reads
-  // of another unit's values ask. Reachable only once bodies lower, as the
-  // classes it is worked out over are not known while units are compared.
-  [[nodiscard]] auto BuiltAs() const -> const BuiltAsQuery& {
-    if (built_as_ == nullptr) {
-      throw InternalError(
-          "UnitLowerer::BuiltAs: what an instance is built as is reachable "
-          "only while bodies lower");
-    }
-    return *built_as_;
+  [[nodiscard]] auto Instances() const -> const ElaboratedInstances& {
+    return facts_.Instances();
   }
 
   // Where the value of a parameter this unit's scopes declare comes from, for
@@ -1324,16 +1322,6 @@ class UnitLowerer {
   // and this is what puts that scope at the start of the walk.
   [[nodiscard]] auto DeclaringScopeChain(const slang::ast::Scope& scope) const
       -> std::vector<ScopeFrameId>;
-
-  // `built`, scopes that each built one part of what is compiled alike, in
-  // the order the lowering reads them: the part is lowered from the first, and
-  // where they disagree on something only all of them together state, the
-  // first to state it decides. That is the order the source wrote them in,
-  // and the reverse where the compile checks itself, so that the lowering it
-  // is checked against reads a second scope of every part wherever one built
-  // it.
-  [[nodiscard]] auto InReadingOrder(std::vector<const slang::ast::Scope*> built)
-      const -> std::vector<const slang::ast::Scope*>;
 
   // Whether a design element other than this unit holds `type`, a class or a
   // covergroup, so that an object of it belongs to an instance of that
@@ -1946,17 +1934,16 @@ class UnitLowerer {
   std::map<stable_hash::Fingerprint, std::vector<hir::BlockBodyId>>
       block_bodies_by_text_;
   // The specialization this unit is lowered as.
-  std::string specialization_;
+  std::string lowering_;
 
   // What this unit publishes, built by the declaration phase and moved out
   // before any body lowers.
   hir::UnitSignature signature_;
-  hir::SpecializationValues values_;
+  hir::LoweringValues values_;
   // What the design's units publish, for the body phase alone. The declaration
   // phase has none, which is what makes "a declaration reads only its own unit"
   // a property of the code rather than a discipline.
   const hir::UnitSignatures* signatures_ = nullptr;
-  const BuiltAsQuery* built_as_ = nullptr;
   // What each signature this unit has read out of became in this unit's pool,
   // one entry per signature, so a type published once is taken once however
   // many connections name it.
@@ -2051,7 +2038,7 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
     return Result();
   };
   const auto name_of = [&](const slang::ast::ClassType& cls) {
-    return UnitName(cls, Naming());
+    return UnitName(cls, Names());
   };
   if constexpr (std::is_void_v<Result>) {
     WalkDeclarationScopes(*scope_, owned, name_of);

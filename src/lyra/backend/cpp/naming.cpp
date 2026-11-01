@@ -53,13 +53,21 @@ void WriteOne(TargetText& out, SourceName name) {
     return;
   }
   Write(out, kMintedPrefix, "esc_");
-  // Two hex digits a byte, so every byte keeps its own width and no two names
-  // escape to one.
+  // A letter or a digit stays itself, an underscore is doubled, and any other
+  // byte is an underscore and its two hex digits; what follows an underscore
+  // says where each byte ends, so no two names escape to one, and the name
+  // still reads.
   for (const char c : name.name) {
     const auto byte = static_cast<unsigned char>(c);
-    const std::array<char, 2> digits{
-        kHexDigits[byte >> 4U], kHexDigits[byte & 0xFU]};
-    out += std::string_view{digits.data(), digits.size()};
+    if (c == '_') {
+      out += "__";
+    } else if (std::isalnum(byte) != 0) {
+      out += std::string_view{&c, 1};
+    } else {
+      const std::array<char, 3> digits{
+          '_', kHexDigits[byte >> 4U], kHexDigits[byte & 0xFU]};
+      out += std::string_view{digits.data(), digits.size()};
+    }
   }
 }
 
@@ -114,7 +122,7 @@ void WriteOne(TargetText& out, MintedPathName name) {
               if (block.disambiguator != 0) {
                 Write(out, "_x", block.disambiguator);
               }
-              bound(block.arguments);
+              bound(block.distinguisher);
             },
             [&](const support::ClassStep& cls) {
               named("c", cls.name);

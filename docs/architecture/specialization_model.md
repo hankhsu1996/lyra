@@ -4,38 +4,45 @@
 
 **A specialization is a definition applied to arguments.** `Reg #(8)` is the definition `Reg` with
 `W` fixed to 8; `Leaf` connected to a `Bus #(16)` is the definition `Leaf` with its port fixed to
-that interface. Everything in this doc follows from taking that sentence literally: what counts as
-an argument, when two applications are the same one, and what the compiler produces per application
-rather than per instance.
+that interface. This doc says what counts as an argument, which applications the compiler lowers
+apart, and what is shared across the instances of one: a unit where what they publish reads alike,
+and a body where their code comes out equal.
 
-This doc defines what a specialization is, when a new one is created, and what stays shared across
-instances that match one. Specialization is also the compile-time **sharing optimization**: the
-correctness baseline is concrete elaboration -- every distinct parameter binding resolved to its own
-concrete artifact -- and a shared artifact is admitted only where distinct concrete forms are shown
-alike: a class where they publish alike, a body where their code is equal. Where they cannot be
-shown alike, concrete artifacts are retained, which is a correct outcome (an optimization miss, not
-a failure).
+Sharing is the compile-time **optimization**: the correctness baseline is concrete elaboration --
+every instance lowered from the body elaborated for it -- and a shared artifact is admitted only
+where distinct concrete forms are shown alike. Where they cannot be shown alike, concrete artifacts
+are retained, which is a correct outcome (an optimization miss, not a failure).
+
+Four words carry the model, each for one thing:
+
+| Word     | What it is                                                                                         | Named by                                                          |
+| -------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Instance | an occurrence of a definition in the hierarchy (LRM 23.3)                                          | its hierarchical path (LRM 23.6)                                  |
+| Lowering | one body the frontend elaborated and did not share, lowered for the instance it was elaborated for | that instance's hierarchical path                                 |
+| Unit     | the lowerings whose published structure reads alike                                                | the definition, with the digest of what it publishes where needed |
+| Body     | the lowerings of one unit whose code comes out equal                                               | the unit's name, with an ordinal after the first                  |
 
 ## The two questions
 
 Everything here is one of these, and they are not the same question.
 
-**What makes two instances the same specialization?** The definition, and the arguments. Two
-instances agreeing on both are one specialization and are built alike; disagreeing anywhere, they
-are two, and specializations whose code comes out alike share one artifact whatever else they
-disagree on. The number of instances that agree never enters into it -- ten thousand `Reg #(8)` are
-one specialization, and the compiler's work does not grow with them.
+**Which instances run one code?** Two the frontend found alike -- the same definition, the same
+arguments, nothing reaching either from outside -- are served by one lowering; every other instance
+is lowered on its own, and lowerings whose code comes out equal are one body. The number of
+instances that agree never enters into it -- ten thousand `Reg #(8)` the frontend found alike are
+one lowering, and the compiler's work does not grow with them.
 
-**How do two separately compiled units agree on which one they mean?** They cannot look each other
+**How do two separately compiled units agree on which unit they mean?** They cannot look each other
 up: a unit compiles from its own contents and the signatures it consumes, with no table between
-them. So both sides derive the answer from the same inputs by the same function, and match on the
-result. That is why a specialization has a _name_ at all -- a name is the only identity that
-survives crossing a boundary two units share nothing across.
+them. So a unit has a _name_, a function of what its lowerings publish and of nothing a body
+produces, worked out once before any body is lowered; the parent's reference to a child and the
+child's own artifact both carry it, and that name is the only identity that survives crossing a
+boundary two units share nothing across.
 
 The second question is what makes the first one strict. If identity were only ever compared inside
-one compiler run, an ordinary object comparison would do. Because a parent naming a child and the
-child naming itself must reach one answer independently, the identity has to be a pure function of
-what both can see -- and it has to be renderable as a name they can both write down.
+one compiler run, an ordinary object comparison would do. Because a parent naming a child's unit and
+the child's artifact must mean one thing, the unit's name has to be a pure function of what is
+published, renderable as a name both can write down, and settled before either compiles further.
 
 ```mermaid
 flowchart LR
@@ -47,33 +54,33 @@ flowchart LR
     D["Leaf, port on Bus #(8)"]
     E["Leaf, port on Bus #(16)"]
   end
-  subgraph S["specializations"]
+  subgraph S["lowerings"]
     direction TB
-    S1["Reg + W=8"]
-    S2["Reg + W=16"]
-    S3["Leaf + port=Bus#(8)"]
-    S4["Leaf + port=Bus#(16)"]
+    S1["a's body"]
+    S2["c's body"]
+    S3["D's body"]
+    S4["E's body"]
   end
   A --> S1
-  B --> S1
+  B -. "found alike a" .-> S1
   C --> S2
   D --> S3
   E --> S4
-  S1 --> R1["one artifact each"]
+  S1 --> R1["one unit and one body each"]
   S2 --> R1
   S3 --> R1
   S4 --> R1
 ```
 
-Five instances, four specializations, four artifacts. `a` and `b` collapse because their arguments
-agree. `D` and `E` do not, even though neither writes a parameter -- which is the point of the next
-section.
+Five instances, four lowerings, four units. `a` and `b` collapse because the frontend found them
+alike, their arguments agreeing. `D` and `E` do not, even though neither writes a parameter -- which
+is the point of the next section.
 
 ## What counts as an argument
 
 Everything the parent fixes at the instantiation site is an argument of the specialization. Which of
-them make the unit another class is not decided from the arguments: it is whatever makes what the
-specialization publishes differ, which is found by comparing. An argument is **not** only "what was
+them make the lowering another unit is not decided from the arguments: it is whatever makes what the
+lowering publishes differ, which is found by comparing. An argument is **not** only "what was
 written as a parameter", and the difference is not a corner case:
 
 ```systemverilog
@@ -111,171 +118,157 @@ Leaf on_narrow (.b(narrow));  ~   Leaf<Bus<8>> on_narrow{&narrow};
 interface share a name and a source text and nothing else, and neither is substitutable for the
 other.
 
-## What the frontend supplies, and what it does not
+## What the frontend supplies
 
-The frontend elaborates the design into symbols, and two of them correspond to concepts here:
+The frontend elaborates the design into symbols, and three of them correspond to concepts here:
 
-| This model                                     | Frontend symbol                          |
-| ---------------------------------------------- | ---------------------------------------- |
-| An occurrence of a definition in the hierarchy | an instance                              |
-| The contents elaborated for that occurrence    | that instance's body, one per occurrence |
-| A specialization                               | nothing                                  |
+| This model                                      | Frontend symbol                                                                                           |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| An instance                                     | an instance                                                                                               |
+| The elaborated body an instance is read through | that instance's body, or the body of the earlier instance it was found alike and points at                |
+| A lowering                                      | an elaborated body the frontend left no instance pointing at from elsewhere, lowered for its own instance |
 
-The third row is empty because the frontend generates no code and so never has to answer how many
-artifacts a definition compiles to. What it does answer, for its own traversal, is whether one body
-duplicates another closely enough that visiting it again would be wasted work, and it records that
-as a pointer from the second occurrence to the first one's body.
-
-That pointer is bookkeeping about elaboration work. It has the same shape as the question this model
-answers -- which occurrences may share -- and it is a different relation, computed for a different
-purpose, free to be coarser or finer. `front-end-semantic-boundary.md` establishes that a semantic
-fact the frontend resolved is translated here rather than re-derived; the frontend's account of its
-own work is not such a fact, and taking it as the answer puts a correctness decision in the keeping
-of an optimization. A compile may use it to skip reading an occurrence, where its own comparison of
-the arguments finds that occurrence one application with another; which occurrences share is then
-still this model's answer, and the same one reading every occurrence gives.
+The frontend elaborates a body for every instance, and where it finds one alike an earlier one --
+the same definition, the same parameter values, each interface port bound to an instance alike, no
+hierarchical name leaving upward, nothing written elsewhere reaching it or anything below it -- it
+leaves the later instance pointing at the earlier one's body and does not visit its own. That record
+is read as given. An instance pointing at a body is read through that body; one standing below such
+an instance is read through the member at the same site under the body pointed at; and a share the
+frontend got wrong is its defect, corrected there and never second-guessed here. Every elaborated
+body nothing points at from elsewhere is lowered on its own, for the instance it was elaborated for,
+and whether it shares code with another is found afterwards by comparing what the two lowered to.
 
 ```mermaid
 flowchart TB
   subgraph FE["frontend symbols"]
     direction TB
-    N["occurrence A"]
-    W["occurrence B"]
+    N["instance A"]
+    W["instance B"]
+    C["instance C"]
     BN["body elaborated for A"]
-    BW["body elaborated for B"]
+    BC["body elaborated for C"]
     N --> BN
-    W --> BW
-    W -. "duplicate marker, when the frontend sets one" .-> BN
+    W -. "found alike A, points at A's body" .-> BN
+    C --> BC
   end
-  subgraph SP["specializations, computed here"]
+  subgraph SP["lowerings"]
     direction TB
-    S1["definition + A's arguments"]
-    S2["definition + B's arguments"]
+    S1["A's body, lowered for A"]
+    S2["C's body, lowered for C"]
   end
-  N ==> S1
-  W ==> S2
-  S1 --> A1["artifact, compiling A's body"]
-  S2 --> A2["artifact, compiling B's body"]
+  BN ==> S1
+  BC ==> S2
+  S1 --> A1["one body where the two lowered equal; two where not"]
+  S2 --> A1
 ```
 
-Each occurrence has a body of its own, elaborated under what the design fixed for it. The heavy
-arrows are this model: an occurrence belongs to the specialization its arguments say it does, and
-the artifact for that specialization compiles a body elaborated for an occurrence in it.
-
-The dotted arrow is drawn to be ignored. Whether the frontend sets it, and whether where it sets it
-coincides with where the heavy arrows meet, are both properties of the frontend's own traversal, and
-this model reads the same either way -- which is what makes it a model rather than a restatement of
-what the frontend happened to do.
+The dotted arrow is the frontend's answer to which elaborations are alike, and the only one: B is
+served by A's lowering. Whether A's and C's lowerings are one body is this model's answer, and it is
+a comparison of what they came out as, never a prediction from what the design fixed for them.
 
 ## Owns
 
-- The definition of a specialization: a definition together with everything the design fixed for its
-  instances.
-- The correspondence between this model and the frontend's symbol graph, including which of its
-  records are inputs here and which are not.
-- The rule that specializations publishing alike are one unit, and those whose code comes out alike
-  one body, shared by every instance of them.
+- What counts as an argument of a specialization.
+- The correspondence between this model and the frontend's symbol graph, including that its record
+  of which elaborations are alike is read as given.
+- The rule that lowerings publishing alike are one unit, and those whose code comes out alike one
+  body, shared by every instance they serve.
+- How a unit, a body and a lowering are named.
 - The rule for which parameter reads are fields of the object and which constants.
 
 ## Does Not Own
 
 - The internal shape of a compilation unit (see `compilation_unit_model.md`).
-- Identity kinds inside a specialization (see `identity_and_ownership.md`).
-- Cache keys for incremental reuse (see `incremental_build.md`). Unit and specialization names feed
-  into that cache, but this doc does not define the cache's contract.
+- Identity kinds inside a unit (see `identity_and_ownership.md`).
+- Cache keys for incremental reuse (see `incremental_build.md`). Unit and body names feed into that
+  cache, but this doc does not define the cache's contract.
 
 ## Core Invariants
 
 1. **Concrete elaboration is the correctness baseline; sharing is the optimization.** Every accepted
-   program has a correct concrete lowering in which each distinct parameter binding is its own
-   artifact. A specialization that shares one artifact across distinct bindings is admitted only
-   when proven behavior-preserving; absent that proof, the concrete artifacts are retained.
-   Correctness never depends on proving sharing.
+   program has a correct concrete lowering in which each instance is lowered from the body
+   elaborated for it. Sharing one artifact across distinct lowerings is admitted only where what
+   they state is shown equal; absent that, the concrete artifacts are retained. Correctness never
+   depends on proving sharing.
 2. **Artifacts are driven by what is published and what is compiled, not by instance count.** A new
-   unit is created only where what two specializations publish differs, and a new body only where
-   their code does. The number of instances that match a specialization does not affect how many
-   artifacts exist.
-3. **Nothing classifies a parameter in advance.** A specialization holds every argument; which
-   arguments change the unit is what comparing what specializations publish finds, and which change
-   the code is what comparing their code finds. Neither is a precondition for lowering a program
+   unit is created only where what two lowerings publish differs, and a new body only where their
+   code does. The number of instances a lowering serves does not affect how many artifacts exist.
+3. **Nothing classifies a parameter in advance.** A body is elaborated under every argument; which
+   arguments change the unit is what comparing what lowerings publish finds, and which change the
+   code is what comparing their code finds. Neither is a precondition for lowering a program
    correctly.
 4. **A parameter the code reads as a value is a field of the object.** Where the language requires a
    constant -- a width, a type, a generate condition -- the front end has settled it in each
    elaboration, and what is left of a parameter is a read the object answers from what it was built
    with. So a value that only steers what the code computes -- an initial value, a count, a flag --
    forks neither the unit nor the code.
-5. **Each set of arguments names a specialization, and specializations that differ only in where
-   their names land are built as one thing** -- once the classes are known, a landing is written by
-   the class of each block on its way and the constants it reads there -- which is lowered once,
-   builds the same blocks and the same children, and is what a construction table is stated by. The
-   code it comes out as is shared with everything else that comes out alike.
-6. **One unit compiles once per distinct body.** A unit is the class its instances' declarations
-   settle, and each distinct code its specializations come out as is a body of it, found by
-   comparing what they state and compiled once, shared by every specialization and instance it
-   serves. Two instances of one specialization are indistinguishable at compile time; two of one
-   unit and different bodies are objects of one class that a referrer cannot tell apart.
-7. **Names are stable and deterministic.** Given a compilation unit and an instance's inputs, the
-   unit's name and the specialization's are fully determined. Neither depends on traversal order,
-   instance enumeration, or the order in which instances are encountered. A shared body is named for
-   the first specialization, in the design's order, that came out as it, so the body's name alone
-   follows that order, and no referrer reads it.
-8. **A specialization is computed from occurrences, and the artifact compiles bodies elaborated for
-   them.** Every argument is read off the occurrence -- what its parent wrote, what was written
-   elsewhere that reaches it or an occurrence below it (LRM 23.10.1, 23.11, 33.4), and where each
-   hierarchical name written in it or below it lands once it leaves the occurrence (LRM 23.8).
-   Together they settle which specialization every occurrence below is, since a unit's declarations
-   name the class of each one it holds. A body an artifact compiles is one elaborated under those
-   same arguments, so what it was named for and what it compiles against are one application; a body
-   elaborated for a different application states different types at the same positions. Occurrences
-   handed different constructor inputs may build different blocks, since those inputs decide which
+5. **A lowering is one elaborated body the frontend did not share, lowered once for the instance it
+   was elaborated for under that instance's environment.** Nothing is worked out before lowering to
+   say that two instances may share one lowering: which bodies exist is the frontend's answer, and
+   which of them come out as one code is the comparison of what they lowered to. A construction
+   table is stated per lowering, by its instance's hierarchical path.
+6. **One unit compiles once per distinct body.** A unit is the lowerings whose declarations publish
+   alike, and each distinct code they come out as is a body of it, found by comparing what they
+   state and compiled once, shared by every lowering and instance it serves. Two instances served by
+   one body are indistinguishable at compile time; two of one unit and different bodies are objects
+   of one published class that a referrer cannot tell apart.
+7. **A unit's name is a function of its definition and what it publishes.** It depends on no
+   traversal order and no instance enumeration: the definition alone where the definition has one
+   unit in the design, else the definition and the digest of what the unit publishes. A body is
+   named for the first lowering, in the design's order, that came out as it -- the unit's name for
+   the first body, the unit's name and the body's ordinal after -- so a body's name alone follows
+   that order. A lowering is named by its instance's hierarchical path, inside one run.
+8. **A lowering is read from the body elaborated for it, and from nothing else.** What the design
+   fixed for an instance -- what its parent wrote, what was written elsewhere that reaches it or an
+   instance below it (LRM 23.10.1, 23.11, 33.4), where each hierarchical name written in it or below
+   it lands once it leaves (LRM 23.8) -- is what the frontend elaborated its body under, and is what
+   makes it share no body with an instance it differs from in any of them. Instances handed
+   different constructor inputs may build different blocks, since those inputs decide which
    alternative of a conditional generate stands, and an alternative not selected is not elaborated
-   (LRM 27.5); so which blocks an occurrence built is one of its arguments, the way the branch an
-   `if constexpr` keeps is part of a C++ instantiation, and an artifact is lowered from any one
-   occurrence of its application. How many blocks a loop counts out is not: the constructor runs the
-   loop. The frontend's record that two bodies duplicate each other decides neither half: an
-   occurrence it marks is still the specialization its own arguments say, read off the body it
-   duplicates only where those arguments make the two one application.
-9. **Producer and consumer derive the identity independently and agree.** A specialization's
-   identity and the one a parent means when it instantiates it are computed from the same inputs by
-   the same function, with no table between them, and a unit's is a function of what every
-   specialization publishes, all of which exists before any unit's later stages run -- which is what
-   lets units compile in any order and in isolation after that point. A name is how that identity
-   crosses the boundary; the identity is what decides whether two applications are the same, and a
-   name that no longer tells two of them apart is a defect in the naming, not a second definition of
-   identity.
+   (LRM 27.5); each is lowered from what it built, and which blocks stand where is the
+   construction's. How many blocks a loop counts out is nobody's argument: the constructor runs the
+   loop.
+9. **A unit's name is settled before any body is lowered, and every party carries it alike.** A unit
+   is a function of what every lowering publishes, all of which exists before any unit's later
+   stages run, so the parent naming a child's unit and the child's own artifact carry one name with
+   no table between them -- which is what lets units compile in any order and in isolation after
+   that point. The comparison of what is published is what decides whether two lowerings are one
+   unit, and a name that no longer tells two units apart is a defect in the naming, not a second
+   definition of the unit.
 
 ## Boundary to Adjacent Layers
 
-- `compilation_unit_model.md` defines the compilation unit. This doc defines how parameter values
-  refine a compilation unit into specializations.
-- `incremental_build.md` uses unit and specialization names as cache keys. The rules in this doc are
-  upstream of incremental reuse.
-- HIR is per what specializations are built as and every layer after it per body, never per
-  instance. See the individual IR docs for how each manifests in HIR, MIR, and LIR.
+- `compilation_unit_model.md` defines the compilation unit. This doc defines which lowerings are one
+  unit and which one body.
+- `incremental_build.md` uses unit and body names as cache keys. The rules in this doc are upstream
+  of incremental reuse.
+- HIR is per lowering, and every layer after it per body, never per instance. See the individual IR
+  docs for how each manifests in HIR, MIR, and LIR.
 
 ## Forbidden Shapes
 
 - A unit keyed on a parameter's value where the value changes nothing the unit publishes.
-- In the optimized steady state, leaving every distinct parameter binding as its own unit without
-  comparing what the bindings publish. The concrete baseline of invariant 1 does exactly this and is
-  correct; the sharing optimization must not stop there.
-- Unit or specialization names derived from instance path, instance ordinal, or instance
-  enumeration.
-- Deriving a specialization, or which artifact an occurrence belongs to, from the frontend's record
-  that two bodies duplicate each other and nothing else. Its subject is whether elaboration must be
-  repeated, and a relation of the same shape computed for another purpose is not by itself evidence
-  about compiled behavior.
-- Compiling, for one specialization, a body elaborated for an occurrence outside it.
+- In the optimized steady state, leaving every lowering as its own unit without comparing what the
+  lowerings publish. The concrete baseline of invariant 1 does exactly this and is correct; the
+  sharing optimization must not stop there.
+- A unit name derived from instance path, instance ordinal, or instance enumeration. A body's name
+  and a lowering's follow the design's order and the instance's path (invariant 7).
+- A second answer, beside the frontend's record, to which elaborations are alike: a key worked out
+  before lowering that says two instances may share one lowering, or a lowering of an instance the
+  frontend left pointing at another's body through its own body, to check the frontend. Such a key
+  was kept right one field at a time, and each miss had an instance run another's code with no
+  error.
+- Compiling, for one lowering, a body elaborated for an instance outside it.
 - An identity stored as the name it renders to, so that two applications are told apart by comparing
   renderings. A name drops whatever the target it is written for recovers by other means; an
   identity may drop nothing. Where the two are one value, the day they disagree is silent.
 - A shared table, registry, or ordinal that both a unit and its instantiator consult to agree on
-  which specialization is meant. Agreement comes from computing the same function, never from
-  reading the same place.
-- Forking a specialization per instance, or allowing instance count to drive the number of
-  specializations.
-- Rejecting a program because two specializations cannot be shown alike. The correct fallback is
-  concrete artifacts, never rejection.
+  which unit is meant. Agreement comes from computing the same function, never from reading the same
+  table.
+- Forking a unit or a body per instance, or allowing instance count to drive the number of
+  artifacts.
+- Rejecting a program because two lowerings cannot be shown alike. The correct fallback is concrete
+  artifacts, never rejection.
 
 ## Notes / Examples
 
@@ -283,8 +276,8 @@ what the frontend happened to do.
 publishes. Instances with different W values belong to different units.
 
 `parameter int INIT = 0` used only as the initial value of a register: INIT changes neither what is
-published nor the code. Instances with different INIT values are one unit and one body, two
-specializations of it handed different values.
+published nor the code. Instances with different INIT values are two lowerings of one unit that come
+out as one body, each object handed its own value.
 
 `parameter int N` controlling a `generate for` that instantiates N children: the compiled
 constructor loops N times, producing N child objects. Neither what the unit publishes nor its code
@@ -295,5 +288,5 @@ Distinct types produce distinct units. "Distinct" follows the language: a built-
 built out of others, is told apart by its form, and a type the source declares -- a class, an
 enumeration, a structure or a union, packed or not -- by its declaration (LRM 6.22.1, 8.3), so two
 declared alike are two. Which instance of a design element a declaration was elaborated for is no
-part of it: every instance of a module handing a child a type the module declares shares that
-child's specialization.
+part of it: the children every instance of a module hands a type the module declares are one unit
+and, where their code comes out alike, one body, whether or not the frontend found them alike.

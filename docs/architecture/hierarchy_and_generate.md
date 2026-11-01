@@ -56,9 +56,9 @@ shared by all consumers: external references, child routing, and construction.
    settles, which generate blocks are built (invariant 2) -- does fork them, because a compiled
    artifact cannot hold two answers to one question; and so does anything written elsewhere that
    reaches an instance below the unit (a `defparam`, a `bind`, a configuration rule), since the unit
-   then builds different children. What serves this is that artifacts scale with distinct
-   specializations rather than instances (`north_star.md` invariant 2), with each instance correct
-   whatever is shared (its invariant 3).
+   then builds different children. What serves this is that artifacts scale with distinct distinct
+   classes and bodies rather than instances (`north_star.md` invariant 2), with each instance
+   correct whatever is shared (its invariant 3).
 7. The constructed object tree is faithful to the frontend's elaboration. Every elaborated instance
    and named scope has a corresponding constructed object, and generate-produced objects preserve
    the elaborated index and identity. Reference resolution relies on this faithfulness (see
@@ -92,14 +92,15 @@ shared by all consumers: external references, child routing, and construction.
     null, a default, or an alternate target.
 12. A set of objects the source writes under one name -- an instance array, the instances an
     interface port carrying a range is bound to, the blocks a loop generate counts out -- is
-    described object by object: each element's identity is computed from its own elaboration, and
-    elements whose identities are one share an artifact. Every element takes what its instantiation
-    wrote (LRM 23.3.2), but a `defparam`, a `bind` or a configuration rule may reach one of them
-    (LRM 23.10.1, 23.11, 33.4), so nothing about the set can be read off one element. What this
-    serves is that correctness does not depend on sharing (`north_star.md` invariant 3): a
-    description of the set that starts from a representative has to predict that the rest agree. The
-    set is still one declaration, stating which kind stands at each position, so artifacts follow
-    the distinct kinds and never the element count (invariant 2 there).
+    described object by object: each element is read from its own elaboration, or from the one the
+    frontend found it alike, and elements whose lowerings come out equal share an artifact. Every
+    element takes what its instantiation wrote (LRM 23.3.2), but a `defparam`, a `bind` or a
+    configuration rule may reach one of them (LRM 23.10.1, 23.11, 33.4), so nothing about the set
+    can be read off one element. What this serves is that correctness does not depend on sharing
+    (`north_star.md` invariant 3): a description of the set that starts from a representative has to
+    predict that the rest agree. The set is still one declaration, stating which kind stands at each
+    position, so artifacts follow the distinct kinds and never the element count (invariant 2
+    there).
 
 ## Boundary to Adjacent Layers
 

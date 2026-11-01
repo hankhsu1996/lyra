@@ -7,7 +7,11 @@
 ## Status
 
 Accepted. Sharpens `specialization-identity.md` and `cross-unit-class-translation.md` on one point
-each; reverses neither.
+each; reverses neither. The specialization key of a design element it sharpens is gone since
+2026-10-31
+([every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md));
+what its Consequences say of a specialization key now holds of the key of a class specialization
+(LRM 8.25), and what they say of an identity holds of every identity.
 
 ## Why this decision matters
 

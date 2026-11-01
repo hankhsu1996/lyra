@@ -8,9 +8,9 @@
 
 #include "lyra/base/pool_id.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/scope_construction.hpp"
-#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/structural_scope.hpp"
 
 namespace lyra::hir {
@@ -48,13 +48,13 @@ struct GeneratePlaces {
 };
 
 // What one object of a scope makes at each instantiation the scope declares
-// (LRM 23.3.2), which specialization of which unit, and at each place of each
+// (LRM 23.3.2), which lowering of which unit, and at each place of each
 // of its generates, which block body and the same of that block in turn. Which
 // body is made where is the object's, stated where the program is assembled;
 // the scope's code names an instantiation by where the scope declares it and a
 // block by its generate and its place, so that code is the same wherever the
-// scope stands. It is read off the specialization while its implementation is
-// still held, which is why it carries the one fact of the implementation the
+// scope stands. It is read off the lowering while its body is
+// still held, which is why it carries the one fact of the body the
 // assembly needs: whether each generate hands its blocks an index.
 class ScopeInstantiations {
  public:
@@ -65,8 +65,7 @@ class ScopeInstantiations {
       const ScopeConstruction& construction);
 
   // What is made at each of this scope's instantiations, in index order.
-  [[nodiscard]] auto Instantiated() const
-      -> std::span<const SpecializationRef> {
+  [[nodiscard]] auto Instantiated() const -> std::span<const LoweringRef> {
     return instantiated_;
   }
   // The places of each generate, in the order the scope declares them.
@@ -77,7 +76,7 @@ class ScopeInstantiations {
   auto operator==(const ScopeInstantiations&) const -> bool = default;
 
  private:
-  std::vector<SpecializationRef> instantiated_;
+  std::vector<LoweringRef> instantiated_;
   std::vector<GeneratePlaces> generates_;
 };
 

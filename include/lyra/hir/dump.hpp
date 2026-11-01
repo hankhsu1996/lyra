@@ -3,13 +3,13 @@
 #include <string>
 
 #include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/specialization.hpp"
+#include "lyra/hir/lowering.hpp"
 
 namespace lyra::hir {
 
 // What one specialization of a unit states: its implementation, then how its
 // objects are built.
-auto DumpHir(const Specialization& lowered) -> std::string;
+auto DumpHir(const Lowering& lowered) -> std::string;
 
 // What an implementation states, in the same text and without the
 // construction of any specialization of it: equal implementations write equal
