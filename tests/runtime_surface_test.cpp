@@ -187,10 +187,8 @@ auto SymbolNames(std::string_view listing) -> std::vector<std::string> {
 // compiled does not withhold it. Nothing in a header looks wrong in any of
 // these, and no warning names one; the object names every one of them.
 TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
-  auto cxx_or = lyra::test::FindClang();
-  if (!cxx_or) {
-    GTEST_SKIP() << "measuring an object requires clang";
-  }
+  const auto clangxx = lyra::test::ResolveClangxx();
+  ASSERT_FALSE(clangxx.empty());
   const auto nm = lyra::test::ResolveLlvmNm();
   ASSERT_FALSE(nm.empty());
   const auto lyra_exe = lyra::test::ResolveLyra();
@@ -227,7 +225,7 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
         {"-I", (project / "runtime" / "include").string(), "-I",
          project.string(), "-c", entry.path().string(), "-o", object.string()});
     compiles.push_back(
-        lyra::driver::ProcessRequest{.exe = *cxx_or, .args = std::move(args)});
+        lyra::driver::ProcessRequest{.exe = clangxx, .args = std::move(args)});
     objects.push_back(std::move(object));
   }
   ASSERT_FALSE(objects.empty()) << "the design emitted no translation unit";

@@ -1,15 +1,11 @@
-// A program keeps a value larger than the stack it was started with off that
-// stack, on either backend. Where a value lies is decided by the compiler, but
-// how much of the stack a body then takes is also its host compiler's: clang
-// at its default level reserves stack in a coroutine for every value its frame
-// holds, so the C++ backend's program is built with clang by name and the case
-// runs where clang is.
+#include "tests/framework/values_off_the_stack.hpp"
 
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -19,12 +15,13 @@
 #include "lyra/driver/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
 
+namespace lyra::test {
+
 namespace {
 
 using conformance::framework::ExitedWithCode;
 using conformance::framework::MakeScratchDir;
 using conformance::framework::RunChildProcess;
-using lyra::test::ResolveLyra;
 
 // A design whose every value is twice the stack it is run on: one of each kind
 // a frame would otherwise keep or an operation make whole -- a sum, a shift, a
@@ -287,7 +284,10 @@ module Test;
 endmodule
 )";
 
-TEST(ValuesOffTheStack, ValuesLargerThanTheStackAreKeptOffIt) {
+}  // namespace
+
+auto ExpectValuesKeptOffTheStack(std::span<const std::string> build_options)
+    -> void {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
@@ -339,23 +339,23 @@ TEST(ValuesOffTheStack, ValuesLargerThanTheStackAreKeptOffIt) {
   auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value());
 
-  for (const std::string backend : {"llvm", "cpp"}) {
-    const auto program = *tmp_or / ("program_" + backend);
-    const std::vector<std::string> build = {
-        "build", "--backend",      backend,
-        "--cxx", "clang++",        "--top",
-        "Test",  "--cache-dir",    (*tmp_or / "cache").string(),
-        "-o",    program.string(), src.string()};
-    const auto built = RunChildProcess(lyra, build);
-    ASSERT_THAT(built, ExitedWithCode(0))
-        << backend << ": " << built.stderr_text;
+  const auto program = *tmp_or / "program";
+  std::vector<std::string> build = {"build",
+                                    "--top",
+                                    "Test",
+                                    "--cache-dir",
+                                    (*tmp_or / "cache").string(),
+                                    "-o",
+                                    program.string()};
+  build.insert(build.end(), build_options.begin(), build_options.end());
+  build.push_back(src.string());
+  const auto built = RunChildProcess(lyra, build);
+  ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
 
-    const std::vector<std::string> run = {
-        "-c", std::format("ulimit -s 512 && exec '{}'", program.string())};
-    const auto ran = RunChildProcess(*sh_or, run);
-    EXPECT_THAT(ran, ExitedWithCode(0))
-        << backend << ": " << ran.stdout_text << ran.stderr_text;
-  }
+  const std::vector<std::string> run = {
+      "-c", std::format("ulimit -s 512 && exec '{}'", program.string())};
+  const auto ran = RunChildProcess(*sh_or, run);
+  EXPECT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
 }
 
-}  // namespace
+}  // namespace lyra::test

@@ -18,14 +18,16 @@ Needing a host compiler is a separate question from being too expensive to gate 
 test can run. Every program either backend builds is linked by the host C++ compiler, so every
 target that runs a design needs one, and a compiler spawned from inside a test is not a Bazel
 action: it is whatever the executing machine has on its PATH. The remote image has the platform's
-own C++ compiler and no clang, and Lyra takes whichever of the two it finds, so a test runs remotely
-unless what it asserts is about clang itself, and such a test carries `no-remote-exec`.
-`runtime_surface_test` is one, since it measures the objects clang produces from an emitted unit and
-skips where there is no clang. The precompiled header is not such a subject, because either compiler
-prepares and reads one; `prepared_header_test` asks the same questions of clang and of GCC side by
-side, so it carries the tag for the machine that has both, and `emitted_project_tests` runs under
-GCC remotely and under clang on the nightly's runner. A target kept out of the gate should be kept
-out for its own reason, never for a neighbour's.
+own C++ compiler and no clang, and Lyra takes whichever of the two it finds. A test whose answer is
+about clang is therefore handed the clang of the release Lyra links, as a declared input, and runs
+remotely like any other: `runtime_surface_test` measures the objects that clang produces from an
+emitted unit, `prepared_header_test` asks the same questions of it and of the executing machine's
+GCC side by side, and `values_off_the_stack_cpp_tests` builds its program with it. That clang is the
+compiler and its headers and no more, so a question about what a whole clang installation does --
+its default linker reading bitcode, its sanitizer's headers -- is asked of the clang a machine has
+installed, by a test carrying `no-remote-exec`: `emitted_project_tests`, whose link-time cases
+compile the runtime beside the design. A target kept out of the gate should be kept out for its own
+reason, never for a neighbour's.
 
 **What the CLI suite cost was once "a fraction of a minute", and by 2026-09-22 it was 117 s of
 processor time and the longest target in the gate -- about four times the corpus run beside it.**
@@ -101,14 +103,13 @@ local command wider or narrower than the gate turns its answer back into a guess
 where the gate is wider, and the section on the gating workflows says why each is there all the
 same.
 
-Every run someone waits on stops at the first case that fails, and every scheduled run does not. The
-two want different things from a red result. A defect the whole corpus shares and a defect one case
-has are indistinguishable from outside while a run is still going, and only the first is worth
-waiting through -- so a person waiting is told as soon as anything is wrong, and pays one case for
-it rather than the corpus. What a scheduled run produces is the list of which cases fail, and a list
-that ends at its first entry is not one, so the two sets a schedule draws on turn it off and so does
-the gate. `--config=full` is not one of them: it is a developer asking for everything, and they are
-still waiting.
+Every run reports every case that fails, the ones someone waits on included. What a test binary is
+handed is part of its cache key, and the gate and a local run share every passing result only while
+both hand it the same arguments, so an argument passed on one side only makes every test the gate
+ran run again on the other. Stopping early would buy little anyway: a passing result is the same
+either way and a failing one is never kept, so all it shortens is a red binary's own time, while the
+run as a whole still waits on its slowest binary. And it costs the list itself, since every case
+after the first failure in a binary reports as skipped, which reads as covered.
 
 On top of the default set, what a change touches selects what else to run:
 

@@ -7,9 +7,9 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "conformance/framework/process.hpp"
@@ -36,6 +36,24 @@ auto ResolveDeclaredInput(std::string_view workspace_path)
   return runfiles->Rlocation(std::format("_main/{}", workspace_path));
 }
 
+// Where this run was given a tool the test names by an environment variable
+// holding its runfiles location.
+auto ResolveNamedTool(const char* variable) -> std::filesystem::path {
+  std::string err;
+  std::unique_ptr<Runfiles> runfiles{Runfiles::CreateForTest(&err)};
+  EXPECT_TRUE(runfiles) << err;
+  const char* location = std::getenv(variable);
+  EXPECT_NE(location, nullptr) << "the test declares no " << variable;
+  if (!runfiles || location == nullptr) return {};
+  return runfiles->Rlocation(location);
+}
+
+auto ResolveOnPath(std::string_view executable) -> std::filesystem::path {
+  auto found = lyra::driver::FindOnPath(executable);
+  EXPECT_TRUE(found) << found.error().Text();
+  return found ? *std::move(found) : std::filesystem::path{};
+}
+
 }  // namespace
 
 auto ResolveLyra() -> std::filesystem::path {
@@ -47,13 +65,19 @@ auto ResolveShippedExamples() -> std::filesystem::path {
 }
 
 auto ResolveLlvmNm() -> std::filesystem::path {
-  std::string err;
-  std::unique_ptr<Runfiles> runfiles{Runfiles::CreateForTest(&err)};
-  EXPECT_TRUE(runfiles) << err;
-  const char* location = std::getenv("LLVM_NM");
-  EXPECT_NE(location, nullptr) << "the test declares no LLVM_NM";
-  if (!runfiles || location == nullptr) return {};
-  return runfiles->Rlocation(location);
+  return ResolveNamedTool("LLVM_NM");
+}
+
+auto ResolveClangxx() -> std::filesystem::path {
+  return ResolveNamedTool("CLANGXX");
+}
+
+auto ResolveHostGcc() -> std::filesystem::path {
+  return ResolveOnPath("g++");
+}
+
+auto ResolveHostClang() -> std::filesystem::path {
+  return ResolveOnPath("clang++");
 }
 
 auto RunLyraFrom(
@@ -61,12 +85,6 @@ auto RunLyraFrom(
     std::string_view args) -> ProcessOutcome {
   return RunShellScript(
       std::format("cd '{}' && '{}' {}", dir.string(), lyra.string(), args));
-}
-
-auto FindClang() -> std::optional<std::filesystem::path> {
-  auto cxx_or = lyra::driver::FindOnPath("clang++");
-  if (!cxx_or) return std::nullopt;
-  return *std::move(cxx_or);
 }
 
 auto WriteTrivialSource(const std::filesystem::path& path) -> void {
