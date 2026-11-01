@@ -1223,7 +1223,7 @@ auto UnitLowerer::DescendPublishedFrom(
             unit_.scope_classes.KeyOf(on.scope_class);
         return ScopeClassOf(
             holder.unit_name,
-            support::Extended(holder.class_path, Naming().BlockStepOf(landed)));
+            support::Extended(holder.class_path, Names().BlockStepOf(landed)));
       };
   const auto step_into_block = [&](hir::PublishedScopeRef names,
                                    hir::ScopeClassId result_class) {
@@ -1329,7 +1329,7 @@ auto UnitLowerer::ResolveValueTarget(
     auto value_type = InternType(value.getType(), span);
     if (!value_type) return std::unexpected(std::move(value_type.error()));
     return hir::ValueTarget{hir::NamespaceValueRef{
-        .unit_name = CompilationUnitName(*unit, Naming()),
+        .unit_name = CompilationUnitName(*unit, Names()),
         .variable_name = std::string{value.name},
         .value_type = *value_type}};
   }
@@ -1350,8 +1350,8 @@ auto UnitLowerer::PublishedClassOf(const slang::ast::Scope& scope)
   // The one the unit of the instance holding `scope` published the scope as,
   // which this unit names the way that unit does -- this unit itself included.
   return ScopeClassOf(
-      Naming().NameOf(InstanceHolding(scope)),
-      DefPathOf(scope.asSymbol(), Naming()));
+      Names().NameOf(InstanceHolding(scope)),
+      DefPathOf(scope.asSymbol(), Names()));
 }
 
 auto UnitLowerer::StartInEnclosing(const slang::ast::Scope& scope)

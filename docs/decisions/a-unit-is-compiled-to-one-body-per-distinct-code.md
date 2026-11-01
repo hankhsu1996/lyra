@@ -36,6 +36,14 @@ a value handed to a child names nothing of the scope handing it, whose published
 names the child's class; and the design root's tables are stated by what a specialization is built
 as, not by the specialization (that record's D9). D2, D3 and D6 stand.
 
+D1, D3's naming of a body and D6 revised 2026-10-31 by
+[every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md):
+nothing names a specialization before it is lowered. Each body the front end elaborated and did not
+share is lowered for its own instance, and the design root's tables are stated per instance, each
+naming the lowering that serves it; a body is named by its unit and its ordinal among the unit's
+bodies, not for a specialization, so it is renamed only where a new distinct body of its unit comes
+out earlier (the third Limit). D2 to D5 otherwise stand.
+
 ## Requirement
 
 A unit is compiled as one class every referrer compiles against, named by the values of the

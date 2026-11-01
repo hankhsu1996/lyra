@@ -3596,10 +3596,10 @@ TEST(LyraBuild, ARunReportsWhereItsCostWent) {
       EXPECT_EQ(spans.at(std::string(per_unit)), declared) << per_unit;
     }
 
-    // Every unit left objects behind, the design root among them, and each
+    // Every body left objects behind, the design root's among them, and each
     // was made by the first build and taken from the store by the second.
     std::set<std::string> units;
-    for (const nlohmann::json& unit : stats.at("units")) {
+    for (const nlohmann::json& unit : stats.at("bodies")) {
       units.insert(unit.at("name").get<std::string>());
       EXPECT_FALSE(unit.at("artifacts").empty()) << unit.at("name");
       for (const nlohmann::json& object : unit.at("artifacts")) {
@@ -3619,15 +3619,14 @@ TEST(LyraBuild, ARunReportsWhereItsCostWent) {
       EXPECT_GT(child.at("cpu_us").get<std::uint64_t>(), 0U);
     }
 
-    // A body lowered is counted where it is lowered, once for each time the
-    // trace times it.
+    // A lowering is counted where it is lowered, once for each time the trace
+    // times it.
     const auto lowered = std::ranges::count_if(
         trace.at("traceEvents"), [](const nlohmann::json& event) {
           return event.value("name", "") == "lower to HIR";
         });
     EXPECT_GT(lowered, 0);
-    EXPECT_EQ(
-        stats.at("work").at("bodies lowered").get<std::int64_t>(), lowered);
+    EXPECT_EQ(stats.at("work").at("lowerings").get<std::int64_t>(), lowered);
 
     ASSERT_TRUE(spans.contains("lower scope"));
     EXPECT_TRUE(
@@ -3661,10 +3660,10 @@ TEST(LyraEmit, TheStatisticsNameEveryFileAUnitWrote) {
 
   const nlohmann::json stats = ReadJson(stats_path);
   ASSERT_FALSE(stats.is_discarded());
-  // The design's two units, the unit `std` every design holds, and the design
-  // root composed from them.
-  EXPECT_EQ(stats.at("units").size(), 4U);
-  for (const nlohmann::json& unit : stats.at("units")) {
+  // The bodies of the design's two units, of the unit `std` every design
+  // holds, and of the design root composed from them.
+  EXPECT_EQ(stats.at("bodies").size(), 4U);
+  for (const nlohmann::json& unit : stats.at("bodies")) {
     const std::string name = unit.at("name");
     EXPECT_FALSE(unit.at("artifacts").empty()) << name;
     for (const nlohmann::json& file : unit.at("artifacts")) {

@@ -43,17 +43,18 @@
 #include "lyra/hir/callee_interface.hpp"
 #include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/lowering_values.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_clocking.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/published_target.hpp"
-#include "lyra/hir/specialization_values.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_signature.hpp"
+#include "lyra/lowering/ast_to_hir/canonical_body.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
@@ -435,7 +436,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   hir::TypeImporter importer = PublishingImporter(published);
 
   // What an instance is handed is the parameters its instantiation may assign
-  // that the unit's name does not hold, the list a parent hands them in.
+  // that its code reads as values, in the order a parent hands them.
   for (const slang::ast::ParameterSymbol* handed :
        environment_.Parameters().supplied) {
     auto type =
@@ -595,7 +596,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   }
   std::vector<hir::ScopeClassSignature> classes;
   for (const std::vector<const slang::ast::Scope*>& scopes : scopes_of_class) {
-    auto cls = PublishScopeClass(*InReadingOrder(scopes).front());
+    auto cls = PublishScopeClass(*scopes.front());
     if (!cls) return std::unexpected(std::move(cls.error()));
     classes.push_back(*std::move(cls));
   }
@@ -661,7 +662,7 @@ auto UnitLowerer::PublishScopeClass(const slang::ast::Scope& scope)
               hir::UnitObjectType{
                   .scope_class = unit_.scope_classes.Import(
                       hir::ScopeClassKey{
-                          .unit_name = Naming().NameOf(*element),
+                          .unit_name = Names().NameOf(*element),
                           .class_path = {}})});
         }
         std::vector<hir::UnpackedRange> declared;
@@ -710,7 +711,7 @@ auto UnitLowerer::PublishScopeClass(const slang::ast::Scope& scope)
     // Which interface the port carries is settled during elaboration, so the
     // unit reads it here and publishes it; a header that leaves it unnamed
     // (LRM 25.3.3) is read the same way. A unit whose ports name different
-    // interfaces is a different specialization and has its own name already.
+    // interfaces publishes differently, and is another class by that.
     // A modport restricts which members a referrer may name and in which
     // direction (LRM 25.5), which is settled where that referrer compiles; what
     // a connection binds is the whole interface instance under any of its
@@ -753,7 +754,7 @@ auto UnitLowerer::PublishScopeClass(const slang::ast::Scope& scope)
               // no name of the source reaches it.
               return hir::PublishedMember{
                   .name = "block event",
-                  .holder = DefPathOf(*event.symbol, Naming()),
+                  .holder = DefPathOf(*event.symbol, Names()),
                   .type = unit_.types.Intern(hir::Type{hir::EventType{}}),
                   .storage = hir::VariableStorage{}};
             },
@@ -1019,7 +1020,7 @@ auto UnitLowerer::ReadingImporter(const hir::UnitSignature& signature)
 
 auto UnitLowerer::ScopeClassOfInstance(
     const slang::ast::InstanceSymbol& instance) -> hir::ScopeClassId {
-  return ScopeClassOf(Naming().NameOf(instance));
+  return ScopeClassOf(Names().NameOf(instance));
 }
 
 auto UnitLowerer::ScopeClassOf(const std::string& unit_name)
@@ -1165,26 +1166,23 @@ void UnitLowerer::ReadTypeDefinitions() {
 
 namespace {
 
-// What the objects holding `decl` are built as: those of the instance holding
-// it, or, for a namespace or a class's specialization, the unit itself, which
-// is built one way only.
-auto BuiltAsHolding(
-    const slang::ast::Symbol& decl, const UnitNamingPolicy& naming,
-    const BuiltAsQuery& built_as) -> std::string {
+// The lowering whose values `decl` is published among: the one of the
+// instance holding it, or, for a namespace or a class's specialization, the
+// unit itself, which is lowered one way only.
+auto LoweringHolding(const slang::ast::Symbol& decl, const InstanceNames& names)
+    -> std::string {
   const slang::ast::Symbol& home = UnitHomeOf(decl);
   if (const auto* body = home.as_if<slang::ast::InstanceBodySymbol>()) {
-    return built_as.NameOf(InstantiationOf(*body));
+    return LoweringNameOf(InstantiationOf(*body));
   }
-  return CompilationUnitName(home, naming);
+  return CompilationUnitName(home, names);
 }
 
 // The scope of its unit a parameter is published under, each block by where
 // it stands: blocks of one class may each settle a constant of their own (LRM
-// 27.4), so the place is what tells their values apart.
-auto HolderOf(
-    const slang::ast::ParameterSymbol& param, const Specializations& keys)
-    -> support::DefPath {
-  return DefPathOf(param.getParentScope()->asSymbol(), keys.Names());
+// 27.4), so where each stands is what tells their values apart.
+auto HolderOf(const slang::ast::ParameterSymbol& param) -> support::DefPath {
+  return DefPathOf(param.getParentScope()->asSymbol(), PathNames{});
 }
 
 }  // namespace
@@ -1208,10 +1206,9 @@ auto UnitLowerer::ParameterValueOf(
     }
     return MakeConstantValue(*settled, span);
   }
-  const std::string holding = BuiltAsHolding(param, Naming(), BuiltAs());
+  const std::string holding = LoweringHolding(param, Names());
   const hir::ConstantValue* published =
-      Signatures().ValuesOf(holding).FindParameter(
-          param.name, HolderOf(param, Naming().Keys()));
+      Signatures().ValuesOf(holding).FindParameter(param.name, HolderOf(param));
   if (published == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -1232,13 +1229,13 @@ void UnitLowerer::PublishParameterValues() {
     values_.parameters.push_back(
         hir::PublishedParameter{
             .name = std::string{param->name},
-            .holder = HolderOf(*param, Naming().Keys()),
+            .holder = HolderOf(*param),
             .value = *std::move(value)});
   };
   WalkOwnDeclarations(publish);
 }
 
-auto UnitLowerer::TakeValues() -> hir::SpecializationValues {
+auto UnitLowerer::TakeValues() -> hir::LoweringValues {
   return std::move(values_);
 }
 

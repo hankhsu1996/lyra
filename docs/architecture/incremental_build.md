@@ -58,8 +58,8 @@ assumes whole-design lowering forecloses it.
 6. **No global identity coupling.** No design-global id space participates in incremental keys or
    fingerprints.
 7. **Tracked granularity is coarse, not per-expression.** Reuse is tracked at, at minimum,
-   compilation-unit, specialization, and callable or process level. Expression-level incrementality
-   is not required.
+   compilation-unit, body, and callable or process level. Expression-level incrementality is not
+   required.
 8. **Deriving a unit's signature reads nothing outside that unit.** A signature is a function of its
    own unit's declarations. Nothing about another unit is required to produce one, so every unit's
    signature is computable at once, in any order, with no dependency graph among them and therefore
@@ -72,8 +72,8 @@ assumes whole-design lowering forecloses it.
    "declared" is measured in.
 10. **After that point a unit's remaining work names no other unit's work.** Each stage's inputs are
     the unit's own prior stage plus what the units it references publish -- their signatures and the
-    values of the specializations it reaches -- so the stages of different units interleave freely:
-    one unit may be emitting while another is still lowering bodies. A stage that needs no signature
+    values of the lowerings it reaches -- so the stages of different units interleave freely: one
+    unit may be emitting while another is still lowering bodies. A stage that needs no signature
     receives an empty set, which is the same shape as receiving many.
 11. **What a unit's compiled output reads of what another publishes is its dependency on it.** The
     set is read off the unit's finished output, as a C++ compiler writes out the headers it read, so
@@ -89,8 +89,8 @@ assumes whole-design lowering forecloses it.
 - `compilation_unit_model.md` defines the compilation-unit ownership boundary and what a unit's
   signature contains. This doc uses that boundary as the coarsest granularity of incremental reuse,
   and the signature as the unit of cross-unit dependency; it does not define what is on one.
-- `specialization_model.md` defines unit and specialization names. Those names feed the cache this
-  doc describes; this doc does not redefine them.
+- `specialization_model.md` defines unit and body names. Those names feed the cache this doc
+  describes; this doc does not redefine them.
 - `lowering_boundaries.md` owns what a single lowering may do. This doc owns the order the units'
   lowerings run in relative to each other, which is a separate axis.
 - Each IR layer defines its own identity kinds. This doc uses those identities as key sources; it

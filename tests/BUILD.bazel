@@ -333,19 +333,6 @@ cc_test(
 )
 
 cc_test(
-    name = "instance_name_test",
-    srcs = ["instance_name_test.cpp"],
-    copts = LYRA_COPTS,
-    deps = [
-        "//:ast_to_hir",
-        "//:compiler",
-        "//:frontend",
-        "@googletest//:gtest_main",
-        "@slang",
-    ],
-)
-
-cc_test(
     name = "std_definitions_test",
     srcs = ["std_definitions_test.cpp"],
     copts = LYRA_COPTS,

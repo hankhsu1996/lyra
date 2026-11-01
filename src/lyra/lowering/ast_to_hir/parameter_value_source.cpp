@@ -8,6 +8,9 @@
 // settled it, and that is what every declaration reads. So which parameters an
 // object is handed is read off what the body's text reads, as it was bound.
 
+#include "lyra/lowering/ast_to_hir/parameter_value_source.hpp"
+
+#include <algorithm>
 #include <cstddef>
 #include <span>
 #include <unordered_map>
@@ -24,6 +27,7 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 
+#include "lyra/lowering/ast_to_hir/canonical_body.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -199,6 +203,20 @@ auto HeldAsSettled(
          reads.read_in_a_nested_element.contains(&param);
 }
 
+// Whether `inst` is a top with a value parameter given a value elsewhere, which
+// the design root, handing every top nothing, cannot hand it.
+auto IsBuiltByTheRoot(const slang::ast::InstanceSymbol& inst) -> bool {
+  return inst.isTopLevel() &&
+         std::ranges::any_of(
+             inst.body.getParameters(),
+             [&](const slang::ast::ParameterSymbolBase* param) {
+               const auto* value =
+                   param->symbol.as_if<slang::ast::ParameterSymbol>();
+               return value != nullptr && !value->isLocalParam() &&
+                      GivenAValue(inst.body, *value);
+             });
+}
+
 }  // namespace
 
 // What a body's text says of its parameters is one answer for every instance
@@ -207,14 +225,9 @@ auto HeldAsSettled(
 // the instance is read through, and the rest of the instance itself, a
 // parameter of the one standing for the parameter of the other declared at the
 // same place.
-auto Specializations::ParametersOf(const slang::ast::InstanceSymbol& inst) const
-    -> const ParametersOfInstance& {
-  if (const auto kept = per_instance_.find(&inst);
-      kept != per_instance_.end()) {
-    return kept->second;
-  }
-  const slang::ast::InstanceBodySymbol& read_through =
-      HasBodyOfItsOwn(inst) ? inst.body : *inst.getCanonicalBody();
+auto ParametersOf(const slang::ast::InstanceSymbol& inst)
+    -> ParametersOfInstance {
+  const slang::ast::InstanceBodySymbol& read_through = CanonicalBodyOf(inst);
   const ParameterSet own = ValueParametersOf(read_through);
   ReadsOfParameters reads(own);
   read_through.visit(reads);
@@ -264,8 +277,8 @@ auto Specializations::ParametersOf(const slang::ast::InstanceSymbol& inst) const
 
   // The design root builds a top as a parent leaving every parameter to its
   // default does. A top a value was given to elsewhere has nothing to hand it
-  // that value, so its values are compiled in; its key says so, so no
-  // instance the source instantiates shares its specialization.
+  // that value, so its values are compiled in; the front end gives such a top
+  // a body of its own, so no instance the source instantiates lowers with it.
   ParametersOfInstance out;
   const auto supplied_here = [&](const slang::ast::ParameterSymbol& param) {
     return param.isFromGenvar() ||
@@ -318,22 +331,7 @@ auto Specializations::ParametersOf(const slang::ast::InstanceSymbol& inst) const
     out.sources.emplace(as_handed(*param), source);
   }
 
-  return per_instance_.emplace(&inst, std::move(out)).first->second;
-}
-
-auto Specializations::SuppliedParametersOf(
-    const slang::ast::InstanceSymbol& inst) const
-    -> std::span<const slang::ast::ParameterSymbol* const> {
-  return ParametersOf(inst).supplied;
-}
-
-auto Specializations::ValueSourceOf(
-    const slang::ast::InstanceSymbol& inst,
-    const slang::ast::ParameterSymbol& param) const -> ParameterValueSource {
-  const ParametersOfInstance& known = ParametersOf(inst);
-  const auto it = known.sources.find(&param);
-  return it == known.sources.end() ? ParameterValueSource::kSettledAtElaboration
-                                   : it->second;
+  return out;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

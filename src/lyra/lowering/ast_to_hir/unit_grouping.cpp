@@ -17,7 +17,6 @@
 #include <variant>
 #include <vector>
 
-#include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
@@ -29,9 +28,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/structure_bytes.hpp"
+#include "lyra/lowering/ast_to_hir/canonical_body.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
-#include "lyra/lowering/ast_to_hir/instance_context.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
+#include "lyra/lowering/ast_to_hir/outside_reach.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -109,48 +109,22 @@ void InstancesDeclaring(
   }
 }
 
-// The instances directly held by `scope`, wherever its generate blocks and
-// instance arrays place them, in the order the source writes them.
-void HeldInstances(
-    const slang::ast::Scope& scope,
-    std::vector<const slang::ast::InstanceSymbol*>& out) {
-  for (const slang::ast::Symbol& member : scope.members()) {
-    if (const auto* inst = member.as_if<slang::ast::InstanceSymbol>()) {
-      out.push_back(inst);
-    } else if (
-        const auto* array = member.as_if<slang::ast::InstanceArraySymbol>()) {
-      HeldInstances(*array, out);
-    } else if (
-        const auto* block = member.as_if<slang::ast::GenerateBlockSymbol>()) {
-      if (!block->isUninstantiated) HeldInstances(*block, out);
-    } else if (
-        const auto* loop =
-            member.as_if<slang::ast::GenerateBlockArraySymbol>()) {
-      for (const slang::ast::GenerateBlockSymbol* entry : loop->entries) {
-        HeldInstances(*entry, out);
-      }
-    }
-  }
-}
-
 class Grouping;
 
-// The naming one specialization is described in while classes are found: the
-// instance being described and every other instance of its specialization by
-// one mark, an instance it holds by what that one publishes, one outside it
-// that its key reaches by where it stands among those, and any other by its
-// class.
-class GroupingNames final : public UnitNamingPolicy {
+// The naming one lowering is described in while units are found: the
+// instance being described and every other instance of its lowering by one
+// mark, an instance it holds by what that one publishes, one outside it that
+// its text reaches by where it stands among those, and any other by its unit.
+class GroupingNames final : public InstanceNames {
  public:
   GroupingNames(
-      const Specializations& keys, Grouping& grouping,
-      const slang::ast::InstanceSymbol& described,
-      const std::vector<const slang::ast::InstanceSymbol*>& reached)
-      : UnitNamingPolicy(keys, nullptr),
-        grouping_(&grouping),
+      Grouping& grouping, const slang::ast::InstanceSymbol& described,
+      const std::vector<const slang::ast::InstanceSymbol*>& reached,
+      std::set<std::size_t>& named)
+      : grouping_(&grouping),
         described_(&described),
-        own_(keys.SpecializationNameOf(described)),
-        reached_(&reached) {
+        reached_(&reached),
+        named_(&named) {
   }
 
   [[nodiscard]] auto NameOf(const slang::ast::InstanceSymbol& inst) const
@@ -158,25 +132,21 @@ class GroupingNames final : public UnitNamingPolicy {
 
   [[nodiscard]] auto BlockStepOf(const slang::ast::GenerateBlockSymbol& block)
       const -> support::GenerateBlockStep override {
-    return Keys().Names().BlockStepOf(block);
+    return PathStepOf(block);
   }
 
-  // Records that what was declared names the reached instance at `reached`.
-  void Name(std::size_t reached) const {
-    named_.insert(reached);
-  }
-
-  [[nodiscard]] auto Named() const -> const std::set<std::size_t>& {
-    return named_;
+  // Notes that what was declared names the reached instance at `reached`.
+  void NoteNamed(std::size_t reached) const {
+    named_->insert(reached);
   }
 
  private:
   Grouping* grouping_;
   const slang::ast::InstanceSymbol* described_;
-  std::string own_;
   const std::vector<const slang::ast::InstanceSymbol*>* reached_;
-  // Which of the reached instances what was declared names, by position.
-  mutable std::set<std::size_t> named_;
+  // Which of the reached instances what was declared names, by position, held
+  // by the description this naming serves.
+  std::set<std::size_t>* named_;
 };
 
 // Every distinct thing of one kind grouping wrote, each by its digest and held
@@ -208,38 +178,39 @@ class Interned {
   std::unordered_map<std::uint64_t, std::string> written_;
 };
 
+// The body a lowering is lowered from, which is what one is identified by
+// while units are found: an in-memory identity that never crosses a unit.
+using Body = const slang::ast::InstanceBodySymbol*;
+
 class Grouping {
  public:
-  Grouping(const Specializations& keys, const DeclareUnder& declare)
-      : keys_(&keys), declare_(&declare) {
+  Grouping(const ElaboratedInstances& instances, const DeclareLowering& declare)
+      : instances_(&instances), declare_(&declare) {
   }
 
-  void Represent(const slang::ast::InstanceSymbol& inst) {
-    representative_.try_emplace(keys_->SpecializationNameOf(inst), &inst);
-  }
-
-  // What the specialization of `inst` publishes, every reference in it written
-  // by what it reaches.
-  auto RelOf(const slang::ast::InstanceSymbol& inst) -> std::uint64_t {
-    const std::string specialization = keys_->SpecializationNameOf(inst);
-    if (const auto kept = rels_.find(specialization); kept != rels_.end()) {
+  // What the lowering of `inst` publishes, every reference in it written by
+  // what it reaches.
+  auto StructureOf(const slang::ast::InstanceSymbol& inst) -> std::uint64_t {
+    const Body body = &CanonicalBodyOf(inst);
+    if (const auto kept = structures_.find(body); kept != structures_.end()) {
       return kept->second;
     }
-    Represent(inst);
-    const slang::ast::InstanceSymbol& described =
-        *representative_.at(specialization);
-    describing_.push_back(specialization);
+    const slang::ast::InstanceSymbol& described = InstantiationOf(*body);
+    being_described_.push_back(body);
     const std::vector<const slang::ast::InstanceSymbol*> reached =
         ReachedFrom(described);
-    const GroupingNames names(*keys_, *this, described, reached);
+    std::set<std::size_t> named;
+    const GroupingNames names(*this, described, reached, named);
     const std::optional<hir::UnitSignature> declared =
         (*declare_)(described, names);
     // One that fails to declare stops the compile once grouping returns, and
-    // is a class of its own until then.
+    // is a unit of its own until then.
     if (!declared.has_value()) {
-      describing_.pop_back();
-      named_.emplace(specialization, std::set<std::size_t>{});
-      return rels_.emplace(specialization, rels_found_.Of("!" + specialization))
+      being_described_.pop_back();
+      named_.emplace(body, std::set<std::size_t>{});
+      return structures_
+          .emplace(
+              body, structures_found_.Of("!" + described.getHierarchicalPath()))
           .first->second;
     }
     const hir::UnitSignature& signature = *declared;
@@ -301,18 +272,17 @@ class Grouping {
       }
     }
     for (const auto& [path, digest] : blocks) {
-      block_class_of_.insert_or_assign(std::pair{specialization, path}, digest);
+      block_class_of_.insert_or_assign(std::pair{body, path}, digest);
     }
 
-    // A class is a class of one definition: two cells of one name in two
+    // A unit is a unit of one definition: two cells of one name in two
     // libraries (LRM 33.2.1) may publish alike and are still two.
-    std::string written = keys_->DefinitionOf(described) + "|" +
+    std::string written = DefinitionNameOf(described) + "|" +
                           hir::StructureBytes(signature, reference);
     // Where what each instance it holds reaches outside itself lands: inside
     // this one, at a place, or outside it, among what this one reaches.
-    std::vector<const slang::ast::InstanceSymbol*> held;
-    HeldInstances(described.body, held);
-    for (const slang::ast::InstanceSymbol* child : held) {
+    for (const slang::ast::InstanceSymbol* child :
+         InstancesHeldIn(described.body)) {
       written += std::format("|{}", RouteFrom(described, *child));
       for (const slang::ast::InstanceSymbol* target : ReachedFrom(*child)) {
         if (Inside(*target, described)) {
@@ -322,56 +292,54 @@ class Grouping {
         const auto among = std::ranges::find(reached, target);
         if (among != reached.end()) {
           const auto at = static_cast<std::size_t>(among - reached.begin());
-          names.Name(at);
+          names.NoteNamed(at);
           written += std::format("=x{};", at);
           continue;
         }
-        written += std::format("=c:{};", ClassOf(*target));
+        written += std::format("=c:{};", UnitOf(*target));
       }
     }
-    describing_.pop_back();
-    named_.emplace(specialization, names.Named());
-    return rels_.emplace(specialization, rels_found_.Of(std::move(written)))
+    being_described_.pop_back();
+    named_.emplace(body, std::move(named));
+    return structures_.emplace(body, structures_found_.Of(std::move(written)))
         .first->second;
   }
 
-  // The class the specialization of `inst` is, as the digest of what it
-  // publishes and the class of each instance outside it that what it publishes
-  // names -- what its code alone reaches is the code's, and no referrer
-  // compiles against it. Every specialization on a cycle of classes turning on
-  // one another is written by its own name instead, which keeps it apart from
-  // every other and never takes two for one.
-  auto ClassOf(const slang::ast::InstanceSymbol& inst) -> std::string {
-    const std::string specialization = keys_->SpecializationNameOf(inst);
-    if (const auto kept = classes_.find(specialization);
-        kept != classes_.end()) {
+  // The unit the lowering of `inst` is, as the digest of what it publishes
+  // and the unit of each instance outside it that what it publishes names --
+  // what its code alone reaches is the code's, and no referrer compiles
+  // against it. Every lowering on a cycle of units turning on one another is
+  // written by its own place instead, which keeps it apart from every other
+  // and never takes two for one.
+  auto UnitOf(const slang::ast::InstanceSymbol& inst) -> std::string {
+    const Body body = &CanonicalBodyOf(inst);
+    if (const auto kept = units_.find(body); kept != units_.end()) {
       return kept->second;
     }
-    const auto on_the_way = [&](const std::vector<std::string>& stack) {
-      return std::ranges::find(stack, specialization);
+    const slang::ast::InstanceSymbol& described = InstantiationOf(*body);
+    const std::string own = "~" + described.getHierarchicalPath();
+    const auto on_the_way = [&](const std::vector<Body>& stack) {
+      return std::ranges::find(stack, body);
     };
-    if (const auto from = on_the_way(classing_); from != classing_.cend()) {
-      cyclic_.insert(from, classing_.cend());
-      return "~" + specialization;
+    if (const auto from = on_the_way(being_classed_);
+        from != being_classed_.cend()) {
+      cyclic_.insert(from, being_classed_.cend());
+      return own;
     }
-    if (on_the_way(describing_) != describing_.end()) {
-      cyclic_.insert(specialization);
-      return "~" + specialization;
+    if (on_the_way(being_described_) != being_described_.end()) {
+      cyclic_.insert(body);
+      return own;
     }
-    Represent(inst);
-    const slang::ast::InstanceSymbol& described =
-        *representative_.at(specialization);
-    classing_.push_back(specialization);
-    std::string written = Hex(RelOf(described));
+    being_classed_.push_back(body);
+    std::string written = Hex(StructureOf(described));
     const std::vector<const slang::ast::InstanceSymbol*> reached =
         ReachedFrom(described);
-    for (const std::size_t at : named_.at(specialization)) {
-      written += std::format("|{}:{}", at, ClassOf(*reached.at(at)));
+    for (const std::size_t at : named_.at(body)) {
+      written += std::format("|{}:{}", at, UnitOf(*reached.at(at)));
     }
-    classing_.pop_back();
-    if (cyclic_.contains(specialization)) written = "~" + specialization;
-    return classes_
-        .emplace(specialization, Hex(classes_found_.Of(std::move(written))))
+    being_classed_.pop_back();
+    if (cyclic_.contains(body)) written = own;
+    return units_.emplace(body, Hex(units_found_.Of(std::move(written))))
         .first->second;
   }
 
@@ -398,7 +366,7 @@ class Grouping {
         found.push_back(bound);
       }
     }
-    const InstanceContext& context = keys_->ContextOf(inst);
+    const OutsideReach& context = instances_->OutsideReachOf(inst);
     const auto lands =
         [&](const slang::ast::Scope& landed,
             std::span<const slang::ast::Scope* const> blocks_passed) {
@@ -412,7 +380,7 @@ class Grouping {
         lands(*use.landing->scope, use.landing->blocks_passed);
       }
     }
-    for (const NameLandingBelow& name : context.names_below) {
+    for (const ClimbAnchor& name : context.names_below) {
       lands(*name.scope, name.blocks_passed);
     }
     const slang::ast::DefinitionSymbol& definition = inst.getDefinition();
@@ -433,30 +401,25 @@ class Grouping {
     return reached;
   }
 
-  // Whether `inst` is an application of the specialization named `own`.
-  [[nodiscard]] auto SameAs(
-      const slang::ast::InstanceSymbol& inst, const std::string& own) const
-      -> bool {
-    return keys_->SpecializationNameOf(inst) == own;
-  }
-
-  // The class of each block of every specialization described, by the
-  // specialization and where the block stands there.
-  [[nodiscard]] auto Blocks() const -> const
-      std::map<std::pair<std::string, support::DefPath>, std::uint64_t>& {
+  // The class of each block of every lowering described, by the body and
+  // where the block stands there.
+  [[nodiscard]] auto Blocks() const
+      -> const std::map<std::pair<Body, support::DefPath>, std::uint64_t>& {
     return block_class_of_;
   }
 
-  // One instance of every specialization met, the ones grouping reached on
-  // its way included, in the order of their names.
-  [[nodiscard]] auto Represented() const
+  // The instance of every lowering met, the ones grouping reached on its way
+  // included, in the order of their places.
+  [[nodiscard]] auto Classified() const
       -> std::vector<const slang::ast::InstanceSymbol*> {
-    std::vector<std::pair<std::string, const slang::ast::InstanceSymbol*>>
-        sorted(representative_.begin(), representative_.end());
-    std::ranges::sort(sorted, {}, &decltype(sorted)::value_type::first);
     std::vector<const slang::ast::InstanceSymbol*> out;
-    out.reserve(sorted.size());
-    for (const auto& [_, inst] : sorted) out.push_back(inst);
+    out.reserve(units_.size());
+    for (const auto& [body, _] : units_) {
+      out.push_back(&InstantiationOf(*body));
+    }
+    std::ranges::sort(out, {}, [](const slang::ast::InstanceSymbol* inst) {
+      return inst->getHierarchicalPath();
+    });
     return out;
   }
 
@@ -470,117 +433,107 @@ class Grouping {
     return Enclosing(scope.asSymbol());
   }
 
-  const Specializations* keys_;
-  const DeclareUnder* declare_;
-  std::unordered_map<std::string, const slang::ast::InstanceSymbol*>
-      representative_;
-  Interned rels_found_{"specializations"};
-  Interned classes_found_{"classes"};
+  const ElaboratedInstances* instances_;
+  const DeclareLowering* declare_;
+  Interned structures_found_{"published structures"};
+  Interned units_found_{"classes"};
   Interned blocks_found_{"block classes"};
-  std::unordered_map<std::string, std::uint64_t> rels_;
-  // Which reached instances each specialization's structure names.
-  std::unordered_map<std::string, std::set<std::size_t>> named_;
-  std::unordered_map<std::string, std::string> classes_;
-  // The specializations being described and those whose class is being worked
-  // out, outermost first.
-  std::vector<std::string> describing_;
-  std::vector<std::string> classing_;
-  std::unordered_set<std::string> cyclic_;
-  std::map<std::pair<std::string, support::DefPath>, std::uint64_t>
-      block_class_of_;
+  std::unordered_map<Body, std::uint64_t> structures_;
+  // Which reached instances each lowering's structure names.
+  std::unordered_map<Body, std::set<std::size_t>> named_;
+  std::unordered_map<Body, std::string> units_;
+  // The lowerings being described and those whose unit is being worked out,
+  // outermost first.
+  std::vector<Body> being_described_;
+  std::vector<Body> being_classed_;
+  std::unordered_set<Body> cyclic_;
+  std::map<std::pair<Body, support::DefPath>, std::uint64_t> block_class_of_;
 };
 
 auto GroupingNames::NameOf(const slang::ast::InstanceSymbol& inst) const
     -> std::string {
-  if (grouping_->SameAs(inst, own_)) return "s";
-  if (Inside(inst, *described_)) return "r:" + Hex(grouping_->RelOf(inst));
+  if (&CanonicalBodyOf(inst) == &CanonicalBodyOf(*described_)) return "s";
+  if (Inside(inst, *described_))
+    return "r:" + Hex(grouping_->StructureOf(inst));
   const auto among = std::ranges::find(*reached_, &inst);
   if (among != reached_->end()) {
     const auto at = static_cast<std::size_t>(among - reached_->begin());
-    Name(at);
+    NoteNamed(at);
     return std::format("x{}", at);
   }
-  return "c:" + grouping_->ClassOf(inst);
+  return "c:" + grouping_->UnitOf(inst);
 }
 
 }  // namespace
 
-auto ClassNames::NameOf(const slang::ast::InstanceSymbol& inst) const
+auto UnitNames::NameOf(const slang::ast::InstanceSymbol& inst) const
     -> std::string {
-  const std::string specialization = Keys().SpecializationNameOf(inst);
-  const auto unit = unit_of_.find(specialization);
+  const auto unit = unit_of_.find(&CanonicalBodyOf(inst));
   if (unit == unit_of_.end()) {
     throw InternalError(
         std::format(
-            "ClassNames: specialization '{}' was grouped into no class",
-            specialization));
+            "UnitNames: '{}' was grouped into no unit",
+            inst.getHierarchicalPath()));
   }
   return unit->second;
 }
 
-auto ClassNames::BlockStepOf(const slang::ast::GenerateBlockSymbol& block) const
+auto UnitNames::BlockStepOf(const slang::ast::GenerateBlockSymbol& block) const
     -> support::GenerateBlockStep {
   support::DefPath path;
   const slang::ast::Symbol* at = &block;
   while (at->kind != slang::ast::SymbolKind::InstanceBody) {
     if (const auto* enclosing = at->as_if<slang::ast::GenerateBlockSymbol>()) {
-      path.data.emplace_back(Keys().Names().BlockStepOf(*enclosing));
+      path.data.emplace_back(PathStepOf(*enclosing));
     }
     at = &at->getParentScope()->asSymbol();
   }
   std::ranges::reverse(path.data);
-  const std::string specialization = Keys().SpecializationNameOf(
+  // A block of an instance lowered with another stands at the same path in
+  // that one's body.
+  const auto* body = &CanonicalBodyOf(
       InstantiationOf(at->as<slang::ast::InstanceBodySymbol>()));
-  const auto found = block_class_of_.find(std::pair{specialization, path});
+  const auto found = block_class_of_.find(std::pair{body, path});
   if (found == block_class_of_.end()) {
     throw InternalError(
         std::format(
-            "ClassNames: block '{}' of '{}' was published by no "
-            "specialization",
-            block.name, specialization));
+            "UnitNames: block '{}' of '{}' was published by no lowering",
+            block.name, InstantiationOf(*body).getHierarchicalPath()));
   }
   support::GenerateBlockStep step =
       std::get<support::GenerateBlockStep>(path.data.back());
-  step.arguments = found->second;
+  step.distinguisher = found->second;
   return step;
 }
 
-auto GroupSpecializations(
-    const Specializations& keys,
-    const std::vector<const slang::ast::InstanceSymbol*>& representatives,
-    const DeclareUnder& declare) -> std::unique_ptr<ClassNames> {
-  Grouping grouping(keys, declare);
-  for (const slang::ast::InstanceSymbol* inst : representatives) {
-    grouping.Represent(*inst);
+auto GroupLowerings(
+    const ElaboratedInstances& instances,
+    const std::vector<const slang::ast::InstanceSymbol*>& lowered,
+    const DeclareLowering& declare) -> std::unique_ptr<UnitNames> {
+  Grouping grouping(instances, declare);
+  for (const slang::ast::InstanceSymbol* inst : lowered) {
+    grouping.UnitOf(*inst);
   }
-  // A class is named by its definition alone where it is nothing but the one
-  // specialization of the definition the design fixed nothing for, and by the
-  // digest of what it publishes otherwise, so every specialization of one
-  // class has one name.
+  // A unit is named by its definition alone where the design holds no other
+  // unit of that definition, and by the digest of what it publishes
+  // otherwise. Either way the name is a function of the design's content and
+  // never of the order it is read in.
   std::map<std::string, std::vector<const slang::ast::InstanceSymbol*>> members;
-  for (const slang::ast::InstanceSymbol* inst : grouping.Represented()) {
-    members[grouping.ClassOf(*inst)].push_back(inst);
+  std::unordered_map<std::string, std::size_t> units_of_definition;
+  for (const slang::ast::InstanceSymbol* inst : grouping.Classified()) {
+    auto& of_unit = members[grouping.UnitOf(*inst)];
+    if (of_unit.empty()) ++units_of_definition[DefinitionNameOf(*inst)];
+    of_unit.push_back(inst);
   }
-  std::unordered_map<std::string, std::string> unit_of;
-  std::unordered_map<std::string, std::string> class_named;
-  for (const auto& [cls, of_class] : members) {
-    const slang::ast::InstanceSymbol& first = *of_class.front();
-    std::string unit = keys.DefinitionOf(first);
-    if (of_class.size() != 1 || !keys.FixesNothing(first)) unit += "__" + cls;
-    if (const auto [kept, fresh] = class_named.try_emplace(unit, cls);
-        !fresh && kept->second != cls) {
-      throw InternalError(
-          std::format(
-              "GroupSpecializations: two classes reached the name '{}', so "
-              "the name no longer tells them apart",
-              unit));
-    }
-    for (const slang::ast::InstanceSymbol* inst : of_class) {
-      unit_of.emplace(keys.SpecializationNameOf(*inst), unit);
+  std::unordered_map<Body, std::string> unit_of;
+  for (const auto& [digest, of_unit] : members) {
+    std::string unit = DefinitionNameOf(*of_unit.front());
+    if (units_of_definition.at(unit) != 1) unit += "__" + digest;
+    for (const slang::ast::InstanceSymbol* inst : of_unit) {
+      unit_of.emplace(&CanonicalBodyOf(*inst), unit);
     }
   }
-  return std::make_unique<ClassNames>(
-      keys, std::move(unit_of), grouping.Blocks());
+  return std::make_unique<UnitNames>(std::move(unit_of), grouping.Blocks());
 }
 
 }  // namespace lyra::lowering::ast_to_hir

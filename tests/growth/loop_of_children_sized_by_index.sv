@@ -4,7 +4,7 @@
 // the one class its instances are, lowered once, read once by the module
 // holding it, and named once by the design root, which states how an object of
 // each unit is made. N is how many blocks the loop counts out.
-// @each-adds: units 1, files, bytes, bodies lowered 1,
+// @each-adds: bodies 1, files, bytes, lowerings 1,
 // @each-adds: mir.classes 1, mir.constructors 1, mir.callables, mir.fields,
 // @each-adds: mir.types, mir.consumed signatures 2, mir.declared classes 2,
 // @each-adds: lir.classes 1, lir.functions, lir.members, lir.types,

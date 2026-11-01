@@ -106,7 +106,7 @@ auto SynthesizeForeignExportEntry(
 
 // Records what `unit` states of one exported name whose entries sit on scopes
 // (LRM 35.5.3): its prototype, and the program-global symbol a foreign source
-// calls. Those entries are compiled once per specialization of the scope, so
+// calls. Those entries are compiled once per body of the scope's unit, so
 // the symbol cannot call any one of them -- it resolves the entry against the
 // scope the foreign call chain established, restores it to the prototype it was
 // generated with, and calls it, inside the same region an entry stands in. The

@@ -11,7 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
-#include "lyra/lowering/ast_to_hir/lower.hpp"
+#include "lyra/lowering/ast_to_hir/declared_design.hpp"
 
 namespace lyra::compiler {
 
@@ -47,7 +47,7 @@ auto DeclareUnits(
         "is none left to declare");
   }
   auto units = lowering::ast_to_hir::DeclaredDesign::Declare(
-      std::move(elaborated), policy.assertions, policy.bodies_read, sink);
+      std::move(elaborated), policy.assertions, sink);
   if (!units) {
     return std::nullopt;
   }

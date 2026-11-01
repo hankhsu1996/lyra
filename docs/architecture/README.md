@@ -20,7 +20,8 @@ Read top to bottom on first pass:
 4. `compilation_unit_model.md` -- what a compilation unit is and owns
 5. `runtime_model.md` -- the constructor / simulation execution-context split
 6. `elaboration_lifecycle.md` -- the build / resolve / seal / initialize / activate phase protocol
-7. `specialization_model.md` -- how parameter values refine a unit into specializations
+7. `specialization_model.md` -- what counts as an argument, and which lowerings are one unit and one
+   body
 8. `hir.md` -- source-near semantic IR
 9. `mir.md` -- object-oriented semantic IR (objects, members, callables)
 10. `callable.md` -- the one callable concept; callable code vs callable value; capture model;
@@ -80,7 +81,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Logical binding identity; per-body materialization; capture forwarding; carrier/view                  | `binding_and_capture.md`        |
 | Per-unit artifact emission; a scope's published part and realization; no wiring                       | `emission_model.md`             |
 | Per-node within-artifact render; type mapping vs value emission                                       | `backend_contract.md`           |
-| Parameter values, unit and specialization names, per-body artifacts                                   | `specialization_model.md`       |
+| Parameter values, unit, body and lowering names, per-body artifacts                                   | `specialization_model.md`       |
 | Identity rules; ownership; forbidden identity shapes                                                  | `identity_and_ownership.md`     |
 | Lowering permissions (what each lowering may and may not do)                                          | `lowering_boundaries.md`        |
 | Lowering pass organization (facts / registry / builder / walk frame)                                  | `lowering_organization.md`      |

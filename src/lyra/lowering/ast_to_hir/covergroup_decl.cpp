@@ -733,8 +733,8 @@ auto UnitLowerer::ResolveCovergroup(
     }
     const hir::CovergroupId id = unit_.covergroups.Import(
         hir::CovergroupKey{
-            .unit_name = CompilationUnitName(UnitHomeOf(covergroup), Naming()),
-            .path = DefPathOf(covergroup, Naming())});
+            .unit_name = CompilationUnitName(UnitHomeOf(covergroup), Names()),
+            .path = DefPathOf(covergroup, Names())});
     covergroup_cache_.emplace(&covergroup, id);
     return id;
   }
@@ -755,7 +755,7 @@ auto UnitLowerer::InternOwnCovergroup(
   // elaborated, as a class is: a copy at a path already declared is that
   // covergroup.
   const hir::CovergroupId id =
-      unit_.covergroups.DeclareOwn(DefPathOf(covergroup, Naming()));
+      unit_.covergroups.DeclareOwn(DefPathOf(covergroup, Names()));
   covergroup_cache_.emplace(&covergroup, id);
   // Its expressions reach what encloses it as a body of the scope replicating
   // it does, so it lowers with that scope (LRM 6.22, 19.3).
@@ -864,7 +864,7 @@ auto UnitLowerer::PublishedCovergroupOf(
         .direction = ParamDirectionOf(declared)};
   };
   hir::PublishedCovergroup published{
-      .path = DefPathOf(covergroup, Naming()),
+      .path = DefPathOf(covergroup, Names()),
       .formals = {},
       .sample_formals = {},
       .embedding = std::nullopt,
@@ -973,13 +973,13 @@ auto UnitLowerer::PublishedFactoryOf(
         .is_pure = false,
         .overridden = hir::NamedBehavior{
             .introducer = *introducer,
-            .name = hir::CovergroupFactoryName(DefPathOf(first, Naming()))}};
+            .name = hir::CovergroupFactoryName(DefPathOf(first, Names()))}};
   }
   return hir::DeclaredMethod{
       .prototype =
           hir::SubroutinePrototype{
               .name =
-                  hir::CovergroupFactoryName(DefPathOf(covergroup, Naming())),
+                  hir::CovergroupFactoryName(DefPathOf(covergroup, Names())),
               .interface = std::move(interface),
               .result_type = *made},
       .dispatch = dispatch,

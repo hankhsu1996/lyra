@@ -17,9 +17,9 @@
 
 #include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/scope_instantiations.hpp"
-#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/library_entry_body.hpp"
@@ -491,9 +491,9 @@ auto ErasedObjectEntry(
 }
 
 // The construction tables the design root states: one per scope of each
-// specialization an object is made of -- the specialization's own, and one per
+// lowering an object is made of -- the lowering's own, and one per
 // block it builds at each place of each of its generates, inside it -- each
-// specialization's stated the first time an instantiation makes it and named
+// lowering's stated the first time an instantiation makes it and named
 // by every later one.
 //
 //   const Instantiation entries[2] = {{(Erased)&Child::sv_create, &child},
@@ -517,22 +517,22 @@ class ConstructionTables {
         cls_(&cls),
         instantiations_(&instantiations),
         entry_types_(&entry_types) {
-    for (const auto& [_, made] : instantiations.by_specialization) {
+    for (const auto& [_, made] : instantiations.by_lowering) {
       Gather(made.body, std::nullopt, made.made);
     }
   }
 
-  // The table of the specialization `made`, which is stated once.
-  auto Of(const hir::SpecializationRef& made) -> mir::ClassConstantRef {
-    if (const auto stated = of_specialization_.find(made.specialization);
-        stated != of_specialization_.end()) {
+  // The table of the lowering `made`, which is stated once.
+  auto Of(const hir::LoweringRef& made) -> mir::ClassConstantRef {
+    if (const auto stated = of_lowering_.find(made.lowering);
+        stated != of_lowering_.end()) {
       return stated->second;
     }
-    const SpecializationMade& found = Made(made);
+    const LoweringMade& found = Made(made);
     const mir::ClassConstantRef table =
         Of(BodyRef{.unit = made.unit, .body = found.body}, std::nullopt,
            found.made);
-    of_specialization_.emplace(made.specialization, table);
+    of_lowering_.emplace(made.lowering, table);
     return table;
   }
 
@@ -640,7 +640,7 @@ class ConstructionTables {
 
   // The table of a scope of the body `owner` laid out as `layout` -- the
   // body's own scope, or that of its block body `scope`: at each
-  // instantiation it declares, how the specialization made there is made,
+  // instantiation it declares, how the lowering made there is made,
   // then at each place of each of its generates, how the block built there is
   // made. Scopes whose tables hold the same entries are made with one table
   // -- the blocks of a loop handed different values that build alike, above
@@ -650,7 +650,7 @@ class ConstructionTables {
       const BodyRef& owner, std::optional<hir::BlockBodyId> scope,
       const hir::ScopeInstantiations& layout) -> mir::ClassConstantRef {
     Content content;
-    for (const hir::SpecializationRef& made : layout.Instantiated()) {
+    for (const hir::LoweringRef& made : layout.Instantiated()) {
       content.instances.push_back(
           Entry{
               .made = BodyRef{.unit = made.unit, .body = Made(made).body},
@@ -772,17 +772,16 @@ class ConstructionTables {
     return std::move(record).Build();
   }
 
-  // What the specialization `made` builds, as its lowering recorded it.
-  [[nodiscard]] auto Made(const hir::SpecializationRef& made) const
-      -> const SpecializationMade& {
-    const auto found =
-        instantiations_->by_specialization.find(made.specialization);
-    if (found == instantiations_->by_specialization.end()) {
+  // What the lowering `made` builds, as its lowering recorded it.
+  [[nodiscard]] auto Made(const hir::LoweringRef& made) const
+      -> const LoweringMade& {
+    const auto found = instantiations_->by_lowering.find(made.lowering);
+    if (found == instantiations_->by_lowering.end()) {
       throw InternalError(
           std::format(
-              "hir_to_mir: an object of specialization '{}' is made, and what "
+              "hir_to_mir: an object of lowering '{}' is made, and what "
               "it builds was never recorded -- please report this as a bug",
-              made.specialization));
+              made.lowering));
     }
     return found->second;
   }
@@ -805,7 +804,7 @@ class ConstructionTables {
   mir::Class* cls_;
   const DesignInstantiations* instantiations_;
   const std::map<std::string, mir::TypeId, std::less<>>* entry_types_;
-  std::map<std::string, mir::ClassConstantRef, std::less<>> of_specialization_;
+  std::map<std::string, mir::ClassConstantRef, std::less<>> of_lowering_;
   // Each table stated, with what it holds.
   std::vector<std::pair<Content, mir::ClassConstantRef>> stated_;
   // Every block built at each place of every scope the design builds.
@@ -1158,8 +1157,7 @@ auto BlockEntryType(mir::CompilationUnit& unit, bool handed_its_index)
 
 auto StateConstructionTables(
     mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    const hir::SpecializationRef& root,
-    const DesignInstantiations& instantiations,
+    const hir::LoweringRef& root, const DesignInstantiations& instantiations,
     const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
     -> mir::ClassConstantRef {
   return ConstructionTables(unit, id, cls, instantiations, entry_types)

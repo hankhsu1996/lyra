@@ -1272,7 +1272,7 @@ auto SynthesizeForeignExportEntry(
   const hir::SubroutineKind kind =
       is_task ? hir::SubroutineKind::kTask : hir::SubroutineKind::kFunction;
 
-  // A subroutine of a scope is compiled once per specialization of that scope
+  // A subroutine of a scope is compiled once per body of the scope's unit
   // while its DPI-C name is one program-global symbol, so its entry is reached
   // through the scope rather than being the symbol: the entry leads with the
   // scope it runs against, and the symbol resolves it against the scope in

@@ -11,6 +11,12 @@ Accepted. Revises [read-set-inference](read-set-inference.md),
 where [front-end-semantic-boundary](front-end-semantic-boundary.md) D2 and
 [event-control-unification](event-control-unification.md) take a read set from.
 
+D4 and D5 revised 2026-10-31 by
+[every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md):
+every body the front end did not share is lowered in the build, so lowering every instance is no
+check and no test; an instance is still its body and its environment, read through nothing else, but
+the environment is worked out per instance and renders no key. D1 to D3 and D6 stand.
+
 ## Requirement
 
 Every instance of a design element, and every block of a generate loop, that one identity names

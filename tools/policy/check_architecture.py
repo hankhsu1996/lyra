@@ -217,9 +217,10 @@ Rules:
         compiler exists to avoid. A clause requiring a constant expression is
         not a reason to read one: it says the value is known, not that the
         artifact has to hold it. What a unit publishes about its ports and
-        what a type is are exempt: both are part of the unit's identity, so a
-        value deciding either is already one artifact per value; so is the
-        key spelling a type by what it holds, a member's default among it. A
+        what a type is are exempt: both are part of what tells one class of
+        a unit from another, so a value deciding either is already one
+        artifact per value; so is a type spelled by what it holds, a member's
+        default among it. A
         port's default is not among them -- it is evaluated for each instance
         that leaves the port unconnected (LRM 23.2.2.4).
         Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
@@ -239,24 +240,25 @@ Rules:
         Scope: every .cpp/.hpp under src/lyra/backend/cpp and
         include/lyra/backend/cpp.
 
-  A025  HIR equality is derived and exact. Every instance of a body is held
-        to lowering alike where the compile is checked against itself, so the
-        comparison is what finds a lowering that read a value the body's name
-        does not hold. A hand-written `operator==` can leave a field out, and
-        a floating-point member compares as a number, which calls 0.0 and
-        -0.0 one value and two identical NaNs two; either way two different
-        programs compare equal, or one program compares unequal to itself. So
-        every `operator==` a HIR node declares is `= default`, and a real
-        value is held as the bits that represent it.
+  A025  HIR equality is derived and exact. The lowerings of one unit are one
+        body where their HIR is equal, compared whole, so the comparison is
+        what decides which instances run one body's code. A hand-written
+        `operator==` can leave a field out, and a floating-point member
+        compares as a number, which calls 0.0 and -0.0 one value and two
+        identical NaNs two; either way two different programs compare equal,
+        or one program compares unequal to itself. So every `operator==` a
+        HIR node declares is `= default`, and a real value is held as the
+        bits that represent it.
         Scope: include/lyra/hir/**.
 
   A026  Nothing reads what the front end folded where the language did not
-        ask for a constant. It records which parameters each evaluation it
-        was required to make read, and that record is what keeps a parameter
-        in a unit's key. A fold it made on its own -- a conditional operator
-        whose condition happened to be constant, a sequence it found can
-        never match -- is recorded nowhere, so code compiled from it holds a
-        value the unit was never told apart by. Read the expression instead.
+        ask for a constant. A fold it made on its own -- a conditional
+        operator whose condition happened to be constant, a sequence it found
+        can never match -- holds a value some parameter decided, so a body
+        lowered from the fold states that value where it could have been
+        supplied, and two instances handed different values are two bodies
+        where lowering the expression would have made one. Read the
+        expression instead.
         Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
         include/lyra/lowering/ast_to_hir.
 
@@ -924,7 +926,7 @@ def check_a019(repo_root: Path) -> list[str]:
 # is coarser than one entry per switch, and it hides nothing new: a key is here
 # only because a switch under it already carried a `default:`.
 A020_STANDING = frozenset({
-    ("src/lyra/lowering/ast_to_hir/compilation_lowerer.cpp",
+    ("src/lyra/lowering/ast_to_hir/declared_design.cpp",
      "slang::ast::SymbolKind"),
     ("src/lyra/lowering/ast_to_hir/expression/query.cpp", "KnownSystemName"),
     ("src/lyra/lowering/ast_to_hir/expression/query.cpp", "QueryKind"),
@@ -1064,12 +1066,12 @@ A022_PATTERN = re.compile(
     r"(?:hir|mir|lir)::CompilationUnit\s*>")
 
 A022_ADMITTED: dict[str, str] = {
-    "include/lyra/lowering/ast_to_hir/implementations.hpp": (
-        "two specializations are one implementation only where everything "
-        "they state is equal, which is found by comparing them whole, as a "
-        "linker folds identical sections; only specializations of one unit "
-        "can be equal and they are lowered one after another, so what is held "
-        "is one copy of each implementation of one unit at a time"),
+    "include/lyra/lowering/ast_to_hir/bodies.hpp": (
+        "two lowerings are one implementation only where everything they "
+        "state is equal, which is found by comparing them whole, as a linker "
+        "folds identical sections; only lowerings of one unit can be equal "
+        "and they are lowered one after another, so what is held is one copy "
+        "of each implementation of one unit at a time"),
 }
 
 # Rule A023
@@ -1078,10 +1080,11 @@ A022_ADMITTED: dict[str, str] = {
 A023_PATTERN = re.compile(r"(?:->|\.)\s*(?:getConstant|eval)\s*\(")
 
 # Where reading one is not the lowering of a body. What a unit publishes about
-# its ports and what a type is are part of the unit's identity: a value that
-# decides either is one a parameter keeps in the key, so the artifact is already
-# one per value and reading the value costs no second one. The same holds where
-# the key itself spells a type by what it holds, a member's default among it.
+# its ports and what a type is are part of what the unit's class is compared
+# by: a value that decides either already tells one class from another, so the
+# artifact is already one per value and reading the value costs no second one.
+# The same holds where a type is spelled by what it holds, a member's default
+# among it.
 # Everything else is the case the rule is for, a port's default included -- it
 # is written in the header, but it is evaluated for each instance that leaves
 # the port unconnected (LRM 23.2.2.4), and so is a body's expression like any
@@ -1089,7 +1092,6 @@ A023_PATTERN = re.compile(r"(?:->|\.)\s*(?:getConstant|eval)\s*\(")
 A023_EXEMPT = (
     "src/lyra/lowering/ast_to_hir/publish_signature.cpp",
     "src/lyra/lowering/ast_to_hir/type.cpp",
-    "src/lyra/lowering/ast_to_hir/unit_identity.cpp",
 )
 
 
@@ -1271,9 +1273,9 @@ def check_a025(repo_root: Path) -> list[str]:
     for path, rel in iter_files(repo_root, "include/lyra/hir"):
         for lineno, reason in a025_violations(path.read_text()):
             errors.append(
-                f"  {rel}:{lineno}: A025 {reason}; instances lowered into one "
-                f"unit are held to lowering alike by comparing their HIR, so "
-                f"the comparison has to be derived and exact -- default it, "
+                f"  {rel}:{lineno}: A025 {reason}; the lowerings of one unit "
+                f"are one body where their HIR compares equal, so the "
+                f"comparison has to be derived and exact -- default it, "
                 f"and hold a real value as its bits"
             )
     return errors
@@ -1300,8 +1302,8 @@ def check_a026(repo_root: Path) -> list[str]:
             if A026_PATTERN.search(strip_comment(line)):
                 errors.append(
                     f"  {rel}:{lineno}: A026 reads a fold the front end made "
-                    f"where nothing asked for a constant, which no record of "
-                    f"what decides a unit holds; lower the expression"
+                    f"where nothing asked for a constant, which bakes a value "
+                    f"a parameter decided into the body; lower the expression"
                 )
     return errors
 

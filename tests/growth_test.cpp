@@ -127,7 +127,7 @@ struct GrowthCase {
 };
 
 // The kinds a run is read for beyond the ones it reports holding.
-constexpr std::string_view kUnits = "units";
+constexpr std::string_view kBodies = "bodies";
 constexpr std::string_view kFiles = "files";
 constexpr std::string_view kBytes = "bytes";
 // How deep the text a run writes nests at the deepest, over every file, which
@@ -137,11 +137,10 @@ constexpr std::string_view kDeepestNesting = "deepest nesting";
 constexpr std::string_view kNestingDepth = "nesting depth";
 
 // What one compile left behind and did, as the run itself recorded it: how
-// many of each kind of thing its units left and hold, taken together, and how
-// often each kind of work ran. A unit's name carries the size it was
-// specialized on, so two runs name their units differently and only the whole
-// of each can be held to the other. A kind a unit holds in one of its forms is
-// named `form.kind`.
+// many of each kind of thing its bodies left and hold, taken together, and how
+// often each kind of work ran. Two runs at two sizes need not name their
+// bodies alike, so only the whole of each can be held to the other. A kind a
+// body holds in one of its forms is named `form.kind`.
 using Reading = std::map<std::string, std::uint64_t>;
 
 auto CommandFor(
@@ -266,8 +265,8 @@ auto Compile(
 
   Left left;
   Reading& reading = left.reading;
-  for (const nlohmann::json& unit : stats.at("units")) {
-    reading[std::string(kUnits)] += 1;
+  for (const nlohmann::json& unit : stats.at("bodies")) {
+    reading[std::string(kBodies)] += 1;
     for (const nlohmann::json& artifact : unit.at("artifacts")) {
       const auto bytes = artifact.at("bytes").get<std::uint64_t>();
       reading[std::string(kFiles)] += 1;

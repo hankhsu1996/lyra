@@ -21,6 +21,8 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/lowering.hpp"
+#include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_scope.hpp"
@@ -28,8 +30,6 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/published_scope_ref.hpp"
 #include "lyra/hir/scope_construction.hpp"
-#include "lyra/hir/specialization.hpp"
-#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
@@ -352,13 +352,13 @@ auto FormatInstanceMethodCallee(const InstanceMethodCallee& callee)
 
 class HirDumper {
  public:
-  auto Dump(const Specialization& lowered) -> std::string {
+  auto Dump(const Lowering& lowered) -> std::string {
     Line(
         std::format(
-            R"(Specialization "{}" of implementation "{}")", lowered.name,
-            lowered.implementation.body_name));
+            R"(Lowering "{}" of body "{}")", lowered.name,
+            lowered.body.body_name));
     Indent();
-    DumpUnit(lowered.implementation);
+    DumpUnit(lowered.body);
     Line("Construction:");
     Indent();
     DumpConstruction(lowered.construction);
@@ -1220,8 +1220,8 @@ class HirDumper {
   void DumpConstruction(const ScopeConstruction& built) {
     for (std::size_t member = 0; member < built.instances.size(); ++member) {
       std::string made;
-      for (const SpecializationRef& child : built.instances[member]) {
-        made += std::format(" {}", child.specialization);
+      for (const LoweringRef& child : built.instances[member]) {
+        made += std::format(" {}", child.lowering);
       }
       Line(std::format("InstanceMember[{}] makes{}", member, made));
     }
@@ -2421,10 +2421,10 @@ class HirDumper {
       for (const UnpackedRange& dim : im.array_dims) {
         array_suffix += std::format("[{}:{}]", dim.left, dim.right);
       }
-      std::string built_as;
+      std::string alternatives;
       for (const InstanceAlternative& alternative : im.alternatives) {
-        built_as += std::format(
-            "{}ScopeClass[{}] {}", built_as.empty() ? "" : " | ",
+        alternatives += std::format(
+            "{}ScopeClass[{}] {}", alternatives.empty() ? "" : " | ",
             alternative.scope_class.value,
             FormatAssignments(alternative.assignments));
       }
@@ -2439,7 +2439,7 @@ class HirDumper {
       Line(
           std::format(
               "InstanceMember[{}] \"{}\"{} : {}{}", id.value, im.instance_name,
-              array_suffix, built_as, taken));
+              array_suffix, alternatives, taken));
     }
     DumpTable("RoutedValueRef", s.routes.values);
     DumpTable("RoutedObjectRef", s.routes.objects);
@@ -3588,7 +3588,7 @@ auto HirDumper::FormatSelectionChoice(
 
 }  // namespace
 
-auto DumpHir(const Specialization& lowered) -> std::string {
+auto DumpHir(const Lowering& lowered) -> std::string {
   HirDumper dumper;
   return dumper.Dump(lowered);
 }

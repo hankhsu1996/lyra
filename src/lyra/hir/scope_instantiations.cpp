@@ -7,9 +7,9 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/scope_construction.hpp"
-#include "lyra/hir/specialization_ref.hpp"
 #include "lyra/hir/structural_scope.hpp"
 
 namespace lyra::hir {
@@ -27,7 +27,7 @@ auto InstantiationIndexOf(const StructuralScope& scope, InstanceMemberId member)
 ScopeInstantiations::ScopeInstantiations(
     const CompilationUnit& unit, const StructuralScope& scope,
     const ScopeConstruction& construction) {
-  for (const std::vector<SpecializationRef>& member : construction.instances) {
+  for (const std::vector<LoweringRef>& member : construction.instances) {
     instantiated_.insert(instantiated_.end(), member.begin(), member.end());
   }
   generates_.reserve(construction.generates.size());

@@ -304,19 +304,21 @@ struct BuiltinMirTypes {
 };
 
 struct CompilationUnit {
-  // The unit's own name -- its module, package, or interface name, with what
-  // was fixed for it. Every declaration another unit may name is named under
+  // The unit's own name -- its module, package, or interface name, and where
+  // the definition compiles to more than one unit, the digest of what this
+  // one publishes. Every declaration another unit may name is named under
   // it, so a unit whose root is a namespace rather than a class (a package)
   // still has a stable identity independent of any member.
   std::string name;
-  // Which body of the unit this is: the unit's name with the digest of the
-  // values its instances' code uses, or the unit's name alone where that code
-  // uses none. Its bodies each state the declarations the unit names, alike,
+  // Which body of the unit this is: the unit's name for the first distinct
+  // body of the unit in the design's order, and the unit's name with the
+  // body's ordinal after for each later one. Its bodies each state the
+  // declarations the unit names, alike,
   // and what only one body holds -- the classes realizing its scopes, their
   // entries, the artifact it is emitted as -- is named under this.
   std::string body_name;
   // The identifier the source declares the unit under, which several units
-  // share where one definition is compiled once per specialization, and which
+  // share where one definition compiles to more than one unit, and which
   // a unit the source gave no identifier lacks. It is what a person is told
   // the compiler is working on, and the design element name `$printtimescale`
   // prints (LRM 20.4.2); nothing compiled is named from it.
@@ -354,10 +356,10 @@ struct CompilationUnit {
   // one. Which direction a foreign callable is reads off its body: an import is
   // the declaration the user's C defines, an export symbol the definition the
   // user's C calls. Where an export's subroutine belongs to a scope, the scope
-  // publishes an entry per specialization and the symbol dispatches over those
-  // entries -- a definition naming nothing this unit owns, which is why neither
-  // the entry nor the symbol is one of these. A class's own callables live on
-  // that class; these are the unit-level namespace's, one scope up.
+  // publishes an entry per body of the unit and the symbol dispatches over
+  // those entries -- a definition naming nothing this unit owns, which is why
+  // neither the entry nor the symbol is one of these. A class's own callables
+  // live on that class; these are the unit-level namespace's, one scope up.
   // Identity is minted separately from content, because a body here is named
   // before it exists: a subroutine of this namespace may call a sibling the
   // source declared after it, or itself, and what such a call names is the
@@ -386,8 +388,8 @@ struct CompilationUnit {
   std::vector<NamedStaticVariable> named_static_variables;
   // The foreign names this unit declares on a scope (LRM 35.5.3), each named
   // once and in declaration order. A name is program-global and lives in its
-  // own name space, and a scope's entry is compiled once per specialization of
-  // that scope, so none of those entries is the symbol -- this is what the unit
+  // own name space, and a scope's entry is compiled once per body of its unit,
+  // so none of those entries is the symbol -- this is what the unit
   // states of the name itself: the prototype a foreign source compiles against
   // and the definition it links to. What a unit's own namespace owns is not
   // among these: its callable is the symbol and already says so.

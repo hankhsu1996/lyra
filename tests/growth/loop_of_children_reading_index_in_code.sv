@@ -6,7 +6,7 @@
 // is made. Each body is a compiled unit of its own, holding its own code and
 // stating the class the unit published, and reads the unit's signature once.
 // N is how many blocks the loop counts out.
-// @each-adds: units 1, files, bytes, bodies lowered 1,
+// @each-adds: bodies 1, files, bytes, lowerings 1,
 // @each-adds: mir.classes, mir.constructors, mir.callables, mir.fields,
 // @each-adds: mir.class constants, mir.integral constants, mir.types,
 // @each-adds: mir.type operations, mir.consumed signatures 1,

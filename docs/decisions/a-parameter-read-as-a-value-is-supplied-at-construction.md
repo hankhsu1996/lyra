@@ -12,7 +12,11 @@ what its code came out as rather than from which values the code reads; and D1 r
 [a-unit-is-the-specializations-that-publish-alike](a-unit-is-the-specializations-that-publish-alike.md):
 no parameter is an argument of a unit's name, which parameters an object is handed is read off what
 its code reads, and the front end's record of which parameters each constant evaluation read is
-gone; D2 holds of a specialization, whose instances lower alike
+gone; D2 holds of a specialization, whose instances lower alike; D2's check of the compile against
+itself removed 2026-10-31 by
+[every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md):
+every body the front end did not share is lowered in the build, so no instance is lowered again to
+be held to its specialization
 
 ## Context
 

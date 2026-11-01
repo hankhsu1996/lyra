@@ -28,14 +28,15 @@ namespace lyra::support {
 // one conditional and those of two of which a scope builds only one (LRM
 // 27.5), so `disambiguator` says which this is among the generate blocks of
 // its scope carrying that label, in the order the source wrote them: zero for
-// the first, and so for every label nothing shares. `arguments` is the digest
-// of what the design fixed for this application, which is what tells the block
-// instances of one construct that compile differently apart, and is absent
-// where nothing was fixed.
+// the first, and so for every label nothing shares. `distinguisher` is what
+// tells the block instances of one construct apart in the naming that wrote
+// the step -- where a block stands, by the index a loop's block was built at
+// (LRM 27.4), or which class a block is inside its unit, by that class's
+// digest -- and is absent where that naming tells them apart by nothing.
 struct GenerateBlockStep {
   std::string label;
   std::uint32_t disambiguator = 0;
-  std::optional<std::uint64_t> arguments;
+  std::optional<std::uint64_t> distinguisher;
 
   auto operator==(const GenerateBlockStep&) const -> bool = default;
   auto operator<=>(const GenerateBlockStep&) const
@@ -192,7 +193,7 @@ struct DefPath {
               if (block.disambiguator != 0) {
                 shown += std::format("#{}", block.disambiguator);
               }
-              return with_arguments(std::move(shown), block.arguments);
+              return with_arguments(std::move(shown), block.distinguisher);
             },
             [&](const ClassStep& cls) {
               return with_arguments(cls.name, cls.arguments);
@@ -236,7 +237,7 @@ struct DefPath {
               if (block.disambiguator != 0) {
                 step += std::format("~{};", block.disambiguator);
               }
-              return step + bound(block.arguments);
+              return step + bound(block.distinguisher);
             },
             [&](const ClassStep& cls) {
               return named('c', cls.name) + bound(cls.arguments);
@@ -272,7 +273,7 @@ struct std::hash<lyra::support::DefPath> {
               [&](const lyra::support::GenerateBlockStep& block) {
                 HashField(seed, block.label);
                 HashField(seed, block.disambiguator);
-                HashField(seed, block.arguments);
+                HashField(seed, block.distinguisher);
               },
               [&](const lyra::support::ClassStep& cls) {
                 HashField(seed, cls.name);

@@ -42,9 +42,9 @@ struct FormDepth {
   std::uint64_t depth = 0;
 };
 
-struct UnitRecord {
+struct BodyRecord {
   std::vector<Artifact> artifacts;
-  // In the order the unit passed through its forms.
+  // In the order the body passed through its forms.
   std::vector<FormCounts> forms;
   std::vector<FormDepth> depths;
 };
@@ -59,11 +59,11 @@ struct Statistics {
   std::mutex lock;
   std::size_t width = 0;
   std::vector<StagePeak> stages;
-  // By name: a unit is recorded once per form and once for what it left, from
-  // whichever thread reached each, and units finish in whatever order the
-  // threads took them, so the name is both what joins a unit's records and
-  // what makes two runs of one design list their units alike.
-  std::map<std::string, UnitRecord, std::less<>> units;
+  // By name: a body is recorded once per form and once for what it left, from
+  // whichever thread reached each, and bodies finish in whatever order the
+  // threads took them, so the name is both what joins a body's records and
+  // what makes two runs of one design list their bodies alike.
+  std::map<std::string, BodyRecord, std::less<>> bodies;
   std::map<std::string, std::uint64_t, std::less<>> work;
   std::vector<ChildRecord> children;
   // The most memory a tool reaped since the running stage began held.
@@ -119,11 +119,11 @@ auto KindName(ArtifactKind kind) -> std::string_view {
   throw InternalError("an artifact kind has no name");
 }
 
-auto UnitNamed(Statistics& statistics, std::string_view unit) -> UnitRecord& {
-  const auto found = statistics.units.find(unit);
-  return found != statistics.units.end()
+auto BodyNamed(Statistics& statistics, std::string_view body) -> BodyRecord& {
+  const auto found = statistics.bodies.find(body);
+  return found != statistics.bodies.end()
              ? found->second
-             : statistics.units.emplace(std::string(unit), UnitRecord{})
+             : statistics.bodies.emplace(std::string(body), BodyRecord{})
                    .first->second;
 }
 
@@ -178,38 +178,38 @@ StageMemory::~StageMemory() {
       StagePeak{.name = std::move(recording_->stage), .peak_rss_bytes = peak});
 }
 
-void RecordUnit(std::string_view unit, std::vector<Artifact> artifacts) {
+void RecordBody(std::string_view body, std::vector<Artifact> artifacts) {
   if (!RecordsStatistics()) {
     return;
   }
   Statistics& statistics = TheStatistics();
   const std::scoped_lock lock(statistics.lock);
-  std::vector<Artifact>& left = UnitNamed(statistics, unit).artifacts;
+  std::vector<Artifact>& left = BodyNamed(statistics, body).artifacts;
   left.insert(
       left.end(), std::make_move_iterator(artifacts.begin()),
       std::make_move_iterator(artifacts.end()));
 }
 
 void RecordCounts(
-    std::string_view unit, std::string_view form, std::vector<Count> counts) {
+    std::string_view body, std::string_view form, std::vector<Count> counts) {
   if (!RecordsStatistics()) {
     return;
   }
   Statistics& statistics = TheStatistics();
   const std::scoped_lock lock(statistics.lock);
-  UnitNamed(statistics, unit)
+  BodyNamed(statistics, body)
       .forms.push_back(
           FormCounts{.form = std::string(form), .counts = std::move(counts)});
 }
 
 void RecordNestingDepth(
-    std::string_view unit, std::string_view form, std::uint64_t depth) {
+    std::string_view body, std::string_view form, std::uint64_t depth) {
   if (!RecordsStatistics()) {
     return;
   }
   Statistics& statistics = TheStatistics();
   const std::scoped_lock lock(statistics.lock);
-  UnitNamed(statistics, unit)
+  BodyNamed(statistics, body)
       .depths.push_back(FormDepth{.form = std::string(form), .depth = depth});
 }
 
@@ -252,10 +252,10 @@ auto WriteStatistics(const std::filesystem::path& path)
     }
     stages.push_back(std::move(entry));
   }
-  nlohmann::ordered_json units = nlohmann::ordered_json::array();
-  for (const auto& [name, unit] : statistics.units) {
+  nlohmann::ordered_json bodies = nlohmann::ordered_json::array();
+  for (const auto& [name, body] : statistics.bodies) {
     nlohmann::ordered_json artifacts = nlohmann::ordered_json::array();
-    for (const Artifact& artifact : unit.artifacts) {
+    for (const Artifact& artifact : body.artifacts) {
       artifacts.push_back(
           {{"kind", KindName(artifact.kind)},
            {"name", artifact.name},
@@ -263,7 +263,7 @@ auto WriteStatistics(const std::filesystem::path& path)
            {"made", artifact.made}});
     }
     nlohmann::ordered_json counts = nlohmann::ordered_json::object();
-    for (const FormCounts& form : unit.forms) {
+    for (const FormCounts& form : body.forms) {
       nlohmann::ordered_json held = nlohmann::ordered_json::object();
       for (const Count& count : form.counts) {
         held[count.kind] = count.held;
@@ -271,10 +271,10 @@ auto WriteStatistics(const std::filesystem::path& path)
       counts[form.form] = std::move(held);
     }
     nlohmann::ordered_json nesting_depth = nlohmann::ordered_json::object();
-    for (const FormDepth& depth : unit.depths) {
+    for (const FormDepth& depth : body.depths) {
       nesting_depth[depth.form] = depth.depth;
     }
-    units.push_back(
+    bodies.push_back(
         {{"name", name},
          {"artifacts", std::move(artifacts)},
          {"counts", std::move(counts)},
@@ -294,7 +294,7 @@ auto WriteStatistics(const std::filesystem::path& path)
   const nlohmann::ordered_json document = {
       {"width", statistics.width},
       {"stages", std::move(stages)},
-      {"units", std::move(units)},
+      {"bodies", std::move(bodies)},
       {"work", std::move(work)},
       {"children", std::move(children)}};
 

@@ -43,8 +43,8 @@
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/dump.hpp"
-#include "lyra/hir/specialization.hpp"
-#include "lyra/hir/specialization_ref.hpp"
+#include "lyra/hir/lowering.hpp"
+#include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
@@ -102,13 +102,13 @@ auto SourceNameOf(const slang::ast::Symbol& home) -> std::string {
 
 UnitLowerer::UnitLowerer(
     const LoweringFacts& facts, const slang::ast::Symbol& home,
-    Environment environment, hir::SpecializationRef names, hir::UnitRole role)
+    Environment environment, hir::LoweringRef names, hir::UnitRole role)
     : facts_(facts),
       home_(&home),
       scope_(&ScopeLoweredFor(home)),
       environment_(std::move(environment)),
       unit_{std::move(names.unit), {}},
-      specialization_(std::move(names.specialization)) {
+      lowering_(std::move(names.lowering)) {
   unit_.role = role;
   unit_.source_name = SourceNameOf(home);
   unit_.library_binding = LibraryBindingOf(scope_->asSymbol());
@@ -128,7 +128,7 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
 
 auto UnitLowerer::DescribeForGrouping() -> diag::Result<void> {
   const profiling::TimeTraceScope span(
-      "describe specialization", [&] { return specialization_; });
+      "describe lowering", [&] { return lowering_; });
   return DeclareOwn();
 }
 
@@ -210,10 +210,9 @@ auto UnitLowerer::TakeSignature() -> hir::UnitSignature {
 }
 
 auto UnitLowerer::LowerBodies(
-    const hir::UnitSignatures& signatures, const BuiltAsQuery& built_as,
-    Implementations& implementations) -> diag::Result<hir::Specialization> {
+    const hir::UnitSignatures& signatures, Bodies& implementations)
+    -> diag::Result<hir::Lowering> {
   signatures_ = &signatures;
-  built_as_ = &built_as;
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
   if (auto declared = ReadOwnUnitDeclarations(); !declared) {
     return std::unexpected(std::move(declared.error()));
@@ -229,17 +228,19 @@ auto UnitLowerer::LowerBodies(
   ReadPendingDeclarations();
   ReadTypeDefinitions();
   hir::Verify(unit_, own->construction);
-  unit_.body_name = implementations.Intern(specialization_, unit_);
-  return hir::Specialization{
-      .name = std::move(specialization_),
+  InternedBody interned = implementations.Intern(unit_);
+  unit_.body_name = std::move(interned.name);
+  return hir::Lowering{
+      .name = std::move(lowering_),
       .construction = std::move(own->construction),
-      .implementation = std::move(unit_)};
+      .body = std::move(unit_),
+      .compiles_its_body = interned.compiles_its_body};
 }
 
 auto UnitLowerer::LowerOwnScope() -> diag::Result<BuiltScope> {
   const profiling::TimeTraceScope span(
       "lower to HIR", [&] { return unit_.name; });
-  support::RecordWork("bodies lowered");
+  support::RecordWork("lowerings");
   WalkFrame frame;
   StructuralScopeLowerer root(*this, *scope_);
   return root.Run(frame);
@@ -333,7 +334,7 @@ void UnitLowerer::DeclareBlockIdentities(
     const slang::ast::GenerateBlockSymbol& block,
     const ScopePublicationRecord& holder) {
   DeclareStructuralIdentities(
-      block, support::Extended(holder.class_path, Naming().BlockStepOf(block)));
+      block, support::Extended(holder.class_path, Names().BlockStepOf(block)));
 }
 
 // Every slang symbol kind is listed and there is no `default`, so a kind a
@@ -872,12 +873,6 @@ auto UnitLowerer::DeclaringScopeChain(const slang::ast::Scope& scope) const
   }
   std::ranges::reverse(chain);
   return chain;
-}
-
-auto UnitLowerer::InReadingOrder(std::vector<const slang::ast::Scope*> built)
-    const -> std::vector<const slang::ast::Scope*> {
-  if (Naming().Keys().ChecksItself()) std::ranges::reverse(built);
-  return built;
 }
 
 auto UnitLowerer::HeldByAnotherDesignElement(

@@ -48,7 +48,7 @@ struct BuiltGenerate {
 // being lowered makes at each object it stands for, in row-major order.
 struct BuiltInstanceMember {
   hir::InstanceMemberDecl member;
-  std::vector<hir::SpecializationRef> made;
+  std::vector<hir::LoweringRef> made;
 };
 
 // The ports a scope declares, by the net or variable each connects inside it.

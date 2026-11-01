@@ -43,7 +43,7 @@ docs knowing what stands on either side.
 ```mermaid
 flowchart TB
   SRC["SystemVerilog source, and the build's level and width"] --> FE["frontend elaboration<br/>one graph over the whole design"]
-  FE --> SP["occurrences keyed into specializations<br/>a definition plus the arguments a parent fixed"]
+  FE --> SP["one lowering per body the frontend did not share<br/>for the instance it was elaborated for, under its environment"]
 
   SP --> D["per unit:<br/>derive the signature from that unit's own declarations"]
   D --> BAR{{"barrier: every unit's signature exists"}}

@@ -10,6 +10,13 @@ Accepted, except D5. Answers the open target category `hierarchical-reference-ro
 for a target whose access surface no existing protocol covers, and extends `reference_resolution.md`
 invariant 7 with what a route seals when its leaf is an object reference. Reverses nothing.
 
+The rejection below of specializing the body per endpoint class rested on a specialization key
+derived before lowering, which is gone since 2026-10-31
+([every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md)):
+the front end shares no body an upward name leaves, so such instances are lowered apart and
+compared. What still rejects it is that a body stated per endpoint class comes out as one body per
+class where the opaque access comes out as one body for all.
+
 **D5 below is reversed by
 [a-settled-access-is-ordinary-operations](a-settled-access-is-ordinary-operations.md)**, which keeps
 its concern and replaces its mechanism: a coordinate is a value the operations take and is a target

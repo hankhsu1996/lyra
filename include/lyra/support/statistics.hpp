@@ -14,13 +14,14 @@
 namespace lyra::support {
 
 // The numbers a run records about itself when asked, for whoever compares two
-// runs or reads one: each stage's peak memory, what each unit holds and what it
+// runs or reads one: each stage's peak memory, what each body holds and what it
 // left behind, how often each kind of work ran, and how long each tool the
 // build ran took. Where the compiler's own time went is the trace's to say, so
 // none of it is here.
 //
 // Nothing is recorded unless the run enables it, and every recording call is
-// then a single check. Units are recorded from whichever thread worked on them.
+// then a single check. Bodies are recorded from whichever thread worked on
+// them.
 void EnableStatistics();
 
 // Whether the run records, for a caller whose record takes working out.
@@ -62,7 +63,7 @@ class StageMemory {
 
 enum class ArtifactKind : std::uint8_t { kObject, kCppSource, kCppHeader };
 
-// A file a unit left behind. A kept object is one this run took from the store
+// A file a body left behind. A kept object is one this run took from the store
 // rather than made, which is why it cost the run nothing.
 struct Artifact {
   ArtifactKind kind;
@@ -71,25 +72,25 @@ struct Artifact {
   bool made = true;
 };
 
-void RecordUnit(std::string_view unit, std::vector<Artifact> artifacts);
+void RecordBody(std::string_view body, std::vector<Artifact> artifacts);
 
-// How many of one kind of thing a unit holds.
+// How many of one kind of thing a body holds.
 struct Count {
   std::string kind;
   std::uint64_t held = 0;
 };
 
-// What a unit holds in one of the forms it passes through, by kind. A file's
-// size says how much a unit left behind and not what of: a unit that holds
+// What a body holds in one of the forms it passes through, by kind. A file's
+// size says how much a body left behind and not what of: a body that holds
 // twice the classes and one that holds twice the statements leave the same
 // bytes, and only one of them was written twice by the design.
 void RecordCounts(
-    std::string_view unit, std::string_view form, std::vector<Count> counts);
+    std::string_view body, std::string_view form, std::vector<Count> counts);
 
-// How deeply a unit nests in one of its forms, at the deepest. Not a count of
-// things held: two units together nest no deeper than the deeper of them.
+// How deeply a body nests in one of its forms, at the deepest. Not a count of
+// things held: two bodies together nest no deeper than the deeper of them.
 void RecordNestingDepth(
-    std::string_view unit, std::string_view form, std::uint64_t depth);
+    std::string_view body, std::string_view form, std::uint64_t depth);
 
 // One more of a kind of work the run did, counted where the work is done and
 // for the run as a whole, whichever unit it was done for, since one unit may

@@ -1,9 +1,7 @@
-#include "lyra/lowering/ast_to_hir/instance_context.hpp"
+#include "lyra/lowering/ast_to_hir/outside_reach.hpp"
 
 #include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <format>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
@@ -24,8 +22,8 @@
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
+#include "lyra/lowering/ast_to_hir/canonical_body.hpp"
 #include "lyra/lowering/ast_to_hir/climb.hpp"
-#include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/profiling/time_trace.hpp"
@@ -33,56 +31,6 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
-
-// One instance as a path spells it: its name, or its array's name with the
-// element's indices (LRM 23.3.2).
-auto InstanceStep(const slang::ast::InstanceSymbol& inst) -> std::string {
-  std::string step{inst.getArrayName()};
-  for (const std::uint32_t at : inst.arrayPath) {
-    step += std::format("[{}]", at);
-  }
-  return step;
-}
-
-// An instance a scope holds, with its path from that scope.
-struct HeldInstance {
-  const slang::ast::InstanceSymbol* instance;
-  std::string path;
-};
-
-// Collects the instances standing in the scope it is handed the members of,
-// through the generate blocks of that scope. A held instance's body is not
-// entered.
-struct HeldInstances
-    : slang::ast::ASTVisitor<HeldInstances, slang::ast::VisitFlags::Symbols> {
-  std::vector<HeldInstance> held;
-  std::string blocks;
-
-  void handle(const slang::ast::InstanceSymbol& inst) {
-    held.push_back(
-        HeldInstance{.instance = &inst, .path = blocks + InstanceStep(inst)});
-  }
-
-  void handle(const slang::ast::GenerateBlockSymbol& block) {
-    if (block.isUninstantiated) return;
-    const std::size_t outer = blocks.size();
-    blocks += BlockInstancePathName(block);
-    blocks += '.';
-    visitDefault(block);
-    blocks.resize(outer);
-  }
-};
-
-// The instances standing in `scope`, an instance's body or a generate block,
-// in the order the scope holds them.
-auto InstancesHeldIn(const slang::ast::Scope& scope)
-    -> std::vector<HeldInstance> {
-  HeldInstances reader;
-  for (const auto& member : scope.members()) {
-    member.visit(reader);
-  }
-  return std::move(reader.held);
-}
 
 // Reads what one instance's own body reaches outside itself: every name it
 // writes and where each lands, the classes another instance declares that its
@@ -276,27 +224,34 @@ struct ReachedOutside
   }
 };
 
-// Adds what is written elsewhere about `held` and about each instance below
-// it, the second known to `held` as `theirs`, each under its path from the
-// scope holding `held`.
-void AppendOverridesAtAndBelow(
-    const HeldInstance& held, const InstanceContext& theirs,
-    std::vector<OverriddenBelow>& overridden) {
-  for (OverrideEffect& effect : OverridesOn(*held.instance)) {
-    overridden.push_back(
-        OverriddenBelow{.path = held.path, .effect = std::move(effect)});
-  }
-  for (const OverriddenBelow& below : theirs.overridden_below) {
-    overridden.push_back(
-        OverriddenBelow{
-            .path = std::format("{}.{}", held.path, below.path),
-            .effect = below.effect});
-  }
-}
-
 }  // namespace
 
-auto InstanceContext::Climbs() const -> std::vector<ClimbAnchor> {
+auto InstancesHeldIn(const slang::ast::Scope& scope)
+    -> std::vector<const slang::ast::InstanceSymbol*> {
+  std::vector<const slang::ast::InstanceSymbol*> held;
+  for (const slang::ast::Symbol& member : scope.members()) {
+    if (const auto* inst = member.as_if<slang::ast::InstanceSymbol>()) {
+      held.push_back(inst);
+    } else if (
+        const auto* array = member.as_if<slang::ast::InstanceArraySymbol>()) {
+      std::ranges::move(InstancesHeldIn(*array), std::back_inserter(held));
+    } else if (
+        const auto* block = member.as_if<slang::ast::GenerateBlockSymbol>()) {
+      if (!block->isUninstantiated) {
+        std::ranges::move(InstancesHeldIn(*block), std::back_inserter(held));
+      }
+    } else if (
+        const auto* loop =
+            member.as_if<slang::ast::GenerateBlockArraySymbol>()) {
+      for (const slang::ast::GenerateBlockSymbol* entry : loop->entries) {
+        std::ranges::move(InstancesHeldIn(*entry), std::back_inserter(held));
+      }
+    }
+  }
+  return held;
+}
+
+auto OutsideReach::Climbs() const -> std::vector<ClimbAnchor> {
   std::vector<ClimbAnchor> climbs;
   for (const NameUse& use : uses) {
     if (use.landing.has_value()) climbs.push_back(*use.landing);
@@ -304,79 +259,43 @@ auto InstanceContext::Climbs() const -> std::vector<ClimbAnchor> {
   return climbs;
 }
 
-auto InstanceContextOf(
-    const slang::ast::InstanceSymbol& inst, InstanceContexts& known,
-    const HasBodyOfItsOwnFn& has_body_of_its_own) -> const InstanceContext& {
-  if (const auto kept = known.find(&inst); kept != known.end()) {
+auto OutsideReachOf(
+    const slang::ast::InstanceSymbol& inst, OutsideReaches& known)
+    -> const OutsideReach& {
+  // The front end shares a body only between instances every name leaving it
+  // resolves alike from, so what the shared body states holds for every
+  // instance read through it, and is kept under the instance it was
+  // elaborated for.
+  const slang::ast::InstanceSymbol& own = CanonicalInstanceOf(inst);
+  if (const auto kept = known.find(&own); kept != known.end()) {
     return kept->second;
   }
-  if (!has_body_of_its_own(inst)) {
-    // The front end shares a body only between instances every name leaving
-    // it resolves alike from, so what the shared body states holds for this
-    // instance too.
-    return InstanceContextOf(
-        *inst.getCanonicalBody()->parentInstance, known, has_body_of_its_own);
-  }
 
-  ReachedOutside reached(inst.body);
-  std::vector<HeldInstance> holds;
+  ReachedOutside reached(own.body);
+  std::vector<const slang::ast::InstanceSymbol*> holds;
   {
     const profiling::TimeTraceScope span(
-        "read instance context", [&] { return std::string{inst.name}; });
-    inst.body.visit(reached);
-    holds = InstancesHeldIn(inst.body);
+        "read instance context", [&] { return std::string{own.name}; });
+    own.body.visit(reached);
+    holds = InstancesHeldIn(own.body);
   }
 
-  InstanceContext context{
+  OutsideReach context{
       .uses = std::move(reached.uses),
       .class_scopes = std::move(reached.class_scopes),
       .foreign_parameters = std::move(reached.parameters),
-      .names_below = {},
-      .overridden_below = {}};
-  for (const HeldInstance& held : holds) {
-    const InstanceContext& theirs =
-        InstanceContextOf(*held.instance, known, has_body_of_its_own);
+      .names_below = {}};
+  for (const slang::ast::InstanceSymbol* held : holds) {
+    const OutsideReach& theirs = OutsideReachOf(*held, known);
     // A name stops at the instance it lands in and concerns none above it.
-    const std::vector<ClimbAnchor> their_climbs = theirs.Climbs();
-    for (std::uint32_t written = 0; written < their_climbs.size(); ++written) {
-      const ClimbAnchor& climb = their_climbs[written];
-      if (climb.instance == &inst.body) continue;
-      context.names_below.push_back(
-          NameLandingBelow{
-              .path = held.path,
-              .written = written,
-              .scope = climb.scope,
-              .blocks_passed = climb.blocks_passed,
-              .instance = climb.instance,
-              .reads = climb.reads});
+    for (const ClimbAnchor& climb : theirs.Climbs()) {
+      if (climb.instance != &own.body) context.names_below.push_back(climb);
     }
-    for (const NameLandingBelow& name : theirs.names_below) {
-      if (name.instance == &inst.body) continue;
-      context.names_below.push_back(
-          NameLandingBelow{
-              .path = std::format("{}.{}", held.path, name.path),
-              .written = name.written,
-              .scope = name.scope,
-              .blocks_passed = name.blocks_passed,
-              .instance = name.instance,
-              .reads = name.reads});
+    for (const ClimbAnchor& name : theirs.names_below) {
+      if (name.instance != &own.body) context.names_below.push_back(name);
     }
-    AppendOverridesAtAndBelow(held, theirs, context.overridden_below);
   }
-  return known.emplace(&inst, std::move(context)).first->second;
-}
-
-auto OverridesBelow(
-    const slang::ast::GenerateBlockSymbol& block, InstanceContexts& known,
-    const HasBodyOfItsOwnFn& has_body_of_its_own)
-    -> std::vector<OverriddenBelow> {
-  std::vector<OverriddenBelow> overrides;
-  for (const HeldInstance& held : InstancesHeldIn(block)) {
-    AppendOverridesAtAndBelow(
-        held, InstanceContextOf(*held.instance, known, has_body_of_its_own),
-        overrides);
-  }
-  return overrides;
+  return known.emplace(&own, std::move(context)).first->second;
 }
 
 }  // namespace lyra::lowering::ast_to_hir
