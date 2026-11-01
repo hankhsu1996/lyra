@@ -16,7 +16,7 @@ namespace lyra::mir {
 // an object of another unit's body. Holding a handle reads nothing of its
 // class, and neither does asking whether an object is of it (LRM 8.16), which
 // names only its definition. A class read is read with its lineage, the
-// classes it extends and the interface classes it is a value of, because its
+// classes it extends and the interfaces it is a value of, because its
 // layout and its dispatch positions follow theirs; what another unit's class
 // holds is that unit's to build and end.
 [[nodiscard]] auto ConsumedSignaturesOf(const CompilationUnit& unit)

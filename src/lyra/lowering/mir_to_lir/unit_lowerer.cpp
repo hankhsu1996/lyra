@@ -420,8 +420,11 @@ auto UnitLowerer::BaseType(const mir::ClassRef& base) -> lir::TypeId {
           [&](const mir::ObjectTreeRootRef&) {
             return library_class(support::LibraryDecl::kScope);
           },
-          [&](const mir::ManagedObjectRootRef&) {
+          [&](const mir::ClassObjectRootRef&) {
             return library_class(support::LibraryDecl::kClassObject);
+          },
+          [&](const mir::ObjectRootRef&) {
+            return library_class(support::LibraryDecl::kObjectRoot);
           }},
       base);
 }

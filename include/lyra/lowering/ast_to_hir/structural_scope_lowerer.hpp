@@ -122,6 +122,9 @@ class StructuralScopeLowerer {
   auto PopulateInterfacePortMember(
       const slang::ast::InterfacePortSymbol& port, WalkFrame frame)
       -> diag::Result<void>;
+  auto RecordExternDefinition(
+      const slang::ast::SubroutineSymbol& definition, WalkFrame frame)
+      -> diag::Result<void>;
   auto PopulateVariableMember(
       const slang::ast::VariableSymbol& var, WalkFrame frame)
       -> diag::Result<void>;

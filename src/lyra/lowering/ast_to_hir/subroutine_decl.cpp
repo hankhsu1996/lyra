@@ -32,6 +32,7 @@
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/support/dpi_abi.hpp"
 
@@ -383,6 +384,12 @@ auto LowerSubroutineDeclImpl(
     declared_ahead.push_back(sym.returnValVar);
   }
   lowerer.AnalyzeLifetimeExtended(declared_ahead, sym.getBody());
+  // A call of a task every connected module defines runs each definition as a
+  // process of its own (LRM 25.7.4), on the formals of the call.
+  if (sym.flags.has(slang::ast::MethodFlags::InterfaceExtern) &&
+      sym.getPrototype()->flags.has(slang::ast::MethodFlags::ForkJoin)) {
+    lowerer.ExtendLifetimes(declared_ahead);
+  }
 
   // A subroutine's root scope is named by the source (LRM 23.9), so a
   // hierarchical path reaches into it and the formals, the implicit result
@@ -438,9 +445,14 @@ auto LowerSubroutineDeclImpl(
     base_arguments = std::move(lowered);
   }
 
-  auto body_stmt_or = lowerer.LowerStmt(sym.getBody(), body_frame);
-  if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
-  const hir::StmtId root_stmt = body.stmts.Add(*std::move(body_stmt_or));
+  // A subroutine an interface leaves to a connected module has no body of its
+  // own (LRM 25.7): a call runs the definition the module bound to the object.
+  std::optional<hir::StmtId> root_stmt;
+  if (!sym.flags.has(slang::ast::MethodFlags::InterfaceExtern)) {
+    auto body_stmt_or = lowerer.LowerStmt(sym.getBody(), body_frame);
+    if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
+    root_stmt = body.stmts.Add(*std::move(body_stmt_or));
+  }
 
   // A function may be called from an expression a wait watches (LRM 9.4.2) or
   // by a procedure whose implicit list is collected (LRM 9.2.2.2.1), so it
@@ -460,7 +472,7 @@ auto LowerSubroutineDeclImpl(
   return SubroutineLoweringResult{
       .decl =
           hir::SubroutineDecl{
-              .name = std::string{sym.name},
+              .name = SubroutineNameOf(sym),
               .kind = ToHirSubroutineKind(sym.subroutineKind),
               .result_type = *return_type_or,
               .params = std::move(params),

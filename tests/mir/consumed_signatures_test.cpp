@@ -52,7 +52,7 @@ auto UnitReading(const Read& read) -> CompilationUnit {
   Class base_class;
   base_class.defining_unit = "P";
   base_class.identity = PathOf("Base");
-  base_class.base = ClassRef{ManagedObjectRootRef{}};
+  base_class.base = ClassRef{ClassObjectRootRef{}};
   base_class.fields.Add(FieldDecl{.type = unit.builtins.int_type});
   unit.DefineClass(base, std::move(base_class));
   Class derived_class;
@@ -179,7 +179,7 @@ TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
   CompilationUnit owning =
       UnitReading([](CompilationUnit&, Builder, ClassId) {});
   Class holder;
-  holder.base = ClassRef{ManagedObjectRootRef{}};
+  holder.base = ClassRef{ClassObjectRootRef{}};
   holder.fields.Add(
       FieldDecl{
           .type = owning.types.Intern(

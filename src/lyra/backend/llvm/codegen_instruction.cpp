@@ -1792,9 +1792,9 @@ auto CodeGenFunction::ResolveCallee(
                 BodyAt(table, module_->DispatchSlotOf(t.method));
             return llvm::FunctionCallee(signature, body);
           },
-          // The table the value's class gives the interface class is found
+          // The table the value's class gives the interface is found
           // among those its definition lists (LRM 8.26.5), and holds the body
-          // answering the method where the interface class declares it.
+          // answering the method where the interface declares it.
           [&](const lir::InterfaceDispatchTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
             if (args.empty()) {

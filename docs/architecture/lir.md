@@ -107,11 +107,11 @@ below LIR, at LIR-to-LLVM.
   reaches only a member its scope published, which leads that object's storage in the order the
   publication states; what lowering added to the object is reached by no step from outside it.
 - Each class's relations as MIR stated them -- what it extends, what it introduces into dispatch and
-  overrides, the interface classes it names and which behavior answers each behavior of every
-  interface class a value of it is also a value of -- and the contents of the constant the library
-  reads for it, which are bodies, names, and plain data such as a scope's time unit and precision.
-  The layout step below LIR reads these and decides every position; LIR carries them as data and
-  decides nothing about them.
+  overrides, the interfaces it names and which behavior answers each behavior of every interface a
+  value of it is also a value of -- and the contents of the constant the library reads for it, which
+  are bodies, names, and plain data such as a scope's time unit and precision. The layout step below
+  LIR reads these and decides every position; LIR carries them as data and decides nothing about
+  them.
 - Effect ordering within a block.
 - Low-level operations: arithmetic, comparisons, machine conversions, loads, stores, calls.
 - Symbols a call reaches by name: a body of this program that another artifact holds, and a foreign

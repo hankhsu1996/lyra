@@ -645,6 +645,21 @@ struct ReplicatedCovergroup {
   auto operator==(const ReplicatedCovergroup&) const -> bool = default;
 };
 
+// A subroutine this scope defines for an interface instance it reaches (LRM
+// 25.7): which of this scope's subroutines is the definition, the object of the
+// interface it is defined for, the class that object is, and which of the
+// subroutines that class leaves to a connected module it defines. The scope
+// hands its definition to that object once the object is reachable, and a call
+// on the interface's subroutine runs it.
+struct ExternDefinition {
+  StructuralSubroutineId definition;
+  RoutedObjectRef target;
+  ScopeClassId scope_class;
+  PublishedExternId of;
+
+  auto operator==(const ExternDefinition&) const -> bool = default;
+};
+
 struct StructuralScope {
   // The label of a generate child as a hierarchical name writes it (LRM 23.6,
   // 27.6), escaped where such a name has to escape it; empty for a block the
@@ -710,6 +725,7 @@ struct StructuralScope {
   // construction did not build is named by none.
   std::vector<ReplicatedCovergroup> replicated_covergroups;
   std::vector<ForeignExportDecl> foreign_exports;
+  std::vector<ExternDefinition> extern_definitions;
   // Every scope's identity is minted before any body is lowered, so a `disable`
   // naming one (LRM 9.6.2) -- possibly from another process lowered first --
   // carries a stable typed id rather than a name it would have to resolve

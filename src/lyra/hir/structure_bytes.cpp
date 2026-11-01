@@ -331,6 +331,10 @@ class Writer {
     Arena(scope.disable_targets, [&](const PublishedDisableTarget& target) {
       OwnPath(target.path);
     });
+    Arena(scope.externs, [&](const PublishedExtern& published) {
+      Number(published.callable.value);
+      Kind(published.form);
+    });
     List(scope.modports, [&](const PublishedModport& modport) {
       Text(modport.name);
       List(modport.ports, [&](const PublishedModportPort& port) {

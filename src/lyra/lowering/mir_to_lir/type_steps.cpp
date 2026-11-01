@@ -480,7 +480,7 @@ void UnitLowerer::StateClassSteps() {
   // class its base object constructor and destructor, its allocating
   // creation and its deleting destructor. Each is a function under the symbol
   // a class extending it, or an object of it, reaches it by, in this unit or
-  // another; an interface class holds no storage and no value is built of one.
+  // another; an interface holds no storage and no value is built of one.
   const lir::TypeId void_type = out_.types.Intern(lir::Type{lir::VoidType{}});
   for (const lir::ClassId id : out_.classes.Ids()) {
     const lir::Class& cls = out_.classes.Get(id);

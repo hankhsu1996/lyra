@@ -1,6 +1,7 @@
 #pragma once
 
 #include <format>
+#include <functional>
 #include <map>
 #include <optional>
 #include <span>
@@ -80,6 +81,13 @@ using ProceduralVarBinding =
 // -- travels down the walk instead, so nothing here changes as the walk moves.
 class ProcessLowerer {
  public:
+  // What writes the body of a subroutine that states no statements of its own,
+  // because what it runs follows from what it is. Everything else about the
+  // body is as any subroutine's: its formals, what a `disable` of it ends, and
+  // how it completes.
+  using BodyWriter =
+      std::function<diag::Result<void>(ProcessLowerer&, WalkFrame)>;
+
   // `enclosing_scope_lowerer` resolves every reference to a declaration of the
   // structural scope this body counts its hops from, and is null for a body
   // that counts from none -- a callable of a namespace unit, whose names
@@ -99,7 +107,8 @@ class ProcessLowerer {
       const StructuralScopeLowerer* enclosing_scope_lowerer,
       TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
       std::optional<hir::StmtId> hir_root_stmt, WalkFrame owner_ctor_frame,
-      const DeclaredScopes& scopes, std::span<const StaticVarBinding> statics)
+      const DeclaredScopes& scopes, std::span<const StaticVarBinding> statics,
+      BodyWriter body_writer = {})
       : owner_(&unit_lowerer),
         enclosing_scope_lowerer_(enclosing_scope_lowerer),
         time_resolution_(time_resolution),
@@ -110,7 +119,8 @@ class ProcessLowerer {
         // A body completes for no caller until it is lowered as one that does,
         // so this is the protocol every body starts with; lowering a subroutine
         // replaces it with the one its completion payload states.
-        result_type_(unit_lowerer.Unit().builtins.coroutine_void) {
+        result_type_(unit_lowerer.Unit().builtins.coroutine_void),
+        body_writer_(std::move(body_writer)) {
     // Where every static-lifetime variable of this body keeps its storage is
     // settled before the body lowers, so each one is bound here. Reaching a
     // static's declaration statement then binds nothing and emits nothing --
@@ -447,6 +457,7 @@ class ProcessLowerer {
   mir::TypeId result_type_;
   std::optional<hir::ProceduralVarId> result_var_;
   std::vector<hir::ProceduralVarId> output_vars_;
+  BodyWriter body_writer_;
 
   std::map<hir::ProceduralVarId, PromotedVarBinding> pending_activation_;
 };

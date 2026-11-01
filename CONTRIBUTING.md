@@ -144,20 +144,23 @@ No issue states where it stands in its text. That is what its fields are for.
   another item. Such a bug is fixed by that item, not on top of it. An order that is only better
   goes in the project's Rank.
 - **Labels.** One `type:` label, one or two `area:` labels naming the parts of Lyra it changes,
-  `tracking` on a tracking issue, and `good first issue` on an item a newcomer can take.
+  `tracking` on a tracking issue, `real design` on an item a design written elsewhere stops on, and
+  `good first issue` on an item a newcomer can take.
 - **Assignee.** Whoever is working on it now. Unassign yourself when you stop.
 - **Project.** Every issue is on the project board, with two fields.
   - **Tier** says how bad the problem is. An item that blocks others takes the worst Tier among
     them, so the cause of a crash ranks as a crash.
     - `crash or wrong answer` -- Lyra crashes, or a program it builds answers wrongly. A regression
-      is one.
-    - `cannot build` -- Lyra refuses legal SystemVerilog.
+      is one. A feature nobody has built is not one, however a program using it ends.
+    - `cannot build` -- Lyra refuses legal SystemVerilog, or has not built what it asks for.
     - `cost` -- build time, run time or memory that stands between a design and its use.
     - `design` -- a debt in the architecture that no user meets.
     - `owed` -- a check or a measurement a merged change left to do.
-  - **Rank** is the order the work is taken in, lowest first. It sorts by Tier, then by how many
-    items an item blocks, then by age, and it puts every item after the items blocking it. An issue
-    with no Rank has not been placed yet.
+  - **Rank** is the order the work is taken in, lowest first. What a real design stops on comes
+    first, with crashes and wrong answers, then refactors and cost, then other bugs, then features
+    no real design needs. Inside each it sorts by how many items an item blocks, then by Tier, then
+    by age, and it puts every item after the items blocking it. An issue with no Rank has not been
+    placed yet.
 - **Status.** The board sets it from the issue, never by hand. An issue is Todo when it is added, In
   Progress once a pull request links it, and Done when it closes.
 

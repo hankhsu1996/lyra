@@ -243,7 +243,7 @@ void WriteOne(TargetText& out, const CppBaseClass& base);
 
 // The table type the class `of` declares, `C::sv_table`, which a class
 // extending it declares its own over and a class implementing it, where it is
-// an interface class, holds a table of; the text naming it needs the class
+// an interface, holds a table of; the text naming it needs the class
 // defined, as it needs a base.
 struct CppDispatchTableOf {
   CppClassRef of;
@@ -274,8 +274,8 @@ void WriteOne(TargetText& out, const CppEntryPointerType& type);
 // the call's arguments: where a class introduced the behavior (LRM 8.20), the
 // library's `Dispatch` told the introducer's table and the behavior's member in
 // it, `lyra::runtime::Dispatch<B::sv_table, &B::sv_table::f>`; where an
-// interface class did (LRM 8.26.5), its `InterfaceDispatch`, told also the
-// interface class's definition, by which the object's class's table for it is
+// interface did (LRM 8.26.5), its `InterfaceDispatch`, told also the
+// interface's definition, by which the object's class's table for it is
 // found, `lyra::runtime::InterfaceDispatch<I::sv_table, &I::sv_table::f,
 // &I::sv_definition>`.
 struct CppDispatchCallee {

@@ -1318,6 +1318,10 @@ the detail lives in the entry itself.
   module's specialization identity, without which two differently bound modules collide on one name.
   **Its rule that a module publishes only its ports is reversed by
   [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).**
+- [a-subroutine-an-interface-leaves-to-a-module-is-a-callback](a-subroutine-an-interface-leaves-to-a-module-is-a-callback.md)
+  -- a subroutine an interface declares and leaves to a connected module is a callback the module
+  binds in its resolve, so no caller and no interface body names the module; `extern forkjoin` keeps
+  a queue of them and a process of its own starts and waits for each.
 - [a-virtual-interface-holds-which-instance](a-virtual-interface-holds-which-instance.md) -- a
   virtual interface's type fixes the interface and every position reached through it, so only the
   instance is chosen at run time; its value is a reference owning nothing, typed by the interface's

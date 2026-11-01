@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 
-#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -40,9 +39,11 @@ struct SubroutineParam {
 //
 // `root_stmt` is the statement a call enters at, absent for a method the
 // source declared as a pure virtual prototype (LRM 8.21 `pure virtual function
-// ...;`), which has a signature and no body. That is distinct from a legal
-// empty body (LRM 8.21 note), which has a statement to enter at. The
-// parameters are still in `body.procedural_vars` and their scope in
+// ...;`) and for a subroutine an interface leaves to a connected module to
+// define (LRM 25.7), each of which has a signature and no body. That is
+// distinct from a legal empty body (LRM 8.21 note), which has a statement to
+// enter at. The parameters are still in `body.procedural_vars` and their scope
+// in
 // `body.root_scope`, so a backend can emit the declaration. Whether a method
 // has a receiver (LRM 8.10) is what its class declares of it, not a fact of
 // its body.

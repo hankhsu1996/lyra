@@ -356,7 +356,7 @@ auto ClassDeclLowerer::DeclareShape(
   if (declared.base.has_value()) {
     base_ref = mir::ClassRef(unit_lowerer.ClassIdentity(*declared.base));
   } else if (!declared.is_interface_class) {
-    base_ref = mir::ClassRef{mir::ManagedObjectRootRef{}};
+    base_ref = mir::ClassRef{mir::ClassObjectRootRef{}};
   }
   std::vector<mir::ClassId> implements;
   implements.reserve(declared.implements.size());
@@ -383,7 +383,7 @@ auto ClassDeclLowerer::DeclareShape(
       .static_property_translation = {},
       .contained = {},
       .is_final = false,
-      .is_interface_class = declared.is_interface_class};
+      .is_interface = declared.is_interface_class};
 
   // A property (LRM 8.4) becomes the field at its position, laid out as every
   // unit declaring the class lays it out. The instance the class's objects

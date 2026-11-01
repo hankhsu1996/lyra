@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <slang/ast/Compilation.h>
+#include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Statement.h>
@@ -494,6 +495,18 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     if (!r) return std::unexpected(std::move(r.error()));
   }
 
+  // A definition reaches the interface through a port or an instance, either
+  // of which the source may declare after it, so it is recorded once both are.
+  for (const auto& member : slang_scope_->members()) {
+    const auto* subroutine = member.as_if<slang::ast::SubroutineSymbol>();
+    if (subroutine == nullptr || !owner_->Owns(member) ||
+        !ExternDefinitionPrefix(*subroutine).has_value()) {
+      continue;
+    }
+    auto r = RecordExternDefinition(*subroutine, frame);
+    if (!r) return std::unexpected(std::move(r.error()));
+  }
+
   // The classes this scope replicates, lowered where a process of the scope
   // is: every declaration a class body may name is bound by now, and the
   // references it records against this scope are recorded before the scope
@@ -790,6 +803,13 @@ auto StructuralScopeLowerer::PopulateMember(
       return PopulateInterfacePortMember(
           member.as<slang::ast::InterfacePortSymbol>(), frame);
 
+    // A subroutine an interface leaves to a connected module is one of the
+    // interface's subroutines with no body (LRM 25.7).
+    case SymbolKind::MethodPrototype:
+      return PopulateSubroutineMember(
+          *member.as<slang::ast::MethodPrototypeSymbol>().getSubroutine(),
+          frame);
+
     case SymbolKind::Port:
       return PopulatePortMember(member.as<slang::ast::PortSymbol>(), frame);
 
@@ -815,7 +835,6 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::FormalArgument:
     case SymbolKind::Field:
     case SymbolKind::ClassProperty:
-    case SymbolKind::MethodPrototype:
     case SymbolKind::Iterator:
     case SymbolKind::PatternVar:
     case SymbolKind::ConstraintBlock:
@@ -1058,6 +1077,70 @@ auto StructuralScopeLowerer::PopulatePortMember(
       port, PortDefaultName(port.name), *initializer, *type, frame);
 }
 
+// A subroutine this scope defines for an interface (LRM 25.7) is handed to that
+// interface's object: the route to it is the one a call written through the
+// same name takes, and what it defines is the subroutine that object's class
+// leaves to a connected module.
+auto StructuralScopeLowerer::RecordExternDefinition(
+    const slang::ast::SubroutineSymbol& definition, WalkFrame frame)
+    -> diag::Result<void> {
+  const auto span = frontend::PointSpanOf(definition.location);
+  const slang::ast::SubroutineSymbol& defined =
+      *definition.getPrototype()->getSubroutine();
+  const slang::ast::Symbol* prefix =
+      definition.getParentScope()->find(*ExternDefinitionPrefix(definition));
+  const std::array<slang::ast::HierarchicalReference::Element, 2> path{
+      slang::ast::HierarchicalReference::Element{*prefix},
+      slang::ast::HierarchicalReference::Element{defined}};
+  slang::ast::HierarchicalReference written;
+  written.target = &defined;
+  written.path = path;
+  // An instance the module holds is reached from the module, as any name
+  // staying inside it is, and a port is reached as whatever it was bound to.
+  const RouteOrigin origin =
+      written.isViaIfacePort()
+          ? owner_->StartOf(frame, defined, written)
+          : RouteOrigin{.start = FromReader{}, .written = written.path};
+  auto walked = owner_->RouteToScopeOrRefuse(
+      frame, *defined.getParentScope(), origin, span);
+  if (!walked) return std::unexpected(std::move(walked.error()));
+  const auto* on = std::get_if<InPublishedScope>(&walked->place);
+  if (on == nullptr || !on->within.empty()) {
+    throw InternalError(
+        "RecordExternDefinition: the interface a definition is written through "
+        "is no object of a published class -- please report this as a bug");
+  }
+  const hir::ScopeClassId scope_class = on->scope_class;
+  const hir::ScopeClassSignature& published =
+      owner_->Unit().scope_classes.Get(scope_class);
+  const std::optional<hir::PublishedCallableId> callable =
+      published.FindCallable(defined.name);
+  const std::optional<hir::PublishedExternId> extern_id =
+      callable.has_value() ? published.FindExtern(*callable) : std::nullopt;
+  if (!extern_id.has_value()) {
+    throw InternalError(
+        "RecordExternDefinition: the interface publishes no subroutine it "
+        "leaves to a connected module under the defined name -- please report "
+        "this as a bug");
+  }
+  const auto binding = owner_->LookupSubroutineBinding(definition);
+  if (!binding.has_value()) {
+    throw InternalError(
+        "RecordExternDefinition: the definition was not minted by the "
+        "declaration pass -- please report this as a bug");
+  }
+  const hir::RoutedObjectRef target = owner_->MakeRoutedObjectRef(
+      frame.Current(), *std::move(walked),
+      owner_->ScopeClassTypeOf(scope_class));
+  frame.current_structural_scope->extern_definitions.push_back(
+      hir::ExternDefinition{
+          .definition = binding->subroutine_id,
+          .target = target,
+          .scope_class = scope_class,
+          .of = *extern_id});
+  return {};
+}
+
 auto StructuralScopeLowerer::PopulateSubroutineMember(
     const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
     -> diag::Result<void> {
@@ -1081,8 +1164,8 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
     auto type = owner_->InternDeclaredType(*formal);
     if (!type) return std::unexpected(std::move(type.error()));
     auto defined = DefineEvaluator(
-        *formal, ArgumentDefaultName(sym.name, formal->name), *default_value,
-        *type, frame);
+        *formal, ArgumentDefaultName(SubroutineNameOf(sym), formal->name),
+        *default_value, *type, frame);
     if (!defined) return std::unexpected(std::move(defined.error()));
   }
 

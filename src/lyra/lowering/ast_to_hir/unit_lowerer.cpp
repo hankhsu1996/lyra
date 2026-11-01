@@ -382,6 +382,11 @@ void UnitLowerer::DeclareMemberIdentities(
       DeclareSubroutine(
           member.as<slang::ast::SubroutineSymbol>(), decls, published, frame);
       return;
+    case SymbolKind::MethodPrototype:
+      DeclareExternSubroutine(
+          member.as<slang::ast::MethodPrototypeSymbol>(), decls, published,
+          frame);
+      return;
     // An anonymous program opens no scope: what it declares are members of
     // this one (LRM 24.6).
     case SymbolKind::AnonymousProgram:
@@ -522,7 +527,6 @@ void UnitLowerer::DeclareMemberIdentities(
     case SymbolKind::FormalArgument:
     case SymbolKind::Field:
     case SymbolKind::ClassProperty:
-    case SymbolKind::MethodPrototype:
     case SymbolKind::Iterator:
     case SymbolKind::PatternVar:
     case SymbolKind::ConstraintBlock:
@@ -635,6 +639,29 @@ void UnitLowerer::DeclareSubroutine(
       ScopePublicationRecord::DisableTarget{.symbol = &sub, .path = path});
   DeclareProceduralStatics(
       sub, sub, hir::ProceduralBodyRef{id}, frame, published, std::move(path));
+}
+
+// A subroutine an interface leaves to a connected module to define (LRM 25.7)
+// is one of the interface's subroutines like any other, declared and published
+// as one, so a caller enables it on the interface wherever it is; the scope
+// publishes besides that a module defines it, and how many may.
+void UnitLowerer::DeclareExternSubroutine(
+    const slang::ast::MethodPrototypeSymbol& prototype,
+    ScopeDeclarations& decls, ScopePublicationRecord& published,
+    ScopeFrameId frame) {
+  if (!prototype.flags.has(slang::ast::MethodFlags::InterfaceExtern)) {
+    throw InternalError(
+        "DeclareExternSubroutine: a structural scope declares a prototype that "
+        "leaves nothing to a connected module -- please report this as a bug");
+  }
+  const slang::ast::SubroutineSymbol& subroutine = *prototype.getSubroutine();
+  DeclareSubroutine(subroutine, decls, published, frame);
+  published.externs.push_back(
+      ScopePublicationRecord::Extern{
+          .symbol = &subroutine,
+          .form = prototype.flags.has(slang::ast::MethodFlags::ForkJoin)
+                      ? hir::ExternForm::kExternForkJoin
+                      : hir::ExternForm::kExtern});
 }
 
 // A name a view defines and offers only for reading stands for an expression

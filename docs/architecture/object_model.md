@@ -46,7 +46,7 @@ reference -- destroys a distinction a consumer has to read.
 - The construction model: creating an object whole, then entering its constructor on it, with the
   base's construction a step of the constructor, as concepts distinct from an ordinary callable.
 - The dispatch model: the override relation between a method and the base method it overrides, the
-  logical dispatch slot, and the dispatched call, whether the slot a class or an interface class
+  logical dispatch slot, and the dispatched call, whether the slot a class or an interface
   introduced.
 - The receiver rule: an instance method carries a receiver; a type-associated (static) function does
   not.
@@ -284,6 +284,10 @@ axes:
 
 The same field, method, override, and construction machinery serves all three; none has a private
 object system.
+
+A class the lowering makes for its own use is the third of these, and may extend the plain managed
+object instead of the SystemVerilog class root, where nothing is running to give a new object its
+random generator (LRM 18.14).
 
 The post-construction lifecycle bodies are the class's own, stated by whichever class supplies them
 rather than carried on a reference to a base: what roots a value in the tree says nothing about how

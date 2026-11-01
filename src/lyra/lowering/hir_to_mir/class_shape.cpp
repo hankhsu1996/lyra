@@ -70,7 +70,7 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .dispatch = {},
       .interface_tables = {},
       .is_final = is_final,
-      .is_interface_class = is_interface_class,
+      .is_interface = is_interface,
       .self_pointer_type = self_pointer_type,
       .time_resolution = time_resolution,
       .execution = execution,

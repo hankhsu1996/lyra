@@ -633,7 +633,10 @@ struct CompilationUnit {
           [](const ObjectTreeRootRef&) -> std::optional<ClassId> {
             return std::nullopt;
           },
-          [](const ManagedObjectRootRef&) -> std::optional<ClassId> {
+          [](const ClassObjectRootRef&) -> std::optional<ClassId> {
+            return std::nullopt;
+          },
+          [](const ObjectRootRef&) -> std::optional<ClassId> {
             return std::nullopt;
           }},
       *cls.base);

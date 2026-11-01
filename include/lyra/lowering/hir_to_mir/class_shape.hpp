@@ -137,7 +137,7 @@ struct ClassShape {
   // carries only pure virtual method contracts, no instance storage and no
   // constructor. A class implementing it places nothing of it in its objects
   // (LRM 8.26); what answers its methods is a table of the implementing class.
-  bool is_interface_class = false;
+  bool is_interface = false;
 
   // Storage the source declared, which the class answers by the identifier the
   // source wrote, and storage the lowering keeps for its own use, which nothing

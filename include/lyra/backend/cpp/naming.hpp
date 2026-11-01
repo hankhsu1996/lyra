@@ -463,7 +463,7 @@ void WriteOne(TargetText& out, BodyScope scope);
 
 // The table a class lays the bodies of its behaviors out in, `sv_table`, a
 // structure each class declares over the one of the class it extends, with one
-// member per behavior it introduces; an interface class's holds one per method
+// member per behavior it introduces; an interface's holds one per method
 // it declares itself. Its member for a behavior is named as the behavior's
 // method.
 [[nodiscard]] inline auto CppDispatchTableTypeName() -> MintedWord {
@@ -471,7 +471,7 @@ void WriteOne(TargetText& out, BodyScope scope);
 }
 
 // The constant holding a class's table, `sv_methods`, and the one holding its
-// table for the interface class at `row` among those it implements,
+// table for the interface at `row` among those it implements,
 // `sv_methods_<row>`.
 [[nodiscard]] inline auto CppDispatchTableName() -> MintedWord {
   return MintedWord{.word = "methods"};

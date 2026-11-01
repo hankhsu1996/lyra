@@ -106,7 +106,7 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   for (const lir::ClassId id : unit_->classes.Ids()) {
     const lir::Class& cls = unit_->classes.Get(id);
     // A class another unit defines is built and dispatched through there, and
-    // an interface class holds no storage and no value is built of one.
+    // an interface holds no storage and no value is built of one.
     if (cls.defining_unit.has_value() || !cls.base.has_value()) continue;
     EmitTables(cls, DeclaredClass(id));
   }
@@ -902,7 +902,7 @@ auto CodeGenModule::LayOut(const Declared& declared)
     -> diag::Result<PlacedMembers> {
   if (!declared.base.has_value()) {
     throw InternalError(
-        "llvm codegen: an interface class is laid out, which holds no storage "
+        "llvm codegen: an interface is laid out, which holds no storage "
         "-- please report this as a bug");
   }
   auto extended = PlacedMembersOf(*declared.base);

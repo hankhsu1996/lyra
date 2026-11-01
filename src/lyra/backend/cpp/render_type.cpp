@@ -198,10 +198,10 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                 out, "lyra::value::UnpackedArray<", type(ua.element_type), ", ",
                 ua.Size(), ">");
           },
-          // No C++ class is every object implementing an interface class,
+          // No C++ class is every object implementing an interface,
           // so an object seen as one is the root every object is.
           [&](const mir::ObjectType& o) {
-            if (unit.GetClass(o.of).is_interface_class) {
+            if (unit.GetClass(o.of).is_interface) {
               out += LibraryCppType(support::LibraryDecl::kObjectRoot);
               return;
             }
@@ -849,8 +849,11 @@ void WriteOne(TargetText& out, const CppClassRef& ref) {
           [&](const mir::ObjectTreeRootRef&) {
             out += LibraryCppType(support::LibraryDecl::kScope);
           },
-          [&](const mir::ManagedObjectRootRef&) {
+          [&](const mir::ClassObjectRootRef&) {
             out += LibraryCppType(support::LibraryDecl::kClassObject);
+          },
+          [&](const mir::ObjectRootRef&) {
+            out += LibraryCppType(support::LibraryDecl::kObjectRoot);
           }},
       ref.Ref());
 }
@@ -871,7 +874,8 @@ void WriteOne(TargetText& out, const CppBaseClass& base) {
             }
           },
           [](const mir::ObjectTreeRootRef&) {},
-          [](const mir::ManagedObjectRootRef&) {}},
+          [](const mir::ClassObjectRootRef&) {},
+          [](const mir::ObjectRootRef&) {}},
       base.of.Ref());
   Write(out, base.of);
 }

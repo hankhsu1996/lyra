@@ -415,6 +415,13 @@ class StructuralScopeLowerer {
   // this one and holds nothing else, so what the unit adds while lowering its
   // bodies moves no field a referrer reads.
   mir::ClassId published_class_id_{};
+  // For each subroutine the scope leaves to a connected module, where the
+  // object keeps what a definer hands it, and the method taking it.
+  struct ExternRealization {
+    mir::FieldId field;
+    mir::CallableId bind;
+  };
+  std::vector<ExternRealization> extern_realizations_;
   // The classes this scope replicates: those it declares (LRM 23.9), and the
   // specializations of a generic on one (LRM 8.25), each a type of this scope's
   // instance (LRM 6.22). So the scope both settles its shape and lowers its

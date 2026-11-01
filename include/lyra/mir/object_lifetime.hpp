@@ -15,7 +15,7 @@ class CompilationUnit;
 
 // The lifetime of an object of a class whose lineage passes through `of`.
 // `base_of` answers the class a class extends, whichever unit defines it: an
-// instance of another module is a class of that unit. An interface class
+// instance of another module is a class of that unit. An interface
 // extends none, and only a value the program makes is ever one (LRM 8.26).
 template <typename BaseOf>
 [[nodiscard]] auto LifetimeOfLineage(const ClassRef& of, const BaseOf& base_of)
@@ -29,7 +29,10 @@ template <typename BaseOf>
                                     : ObjectLifetime::kWhileReferenced;
           },
           [](const ObjectTreeRootRef&) { return ObjectLifetime::kTheRun; },
-          [](const ManagedObjectRootRef&) {
+          [](const ClassObjectRootRef&) {
+            return ObjectLifetime::kWhileReferenced;
+          },
+          [](const ObjectRootRef&) {
             return ObjectLifetime::kWhileReferenced;
           }},
       of);

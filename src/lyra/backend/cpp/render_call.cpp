@@ -407,10 +407,10 @@ void WriteCallee(
           // The library's dispatch, told the introducer's table and the
           // behavior's member, handed the object first:
           // `lyra::runtime::Dispatch<B::sv_table, &B::sv_table::f>(obj, args)`;
-          // for a behavior an interface class introduced, the one finding
-          // that interface class's table among the object's.
+          // for a behavior an interface introduced, the one finding
+          // that interface's table among the object's.
           [&](const mir::Virtual& v) {
-            if (view.Unit().GetClass(v.slot.owner_class).is_interface_class) {
+            if (view.Unit().GetClass(v.slot.owner_class).is_interface) {
               callee.Named(
                   ReceiverPlacement::kIntoArgumentList,
                   CppInterfaceDispatchCallee{

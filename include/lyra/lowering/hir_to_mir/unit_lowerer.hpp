@@ -225,6 +225,24 @@ struct ClassCodeSlot {
   mir::CallableCode operation;
 };
 
+// What the class a scope published states of one subroutine the scope leaves to
+// a connected module to define (LRM 25.7), alike in the unit publishing it and
+// in every unit reading the signature. `callback` is the abstract class a
+// definition is handed over as, whose one method `invoke` takes what the
+// subroutine takes;
+// `bind` is the method of the published class a definer hands it to, taking a
+// `handle` to it, and named apart by a space, which no identifier holds, so no
+// subroutine the scope published shares it.
+struct ExternBinding {
+  mir::ClassId callback;
+  mir::CallableCode invoke;
+  mir::CallableId bind;
+  std::string bind_name;
+  mir::CallableCode bind_prototype;
+  mir::TypeId handle;
+  hir::ExternForm form = hir::ExternForm::kExtern;
+};
+
 // A class this unit published of its scopes. Several scopes may be published
 // as one class -- the bodies a generate block came out as at its several
 // places (LRM 27.3) -- so what the signature fixes is held once: where it
@@ -310,6 +328,13 @@ class UnitLowerer {
   // its origin by (LRM 20.10).
   [[nodiscard]] auto SourceManager() const -> const diag::SourceManager& {
     return *source_manager_;
+  }
+
+  // What the class `published` states of each subroutine its scope leaves to a
+  // connected module, in the order the signature gives them.
+  [[nodiscard]] auto ExternBindingsOf(mir::ClassId published) const
+      -> const std::vector<ExternBinding>& {
+    return extern_bindings_.at(published);
   }
 
   // The MIR type an HIR type is, asked only of one MIR has a type for.
@@ -642,6 +667,14 @@ class UnitLowerer {
       mir::ClassId id, std::string unit_name, support::DefPath class_path)
       -> void;
 
+  // States, for the class `published` of a scope, what each subroutine the
+  // scope leaves to a connected module takes in MIR: every unit reaching the
+  // scope states it alike from the signature, and the one publishing the scope
+  // is `defining_unit`'s.
+  void DeclareExternBindings(
+      mir::ClassId published, const std::optional<std::string>& defining_unit,
+      const hir::ScopeClassSignature& scope);
+
   // Declares in MIR the class a scope of another unit is -- one of its
   // instances, or a generate block inside one -- once per class reached, with a
   // field for each thing the scope published. That class is a class of that
@@ -756,6 +789,7 @@ class UnitLowerer {
   // The class each covergroup the unit names is written as, of this unit or
   // another.
   base::Translation<hir::CovergroupId, mir::ClassId> covergroup_identities_;
+  std::map<mir::ClassId, std::vector<ExternBinding>> extern_bindings_;
   // The class each scope class the unit names is, of this unit or another.
   std::map<hir::ScopeClassId, mir::ClassId> scope_class_translations_;
   // This unit's layout of each class a scope of another unit is, by the HIR
