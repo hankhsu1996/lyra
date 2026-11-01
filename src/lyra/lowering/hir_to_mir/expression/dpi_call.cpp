@@ -743,6 +743,15 @@ auto PopulateForeignImportBoundary(
     }
   }
 
+  // The foreign side writes the process's standard output through the C
+  // library, so what the design wrote reaches it before the foreign frame runs
+  // (LRM 35). A pure function performs no file operation (LRM 35.5.2), so its
+  // call has nothing to order and is left as cheap as any call.
+  if (!import.is_pure) {
+    AppendRuntimeEffectStmt(
+        unit_lowerer, body, support::BuiltinFn::kBeforeForeignCodeRuns, {});
+  }
+
   mir::Expr foreign_call =
       MakeForeignSymbolCall(unit, import, std::move(call_args));
   const mir::TypeId call_type = foreign_call.type;
@@ -773,8 +782,7 @@ auto PopulateForeignImportBoundary(
   // LRM 35.9 items b and c, checked where the foreign frame has just returned
   // and its evidence is still in hand. Only a `context` import may reach an
   // exported subroutine (LRM 35.5.3), and a plain one that does is refused at
-  // the export, so a plain import's boundary carries no check and stays as
-  // cheap as any call.
+  // the export, so a plain import's boundary carries no check.
   if (import.is_context) {
     if (import.is_task) {
       AppendRuntimeEffectStmt(
@@ -1213,10 +1221,13 @@ void ReturnTheFallbackAnswer(
 // execution that must stop owes before any statement of the body runs -- the
 // foreign side may call in again after a disable or after the run ended, and
 // nothing of the design runs then -- all inside the region that lands whatever
-// no region of the body claimed, then the fallback answer. The entry is that
-// region whether or not a symbol stands in front of it: where the name belongs
-// to a scope, one does, and where it belongs to a namespace, the entry is the
-// symbol and the foreign caller's frame is directly above it.
+// no region of the body claimed, then the fallback answer. The body is paired
+// with what every way back to the foreign caller owes: what the design wrote
+// to standard output reaches it before the foreign frame runs again (LRM 35).
+// The entry is that region whether or not a symbol stands in front of it:
+// where the name belongs to a scope, one does, and where it belongs to a
+// namespace, the entry is the symbol and the foreign caller's frame is
+// directly above it.
 void CloseForeignExportEntry(
     UnitLowerer& module, CallableBindings& bindings, mir::Builder entry,
     mir::Block&& body, hir::SubroutineKind kind,
@@ -1227,8 +1238,11 @@ void CloseForeignExportEntry(
       module, ran_builder, support::BuiltinFn::kCheckExportReachable, {});
   AppendRuntimeEffectStmt(
       module, ran_builder, support::BuiltinFn::kTakeDepartureIfDue, {});
-  ran_builder.AppendStmt(
-      mir::BlockStmt{.scope = ran_builder.AddScope(std::move(body))});
+  mir::Block back_to_the_caller;
+  AppendRuntimeEffectStmt(
+      module, ran_builder.Into(back_to_the_caller),
+      support::BuiltinFn::kBeforeForeignCodeRuns, {});
+  ran_builder.AppendFinally(std::move(body), std::move(back_to_the_caller));
   CloseForeignCallerRegion(module.Unit(), bindings, entry, std::move(ran));
   ReturnTheFallbackAnswer(module, entry, kind, ret_abi);
 }

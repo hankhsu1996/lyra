@@ -303,8 +303,8 @@ class Runtime final : public RuntimeEffects {
   // simulation where it offers no assertion API to ask for them on demand.
   void ReportCoverage();
 
-  DiagnosticDispatcher diagnostic_;
   FileTable files_;
+  DiagnosticDispatcher diagnostic_{files_};
   // Built from the plusargs before they are moved into their own source.
   ValueDumps dumps_;
   RandomizeSettings randomize_settings_;

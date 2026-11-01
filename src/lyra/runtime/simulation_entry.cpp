@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <exception>
 #include <memory>
+#include <sanitizer/common_interface_defs.h>
 #include <span>
 #include <string>
 #include <string_view>
@@ -15,10 +16,11 @@
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/fault_watch.hpp"
 #include "lyra/base/memory_watch.hpp"
-#include "lyra/base/stack_watch.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/design.hpp"
+#include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/interrupt_report.hpp"
 #include "lyra/runtime/plusargs.hpp"
@@ -91,15 +93,27 @@ constexpr std::string_view kOutOfMemory =
 
 }  // namespace
 
+// A program built to check its memory links the address sanitizer, which ends
+// the process itself when it has reported, calling this first where one is
+// registered. A program built without it links none of this, so the
+// declaration is weak and nothing is registered.
+#pragma weak __sanitizer_set_death_callback
+
 auto RunDesignRoot(
     int argc, char** argv, std::string_view root_name, const RootFactory& make)
     -> int {
-  base::InstallOutOfMemoryHandler(kOutOfMemory);
+  // Every ending the process can still act on delivers what the design wrote
+  // before it ends: a refused request for memory, a fault, a report of the
+  // checker, and -- for as long as the run lasts -- a signal from outside.
+  base::InstallOutOfMemoryHandler(kOutOfMemory, DeliverFinishedOutput);
   // The simulation runs on the stack of the thread the program starts on. A
   // foreign task runs on a stack of its own, which is not registered.
   static std::array<std::byte, base::kAltStackSize> alt_stack;
-  base::InstallStackOverflowHandler(kOutOfStack);
+  base::InstallFaultHandler(kOutOfStack, DeliverFinishedOutput);
   base::RegisterThreadStack(alt_stack);
+  if (__sanitizer_set_death_callback != nullptr) {
+    __sanitizer_set_death_callback(DeliverFinishedOutput);
+  }
 
   // A built program's own argv leads with its name, which is not one of the
   // simulation's arguments.

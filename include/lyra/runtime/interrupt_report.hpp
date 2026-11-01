@@ -4,15 +4,18 @@
 #include <csignal>
 #include <optional>
 
+#include "lyra/runtime/file.hpp"
+
 namespace lyra::runtime {
 
 class Runtime;
 
 // For as long as one stands, a run that is stopped from outside -- by the
-// keyboard's interrupt or by a request to terminate -- first says where it was:
-// the time, and where the procedure running at that moment is written. It then
-// ends as the signal would have ended it, and no final procedure runs, since
-// the simulation did not reach its end (LRM 9.2.3).
+// keyboard's interrupt or by a request to terminate -- first delivers what the
+// design had written and says where it was: the time, and where the procedure
+// running at that moment is written. It then ends as the signal would have
+// ended it, and no final procedure runs, since the simulation did not reach
+// its end (LRM 9.2.3).
 //
 // A procedure that never stops to wait is legal text (LRM 9.2.2, 12.7.6) and
 // cannot be told from one that is only taking long, so the run never decides
@@ -32,12 +35,11 @@ class InterruptReport {
   auto operator=(InterruptReport&&) -> InterruptReport& = delete;
 
  private:
-  static constexpr std::array kSignals{SIGINT, SIGTERM};
-
   static void SayWhereTheRunWas(int signal);
 
+  const Runtime* run_;
   // What each signal did before this stood, for the ones it took over.
-  std::array<std::optional<struct sigaction>, kSignals.size()> displaced_;
+  std::array<std::optional<struct sigaction>, kStopSignals.size()> displaced_;
 };
 
 }  // namespace lyra::runtime

@@ -9,8 +9,8 @@
 #include <sys/resource.h>
 #include <utility>
 
+#include "lyra/base/fault_watch.hpp"
 #include "lyra/base/memory_watch.hpp"
-#include "lyra/base/stack_watch.hpp"
 
 namespace lyra::base {
 
@@ -66,7 +66,9 @@ void StackThread::Join() {
 
 auto StackThread::Run(void* self) -> void* {
   auto& thread = *static_cast<StackThread*>(self);
-  InstallStackOverflowHandler(kOutOfStack);
+  // A command's output is held by the C library's streams, which a signal
+  // handler may not flush, so a fault has nothing it can deliver.
+  InstallFaultHandler(kOutOfStack, NothingBeforeEnding);
   RegisterThreadStack(thread.alt_stack_);
   thread.work_();
   return nullptr;

@@ -1529,7 +1529,10 @@ the detail lives in the entry itself.
   `final` after `$stop`, `$stop` as a failure, a fifth severity, and aborting at the raise site are
   rejected. Revised 2026-10-21: a refused request for memory delivers everything the design wrote to
   standard output; and a run-time error becomes a departure at the first region or activation that
-  takes it, a cleanup's landing only passing it on.
+  takes it, a cleanup's landing only passing it on. Revised 2026-10-31: every ending the process can
+  still act on -- a signal from outside, a fault, the checker's report, a refused request --
+  delivers what the design had written, from a buffer of the runtime's own per file, with `write`
+  alone.
 - [deferred-report-queue](deferred-report-queue.md) -- a pending report stays in the region's own
   list and withdrawal is a refusal to act, so it records the sources that can withdraw it and acts
   only if all still stand: two `disable` targets through the accepted cancellation-source

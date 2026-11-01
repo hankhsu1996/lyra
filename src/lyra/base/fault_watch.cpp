@@ -1,5 +1,6 @@
-#include "lyra/base/stack_watch.hpp"
+#include "lyra/base/fault_watch.hpp"
 
+#include <array>
 #include <bit>
 #include <csignal>
 #include <cstddef>
@@ -8,12 +9,16 @@
 #include <pthread.h>
 #include <span>
 #include <string_view>
-#include <sys/types.h>
 #include <unistd.h>
+
+#include "lyra/base/write_all.hpp"
 
 namespace lyra::base {
 
 namespace {
+
+// The signals a fault arrives as.
+constexpr std::array kFaultSignals{SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT};
 
 // How far around the end of a stack a faulting address is taken to mean the
 // stack overflowed: below it, as far as a large frame can step past the pages
@@ -34,46 +39,60 @@ auto OverflowMessage() -> std::string_view& {
   return message;
 }
 
-// What handled a fault before the handler below was installed, so a fault it
-// has spoken about ends the process the way it would have.
-auto PreviousFaultAction() -> struct sigaction& {
-  static struct sigaction previous{};
+// What runs before the process ends, once something is installed.
+auto BeforeEndingAction() -> BeforeEnding& {
+  static BeforeEnding action = &NothingBeforeEnding;
+  return action;
+}
+
+// What handled each fault signal before the handler below was installed, so
+// a fault it has spoken about ends the process the way it would have.
+auto PreviousFaultActions()
+    -> std::array<struct sigaction, kFaultSignals.size()>& {
+  static std::array<struct sigaction, kFaultSignals.size()> previous{};
   return previous;
 }
 
-// Says the stack ran out where that is what the fault is, then hands the
-// signal back: returning runs the faulting instruction again, and whatever
-// handled the signal before this ends the process. A handler that is
-// given the fault's address takes a third argument, which this one does not
-// read.
+// Runs what was installed to run before an ending, says the stack ran out
+// where that is what the fault is, then hands the signal back: returning runs
+// the faulting instruction again, and whatever handled the signal before this
+// ends the process. An abort raises its signal again once a handler returns,
+// which comes to the same. A handler that is given the fault's address takes
+// a third argument, which this one does not read.
 // NOLINTNEXTLINE(readability-named-parameter)
-void ReportStackOverflow(int signal, siginfo_t* info, void*) {
+void ReportFault(int signal, siginfo_t* info, void*) {
+  BeforeEndingAction()();
   const auto fault = std::bit_cast<std::uintptr_t>(info->si_addr);
   const std::uintptr_t end = StackEnd();
-  if (end != 0 && fault + kBelowStackEnd >= end &&
+  if (signal == SIGSEGV && end != 0 && fault + kBelowStackEnd >= end &&
       fault < end + kAboveStackEnd) {
-    std::string_view unwritten = OverflowMessage();
-    while (!unwritten.empty()) {
-      const ssize_t written =
-          ::write(STDERR_FILENO, unwritten.data(), unwritten.size());
-      if (written <= 0) break;
-      unwritten.remove_prefix(static_cast<std::size_t>(written));
+    WriteAll(STDERR_FILENO, OverflowMessage());
+  }
+  for (std::size_t i = 0; i < kFaultSignals.size(); ++i) {
+    if (kFaultSignals.at(i) == signal) {
+      ::sigaction(signal, &PreviousFaultActions().at(i), nullptr);
     }
   }
-  ::sigaction(signal, &PreviousFaultAction(), nullptr);
 }
 
 }  // namespace
 
-void InstallStackOverflowHandler(std::string_view message) {
+void NothingBeforeEnding() noexcept {
+}
+
+void InstallFaultHandler(
+    std::string_view overflow_message, BeforeEnding before_ending) {
   static std::once_flag installed;
   std::call_once(installed, [&] {
-    OverflowMessage() = message;
+    OverflowMessage() = overflow_message;
+    BeforeEndingAction() = before_ending;
     struct sigaction action{};
-    action.sa_sigaction = ReportStackOverflow;
+    action.sa_sigaction = ReportFault;
     action.sa_flags = SA_SIGINFO | SA_ONSTACK;
     ::sigemptyset(&action.sa_mask);
-    ::sigaction(SIGSEGV, &action, &PreviousFaultAction());
+    for (std::size_t i = 0; i < kFaultSignals.size(); ++i) {
+      ::sigaction(kFaultSignals.at(i), &action, &PreviousFaultActions().at(i));
+    }
   });
 }
 

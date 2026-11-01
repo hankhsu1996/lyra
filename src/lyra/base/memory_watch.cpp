@@ -1,13 +1,12 @@
 #include "lyra/base/memory_watch.hpp"
 
-#include <cstddef>
-#include <cstdio>
 #include <cstdlib>
-#include <iostream>
 #include <new>
 #include <string_view>
-#include <sys/types.h>
 #include <unistd.h>
+
+#include "lyra/base/fault_watch.hpp"
+#include "lyra/base/write_all.hpp"
 
 namespace lyra::base {
 
@@ -18,25 +17,23 @@ auto OutOfMemoryMessage() -> std::string_view& {
   return message;
 }
 
+auto BeforeEndingAction() -> BeforeEnding& {
+  static BeforeEnding action = &NothingBeforeEnding;
+  return action;
+}
+
 }  // namespace
 
-void InstallOutOfMemoryHandler(std::string_view message) {
+void InstallOutOfMemoryHandler(
+    std::string_view message, BeforeEnding before_ending) {
   OutOfMemoryMessage() = message;
+  BeforeEndingAction() = before_ending;
   std::set_new_handler(EndForLackOfMemory);
 }
 
 void EndForLackOfMemory() {
-  std::cout.flush();
-  std::fflush(stdout);
-  std::string_view unwritten = OutOfMemoryMessage();
-  while (!unwritten.empty()) {
-    const ssize_t written =
-        ::write(STDERR_FILENO, unwritten.data(), unwritten.size());
-    if (written <= 0) {
-      break;
-    }
-    unwritten.remove_prefix(static_cast<std::size_t>(written));
-  }
+  BeforeEndingAction()();
+  WriteAll(STDERR_FILENO, OutOfMemoryMessage());
   std::_Exit(EXIT_FAILURE);
 }
 

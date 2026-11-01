@@ -8,6 +8,8 @@
 #include <string_view>
 #include <unistd.h>
 
+#include "lyra/base/write_all.hpp"
+#include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 
@@ -26,13 +28,7 @@ auto ReportedRun() noexcept -> std::atomic<const Runtime*>& {
 // as async-signal-safe may be called: no allocation, no stream, no formatting
 // library. The text goes straight to the error stream's descriptor.
 void Write(std::string_view text) noexcept {
-  while (!text.empty()) {
-    const ssize_t written = ::write(STDERR_FILENO, text.data(), text.size());
-    if (written <= 0) {
-      return;
-    }
-    text.remove_prefix(static_cast<std::size_t>(written));
-  }
+  base::WriteAll(STDERR_FILENO, text);
 }
 
 void WriteDecimal(std::uint64_t value) noexcept {
@@ -51,11 +47,11 @@ void WriteDecimal(std::uint64_t value) noexcept {
 
 }  // namespace
 
-InterruptReport::InterruptReport(const Runtime& run) {
+InterruptReport::InterruptReport(const Runtime& run) : run_(&run) {
   ReportedRun().store(&run);
-  for (std::size_t i = 0; i < kSignals.size(); ++i) {
+  for (std::size_t i = 0; i < kStopSignals.size(); ++i) {
     struct sigaction standing{};
-    if (sigaction(kSignals.at(i), nullptr, &standing) != 0 ||
+    if (sigaction(kStopSignals.at(i), nullptr, &standing) != 0 ||
         standing.sa_handler == SIG_IGN) {
       continue;
     }
@@ -65,22 +61,26 @@ InterruptReport::InterruptReport(const Runtime& run) {
     report.sa_handler = &InterruptReport::SayWhereTheRunWas;
     report.sa_flags = SA_RESETHAND;
     sigemptyset(&report.sa_mask);
-    if (sigaction(kSignals.at(i), &report, nullptr) == 0) {
+    if (sigaction(kStopSignals.at(i), &report, nullptr) == 0) {
       displaced_.at(i) = standing;
     }
   }
 }
 
 InterruptReport::~InterruptReport() {
-  for (std::size_t i = 0; i < kSignals.size(); ++i) {
+  for (std::size_t i = 0; i < kStopSignals.size(); ++i) {
     if (displaced_.at(i)) {
-      sigaction(kSignals.at(i), &*displaced_.at(i), nullptr);
+      sigaction(kStopSignals.at(i), &*displaced_.at(i), nullptr);
     }
   }
-  ReportedRun().store(nullptr);
+  // A second run constructed in the same process before this one ended has
+  // taken the handler's attention; it keeps it.
+  const Runtime* expected = run_;
+  ReportedRun().compare_exchange_strong(expected, nullptr);
 }
 
 void InterruptReport::SayWhereTheRunWas(int signal) {
+  DeliverFinishedOutput();
   if (const Runtime* run = ReportedRun().load(); run != nullptr) {
     Write("note: interrupted at time ");
     WriteDecimal(run->now_.load());

@@ -23,6 +23,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/dump_writer.hpp"
+#include "lyra/runtime/file.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/region.hpp"
@@ -273,6 +274,9 @@ class DumpOutput {
   }
 
   void Run() {
+    // A stop from outside is handled by the thread running the design, which
+    // hands the files over whole; this thread only writes the dump.
+    const StopSignalsHeld stop_signals_held;
     for (bool open = true; open;) {
       Batch batch;
       {

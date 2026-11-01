@@ -274,16 +274,11 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
       carried);
 }
 
-// A program linked against the shipped library needs of the C++ library what a
-// program its compiler builds alone needs. libstdc++ from 13 initializes the
-// standard streams in the library, and from 13.2 a unit writing to them names
-// that initializer, so a compiler linking the library's newer parts statically
-// (GCC Toolset's split) brings it into a program that then runs on an older
-// system library, and a plain older library refuses to load the program. A
-// library compiled against 13.1's headers names nothing, so the program loads
-// an older library, whose streams were never initialized, and dies at its first
-// print.
-TEST(RuntimeSurface, TheLibraryAsksForTheStreamsItWritesTo) {
+// The runtime writes its descriptors itself and names no standard stream of
+// the C++ library, which is what lets an ending hand the design's output over
+// from a signal handler, and what keeps a program it links from needing the
+// library's stream initializer.
+TEST(RuntimeSurface, TheLibraryNamesNoStandardStream) {
   const auto nm = lyra::test::ResolveLlvmNm();
   ASSERT_FALSE(nm.empty());
   const auto lyra_exe = lyra::test::ResolveLyra();
@@ -298,11 +293,10 @@ TEST(RuntimeSurface, TheLibraryAsksForTheStreamsItWritesTo) {
   ASSERT_EQ(listed_or->exit_code, 0) << listed_or->stderr_text;
   const std::vector<std::string> asked = SymbolNames(listed_or->stdout_text);
 
-  ASSERT_TRUE(std::ranges::contains(asked, "_ZSt4cout"))
-      << "the library no longer writes to std::cout, so this has nothing left "
-         "to ask of it";
-  EXPECT_TRUE(std::ranges::contains(asked, "_ZSt21ios_base_library_initv"))
-      << "the library writes to the standard streams without naming their "
-         "initializer, so it was compiled against libstdc++ headers older than "
-         "13.2";
+  EXPECT_FALSE(std::ranges::contains(asked, "_ZSt4cout"))
+      << "the library writes standard output through std::cout";
+  EXPECT_FALSE(std::ranges::contains(asked, "_ZSt4cerr"))
+      << "the library writes the error stream through std::cerr";
+  EXPECT_FALSE(std::ranges::contains(asked, "_ZSt3cin"))
+      << "the library reads standard input through std::cin";
 }

@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <format>
 #include <functional>
-#include <iostream>
 #include <optional>
 #include <span>
 #include <string>
@@ -12,6 +11,7 @@
 #include <utility>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/runtime/file_table.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -60,12 +60,13 @@ auto DiagnosticDispatcher::CountKeyHash::operator()(
   return place_hash ^ (severity_hash << 1U);
 }
 
-DiagnosticDispatcher::DiagnosticDispatcher(std::uint32_t rate_limit)
-    : rate_limit_(rate_limit) {
+DiagnosticDispatcher::DiagnosticDispatcher(
+    FileTable& files, std::uint32_t rate_limit)
+    : files_(&files), rate_limit_(rate_limit) {
 }
 
 void DiagnosticDispatcher::Write(std::string_view text) {
-  std::cerr << text;
+  files_->WriteToStandardError(text);
 }
 
 void DiagnosticDispatcher::SetContextSource(ContextSource context) {

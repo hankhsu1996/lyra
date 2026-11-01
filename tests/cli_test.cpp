@@ -1933,9 +1933,11 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
 
 // A procedure that never stops to wait cannot be told from one that is only
 // taking long, so nothing ends such a run but whoever is waiting on it. What
-// that reader is owed when they do is where the run was. The program is ended
-// the way a harness ends a child it has given up on, so what it says is what
-// such a harness reports.
+// that reader is owed when they do is where the run was, and everything the
+// design had written before it -- to standard output, which a harness reads
+// through a pipe, and to the files it opened. The program is ended the way a
+// harness ends a child it has given up on, so what it says is what such a
+// harness reports.
 TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -1943,33 +1945,139 @@ TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
 
   const auto src = *tmp_or / "test.sv";
+  std::ofstream(src)
+      << "module Test;\n"
+      << "  bit toggled, gate;\n"
+      << "  int trace, channel;\n"
+      << "  initial begin\n"
+      << "    #7;\n"
+      << "    trace = $fopen(\"trace.txt\", \"w\");\n"
+      << "    channel = $fopen(\"channel.txt\");\n"
+      << "    $fdisplay(trace, \"traced at %0t\", $time);\n"
+      << "    $fdisplay(channel, \"channelled at %0t\", $time);\n"
+      << "    $display(\"reached time %0t\", $time);\n"
+      << "    forever begin\n"
+      << "      if (gate) #1;\n"
+      << "      toggled = ~toggled;\n"
+      << "    end\n"
+      << "  end\n"
+      << "endmodule\n";
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto program = *tmp_or / std::format("program_{}", backend);
+    const auto built = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "build --backend {} --top Test -o '{}' test.sv", backend,
+            program.string()));
+    ASSERT_THAT(built, ExitedWithCode(0))
+        << backend << ": " << built.stderr_text;
+
+    const auto run =
+        RunChildProcess(program, {}, std::chrono::seconds{2}, *tmp_or);
+    EXPECT_TRUE(std::holds_alternative<TimedOut>(run.end))
+        << backend << ": " << Describe(run.end) << "\n"
+        << run.stderr_text;
+    EXPECT_NE(run.stderr_text.find("interrupted at time 7"), std::string::npos)
+        << backend << ": " << run.stderr_text;
+    EXPECT_NE(
+        run.stderr_text.find("test.sv:4:3: note: this procedure was running"),
+        std::string::npos)
+        << backend << ": " << run.stderr_text;
+    EXPECT_EQ(run.stdout_text, "reached time 7\n")
+        << backend << ": " << run.stdout_text;
+    EXPECT_EQ(ReadWholeFile(*tmp_or / "trace.txt"), "traced at 7\n") << backend;
+    EXPECT_EQ(ReadWholeFile(*tmp_or / "channel.txt"), "channelled at 7\n")
+        << backend;
+  }
+}
+
+// Foreign code writes the process's standard output through the C library
+// (LRM 35), and the design writes it through the runtime, so what the two
+// print comes out in the order it was printed only if each hands what it holds
+// over before the other runs -- on the way into foreign code, and on the way
+// back into the design through an export.
+TEST(LyraRun, TheDesignsOutputAndForeignOutputKeepTheirOrder) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
   std::ofstream(src) << "module Test;\n"
-                     << "  bit toggled, gate;\n"
+                     << "  import \"DPI-C\" context function void talk();\n"
+                     << "  export \"DPI-C\" function speak;\n"
+                     << "  function void speak();\n"
+                     << "    $display(\"3 the design, called back\");\n"
+                     << "  endfunction\n"
                      << "  initial begin\n"
-                     << "    #7;\n"
-                     << "    forever begin\n"
-                     << "      if (gate) #1;\n"
-                     << "      toggled = ~toggled;\n"
-                     << "    end\n"
+                     << "    $display(\"1 the design\");\n"
+                     << "    talk();\n"
+                     << "    $display(\"5 the design again\");\n"
                      << "  end\n"
                      << "endmodule\n";
-  const auto program = *tmp_or / "program";
-  const auto built = RunLyraFrom(
-      lyra, *tmp_or,
-      std::format(
-          "build --backend llvm --top Test -o '{}' test.sv", program.string()));
-  ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
+  const auto foreign = *tmp_or / "foreign.c";
+  std::ofstream(foreign) << "#include <stdio.h>\n"
+                         << "#include \"dpi.h\"\n"
+                         << "void talk(void) {\n"
+                         << "  printf(\"2 foreign code\\n\");\n"
+                         << "  speak();\n"
+                         << "  printf(\"4 foreign code again\\n\");\n"
+                         << "}\n";
 
-  const auto run = RunChildProcess(program, {}, std::chrono::seconds{2});
-  EXPECT_TRUE(std::holds_alternative<TimedOut>(run.end))
-      << Describe(run.end) << "\n"
-      << run.stderr_text;
-  EXPECT_NE(run.stderr_text.find("interrupted at time 7"), std::string::npos)
-      << run.stderr_text;
-  EXPECT_NE(
-      run.stderr_text.find("test.sv:3:3: note: this procedure was running"),
-      std::string::npos)
-      << run.stderr_text;
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const std::vector<std::string> args = {
+        "run",  "--backend",  std::string(backend), "--top",
+        "Test", "--dpi-link", foreign.string(),     src.string()};
+    const auto run = RunChildProcess(lyra, args);
+    EXPECT_THAT(run, ExitedWithCode(0))
+        << backend << ": " << run.stdout_text << run.stderr_text;
+    EXPECT_EQ(
+        run.stdout_text,
+        "1 the design\n2 foreign code\n3 the design, called back\n"
+        "4 foreign code again\n5 the design again\n")
+        << backend << ": " << run.stdout_text;
+  }
+}
+
+// A report goes to the error stream and the design's output to standard
+// output; where the two are one file, as under `2>&1`, a report follows what
+// the design printed before it.
+TEST(LyraRun, AReportFollowsWhatTheDesignPrintedBeforeIt) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  initial begin\n"
+                     << "    $display(\"one\");\n"
+                     << "    $display(\"two\");\n"
+                     << "    $error(\"after two lines\");\n"
+                     << "    $display(\"three\");\n"
+                     << "  end\n"
+                     << "endmodule\n";
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto program = *tmp_or / std::format("program_{}", backend);
+    const auto built = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "build --backend {} --top Test -o '{}' test.sv", backend,
+            program.string()));
+    ASSERT_THAT(built, ExitedWithCode(0))
+        << backend << ": " << built.stderr_text;
+
+    const auto joined = *tmp_or / std::format("joined_{}.txt", backend);
+    const std::vector<std::string> positional = {
+        program.string(), joined.string()};
+    const auto run = RunShellScript(R"("$0" > "$1" 2>&1)", positional);
+    EXPECT_THAT(run, ExitedWithCode(0)) << backend << ": " << run.stderr_text;
+    EXPECT_EQ(
+        ReadWholeFile(joined),
+        "one\ntwo\ntest.sv:5:5: error: after two lines\n"
+        "note: in 'Test' at time 0\nthree\n")
+        << backend;
+  }
 }
 
 // LRM 8.4 leaves the result of reaching a member through a null object handle
@@ -2384,6 +2492,10 @@ TEST(LyraBuild, AProgramBuiltToCheckItsMemoryReportsAReadOfFreedStorage) {
         << label << ": " << ran.stderr_text;
     EXPECT_NE(ran.stderr_text.find("freed by thread"), std::string::npos)
         << label << ": " << ran.stderr_text;
+    // What the design printed before the read is delivered, though the
+    // sanitizer ends the program where it stands.
+    EXPECT_EQ(ran.stdout_text, "waited at 1\n")
+        << label << ": " << ran.stdout_text;
   }
 
   // A program Lyra starts is told where its sanitizer's symbolizer is, so the
