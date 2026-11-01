@@ -17,6 +17,13 @@
 
 namespace lyra::hir {
 
+// The path a unit publishes the class of its own scope under -- the class its
+// instances are objects of -- which is where every path of its own scopes
+// starts. A reader naming that class needs no more of the unit than its name.
+inline auto UnitScopeClassPath() -> support::DefPath {
+  return support::DefPath{};
+}
+
 // The name every unit gives the class a scope of the design hierarchy is -- an
 // instance of a unit, or a generate block inside one: the unit and the path it
 // published the scope's class under, as a class's key is.

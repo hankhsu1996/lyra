@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -22,7 +23,9 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -72,12 +75,12 @@ auto ConversionBody(
   const mir::TypeId element = *to_type.ContainerElementType();
   mir::ExprId source =
       block.Deref(unit.types, block.LocalPlace(param, reference), from);
-  if (const auto* queue = to_type.As<mir::QueueType>();
-      queue != nullptr && queue->max_bound.has_value()) {
-    const mir::TypeId kept_type = unit.types.Intern(
-        mir::Type{mir::QueueType{
-            .element_type = *unit.types.Get(from).ContainerElementType(),
-            .max_bound = queue->max_bound}});
+  if (to_type.IsDeclaredBy(support::LibraryDecl::kQueue) &&
+      std::holds_alternative<support::BoundedQueue>(
+          to_type.Get<mir::LibraryType>().Bound())) {
+    const mir::TypeId kept_type = mir::QueueOf(
+        unit.types, *unit.types.Get(from).ContainerElementType(),
+        to_type.Get<mir::LibraryType>().Bound());
     const mir::LocalId kept = DeclareLocal(
         frame,
         EntryCall(
@@ -89,14 +92,14 @@ auto ConversionBody(
   const WalkedArray walked = WalkedArrayAt(
       lowerer, frame, AccessPath{.owner = source, .descent = {}}, std::nullopt);
   const mir::LocalId built = DeclareLocal(
-      frame, to_type.Is<mir::DynamicArrayType>()
-                 ? EntryCall(
-                       unit, block, support::BuiltinFn::kMakeDynamicArrayNew,
-                       std::nullopt,
-                       {BuildToInt64Call(
-                           unit, block, EntryCount(unit, block, walked))},
-                       to)
-                 : block.Add(BuildDefaultValueExpr(unit, block, to)));
+      frame,
+      to_type.IsDeclaredBy(support::LibraryDecl::kDynamicArray)
+          ? EntryCall(
+                unit, block, support::BuiltinFn::kDynamicArrayNew, std::nullopt,
+                {BuildToInt64Call(
+                    unit, block, EntryCount(unit, block, walked))},
+                to)
+          : block.Add(BuildDefaultValueExpr(unit, block, to)));
 
   auto loop = BuildEntryLoopStmt(
       lowerer, frame, walked, WalkOrder::kFromFirst, std::nullopt,
@@ -105,7 +108,7 @@ auto ConversionBody(
         mir::Builder b = at.Builder();
         const mir::ExprId value =
             ConvertToType(unit, b, entry.element, element);
-        if (to_type.Is<mir::QueueType>()) {
+        if (to_type.IsDeclaredBy(support::LibraryDecl::kQueue)) {
           AppendPushBack(lowerer, b, built, to, value);
           return {};
         }
@@ -123,7 +126,7 @@ auto ConversionBody(
   }
   block.AppendStmt(*std::move(loop));
 
-  if (to_type.Is<mir::AssociativeArrayType>()) {
+  if (to_type.IndexType().has_value()) {
     const mir::TypeId from_element =
         *unit.types.Get(from).ContainerElementType();
     mir::Block given;

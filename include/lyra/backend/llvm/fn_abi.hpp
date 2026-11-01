@@ -9,13 +9,14 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/backend/llvm/entry_realizations.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/value_domain.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace llvm {
 class Type;
@@ -267,6 +268,13 @@ class CallArranger {
     support::AnswerTold answer_told;
   };
   [[nodiscard]] auto ConstructionOf(
+      const lir::CallInstr& call, lir::TypeId result) const
+      -> diag::Result<Construction>;
+  // The same for a type the library declares, whose declaration names
+  // `constructor` as what builds one, each entry reached as the shared entry
+  // declaration names it.
+  [[nodiscard]] auto ConstructorEntryOf(
+      const support::LibraryConstructor& constructor,
       const lir::CallInstr& call, lir::TypeId result) const
       -> diag::Result<Construction>;
 

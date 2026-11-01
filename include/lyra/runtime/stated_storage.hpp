@@ -1,34 +1,50 @@
 #pragma once
 
+#include <algorithm>
+#include <cstddef>
+#include <memory>
+#include <optional>
 #include <type_traits>
+#include <variant>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/any.hpp"
+#include "lyra/runtime/cancellation.hpp"
+#include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
+#include "lyra/runtime/loop_blocks.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/open_write.hpp"
 #include "lyra/runtime/read_report.hpp"
 #include "lyra/runtime/shared_pointer.hpp"
+#include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/runtime/weak_reference.hpp"
+#include "lyra/support/layout.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
+#include "lyra/support/value_domain.hpp"
 #include "lyra/value/any.hpp"
+#include "lyra/value/any_value.hpp"
+#include "lyra/value/associative_array.hpp"
 #include "lyra/value/bit_vec.hpp"
-#include "lyra/value/chandle.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
-#include "lyra/value/empty.hpp"
+#include "lyra/value/dynamic_array.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/index_order.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/real.hpp"
+#include "lyra/value/queue.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/unmanaged_ref.hpp"
 
 namespace lyra::runtime {
 
@@ -41,55 +57,147 @@ namespace lyra::runtime {
 template <typename T>
 constexpr auto FitsStatedStorage(const support::ObjectLayout& stated) -> bool {
   return sizeof(T) <= stated.layout.size && alignof(T) <= stated.layout.align &&
-         (!stated.ends_with_nothing_to_do ||
-          std::is_trivially_destructible_v<T>);
+         (stated.needs_end || std::is_trivially_destructible_v<T>);
 }
 
-static_assert(FitsStatedStorage<Trigger>(support::kTriggerStorage));
-static_assert(FitsStatedStorage<Observation>(support::kObservationStorage));
-static_assert(FitsStatedStorage<ReadReport>(support::kReadReportStorage));
-static_assert(FitsStatedStorage<Wait>(support::kWaitStorage));
+// The least storage every one of `T...` fits: as large and as aligned as the
+// largest and the most aligned of them, and ended where any of them has
+// anything to end.
+template <typename... T>
+constexpr auto StorageEnclosing() -> support::ObjectLayout {
+  return support::ObjectLayout{
+      .layout =
+          {.size = std::max({sizeof(T)...}),
+           .align = std::max({alignof(T)...})},
+      .needs_end = (!std::is_trivially_destructible_v<T> || ...)};
+}
+
+// The classes built in one storage a declaration or the IR states: `Built`,
+// which the library's own entries build there and the execution backend calls
+// them to, and `Written`, which the C++ backend writes there. They are one
+// class but where the C++ backend writes a class template over the type's
+// arguments -- written here over a string, since such a class holds its
+// elements elsewhere and is laid out alike whatever they are -- or a class of
+// its own for the same value.
+template <typename Built, typename Written = Built>
+struct BuiltIn {};
+
+// Hands `visit` each declaration of the library's whose object is laid out as
+// a class: by value where a holder gives the object storage of its own, which
+// the declaration states, and otherwise as a member of an object holding it
+// whole. Every check of the storage a declaration states, and every layout
+// read off the class a declaration stands for, reads this pairing.
+template <typename Visit>
+constexpr void ForEachDeclaredObjectClass(const Visit& visit) {
+  using support::LibraryDecl;
+  visit(LibraryDecl::kTrigger, BuiltIn<Trigger>{});
+  visit(LibraryDecl::kObservation, BuiltIn<Observation>{});
+  visit(LibraryDecl::kReadReport, BuiltIn<ReadReport>{});
+  visit(LibraryDecl::kWait, BuiltIn<Wait>{});
+  visit(LibraryDecl::kLeasedReference, BuiltIn<LeasedReference>{});
+  visit(LibraryDecl::kHierarchySegment, BuiltIn<HierarchySegment>{});
+  visit(LibraryDecl::kChannelCancellation, BuiltIn<ChannelCancellation>{});
+  visit(LibraryDecl::kWeakReference, BuiltIn<WeakObjectRef>{});
+  visit(LibraryDecl::kString, BuiltIn<value::String>{});
+  visit(
+      LibraryDecl::kDynamicArray,
+      BuiltIn<
+          value::RuntimeDynamicArray, value::DynamicArray<value::String>>{});
+  visit(
+      LibraryDecl::kQueue,
+      BuiltIn<value::RuntimeQueue, value::Queue<value::String>>{});
+  visit(
+      LibraryDecl::kAssociativeArray,
+      BuiltIn<
+          value::RuntimeAssociativeArray,
+          value::AssociativeArray<value::String, value::String>>{});
+  visit(
+      LibraryDecl::kWildcardIndex,
+      BuiltIn<value::AnyValue, value::WildcardKey>{});
+  visit(LibraryDecl::kAny, BuiltIn<value::Any>{});
+  visit(LibraryDecl::kBitVec, BuiltIn<value::BitVec>{});
+  visit(LibraryDecl::kPrintItem, BuiltIn<value::PrintItem>{});
+  visit(LibraryDecl::kFormatSpec, BuiltIn<value::FormatSpec>{});
+  visit(LibraryDecl::kFormatArg, BuiltIn<value::FormatArg>{});
+  visit(LibraryDecl::kDpiBitBuffer, BuiltIn<value::DpiBitBuffer>{});
+  visit(LibraryDecl::kDpiLogicBuffer, BuiltIn<value::DpiLogicBuffer>{});
+  visit(LibraryDecl::kDpiOpenArray, BuiltIn<value::DpiOpenArray>{});
+  visit(LibraryDecl::kCancellationTarget, BuiltIn<CancellationTarget>{});
+  visit(LibraryDecl::kTimer, BuiltIn<Timer>{});
+  visit(LibraryDecl::kEvaluationAttempts, BuiltIn<EvaluationAttempts>{});
+  visit(LibraryDecl::kLoopBlocks, BuiltIn<LoopBlocks>{});
+}
+
+// The same for each object of a type the IR owns that a holder gives storage
+// of its own, with the object whose storage is stated for it.
+template <typename Visit>
+constexpr void ForEachStatedObjectClass(const Visit& visit) {
+  using support::LibraryObject;
+  visit(LibraryObject::kExecution, BuiltIn<Coroutine<void>>{});
+  visit(
+      LibraryObject::kReference,
+      BuiltIn<ErasedReference, VariableRef<value::String>>{});
+  visit(LibraryObject::kAnyReference, BuiltIn<AnyReference>{});
+  visit(
+      LibraryObject::kSharedPointer,
+      BuiltIn<SharedPointer, std::shared_ptr<value::String>>{});
+  visit(LibraryObject::kOpenWrite, BuiltIn<OpenWrite>{});
+  visit(LibraryObject::kDesignation, BuiltIn<ErasedDesignation>{});
+  visit(
+      LibraryObject::kObjectWrite,
+      BuiltIn<ErasedObjectWrite, ObjectWrite<GcObject>>{});
+  visit(support::ValueDomain::kManagedRef, BuiltIn<value::ObjectRef>{});
+}
+
+// Every declaration laid out as a class -- one held by value, or as a member
+// of an object holding it whole -- is paired with its classes exactly once,
+// and no other is, so a declaration added without its classes fails to
+// compile here rather than going unchecked against the storage it states.
+consteval auto EveryClassIsPairedOnce() -> bool {
+  bool paired_once = true;
+  support::ForEachLibraryDecl([&](support::LibraryDecl decl) {
+    std::size_t times = 0;
+    ForEachDeclaredObjectClass([&](support::LibraryDecl paired, auto) {
+      if (paired == decl) {
+        ++times;
+      }
+    });
+    const bool laid_out_as_a_class =
+        !std::holds_alternative<support::StorageElsewhere>(
+            support::DeclarationOf(decl).holding);
+    paired_once = paired_once && times == (laid_out_as_a_class ? 1U : 0U);
+  });
+  return paired_once;
+}
 static_assert(
-    FitsStatedStorage<LeasedReference>(support::kLeasedReferenceStorage));
+    EveryClassIsPairedOnce(),
+    "a declaration of the library's laid out as a class is paired with its "
+    "classes other than once, or one laid out otherwise is paired with some");
+
+consteval auto EveryClassFitsItsStatedStorage() -> bool {
+  bool fits = true;
+  ForEachDeclaredObjectClass([&]<typename Built, typename Written>(
+                                 support::LibraryDecl decl,
+                                 BuiltIn<Built, Written>) {
+    const std::optional<support::ObjectLayout> stated =
+        support::ObjectStorageOf(decl);
+    fits =
+        fits && (!stated.has_value() || (FitsStatedStorage<Built>(*stated) &&
+                                         FitsStatedStorage<Written>(*stated)));
+  });
+  ForEachStatedObjectClass([&]<typename Built, typename Written>(
+                               const support::RuntimeObject& object,
+                               BuiltIn<Built, Written>) {
+    const std::optional<support::ObjectLayout> stated =
+        support::StatedStorageOf(object);
+    fits = fits && stated.has_value() && FitsStatedStorage<Built>(*stated) &&
+           FitsStatedStorage<Written>(*stated);
+  });
+  return fits;
+}
 static_assert(
-    FitsStatedStorage<HierarchySegment>(support::kHierarchySegmentStorage));
-static_assert(FitsStatedStorage<ChannelCancellation>(
-    support::kChannelCancellationStorage));
-static_assert(FitsStatedStorage<WeakObjectRef>(support::kWeakReferenceStorage));
-static_assert(FitsStatedStorage<ErasedReference>(support::kReferenceStorage));
-static_assert(FitsStatedStorage<AnyReference>(support::kAnyReferenceStorage));
-static_assert(FitsStatedStorage<SharedPointer>(support::kSharedPointerStorage));
-static_assert(FitsStatedStorage<OpenWrite>(support::kOpenWriteStorage));
-static_assert(
-    FitsStatedStorage<ErasedDesignation>(support::kDesignationStorage));
-static_assert(
-    FitsStatedStorage<ErasedObjectWrite>(support::kObjectWriteStorage));
-static_assert(FitsStatedStorage<value::String>(support::kStringStorage));
-static_assert(FitsStatedStorage<value::Real>(support::kRealStorage));
-static_assert(FitsStatedStorage<value::ShortReal>(support::kShortRealStorage));
-static_assert(FitsStatedStorage<value::Chandle>(support::kChandleStorage));
-static_assert(FitsStatedStorage<value::ObjectRef>(support::kObjectRefStorage));
-static_assert(FitsStatedStorage<value::RuntimeDynamicArray>(
-    support::kDynamicArrayStorage));
-static_assert(FitsStatedStorage<value::RuntimeQueue>(support::kQueueStorage));
-static_assert(FitsStatedStorage<value::RuntimeAssociativeArray>(
-    support::kAssociativeArrayStorage));
-static_assert(
-    FitsStatedStorage<value::WildcardKey>(support::kWildcardKeyStorage));
-static_assert(FitsStatedStorage<value::Any>(support::kAnyStorage));
-static_assert(FitsStatedStorage<value::Empty>(support::kEmptyStorage));
-static_assert(FitsStatedStorage<value::BitVec>(support::kBitVecStorage));
-static_assert(FitsStatedStorage<value::PrintItem>(support::kPrintItemStorage));
-static_assert(
-    FitsStatedStorage<value::FormatSpec>(support::kFormatSpecStorage));
-static_assert(FitsStatedStorage<value::FormatArg>(support::kFormatArgStorage));
-static_assert(
-    FitsStatedStorage<value::TimeFormat>(support::kTimeFormatStorage));
-static_assert(
-    FitsStatedStorage<value::DpiBitBuffer>(support::kDpiBitBufferStorage));
-static_assert(
-    FitsStatedStorage<value::DpiLogicBuffer>(support::kDpiLogicBufferStorage));
-static_assert(
-    FitsStatedStorage<value::DpiOpenArray>(support::kDpiOpenArrayStorage));
+    EveryClassFitsItsStatedStorage(),
+    "a class a backend builds is larger, more aligned or harder to end than "
+    "the storage stated for it");
 
 }  // namespace lyra::runtime

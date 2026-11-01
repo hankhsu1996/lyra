@@ -1,17 +1,21 @@
 #include "lyra/mir/type.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/hash.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/support/library_decl.hpp"
+#include "lyra/support/movability.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 
@@ -29,16 +33,6 @@ auto BitsOf(MachineIntWidth width) -> std::uint32_t {
       return 64;
   }
   throw InternalError("mir: unknown MachineIntWidth");
-}
-
-auto BitsOf(MachineFloatWidth width) -> std::uint32_t {
-  switch (width) {
-    case MachineFloatWidth::k32:
-      return 32;
-    case MachineFloatWidth::k64:
-      return 64;
-  }
-  throw InternalError("mir: unknown MachineFloatWidth");
 }
 
 namespace {
@@ -112,19 +106,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             HashId(seed, t.element_type);
             HashField(seed, t.count);
           },
-          [&](const DynamicArrayType& t) { HashId(seed, t.element_type); },
-          [&](const QueueType& t) {
-            HashId(seed, t.element_type);
-            HashField(seed, t.max_bound.value_or(0));
-            HashField(seed, t.max_bound.has_value());
-          },
-          [&](const AssociativeArrayType& t) {
-            HashId(seed, t.element_type);
-            HashId(seed, t.key_type);
-          },
-          [](const WildcardIndexType&) {},
-          [](const StringType&) {},
-          [](const AnyType&) {},
           [](const ErasedValueType&) {},
           [](const MachineCStringType&) {},
           [](const MachineBoolType&) {},
@@ -142,16 +123,25 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             HashIds(seed, t.params);
             HashId(seed, t.result);
           },
-          [](const RealType&) {},
-          [](const ShortRealType&) {},
-          [](const ChandleType&) {},
+          [&](const RealType& t) { HashEnum(seed, t.width); },
           [](const VoidType&) {},
           [&](const ObjectType& t) { HashField(seed, t.of.value); },
-          [&](const RuntimeClassType& t) { HashEnum(seed, t.which); },
-          [](const RuntimeEffectsType&) {},
-          [](const FilesType&) {},
-          [](const DiagnosticType&) {},
-          [&](const RuntimeLibraryType& t) { HashEnum(seed, t.kind); },
+          [&](const LibraryType& t) {
+            HashEnum(seed, t.decl);
+            for (const LibraryType::Arg& arg : t.args) {
+              std::visit(
+                  Overloaded{
+                      [&](TypeId type) { HashId(seed, type); },
+                      [&](const support::QueueBound& bound) {
+                        HashField(seed, bound.index());
+                        if (const auto* most =
+                                std::get_if<support::BoundedQueue>(&bound)) {
+                          HashField(seed, most->count);
+                        }
+                      }},
+                  arg);
+            }
+          },
           [&](const CoroutineType& t) { HashId(seed, t.payload); },
           [&](const VariableRefType& t) {
             HashId(seed, t.pointee);
@@ -171,10 +161,9 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             HashEnum(seed, t.mutability);
           },
           [&](const ManagedRefType& t) { HashId(seed, t.pointee); },
-          [&](const WeakManagedRefType& t) { HashId(seed, t.pointee); },
+          [&](const UnmanagedRefType& t) { HashId(seed, t.pointee); },
           [&](const VectorType& t) { HashId(seed, t.element); },
           [&](const TupleType& t) { HashIds(seed, t.elements); },
-          [](const EmptyType&) {},
           [&](const ObservableType& t) { HashId(seed, t.value); },
           [&](const ResolvedType& t) { HashId(seed, t.value); },
           [&](const DriverType& t) { HashId(seed, t.value); },
@@ -182,9 +171,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const DesignationType& t) { HashId(seed, t.value); },
           [&](const BitsReferenceType& t) { HashId(seed, t.bits); },
           [&](const ObjectWriteType& t) { HashId(seed, t.object); },
-          [&](const SampledHistoryType& t) { HashId(seed, t.value); },
-          [](const EvaluationAttemptsType&) {},
-          [](const LoopBlocksType&) {},
           [&](const RecordType& t) { HashField(seed, t.declaration.value); },
           [&](const ClosureType& t) { HashField(seed, t.closure_id.value); },
           [&](const ErasedCallableType& t) {
@@ -209,12 +195,18 @@ auto Type::Integral() const -> const IntegralType& {
   throw InternalError("mir: type is not integral");
 }
 
-auto Type::IsRealFamily() const -> bool {
-  return Is<RealType>() || Is<ShortRealType>();
+auto Type::IsDeclaredBy(support::LibraryDecl decl) const -> bool {
+  const auto* library = As<LibraryType>();
+  return library != nullptr && library->decl == decl;
 }
 
-auto Type::IsAliasHandle() const -> bool {
-  return Is<RuntimeEffectsType>() || Is<FilesType>() || Is<DiagnosticType>();
+auto Type::RuntimeClassOf() const -> std::optional<support::LibraryDecl> {
+  const auto* library = As<LibraryType>();
+  if (library == nullptr ||
+      !support::DeclarationOf(library->decl).runtime_class.has_value()) {
+    return std::nullopt;
+  }
+  return library->decl;
 }
 
 auto Type::IsCapabilityWrapper() const -> bool {
@@ -226,158 +218,6 @@ auto Type::IsVariableRef() const -> bool {
   return Is<VariableRefType>() || Is<ReferenceWrapperType>();
 }
 
-namespace {
-
-// Whether an object of the library's of `kind` is storage reached by its
-// address, as LIR states it: what a disable names, what a delayed continuous
-// assignment propagates through, and the keepers a deferred closure is emplaced
-// in.
-auto IsReachedByAddress(RuntimeLibraryKind kind) -> bool {
-  switch (kind) {
-    case RuntimeLibraryKind::kCancellationTarget:
-    case RuntimeLibraryKind::kTimer:
-    case RuntimeLibraryKind::kDeferredEffects:
-    case RuntimeLibraryKind::kViolationReportKeeper:
-      return true;
-    case RuntimeLibraryKind::kBitVec:
-    case RuntimeLibraryKind::kPrintItem:
-    case RuntimeLibraryKind::kFormatSpec:
-    case RuntimeLibraryKind::kFormatArg:
-    case RuntimeLibraryKind::kTimeFormat:
-    case RuntimeLibraryKind::kDpiBitBuffer:
-    case RuntimeLibraryKind::kDpiLogicBuffer:
-    case RuntimeLibraryKind::kDpiOpenArray:
-    case RuntimeLibraryKind::kEnumeration:
-    case RuntimeLibraryKind::kTrigger:
-    case RuntimeLibraryKind::kObservation:
-    case RuntimeLibraryKind::kReadReport:
-    case RuntimeLibraryKind::kWait:
-    case RuntimeLibraryKind::kLeasedReference:
-    case RuntimeLibraryKind::kHierarchySegment:
-    case RuntimeLibraryKind::kChannelCancellation:
-    case RuntimeLibraryKind::kDpiBitChunk:
-    case RuntimeLibraryKind::kDpiLogicChunk:
-    case RuntimeLibraryKind::kDpiOpenArrayHandle:
-    case RuntimeLibraryKind::kWatchedPlace:
-    case RuntimeLibraryKind::kControlEffect:
-    case RuntimeLibraryKind::kObjectDefinition:
-    case RuntimeLibraryKind::kScopeInfo:
-    case RuntimeLibraryKind::kScopeCallable:
-    case RuntimeLibraryKind::kClassObjectInfo:
-    case RuntimeLibraryKind::kInterfaceRow:
-    case RuntimeLibraryKind::kScopeMetadata:
-    case RuntimeLibraryKind::kConstructionTable:
-    case RuntimeLibraryKind::kInstantiation:
-    case RuntimeLibraryKind::kGeneratePlaces:
-    case RuntimeLibraryKind::kDumpEntry:
-    case RuntimeLibraryKind::kDumpBlock:
-      return false;
-  }
-  throw InternalError("mir: unknown runtime library kind");
-}
-
-// Whether a value of the library's of `kind` lives in storage of its own that
-// its holder keeps a claim on, as a run of bits does; every other kind is a
-// payload built for the call that reads it, or storage the runtime keeps.
-auto IsLibraryValue(RuntimeLibraryKind kind) -> bool {
-  switch (kind) {
-    case RuntimeLibraryKind::kBitVec:
-      return true;
-    case RuntimeLibraryKind::kCancellationTarget:
-    case RuntimeLibraryKind::kTimer:
-    case RuntimeLibraryKind::kDeferredEffects:
-    case RuntimeLibraryKind::kViolationReportKeeper:
-    case RuntimeLibraryKind::kPrintItem:
-    case RuntimeLibraryKind::kFormatSpec:
-    case RuntimeLibraryKind::kFormatArg:
-    case RuntimeLibraryKind::kTimeFormat:
-    case RuntimeLibraryKind::kDpiBitBuffer:
-    case RuntimeLibraryKind::kDpiLogicBuffer:
-    case RuntimeLibraryKind::kDpiOpenArray:
-    case RuntimeLibraryKind::kEnumeration:
-    case RuntimeLibraryKind::kTrigger:
-    case RuntimeLibraryKind::kObservation:
-    case RuntimeLibraryKind::kReadReport:
-    case RuntimeLibraryKind::kWait:
-    case RuntimeLibraryKind::kLeasedReference:
-    case RuntimeLibraryKind::kHierarchySegment:
-    case RuntimeLibraryKind::kChannelCancellation:
-    case RuntimeLibraryKind::kDpiBitChunk:
-    case RuntimeLibraryKind::kDpiLogicChunk:
-    case RuntimeLibraryKind::kDpiOpenArrayHandle:
-    case RuntimeLibraryKind::kWatchedPlace:
-    case RuntimeLibraryKind::kControlEffect:
-    case RuntimeLibraryKind::kObjectDefinition:
-    case RuntimeLibraryKind::kScopeInfo:
-    case RuntimeLibraryKind::kScopeCallable:
-    case RuntimeLibraryKind::kClassObjectInfo:
-    case RuntimeLibraryKind::kInterfaceRow:
-    case RuntimeLibraryKind::kScopeMetadata:
-    case RuntimeLibraryKind::kConstructionTable:
-    case RuntimeLibraryKind::kInstantiation:
-    case RuntimeLibraryKind::kGeneratePlaces:
-    case RuntimeLibraryKind::kDumpEntry:
-    case RuntimeLibraryKind::kDumpBlock:
-      return false;
-  }
-  throw InternalError("mir: unknown runtime library kind");
-}
-
-// The movability of a value of the library of `kind`. A run
-// of bits is a value and a watched place one word, and a reference a call
-// binds is copied together with the lease keeping what it names, which a local
-// of the frame keeps as the binding would (LRM 13.5.2). A payload built for the
-// call that reads it is moved into the temporary and out of it. A kind the
-// runtime keeps where it was made -- a cancellation target, a timer, the
-// deferred effects of a region, the keeper of violation reports -- is never
-// moved, and is formed where it is used.
-auto LibraryValueMovability(RuntimeLibraryKind kind) -> Movability {
-  switch (kind) {
-    case RuntimeLibraryKind::kBitVec:
-    case RuntimeLibraryKind::kLeasedReference:
-    case RuntimeLibraryKind::kWatchedPlace:
-      return Movability::kCopyable;
-    case RuntimeLibraryKind::kEnumeration:
-    case RuntimeLibraryKind::kPrintItem:
-    case RuntimeLibraryKind::kFormatSpec:
-    case RuntimeLibraryKind::kFormatArg:
-    case RuntimeLibraryKind::kChannelCancellation:
-    case RuntimeLibraryKind::kTimeFormat:
-    case RuntimeLibraryKind::kTrigger:
-    case RuntimeLibraryKind::kObservation:
-    case RuntimeLibraryKind::kReadReport:
-    case RuntimeLibraryKind::kWait:
-    case RuntimeLibraryKind::kHierarchySegment:
-    case RuntimeLibraryKind::kDpiBitBuffer:
-    case RuntimeLibraryKind::kDpiLogicBuffer:
-    case RuntimeLibraryKind::kDpiBitChunk:
-    case RuntimeLibraryKind::kDpiLogicChunk:
-    case RuntimeLibraryKind::kDpiOpenArray:
-    case RuntimeLibraryKind::kDpiOpenArrayHandle:
-    case RuntimeLibraryKind::kControlEffect:
-    case RuntimeLibraryKind::kObjectDefinition:
-    case RuntimeLibraryKind::kScopeInfo:
-    case RuntimeLibraryKind::kScopeCallable:
-    case RuntimeLibraryKind::kClassObjectInfo:
-    case RuntimeLibraryKind::kInterfaceRow:
-    case RuntimeLibraryKind::kScopeMetadata:
-    case RuntimeLibraryKind::kConstructionTable:
-    case RuntimeLibraryKind::kInstantiation:
-    case RuntimeLibraryKind::kGeneratePlaces:
-    case RuntimeLibraryKind::kDumpEntry:
-    case RuntimeLibraryKind::kDumpBlock:
-      return Movability::kMovable;
-    case RuntimeLibraryKind::kCancellationTarget:
-    case RuntimeLibraryKind::kTimer:
-    case RuntimeLibraryKind::kDeferredEffects:
-    case RuntimeLibraryKind::kViolationReportKeeper:
-      return Movability::kImmovable;
-  }
-  throw InternalError("mir: unknown runtime library kind");
-}
-
-}  // namespace
-
 auto Type::IsAddressOnly() const -> bool {
   // One arm per MIR type and no catch-all, so a type added later fails to
   // compile here until it says which it is; answering that it has a value to
@@ -388,21 +228,11 @@ auto Type::IsAddressOnly() const -> bool {
           [](const ObservableType&) { return true; },
           [](const ResolvedType&) { return true; },
           [](const ObjectType&) { return true; },
-          [](const RuntimeClassType&) { return true; },
-          [](const SampledHistoryType&) { return true; },
-          [](const EvaluationAttemptsType&) { return true; },
-          [](const LoopBlocksType&) { return true; },
 
           // A value, or something whose value is what it holds.
           [](const IntegralType&) { return false; },
           [](const EnumType&) { return false; },
           [](const UnpackedArrayType&) { return false; },
-          [](const DynamicArrayType&) { return false; },
-          [](const QueueType&) { return false; },
-          [](const AssociativeArrayType&) { return false; },
-          [](const WildcardIndexType&) { return false; },
-          [](const StringType&) { return false; },
-          [](const AnyType&) { return false; },
           [](const ErasedValueType&) { return false; },
           [](const MachineCStringType&) { return false; },
           [](const MachineBoolType&) { return false; },
@@ -412,25 +242,18 @@ auto Type::IsAddressOnly() const -> bool {
           [](const MachineSpanType&) { return false; },
           [](const MachineFunctionType&) { return false; },
           [](const RealType&) { return false; },
-          [](const ShortRealType&) { return false; },
-          [](const ChandleType&) { return false; },
           [](const VoidType&) { return false; },
-          [](const RuntimeEffectsType&) { return false; },
-          [](const FilesType&) { return false; },
-          [](const DiagnosticType&) { return false; },
-          [](const RuntimeLibraryType& t) {
-            return IsReachedByAddress(t.kind);
-          },
+          // Storage the library keeps, or a value, as its declaration says.
+          [](const LibraryType& t) { return support::IsAddressOnly(t.decl); },
           [](const CoroutineType&) { return false; },
           [](const VariableRefType&) { return false; },
           [](const ReferenceWrapperType&) { return false; },
           [](const PointerType&) { return false; },
           [](const ReferenceType&) { return false; },
           [](const ManagedRefType&) { return false; },
-          [](const WeakManagedRefType&) { return false; },
+          [](const UnmanagedRefType&) { return false; },
           [](const VectorType&) { return false; },
           [](const TupleType&) { return false; },
-          [](const EmptyType&) { return false; },
           [](const DriverType&) { return false; },
           [](const OpenWriteType&) { return false; },
           [](const DesignationType&) { return false; },
@@ -483,43 +306,35 @@ auto Type::IsRuntimeStoredValue() const -> bool {
   // it is gone.
   return Visit(
       Overloaded{
-          // An integral value is the bits its type declares, and an
-          // enumeration's is its base's, so whoever holds one holds it entire.
+          // An integral value is the bits its type declares, an enumeration's
+          // is its base's, and a real is the IEEE value of its width (LRM
+          // 6.12), so whoever holds one holds it entire.
           [](const IntegralType&) { return false; },
           [](const EnumType&) { return false; },
+          [](const RealType&) { return false; },
 
-          // A value built of other values -- a sequence however it is sized
-          // and indexed, a product, the members a union overlays -- and the
-          // single quantities whose representation the library decides.
+          // A value built of other values -- a fixed-size sequence, a product,
+          // the members a union overlays.
           [](const UnpackedArrayType&) { return true; },
-          [](const DynamicArrayType&) { return true; },
-          [](const QueueType&) { return true; },
-          [](const AssociativeArrayType&) { return true; },
           [](const TupleType&) { return true; },
           [](const RecordType&) { return true; },
-          [](const StringType&) { return true; },
-          [](const AnyType&) { return true; },
-          // A wildcard index (LRM 7.8.1) is an integral value kept with the
-          // type it was written in, which the library holds as a copy of it.
-          [](const WildcardIndexType&) { return true; },
           [](const ErasedValueType&) { return false; },
-          [](const RealType&) { return true; },
-          [](const ShortRealType&) { return true; },
-          [](const RuntimeLibraryType& t) { return IsLibraryValue(t.kind); },
+          // A type the library declares says whether a value of it lies in
+          // storage of its own its holder keeps a claim on.
+          [](const LibraryType& t) {
+            return support::IsRuntimeStoredValue(t.decl);
+          },
 
-          // A class handle is one of these and a chandle is not, which LRM 8.4
-          // Table 8-1 states directly: an unreferenced object is collected
-          // where the handle is an object handle, and is not where it is a
-          // chandle or a C pointer. A handle's value is therefore which object
-          // it names together with a claim on that object's life, which no
-          // address carries on its own; a chandle's value is the address, so
-          // whoever holds the address holds the whole of it (LRM 6.14).
+          // A class handle is one of these and a reference owning nothing is
+          // not, which LRM 8.4 Table 8-1 states directly: an unreferenced
+          // object is collected where the handle is an object handle, and is
+          // not where it is a chandle or a C pointer. A handle's value is
+          // therefore which object it names together with a claim on that
+          // object's life, which no address carries on its own; a reference
+          // owning nothing is the address, so whoever holds the address holds
+          // the whole of it (LRM 6.14).
           [](const ManagedRefType&) { return true; },
-          // A weak reference is no value of the design but a hold of the
-          // library's, held by whatever holds it as a counted hold is, and
-          // ended where that holder ends.
-          [](const WeakManagedRefType&) { return false; },
-          [](const ChandleType&) { return false; },
+          [](const UnmanagedRefType&) { return false; },
 
           // A machine quantity, which whoever holds it holds entire.
           [](const MachineCStringType&) { return false; },
@@ -545,121 +360,116 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           // type is not known.
           [](const ObjectType&) { return false; },
           [](const ErasedCallableType&) { return false; },
-          [](const RuntimeClassType&) { return false; },
           // A closure never moves once made: it is made where the local
           // holding it lies, and so is never a variable whose storage is
           // filled by handing it a value made elsewhere.
           [](const ClosureType&) { return false; },
 
-          // Storage, and the facilities the runtime holds for the whole run.
-          // Each is consumed where it lives rather than read out as a value, so
-          // no holder ever has a copy of one to lose.
+          // Storage, consumed where it lives rather than read out as a value,
+          // so no holder ever has a copy of one to lose.
           [](const ObservableType&) { return false; },
           [](const ResolvedType&) { return false; },
           [](const OpenWriteType&) { return false; },
           [](const DesignationType&) { return false; },
           [](const BitsReferenceType&) { return false; },
           [](const ObjectWriteType&) { return false; },
-          [](const SampledHistoryType&) { return false; },
-          [](const EvaluationAttemptsType&) { return false; },
-          [](const LoopBlocksType&) { return false; },
-          [](const RuntimeEffectsType&) { return false; },
-          [](const FilesType&) { return false; },
-          [](const DiagnosticType&) { return false; },
 
-          // `void` and a tagged union's empty payload (LRM 7.3.2) are values
-          // no declaration holds on its own.
-          [](const EmptyType&) { return false; },
+          // `void` is the absence of a value, which nothing holds.
           [](const VoidType&) { return false; }});
 }
 
-auto Type::ValueMovability() const -> Movability {
+auto Type::ValueMovability() const -> support::Movability {
   // One arm per MIR type and no catch-all, so a type added later fails to
   // compile here until it says how a temporary can stand in its place.
   return Visit(
       Overloaded{
           // A value of the program, whoever holds it holding the whole of it.
-          [](const IntegralType&) { return Movability::kCopyable; },
-          [](const EnumType&) { return Movability::kCopyable; },
-          [](const UnpackedArrayType&) { return Movability::kCopyable; },
-          [](const DynamicArrayType&) { return Movability::kCopyable; },
-          [](const QueueType&) { return Movability::kCopyable; },
-          [](const AssociativeArrayType&) { return Movability::kCopyable; },
-          [](const TupleType&) { return Movability::kCopyable; },
-          [](const RecordType&) { return Movability::kCopyable; },
-          [](const StringType&) { return Movability::kCopyable; },
-          [](const AnyType&) { return Movability::kCopyable; },
-          [](const RealType&) { return Movability::kCopyable; },
-          [](const ShortRealType&) { return Movability::kCopyable; },
-          [](const ManagedRefType&) { return Movability::kCopyable; },
-          [](const WeakManagedRefType&) { return Movability::kCopyable; },
-          [](const ChandleType&) { return Movability::kCopyable; },
-          [](const MachineBoolType&) { return Movability::kCopyable; },
-          [](const MachineIntType&) { return Movability::kCopyable; },
-          [](const MachineFloatType&) { return Movability::kCopyable; },
-          [](const MachineFunctionType&) { return Movability::kCopyable; },
+          [](const IntegralType&) { return support::Movability::kCopyable; },
+          [](const EnumType&) { return support::Movability::kCopyable; },
+          [](const UnpackedArrayType&) {
+            return support::Movability::kCopyable;
+          },
+          [](const TupleType&) { return support::Movability::kCopyable; },
+          [](const RecordType&) { return support::Movability::kCopyable; },
+          [](const RealType&) { return support::Movability::kCopyable; },
+          [](const ManagedRefType&) { return support::Movability::kCopyable; },
+          [](const UnmanagedRefType&) {
+            return support::Movability::kCopyable;
+          },
+          [](const MachineBoolType&) { return support::Movability::kCopyable; },
+          [](const MachineIntType&) { return support::Movability::kCopyable; },
+          [](const MachineFloatType&) {
+            return support::Movability::kCopyable;
+          },
+          [](const MachineFunctionType&) {
+            return support::Movability::kCopyable;
+          },
           // Where entries kept elsewhere begin and how many there are, which
           // owns none of them.
-          [](const MachineSpanType&) { return Movability::kCopyable; },
+          [](const MachineSpanType&) { return support::Movability::kCopyable; },
           // The address of a string's characters, which lasts as long as the
           // string does.
-          [](const MachineCStringType&) { return Movability::kCopyable; },
-          [](const RuntimeLibraryType& t) {
-            return LibraryValueMovability(t.kind);
+          [](const MachineCStringType&) {
+            return support::Movability::kCopyable;
+          },
+          // A type the library declares states it.
+          [](const LibraryType& t) {
+            return support::DeclarationOf(t.decl).movability;
           },
 
           // A reference is the address of what it refers to, whether a
-          // frame's, one the library reads and writes through, or one to a
-          // facility the runtime holds for the whole run, and so is a pointer
-          // that owns nothing or shares what it points to. One that owns is
-          // moved, since a copy would be a second owner.
-          [](const ReferenceType&) { return Movability::kCopyable; },
-          [](const VariableRefType&) { return Movability::kCopyable; },
-          [](const RuntimeEffectsType&) { return Movability::kCopyable; },
-          [](const FilesType&) { return Movability::kCopyable; },
-          [](const DiagnosticType&) { return Movability::kCopyable; },
+          // frame's or one the library reads and writes through, and so is a
+          // pointer that owns nothing or shares what it points to. One that
+          // owns is moved, since a copy would be a second owner.
+          [](const ReferenceType&) { return support::Movability::kCopyable; },
+          [](const VariableRefType&) { return support::Movability::kCopyable; },
           [](const PointerType& t) {
             switch (t.ownership) {
               case PointerOwnership::kShared:
               case PointerOwnership::kBorrowed:
-                return Movability::kCopyable;
+                return support::Movability::kCopyable;
               case PointerOwnership::kUnique:
-                return Movability::kMovable;
+                return support::Movability::kMovable;
             }
             throw InternalError("mir: unknown pointer ownership");
           },
 
           // A value made only to be handed on, which nothing holds a second
           // copy of.
-          [](const ErasedValueType&) { return Movability::kMovable; },
-          [](const ErasedCallableType&) { return Movability::kMovable; },
+          [](const ErasedValueType&) { return support::Movability::kMovable; },
+          [](const ErasedCallableType&) {
+            return support::Movability::kMovable;
+          },
 
           // A value no temporary stands in for: one whose identity is where it
           // was made -- a closure, whose captures' references were handed out
-          // there, an object -- one standing for storage elsewhere, a write in
-          // progress or what designates part of one, and a hold of the
-          // runtime's.
-          // A sequence of machine values is built where it is kept.
-          [](const MachineArrayType&) { return Movability::kImmovable; },
-          [](const ReferenceWrapperType&) { return Movability::kImmovable; },
-          [](const VectorType&) { return Movability::kImmovable; },
-          [](const DriverType&) { return Movability::kImmovable; },
-          [](const CoroutineType&) { return Movability::kImmovable; },
-          [](const ObjectType&) { return Movability::kImmovable; },
-          [](const RuntimeClassType&) { return Movability::kImmovable; },
-          [](const ClosureType&) { return Movability::kImmovable; },
-          [](const ObservableType&) { return Movability::kImmovable; },
-          [](const ResolvedType&) { return Movability::kImmovable; },
-          [](const OpenWriteType&) { return Movability::kImmovable; },
-          [](const DesignationType&) { return Movability::kImmovable; },
-          [](const BitsReferenceType&) { return Movability::kImmovable; },
-          [](const ObjectWriteType&) { return Movability::kImmovable; },
-          [](const SampledHistoryType&) { return Movability::kImmovable; },
-          [](const EvaluationAttemptsType&) { return Movability::kImmovable; },
-          [](const LoopBlocksType&) { return Movability::kImmovable; },
-          [](const WildcardIndexType&) { return Movability::kImmovable; },
-          [](const EmptyType&) { return Movability::kImmovable; },
-          [](const VoidType&) { return Movability::kImmovable; }});
+          // there, an object -- one standing for storage elsewhere, and a
+          // write in progress or what designates part of one. A sequence of
+          // machine values is built where it is kept.
+          [](const MachineArrayType&) {
+            return support::Movability::kImmovable;
+          },
+          [](const ReferenceWrapperType&) {
+            return support::Movability::kImmovable;
+          },
+          [](const VectorType&) { return support::Movability::kImmovable; },
+          [](const DriverType&) { return support::Movability::kImmovable; },
+          [](const CoroutineType&) { return support::Movability::kImmovable; },
+          [](const ObjectType&) { return support::Movability::kImmovable; },
+          [](const ClosureType&) { return support::Movability::kImmovable; },
+          [](const ObservableType&) { return support::Movability::kImmovable; },
+          [](const ResolvedType&) { return support::Movability::kImmovable; },
+          [](const OpenWriteType&) { return support::Movability::kImmovable; },
+          [](const DesignationType&) {
+            return support::Movability::kImmovable;
+          },
+          [](const BitsReferenceType&) {
+            return support::Movability::kImmovable;
+          },
+          [](const ObjectWriteType&) {
+            return support::Movability::kImmovable;
+          },
+          [](const VoidType&) { return support::Movability::kImmovable; }});
 }
 
 auto Type::BitsAreWrittenInPlace() const -> bool {
@@ -670,13 +480,12 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
   using Element = std::optional<TypeId>;
   return Visit(
       Overloaded{
-          // The four a declaration names as holding a sequence of values,
-          // however the sequence is sized and however it is indexed.
+          // A sequence of values whose count is the type's, and a container
+          // the library declares, which says which of its arguments is its
+          // element type.
           [](const UnpackedArrayType& t) -> Element { return t.element_type; },
-          [](const DynamicArrayType& t) -> Element { return t.element_type; },
-          [](const QueueType& t) -> Element { return t.element_type; },
-          [](const AssociativeArrayType& t) -> Element {
-            return t.element_type;
+          [](const LibraryType& t) -> Element {
+            return t.FindTypeArg(support::LibraryParam::kElement);
           },
 
           // These hold a sequence of values too and are still not containers: a
@@ -698,18 +507,12 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const RecordType&) -> Element { return std::nullopt; },
 
           // A single quantity or a single token.
-          [](const WildcardIndexType&) -> Element { return std::nullopt; },
-          [](const StringType&) -> Element { return std::nullopt; },
-          [](const AnyType&) -> Element { return std::nullopt; },
           [](const ErasedValueType&) -> Element { return std::nullopt; },
           [](const MachineCStringType&) -> Element { return std::nullopt; },
           [](const MachineBoolType&) -> Element { return std::nullopt; },
           [](const MachineIntType&) -> Element { return std::nullopt; },
           [](const MachineFloatType&) -> Element { return std::nullopt; },
           [](const RealType&) -> Element { return std::nullopt; },
-          [](const ShortRealType&) -> Element { return std::nullopt; },
-          [](const ChandleType&) -> Element { return std::nullopt; },
-          [](const EmptyType&) -> Element { return std::nullopt; },
           [](const VoidType&) -> Element { return std::nullopt; },
 
           // A cell keeps one value, whatever it publishes about changes to it;
@@ -721,9 +524,6 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const DesignationType&) -> Element { return std::nullopt; },
           [](const BitsReferenceType&) -> Element { return std::nullopt; },
           [](const ObjectWriteType&) -> Element { return std::nullopt; },
-          [](const SampledHistoryType&) -> Element { return std::nullopt; },
-          [](const EvaluationAttemptsType&) -> Element { return std::nullopt; },
-          [](const LoopBlocksType&) -> Element { return std::nullopt; },
 
           // These refer to a value living elsewhere rather than holding one,
           // so a container reached through one is reached by dereferencing it
@@ -733,23 +533,159 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const PointerType&) -> Element { return std::nullopt; },
           [](const ReferenceType&) -> Element { return std::nullopt; },
           [](const ManagedRefType&) -> Element { return std::nullopt; },
-          [](const WeakManagedRefType&) -> Element { return std::nullopt; },
+          [](const UnmanagedRefType&) -> Element { return std::nullopt; },
           [](const CoroutineType&) -> Element { return std::nullopt; },
           [](const MachineFunctionType&) -> Element { return std::nullopt; },
 
           // An object and a closure are declarations, and a declaration is not
           // a sequence of anything.
           [](const ObjectType&) -> Element { return std::nullopt; },
-          [](const RuntimeClassType&) -> Element { return std::nullopt; },
           [](const ClosureType&) -> Element { return std::nullopt; },
-          [](const ErasedCallableType&) -> Element { return std::nullopt; },
+          [](const ErasedCallableType&) -> Element { return std::nullopt; }});
+}
 
-          // A handle to a runtime facility, and a type the library declares,
-          // whose shape is the library's.
-          [](const RuntimeEffectsType&) -> Element { return std::nullopt; },
-          [](const FilesType&) -> Element { return std::nullopt; },
-          [](const DiagnosticType&) -> Element { return std::nullopt; },
-          [](const RuntimeLibraryType&) -> Element { return std::nullopt; }});
+auto Type::IsLibraryContainer() const -> bool {
+  const auto* library = As<LibraryType>();
+  return library != nullptr &&
+         library->FindTypeArg(support::LibraryParam::kElement).has_value();
+}
+
+auto Type::IsLibrarySequence() const -> bool {
+  return IsLibraryContainer() && !IndexType().has_value();
+}
+
+auto Type::IndexType() const -> std::optional<TypeId> {
+  const auto* library = As<LibraryType>();
+  if (library == nullptr) {
+    return std::nullopt;
+  }
+  return library->FindTypeArg(support::LibraryParam::kIndex);
+}
+
+auto IsDataType(const TypePool& types, TypeId type) -> bool {
+  // One arm per MIR type and no catch-all: a type added later fails to compile
+  // here until it is classified, rather than silently counting as no data --
+  // which would leave a variable of a new value type unobserved, its writes
+  // firing no update event (LRM 9.4.2), a bug no test would obviously catch.
+  return types.Get(type).Visit(
+      Overloaded{
+          // What a variable is declared to hold (LRM 6.2, 7).
+          [](const IntegralType&) { return true; },
+          [](const EnumType&) { return true; },
+          [](const UnpackedArrayType&) { return true; },
+          [](const RealType&) { return true; },
+          [](const RecordType&) { return true; },
+          [&](const TupleType& t) {
+            return std::ranges::all_of(t.elements, [&](TypeId component) {
+              return IsDataType(types, component);
+            });
+          },
+          // A variable naming an object or holding a pointer is value storage
+          // too: LRM 9.4.2 makes a write to an object handle or a chandle an
+          // event when it is not equal to what was there, and the clause's own
+          // example puts a wait on a handle beside a wait on a property of the
+          // object to say they are two waits. A virtual interface is the same
+          // (LRM 25.9).
+          [](const ManagedRefType&) { return true; },
+          [](const UnmanagedRefType&) { return true; },
+
+          [](const ErasedValueType&) { return false; },
+          // A machine primitive: a plain boolean, integer, float, C string,
+          // array, view of an array or code address.
+          [](const MachineCStringType&) { return false; },
+          [](const MachineBoolType&) { return false; },
+          [](const MachineIntType&) { return false; },
+          [](const MachineFloatType&) { return false; },
+          [](const MachineArrayType&) { return false; },
+          [](const MachineSpanType&) { return false; },
+          [](const MachineFunctionType&) { return false; },
+          [](const VoidType&) { return false; },
+          // An object: a class instance or an instantiated child.
+          [](const ObjectType&) { return false; },
+          // A type the library declares says whether a declaration names it.
+          [](const LibraryType& t) {
+            return support::DeclarationOf(t.decl).is_a_data_type;
+          },
+          [](const CoroutineType&) { return false; },
+          // A handle onto storage of another lifetime.
+          [](const VariableRefType&) { return false; },
+          [](const ReferenceWrapperType&) { return false; },
+          [](const PointerType&) { return false; },
+          [](const ReferenceType&) { return false; },
+          [](const VectorType&) { return false; },
+          // The observable, net-cell and net-driver storage itself, and a write
+          // open on one of them.
+          [](const ObservableType&) { return false; },
+          [](const ResolvedType&) { return false; },
+          [](const DriverType&) { return false; },
+          [](const OpenWriteType&) { return false; },
+          [](const DesignationType&) { return false; },
+          [](const BitsReferenceType&) { return false; },
+          [](const ObjectWriteType&) { return false; },
+          // Code: a closure, and one of no known type.
+          [](const ClosureType&) { return false; },
+          [](const ErasedCallableType&) { return false; }});
+}
+
+auto OperationsStatedPerUnit(const Type& type) -> std::optional<StatedPerUnit> {
+  using Stated = std::optional<StatedPerUnit>;
+  const auto by_a_declaration_or_none = [](const auto&) -> Stated {
+    return std::nullopt;
+  };
+  return type.Visit(
+      Overloaded{
+          [](const UnpackedArrayType&) -> Stated {
+            return StatedPerUnit::kFixedArray;
+          },
+          [](const TupleType&) -> Stated { return StatedPerUnit::kTuple; },
+          [&](const IntegralType& t) { return by_a_declaration_or_none(t); },
+          [&](const EnumType& t) { return by_a_declaration_or_none(t); },
+          [&](const ErasedValueType& t) { return by_a_declaration_or_none(t); },
+          [&](const MachineCStringType& t) {
+            return by_a_declaration_or_none(t);
+          },
+          [&](const MachineBoolType& t) { return by_a_declaration_or_none(t); },
+          [&](const MachineIntType& t) { return by_a_declaration_or_none(t); },
+          [&](const MachineFloatType& t) {
+            return by_a_declaration_or_none(t);
+          },
+          [&](const MachineArrayType& t) {
+            return by_a_declaration_or_none(t);
+          },
+          [&](const MachineSpanType& t) { return by_a_declaration_or_none(t); },
+          [&](const MachineFunctionType& t) {
+            return by_a_declaration_or_none(t);
+          },
+          [&](const RealType& t) { return by_a_declaration_or_none(t); },
+          [&](const VoidType& t) { return by_a_declaration_or_none(t); },
+          [&](const ObjectType& t) { return by_a_declaration_or_none(t); },
+          [&](const LibraryType& t) { return by_a_declaration_or_none(t); },
+          [&](const CoroutineType& t) { return by_a_declaration_or_none(t); },
+          [&](const VariableRefType& t) { return by_a_declaration_or_none(t); },
+          [&](const ReferenceWrapperType& t) {
+            return by_a_declaration_or_none(t);
+          },
+          [&](const PointerType& t) { return by_a_declaration_or_none(t); },
+          [&](const ReferenceType& t) { return by_a_declaration_or_none(t); },
+          [&](const ManagedRefType& t) { return by_a_declaration_or_none(t); },
+          [&](const UnmanagedRefType& t) {
+            return by_a_declaration_or_none(t);
+          },
+          [&](const VectorType& t) { return by_a_declaration_or_none(t); },
+          [&](const ObservableType& t) { return by_a_declaration_or_none(t); },
+          [&](const ResolvedType& t) { return by_a_declaration_or_none(t); },
+          [&](const DriverType& t) { return by_a_declaration_or_none(t); },
+          [&](const OpenWriteType& t) { return by_a_declaration_or_none(t); },
+          [&](const DesignationType& t) { return by_a_declaration_or_none(t); },
+          [&](const BitsReferenceType& t) {
+            return by_a_declaration_or_none(t);
+          },
+          [&](const ObjectWriteType& t) { return by_a_declaration_or_none(t); },
+          [&](const RecordType& t) { return by_a_declaration_or_none(t); },
+          [&](const ClosureType& t) { return by_a_declaration_or_none(t); },
+          [&](const ErasedCallableType& t) {
+            return by_a_declaration_or_none(t);
+          }});
 }
 
 }  // namespace lyra::mir

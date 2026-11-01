@@ -85,15 +85,15 @@ struct StrConst {
   TypeId type;
 };
 
-struct RealConst {
+struct FloatConst {
   double value;
   TypeId type;
 };
 
-// A null value, the sole literal of the pointer-like types: a chandle (LRM
-// 6.14), a class handle (LRM 8.4), a pointer. It carries only its type -- there
-// is no payload, since every such value's null is the host null pointer -- and
-// the type names the domain the surrounding operator reads it in.
+// A null value, the sole literal of the types that refer: a reference owning
+// nothing (a chandle, LRM 6.14; a virtual interface, LRM 25.9), a class handle
+// (LRM 8.4), a pointer. It carries only its type, which decides what referring
+// to nothing is.
 struct NullConst {
   TypeId type;
 };
@@ -168,7 +168,7 @@ struct FunctionRef {
 // operand rather than a value of its own because it has no dataflow origin to
 // name -- it is materialized at the use site.
 using Operand = std::variant<
-    Use, IntConst, StrConst, RealConst, NullConst, BoolConst, VoidConst,
+    Use, IntConst, StrConst, FloatConst, NullConst, BoolConst, VoidConst,
     LayoutConst, EnumTableRef, IntegralConstantRef, StaticRef, DefinitionRef,
     FunctionRef>;
 

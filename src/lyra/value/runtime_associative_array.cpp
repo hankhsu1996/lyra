@@ -70,8 +70,8 @@ constinit const IndexOrder lyra_rt_integral_index_order{
     .before = &IntegralBefore, .names_no_entry = &IntegralNamesNoEntry};
 constinit const IndexOrder lyra_rt_string_index_order =
     kObjectIndexOrder<String>;
-constinit const IndexOrder lyra_rt_chandle_index_order =
-    kObjectIndexOrder<Chandle>;
+constinit const IndexOrder lyra_rt_unmanagedref_index_order =
+    kObjectIndexOrder<UnmanagedRef>;
 constinit const IndexOrder lyra_rt_managedref_index_order =
     kObjectIndexOrder<ObjectRef>;
 constinit const IndexOrder lyra_rt_wildcard_index_index_order{

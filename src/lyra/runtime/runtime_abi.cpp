@@ -75,17 +75,15 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/runtime/weak_reference.hpp"
 #include "lyra/support/callable_bounds.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/assert.hpp"
 #include "lyra/value/bit_vec.hpp"
-#include "lyra/value/chandle.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/element_type.hpp"
-#include "lyra/value/empty.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/fixed_array_value.hpp"
@@ -107,6 +105,7 @@
 #include "lyra/value/string.hpp"
 #include "lyra/value/take_built.hpp"
 #include "lyra/value/tuple_type.hpp"
+#include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/unpacked_array.hpp"
 #include "lyra/value/unpacked_range.hpp"
 #include "lyra/value/wide.hpp"
@@ -2141,11 +2140,9 @@ using lyra::runtime::WaitUntil;
 using lyra::runtime::WatchedPlace;
 using lyra::runtime::WeakObjectRef;
 using lyra::value::BitVec;
-using lyra::value::Chandle;
 using lyra::value::DpiBitBuffer;
 using lyra::value::DpiLogicBuffer;
 using lyra::value::DpiOpenArray;
-using lyra::value::Empty;
 using lyra::value::Enumeration;
 using lyra::value::Format;
 using lyra::value::FormatArg;
@@ -2161,6 +2158,7 @@ using lyra::value::RuntimeQueue;
 using lyra::value::ShortReal;
 using lyra::value::String;
 using lyra::value::TimeFormat;
+using lyra::value::UnmanagedRef;
 using lyra::value::UnpackedRange;
 
 extern "C" {
@@ -2311,11 +2309,15 @@ auto lyra_rt_is_cancelled(const void* cancellation, void* out) -> void* {
   return Emplace(out, Read<ChannelCancellation>(cancellation).IsCancelled());
 }
 
-auto lyra_rt_string_make(void* cstr, void* out) -> void* {
+auto lyra_rt_string_from_text(void* cstr, void* out) -> void* {
   return Emplace(out, String(static_cast<const char*>(cstr)));
 }
 
-auto lyra_rt_make_text_print_item(const void* text, void* out) -> void* {
+auto lyra_rt_string_default(void* out) -> void* {
+  return Emplace(out, String());
+}
+
+auto lyra_rt_text_print_item_make(const void* text, void* out) -> void* {
   return Emplace(out, PrintItem::Text(Read<String>(text)));
 }
 
@@ -2925,8 +2927,8 @@ auto lyra_rt_shortreal_shared_cell_make(void* out) -> void* {
   return MakeSharedCell<ShortReal>(out);
 }
 
-auto lyra_rt_chandle_shared_cell_make(void* out) -> void* {
-  return MakeSharedCell<Chandle>(out);
+auto lyra_rt_unmanagedref_shared_cell_make(void* out) -> void* {
+  return MakeSharedCell<UnmanagedRef>(out);
 }
 
 auto lyra_rt_managedref_shared_cell_make(void* out) -> void* {
@@ -3108,7 +3110,7 @@ void lyra_rt_timer_arm(
 // what makes the two addresses one under the platform ABI. For a place reached
 // through a reference bound into a member it is the word that reference
 // answered, which says so itself.
-auto lyra_rt_make_trigger(
+auto lyra_rt_trigger_make(
     void* observable, const void* observation, LyraSpan steps,
     std::int64_t lsb_bit_offset, std::int64_t bit_width, void* out) -> void* {
   return Emplace(
@@ -3876,7 +3878,8 @@ void lyra_rt_run_exported_task_to_completion(void* activation) {
   }
 }
 
-auto lyra_rt_make_segment(void* label, LyraSpan indices, void* out) -> void* {
+auto lyra_rt_hierarchy_segment_make(void* label, LyraSpan indices, void* out)
+    -> void* {
   return std::construct_at(
       static_cast<HierarchySegment*>(out),
       std::string(static_cast<const char*>(label)),
@@ -3969,12 +3972,12 @@ auto lyra_rt_interface_table(const void* object, const void* iface) -> const
 
 void lyra_rt_begin_library_part(std::uint8_t which, void* at) {
   lyra::runtime::BeginLibraryPart(
-      static_cast<lyra::support::RuntimeClass>(which), at);
+      static_cast<lyra::support::LibraryDecl>(which), at);
 }
 
 void lyra_rt_end_library_part(std::uint8_t which, void* at) {
   lyra::runtime::EndLibraryPart(
-      static_cast<lyra::support::RuntimeClass>(which), at);
+      static_cast<lyra::support::LibraryDecl>(which), at);
 }
 
 auto lyra_rt_object_event_source(void* object) -> void* {
@@ -4112,8 +4115,8 @@ auto lyra_rt_real_cell_refer(void* cell, void* out) -> void* {
 auto lyra_rt_shortreal_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<ShortReal>(cell, out);
 }
-auto lyra_rt_chandle_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCell<Chandle>(cell, out);
+auto lyra_rt_unmanagedref_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<UnmanagedRef>(cell, out);
 }
 auto lyra_rt_managedref_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<ObjectRef>(cell, out);
@@ -4230,20 +4233,20 @@ auto lyra_rt_shortreal_ref_sampled_get(void* reference) -> const void* {
   return RefSampledGet<ShortReal>(reference);
 }
 
-auto lyra_rt_chandle_ref_get(void* reference) -> const void* {
-  return RefGet<Chandle>(reference);
+auto lyra_rt_unmanagedref_ref_get(void* reference) -> const void* {
+  return RefGet<UnmanagedRef>(reference);
 }
 
-void lyra_rt_chandle_ref_set(void* reference, const void* value) {
-  RefSet<Chandle>(reference, value);
+void lyra_rt_unmanagedref_ref_set(void* reference, const void* value) {
+  RefSet<UnmanagedRef>(reference, value);
 }
 
-void lyra_rt_chandle_ref_arm_sampling(void* reference) {
-  RefArmSampling<Chandle>(reference);
+void lyra_rt_unmanagedref_ref_arm_sampling(void* reference) {
+  RefArmSampling<UnmanagedRef>(reference);
 }
 
-auto lyra_rt_chandle_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<Chandle>(reference);
+auto lyra_rt_unmanagedref_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<UnmanagedRef>(reference);
 }
 
 auto lyra_rt_managedref_ref_get(void* reference) -> const void* {
@@ -4940,7 +4943,7 @@ auto lyra_rt_string_ge(const void* lhs, const void* rhs) -> std::uint8_t {
   return Compared(Read<String>(lhs) >= Read<String>(rhs));
 }
 
-auto lyra_rt_make_format_spec(
+auto lyra_rt_format_spec_make(
     std::int64_t kind, std::int64_t field_width, std::int64_t precision,
     std::int64_t zero_pad, std::int64_t left_align, std::int64_t timeunit_power,
     void* out) -> void* {
@@ -4950,7 +4953,7 @@ auto lyra_rt_make_format_spec(
           kind, field_width, precision, zero_pad, left_align, timeunit_power));
 }
 
-auto lyra_rt_integral_make_print_value_item(
+auto lyra_rt_integral_print_item_make(
     const void* value, std::int64_t value_width, bool value_is_signed,
     bool value_is_four_state, const void* spec, void* out) -> void* {
   return Emplace(
@@ -4962,73 +4965,26 @@ auto lyra_rt_integral_make_print_value_item(
           Read<FormatSpec>(spec)));
 }
 
-auto lyra_rt_string_make_print_value_item(
+auto lyra_rt_string_print_item_make(
     const void* value, const void* spec, void* out) -> void* {
   return Emplace(out, PrintItem(Read<String>(value), Read<FormatSpec>(spec)));
 }
 
-auto lyra_rt_chandle_make_print_value_item(
+auto lyra_rt_unmanagedref_print_item_make(
     const void* value, const void* spec, void* out) -> void* {
-  return Emplace(out, PrintItem(Read<Chandle>(value), Read<FormatSpec>(spec)));
+  return Emplace(
+      out, PrintItem(Read<UnmanagedRef>(value), Read<FormatSpec>(spec)));
 }
 
-auto lyra_rt_managedref_make_print_value_item(
+auto lyra_rt_managedref_print_item_make(
     const void* value, const void* spec, void* out) -> void* {
   return Emplace(
       out, PrintItem(Read<ObjectRef>(value), Read<FormatSpec>(spec)));
 }
 
-auto lyra_rt_real_add(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Real>(lhs) + Read<Real>(rhs));
-}
-
-auto lyra_rt_real_sub(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Real>(lhs) - Read<Real>(rhs));
-}
-
-auto lyra_rt_real_mul(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Real>(lhs) * Read<Real>(rhs));
-}
-
-auto lyra_rt_real_div(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Real>(lhs) / Read<Real>(rhs));
-}
-
-auto lyra_rt_real_neg(const void* operand, void* out) -> void* {
-  return Emplace(out, -Read<Real>(operand));
-}
-
-auto lyra_rt_real_eq(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<Real>(lhs) == Read<Real>(rhs));
-}
-
-auto lyra_rt_real_ne(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<Real>(lhs) != Read<Real>(rhs));
-}
-
 auto lyra_rt_real_case_equal(const void* lhs, const void* rhs, void* out)
     -> void* {
   return Emplace(out, Read<Real>(lhs).CaseEqual(Read<Real>(rhs)));
-}
-
-auto lyra_rt_real_lt(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<Real>(lhs) < Read<Real>(rhs));
-}
-
-auto lyra_rt_real_le(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<Real>(lhs) <= Read<Real>(rhs));
-}
-
-auto lyra_rt_real_gt(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<Real>(lhs) > Read<Real>(rhs));
-}
-
-auto lyra_rt_real_ge(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<Real>(lhs) >= Read<Real>(rhs));
-}
-
-auto lyra_rt_real_to_bool(const void* operand) -> bool {
-  return static_cast<bool>(Read<Real>(operand));
 }
 
 auto lyra_rt_real_pow(const void* base, const void* exponent, void* out)
@@ -5038,10 +4994,6 @@ auto lyra_rt_real_pow(const void* base, const void* exponent, void* out)
 
 auto lyra_rt_real_round(const void* value) -> std::int64_t {
   return Read<Real>(value).Round();
-}
-
-auto lyra_rt_real_real_value(const void* value) -> double {
-  return Read<Real>(value).Value();
 }
 
 auto lyra_rt_real_truncate(const void* value) -> std::int64_t {
@@ -5136,10 +5088,6 @@ auto lyra_rt_real_atanh(const void* value, void* out) -> void* {
   return Emplace(out, Read<Real>(value).Atanh());
 }
 
-auto lyra_rt_real_const(double value, void* out) -> void* {
-  return Emplace(out, Real{value});
-}
-
 auto lyra_rt_real_from_int(std::int64_t value, void* out) -> void* {
   return Emplace(out, Real::FromInt(value));
 }
@@ -5165,70 +5113,18 @@ auto lyra_rt_real_value_cell_load(void* cell) noexcept -> void* {
   return &LocalAt<Real>(cell).Storage();
 }
 
-auto lyra_rt_real_make_print_value_item(
+auto lyra_rt_real_print_item_make(
     const void* value, const void* spec, void* out) -> void* {
   return Emplace(out, PrintItem(Read<Real>(value), Read<FormatSpec>(spec)));
 }
 
-auto lyra_rt_real_make_format_arg(const void* value, void* out) -> void* {
+auto lyra_rt_real_format_arg_make(const void* value, void* out) -> void* {
   return Emplace(out, MakeFormatArg(Read<Real>(value)));
-}
-
-auto lyra_rt_shortreal_add(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ShortReal>(lhs) + Read<ShortReal>(rhs));
-}
-
-auto lyra_rt_shortreal_sub(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ShortReal>(lhs) - Read<ShortReal>(rhs));
-}
-
-auto lyra_rt_shortreal_mul(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ShortReal>(lhs) * Read<ShortReal>(rhs));
-}
-
-auto lyra_rt_shortreal_div(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ShortReal>(lhs) / Read<ShortReal>(rhs));
-}
-
-auto lyra_rt_shortreal_neg(const void* operand, void* out) -> void* {
-  return Emplace(out, -Read<ShortReal>(operand));
-}
-
-auto lyra_rt_shortreal_eq(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<ShortReal>(lhs) == Read<ShortReal>(rhs));
-}
-
-auto lyra_rt_shortreal_ne(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<ShortReal>(lhs) != Read<ShortReal>(rhs));
 }
 
 auto lyra_rt_shortreal_case_equal(const void* lhs, const void* rhs, void* out)
     -> void* {
   return Emplace(out, Read<ShortReal>(lhs).CaseEqual(Read<ShortReal>(rhs)));
-}
-
-auto lyra_rt_shortreal_lt(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<ShortReal>(lhs) < Read<ShortReal>(rhs));
-}
-
-auto lyra_rt_shortreal_le(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<ShortReal>(lhs) <= Read<ShortReal>(rhs));
-}
-
-auto lyra_rt_shortreal_gt(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<ShortReal>(lhs) > Read<ShortReal>(rhs));
-}
-
-auto lyra_rt_shortreal_ge(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<ShortReal>(lhs) >= Read<ShortReal>(rhs));
-}
-
-auto lyra_rt_shortreal_to_bool(const void* operand) -> bool {
-  return static_cast<bool>(Read<ShortReal>(operand));
 }
 
 auto lyra_rt_shortreal_pow(const void* base, const void* exponent, void* out)
@@ -5240,20 +5136,12 @@ auto lyra_rt_shortreal_round(const void* value) -> std::int64_t {
   return Read<ShortReal>(value).Round();
 }
 
-auto lyra_rt_shortreal_real_value(const void* value) -> float {
-  return Read<ShortReal>(value).Value();
-}
-
 auto lyra_rt_shortreal_to_bits(const void* value) -> std::int64_t {
   return Read<ShortReal>(value).ToBits();
 }
 
 auto lyra_rt_shortreal_from_bits(std::int64_t bits, void* out) -> void* {
   return Emplace(out, ShortReal::FromBits(bits));
-}
-
-auto lyra_rt_shortreal_const(float value, void* out) -> void* {
-  return Emplace(out, ShortReal{value});
 }
 
 auto lyra_rt_shortreal_from_int(std::int64_t value, void* out) -> void* {
@@ -5278,82 +5166,57 @@ auto lyra_rt_shortreal_value_cell_load(void* cell) noexcept -> void* {
   return &LocalAt<ShortReal>(cell).Storage();
 }
 
-auto lyra_rt_shortreal_make_print_value_item(
+auto lyra_rt_shortreal_print_item_make(
     const void* value, const void* spec, void* out) -> void* {
   return Emplace(
       out, PrintItem(Read<ShortReal>(value), Read<FormatSpec>(spec)));
 }
 
-auto lyra_rt_shortreal_make_format_arg(const void* value, void* out) -> void* {
+auto lyra_rt_shortreal_format_arg_make(const void* value, void* out) -> void* {
   return Emplace(out, MakeFormatArg(Read<ShortReal>(value)));
 }
 
-// The two directions of the boundary between a chandle and the host pointer it
-// carries (LRM 6.14). They are entries because which bits a domain's value is
-// stays the runtime's answer: a generated body asks for a chandle and is handed
-// whatever one is.
-auto lyra_rt_chandle_default(void* out) -> void* {
-  return Emplace(out, Chandle{});
+auto lyra_rt_unmanagedref_case_equal(
+    const void* lhs, const void* rhs, void* out) -> void* {
+  return Emplace(
+      out, Read<UnmanagedRef>(lhs).CaseEqual(Read<UnmanagedRef>(rhs)));
 }
 
-auto lyra_rt_chandle_make(void* pointer, void* out) -> void* {
-  return Emplace(out, Chandle{pointer});
+auto lyra_rt_unmanagedref_value_cell_alloc() noexcept -> void* {
+  return AllocateValueCell<UnmanagedRef>();
 }
 
-auto lyra_rt_chandle_ptr(const void* operand) -> void* {
-  return Read<Chandle>(operand).Ptr();
+void lyra_rt_unmanagedref_value_cell_store(
+    void* cell, const void* value) noexcept {
+  LocalAt<UnmanagedRef>(cell).Assign(Read<UnmanagedRef>(value));
 }
 
-auto lyra_rt_chandle_eq(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<Chandle>(lhs) == Read<Chandle>(rhs));
+auto lyra_rt_unmanagedref_value_cell_load(void* cell) noexcept -> void* {
+  return &LocalAt<UnmanagedRef>(cell).Storage();
 }
 
-auto lyra_rt_chandle_ne(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<Chandle>(lhs) != Read<Chandle>(rhs));
+// A variable holding a reference that owns nothing, which a process may wait
+// on: LRM 9.4.2 makes a write to one an event whenever the address it holds is
+// not the address it held.
+auto lyra_rt_unmanagedref_cell_get(void* cell) -> const void* {
+  return &VariableAt<UnmanagedRef>(cell).Get();
 }
 
-auto lyra_rt_chandle_case_equal(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<Chandle>(lhs).CaseEqual(Read<Chandle>(rhs)));
-}
-
-auto lyra_rt_chandle_to_bool(const void* operand) -> bool {
-  return static_cast<bool>(Read<Chandle>(operand));
-}
-
-auto lyra_rt_chandle_value_cell_alloc() noexcept -> void* {
-  return AllocateValueCell<Chandle>();
-}
-
-void lyra_rt_chandle_value_cell_store(void* cell, const void* value) noexcept {
-  LocalAt<Chandle>(cell).Assign(Read<Chandle>(value));
-}
-
-auto lyra_rt_chandle_value_cell_load(void* cell) noexcept -> void* {
-  return &LocalAt<Chandle>(cell).Storage();
-}
-
-// A chandle variable, which a process may wait on: LRM 9.4.2 makes a write to
-// one an event whenever the pointer it holds is not the pointer it held.
-auto lyra_rt_chandle_cell_get(void* cell) -> const void* {
-  return &VariableAt<Chandle>(cell).Get();
-}
-
-void lyra_rt_chandle_cell_initialize(
+void lyra_rt_unmanagedref_cell_initialize(
     void* cell, const void* prototype) noexcept {
-  VariableAt<Chandle>(cell).Initialize(Read<Chandle>(prototype));
+  VariableAt<UnmanagedRef>(cell).Initialize(Read<UnmanagedRef>(prototype));
 }
 
-void lyra_rt_chandle_cell_set(void* cell, const void* value) {
-  VariableAt<Chandle>(cell).Set(Read<Chandle>(value));
+void lyra_rt_unmanagedref_cell_set(void* cell, const void* value) {
+  VariableAt<UnmanagedRef>(cell).Set(Read<UnmanagedRef>(value));
 }
 
-void lyra_rt_chandle_cell_arm_sampling(void* cell) {
-  VariableAt<Chandle>(cell).ArmSampling();
+void lyra_rt_unmanagedref_cell_arm_sampling(void* cell) {
+  VariableAt<UnmanagedRef>(cell).ArmSampling();
 }
 
-auto lyra_rt_chandle_cell_sampled_get(void* cell) -> const void* {
-  return &VariableAt<Chandle>(cell).SampledGet();
+auto lyra_rt_unmanagedref_cell_sampled_get(void* cell) -> const void* {
+  return &VariableAt<UnmanagedRef>(cell).SampledGet();
 }
 
 // A handle referring to nothing (LRM 8.4), a value of the domain like any
@@ -5527,13 +5390,7 @@ auto lyra_rt_laidout_value_cell_alloc(const void* held_type) noexcept -> void* {
       lyra::runtime::ElementTypeAt(held_type));
 }
 
-// A tagged union's `void` member (LRM 7.3.2) carries a value with no bits.
-// `default` builds the one value it has.
-auto lyra_rt_empty_default(void* out) -> void* {
-  return Emplace(out, lyra::value::Empty{});
-}
-
-auto lyra_rt_make_dynamic_array_new(
+auto lyra_rt_dynamic_array_new(
     std::int64_t size, const void* answer_element_type, void* out) -> void* {
   return Emplace(
       out, RuntimeDynamicArray(
@@ -5541,7 +5398,7 @@ auto lyra_rt_make_dynamic_array_new(
                lyra::runtime::NewCount(size), nullptr));
 }
 
-auto lyra_rt_make_dynamic_array_new_copy(
+auto lyra_rt_dynamic_array_new_copy(
     std::int64_t size, const void* src, const void* answer_element_type,
     void* out) -> void* {
   return Emplace(
@@ -5550,7 +5407,14 @@ auto lyra_rt_make_dynamic_array_new_copy(
                lyra::runtime::NewCount(size), &Read<RuntimeDynamicArray>(src)));
 }
 
-auto lyra_rt_dynarray_from_literal(
+auto lyra_rt_dynarray_default(const void* answer_element_type, void* out)
+    -> void* {
+  return Emplace(
+      out, RuntimeDynamicArray::FromElements(
+               lyra::runtime::ElementTypeAt(answer_element_type), {}));
+}
+
+auto lyra_rt_dynarray_from_list(
     LyraSpan unit, std::int64_t count, const void* answer_element_type,
     void* out) -> void* {
   return Emplace(
@@ -6044,8 +5908,9 @@ auto lyra_rt_real_bit_identical(const void* lhs, const void* rhs) -> bool {
 auto lyra_rt_shortreal_bit_identical(const void* lhs, const void* rhs) -> bool {
   return lyra::runtime::BitIdentical<ShortReal>(lhs, rhs);
 }
-auto lyra_rt_chandle_bit_identical(const void* lhs, const void* rhs) -> bool {
-  return lyra::runtime::BitIdentical<Chandle>(lhs, rhs);
+auto lyra_rt_unmanagedref_bit_identical(const void* lhs, const void* rhs)
+    -> bool {
+  return lyra::runtime::BitIdentical<UnmanagedRef>(lhs, rhs);
 }
 auto lyra_rt_dynarray_bit_identical(const void* lhs, const void* rhs) -> bool {
   return lyra::runtime::BitIdentical<RuntimeDynamicArray>(lhs, rhs);
@@ -6071,8 +5936,8 @@ auto lyra_rt_real_has_unknown(const void* value) -> bool {
 auto lyra_rt_shortreal_has_unknown(const void* value) -> bool {
   return lyra::runtime::HasUnknown<ShortReal>(value);
 }
-auto lyra_rt_chandle_has_unknown(const void* value) -> bool {
-  return lyra::runtime::HasUnknown<Chandle>(value);
+auto lyra_rt_unmanagedref_has_unknown(const void* value) -> bool {
+  return lyra::runtime::HasUnknown<UnmanagedRef>(value);
 }
 auto lyra_rt_dynarray_has_unknown(
     const void* value, const void* value_operations) -> bool {
@@ -6360,7 +6225,11 @@ void lyra_rt_laidout_driver_set(void* driver, const void* value) {
   DriverOf<LaidOutValue>(driver).SetBytes(value);
 }
 
-auto lyra_rt_queue_from_literal(
+auto lyra_rt_queue_default(const void* answer_type, void* out) -> void* {
+  return Emplace(out, RuntimeQueue::FromElements(QueueTypeAt(answer_type), {}));
+}
+
+auto lyra_rt_queue_from_list(
     LyraSpan unit, std::int64_t count, const void* answer_type, void* out)
     -> void* {
   return Emplace(
@@ -6543,6 +6412,15 @@ void lyra_rt_queue_value_cell_store(void* cell, const void* value) noexcept {
 
 auto lyra_rt_queue_value_cell_load(void* cell) noexcept -> void* {
   return &LocalAt<RuntimeQueue>(cell).Storage();
+}
+
+auto lyra_rt_assocarray_default(
+    const void* key_index_order, const void* answer_element_type, void* out)
+    -> void* {
+  return Emplace(
+      out, RuntimeAssociativeArray(
+               *static_cast<const lyra::value::IndexOrder*>(key_index_order),
+               lyra::runtime::ElementTypeAt(answer_element_type)));
 }
 
 // LRM 7.9.11 `'{index: value, ...}`: each entry crosses as the product of the
@@ -7100,7 +6978,7 @@ auto lyra_rt_format_runtime(
                timeunit_power));
 }
 
-auto lyra_rt_integral_make_format_arg(
+auto lyra_rt_integral_format_arg_make(
     const void* value, std::int64_t value_width, bool value_is_signed,
     bool value_is_four_state, void* out) -> void* {
   return Emplace(
@@ -7109,11 +6987,11 @@ auto lyra_rt_integral_make_format_arg(
                           value_width, value_is_signed, value_is_four_state)));
 }
 
-auto lyra_rt_string_make_format_arg(const void* value, void* out) -> void* {
+auto lyra_rt_string_format_arg_make(const void* value, void* out) -> void* {
   return Emplace(out, MakeFormatArg(Read<String>(value)));
 }
 
-auto lyra_rt_make_patterned_format_arg(
+auto lyra_rt_patterned_format_arg_make(
     const void* value, std::int64_t value_width, bool value_is_signed,
     bool value_is_four_state, const void* pattern, void* out) -> void* {
   FormatArg arg = lyra::runtime::IntegralFormatArg(
@@ -7123,26 +7001,27 @@ auto lyra_rt_make_patterned_format_arg(
   return Emplace(out, arg);
 }
 
-auto lyra_rt_make_rendered_format_arg(const void* pattern, void* out) -> void* {
+auto lyra_rt_rendered_format_arg_make(const void* pattern, void* out) -> void* {
   return Emplace(out, FormatArg::Rendered(Read<String>(pattern)));
 }
 
-auto lyra_rt_chandle_make_format_arg(const void* value, void* out) -> void* {
-  return Emplace(out, MakeFormatArg(Read<Chandle>(value)));
+auto lyra_rt_unmanagedref_format_arg_make(const void* value, void* out)
+    -> void* {
+  return Emplace(out, MakeFormatArg(Read<UnmanagedRef>(value)));
 }
 
-auto lyra_rt_managedref_make_format_arg(const void* value, void* out) -> void* {
+auto lyra_rt_managedref_format_arg_make(const void* value, void* out) -> void* {
   return Emplace(out, MakeFormatArg(Read<ObjectRef>(value)));
 }
 
-auto lyra_rt_make_dpi_bit_buffer(
+auto lyra_rt_dpi_bit_buffer_make(
     const void* sv, std::int64_t sv_width, bool sv_is_four_state, void* out)
     -> void* {
   const lyra::value::LoadedWords words = BitsAt(sv, sv_width, sv_is_four_state);
   return Emplace(out, DpiBitBuffer(words.View()));
 }
 
-auto lyra_rt_make_dpi_logic_buffer(
+auto lyra_rt_dpi_logic_buffer_make(
     const void* sv, std::int64_t sv_width, bool sv_is_four_state, void* out)
     -> void* {
   const lyra::value::LoadedWords words = BitsAt(sv, sv_width, sv_is_four_state);
@@ -7182,7 +7061,7 @@ auto lyra_rt_to_sv_logic(
 // (Annex H.7.3) and nothing here could read that representation off anything
 // else. What the image needs of the actual's type is the type of one element,
 // which the actual's own type reaches under its unpacked layers.
-auto lyra_rt_make_dpi_open_array(
+auto lyra_rt_dpi_open_array_make(
     const void* sv, const void* sv_type, LyraSpan bounds,
     bool addressable_elements, void* out) -> void* {
   const std::span<const std::int64_t> declared =
@@ -7232,8 +7111,8 @@ auto lyra_rt_real_cell_open_for_write(void* cell, void* out) -> void* {
 auto lyra_rt_shortreal_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<ShortReal>(cell, out);
 }
-auto lyra_rt_chandle_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenCellWrite<Chandle>(cell, out);
+auto lyra_rt_unmanagedref_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<UnmanagedRef>(cell, out);
 }
 auto lyra_rt_managedref_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<ObjectRef>(cell, out);
@@ -7260,8 +7139,9 @@ auto lyra_rt_real_ref_open_for_write(void* reference, void* out) -> void* {
 auto lyra_rt_shortreal_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<ShortReal>(reference, out);
 }
-auto lyra_rt_chandle_ref_open_for_write(void* reference, void* out) -> void* {
-  return OpenRefWrite<Chandle>(reference, out);
+auto lyra_rt_unmanagedref_ref_open_for_write(void* reference, void* out)
+    -> void* {
+  return OpenRefWrite<UnmanagedRef>(reference, out);
 }
 auto lyra_rt_managedref_ref_open_for_write(void* reference, void* out)
     -> void* {
@@ -7489,11 +7369,8 @@ auto lyra_rt_real_land(const void* designation) noexcept -> void* {
 auto lyra_rt_shortreal_land(const void* designation) noexcept -> void* {
   return LandDesignation<ShortReal>(designation);
 }
-auto lyra_rt_chandle_land(const void* designation) noexcept -> void* {
-  return LandDesignation<Chandle>(designation);
-}
-auto lyra_rt_empty_land(const void* designation) noexcept -> void* {
-  return LandDesignation<Empty>(designation);
+auto lyra_rt_unmanagedref_land(const void* designation) noexcept -> void* {
+  return LandDesignation<UnmanagedRef>(designation);
 }
 auto lyra_rt_laidout_land(
     const void* designation, const void* value_type) noexcept -> void* {
@@ -7522,18 +7399,6 @@ void lyra_rt_string_assign(void* storage, const void* value) {
 }
 void lyra_rt_bitvec_assign(void* storage, const void* value) {
   *static_cast<BitVec*>(storage) = Read<BitVec>(value);
-}
-void lyra_rt_real_assign(void* storage, const void* value) {
-  *static_cast<Real*>(storage) = Read<Real>(value);
-}
-void lyra_rt_shortreal_assign(void* storage, const void* value) {
-  *static_cast<ShortReal*>(storage) = Read<ShortReal>(value);
-}
-void lyra_rt_chandle_assign(void* storage, const void* value) {
-  *static_cast<Chandle*>(storage) = Read<Chandle>(value);
-}
-void lyra_rt_empty_assign(void* storage, const void* value) {
-  *static_cast<lyra::value::Empty*>(storage) = Read<lyra::value::Empty>(value);
 }
 void lyra_rt_dynarray_assign(void* storage, const void* value) {
   *static_cast<RuntimeDynamicArray*>(storage) =
@@ -7643,18 +7508,6 @@ auto lyra_rt_string_copy(const void* value, void* out) -> void* {
 auto lyra_rt_bitvec_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<BitVec>(value));
 }
-auto lyra_rt_real_copy(const void* value, void* out) -> void* {
-  return Emplace(out, Read<Real>(value));
-}
-auto lyra_rt_shortreal_copy(const void* value, void* out) -> void* {
-  return Emplace(out, Read<ShortReal>(value));
-}
-auto lyra_rt_chandle_copy(const void* value, void* out) -> void* {
-  return Emplace(out, Read<Chandle>(value));
-}
-auto lyra_rt_empty_copy(const void* value, void* out) -> void* {
-  return Emplace(out, Read<lyra::value::Empty>(value));
-}
 auto lyra_rt_dynarray_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<RuntimeDynamicArray>(value));
 }
@@ -7720,18 +7573,6 @@ auto lyra_rt_string_move(void* value, void* out) -> void* {
 }
 auto lyra_rt_bitvec_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<BitVec*>(value)));
-}
-auto lyra_rt_real_move(void* value, void* out) -> void* {
-  return Emplace(out, *static_cast<Real*>(value));
-}
-auto lyra_rt_shortreal_move(void* value, void* out) -> void* {
-  return Emplace(out, *static_cast<ShortReal*>(value));
-}
-auto lyra_rt_chandle_move(void* value, void* out) -> void* {
-  return Emplace(out, *static_cast<Chandle*>(value));
-}
-auto lyra_rt_empty_move(void* value, void* out) -> void* {
-  return Emplace(out, *static_cast<lyra::value::Empty*>(value));
 }
 auto lyra_rt_dynarray_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<RuntimeDynamicArray*>(value)));
@@ -7818,8 +7659,8 @@ void lyra_rt_real_cell_construct(void* storage) {
 void lyra_rt_shortreal_cell_construct(void* storage) {
   BuildAt<Var<ShortReal>>(storage);
 }
-void lyra_rt_chandle_cell_construct(void* storage) {
-  BuildAt<Var<Chandle>>(storage);
+void lyra_rt_unmanagedref_cell_construct(void* storage) {
+  BuildAt<Var<UnmanagedRef>>(storage);
 }
 void lyra_rt_laidout_cell_construct(const void* held_type, void* storage) {
   BuildAt<VariableOf<LaidOutValue>::Type>(
@@ -7850,8 +7691,8 @@ void lyra_rt_real_value_cell_construct(void* storage) {
 void lyra_rt_shortreal_value_cell_construct(void* storage) {
   BuildAt<ValueCell<ShortReal>>(storage);
 }
-void lyra_rt_chandle_value_cell_construct(void* storage) {
-  BuildAt<ValueCell<Chandle>>(storage);
+void lyra_rt_unmanagedref_value_cell_construct(void* storage) {
+  BuildAt<ValueCell<UnmanagedRef>>(storage);
 }
 void lyra_rt_laidout_value_cell_construct(
     const void* held_type, void* storage) {
@@ -7934,8 +7775,8 @@ void lyra_rt_real_cell_destroy(void* storage) {
 void lyra_rt_shortreal_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<ShortReal>(storage));
 }
-void lyra_rt_chandle_cell_destroy(void* storage) {
-  std::destroy_at(&VariableAt<Chandle>(storage));
+void lyra_rt_unmanagedref_cell_destroy(void* storage) {
+  std::destroy_at(&VariableAt<UnmanagedRef>(storage));
 }
 void lyra_rt_laidout_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<LaidOutValue>(storage));

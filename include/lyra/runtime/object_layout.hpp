@@ -4,9 +4,9 @@
 #include <optional>
 #include <variant>
 
+#include "lyra/support/declared_member_storage.hpp"
 #include "lyra/support/layout.hpp"
-#include "lyra/support/member_storage_kind.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
@@ -19,7 +19,6 @@ namespace lyra::runtime {
 // both read it: the library as the type itself, a target through this.
 auto LayoutOf(support::ValueDomain domain) -> support::ObjectLayout;
 auto LayoutOf(support::LibraryObject object) -> support::ObjectLayout;
-auto LayoutOf(const support::RuntimeObject& object) -> support::ObjectLayout;
 
 // The same for the storage one member of a declaration occupies where the
 // declaration is laid out, for each kind over each domain it is realized for,
@@ -53,9 +52,9 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
     -> std::optional<HeldContents>;
 
 // The same for the part of a value this library builds where a class of the
-// source extends one of its classes: what that part occupies, which is where
-// the class's own storage begins.
-auto LayoutOf(support::RuntimeClass klass) -> support::ObjectLayout;
+// source extends the class of the runtime's `decl` states: what that part
+// occupies, which is where the class's own storage begins.
+auto LibraryPartLayoutOf(support::LibraryDecl decl) -> support::ObjectLayout;
 
 // What this library keeps at the start of a closure value: the code building
 // a closure lays its captures out after it, as a class extending one of this
@@ -74,7 +73,7 @@ auto DefinitionLayoutOf() -> DefinitionLayout;
 // Builds that part at `at`, where a value of a class extending it is created,
 // before any member of the class's own; and ends it there, after every one of
 // them, as a C++ class's construction and destruction call its base's.
-void BeginLibraryPart(support::RuntimeClass klass, void* at);
-void EndLibraryPart(support::RuntimeClass klass, void* at);
+void BeginLibraryPart(support::LibraryDecl decl, void* at);
+void EndLibraryPart(support::LibraryDecl decl, void* at);
 
 }  // namespace lyra::runtime

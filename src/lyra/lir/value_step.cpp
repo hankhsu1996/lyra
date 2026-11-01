@@ -11,27 +11,35 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/support/layout.hpp"
 #include "lyra/support/runtime_object.hpp"
-#include "lyra/support/value_domain.hpp"
+#include "lyra/value/scalar.hpp"
 
 namespace lyra::lir {
 
 namespace {
 
-using support::LibraryObject;
-using support::ValueDomain;
-
-// Whether ending a value of the library's own does anything, as the storage
-// it is stated to take says.
+// Whether ending an object of the library's does anything, as the storage it
+// is stated to take says, which states it once for every class built there.
 auto LibraryNeedsEnd(const support::RuntimeObject& object) -> bool {
   const std::optional<support::ObjectLayout> stated =
       support::StatedStorageOf(object);
   if (!stated.has_value()) {
     throw InternalError(
-        "lir: a value held as its bits or its bytes, or an execution, is "
-        "asked as an object something holds -- please report this as a bug");
+        "lir: a value held as its bits is asked as an object something holds "
+        "-- please report this as a bug");
   }
-  return !stated->ends_with_nothing_to_do;
+  return stated->needs_end;
+}
+
+// How `step` of a value the library holds as `object` is carried out: by the
+// library's own entry, but an end that does nothing, which is its bytes.
+auto LibraryStep(const support::RuntimeObject& object, ValueStep step)
+    -> StepRealization {
+  if (step == ValueStep::kEnd && !LibraryNeedsEnd(object)) {
+    return StepIsBytes{};
+  }
+  return StepByLibrary{.object = object};
 }
 
 // The parts a value laid out by its type is made of: a product's components,
@@ -84,13 +92,14 @@ auto LaidOutStep(const CompilationUnit& unit, TypeId type, ValueStep step)
 
 }  // namespace
 
+auto IsScalar(const Type& type) -> bool {
+  const std::optional<Holding> held = type.HeldAs();
+  return held.has_value() && std::holds_alternative<value::Scalar>(*held);
+}
+
 auto IsLaidOutByItsType(const Type& type) -> bool {
   const std::optional<Holding> held = type.HeldAs();
-  if (!held.has_value()) {
-    return false;
-  }
-  const auto* domain = std::get_if<ValueDomain>(&*held);
-  return domain != nullptr && support::IsLaidOutByItsType(*domain);
+  return held.has_value() && std::holds_alternative<LaidOutByType>(*held);
 }
 
 auto ValueStepName(ValueStep step) -> std::string_view {
@@ -114,15 +123,11 @@ auto NeedsEnd(const CompilationUnit& unit, TypeId type) -> bool {
   }
   return std::visit(
       Overloaded{
-          [](const IntegralBits&) { return false; },
-          [](const OwnedStorageAddress&) { return true; },
-          [](const ClosureStorage&) { return true; },
-          [&](ValueDomain domain) {
-            if (!support::IsLaidOutByItsType(domain)) {
-              return LibraryNeedsEnd(domain);
-            }
-            // An untagged union's members are only bits another member may
-            // have written, so none of them is held to end.
+          [](const value::Scalar&) { return false; },
+          // A value laid out by its type ends as its parts do, where any has
+          // anything to end; an untagged union's members are only bits
+          // another member may have written, so none of them is held to end.
+          [&](const LaidOutByType&) {
             if (const std::optional<RecordKind> kind =
                     RecordKindOf(unit, type)) {
               switch (*kind) {
@@ -137,7 +142,11 @@ auto NeedsEnd(const CompilationUnit& unit, TypeId type) -> bool {
               return NeedsEnd(unit, part);
             });
           },
-          [](LibraryObject library) { return LibraryNeedsEnd(library); }},
+          [](const OwnedStorageAddress&) { return true; },
+          [](const ClosureStorage&) { return true; },
+          [](const support::RuntimeObject& object) {
+            return LibraryNeedsEnd(object);
+          }},
       *held);
 }
 
@@ -165,7 +174,10 @@ auto StepOf(const CompilationUnit& unit, TypeId type, ValueStep step)
   }
   return std::visit(
       Overloaded{
-          [](const IntegralBits&) -> StepRealization { return StepIsBytes{}; },
+          [](const value::Scalar&) -> StepRealization { return StepIsBytes{}; },
+          [&](const LaidOutByType&) -> StepRealization {
+            return LaidOutStep(unit, type, step);
+          },
           // An owning pointer is the address it holds, which moves as its
           // bytes and is never copied; ending it ends what it points at and
           // gives the storage back. What it points at is ended through the
@@ -184,7 +196,8 @@ auto StepOf(const CompilationUnit& unit, TypeId type, ValueStep step)
                 break;
             }
             const Type& pointee = unit.types.Get(*stated.Pointee());
-            if (pointee.Is<ObjectType>() || pointee.Is<RuntimeClassType>() ||
+            if (pointee.Is<ObjectType>() ||
+                pointee.RuntimeClassOf().has_value() ||
                 pointee.Is<ErasedCallableType>()) {
               return StepThroughDefinition{};
             }
@@ -198,20 +211,8 @@ auto StepOf(const CompilationUnit& unit, TypeId type, ValueStep step)
             }
             return StepByFunction{};
           },
-          [&](ValueDomain domain) -> StepRealization {
-            if (support::IsLaidOutByItsType(domain)) {
-              return LaidOutStep(unit, type, step);
-            }
-            if (step == ValueStep::kEnd && !LibraryNeedsEnd(domain)) {
-              return StepIsBytes{};
-            }
-            return StepByLibrary{.object = domain};
-          },
-          [&](LibraryObject library) -> StepRealization {
-            if (step == ValueStep::kEnd && !LibraryNeedsEnd(library)) {
-              return StepIsBytes{};
-            }
-            return StepByLibrary{.object = library};
+          [&](const support::RuntimeObject& object) -> StepRealization {
+            return LibraryStep(object, step);
           }},
       *held);
 }

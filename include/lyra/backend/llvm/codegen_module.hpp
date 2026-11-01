@@ -28,8 +28,8 @@
 #include "lyra/lir/linkage.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/value_step.hpp"
+#include "lyra/support/declared_member_storage.hpp"
 #include "lyra/support/layout.hpp"
-#include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/integral.hpp"
@@ -171,9 +171,9 @@ class CodeGenModule {
   auto OperatorNew() -> llvm::FunctionCallee;
   auto SizedOperatorDelete() -> llvm::FunctionCallee;
 
-  // The library kind a value of `type` is, which names the entries acting on
-  // it; a type the library realizes as no kind of its own is one this backend
-  // does not carry.
+  // The value domain a value of `type` is realized in, which names the entries
+  // acting on it; a type realized in no domain is one this backend does not
+  // carry.
   [[nodiscard]] auto DomainOf(lir::TypeId type) const
       -> diag::Result<support::ValueDomain>;
 
@@ -286,8 +286,7 @@ class CodeGenModule {
   void EndObject(llvm::IRBuilderBase& builder, llvm::Value* object);
   // Whether a member of `type` held as `storage` is the bytes this backend lays
   // a value of the type out in -- a product's, a fixed-size unpacked array's,
-  // an integral value's, a machine integer's -- rather than an object of the
-  // library.
+  // a scalar's, a machine integer's -- rather than an object of the library.
   [[nodiscard]] auto HoldsItsBytesInline(
       lir::TypeId type, support::DeclaredMemberStorage storage) const -> bool;
   // What a member of `type` held as `storage` occupies.

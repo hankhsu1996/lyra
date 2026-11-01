@@ -13,8 +13,11 @@
 #include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/float_width.hpp"
+#include "lyra/support/library_decl.hpp"
+#include "lyra/support/library_type.hpp"
 #include "lyra/support/runtime_object.hpp"
+#include "lyra/value/scalar.hpp"
 
 namespace lyra::lir {
 
@@ -43,57 +46,6 @@ enum class PointerOwnership : std::uint8_t { kUnique, kShared, kBorrowed };
 
 enum class Mutability : std::uint8_t { kMutable, kReadOnly };
 
-enum class RuntimeLibraryKind : std::uint8_t {
-  // A run of bits whose length is the value's.
-  kBitVec,
-  kEnumeration,
-  kPrintItem,
-  kFormatSpec,
-  kFormatArg,
-  kChannelCancellation,
-  kTimeFormat,
-  kHierarchySegment,
-  kDpiBitBuffer,
-  kDpiLogicBuffer,
-  kDpiBitChunk,
-  kDpiLogicChunk,
-  kDpiOpenArray,
-  kDpiOpenArrayHandle,
-  kWatchedPlace,
-  kTrigger,
-  kObservation,
-  kReadReport,
-  kWait,
-  kLeasedReference,
-  kObjectWrite,
-  kCancellationTarget,
-  kTimer,
-  kDeferredEffects,
-  kViolationReportKeeper,
-  kControlEffect,
-  // The definition every object of one class carries. A body names it to ask
-  // the class a question, and forwards its address without reading inside it,
-  // so what reaches here is the kind and never the runtime struct's layout.
-  kObjectDefinition,
-  // The structures a definition is made of, which only a constant names.
-  kScopeInfo,
-  kScopeMetadata,
-  kScopeCallable,
-  kClassObjectInfo,
-  kInterfaceRow,
-  // What a constructor is handed, what one of its entries is, and the entries
-  // of one generate. A body hands a table's address to the library and never
-  // reads inside it.
-  kConstructionTable,
-  kInstantiation,
-  kGeneratePlaces,
-  // What a class states of each thing a value dump may record and of each
-  // named block, task or function around them, which only a constant names
-  // and a body forwards the address of.
-  kDumpEntry,
-  kDumpBlock,
-};
-
 // An integral value's type: how many bits it has, whether they are read as
 // signed, and how many values a bit can take (LRM 6.11).
 struct IntegralType {
@@ -104,45 +56,14 @@ struct IntegralType {
   auto operator==(const IntegralType&) const -> bool = default;
 };
 
+// The states a bit of a type holds, as the value library names them.
+[[nodiscard]] auto StateDomainOf(IntegralStateKind state) -> value::StateDomain;
+
 struct UnpackedArrayType {
   TypeId element_type;
   std::uint64_t size;
 
   auto operator==(const UnpackedArrayType&) const -> bool = default;
-};
-
-struct DynamicArrayType {
-  TypeId element_type;
-
-  auto operator==(const DynamicArrayType&) const -> bool = default;
-};
-
-struct QueueType {
-  TypeId element_type;
-  std::optional<std::uint64_t> max_bound;
-
-  auto operator==(const QueueType&) const -> bool = default;
-};
-
-struct AssociativeArrayType {
-  TypeId element_type;
-  TypeId key_type;
-
-  auto operator==(const AssociativeArrayType&) const -> bool = default;
-};
-
-struct WildcardIndexType {
-  auto operator==(const WildcardIndexType&) const -> bool = default;
-};
-
-struct StringType {
-  auto operator==(const StringType&) const -> bool = default;
-};
-
-// A value of any type, kept with that type and the identity it is tested by,
-// which the library holds as an object of its own.
-struct AnyType {
-  auto operator==(const AnyType&) const -> bool = default;
 };
 
 // A reference to a value of a type known only where the program runs: where a
@@ -154,7 +75,8 @@ struct AnyReferenceType {
 };
 
 // A borrowed, NUL-terminated machine string (C `const char*`): raw character
-// storage the value does not own, distinct from the owning `StringType`.
+// storage the value does not own, distinct from the owning string the library
+// declares.
 struct MachineCStringType {
   auto operator==(const MachineCStringType&) const -> bool = default;
 };
@@ -171,8 +93,6 @@ struct MachineBoolType {
 // type system names outright.
 enum class MachineIntWidth : std::uint8_t { k8, k16, k32, k64 };
 
-enum class MachineFloatWidth : std::uint8_t { k32, k64 };
-
 // The width as a number, for a target that parameterizes its integer type by a
 // bit count rather than naming a type per width.
 [[nodiscard]] auto BitsOf(MachineIntWidth width) -> std::uint32_t;
@@ -187,17 +107,18 @@ struct MachineIntType {
 };
 
 // A primitive machine float (C `float` / `double`), distinct from `RealType`,
-// which is a simulation value reached through a value wrapper.
+// which is a value of the design a variable's cell holds and the library
+// prints, though both are laid out as the same IEEE value.
 struct MachineFloatType {
-  MachineFloatWidth width;
+  support::FloatWidth width;
 
   auto operator==(const MachineFloatType&) const -> bool = default;
 };
 
 // A fixed-size contiguous aggregate of plain machine data (C++ `std::array<T,
-// N>`), distinct from `UnpackedArrayType`, which is a simulation value reached
-// through a value wrapper. Its interior is not independently addressable; the
-// storage is reached as a whole or through a pointer to its first element.
+// N>`), distinct from `UnpackedArrayType`, which is a value of the design. Its
+// interior is not independently addressable; the storage is reached as a whole
+// or through a pointer to its first element.
 struct MachineArrayType {
   TypeId element;
   std::uint32_t size;
@@ -226,38 +147,20 @@ struct MachineFunctionType {
   auto operator==(const MachineFunctionType&) const -> bool = default;
 };
 
+// An SV floating-point value: the IEEE 754 value of its width.
 struct RealType {
+  support::FloatWidth width;
+
   auto operator==(const RealType&) const -> bool = default;
-};
-struct ShortRealType {
-  auto operator==(const ShortRealType&) const -> bool = default;
-};
-struct ChandleType {
-  auto operator==(const ChandleType&) const -> bool = default;
 };
 struct VoidType {
   auto operator==(const VoidType&) const -> bool = default;
-};
-
-// A value type carrying no information: exactly one value, nothing to store.
-// Distinct from `VoidType`, which marks the absence of a type. Reached through
-// a tagged union's `void` member (LRM 7.3.2).
-struct EmptyType {
-  auto operator==(const EmptyType&) const -> bool = default;
 };
 
 struct ObjectType {
   ClassId class_id;
 
   auto operator==(const ObjectType&) const -> bool = default;
-};
-
-// A class the runtime library defines. It belongs to no compilation unit, so
-// which class it is is the whole identity.
-struct RuntimeClassType {
-  support::RuntimeClass which;
-
-  auto operator==(const RuntimeClassType&) const -> bool = default;
 };
 
 // A callable value: an instance of one closure declaration, holding that
@@ -279,21 +182,10 @@ struct ErasedCallableType {
   auto operator==(const ErasedCallableType&) const -> bool = default;
 };
 
-struct RuntimeEffectsType {
-  auto operator==(const RuntimeEffectsType&) const -> bool = default;
-};
-struct FilesType {
-  auto operator==(const FilesType&) const -> bool = default;
-};
-struct DiagnosticType {
-  auto operator==(const DiagnosticType&) const -> bool = default;
-};
-
-struct RuntimeLibraryType {
-  RuntimeLibraryKind kind;
-
-  auto operator==(const RuntimeLibraryType&) const -> bool = default;
-};
+// A type the runtime library declares, named by its declaration and its
+// arguments as MIR names it; what any consumer asks of one it reads off the
+// declaration.
+using LibraryType = support::LibraryType<TypeId>;
 
 struct CoroutineType {
   TypeId payload;
@@ -322,12 +214,12 @@ struct ManagedRefType {
   auto operator==(const ManagedRefType&) const -> bool = default;
 };
 
-// A weak reference to an object a managed reference names (LRM 8.30), which
-// does not keep the object: the library object holding one.
-struct WeakManagedRefType {
+// A reference that owns nothing (a chandle, LRM 6.14; a virtual interface, LRM
+// 25.9): one address, or null, held as a value of the design is.
+struct UnmanagedRefType {
   TypeId pointee;
 
-  auto operator==(const WeakManagedRefType&) const -> bool = default;
+  auto operator==(const UnmanagedRefType&) const -> bool = default;
 };
 
 struct VectorType {
@@ -337,7 +229,9 @@ struct VectorType {
 };
 
 // A heterogeneous fixed product that is its components and nothing more, each
-// reached by its position: two with the same components are the same type.
+// reached by its position: two with the same components are the same type. The
+// tuple of no components is laid out as nothing at all, and is what a tagged
+// union's `void` member holds (LRM 7.3.2).
 struct TupleType {
   std::vector<TypeId> elements;
 
@@ -379,30 +273,6 @@ struct ObservableType {
   auto operator==(const ObservableType&) const -> bool = default;
 };
 
-// Storage holding what the ticks of one clocking event settled for one
-// expression, which is what a read of an earlier tick answers from. It names
-// the values it keeps; how many it keeps is fixed by filling the storage rather
-// than by building it, so it is not part of the type.
-struct SampledHistoryType {
-  TypeId value;
-
-  auto operator==(const SampledHistoryType&) const -> bool = default;
-};
-
-// Storage holding what one concurrent assertion has in flight. It names no
-// value, because what it holds is machine words that mean something only to
-// the transition reading them: nothing of the design is in there.
-struct EvaluationAttemptsType {
-  auto operator==(const EvaluationAttemptsType&) const -> bool = default;
-};
-
-// Storage holding the blocks one loop generate built, each under the value its
-// index stood at. It names no value, because what it holds is the blocks
-// themselves, which a name reaching one asks it for.
-struct LoopBlocksType {
-  auto operator==(const LoopBlocksType&) const -> bool = default;
-};
-
 // A write in progress into the storage a capability wrapper stands for, whose
 // contents are values of `value` (LRM 11.5.1). It is an object the writer holds
 // and owes the end of, and it names no place itself: the whole of those
@@ -425,6 +295,14 @@ struct DesignationType {
   auto operator==(const DesignationType&) const -> bool = default;
 };
 
+// A write in progress into the properties of an object (LRM 8.4), which the
+// writer holds for as long as it writes there and which tells the object it
+// was written as it ends. It is one object whatever the object's class, since
+// each access through it states its own member's class.
+struct ObjectWriteType {
+  auto operator==(const ObjectWriteType&) const -> bool = default;
+};
+
 // The declaration of member-bearing storage a type names: a class, whichever
 // unit defines it, or a closure a lowering introduces that no source
 // declaration stands behind. Each is a position in its own registry of this
@@ -432,20 +310,26 @@ struct DesignationType {
 // it met rather than asking every type there is.
 using TypeDeclaration = std::variant<ObjectType, ClosureType>;
 
-// What a value is held as: an integral value as the bits its type declares,
-// whose layout this layer does not state; any other value of the design as an
-// object of its value domain, which is never a domain of an integral layout
-// here; what the library builds for its own use as that object; a pointer
-// owning what it points at as the address of that storage, which its end gives
-// back, as Rust's `Box` is held; and a closure as the storage its declaration
-// lays out, which the body its declaration states for it ends, as a C++
-// lambda's object is held.
-struct IntegralBits {};
+// What a value is held as: a scalar the IR lays out -- an integral value of
+// its width and states, a real of its width, a reference owning nothing -- as
+// its own bytes, which that scalar lays out, as rustc's layout calls a value
+// one machine scalar; a value laid out by its type -- a tuple, a structure, a
+// union of either kind, a fixed-size unpacked array (LRM 7.4.2) -- as the
+// bytes that type places its parts in, stepped part by part by code compiled
+// for the type; an object of the library's, built and ended by its entries --
+// a class handle or a value of a type the library declares as an object of its
+// value domain, an object a declaration states as its own as that object, and
+// what the library builds for a type the IR owns as that object; a pointer
+// owning what it points at as the address of that storage, which its end
+// gives back, as Rust's `Box` is held; and a closure as the storage its
+// declaration lays out, which the body its declaration states for it ends, as
+// a C++ lambda's object is held.
+struct LaidOutByType {};
 struct OwnedStorageAddress {};
 struct ClosureStorage {};
 using Holding = std::variant<
-    IntegralBits, support::ValueDomain, support::LibraryObject,
-    OwnedStorageAddress, ClosureStorage>;
+    value::Scalar, LaidOutByType, support::RuntimeObject, OwnedStorageAddress,
+    ClosureStorage>;
 
 // A type one LIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
@@ -459,17 +343,13 @@ using Holding = std::variant<
 class Type {
  private:
   using Data = std::variant<
-      IntegralType, UnpackedArrayType, DynamicArrayType, QueueType,
-      AssociativeArrayType, WildcardIndexType, StringType, AnyType,
-      AnyReferenceType, MachineCStringType, MachineBoolType, MachineIntType,
-      MachineFloatType, MachineArrayType, MachineSpanType, MachineFunctionType,
-      RealType, ShortRealType, ChandleType, VoidType, EmptyType, ObjectType,
-      RuntimeClassType, ClosureType, ErasedCallableType, RuntimeEffectsType,
-      FilesType, DiagnosticType, RuntimeLibraryType, CoroutineType,
-      VariableRefType, PointerType, ManagedRefType, WeakManagedRefType,
+      IntegralType, UnpackedArrayType, AnyReferenceType, MachineCStringType,
+      MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
+      MachineSpanType, MachineFunctionType, RealType, VoidType, ObjectType,
+      ClosureType, ErasedCallableType, LibraryType, CoroutineType,
+      VariableRefType, PointerType, ManagedRefType, UnmanagedRefType,
       VectorType, TupleType, RecordType, ResolvedType, DriverType,
-      ObservableType, SampledHistoryType, EvaluationAttemptsType,
-      LoopBlocksType, OpenWriteType, DesignationType>;
+      ObservableType, OpenWriteType, DesignationType, ObjectWriteType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -515,14 +395,9 @@ class Type {
   [[nodiscard]] auto IsAddressOnly() const -> bool;
 
   // What a value of this type is held as, and nothing for a type whose value
-  // is held as itself or is reached where it lives. An integral value is its
-  // bits at its type, and how those are laid out is decided below this layer.
-  // Any other value of the design is its domain's object; an object a call
-  // builds for one use -- what a print is assembled from, what a wait
-  // registers, the storage a closure captures into, a counted hold on a value
-  // -- is the library's own. A pointer owning what it points at is the address
-  // of that storage. Each of those names a logical shape only, whose size is a
-  // physical fact decided below this layer too.
+  // is held as itself -- machine data, a borrowed pointer -- or is reached
+  // where it lives. Each holding names a logical shape only, whose size is a
+  // physical fact decided below this layer.
   [[nodiscard]] auto HeldAs() const -> std::optional<Holding>;
 
   // True for a value its holder owns and has to end. One of these ends where
@@ -550,6 +425,10 @@ class Type {
   // named.
   [[nodiscard]] auto ContainerElementType() const -> std::optional<TypeId>;
 
+  // The type an associative array is indexed by (LRM 7.8), and nothing for a
+  // type whose elements are reached by position.
+  [[nodiscard]] auto IndexType() const -> std::optional<TypeId>;
+
   // How this type's sign bit is read as a machine integer, and nothing for a
   // type that is not one. A machine integer's operators are the target's own
   // instructions over one scalar, and the only thing an instruction still has
@@ -557,6 +436,12 @@ class Type {
   // bit wide and never negative, so it answers rather than standing outside.
   [[nodiscard]] auto MachineIntegerSignedness() const
       -> std::optional<Signedness>;
+
+  // The declaration of the class of the runtime's a value of this type is an
+  // object of, where it is one rather than a class some unit declares or no
+  // object at all.
+  [[nodiscard]] auto RuntimeClassOf() const
+      -> std::optional<support::LibraryDecl>;
 
   template <typename T>
   [[nodiscard]] auto Is() const -> bool {

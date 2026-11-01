@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <variant>
@@ -20,11 +21,15 @@
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/float_width.hpp"
 #include "lyra/support/layout.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
+#include "lyra/support/value_domain.hpp"
 #include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/layout.hpp"
+#include "lyra/value/scalar.hpp"
 
 namespace lyra::mir {
 
@@ -34,73 +39,31 @@ constexpr support::Layout kAddress{
     .size = sizeof(void*), .align = alignof(void*)};
 
 auto LayoutOfIntegral(const IntegralType& integral) -> support::Layout {
-  return support::Layout{
-      .size = value::IntegralBytesFor(
-          integral.bit_width, StateDomainOf(integral.state_kind)),
-      .align = value::IntegralAlignFor(integral.bit_width)};
+  return value::FactsOf(
+             value::IntegralScalar{
+                 .width = integral.bit_width,
+                 .states = StateDomainOf(integral.state_kind)})
+      .layout;
 }
 
-// An object of the library's a frame holds by value: the storage stated for
-// it. Every other class of the runtime's is reached by address, and is counted
-// as the word a frame names one by.
-auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> support::Layout {
-  switch (kind) {
-    case RuntimeLibraryKind::kBitVec:
-      return support::kBitVecStorage.layout;
-    case RuntimeLibraryKind::kPrintItem:
-      return support::kPrintItemStorage.layout;
-    case RuntimeLibraryKind::kFormatSpec:
-      return support::kFormatSpecStorage.layout;
-    case RuntimeLibraryKind::kFormatArg:
-      return support::kFormatArgStorage.layout;
-    case RuntimeLibraryKind::kTimeFormat:
-      return support::kTimeFormatStorage.layout;
-    case RuntimeLibraryKind::kDpiBitBuffer:
-      return support::kDpiBitBufferStorage.layout;
-    case RuntimeLibraryKind::kDpiLogicBuffer:
-      return support::kDpiLogicBufferStorage.layout;
-    case RuntimeLibraryKind::kDpiOpenArray:
-      return support::kDpiOpenArrayStorage.layout;
-    // A table the unit states once and every use names.
-    case RuntimeLibraryKind::kEnumeration:
-      return kAddress;
-    case RuntimeLibraryKind::kTrigger:
-      return support::kTriggerStorage.layout;
-    case RuntimeLibraryKind::kObservation:
-      return support::kObservationStorage.layout;
-    case RuntimeLibraryKind::kReadReport:
-      return support::kReadReportStorage.layout;
-    case RuntimeLibraryKind::kWait:
-      return support::kWaitStorage.layout;
-    case RuntimeLibraryKind::kLeasedReference:
-      return support::kLeasedReferenceStorage.layout;
-    case RuntimeLibraryKind::kHierarchySegment:
-      return support::kHierarchySegmentStorage.layout;
-    case RuntimeLibraryKind::kChannelCancellation:
-      return support::kChannelCancellationStorage.layout;
-    case RuntimeLibraryKind::kDpiBitChunk:
-    case RuntimeLibraryKind::kDpiLogicChunk:
-    case RuntimeLibraryKind::kDpiOpenArrayHandle:
-    case RuntimeLibraryKind::kWatchedPlace:
-    case RuntimeLibraryKind::kCancellationTarget:
-    case RuntimeLibraryKind::kControlEffect:
-    case RuntimeLibraryKind::kObjectDefinition:
-    case RuntimeLibraryKind::kScopeInfo:
-    case RuntimeLibraryKind::kScopeCallable:
-    case RuntimeLibraryKind::kClassObjectInfo:
-    case RuntimeLibraryKind::kInterfaceRow:
-    case RuntimeLibraryKind::kScopeMetadata:
-    case RuntimeLibraryKind::kConstructionTable:
-    case RuntimeLibraryKind::kInstantiation:
-    case RuntimeLibraryKind::kGeneratePlaces:
-    case RuntimeLibraryKind::kTimer:
-    case RuntimeLibraryKind::kDeferredEffects:
-    case RuntimeLibraryKind::kViolationReportKeeper:
-    case RuntimeLibraryKind::kDumpEntry:
-    case RuntimeLibraryKind::kDumpBlock:
-      return kAddress;
+// The storage stated for an object of the library's a frame holds by value,
+// which every class a backend builds there fits.
+auto StatedLayoutOf(const support::RuntimeObject& object) -> support::Layout {
+  const std::optional<support::ObjectLayout> stated =
+      support::StatedStorageOf(object);
+  if (!stated.has_value()) {
+    throw InternalError(
+        "mir: a frame holds an object of the library's no storage is stated "
+        "for -- please report this as a bug");
   }
-  throw InternalError("mir: unknown runtime library kind");
+  return stated->layout;
+}
+
+// A value of a type the library declares: the storage stated for the object a
+// frame holds it as by value, and the word a frame names it by where it is
+// kept elsewhere.
+auto LayoutOfLibraryType(support::LibraryDecl decl) -> support::Layout {
+  return support::ObjectOf(decl).transform(StatedLayoutOf).value_or(kAddress);
 }
 
 // Whether a value laid out as `layout` is too large for a frame, which is a
@@ -188,36 +151,18 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
             }
             return value::ProductLayoutOf(parts).whole;
           },
-          [](const DynamicArrayType&) {
-            return support::kDynamicArrayStorage.layout;
-          },
-          [](const QueueType&) { return support::kQueueStorage.layout; },
-          [](const AssociativeArrayType&) {
-            return support::kAssociativeArrayStorage.layout;
-          },
-          [](const WildcardIndexType&) {
-            return support::kWildcardKeyStorage.layout;
-          },
-          [](const StringType&) { return support::kStringStorage.layout; },
-          [](const AnyType&) { return support::kAnyStorage.layout; },
           [](const ErasedValueType&) -> support::Layout {
             throw InternalError(
                 "mir: a value of a type known only where the program runs is "
                 "laid out only behind a reference -- please report this as a "
                 "bug");
           },
-          [](const RealType&) { return support::kRealStorage.layout; },
-          [](const ShortRealType&) {
-            return support::kShortRealStorage.layout;
-          },
-          [](const ChandleType&) { return support::kChandleStorage.layout; },
           [](const ManagedRefType&) {
-            return support::kObjectRefStorage.layout;
+            return StatedLayoutOf(support::ValueDomain::kManagedRef);
           },
-          [](const WeakManagedRefType&) {
-            return support::kWeakReferenceStorage.layout;
+          [](const UnmanagedRefType&) {
+            return value::FactsOf(value::UnmanagedRefScalar{}).layout;
           },
-          [](const EmptyType&) { return support::kEmptyStorage.layout; },
           [](const VoidType&) {
             return support::Layout{.size = 0, .align = 1};
           },
@@ -233,6 +178,9 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
             const std::uint64_t bytes = BitsOf(t.width) / 8;
             return support::Layout{.size = bytes, .align = bytes};
           },
+          [](const RealType& t) {
+            return value::FactsOf(value::RealScalar{.width = t.width}).layout;
+          },
           [&](const MachineCStringType& t) { return handle(t); },
           [&](const MachineFunctionType& t) { return handle(t); },
           [](const ErasedCallableType&) -> support::Layout {
@@ -245,7 +193,7 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
           [&](const PointerType& t) {
             switch (t.ownership) {
               case PointerOwnership::kShared:
-                return support::kSharedPointerStorage.layout;
+                return StatedLayoutOf(support::LibraryObject::kSharedPointer);
               case PointerOwnership::kUnique:
               case PointerOwnership::kBorrowed:
                 return kAddress;
@@ -256,41 +204,35 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
           // A variable's reference is the library's object naming where its
           // referent lies and whatever is told of a write through it.
           [&](const VariableRefType& t) {
-            return unit.types.Get(t.pointee).Is<ErasedValueType>()
-                       ? support::kAnyReferenceStorage.layout
-                       : support::kReferenceStorage.layout;
+            return StatedLayoutOf(
+                unit.types.Get(t.pointee).Is<ErasedValueType>()
+                    ? support::LibraryObject::kAnyReference
+                    : support::LibraryObject::kReference);
           },
           [](const ReferenceWrapperType&) {
-            return support::kReferenceStorage.layout;
+            return StatedLayoutOf(support::LibraryObject::kReference);
           },
           [&](const VectorType& t) { return handle(t); },
           [&](const CoroutineType& t) { return handle(t); },
           [&](const DriverType& t) { return handle(t); },
           [&](const ObjectType& t) { return handle(t); },
-          [&](const RuntimeClassType& t) { return handle(t); },
-          [&](const RuntimeEffectsType& t) { return handle(t); },
-          [&](const FilesType& t) { return handle(t); },
-          [&](const DiagnosticType& t) { return handle(t); },
-          [](const RuntimeLibraryType& t) {
-            return LayoutOfLibraryObject(t.kind);
-          },
+          [](const LibraryType& t) { return LayoutOfLibraryType(t.decl); },
           [&](const ObservableType& t) { return handle(t); },
           [&](const ResolvedType& t) { return handle(t); },
           // A write in progress and a place designated within one are the
           // library's objects the writer holds for as long as the write lasts.
           [](const OpenWriteType&) {
-            return support::kOpenWriteStorage.layout;
+            return StatedLayoutOf(support::LibraryObject::kOpenWrite);
           },
           [](const DesignationType&) {
-            return support::kDesignationStorage.layout;
+            return StatedLayoutOf(support::LibraryObject::kDesignation);
           },
           [&](const BitsReferenceType& t) { return handle(t); },
+          // A write into an object's properties is the library's object the
+          // writer holds while it writes there.
           [](const ObjectWriteType&) {
-            return support::kObjectWriteStorage.layout;
-          },
-          [&](const SampledHistoryType& t) { return handle(t); },
-          [&](const EvaluationAttemptsType& t) { return handle(t); },
-          [&](const LoopBlocksType& t) { return handle(t); }});
+            return StatedLayoutOf(support::LibraryObject::kObjectWrite);
+          }});
 }
 
 // Calls `discard` with each expression `data` evaluates and discards the value

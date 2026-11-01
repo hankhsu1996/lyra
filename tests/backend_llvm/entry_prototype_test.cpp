@@ -5,6 +5,7 @@
 #include <format>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <initializer_list>
 #include <iterator>
 #include <map>
 #include <optional>
@@ -15,6 +16,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/backend/llvm/entry_realizations.hpp"
 #include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -24,7 +26,7 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/member_storage_kind.hpp"
+#include "lyra/support/declared_member_storage.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -615,14 +617,23 @@ auto DeclaredRealizations() -> Realizations {
   }
   // The entry building a member's storage, for each kind of storage that holds
   // values over each domain the library lays that storage out for.
-  for (const support::MemberStorageKind kind :
-       {support::MemberStorageKind::kObservableCell,
-        support::MemberStorageKind::kResolvedNet,
-        support::MemberStorageKind::kSampledHistory,
-        support::MemberStorageKind::kValueCell}) {
+  using StorageOver =
+      auto (*)(support::ValueDomain)->support::DeclaredMemberStorage;
+  for (const StorageOver over : std::initializer_list<StorageOver>{
+           [](support::ValueDomain domain) -> support::DeclaredMemberStorage {
+             return support::ObservableCellMember{.domain = domain};
+           },
+           [](support::ValueDomain domain) -> support::DeclaredMemberStorage {
+             return support::ResolvedNetMember{.domain = domain};
+           },
+           [](support::ValueDomain domain) -> support::DeclaredMemberStorage {
+             return support::SampledHistoryMember{.domain = domain};
+           },
+           [](support::ValueDomain domain) -> support::DeclaredMemberStorage {
+             return support::ValueCellMember{.domain = domain};
+           }}) {
     for (const support::ValueDomain domain : domains) {
-      const support::DeclaredMemberStorage storage{
-          .kind = kind, .domain = domain};
+      const support::DeclaredMemberStorage storage = over(domain);
       try {
         runtime::LayoutOf(storage, runtime::LayoutOf(domain));
       } catch (const InternalError&) {

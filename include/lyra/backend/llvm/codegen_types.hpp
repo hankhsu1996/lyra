@@ -10,15 +10,17 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Type.h>
 
+#include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/declared_member_storage.hpp"
 #include "lyra/support/layout.hpp"
 #include "lyra/support/runtime_object.hpp"
+#include "lyra/support/value_domain.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/layout.hpp"
 
 namespace lyra::lir {
 struct CompilationUnit;
-struct IntegralType;
 }  // namespace lyra::lir
 
 namespace lyra::backend::llvm_backend {
@@ -68,6 +70,44 @@ using FieldsShape =
 [[nodiscard]] auto ShapeOf(const lir::IntegralType& integral)
     -> value::IntegralShape;
 
+// The domain a LIR type is realized in, absent for a type whose values are not
+// values of the design. It is the type's held object where that object is a
+// domain's, so the entry a call names and the storage a cell owns read one
+// classification.
+auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
+    -> std::optional<support::ValueDomain>;
+
+// What a member slot is for, which two declarations answer differently for a
+// slot of the same type: a variable is written through its own store for as
+// long as its owner lives, and a snapshot is filled once where its owner is
+// built and only read afterwards.
+enum class MemberSlotRole : std::uint8_t { kVariable, kSnapshot };
+
+// What the members a declaration gives its values are for. A closure's are
+// copies taken where it is built and only read after; every other
+// declaration's are variables of the value that holds them.
+auto MemberSlotRoleOf(const lir::TypeDeclaration& declaration)
+    -> MemberSlotRole;
+
+// The storage a member of `type` needs, with the value domain it holds where
+// it holds values of one, or nothing where this backend has no realization for
+// such a member. One arm per LIR type and no catch-all, because the kinds of
+// storage differ in what a write has to do: a type gained later fails to
+// compile here until someone says which storage it needs. Which type the
+// domain is read from follows from the storage -- one wrapping a value names
+// the type it wraps, one that is the value names the member's own type -- so
+// this is the one place a declaration's type becomes what the runtime builds
+// storage from.
+auto DeclaredStorageOf(
+    const lir::CompilationUnit& unit, lir::TypeId type, MemberSlotRole role)
+    -> std::optional<support::DeclaredMemberStorage>;
+
+// The storage a holder gives an object of the library's: the storage stated
+// for it, which every class a backend builds there fits, so a frame holds what
+// MIR counted it to.
+auto HolderStorageOf(const support::RuntimeObject& object)
+    -> support::ObjectLayout;
+
 // Maps a LIR type to the LLVM type a value of it is held in. A machine type
 // names itself, because a target's own type system already spells what the
 // target computes with; every other type answers with an address, because what
@@ -91,10 +131,10 @@ class CodeGenTypes {
   // The storage a value an owner holds occupies. A product's -- a tuple, or
   // a structure -- is composed from its components'; a fixed-size unpacked
   // array's is its elements'; a union's is its members' overlaid, then a tagged
-  // union's tag; an integral value's is the bytes the value layer lays a value
-  // of its width and states out in; a machine integer's is that integer's; a
-  // sequence of machine values is the values, as a C++ `std::array` is; every
-  // other owned value is one runtime object, whose storage the library states.
+  // union's tag; a scalar's is its own bytes, as the machine holds one of its
+  // kind; a machine integer's is that integer's; a sequence of machine values
+  // is the values, as a C++ `std::array` is; every other owned value is one
+  // runtime object, whose storage the library states.
   auto LayoutOf(lir::TypeId type) -> support::ObjectLayout;
   // Whether a value of `type` lies in storage of its own, which an operand of
   // it then names by address, as clang evaluates an aggregate into a slot

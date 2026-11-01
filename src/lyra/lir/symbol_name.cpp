@@ -16,7 +16,8 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/value_step.hpp"
 #include "lyra/support/def_path.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/float_width.hpp"
+#include "lyra/support/library_callback.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -288,24 +289,6 @@ void SpellType(const CompilationUnit& unit, TypeId type, std::string& out) {
             number(t.size);
             of(t.element_type);
           },
-          [&](const DynamicArrayType& t) {
-            kind('D');
-            of(t.element_type);
-          },
-          [&](const QueueType& t) {
-            kind('Q');
-            out += t.max_bound.has_value() ? std::format("{};", *t.max_bound)
-                                           : std::string{"-;"};
-            of(t.element_type);
-          },
-          [&](const AssociativeArrayType& t) {
-            kind('M');
-            of(t.key_type);
-            of(t.element_type);
-          },
-          [&](const WildcardIndexType&) { kind('W'); },
-          [&](const StringType&) { kind('S'); },
-          [&](const AnyType&) { kind('Y'); },
           [&](const AnyReferenceType&) { kind('R'); },
           [&](const MachineCStringType&) { kind('c'); },
           [&](const MachineBoolType&) { kind('b'); },
@@ -332,18 +315,21 @@ void SpellType(const CompilationUnit& unit, TypeId type, std::string& out) {
             all(t.params);
             of(t.result);
           },
-          [&](const RealType&) { kind('r'); },
-          [&](const ShortRealType&) { kind('h'); },
-          [&](const ChandleType&) { kind('C'); },
+          [&](const RealType& t) {
+            switch (t.width) {
+              case support::FloatWidth::k32:
+                kind('h');
+                return;
+              case support::FloatWidth::k64:
+                kind('r');
+                return;
+            }
+            throw InternalError("lir: unknown real width");
+          },
           [&](const VoidType&) { kind('v'); },
-          [&](const EmptyType&) { kind('e'); },
           [&](const ObjectType& t) {
             kind('O');
             named(DefinitionSymbol(unit, t.class_id));
-          },
-          [&](const RuntimeClassType& t) {
-            kind('L');
-            number(std::to_underlying(t.which));
           },
           [&](const ClosureType& t) {
             kind('K');
@@ -354,12 +340,30 @@ void SpellType(const CompilationUnit& unit, TypeId type, std::string& out) {
             all(t.params);
             of(t.result);
           },
-          [&](const RuntimeEffectsType&) { kind('x'); },
-          [&](const FilesType&) { kind('g'); },
-          [&](const DiagnosticType&) { kind('d'); },
-          [&](const RuntimeLibraryType& t) {
+          // A type the library declares is its declaration and its arguments,
+          // a queue's bound written as its count, or as `-` where it has
+          // none.
+          [&](const LibraryType& t) {
             kind('l');
-            number(std::to_underlying(t.kind));
+            number(std::to_underlying(t.decl));
+            number(t.args.size());
+            for (const LibraryType::Arg& arg : t.args) {
+              std::visit(
+                  Overloaded{
+                      [&](TypeId part) { of(part); },
+                      [&](const support::QueueBound& bound) {
+                        std::visit(
+                            Overloaded{
+                                [&](const support::UnboundedQueue&) {
+                                  out += "-;";
+                                },
+                                [&](const support::BoundedQueue& most) {
+                                  number(most.count);
+                                }},
+                            bound);
+                      }},
+                  arg);
+            }
           },
           [&](const CoroutineType& t) {
             kind('T');
@@ -380,8 +384,8 @@ void SpellType(const CompilationUnit& unit, TypeId type, std::string& out) {
             kind('H');
             of(t.pointee);
           },
-          [&](const WeakManagedRefType& t) {
-            kind('w');
+          [&](const UnmanagedRefType& t) {
+            kind('C');
             of(t.pointee);
           },
           [&](const VectorType& t) {
@@ -416,12 +420,6 @@ void SpellType(const CompilationUnit& unit, TypeId type, std::string& out) {
             kind('o');
             of(t.value);
           },
-          [&](const SampledHistoryType& t) {
-            kind('s');
-            of(t.value);
-          },
-          [&](const EvaluationAttemptsType&) { kind('t'); },
-          [&](const LoopBlocksType&) { kind('k'); },
           [&](const OpenWriteType& t) {
             kind('p');
             of(t.value);
@@ -429,7 +427,8 @@ void SpellType(const CompilationUnit& unit, TypeId type, std::string& out) {
           [&](const DesignationType& t) {
             kind('q');
             of(t.value);
-          }});
+          },
+          [&](const ObjectWriteType&) { kind('w'); }});
 }
 
 }  // namespace

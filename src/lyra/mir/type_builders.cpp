@@ -4,14 +4,15 @@
 #include <cstdint>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
-#include "lyra/base/overloaded.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_fwd.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -75,6 +76,45 @@ auto MachineArrayOf(const TypePool& types, TypeId element, std::size_t size)
           .element = element, .size = static_cast<std::uint32_t>(size)}});
 }
 
+auto DynamicArrayOf(const TypePool& types, TypeId element) -> TypeId {
+  return types.Intern(
+      Type{LibraryType{
+          .decl = support::LibraryDecl::kDynamicArray, .args = {element}}});
+}
+
+auto QueueOf(const TypePool& types, TypeId element, support::QueueBound bound)
+    -> TypeId {
+  return types.Intern(
+      Type{LibraryType{
+          .decl = support::LibraryDecl::kQueue, .args = {element, bound}}});
+}
+
+auto AssociativeArrayOf(const TypePool& types, TypeId index, TypeId element)
+    -> TypeId {
+  return types.Intern(
+      Type{LibraryType{
+          .decl = support::LibraryDecl::kAssociativeArray,
+          .args = {index, element}}});
+}
+
+auto WithElementType(const TypePool& types, TypeId container, TypeId element)
+    -> TypeId {
+  LibraryType rewritten = types.Get(container).Get<LibraryType>();
+  const std::optional<std::size_t> position =
+      support::ParamOf(rewritten.decl, support::LibraryParam::kElement);
+  if (!position.has_value()) {
+    throw InternalError(
+        "mir: the element type of a type that holds no elements was replaced "
+        "-- please report this as a bug");
+  }
+  rewritten.args.at(*position) = element;
+  return types.Intern(Type{std::move(rewritten)});
+}
+
+auto LibraryTypeOf(const TypePool& types, support::LibraryDecl decl) -> TypeId {
+  return types.Intern(Type{LibraryType{.decl = decl, .args = {}}});
+}
+
 auto ErasedFunction(const TypePool& types) -> TypeId {
   return types.Intern(
       Type{MachineFunctionType{
@@ -96,11 +136,6 @@ auto ErasedPointer(const TypePool& types) -> TypeId {
           .ownership = PointerOwnership::kBorrowed}});
 }
 
-auto WatchedPlace(const TypePool& types) -> TypeId {
-  return types.Intern(
-      Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kWatchedPlace}});
-}
-
 auto BoxOf(const TypePool& types, TypeId value) -> TypeId {
   return types.Intern(
       Type{PointerType{
@@ -120,15 +155,11 @@ auto AllocatedType(const TypePool& types, TypeId owner)
   return pointer->pointee;
 }
 
-auto ClassDefinitionType(const TypePool& types) -> TypeId {
-  return types.Intern(
-      Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kObjectDefinition}});
-}
-
 auto ClassDefinitionPointer(const TypePool& types) -> TypeId {
   return types.Intern(
       Type{PointerType{
-          .pointee = ClassDefinitionType(types),
+          .pointee =
+              LibraryTypeOf(types, support::LibraryDecl::kObjectDefinition),
           .ownership = PointerOwnership::kBorrowed,
           .mutability = Mutability::kReadOnly}});
 }
@@ -144,122 +175,27 @@ auto FunctionTypeOf(const TypePool& types, const CallableCode& code) -> TypeId {
           .params = std::move(params), .result = code.result_type}});
 }
 
-auto ObjectRootType(const TypePool& types) -> TypeId {
-  return types.Intern(
-      Type{RuntimeClassType{.which = support::RuntimeClass::kObject}});
-}
-
 auto ObjectRootPointer(const TypePool& types) -> TypeId {
   return types.Intern(
       Type{PointerType{
-          .pointee = ObjectRootType(types),
+          .pointee = LibraryTypeOf(types, support::LibraryDecl::kObjectRoot),
           .ownership = PointerOwnership::kBorrowed}});
-}
-
-auto ConstructionTableType(const TypePool& types) -> TypeId {
-  return types.Intern(
-      Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kConstructionTable}});
 }
 
 auto ConstructionTablePointer(const TypePool& types) -> TypeId {
   return types.Intern(
       Type{PointerType{
-          .pointee = ConstructionTableType(types),
+          .pointee =
+              LibraryTypeOf(types, support::LibraryDecl::kConstructionTable),
           .ownership = PointerOwnership::kBorrowed,
           .mutability = Mutability::kReadOnly}});
 }
 
 auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
-  // One arm per MIR type and no catch-all: a type added later fails to compile
-  // here until it is classified, rather than silently defaulting to
-  // non-observable -- which would leave a new value type's writes firing no
-  // subscribers, a bug no test would obviously catch.
-  const auto wrap = [&] {
-    return types.Intern(Type{ObservableType{.value = value_type}});
-  };
-  const auto bare = [&] { return value_type; };
-  const Type& value = types.Get(value_type);
-  return value.Visit(
-      Overloaded{
-          // A SystemVerilog value-storage data object (LRM 6.5): a variable of
-          // one of these is an observable signal, so it is wrapped in the cell
-          // that fires subscribers on change.
-          [&](const IntegralType&) { return wrap(); },
-          [&](const EnumType&) { return wrap(); },
-          [&](const UnpackedArrayType&) { return wrap(); },
-          [&](const DynamicArrayType&) { return wrap(); },
-          [&](const QueueType&) { return wrap(); },
-          [&](const AssociativeArrayType&) { return wrap(); },
-          [&](const StringType&) { return wrap(); },
-          [&](const RealType&) { return wrap(); },
-          [&](const ShortRealType&) { return wrap(); },
-          [&](const TupleType&) { return wrap(); },
-          [&](const RecordType&) { return wrap(); },
-          [&](const EmptyType&) { return wrap(); },
-          // A variable naming an object or holding a pointer is value storage
-          // too: LRM 9.4.2 makes a write to an object handle or a chandle an
-          // event when it is not equal to what was there, and the clause's own
-          // example puts a wait on a handle beside a wait on a property of the
-          // object to say they are two waits.
-          [&](const ManagedRefType&) { return wrap(); },
-          [&](const ChandleType&) { return wrap(); },
-          // Not value storage, so its own declaration shape is its storage and
-          // it is not wrapped: a handle onto storage of another lifetime
-          // (pointer, reference, vector), an object (a class instance
-          // or an instantiated child), a runtime facade (effects, files,
-          // diagnostics), a type the runtime library declares, a coroutine
-          // result, a machine
-          // primitive (a plain boolean, integer, float, C string, array, or
-          // code address), a closure, the wildcard index type (LRM 7.8.1),
-          // `void`, the observable, net-cell, net-driver, sampled-history and
-          // evaluation-attempt storage itself, and a write open on one of
-          // them.
-          [&](const WildcardIndexType&) { return bare(); },
-          // A value of any type is what a mailbox's own messages are where it
-          // states none (LRM 15.4.9): only the mailbox holds one, and nothing
-          // waits on it.
-          [&](const AnyType&) { return bare(); },
-          // A weak reference is held by the object it lies in alone, and a
-          // wait reaches what it refers to only by reading it (LRM 8.30.3).
-          [&](const WeakManagedRefType&) { return bare(); },
-          [&](const ErasedValueType&) { return bare(); },
-          [&](const MachineCStringType&) { return bare(); },
-          [&](const MachineBoolType&) { return bare(); },
-          [&](const MachineIntType&) { return bare(); },
-          [&](const MachineFloatType&) { return bare(); },
-          [&](const MachineArrayType&) { return bare(); },
-          [&](const MachineSpanType&) { return bare(); },
-          [&](const MachineFunctionType&) { return bare(); },
-          [&](const VoidType&) { return bare(); },
-          [&](const ObjectType&) { return bare(); },
-          [&](const RuntimeClassType&) { return bare(); },
-          [&](const RuntimeEffectsType&) { return bare(); },
-          [&](const FilesType&) { return bare(); },
-          [&](const DiagnosticType&) { return bare(); },
-          // A type the library declares is a payload built for one call,
-          // storage the runtime keeps, or the run of bits a streaming operator
-          // holds while it packs or unpacks (LRM 11.4.14), which no
-          // declaration names, so nothing waits on any of them.
-          [&](const RuntimeLibraryType&) { return bare(); },
-          [&](const CoroutineType&) { return bare(); },
-          [&](const VariableRefType&) { return bare(); },
-          [&](const ReferenceWrapperType&) { return bare(); },
-          [&](const PointerType&) { return bare(); },
-          [&](const ReferenceType&) { return bare(); },
-          [&](const VectorType&) { return bare(); },
-          [&](const ObservableType&) { return bare(); },
-          [&](const ResolvedType&) { return bare(); },
-          [&](const DriverType&) { return bare(); },
-          [&](const OpenWriteType&) { return bare(); },
-          [&](const DesignationType&) { return bare(); },
-          [&](const BitsReferenceType&) { return bare(); },
-          [&](const ObjectWriteType&) { return bare(); },
-          [&](const SampledHistoryType&) { return bare(); },
-          [&](const EvaluationAttemptsType&) { return bare(); },
-          [&](const LoopBlocksType&) { return bare(); },
-          [&](const ClosureType&) { return bare(); },
-          [&](const ErasedCallableType&) { return bare(); },
-      });
+  if (!IsDataType(types, value_type)) {
+    return value_type;
+  }
+  return types.Intern(Type{ObservableType{.value = value_type}});
 }
 
 }  // namespace lyra::mir

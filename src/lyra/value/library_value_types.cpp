@@ -8,14 +8,13 @@
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/bit_vec.hpp"
-#include "lyra/value/chandle.hpp"
-#include "lyra/value/empty.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/value_type.hpp"
 #include "lyra/value/value_witnesses_of.hpp"
 
@@ -103,9 +102,8 @@ constinit const ValueType lyra_rt_bitvec_value_type =
 constinit const ValueType lyra_rt_real_value_type = LibraryValueType<Real>();
 constinit const ValueType lyra_rt_shortreal_value_type =
     LibraryValueType<ShortReal>();
-constinit const ValueType lyra_rt_chandle_value_type =
-    LibraryValueType<Chandle>();
-constinit const ValueType lyra_rt_empty_value_type = LibraryValueType<Empty>();
+constinit const ValueType lyra_rt_unmanagedref_value_type =
+    LibraryValueType<UnmanagedRef>();
 constinit const ValueType lyra_rt_dynarray_value_type =
     LibraryValueType<RuntimeDynamicArray>();
 constinit const ValueType lyra_rt_queue_value_type =
@@ -121,8 +119,8 @@ constinit const OperationFunctions lyra_rt_real_operation_functions =
     kOperationFunctionsFor<OperationsOf<Real>>;
 constinit const OperationFunctions lyra_rt_shortreal_operation_functions =
     kOperationFunctionsFor<OperationsOf<ShortReal>>;
-constinit const OperationFunctions lyra_rt_chandle_operation_functions =
-    kOperationFunctionsFor<OperationsOf<Chandle>>;
+constinit const OperationFunctions lyra_rt_unmanagedref_operation_functions =
+    kOperationFunctionsFor<OperationsOf<UnmanagedRef>>;
 constinit const OperationFunctions lyra_rt_managedref_operation_functions =
     kOperationFunctionsFor<OperationsOf<ObjectRef>>;
 constinit const OperationFunctions lyra_rt_dynarray_operation_functions =
@@ -144,9 +142,9 @@ constinit const ValueOperations lyra_rt_shortreal_value_operations{
     .functions = &lyra_rt_shortreal_operation_functions,
     .type = &lyra_rt_shortreal_value_type,
     .element = nullptr};
-constinit const ValueOperations lyra_rt_chandle_value_operations{
-    .functions = &lyra_rt_chandle_operation_functions,
-    .type = &lyra_rt_chandle_value_type,
+constinit const ValueOperations lyra_rt_unmanagedref_value_operations{
+    .functions = &lyra_rt_unmanagedref_operation_functions,
+    .type = &lyra_rt_unmanagedref_value_type,
     .element = nullptr};
 constinit const ValueOperations lyra_rt_managedref_value_operations{
     .functions = &lyra_rt_managedref_operation_functions,

@@ -398,6 +398,18 @@ cc_test(
 )
 
 cc_test(
+    name = "support_library_decl_test",
+    srcs = ["support/library_decl_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:abi",
+        "//:base",
+        "//:support",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "support_builtin_fn_test",
     srcs = ["support/builtin_fn_test.cpp"],
     copts = LYRA_COPTS,

@@ -178,7 +178,10 @@ auto TypeImporter::Import(const Type& type) -> Type {
             }
             return Type{std::move(imported)};
           },
-          [](const VirtualInterfaceType& t) -> Type { return Type{t}; },
+          [this](const VirtualInterfaceType& t) -> Type {
+            return Type{VirtualInterfaceType{
+                .scope_class = ImportScopeClass(t.scope_class)}};
+          },
           [](const NullType& t) -> Type { return Type{t}; },
           [](const DynamicType& t) -> Type { return Type{t}; },
           [](const VoidType& t) -> Type { return Type{t}; }});

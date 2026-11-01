@@ -868,6 +868,12 @@ class UnitLowerer {
   auto ScopeClassOfInstance(const slang::ast::InstanceSymbol& instance)
       -> hir::ScopeClassId;
 
+  // The same class named without being read, as a type naming an interface
+  // (LRM 25.9) names it: the name alone reads nothing of that unit, and a
+  // name reaching into the instance a handle holds reads the class there.
+  auto InterfaceClassOf(const slang::ast::InstanceSymbol& instance)
+      -> hir::ScopeClassId;
+
   // This unit's record of the class an instance of `unit_name` is an object
   // of, taken from that unit's signature the first time one is reached and
   // answered with the same identity every later time. Reaching another unit's

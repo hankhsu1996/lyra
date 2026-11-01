@@ -38,7 +38,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_callback.hpp"
 #include "lyra/support/scope_execution.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -312,8 +312,16 @@ class UnitLowerer {
     return *source_manager_;
   }
 
+  // The MIR type an HIR type is, asked only of one MIR has a type for.
   [[nodiscard]] auto TranslateType(hir::TypeId hir_id) const -> mir::TypeId {
-    return type_translations_.Get(hir_id);
+    const std::optional<mir::TypeId>& translated =
+        type_translations_.Get(hir_id);
+    if (!translated.has_value()) {
+      throw InternalError(
+          "TranslateType: a type MIR has no type for was asked for its MIR "
+          "type -- please report this as a bug");
+    }
+    return *translated;
   }
 
   // The class the covergroup `covergroup` is written as (LRM 19.3): this
@@ -684,15 +692,17 @@ class UnitLowerer {
   // so no class is its owner.
   void PublishAssignmentPatternTexts();
 
-  // States every operation on a whole value of each union, tagged union and
-  // fixed-size unpacked array the unit names (LRM 7.3, 7.4.2), and the default
-  // of every type the unit holds an array of, whatever the array's kind
-  // (LRM 7.4.5). Which types those are follows from the source's types alone,
-  // every one of which is translated before any body lowers, so the set is
-  // whole here and no body adds to it.
+  // States what each type the unit names with no declaration answers with a
+  // body of the unit's own: every operation on a whole value of a fixed-size
+  // unpacked array (LRM 7.4.2), each operation of a tuple that some code of
+  // the unit calls, an array's passage into and out of the form of it with no
+  // queue bounded (LRM 7.6), and the default of every type the unit holds an
+  // array of, whatever the array's kind (LRM 7.4.5), and of every tuple.
   void PublishTypeOperations();
 
-  [[nodiscard]] auto TranslateType(const hir::Type& type) -> mir::Type;
+  // The MIR type an HIR type is, and nothing for one MIR has no type for.
+  [[nodiscard]] auto TranslateType(const hir::Type& type)
+      -> std::optional<mir::Type>;
 
   // The record type a structure or a union is, its record declared here and
   // defined once every type has its translation: its members may be of types
@@ -729,7 +739,7 @@ class UnitLowerer {
   const hir::CompilationUnit* hir_;
   const diag::SourceManager* source_manager_;
   mir::CompilationUnit unit_;
-  base::Translation<hir::TypeId, mir::TypeId> type_translations_;
+  base::Translation<hir::TypeId, std::optional<mir::TypeId>> type_translations_;
   // The class each class the unit names is, of this unit or another, and the
   // randomization bodies each one this unit declares takes.
   base::Translation<hir::ClassId, mir::ClassId> class_identities_;

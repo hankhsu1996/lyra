@@ -52,15 +52,22 @@ class UnitLowerer;
 [[nodiscard]] auto ReferenceTo(
     const mir::CompilationUnit& unit, mir::TypeId type) -> mir::TypeId;
 
-// A body for every operation on a whole value the fixed-size unpacked array
-// `type` has (LRM 7.4.2), each element's in turn, which the unit naming the
-// type states as its own.
-[[nodiscard]] auto ArrayOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
+// A body for every operation on a whole value `type`, a type whose operations
+// each unit naming it states as its own, has: a fixed-size unpacked array's
+// each element's in turn (LRM 7.4.2), and a tuple's each component's in turn,
+// where every component has it.
+[[nodiscard]] auto TypeOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
     -> std::vector<mir::TypeOperation>;
 
+// The one of those bodies answering `asked`, or nothing where `type` has no
+// such operation.
+[[nodiscard]] auto TypeOperationOf(
+    UnitLowerer& lowerer, mir::TypeId type, support::ValueOperation asked)
+    -> std::optional<mir::TypeOperation>;
+
 // How many positions a procedural continuous assignment may hold some of in a
-// value of `type` (LRM 10.6.2): an integral value's bits, a structure's
-// members' and a fixed-size unpacked array's elements' positions one part
+// value of `type` (LRM 10.6.2): an integral value's bits, a product's
+// components' and a fixed-size unpacked array's elements' positions one part
 // after another, the first part's first, and one for any other value, which is
 // held whole.
 [[nodiscard]] auto PositionCountOf(

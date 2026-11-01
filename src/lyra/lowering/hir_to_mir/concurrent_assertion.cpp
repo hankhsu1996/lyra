@@ -35,8 +35,10 @@
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/property_answer.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -1140,7 +1142,7 @@ auto LowerExpectStmt(
                      unit.builtins.wait_ptr)));
 
   const mir::TypeId attempts_type =
-      unit.types.Intern(mir::Type{mir::EvaluationAttemptsType{}});
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kEvaluationAttempts);
   const mir::TypeId attempts_pointer = unit.types.Intern(
       mir::Type{mir::PointerType{
           .pointee = attempts_type,

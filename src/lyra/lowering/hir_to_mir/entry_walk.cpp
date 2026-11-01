@@ -96,16 +96,15 @@ auto BuildPositionLoopStmt(
       unit, frame, block, count, position, order, body_scope, walk.Label());
 }
 
-// The loop over an associative array, by its keys, which the index variable
-// holds in turn.
+// The loop over an associative array of `element` indexed by `key_type`, by
+// its keys, which the index variable holds in turn.
 auto BuildKeyedLoopStmt(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const WalkedArray& array,
-    mir::AssociativeArrayType keyed, WalkOrder order,
+    mir::TypeId key_type, mir::TypeId element, WalkOrder order,
     std::optional<BindingOriginId> index_origin, const EntryVisit& visit)
     -> diag::Result<mir::Stmt> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
-  const mir::TypeId key_type = keyed.key_type;
 
   const mir::LocalId key = IndexLocal(frame, index_origin, key_type);
   block.AppendStmt(
@@ -120,8 +119,7 @@ auto BuildKeyedLoopStmt(
   const EntryPlace place{
       .index = key, .index_type = key_type, .position = std::nullopt};
   AccessPath named = NamedIn(array.path, body_builder);
-  DescentStep visited =
-      StepToVisited(unit, body_builder, place, keyed.element_type);
+  DescentStep visited = StepToVisited(unit, body_builder, place, element);
   auto ran = visit(
       at, VisitedEntry{
               .element = PathValue(
@@ -227,15 +225,16 @@ auto BuildEntryLoopStmt(
     WalkOrder order, std::optional<BindingOriginId> index_origin,
     const EntryVisit& visit) -> diag::Result<mir::Stmt> {
   const mir::Type& type = unit_lowerer.Unit().types.Get(array.type);
-  if (const auto* keyed = type.As<mir::AssociativeArrayType>()) {
-    return BuildKeyedLoopStmt(
-        unit_lowerer, frame, array, *keyed, order, index_origin, visit);
-  }
   const std::optional<mir::TypeId> element = type.ContainerElementType();
   if (!element.has_value()) {
     throw InternalError(
         "BuildEntryLoopStmt: the array whose entries are visited is no "
         "unpacked array");
+  }
+  if (const std::optional<mir::TypeId> key_type = type.IndexType()) {
+    return BuildKeyedLoopStmt(
+        unit_lowerer, frame, array, *key_type, *element, order, index_origin,
+        visit);
   }
   return BuildPositionLoopStmt(
       unit_lowerer, frame, array, *element, order, index_origin, visit);

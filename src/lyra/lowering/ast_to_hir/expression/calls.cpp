@@ -51,6 +51,7 @@
 #include "lyra/lowering/ast_to_hir/covergroup_access.hpp"
 #include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/expression/operators.hpp"
 #include "lyra/lowering/ast_to_hir/expression/query.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
@@ -580,6 +581,16 @@ auto LowerSystemCall(
   const auto& info =
       std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
   const std::string_view name = info.subroutine->name;
+
+  // Every system subroutine taking an operand of no stated type formats it,
+  // and a `null` formats as a handle naming nothing whatever type of handle it
+  // is (LRM 21.2.1.6), so an untyped one is the null chandle.
+  const hir::TypeId chandle = types.Intern(hir::Type{hir::ChandleType{}});
+  for (std::optional<hir::ExprId>& arg : arg_ids) {
+    if (arg.has_value()) {
+      arg = NullAsTypeOf(types, frame, *arg, chandle);
+    }
+  }
 
   if (receiver_type.has_value() &&
       types.Get(*receiver_type).Is<hir::EnumType>()) {

@@ -10,10 +10,6 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// An unbounded queue of `element` (LRM 7.10).
-[[nodiscard]] auto QueueOf(mir::CompilationUnit& unit, mir::TypeId element)
-    -> mir::TypeId;
-
 // Appends to `block` the statement adding `value`, brought to the element type,
 // to the back of the queue held in `queue`, which then holds it to its bound
 // (LRM 7.10.2.7).

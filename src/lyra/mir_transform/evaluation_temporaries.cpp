@@ -26,6 +26,7 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/mir_transform/block_rebuild.hpp"
+#include "lyra/support/movability.hpp"
 
 namespace lyra::mir_transform {
 
@@ -146,12 +147,12 @@ auto OperandsOf(const mir::CompilationUnit& unit, const mir::Expr& node)
 }
 
 // Whether a temporary can stand in for a value of movability `movability`.
-auto IsMovable(mir::Movability movability) -> bool {
+auto IsMovable(support::Movability movability) -> bool {
   switch (movability) {
-    case mir::Movability::kCopyable:
-    case mir::Movability::kMovable:
+    case support::Movability::kCopyable:
+    case support::Movability::kMovable:
       return true;
-    case mir::Movability::kImmovable:
+    case support::Movability::kImmovable:
       return false;
   }
   throw InternalError("mir_transform: unknown movability");
@@ -159,12 +160,12 @@ auto IsMovable(mir::Movability movability) -> bool {
 
 // Whether a value of movability `movability` is read out of its temporary as
 // a copy.
-auto IsCopyable(mir::Movability movability) -> bool {
+auto IsCopyable(support::Movability movability) -> bool {
   switch (movability) {
-    case mir::Movability::kCopyable:
+    case support::Movability::kCopyable:
       return true;
-    case mir::Movability::kMovable:
-    case mir::Movability::kImmovable:
+    case support::Movability::kMovable:
+    case support::Movability::kImmovable:
       return false;
   }
   throw InternalError("mir_transform: unknown movability");

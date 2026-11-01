@@ -27,6 +27,7 @@
 #include "lyra/lir/value_step.hpp"
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -97,7 +98,7 @@ struct ConstantAddress {
 // library declares them, a member that is a structure of its own given as a
 // record of its own.
 struct ConstantRecord {
-  RuntimeLibraryKind kind;
+  support::LibraryDecl decl;
   std::vector<Constant> parts;
 };
 

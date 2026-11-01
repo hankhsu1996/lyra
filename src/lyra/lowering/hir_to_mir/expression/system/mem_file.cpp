@@ -38,6 +38,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -102,7 +103,7 @@ auto DescribeMemory(
             // wildcard index (LRM 7.8.1) declares none.
             const mir::Type& key = unit_lowerer.Unit().types.Get(
                 unit_lowerer.TranslateType(a.key_type));
-            if (key.Is<mir::WildcardIndexType>()) {
+            if (key.IsDeclaredBy(support::LibraryDecl::kWildcardIndex)) {
               return diag::Fail(
                   span, diag::DiagCode::kUnsupportedSubroutineArgument,
                   "'{}' with an associative memory of wildcard index is not "

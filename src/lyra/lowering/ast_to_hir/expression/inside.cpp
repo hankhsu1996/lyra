@@ -7,6 +7,7 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 
+#include "lyra/lowering/ast_to_hir/expression/operators.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -21,12 +22,15 @@ auto LowerInsideExpr(
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id = frame.Exprs().Add(*std::move(lhs_or));
 
+  const hir::TypePool& types = lowerer.Owner().Unit().types;
+  const hir::TypeId lhs_type = frame.Exprs().Get(lhs_id).type;
   std::vector<hir::ExprId> items;
   items.reserve(in.rangeList().size());
   for (const auto* item : in.rangeList()) {
     auto item_or = lowerer.LowerExpr(*item, frame);
     if (!item_or) return std::unexpected(std::move(item_or.error()));
-    items.push_back(frame.Exprs().Add(*std::move(item_or)));
+    items.push_back(NullAsTypeOf(
+        types, frame, frame.Exprs().Add(*std::move(item_or)), lhs_type));
   }
 
   auto type_id = lowerer.Owner().InternExpressionType(in, span);

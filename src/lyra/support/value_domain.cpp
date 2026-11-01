@@ -40,10 +40,8 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "real";
     case ValueDomain::kShortReal:
       return "shortreal";
-    case ValueDomain::kChandle:
-      return "chandle";
-    case ValueDomain::kEmpty:
-      return "empty";
+    case ValueDomain::kUnmanagedRef:
+      return "unmanagedref";
     case ValueDomain::kLaidOut:
       return "laidout";
     case ValueDomain::kDynArray:
@@ -80,39 +78,7 @@ auto IsLaidOutByItsType(ValueDomain domain) -> bool {
     case ValueDomain::kBitVec:
     case ValueDomain::kReal:
     case ValueDomain::kShortReal:
-    case ValueDomain::kChandle:
-    case ValueDomain::kEmpty:
-    case ValueDomain::kDynArray:
-    case ValueDomain::kQueue:
-    case ValueDomain::kAssocArray:
-    case ValueDomain::kManagedRef:
-      return false;
-  }
-  throw InternalError("value domain: unknown domain");
-}
-
-auto IsIntegralLayout(ValueDomain domain) -> bool {
-  switch (domain) {
-    case ValueDomain::kBit8:
-    case ValueDomain::kBit16:
-    case ValueDomain::kBit32:
-    case ValueDomain::kBit64:
-    case ValueDomain::kLogic8:
-    case ValueDomain::kLogic16:
-    case ValueDomain::kLogic32:
-    case ValueDomain::kLogic64:
-      return true;
-    case ValueDomain::kBitWide:
-    case ValueDomain::kLogicWide:
-    case ValueDomain::kWildcardIndex:
-    case ValueDomain::kAny:
-    case ValueDomain::kString:
-    case ValueDomain::kBitVec:
-    case ValueDomain::kReal:
-    case ValueDomain::kShortReal:
-    case ValueDomain::kChandle:
-    case ValueDomain::kEmpty:
-    case ValueDomain::kLaidOut:
+    case ValueDomain::kUnmanagedRef:
     case ValueDomain::kDynArray:
     case ValueDomain::kQueue:
     case ValueDomain::kAssocArray:

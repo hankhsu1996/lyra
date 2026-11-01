@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/concatenation.hpp"
+#include "lyra/lowering/hir_to_mir/container_construction.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
@@ -33,6 +34,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -64,8 +66,7 @@ auto ContributesItsElements(
 // questions whose answers coincide over these three kinds and whose LRM clauses
 // are not the same, so neither one stands in for the other.
 auto BuildsFromAnElementList(const mir::Type& ty) -> bool {
-  return ty.Is<mir::UnpackedArrayType>() || ty.Is<mir::DynamicArrayType>() ||
-         ty.Is<mir::QueueType>();
+  return ty.ContainerElementType().has_value() && !ty.IndexType().has_value();
 }
 
 // Bits repeated as many times as fill `result_type`, an integral type (LRM
@@ -101,7 +102,9 @@ auto BuildUnpackedConcatSteps(
   const mir::TypeId element_type =
       RequiredContainerElementType(unit, result_type);
   const mir::TypeId queue_type =
-      result.Is<mir::QueueType>() ? result_type : QueueOf(unit, element_type);
+      result.IsDeclaredBy(support::LibraryDecl::kQueue)
+          ? result_type
+          : mir::QueueOf(unit.types, element_type, support::UnboundedQueue{});
   BlockBuilder steps(frame);
   mir::Builder body = steps.Body();
   const mir::LocalId appended = steps.DeclareLocal(
@@ -173,7 +176,7 @@ auto LowerHirConcatExpr(
   // What the operator joins -- bits, characters, elements -- differs by operand
   // family, so which operation this is settles here, where the family is known,
   // rather than at each consumer.
-  if (result_ty.Is<mir::StringType>()) {
+  if (result_ty.IsDeclaredBy(support::LibraryDecl::kString)) {
     return block.Get(BuildStringJoin(unit, block, operand_ids));
   }
   if (result_ty.Is<mir::UnpackedArrayType>()) {
@@ -524,10 +527,9 @@ auto LowerHirDynamicArrayNewExpr(
             mir::CallExpr{
                 .callee =
                     mir::Direct{
-                        .target =
-                            from.has_value()
-                                ? support::BuiltinFn::kMakeDynamicArrayNewCopy
-                                : support::BuiltinFn::kMakeDynamicArrayNew},
+                        .target = from.has_value()
+                                      ? support::BuiltinFn::kDynamicArrayNewCopy
+                                      : support::BuiltinFn::kDynamicArrayNew},
                 .arguments = std::move(args)},
         .type = result_type};
   };

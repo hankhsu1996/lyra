@@ -8,6 +8,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -87,6 +88,28 @@ void AppendScheduleAfterReturnRequirement(
 [[nodiscard]] auto BuildStringValueExpr(
     const mir::CompilationUnit& unit, mir::Builder block, std::string text)
     -> mir::ExprId;
+
+// The two entries one use of a delay amount is made by, of which the amount's
+// own type picks one (LRM 9.4.1): an integral amount counts whole time units
+// and gives its unknown and negative values meanings of their own, while a
+// real one may name a fraction of a unit.
+struct DelayEntries {
+  support::BuiltinFn integral;
+  support::BuiltinFn real;
+};
+
+// The entry a delay amount is read by, and the amount as that entry takes it.
+struct DelayRead {
+  support::BuiltinFn entry;
+  mir::ExprId amount;
+};
+
+// How `amount` is read by whichever of `entries` its type picks: an integral
+// amount as written, and a real one at `real`, into which a `shortreal`
+// widens, since the two differ only in host precision (LRM 6.12.1).
+[[nodiscard]] auto ReadDelayAmount(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId amount,
+    DelayEntries entries) -> DelayRead;
 
 // Builds the file-IO broker expression `current_runtime().Files()`: a
 // `Files` method call on the engine handle, typed as the unit's `files`

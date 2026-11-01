@@ -313,6 +313,7 @@ cc_library(
     deps = [
         ":diag",
         ":support",
+        ":value",
     ],
 )
 

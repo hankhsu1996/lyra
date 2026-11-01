@@ -48,6 +48,7 @@
 #include "lyra/hir/published_clocking.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/published_target.hpp"
+#include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
@@ -1021,6 +1022,14 @@ auto UnitLowerer::ReadingImporter(const hir::UnitSignature& signature)
 auto UnitLowerer::ScopeClassOfInstance(
     const slang::ast::InstanceSymbol& instance) -> hir::ScopeClassId {
   return ScopeClassOf(Names().NameOf(instance));
+}
+
+auto UnitLowerer::InterfaceClassOf(const slang::ast::InstanceSymbol& instance)
+    -> hir::ScopeClassId {
+  return unit_.scope_classes.Import(
+      hir::ScopeClassKey{
+          .unit_name = Names().InterfaceNameOf(instance),
+          .class_path = hir::UnitScopeClassPath()});
 }
 
 auto UnitLowerer::ScopeClassOf(const std::string& unit_name)

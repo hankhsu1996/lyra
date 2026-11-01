@@ -33,6 +33,7 @@
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/shared_pointer.hpp"
+#include "lyra/runtime/stated_storage.hpp"
 #include "lyra/runtime/storage_for.hpp"
 #include "lyra/runtime/synchronization_object.hpp"
 #include "lyra/runtime/tail.hpp"
@@ -44,12 +45,10 @@
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/bit_vec.hpp"
-#include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
 #include "lyra/value/element_type.hpp"
-#include "lyra/value/empty.hpp"
 #include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/index_order.hpp"
@@ -62,6 +61,7 @@
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
 
@@ -69,7 +69,6 @@ namespace lyra::runtime {
 
 namespace {
 
-using support::MemberStorageKind;
 using support::ObjectLayout;
 using support::ValueDomain;
 
@@ -77,56 +76,109 @@ template <typename T>
 constexpr auto Of() -> ObjectLayout {
   return ObjectLayout{
       .layout = {.size = sizeof(T), .align = alignof(T)},
-      .ends_with_nothing_to_do = std::is_trivially_destructible_v<T>};
+      .needs_end = !std::is_trivially_destructible_v<T>};
 }
 
-// Each object takes the storage stated for it, which a layer compiled without
-// the runtime sizes a frame holding one by.
-static_assert(Of<Trigger>() == support::kTriggerStorage);
-static_assert(Of<Observation>() == support::kObservationStorage);
-static_assert(Of<ReadReport>() == support::kReadReportStorage);
-static_assert(Of<Wait>() == support::kWaitStorage);
-static_assert(Of<LeasedReference>() == support::kLeasedReferenceStorage);
-static_assert(Of<HierarchySegment>() == support::kHierarchySegmentStorage);
+// Each storage stated is exactly the least every class built there fits,
+// which a layer compiled without the runtime sizes a frame holding one by: an
+// object of a type the library declares, its declaration's, and one of a type
+// the IR owns, the storage stated beside it.
+consteval auto EveryClassTakesItsStatedStorage() -> bool {
+  bool exact = true;
+  ForEachDeclaredObjectClass([&]<typename Built, typename Written>(
+                                 support::LibraryDecl decl,
+                                 BuiltIn<Built, Written>) {
+    const std::optional<ObjectLayout> stated = support::ObjectStorageOf(decl);
+    exact = exact && (!stated.has_value() ||
+                      StorageEnclosing<Built, Written>() == *stated);
+  });
+  ForEachStatedObjectClass(
+      [&]<typename Built, typename Written>(
+          const support::RuntimeObject& object, BuiltIn<Built, Written>) {
+        exact = exact && support::StatedStorageOf(object) ==
+                             StorageEnclosing<Built, Written>();
+      });
+  return exact;
+}
+static_assert(EveryClassTakesItsStatedStorage());
+
+// What an object of the class the library's entries build for `decl`
+// occupies.
+auto ClassLayoutOf(support::LibraryDecl decl) -> ObjectLayout {
+  std::optional<ObjectLayout> found;
+  ForEachDeclaredObjectClass(
+      [&]<typename Built, typename Written>(
+          support::LibraryDecl paired, BuiltIn<Built, Written>) {
+        if (paired == decl) {
+          found = Of<Built>();
+        }
+      });
+  if (!found.has_value()) {
+    throw InternalError(
+        "object layout: a declaration names no class the runtime defines -- "
+        "please report this as a bug");
+  }
+  return *found;
+}
+
+// Hands `visit` each class of the runtime's a class of the source extends,
+// with its declaration: an instance of the design hierarchy extends a scope
+// (LRM 23.3), an object the program makes the root, and one of a class with a
+// generator a class object (LRM 8.3, 18.14.1).
+template <typename Visit>
+constexpr void ForEachExtendedClass(const Visit& visit) {
+  using support::LibraryDecl;
+  visit.template operator()<Scope>(LibraryDecl::kScope);
+  visit.template operator()<GcObject>(LibraryDecl::kObjectRoot);
+  visit.template operator()<ClassObject>(LibraryDecl::kClassObject);
+}
+
+// Hands `visit` each declaration of a class of the runtime's, with that class:
+// those a class of the source extends, and a process, an event's object and a
+// randomization's problem, which the library alone builds (LRM 9.7, 6.17,
+// 18.6).
+template <typename Visit>
+constexpr void ForEachRuntimeClass(const Visit& visit) {
+  using support::LibraryDecl;
+  ForEachExtendedClass(visit);
+  visit.template operator()<RuntimeProcess>(LibraryDecl::kProcess);
+  visit.template operator()<SynchronizationObject>(
+      LibraryDecl::kSynchronizationObject);
+  visit.template operator()<ConstraintProblem>(LibraryDecl::kConstraintProblem);
+}
+
+// Every declaration stating a class of the runtime's is listed with its class
+// exactly once, and no other is.
+consteval auto EveryRuntimeClassIsListedOnce() -> bool {
+  bool listed_once = true;
+  support::ForEachLibraryDecl([&](support::LibraryDecl decl) {
+    std::size_t times = 0;
+    ForEachRuntimeClass([&]<typename T>(support::LibraryDecl listed) {
+      if (listed == decl) {
+        ++times;
+      }
+    });
+    const bool states_one =
+        support::DeclarationOf(decl).runtime_class.has_value();
+    listed_once = listed_once && times == (states_one ? 1U : 0U);
+  });
+  return listed_once;
+}
 static_assert(
-    Of<ChannelCancellation>() == support::kChannelCancellationStorage);
-static_assert(Of<WeakObjectRef>() == support::kWeakReferenceStorage);
-static_assert(Of<ErasedReference>() == support::kReferenceStorage);
-static_assert(Of<AnyReference>() == support::kAnyReferenceStorage);
-static_assert(Of<SharedPointer>() == support::kSharedPointerStorage);
-static_assert(Of<OpenWrite>() == support::kOpenWriteStorage);
-static_assert(Of<ErasedDesignation>() == support::kDesignationStorage);
-static_assert(Of<ErasedObjectWrite>() == support::kObjectWriteStorage);
-static_assert(Of<value::String>() == support::kStringStorage);
-static_assert(Of<value::Real>() == support::kRealStorage);
-static_assert(Of<value::ShortReal>() == support::kShortRealStorage);
-static_assert(Of<value::Chandle>() == support::kChandleStorage);
-static_assert(Of<value::ObjectRef>() == support::kObjectRefStorage);
-static_assert(
-    Of<value::RuntimeDynamicArray>() == support::kDynamicArrayStorage);
-static_assert(Of<value::RuntimeQueue>() == support::kQueueStorage);
-static_assert(
-    Of<value::RuntimeAssociativeArray>() == support::kAssociativeArrayStorage);
-static_assert(Of<value::WildcardKey>() == support::kWildcardKeyStorage);
-static_assert(Of<value::Any>() == support::kAnyStorage);
-static_assert(Of<value::Empty>() == support::kEmptyStorage);
-static_assert(Of<value::BitVec>() == support::kBitVecStorage);
-static_assert(Of<value::PrintItem>() == support::kPrintItemStorage);
-static_assert(Of<value::FormatSpec>() == support::kFormatSpecStorage);
-static_assert(Of<value::FormatArg>() == support::kFormatArgStorage);
-static_assert(Of<value::TimeFormat>() == support::kTimeFormatStorage);
-static_assert(Of<value::DpiBitBuffer>() == support::kDpiBitBufferStorage);
-static_assert(Of<value::DpiLogicBuffer>() == support::kDpiLogicBufferStorage);
-static_assert(Of<value::DpiOpenArray>() == support::kDpiOpenArrayStorage);
+    EveryRuntimeClassIsListedOnce(),
+    "a declaration stating a class of the runtime's is listed with its class "
+    "other than once, or one stating none is listed");
 
 // Every backend reads an object's class from the object's first word, which a
 // table pointer the host compiler gave a class of the library would take.
-static_assert(!std::is_polymorphic_v<GcObject>);
-static_assert(!std::is_polymorphic_v<ClassObject>);
-static_assert(!std::is_polymorphic_v<RuntimeProcess>);
-static_assert(!std::is_polymorphic_v<Scope>);
-static_assert(!std::is_polymorphic_v<SynchronizationObject>);
-static_assert(!std::is_polymorphic_v<ConstraintProblem>);
+consteval auto NoRuntimeClassIsPolymorphic() -> bool {
+  bool none = true;
+  ForEachRuntimeClass([&]<typename T>(support::LibraryDecl) {
+    none = none && !std::is_polymorphic_v<T>;
+  });
+  return none;
+}
+static_assert(NoRuntimeClassIsPolymorphic());
 
 template <typename Answer>
 [[noreturn]] auto NotRealized() -> Answer {
@@ -140,7 +192,7 @@ template <typename Answer>
 // this is the one place a domain names its class, and what a storage admits is
 // asked of the class it is handed.
 template <typename F>
-auto WithValueClass(ValueDomain domain, F f)
+constexpr auto WithValueClass(ValueDomain domain, F f)
     -> decltype(f.template operator()<value::String>()) {
   switch (domain) {
     case ValueDomain::kBit8:
@@ -175,10 +227,8 @@ auto WithValueClass(ValueDomain domain, F f)
       return f.template operator()<value::Real>();
     case ValueDomain::kShortReal:
       return f.template operator()<value::ShortReal>();
-    case ValueDomain::kChandle:
-      return f.template operator()<value::Chandle>();
-    case ValueDomain::kEmpty:
-      return f.template operator()<value::Empty>();
+    case ValueDomain::kUnmanagedRef:
+      return f.template operator()<value::UnmanagedRef>();
     case ValueDomain::kLaidOut:
       return f.template operator()<value::LaidOutValue>();
     case ValueDomain::kDynArray:
@@ -193,14 +243,31 @@ auto WithValueClass(ValueDomain domain, F f)
   throw InternalError("object layout: unknown value domain");
 }
 
-// A variable a declaration names may be of every value class but the empty
-// one, which is only ever a tagged union's payload (LRM 7.3.2), an index held
-// with its type, which is no type a declaration can name (LRM 7.8.1), and a
-// run of bits, which is the stream a streaming operator makes and no
+// The class the library's entries build for a declaration whose values are
+// objects of a value domain is the class every holder of that domain holds,
+// so the two never disagree on what lies in the storage stated for it.
+consteval auto EveryDomainObjectIsItsDomainsClass() -> bool {
+  bool same = true;
+  ForEachDeclaredObjectClass([&]<typename Built, typename Written>(
+                                 support::LibraryDecl decl,
+                                 BuiltIn<Built, Written>) {
+    const auto* held = std::get_if<support::DomainObject>(
+        &support::DeclarationOf(decl).holding);
+    same = same &&
+           (held == nullptr || WithValueClass(held->domain, []<typename T>() {
+              return std::is_same_v<T, Built>;
+            }));
+  });
+  return same;
+}
+static_assert(EveryDomainObjectIsItsDomainsClass());
+
+// A variable a declaration names may be of every value class but an index
+// held with its type, which is no type a declaration can name (LRM 7.8.1), and
+// a run of bits, which is the stream a streaming operator makes and no
 // declaration names either (LRM 11.4.14.1).
 template <typename T>
 struct AdmitsVariable : std::bool_constant<
-                            !std::is_same_v<T, value::Empty> &&
                             !std::is_same_v<T, value::AnyValue> &&
                             !std::is_same_v<T, value::BitVec>> {};
 
@@ -213,12 +280,14 @@ struct AdmitsLocal
     : std::bool_constant<
           AdmitsVariable<T>::value || std::is_same_v<T, value::BitVec>> {};
 
-// A history is kept over every variable type but the chandle, whose value is
-// the pointer it carries (LRM 6.14), which no sampled read can answer across.
+// A history is kept over every variable type but a reference owning nothing,
+// whose value is the address it carries (LRM 6.14), which no sampled read can
+// answer across.
 template <typename T>
 struct AdmitsHistory
     : std::bool_constant<
-          AdmitsVariable<T>::value && !std::is_same_v<T, value::Chandle>> {};
+          AdmitsVariable<T>::value && !std::is_same_v<T, value::UnmanagedRef>> {
+};
 
 // A net resolves only what LRM 6.7.1 admits as a net's data type, which of the
 // integral types is the four-state ones.
@@ -253,8 +322,7 @@ auto HolderLayout(const std::optional<ObjectLayout>& held) -> ObjectLayout {
           "with no value to hold");
     }
     return ObjectLayout{
-        .layout = HolderLayoutFor<Holder>(held->layout),
-        .ends_with_nothing_to_do = false};
+        .layout = HolderLayoutFor<Holder>(held->layout), .needs_end = true};
   } else {
     return Of<Holder>();
   }
@@ -277,115 +345,74 @@ auto LayoutOf(ValueDomain domain) -> ObjectLayout {
 }
 
 auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
-  switch (object) {
-    case support::LibraryObject::kPrintItem:
-      return Of<value::PrintItem>();
-    case support::LibraryObject::kFormatSpec:
-      return Of<value::FormatSpec>();
-    case support::LibraryObject::kFormatArg:
-      return Of<value::FormatArg>();
-    case support::LibraryObject::kHierarchySegment:
-      return support::kHierarchySegmentStorage;
-    case support::LibraryObject::kTrigger:
-      return support::kTriggerStorage;
-    case support::LibraryObject::kObservation:
-      return support::kObservationStorage;
-    case support::LibraryObject::kReadReport:
-      return support::kReadReportStorage;
-    case support::LibraryObject::kWait:
-      return support::kWaitStorage;
-    case support::LibraryObject::kDpiBitBuffer:
-      return Of<value::DpiBitBuffer>();
-    case support::LibraryObject::kDpiLogicBuffer:
-      return Of<value::DpiLogicBuffer>();
-    case support::LibraryObject::kDpiOpenArray:
-      return Of<value::DpiOpenArray>();
-    case support::LibraryObject::kChannelCancellation:
-      return support::kChannelCancellationStorage;
-    case support::LibraryObject::kExecution:
-      return Of<Coroutine<void>>();
-    case support::LibraryObject::kSharedPointer:
-      return support::kSharedPointerStorage;
-    case support::LibraryObject::kOpenWrite:
-      return support::kOpenWriteStorage;
-    case support::LibraryObject::kDesignation:
-      return support::kDesignationStorage;
-    case support::LibraryObject::kObjectWrite:
-      return support::kObjectWriteStorage;
-    case support::LibraryObject::kReference:
-      return support::kReferenceStorage;
-    case support::LibraryObject::kAnyReference:
-      return support::kAnyReferenceStorage;
-    case support::LibraryObject::kWeakReference:
-      return support::kWeakReferenceStorage;
-    case support::LibraryObject::kLeasedReference:
-      return support::kLeasedReferenceStorage;
+  std::optional<ObjectLayout> found;
+  ForEachStatedObjectClass(
+      [&]<typename Built, typename Written>(
+          const support::RuntimeObject& paired, BuiltIn<Built, Written>) {
+        if (paired == support::RuntimeObject{object}) {
+          found = Of<Built>();
+        }
+      });
+  if (!found.has_value()) {
+    throw InternalError(
+        "object layout: an object of the library's names no class the runtime "
+        "defines -- please report this as a bug");
   }
-  throw InternalError("object layout: unknown library object");
-}
-
-auto LayoutOf(const support::RuntimeObject& object) -> ObjectLayout {
-  return std::visit(
-      Overloaded{
-          [](ValueDomain domain) { return LayoutOf(domain); },
-          [](support::LibraryObject library) { return LayoutOf(library); }},
-      object);
+  return *found;
 }
 
 auto LayoutOf(
     support::DeclaredMemberStorage storage, std::optional<ObjectLayout> held)
     -> ObjectLayout {
-  switch (storage.kind) {
-    case MemberStorageKind::kInlineValue:
-      return StorageOver<std::type_identity_t, AdmitsLocal>(storage.domain);
-    case MemberStorageKind::kValueCell:
-      return WithValueClass(storage.domain, [&]<typename T>() -> ObjectLayout {
-        if constexpr (AdmitsLocal<T>::value) {
-          return HolderLayout<typename LocalOf<T>::Type, T>(held);
-        } else {
-          return NotRealized<ObjectLayout>();
-        }
-      });
-    case MemberStorageKind::kObservableCell:
-      return WithValueClass(storage.domain, [&]<typename T>() -> ObjectLayout {
-        if constexpr (AdmitsLocal<T>::value) {
-          return HolderLayout<typename VariableOf<T>::Type, T>(held);
-        } else {
-          return NotRealized<ObjectLayout>();
-        }
-      });
-    case MemberStorageKind::kSampledHistory:
-      return StorageOver<SampledHistory, AdmitsHistory>(storage.domain);
-    case MemberStorageKind::kResolvedNet:
-      return WithValueClass(storage.domain, [&]<typename T>() -> ObjectLayout {
-        if constexpr (AdmitsNet<T>::value) {
-          return HolderLayout<ResolvedNet<T>, T>(held);
-        } else {
-          return NotRealized<ObjectLayout>();
-        }
-      });
-    case MemberStorageKind::kBorrowedHandle:
-      return Of<void*>();
-    case MemberStorageKind::kReference:
-      return Of<ErasedReference>();
-    case MemberStorageKind::kAnyReference:
-      return Of<AnyReference>();
-    case MemberStorageKind::kWeakReference:
-      return support::kWeakReferenceStorage;
-    case MemberStorageKind::kSharedPointer:
-      return Of<SharedPointer>();
-    case MemberStorageKind::kChannelCancellation:
-      return support::kChannelCancellationStorage;
-    case MemberStorageKind::kCancellationTarget:
-      return Of<CancellationTarget>();
-    case MemberStorageKind::kEvaluationAttempts:
-      return Of<EvaluationAttempts>();
-    case MemberStorageKind::kTimer:
-      return Of<Timer>();
-    case MemberStorageKind::kLoopBlocks:
-      return Of<LoopBlocks>();
-  }
-  throw InternalError("object layout: unknown member storage kind");
+  return std::visit(
+      Overloaded{
+          [](const support::InlineValueMember& m) {
+            return StorageOver<std::type_identity_t, AdmitsLocal>(m.domain);
+          },
+          [](const support::InlineBytesMember&) -> ObjectLayout {
+            throw InternalError(
+                "object layout: the library is asked the layout of storage "
+                "generated code lays out itself -- please report this as a "
+                "bug");
+          },
+          [&](const support::ValueCellMember& m) {
+            return WithValueClass(m.domain, [&]<typename T>() -> ObjectLayout {
+              if constexpr (AdmitsLocal<T>::value) {
+                return HolderLayout<typename LocalOf<T>::Type, T>(held);
+              } else {
+                return NotRealized<ObjectLayout>();
+              }
+            });
+          },
+          [&](const support::ObservableCellMember& m) {
+            return WithValueClass(m.domain, [&]<typename T>() -> ObjectLayout {
+              if constexpr (AdmitsLocal<T>::value) {
+                return HolderLayout<typename VariableOf<T>::Type, T>(held);
+              } else {
+                return NotRealized<ObjectLayout>();
+              }
+            });
+          },
+          [](const support::SampledHistoryMember& m) {
+            return StorageOver<SampledHistory, AdmitsHistory>(m.domain);
+          },
+          [&](const support::ResolvedNetMember& m) {
+            return WithValueClass(m.domain, [&]<typename T>() -> ObjectLayout {
+              if constexpr (AdmitsNet<T>::value) {
+                return HolderLayout<ResolvedNet<T>, T>(held);
+              } else {
+                return NotRealized<ObjectLayout>();
+              }
+            });
+          },
+          [](const support::BorrowedHandleMember&) { return Of<void*>(); },
+          [](const support::LibraryDeclMember& m) {
+            return ClassLayoutOf(m.decl);
+          },
+          [](const support::LibraryObjectMember& m) {
+            return LayoutOf(m.object);
+          }},
+      storage);
 }
 
 namespace {
@@ -437,90 +464,96 @@ auto TailThroughOffset(Through through) -> std::uint64_t {
 
 }  // namespace
 
+// Storage holding no value of the program's holds no contents to reach.
 auto HeldContentsOf(support::DeclaredMemberStorage storage)
     -> std::optional<HeldContents> {
-  return WithValueClass(
-      storage.domain, [&]<typename T>() -> std::optional<HeldContents> {
-        const auto through = [](std::uint64_t offset) {
-          return HeldContents{ContentsIndirectAt{.offset = offset}};
-        };
-        const auto shown = [](const auto& net) { return net.ShownThrough(); };
-        switch (storage.kind) {
-          case MemberStorageKind::kInlineValue:
-            if constexpr (HeldInOneWord<T>) {
-              return ContentsAt{.offset = 0};
-            } else {
-              return std::nullopt;
-            }
+  using Held = std::optional<HeldContents>;
+  const auto through = [](std::uint64_t offset) {
+    return HeldContents{ContentsIndirectAt{.offset = offset}};
+  };
+  const auto none = [](const auto&) -> Held { return std::nullopt; };
+  return std::visit(
+      Overloaded{
+          [](const support::InlineValueMember& m) {
+            return WithValueClass(m.domain, [&]<typename T>() -> Held {
+              if constexpr (HeldInOneWord<T>) {
+                return ContentsAt{.offset = 0};
+              } else {
+                return std::nullopt;
+              }
+            });
+          },
           // A net keeps the address of what it shows, its own value or the
           // object its one driver carries.
-          case MemberStorageKind::kResolvedNet:
-            if constexpr (!BitAddressed<T> && !value::LaidOutByType<T>) {
-              return std::nullopt;
-            } else if constexpr (!AdmitsNet<T>::value) {
-              return NotRealized<std::optional<HeldContents>>();
-            } else if constexpr (DynamicallySized<T>) {
-              return through(TailThroughOffset<ResolvedNet<T>, T>(shown));
-            } else {
-              return through(
-                  ThroughOffset<ResolvedNet<T>>(
-                      support::Layout{.size = 0, .align = 1}, shown));
-            }
-          case MemberStorageKind::kObservableCell:
-            if constexpr (HeldInOneWord<T>) {
-              return ContentsAt{.offset = ReadAt<Var<T>>()};
-            } else if constexpr (DynamicallySized<T>) {
-              return through(
-                  TailThroughOffset<typename VariableOf<T>::Type, T>(
-                      [](const auto& cell) {
-                        return cell.HeldStorage().BytesThrough();
-                      }));
-            } else {
-              return std::nullopt;
-            }
-          case MemberStorageKind::kValueCell:
-            if constexpr (HeldInOneWord<T>) {
-              return ContentsAt{.offset = ReadAt<ValueCell<T>>()};
-            } else if constexpr (DynamicallySized<T>) {
-              return through(
-                  TailThroughOffset<typename LocalOf<T>::Type, T>(
-                      [](const auto& local) { return local.BytesThrough(); }));
-            } else {
-              return std::nullopt;
-            }
-          case MemberStorageKind::kSampledHistory:
-          case MemberStorageKind::kBorrowedHandle:
-          case MemberStorageKind::kReference:
-          case MemberStorageKind::kAnyReference:
-          case MemberStorageKind::kWeakReference:
-          case MemberStorageKind::kSharedPointer:
-          case MemberStorageKind::kChannelCancellation:
-          case MemberStorageKind::kCancellationTarget:
-          case MemberStorageKind::kEvaluationAttempts:
-          case MemberStorageKind::kTimer:
-          case MemberStorageKind::kLoopBlocks:
-            return std::nullopt;
-        }
-        throw InternalError("object layout: unknown member storage kind");
-      });
+          [&](const support::ResolvedNetMember& m) {
+            return WithValueClass(m.domain, [&]<typename T>() -> Held {
+              const auto shown = [](const auto& net) {
+                return net.ShownThrough();
+              };
+              if constexpr (!BitAddressed<T> && !value::LaidOutByType<T>) {
+                return std::nullopt;
+              } else if constexpr (!AdmitsNet<T>::value) {
+                return NotRealized<Held>();
+              } else if constexpr (DynamicallySized<T>) {
+                return through(TailThroughOffset<ResolvedNet<T>, T>(shown));
+              } else {
+                return through(
+                    ThroughOffset<ResolvedNet<T>>(
+                        support::Layout{.size = 0, .align = 1}, shown));
+              }
+            });
+          },
+          [&](const support::ObservableCellMember& m) {
+            return WithValueClass(m.domain, [&]<typename T>() -> Held {
+              if constexpr (HeldInOneWord<T>) {
+                return ContentsAt{.offset = ReadAt<Var<T>>()};
+              } else if constexpr (DynamicallySized<T>) {
+                return through(
+                    TailThroughOffset<typename VariableOf<T>::Type, T>(
+                        [](const auto& cell) {
+                          return cell.HeldStorage().BytesThrough();
+                        }));
+              } else {
+                return std::nullopt;
+              }
+            });
+          },
+          [&](const support::ValueCellMember& m) {
+            return WithValueClass(m.domain, [&]<typename T>() -> Held {
+              if constexpr (HeldInOneWord<T>) {
+                return ContentsAt{.offset = ReadAt<ValueCell<T>>()};
+              } else if constexpr (DynamicallySized<T>) {
+                return through(
+                    TailThroughOffset<typename LocalOf<T>::Type, T>(
+                        [](const auto& local) {
+                          return local.BytesThrough();
+                        }));
+              } else {
+                return std::nullopt;
+              }
+            });
+          },
+          [&](const support::SampledHistoryMember& m) { return none(m); },
+          [&](const support::InlineBytesMember& m) { return none(m); },
+          [&](const support::BorrowedHandleMember& m) { return none(m); },
+          [&](const support::LibraryDeclMember& m) { return none(m); },
+          [&](const support::LibraryObjectMember& m) { return none(m); }},
+      storage);
 }
 
-auto LayoutOf(support::RuntimeClass klass) -> ObjectLayout {
-  switch (klass) {
-    case support::RuntimeClass::kScope:
-      return Of<Scope>();
-    case support::RuntimeClass::kObject:
-      return Of<GcObject>();
-    case support::RuntimeClass::kClassObject:
-      return Of<ClassObject>();
-    case support::RuntimeClass::kProcess:
-      return Of<RuntimeProcess>();
-    case support::RuntimeClass::kSynchronizationObject:
-      return Of<SynchronizationObject>();
-    case support::RuntimeClass::kConstraintProblem:
-      return Of<ConstraintProblem>();
+auto LibraryPartLayoutOf(support::LibraryDecl decl) -> ObjectLayout {
+  std::optional<ObjectLayout> found;
+  ForEachRuntimeClass([&]<typename T>(support::LibraryDecl listed) {
+    if (listed == decl) {
+      found = Of<T>();
+    }
+  });
+  if (!found.has_value()) {
+    throw InternalError(
+        "object layout: a declaration states no class of the runtime's -- "
+        "please report this as a bug");
   }
-  throw InternalError("object layout: unknown runtime class");
+  return *found;
 }
 
 auto DefinitionLayoutOf() -> DefinitionLayout {
@@ -535,39 +568,33 @@ auto ClosurePart() -> support::Layout {
 
 namespace {
 
-// Calls `f` with a pointer, at `at`, to the class of the library `klass` is, as
-// its template argument: one a value of a source class extends.
+// Calls `f` with a pointer, at `at`, to the class of the runtime's `decl`
+// states, which a value of a source class extends.
 template <typename F>
-void WithExtendedClass(support::RuntimeClass klass, void* at, F f) {
-  switch (klass) {
-    case support::RuntimeClass::kScope:
-      f(static_cast<Scope*>(at));
-      return;
-    case support::RuntimeClass::kObject:
-      f(static_cast<GcObject*>(at));
-      return;
-    case support::RuntimeClass::kClassObject:
-      f(static_cast<ClassObject*>(at));
-      return;
-    case support::RuntimeClass::kProcess:
-    case support::RuntimeClass::kSynchronizationObject:
-    case support::RuntimeClass::kConstraintProblem:
-      throw InternalError(
-          "object layout: a process, an event's object or a randomization's "
-          "problem is read as a class a value extends -- please report this "
-          "as a bug");
+void WithExtendedClass(support::LibraryDecl decl, void* at, F f) {
+  bool found = false;
+  ForEachExtendedClass([&]<typename T>(support::LibraryDecl listed) {
+    if (listed == decl) {
+      f(static_cast<T*>(at));
+      found = true;
+    }
+  });
+  if (!found) {
+    throw InternalError(
+        "object layout: a part a value extends is read as of a declaration "
+        "stating no class a value of the source extends -- please report "
+        "this as a bug");
   }
-  throw InternalError("object layout: unknown runtime class");
 }
 
 }  // namespace
 
-void BeginLibraryPart(support::RuntimeClass klass, void* at) {
-  WithExtendedClass(klass, at, [](auto* part) { std::construct_at(part); });
+void BeginLibraryPart(support::LibraryDecl decl, void* at) {
+  WithExtendedClass(decl, at, [](auto* part) { std::construct_at(part); });
 }
 
-void EndLibraryPart(support::RuntimeClass klass, void* at) {
-  WithExtendedClass(klass, at, [](auto* part) { std::destroy_at(part); });
+void EndLibraryPart(support::LibraryDecl decl, void* at) {
+  WithExtendedClass(decl, at, [](auto* part) { std::destroy_at(part); });
 }
 
 }  // namespace lyra::runtime

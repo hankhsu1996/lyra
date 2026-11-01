@@ -158,7 +158,7 @@ auto TypeIdentity(const slang::ast::Type& type, const InstanceNames& names)
     // was given, and the view it is taken through.
     case SymbolKind::VirtualInterfaceType: {
       const auto& handle = canonical.as<slang::ast::VirtualInterfaceType>();
-      const std::string unit = names.NameOf(handle.iface);
+      const std::string unit = names.InterfaceNameOf(handle.iface);
       return std::format(
           "virtual {}:{} {}", unit.size(), unit,
           handle.modport == nullptr ? std::string_view{}
@@ -276,12 +276,13 @@ auto IsCompilationUnit(const slang::ast::Symbol& symbol) -> bool {
          symbol.kind == slang::ast::SymbolKind::CompilationUnit;
 }
 
-// The bytes a key folds to. Every part is written with its own delimiter, so
-// two keys that differ anywhere differ here; nothing rests on this being read
-// back, and nothing compares keys through it -- a key answers that itself.
-auto KeyBytes(const ClassKey& key) -> std::string {
+// The bytes what parameters were bound to folds to. Every part is written with
+// its own delimiter, so two lists that differ anywhere differ here; nothing
+// rests on this being read back, and nothing compares keys through it -- a key
+// answers that itself.
+auto InputBytes(std::span<const ClassKeyInput> inputs) -> std::string {
   std::string bytes;
-  for (const ClassKeyInput& input : key.inputs) {
+  for (const ClassKeyInput& input : inputs) {
     bytes += input.name;
     bytes += '=';
     bytes += std::visit(
@@ -363,6 +364,11 @@ auto PathNames::NameOf(const slang::ast::InstanceSymbol& inst) const
   return inst.getHierarchicalPath();
 }
 
+auto PathNames::InterfaceNameOf(const slang::ast::InstanceSymbol& iface) const
+    -> std::string {
+  return NameOf(iface);
+}
+
 auto PathNames::BlockStepOf(const slang::ast::GenerateBlockSymbol& block) const
     -> support::GenerateBlockStep {
   return PathStepOf(block);
@@ -370,7 +376,7 @@ auto PathNames::BlockStepOf(const slang::ast::GenerateBlockSymbol& block) const
 
 auto ArgumentsDigest(const ClassKey& key) -> std::optional<std::uint64_t> {
   if (key.inputs.empty()) return std::nullopt;
-  return NameDigest(KeyBytes(key));
+  return NameDigest(InputBytes(key.inputs));
 }
 
 auto UnitName(const ClassKey& key) -> std::string {
@@ -450,6 +456,24 @@ auto ClassKeyOf(const slang::ast::ClassType& cls, const InstanceNames& names)
 auto UnitName(const slang::ast::ClassType& cls, const InstanceNames& names)
     -> std::string {
   return UnitName(ClassKeyOf(cls, names));
+}
+
+auto InterfaceIdentity(
+    const slang::ast::InstanceSymbol& iface, const InstanceNames& names)
+    -> std::string {
+  std::string identity = DefinitionNameOf(iface);
+  const slang::ast::DefinitionSymbol& definition = iface.getDefinition();
+  // A definition declared inside another is one of the body declaring it (LRM
+  // 23.4), and two such bodies each declare one.
+  if (!IsLibraryCell(definition)) {
+    identity += std::format(
+        " in {}", names.NameOf(InstantiationOf(BodyDeclaring(definition))));
+  }
+  std::vector<ClassKeyInput> inputs;
+  for (const auto* parameter : iface.body.getParameters()) {
+    inputs.push_back(ParameterInput(parameter->symbol, names));
+  }
+  return std::format("{}({})", identity, InputBytes(inputs));
 }
 
 auto DeclaringNamespaceUnit(const slang::ast::Symbol& decl)

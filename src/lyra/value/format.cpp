@@ -12,13 +12,13 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/value/chandle.hpp"
 #include "lyra/value/format_parse.hpp"
 #include "lyra/value/integral_format.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/managed_ref.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/unmanaged_ref.hpp"
 
 namespace lyra::value {
 
@@ -260,9 +260,9 @@ auto FormatHandleIdentity(const FormatSpec& spec, const void* identity)
 
 }  // namespace
 
-auto Formatter<Chandle>::Format(const FormatSpec& spec, const Chandle& value)
-    -> std::string {
-  return FormatHandleIdentity(spec, value.Ptr());
+auto Formatter<UnmanagedRef>::Format(
+    const FormatSpec& spec, const UnmanagedRef& value) -> std::string {
+  return FormatHandleIdentity(spec, value.Address());
 }
 
 auto Formatter<ObjectRef>::Format(

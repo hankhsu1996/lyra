@@ -12,14 +12,17 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -118,8 +121,7 @@ auto HoldsClassHandle(const mir::CompilationUnit& unit, mir::TypeId type)
 auto IsStreamDestination(const mir::CompilationUnit& unit, mir::TypeId type)
     -> bool {
   return !HoldsAnywhere(unit, type, [](const mir::Type& part) {
-    return part.Is<mir::ManagedRefType>() ||
-           part.Is<mir::AssociativeArrayType>();
+    return part.Is<mir::ManagedRefType>() || part.IndexType().has_value();
   });
 }
 
@@ -190,10 +192,10 @@ auto StreamFillOf(const mir::CompilationUnit& unit, mir::TypeId type)
         .empty_width = fixed->width, .first_element = 0, .multiplier = 0};
   }
   const mir::Type& resolved = unit.types.Get(type);
-  if (resolved.Is<mir::StringType>()) {
+  if (resolved.IsDeclaredBy(support::LibraryDecl::kString)) {
     return StreamFill{.empty_width = 0, .first_element = 0, .multiplier = 8};
   }
-  if (resolved.Is<mir::DynamicArrayType>() || resolved.Is<mir::QueueType>()) {
+  if (resolved.IsLibrarySequence()) {
     const mir::TypeId element = *resolved.ContainerElementType();
     if (const std::optional<StreamShape> fixed =
             FixedStreamShapeOf(unit, element)) {
@@ -264,10 +266,7 @@ namespace {
 // A run of no bits, which a run is built up from one part after another.
 auto BuildEmptyRun(const mir::CompilationUnit& unit, mir::Builder block)
     -> mir::ExprId {
-  return block.Add(
-      mir::Expr{
-          .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
-          .type = unit.builtins.bit_vec});
+  return block.Add(BuildDefaultValueExpr(unit, block, unit.builtins.bit_vec));
 }
 
 // `part`, an integral stream or a run of bits, laid after the bits the local
@@ -531,7 +530,7 @@ auto BuildFromBitVec(
     mir::TypeId dst_type) -> mir::ExprId {
   const mir::Type& dst = unit.types.Get(dst_type);
   const mir::ExprId held = block.AsValue(unit.types, run);
-  if (dst.Is<mir::StringType>()) {
+  if (dst.IsDeclaredBy(support::LibraryDecl::kString)) {
     return block.Add(
         mir::MakeBuiltinCall(
             unit, block.Body(), support::BuiltinFn::kStringFromBitVec,

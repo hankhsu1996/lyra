@@ -28,6 +28,7 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -439,7 +440,7 @@ auto NamedAgain(const mir::Block& from, mir::Builder to, mir::ExprId id)
           [](const mir::NullLiteral& e) -> mir::ExprData { return e; },
           [](const mir::MachineBoolLiteral& e) -> mir::ExprData { return e; },
           [](const mir::MachineIntLiteral& e) -> mir::ExprData { return e; },
-          [](const mir::MachineFloatLiteral& e) -> mir::ExprData { return e; },
+          [](const mir::FloatingLiteral& e) -> mir::ExprData { return e; },
           [](const mir::ReferenceExpr& e) -> mir::ExprData { return e; },
           [&](const mir::DerefExpr& e) -> mir::ExprData {
             return mir::DerefExpr{.pointer = again(e.pointer)};
@@ -803,27 +804,20 @@ auto LentStep(
               .mutability = mir::Mutability::kMutable}}));
 }
 
-// Whether a value of `container` is a dynamically sized array, whose elements
-// it can let go of while a call leases one: a queue's or an associative array's
+// The leasing step a call's binding takes where `step` reaches an element of a
+// container sized while the program runs, named by how the step names the
+// element; none for any other step. Such a container can let go of its
+// elements while a call leases one: a queue's or an associative array's
 // element, which a removal ends, or a dynamic array's elements, which a resize
 // or an assignment replaces (LRM 13.5.2). A fixed-size array's elements live
 // as long as the array does.
-auto IsDynamicallySized(const mir::Type& container) -> bool {
-  return container.Is<mir::QueueType>() ||
-         container.Is<mir::DynamicArrayType>() ||
-         container.Is<mir::AssociativeArrayType>();
-}
-
-// The leasing step a call's binding takes where `step` reaches an element of a
-// dynamically sized `container`, named by how the step names the element; none
-// for any other step.
 struct ElementLease {
   support::BuiltinFn entry;
   mir::ExprId coordinate;
 };
 auto ElementLeaseFor(const DescentStep& step, const mir::Type& container)
     -> std::optional<ElementLease> {
-  if (!IsDynamicallySized(container)) {
+  if (!container.IsLibraryContainer()) {
     return std::nullopt;
   }
   return std::visit(
@@ -891,9 +885,8 @@ auto PathReference(
 auto PathBoundReference(
     mir::CompilationUnit& unit, mir::Builder block, const AccessPath& path,
     const HoldLease& hold) -> mir::ExprId {
-  const mir::TypeId leased = unit.types.Intern(
-      mir::Type{mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kLeasedReference}});
+  const mir::TypeId leased =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kLeasedReference);
   const mir::ExprId owned = OwnerReference(unit, block, path.owner);
   mir::ExprId reference = std::visit(
       Overloaded{
@@ -1053,7 +1046,7 @@ auto SettledPlace(
           [&](const mir::NullLiteral&) { return computed(); },
           [&](const mir::MachineBoolLiteral&) { return computed(); },
           [&](const mir::MachineIntLiteral&) { return computed(); },
-          [&](const mir::MachineFloatLiteral&) { return computed(); },
+          [&](const mir::FloatingLiteral&) { return computed(); },
           [&](const mir::ReferenceExpr&) { return computed(); },
           [&](const mir::AddressOfExpr&) { return computed(); },
           [&](const mir::BorrowExpr&) { return computed(); },

@@ -1,4 +1,5 @@
 #include <span>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -11,6 +12,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -43,17 +45,6 @@ auto TranslateMachineIntWidth(mir::MachineIntWidth w) -> lir::MachineIntWidth {
       return lir::MachineIntWidth::k64;
   }
   throw InternalError("TranslateMachineIntWidth: unknown MachineIntWidth");
-}
-
-auto TranslateMachineFloatWidth(mir::MachineFloatWidth w)
-    -> lir::MachineFloatWidth {
-  switch (w) {
-    case mir::MachineFloatWidth::k32:
-      return lir::MachineFloatWidth::k32;
-    case mir::MachineFloatWidth::k64:
-      return lir::MachineFloatWidth::k64;
-  }
-  throw InternalError("TranslateMachineFloatWidth: unknown MachineFloatWidth");
 }
 
 auto TranslatePointerOwnership(mir::PointerOwnership o)
@@ -120,34 +111,11 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 .element_type = TranslateType(ua.element_type),
                 .size = ua.Size()}};
           },
-          [&](const mir::DynamicArrayType& da) -> lir::Type {
-            return lir::Type{lir::DynamicArrayType{
-                .element_type = TranslateType(da.element_type)}};
-          },
-          [&](const mir::QueueType& q) -> lir::Type {
-            return lir::Type{lir::QueueType{
-                .element_type = TranslateType(q.element_type),
-                .max_bound = q.max_bound}};
-          },
-          [&](const mir::AssociativeArrayType& aa) -> lir::Type {
-            return lir::Type{lir::AssociativeArrayType{
-                .element_type = TranslateType(aa.element_type),
-                .key_type = TranslateType(aa.key_type)}};
-          },
-          [](const mir::WildcardIndexType&) -> lir::Type {
-            return lir::Type{lir::WildcardIndexType{}};
-          },
-          [](const mir::AnyType&) -> lir::Type {
-            return lir::Type{lir::AnyType{}};
-          },
           // Reached only through a reference, which is translated whole.
           [](const mir::ErasedValueType&) -> lir::Type {
             throw InternalError(
                 "mir to lir: a value of no known type is translated apart from "
                 "the reference holding it -- please report this as a bug");
-          },
-          [](const mir::StringType&) -> lir::Type {
-            return lir::Type{lir::StringType{}};
           },
           [](const mir::MachineCStringType&) -> lir::Type {
             return lir::Type{lir::MachineCStringType{}};
@@ -161,8 +129,7 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 .signedness = TranslateSignedness(mi.signedness)}};
           },
           [](const mir::MachineFloatType& mf) -> lir::Type {
-            return lir::Type{lir::MachineFloatType{
-                .width = TranslateMachineFloatWidth(mf.width)}};
+            return lir::Type{lir::MachineFloatType{.width = mf.width}};
           },
           [&](const mir::MachineArrayType& ma) -> lir::Type {
             return lir::Type{lir::MachineArrayType{
@@ -177,38 +144,31 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 .params = TranslateTypes(mf.params),
                 .result = TranslateType(mf.result)}};
           },
-          [](const mir::RealType&) -> lir::Type {
-            return lir::Type{lir::RealType{}};
-          },
-          [](const mir::ShortRealType&) -> lir::Type {
-            return lir::Type{lir::ShortRealType{}};
-          },
-          [](const mir::ChandleType&) -> lir::Type {
-            return lir::Type{lir::ChandleType{}};
+          [](const mir::RealType& r) -> lir::Type {
+            return lir::Type{lir::RealType{.width = r.width}};
           },
           [](const mir::VoidType&) -> lir::Type {
             return lir::Type{lir::VoidType{}};
           },
-          [](const mir::EmptyType&) -> lir::Type {
-            return lir::Type{lir::EmptyType{}};
-          },
           [&](const mir::ObjectType& ob) -> lir::Type {
             return Types().Get(ClassValueType(ob.of));
           },
-          [](const mir::RuntimeClassType& e) -> lir::Type {
-            return lir::Type{lir::RuntimeClassType{.which = e.which}};
-          },
-          [](const mir::RuntimeEffectsType&) -> lir::Type {
-            return lir::Type{lir::RuntimeEffectsType{}};
-          },
-          [](const mir::FilesType&) -> lir::Type {
-            return lir::Type{lir::FilesType{}};
-          },
-          [](const mir::DiagnosticType&) -> lir::Type {
-            return lir::Type{lir::DiagnosticType{}};
-          },
-          [&](const mir::RuntimeLibraryType& rl) -> lir::Type {
-            return TranslateRuntimeLibrary(rl.kind);
+          [&](const mir::LibraryType& l) -> lir::Type {
+            std::vector<lir::LibraryType::Arg> args;
+            args.reserve(l.args.size());
+            for (const mir::LibraryType::Arg& arg : l.args) {
+              args.push_back(
+                  std::visit(
+                      Overloaded{
+                          [&](mir::TypeId type) -> lir::LibraryType::Arg {
+                            return TranslateType(type);
+                          },
+                          [](const support::QueueBound& bound)
+                              -> lir::LibraryType::Arg { return bound; }},
+                      arg));
+            }
+            return lir::Type{
+                lir::LibraryType{.decl = l.decl, .args = std::move(args)}};
           },
           [&](const mir::CoroutineType& co) -> lir::Type {
             return lir::Type{
@@ -254,9 +214,9 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{
                 lir::ManagedRefType{.pointee = TranslateType(mr.pointee)}};
           },
-          [&](const mir::WeakManagedRefType& w) -> lir::Type {
+          [&](const mir::UnmanagedRefType& u) -> lir::Type {
             return lir::Type{
-                lir::WeakManagedRefType{.pointee = TranslateType(w.pointee)}};
+                lir::UnmanagedRefType{.pointee = TranslateType(u.pointee)}};
           },
           [&](const mir::VectorType& v) -> lir::Type {
             return lir::Type{
@@ -291,24 +251,13 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           },
           // Which class the write answers its object as is a fact of the
           // writer's own accesses, each of which states its member's class, so
-          // below MIR the write is the one library object every class shares.
+          // below MIR the write is the one write every class shares.
           [](const mir::ObjectWriteType&) -> lir::Type {
-            return lir::Type{lir::RuntimeLibraryType{
-                .kind = lir::RuntimeLibraryKind::kObjectWrite}};
+            return lir::Type{lir::ObjectWriteType{}};
           },
           [&](const mir::ObservableType& ob) -> lir::Type {
             return lir::Type{
                 lir::ObservableType{.value = TranslateType(ob.value)}};
-          },
-          [&](const mir::SampledHistoryType& history) -> lir::Type {
-            return lir::Type{
-                lir::SampledHistoryType{.value = TranslateType(history.value)}};
-          },
-          [](const mir::EvaluationAttemptsType&) -> lir::Type {
-            return lir::Type{lir::EvaluationAttemptsType{}};
-          },
-          [](const mir::LoopBlocksType&) -> lir::Type {
-            return lir::Type{lir::LoopBlocksType{}};
           },
           [&](const mir::RecordType& r) -> lir::Type {
             return lir::Type{lir::RecordType{
@@ -327,89 +276,8 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
 
 auto UnitLowerer::ControlEffectType() const -> lir::TypeId {
   return out_.types.Intern(
-      TranslateRuntimeLibrary(mir::RuntimeLibraryKind::kControlEffect));
-}
-
-auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
-    -> lir::Type {
-  const auto mirror = [](lir::RuntimeLibraryKind k) {
-    return lir::Type{lir::RuntimeLibraryType{.kind = k}};
-  };
-  switch (kind) {
-    case mir::RuntimeLibraryKind::kPrintItem:
-      return mirror(lir::RuntimeLibraryKind::kPrintItem);
-    case mir::RuntimeLibraryKind::kEnumeration:
-      return mirror(lir::RuntimeLibraryKind::kEnumeration);
-    case mir::RuntimeLibraryKind::kFormatSpec:
-      return mirror(lir::RuntimeLibraryKind::kFormatSpec);
-    case mir::RuntimeLibraryKind::kFormatArg:
-      return mirror(lir::RuntimeLibraryKind::kFormatArg);
-    case mir::RuntimeLibraryKind::kChannelCancellation:
-      return mirror(lir::RuntimeLibraryKind::kChannelCancellation);
-    case mir::RuntimeLibraryKind::kTimeFormat:
-      return mirror(lir::RuntimeLibraryKind::kTimeFormat);
-    case mir::RuntimeLibraryKind::kHierarchySegment:
-      return mirror(lir::RuntimeLibraryKind::kHierarchySegment);
-    case mir::RuntimeLibraryKind::kBitVec:
-      return mirror(lir::RuntimeLibraryKind::kBitVec);
-    case mir::RuntimeLibraryKind::kDpiBitBuffer:
-      return mirror(lir::RuntimeLibraryKind::kDpiBitBuffer);
-    case mir::RuntimeLibraryKind::kDpiLogicBuffer:
-      return mirror(lir::RuntimeLibraryKind::kDpiLogicBuffer);
-    case mir::RuntimeLibraryKind::kDpiBitChunk:
-      return mirror(lir::RuntimeLibraryKind::kDpiBitChunk);
-    case mir::RuntimeLibraryKind::kDpiLogicChunk:
-      return mirror(lir::RuntimeLibraryKind::kDpiLogicChunk);
-    case mir::RuntimeLibraryKind::kDpiOpenArray:
-      return mirror(lir::RuntimeLibraryKind::kDpiOpenArray);
-    case mir::RuntimeLibraryKind::kDpiOpenArrayHandle:
-      return mirror(lir::RuntimeLibraryKind::kDpiOpenArrayHandle);
-    case mir::RuntimeLibraryKind::kWatchedPlace:
-      return mirror(lir::RuntimeLibraryKind::kWatchedPlace);
-    case mir::RuntimeLibraryKind::kTrigger:
-      return mirror(lir::RuntimeLibraryKind::kTrigger);
-    case mir::RuntimeLibraryKind::kObservation:
-      return mirror(lir::RuntimeLibraryKind::kObservation);
-    case mir::RuntimeLibraryKind::kReadReport:
-      return mirror(lir::RuntimeLibraryKind::kReadReport);
-    case mir::RuntimeLibraryKind::kWait:
-      return mirror(lir::RuntimeLibraryKind::kWait);
-    case mir::RuntimeLibraryKind::kLeasedReference:
-      return mirror(lir::RuntimeLibraryKind::kLeasedReference);
-    case mir::RuntimeLibraryKind::kCancellationTarget:
-      return mirror(lir::RuntimeLibraryKind::kCancellationTarget);
-    case mir::RuntimeLibraryKind::kTimer:
-      return mirror(lir::RuntimeLibraryKind::kTimer);
-    case mir::RuntimeLibraryKind::kDeferredEffects:
-      return mirror(lir::RuntimeLibraryKind::kDeferredEffects);
-    case mir::RuntimeLibraryKind::kViolationReportKeeper:
-      return mirror(lir::RuntimeLibraryKind::kViolationReportKeeper);
-    case mir::RuntimeLibraryKind::kControlEffect:
-      return mirror(lir::RuntimeLibraryKind::kControlEffect);
-    case mir::RuntimeLibraryKind::kObjectDefinition:
-      return mirror(lir::RuntimeLibraryKind::kObjectDefinition);
-    case mir::RuntimeLibraryKind::kScopeInfo:
-      return mirror(lir::RuntimeLibraryKind::kScopeInfo);
-    case mir::RuntimeLibraryKind::kScopeCallable:
-      return mirror(lir::RuntimeLibraryKind::kScopeCallable);
-    case mir::RuntimeLibraryKind::kClassObjectInfo:
-      return mirror(lir::RuntimeLibraryKind::kClassObjectInfo);
-    case mir::RuntimeLibraryKind::kInterfaceRow:
-      return mirror(lir::RuntimeLibraryKind::kInterfaceRow);
-    case mir::RuntimeLibraryKind::kScopeMetadata:
-      return mirror(lir::RuntimeLibraryKind::kScopeMetadata);
-    case mir::RuntimeLibraryKind::kConstructionTable:
-      return mirror(lir::RuntimeLibraryKind::kConstructionTable);
-    case mir::RuntimeLibraryKind::kInstantiation:
-      return mirror(lir::RuntimeLibraryKind::kInstantiation);
-    case mir::RuntimeLibraryKind::kGeneratePlaces:
-      return mirror(lir::RuntimeLibraryKind::kGeneratePlaces);
-    case mir::RuntimeLibraryKind::kDumpEntry:
-      return mirror(lir::RuntimeLibraryKind::kDumpEntry);
-    case mir::RuntimeLibraryKind::kDumpBlock:
-      return mirror(lir::RuntimeLibraryKind::kDumpBlock);
-  }
-  throw InternalError("TranslateRuntimeLibrary: unknown RuntimeLibraryKind");
+      lir::Type{lir::LibraryType{
+          .decl = support::LibraryDecl::kControlEffect, .args = {}}});
 }
 
 }  // namespace lyra::lowering::mir_to_lir

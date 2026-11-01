@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <concepts>
 #include <cstddef>
@@ -7,6 +8,9 @@
 #include <utility>
 
 #include "lyra/value/clear_above_widths.hpp"
+#include "lyra/value/concepts.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/pack_element.hpp"
 
 namespace lyra::value {
@@ -56,10 +60,14 @@ constexpr bool kIsTheProductItself<Product, U> =
 // shallow copy of its components.
 //
 // A product a lowering composes for itself -- a task's output pack, an
-// associative entry's (key, value) pair -- is this and nothing more, since
-// nothing asks a whole-value operation of one. A structure the source declares
-// (LRM 7.2) is a type of its declaring unit built on this one, whose members
-// are the methods its declaration states for those operations.
+// associative entry's (key, value) pair, what a tagged union's `void` member
+// holds (LRM 7.3.2) -- is this and nothing more, and answers each operation on
+// its whole value as its components do, one component after another, so the
+// product of no components answers each as a value with nothing to compare
+// does. Each operation is instantiated only where it is asked for, so a
+// product of components lacking one still holds them. A structure the source
+// declares (LRM 7.2) is a type of its declaring unit built on this one, whose
+// members are the methods its declaration states for those operations.
 template <typename... Ts>
 class Tuple {
   using Components =
@@ -104,6 +112,70 @@ class Tuple {
     return std::move(static_cast<Stored<I>&>(data_).value);
   }
 
+  // LRM 11.4.5: equal where every pair of components is, and unknown where no
+  // pair is unequal and some pair is unknown, in the state domain a component's
+  // comparison can answer in.
+  [[nodiscard]] auto operator==(const Tuple& other) const {
+    using Compare = FourStateBit (*)(const Tuple&, const Tuple&);
+    static constexpr auto kCompares =
+        PerComponent<Compare>([]<std::size_t I>() -> Compare {
+          return +[](const Tuple& lhs, const Tuple& rhs) {
+            return AnswerScalar(
+                lhs.template Component<I>() == rhs.template Component<I>());
+          };
+        });
+    FourStateBit equal = FourStateBit::kOne;
+    for (const Compare compare : kCompares) {
+      equal = LogicalAnd(equal, compare(*this, other));
+    }
+    return OneBit<EqualityDomain()>::Filled(equal);
+  }
+  [[nodiscard]] auto operator!=(const Tuple& other) const {
+    return !(*this == other);
+  }
+
+  // LRM 11.4.5 `===`, a known bit: every pair of components identical in the
+  // same sense.
+  [[nodiscard]] auto CaseEqual(const Tuple& other) const -> Bit {
+    using Compare = bool (*)(const Tuple&, const Tuple&);
+    static constexpr auto kCompares =
+        PerComponent<Compare>([]<std::size_t I>() -> Compare {
+          return +[](const Tuple& lhs, const Tuple& rhs) {
+            return lhs.template Component<I>()
+                .CaseEqual(rhs.template Component<I>())
+                .IsTruthy();
+          };
+        });
+    return Bit::FromBool(std::ranges::all_of(kCompares, [&](Compare compare) {
+      return compare(*this, other);
+    }));
+  }
+
+  // LRM 9.4.2: whether two products are the same bits, component by component.
+  [[nodiscard]] auto IsBitIdentical(const Tuple& other) const -> bool {
+    using Compare = bool (*)(const Tuple&, const Tuple&);
+    static constexpr auto kCompares =
+        PerComponent<Compare>([]<std::size_t I>() -> Compare {
+          return +[](const Tuple& lhs, const Tuple& rhs) {
+            return lhs.template Component<I>().IsBitIdentical(
+                rhs.template Component<I>());
+          };
+        });
+    return std::ranges::all_of(
+        kCompares, [&](Compare compare) { return compare(*this, other); });
+  }
+
+  // LRM 20.9: whether any component holds an x or a z.
+  [[nodiscard]] auto HasUnknown() const -> bool {
+    using Ask = bool (*)(const Tuple&);
+    static constexpr auto kAsks = PerComponent<Ask>([]<std::size_t I>() -> Ask {
+      return +[](const Tuple& product) {
+        return product.template Component<I>().HasUnknown();
+      };
+    });
+    return std::ranges::any_of(kAsks, [&](Ask ask) { return ask(*this); });
+  }
+
   // Each component's positions above its widths made clear, through a table
   // of one entry per component rather than one expression over all of them.
   void ClearAboveWidths() {
@@ -122,6 +194,31 @@ class Tuple {
  private:
   template <std::size_t I>
   using Stored = detail::TupleComponent<I, Element<I>>;
+
+  // A table of one entry per component, entry `I` what `entry.template
+  // operator()<I>()` makes, so a question asked of every component is a loop
+  // over the table rather than one expression over all of them.
+  template <typename Entry, typename MakeEntry>
+  [[nodiscard]] static constexpr auto PerComponent(MakeEntry entry) {
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+      return std::array<Entry, sizeof...(I)> {
+        entry.template operator()<I>()...
+      };
+    }(std::index_sequence_for<Ts...>{});
+  }
+
+  // The state domain comparing two products answers in: four-state where
+  // comparing some pair of components can answer unknown.
+  [[nodiscard]] static constexpr auto EqualityDomain() -> StateDomain {
+    constexpr std::array<StateDomain, sizeof...(Ts)> kComponents{
+        decltype(std::declval<const Ts&>() == std::declval<const Ts&>())::
+            kDomain...};
+    StateDomain domain = StateDomain::kTwoState;
+    for (const StateDomain component : kComponents) {
+      domain = detail::CombinedDomain(domain, component);
+    }
+    return domain;
+  }
 
   Components data_;
 };

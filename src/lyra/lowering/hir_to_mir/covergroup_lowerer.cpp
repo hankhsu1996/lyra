@@ -55,6 +55,7 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -2119,9 +2120,8 @@ void CovergroupLowerer::DeclareShape(
   }
   scopes_ = ScopesOwningDisableTargets(
       decl_->procedural_scopes, decl_->declared_in, class_storage,
-      unit.types.Intern(
-          mir::Type{mir::RuntimeLibraryType{
-              .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
+      mir::LibraryTypeOf(
+          unit.types, support::LibraryDecl::kCancellationTarget));
   if (!unit_lowerer.HasClassShape(class_id_)) {
     unit_lowerer.DefineClassShape(class_id_, std::move(shape));
   }

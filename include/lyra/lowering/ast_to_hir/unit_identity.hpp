@@ -14,10 +14,8 @@
 
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -134,6 +132,14 @@ class InstanceNames {
   [[nodiscard]] virtual auto NameOf(
       const slang::ast::InstanceSymbol& inst) const -> std::string = 0;
 
+  // What a type naming the interface `iface` (LRM 25.9) names it by in this
+  // stage. Such a type names a unit and holds no instance: the front end stands
+  // one instance in for every type naming an interface with the same
+  // parameters, and places it under whichever declaration it met first, so
+  // where that instance stands says nothing of the type.
+  [[nodiscard]] virtual auto InterfaceNameOf(
+      const slang::ast::InstanceSymbol& iface) const -> std::string = 0;
+
   // The step the block instance `block` is in the scope holding it: its label,
   // which one it is among the blocks of that scope sharing the label (LRM
   // 27.5), and what tells it from the other block instances of its construct in
@@ -156,6 +162,8 @@ class PathNames final : public InstanceNames {
  public:
   [[nodiscard]] auto NameOf(const slang::ast::InstanceSymbol& inst) const
       -> std::string override;
+  [[nodiscard]] auto InterfaceNameOf(
+      const slang::ast::InstanceSymbol& iface) const -> std::string override;
   [[nodiscard]] auto BlockStepOf(const slang::ast::GenerateBlockSymbol& block)
       const -> support::GenerateBlockStep override;
 };
@@ -183,6 +191,15 @@ auto UnitName(const ClassKey& key) -> std::string;
 // The name the class specialization `cls` is, for a caller that wants the name
 // and not the key it comes from.
 auto UnitName(const slang::ast::ClassType& cls, const InstanceNames& names)
+    -> std::string;
+
+// What a virtual interface type naming `iface` names (LRM 25.9): the
+// interface's definition and the value or type each of its parameters was
+// fixed to. Nothing else shapes an instance a virtual interface may hold, since
+// the front end refuses one whose body reaches upward or takes an interface
+// port.
+[[nodiscard]] auto InterfaceIdentity(
+    const slang::ast::InstanceSymbol& iface, const InstanceNames& names)
     -> std::string;
 
 // The step a subroutine or a block of statements is in the scope holding it:

@@ -13,6 +13,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/ast_to_hir/expression/operators.hpp"
 #include "lyra/lowering/ast_to_hir/pattern.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -76,6 +77,8 @@ auto LowerCaseStmt(
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
   const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_expr));
+  const hir::TypePool& types = proc.Owner().Unit().types;
+  const hir::TypeId cond_type = frame.Exprs().Get(cond_id).type;
   std::vector<hir::CaseItem> items;
   items.reserve(cs.items.size());
   for (const auto& item : cs.items) {
@@ -84,7 +87,8 @@ auto LowerCaseStmt(
     for (const auto* label_expr : item.expressions) {
       auto label_or = proc.LowerExpr(*label_expr, frame);
       if (!label_or) return std::unexpected(std::move(label_or.error()));
-      label_ids.push_back(frame.Exprs().Add(*std::move(label_or)));
+      label_ids.push_back(NullAsTypeOf(
+          types, frame, frame.Exprs().Add(*std::move(label_or)), cond_type));
     }
     auto item_stmt = proc.LowerStmt(*item.stmt, frame);
     if (!item_stmt) return std::unexpected(std::move(item_stmt.error()));

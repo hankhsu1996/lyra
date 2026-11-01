@@ -235,8 +235,6 @@ class UnitLowerer {
       mir::CallableId id) const -> std::string;
 
   auto TranslateType(const mir::Type& ty) -> lir::Type;
-  static auto TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
-      -> lir::Type;
   auto LowerClass(mir::ClassId owner, const mir::Class& cls)
       -> diag::Result<lir::Class>;
   // The value `id` of `build` states, as the data it is. A constant is built

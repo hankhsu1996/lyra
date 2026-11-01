@@ -18,6 +18,8 @@
 #include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/float_width.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::dpi {
 
@@ -53,12 +55,12 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           },
           [](const mir::MachineFloatType& f) -> std::string {
             switch (f.width) {
-              case mir::MachineFloatWidth::k32:
+              case support::FloatWidth::k32:
                 return "float";
-              case mir::MachineFloatWidth::k64:
+              case support::FloatWidth::k64:
                 return "double";
             }
-            throw InternalError("RenderTypeAsC: unknown MachineFloatWidth");
+            throw InternalError("RenderTypeAsC: unknown FloatWidth");
           },
           [](const mir::MachineCStringType&) -> std::string {
             return "const char*";
@@ -71,53 +73,15 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           },
           // C has no references (LRM 35.5.6 passes by pointer).
           [&](const mir::ReferenceType&) { return crosses_no_boundary(); },
-          [&](const mir::RuntimeLibraryType& r) -> std::string {
-            switch (r.kind) {
-              case mir::RuntimeLibraryKind::kDpiBitChunk:
-                return "svBitVecVal";
-              case mir::RuntimeLibraryKind::kDpiLogicChunk:
-                return "svLogicVecVal";
-              // LRM Annex H.8.6: an open array is passed by handle in either
-              // direction, and the handle carries a `const` qualifier because
-              // the foreign side may not modify it.
-              case mir::RuntimeLibraryKind::kDpiOpenArrayHandle:
-                return "const svOpenArrayHandle";
-              case mir::RuntimeLibraryKind::kBitVec:
-              case mir::RuntimeLibraryKind::kEnumeration:
-              case mir::RuntimeLibraryKind::kPrintItem:
-              case mir::RuntimeLibraryKind::kFormatSpec:
-              case mir::RuntimeLibraryKind::kFormatArg:
-              case mir::RuntimeLibraryKind::kChannelCancellation:
-              case mir::RuntimeLibraryKind::kTimeFormat:
-              case mir::RuntimeLibraryKind::kTrigger:
-              case mir::RuntimeLibraryKind::kWatchedPlace:
-              case mir::RuntimeLibraryKind::kObservation:
-              case mir::RuntimeLibraryKind::kReadReport:
-              case mir::RuntimeLibraryKind::kWait:
-              case mir::RuntimeLibraryKind::kLeasedReference:
-              case mir::RuntimeLibraryKind::kHierarchySegment:
-              case mir::RuntimeLibraryKind::kDpiBitBuffer:
-              case mir::RuntimeLibraryKind::kDpiLogicBuffer:
-              case mir::RuntimeLibraryKind::kDpiOpenArray:
-              case mir::RuntimeLibraryKind::kCancellationTarget:
-              case mir::RuntimeLibraryKind::kControlEffect:
-              case mir::RuntimeLibraryKind::kTimer:
-              case mir::RuntimeLibraryKind::kDeferredEffects:
-              case mir::RuntimeLibraryKind::kViolationReportKeeper:
-              case mir::RuntimeLibraryKind::kObjectDefinition:
-              case mir::RuntimeLibraryKind::kScopeInfo:
-              case mir::RuntimeLibraryKind::kScopeCallable:
-              case mir::RuntimeLibraryKind::kClassObjectInfo:
-              case mir::RuntimeLibraryKind::kInterfaceRow:
-              case mir::RuntimeLibraryKind::kScopeMetadata:
-              case mir::RuntimeLibraryKind::kConstructionTable:
-              case mir::RuntimeLibraryKind::kInstantiation:
-              case mir::RuntimeLibraryKind::kGeneratePlaces:
-              case mir::RuntimeLibraryKind::kDumpEntry:
-              case mir::RuntimeLibraryKind::kDumpBlock:
-                return crosses_no_boundary();
+          // A type the library declares crosses where its declaration gives
+          // it a C spelling: a canonical chunk, and an open array's handle.
+          [&](const mir::LibraryType& l) -> std::string {
+            const std::optional<std::string_view> spelling =
+                support::DeclarationOf(l.decl).c_spelling;
+            if (!spelling.has_value()) {
+              return crosses_no_boundary();
             }
-            throw InternalError("RenderTypeAsC: unknown runtime library kind");
+            return std::string{*spelling};
           },
           // Every other type is one no foreign signature names, so the
           // boundary lowering should have refused the declaration before a
@@ -125,14 +89,6 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           [&](const mir::IntegralType&) { return crosses_no_boundary(); },
           [&](const mir::EnumType&) { return crosses_no_boundary(); },
           [&](const mir::UnpackedArrayType&) { return crosses_no_boundary(); },
-          [&](const mir::DynamicArrayType&) { return crosses_no_boundary(); },
-          [&](const mir::QueueType&) { return crosses_no_boundary(); },
-          [&](const mir::AssociativeArrayType&) {
-            return crosses_no_boundary();
-          },
-          [&](const mir::WildcardIndexType&) { return crosses_no_boundary(); },
-          [&](const mir::StringType&) { return crosses_no_boundary(); },
-          [&](const mir::AnyType&) { return crosses_no_boundary(); },
           [&](const mir::ErasedValueType&) { return crosses_no_boundary(); },
           [&](const mir::MachineBoolType&) { return crosses_no_boundary(); },
           [&](const mir::MachineArrayType&) { return crosses_no_boundary(); },
@@ -141,21 +97,14 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
             return crosses_no_boundary();
           },
           [&](const mir::RealType&) { return crosses_no_boundary(); },
-          [&](const mir::ShortRealType&) { return crosses_no_boundary(); },
-          [&](const mir::ChandleType&) { return crosses_no_boundary(); },
-          [&](const mir::EmptyType&) { return crosses_no_boundary(); },
+          [&](const mir::UnmanagedRefType&) { return crosses_no_boundary(); },
           [&](const mir::ObjectType&) { return crosses_no_boundary(); },
-          [&](const mir::RuntimeClassType&) { return crosses_no_boundary(); },
-          [&](const mir::RuntimeEffectsType&) { return crosses_no_boundary(); },
-          [&](const mir::FilesType&) { return crosses_no_boundary(); },
-          [&](const mir::DiagnosticType&) { return crosses_no_boundary(); },
           [&](const mir::CoroutineType&) { return crosses_no_boundary(); },
           [&](const mir::VariableRefType&) { return crosses_no_boundary(); },
           [&](const mir::ReferenceWrapperType&) {
             return crosses_no_boundary();
           },
           [&](const mir::ManagedRefType&) { return crosses_no_boundary(); },
-          [&](const mir::WeakManagedRefType&) { return crosses_no_boundary(); },
           [&](const mir::VectorType&) { return crosses_no_boundary(); },
           [&](const mir::TupleType&) { return crosses_no_boundary(); },
           [&](const mir::ObservableType&) { return crosses_no_boundary(); },
@@ -165,11 +114,6 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           [&](const mir::DesignationType&) { return crosses_no_boundary(); },
           [&](const mir::BitsReferenceType&) { return crosses_no_boundary(); },
           [&](const mir::ObjectWriteType&) { return crosses_no_boundary(); },
-          [&](const mir::SampledHistoryType&) { return crosses_no_boundary(); },
-          [&](const mir::EvaluationAttemptsType&) {
-            return crosses_no_boundary();
-          },
-          [&](const mir::LoopBlocksType&) { return crosses_no_boundary(); },
           [&](const mir::RecordType&) { return crosses_no_boundary(); },
           [&](const mir::ClosureType&) { return crosses_no_boundary(); },
           [&](const mir::ErasedCallableType&) {

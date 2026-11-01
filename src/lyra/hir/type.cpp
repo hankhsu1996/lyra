@@ -157,7 +157,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             return h;
           },
           [seed](const VirtualInterfaceType& t) {
-            return Combine(seed, t.unit_name);
+            return Combine(seed, t.scope_class.value);
           },
           // A type carrying nothing beyond being itself is separated by its arm
           // alone, which the seed already holds.

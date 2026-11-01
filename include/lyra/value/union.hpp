@@ -77,7 +77,7 @@ class Union {
 
   // LRM 7.3: the first member at its default.
   Union() {
-    storage_.template Build<0>(detail::DefaultOf<Member<0>>());
+    storage_.template Build<0>(DefaultOf<Member<0>>());
   }
 
   // The union holding member `I` as `value` and every other byte zero, which

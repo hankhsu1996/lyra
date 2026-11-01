@@ -35,6 +35,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -69,7 +70,7 @@ auto LiftStringSource(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId source_type,
     mir::ExprId source_id) -> mir::ExprId {
   const mir::Type& source = unit_lowerer.Unit().types.Get(source_type);
-  if (source.Is<mir::StringType>()) return source_id;
+  if (source.IsDeclaredBy(support::LibraryDecl::kString)) return source_id;
 
   if (source.Is<mir::UnpackedArrayType>()) {
     const auto& ua = unit_lowerer.Unit()
@@ -98,7 +99,7 @@ auto LiftStringFormat(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::TypeId format_type,
     mir::ExprId format_id) -> mir::ExprId {
   const auto& t = unit_lowerer.Unit().types.Get(format_type);
-  if (t.Is<mir::StringType>()) return format_id;
+  if (t.IsDeclaredBy(support::LibraryDecl::kString)) return format_id;
   if (!t.IsIntegral()) {
     throw InternalError(
         "LiftStringFormat: a scan format reached lowering that is not string "
@@ -132,7 +133,7 @@ auto ValidateTargetType(
     support::ScanSourceKind source_kind, diag::SourceSpan span)
     -> diag::Result<void> {
   const auto& target = unit.types.Get(mir_type);
-  if (target.Is<mir::StringType>()) return {};
+  if (target.IsDeclaredBy(support::LibraryDecl::kString)) return {};
   if (target.IsIntegral()) return {};
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,

@@ -28,7 +28,7 @@
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_callback.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::backend::cpp {
@@ -953,6 +953,13 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
                           "question the library asks of a value or of its "
                           "type, and an allocation function is no question "
                           "-- please report this as a bug");
+                    },
+                    [](const support::Constructor&) -> VerbatimName {
+                      throw InternalError(
+                          "backend::cpp: a type's own operation answers a "
+                          "question the library asks of a value or of its "
+                          "type, and a constructor is no question -- please "
+                          "report this as a bug");
                     }},
                 support::RuntimeEntryOf(fn).declaration);
           }},

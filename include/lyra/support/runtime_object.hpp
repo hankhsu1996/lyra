@@ -5,159 +5,151 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/support/layout.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::support {
 
-// An object the runtime library defines that is not a value of the design:
-// what an entry builds for one use -- what a print is assembled from, what a
-// wait registers, a write in progress into storage a wrapper stands for, a part
-// designated within one -- and what the generated side holds for a while --
-// an execution, a counted hold on a value, a reference to storage somebody
-// else owns.
+// An object the runtime library defines for a type the IR owns rather than
+// one the library declares: an execution, a counted hold on a value, a write
+// in progress into storage a wrapper stands for, a part designated within one,
+// a write in progress into the properties of an object (LRM 8.4), which tells
+// the object it was written as it ends, and a reference to storage somebody
+// else owns, whether of a known type or of any type (LRM 15.4.9).
 enum class LibraryObject : std::uint8_t {
-  kPrintItem,
-  kFormatSpec,
-  kFormatArg,
-  kHierarchySegment,
-  kTrigger,
-  kObservation,
-  kReadReport,
-  kWait,
-  kDpiBitBuffer,
-  kDpiLogicBuffer,
-  kDpiOpenArray,
-  kChannelCancellation,
   kExecution,
   kSharedPointer,
   kOpenWrite,
   kDesignation,
   kObjectWrite,
   kReference,
-  // A reference to a value of any type (LRM 15.4.9).
   kAnyReference,
-  // A reference to an object that does not keep it (LRM 8.30).
-  kWeakReference,
-  // A reference a call binds, with the lease keeping what it names in
-  // existence until the call returns (LRM 13.5.2).
-  kLeasedReference,
 };
 
-// An object generated code holds by value: it gives the object storage in its
-// own frame, the library builds the object there, and the object ends where
-// the program that made it says. A value of every domain is one, and so is
-// each library object -- except a value laid out by its type (a structure, a
-// union, a tuple a lowering composes, or a fixed-size unpacked array), which
-// generated code lays out itself as the type states; the object of that domain
-// is how the library holds one.
-// What the library keeps for the whole run, and storage an owner holds, is
-// reached by address instead and is not one of these.
+// What a holder builds, copies and ends a value as through the library's
+// entries, and what those entries are named over: the value domain a value of
+// the design is realized in, an object a declaration of the library's states
+// as its own, named by that declaration, or an object above. A value held as
+// its bits -- an integral value, a real, a reference owning nothing -- and a
+// value laid out by its type are named by their domain too, where a cell or a
+// container holds them, though a frame holds each as the bytes its type lays
+// out and the library builds no object of it there. What the library keeps for
+// the whole run, and storage an owner holds, is reached by address instead and
+// is none of these.
 //
 // Two sides name it, as they do a value domain: a backend gives the storage
 // and calls the entries that build and end an object, and the runtime defines
 // those entries over the object's own type.
-using RuntimeObject = std::variant<ValueDomain, LibraryObject>;
+using RuntimeObject = std::variant<ValueDomain, LibraryDecl, LibraryObject>;
 
-// The storage an object needs, and whether ending one has anything to do. The
-// runtime answers it for each object it builds, read off that object's own
-// type; a holder keeping a value at its tail answers it with that value's
-// layout, so its size follows the type it holds.
-struct ObjectLayout {
-  Layout layout;
-  bool ends_with_nothing_to_do;
+// The declaration whose values are objects of `domain`, and nothing for a
+// domain no declaration's values are realized in.
+constexpr auto DeclarationRealizedIn(ValueDomain domain)
+    -> std::optional<LibraryDecl> {
+  std::optional<LibraryDecl> found;
+  ForEachLibraryDecl([&](LibraryDecl decl) {
+    const auto* held = std::get_if<DomainObject>(&DeclarationOf(decl).holding);
+    if (held != nullptr && held->domain == domain) {
+      found = decl;
+    }
+  });
+  return found;
+}
 
-  friend auto operator==(const ObjectLayout&, const ObjectLayout&)
-      -> bool = default;
-};
+// How large an object the runtime defines for a type the IR owns is, for each
+// one generated code holds by value, stated where a layer compiled without the
+// runtime reads it: MIR sizes a frame holding one from it, every backend gives
+// one that storage, and the runtime checks each class a backend builds there
+// against it. An execution lies there only until whoever drives it takes it,
+// the moment it is made.
+constexpr auto StatedStorageOf(LibraryObject object) -> ObjectLayout {
+  switch (object) {
+    case LibraryObject::kExecution:
+      return ObjectLayout{.layout = {.size = 8, .align = 8}, .needs_end = true};
+    case LibraryObject::kSharedPointer:
+      return ObjectLayout{
+          .layout = {.size = 16, .align = 8}, .needs_end = true};
+    case LibraryObject::kOpenWrite:
+      return ObjectLayout{
+          .layout = {.size = 448, .align = 8}, .needs_end = true};
+    case LibraryObject::kDesignation:
+      return ObjectLayout{
+          .layout = {.size = 16, .align = 8}, .needs_end = false};
+    case LibraryObject::kObjectWrite:
+      return ObjectLayout{
+          .layout = {.size = 16, .align = 8}, .needs_end = true};
+    case LibraryObject::kReference:
+      return ObjectLayout{
+          .layout = {.size = 72, .align = 8}, .needs_end = false};
+    case LibraryObject::kAnyReference:
+      return ObjectLayout{
+          .layout = {.size = 40, .align = 8}, .needs_end = false};
+  }
+  throw InternalError("runtime object: unknown library object");
+}
 
-// How large an object the runtime defines is, for each one generated code
-// holds by value, stated where a layer compiled without the runtime reads it:
-// MIR sizes a frame holding one, a list of triggers among them, from these, and
-// the runtime answers its own layout queries with them too, after checking each
-// against the class it defines. A compiler building a program lays the classes
-// out itself, and checks that each fits what is stated.
-inline constexpr ObjectLayout kTriggerStorage{
-    .layout = {.size = 80, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kObservationStorage{
-    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kReadReportStorage{
-    .layout = {.size = 120, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kWaitStorage{
-    .layout = {.size = 8, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kHierarchySegmentStorage{
-    .layout = {.size = 56, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kChannelCancellationStorage{
-    .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kWeakReferenceStorage{
-    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kLeasedReferenceStorage{
-    .layout = {.size = 112, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kReferenceStorage{
-    .layout = {.size = 72, .align = 8}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kAnyReferenceStorage{
-    .layout = {.size = 40, .align = 8}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kSharedPointerStorage{
-    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kOpenWriteStorage{
-    .layout = {.size = 448, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kDesignationStorage{
-    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kObjectWriteStorage{
-    .layout = {.size = 8, .align = 8}, .ends_with_nothing_to_do = false};
+// The same for the object a value of `domain` is: a class handle's, which MIR
+// owns, stated here, and a value of a type the library declares, on its
+// declaration. Nothing for a value held as its bits or laid out by its type,
+// which is no object of the library's where a holder keeps it.
+constexpr auto StatedStorageOf(ValueDomain domain)
+    -> std::optional<ObjectLayout> {
+  switch (domain) {
+    case ValueDomain::kManagedRef:
+      return ObjectLayout{
+          .layout = {.size = 16, .align = 8}, .needs_end = true};
+    case ValueDomain::kWildcardIndex:
+    case ValueDomain::kAny:
+    case ValueDomain::kString:
+    case ValueDomain::kBitVec:
+    case ValueDomain::kDynArray:
+    case ValueDomain::kQueue:
+    case ValueDomain::kAssocArray:
+      return DeclarationRealizedIn(domain).and_then(ObjectStorageOf);
+    case ValueDomain::kReal:
+    case ValueDomain::kShortReal:
+    case ValueDomain::kUnmanagedRef:
+    case ValueDomain::kBit8:
+    case ValueDomain::kBit16:
+    case ValueDomain::kBit32:
+    case ValueDomain::kBit64:
+    case ValueDomain::kLogic8:
+    case ValueDomain::kLogic16:
+    case ValueDomain::kLogic32:
+    case ValueDomain::kLogic64:
+    case ValueDomain::kBitWide:
+    case ValueDomain::kLogicWide:
+    case ValueDomain::kLaidOut:
+      return std::nullopt;
+  }
+  throw InternalError("runtime object: unknown value domain");
+}
 
-// The same for each class the value library keeps a value in where it does not
-// lay the value out by its type, and for each object of the value library a
-// runtime entry is handed.
-inline constexpr ObjectLayout kStringStorage{
-    .layout = {.size = 32, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kRealStorage{
-    .layout = {.size = 8, .align = 8}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kShortRealStorage{
-    .layout = {.size = 4, .align = 4}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kChandleStorage{
-    .layout = {.size = 8, .align = 8}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kObjectRefStorage{
-    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kDynamicArrayStorage{
-    .layout = {.size = 40, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kQueueStorage{
-    .layout = {.size = 64, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kAssociativeArrayStorage{
-    .layout = {.size = 80, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kWildcardKeyStorage{
-    .layout = {.size = 80, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kAnyStorage{
-    .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kEmptyStorage{
-    .layout = {.size = 1, .align = 1}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kBitVecStorage{
-    .layout = {.size = 32, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kPrintItemStorage{
-    .layout = {.size = 72, .align = 8}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kFormatSpecStorage{
-    .layout = {.size = 20, .align = 4}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kFormatArgStorage{
-    .layout = {.size = 40, .align = 8}, .ends_with_nothing_to_do = true};
-inline constexpr ObjectLayout kTimeFormatStorage{
-    .layout = {.size = 48, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kDpiBitBufferStorage{
-    .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kDpiLogicBufferStorage{
-    .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
-inline constexpr ObjectLayout kDpiOpenArrayStorage{
-    .layout = {.size = 64, .align = 8}, .ends_with_nothing_to_do = false};
+// The storage stated for an object, read where each kind of object states it.
+constexpr auto StatedStorageOf(const RuntimeObject& object)
+    -> std::optional<ObjectLayout> {
+  return std::visit(
+      Overloaded{
+          [](ValueDomain domain) { return StatedStorageOf(domain); },
+          [](LibraryDecl decl) { return ObjectStorageOf(decl); },
+          [](LibraryObject library) -> std::optional<ObjectLayout> {
+            return StatedStorageOf(library);
+          }},
+      object);
+}
 
-// The storage stated above for an object of the library's own, and nothing
-// for one it is not: a value held as its bits or as the bytes its type lays
-// out, and an execution, which whoever drives it takes the moment it is made.
-auto StatedStorageOf(const RuntimeObject& object)
-    -> std::optional<ObjectLayout>;
+// What a holder builds, copies and ends a value of `decl` as, where it holds
+// one by value as an object of the library's: the value domain a value of the
+// design is realized in, or the declaration itself for an object of its own.
+auto ObjectOf(LibraryDecl decl) -> std::optional<RuntimeObject>;
 
 // The spelling the entries over an object carry, stated once for both sides.
 // A value domain's object is spelled as the domain is, so every entry over a
-// value leads with the same word, and a library object as its own name is.
-auto LibraryObjectName(LibraryObject object) -> std::string_view;
+// value leads with the same word; an object a declaration states as its own is
+// spelled as its declaration says, and one above as its own name is.
 auto RuntimeObjectName(const RuntimeObject& object) -> std::string_view;
 
 }  // namespace lyra::support

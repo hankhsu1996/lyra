@@ -1,12 +1,15 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
@@ -14,7 +17,9 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/float_width.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -231,6 +236,24 @@ auto BuildFormatCallExpr(
               .callee = mir::Direct{.target = support::BuiltinFn::kFormat},
               .arguments = {items_array, time_format_id}},
       .type = builtins.string};
+}
+
+auto ReadDelayAmount(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId amount,
+    DelayEntries entries) -> DelayRead {
+  const auto* real = unit.types.Get(block.Get(amount).type).As<mir::RealType>();
+  if (real == nullptr) {
+    return DelayRead{.entry = entries.integral, .amount = amount};
+  }
+  switch (real->width) {
+    case support::FloatWidth::k64:
+      return DelayRead{.entry = entries.real, .amount = amount};
+    case support::FloatWidth::k32:
+      return DelayRead{
+          .entry = entries.real,
+          .amount = ConvertToType(unit, block, amount, unit.builtins.real)};
+  }
+  throw InternalError("hir_to_mir: unknown real width");
 }
 
 }  // namespace lyra::lowering::hir_to_mir

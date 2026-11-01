@@ -45,6 +45,7 @@
 #include "lyra/hir/dump.hpp"
 #include "lyra/hir/lowering.hpp"
 #include "lyra/hir/lowering_ref.hpp"
+#include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
@@ -136,7 +137,7 @@ auto UnitLowerer::DeclareOwn() -> diag::Result<void> {
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
   {
     const profiling::TimeTraceScope step("declare structural identities");
-    DeclareStructuralIdentities(*scope_, support::DefPath{});
+    DeclareStructuralIdentities(*scope_, hir::UnitScopeClassPath());
   }
   {
     const profiling::TimeTraceScope step("declare classes");

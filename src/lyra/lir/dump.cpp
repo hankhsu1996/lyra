@@ -18,6 +18,7 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -214,8 +215,7 @@ class LirDumper {
             },
             [&](const ConstantRecord& c) {
               return std::format(
-                  "{} {{{}}}",
-                  Type{RuntimeLibraryType{.kind = c.kind}}.KindName(),
+                  "{} {{{}}}", support::DeclarationOf(c.decl).name,
                   list(c.parts));
             },
             [&](const ConstantArray& c) {
@@ -591,8 +591,8 @@ class LirDumper {
             [](const StrConst& c) -> std::string {
               return std::format("str:\"{}\"", c.value);
             },
-            [](const RealConst& c) -> std::string {
-              return std::format("real:{}", c.value);
+            [](const FloatConst& c) -> std::string {
+              return std::format("float:{}", c.value);
             },
             // Its type, where every other constant prints its value: referring
             // to nothing is the whole of a null's value, and which type's

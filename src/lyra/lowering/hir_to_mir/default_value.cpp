@@ -18,6 +18,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/container_construction.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/real_literal.hpp"
 #include "lyra/mir/builder.hpp"
@@ -29,6 +30,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -47,47 +49,6 @@ auto DefaultIntegralConstant(const mir::IntegralType& integral)
 }
 
 namespace {
-
-// The elements a construction is handed, as one value: the plain-data array of
-// the container's element type holding them in order. The container is what
-// the construction makes of the list, never what the list itself is.
-auto BuildElementList(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    mir::TypeId array_type, std::vector<mir::ExprId> elements) -> mir::ExprId {
-  const mir::TypeId element_type =
-      RequiredContainerElementType(unit, array_type);
-  // Each item is assigned to the element it lands in (LRM 10.8, 10.9.1).
-  for (mir::ExprId& element : elements) {
-    element = AtType(unit, block, element, element_type);
-  }
-  const mir::TypeId list_type =
-      mir::MachineArrayOf(unit.types, element_type, elements.size());
-  return block.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = std::move(elements)},
-          .type = list_type});
-}
-
-// Builds the queue or the dynamic array an element list feeds. Neither has a
-// size of its own, so its construction states the list and how many times it
-// repeats. What a position no element fills holds, and how many a queue may
-// hold (LRM 7.4.5, 7.10.5), are the type's to say, so nothing here states
-// either.
-auto BuildContainerFromElements(
-    const mir::CompilationUnit& unit, mir::TypeId array_type,
-    mir::ExprId elements, mir::ExprId count) -> mir::Expr {
-  if (unit.types.Get(array_type).Is<mir::UnpackedArrayType>()) {
-    throw InternalError(
-        "BuildContainerFromElements: a fixed-size unpacked array's element "
-        "count is its type's, so its construction states no repeat count -- "
-        "please report this as a bug");
-  }
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Construct{}, .arguments = {elements, count}},
-      .type = array_type};
-}
 
 // Materialize a folded member-default constant (LRM 7.2.2) as a MIR value of
 // its type. A scalar leaf becomes a literal (a string constructs the runtime
@@ -200,23 +161,7 @@ auto DefaultValueOf(
                 mir::BuildIntegralLiteral(
                     unit, block, type, DefaultIntegralConstant(e.base)));
           },
-          [&](const mir::StringType&) -> Answer {
-            // The literal is machine text; the empty string value is what the
-            // string's constructor builds from it.
-            const mir::ExprId lit = block.Add(
-                mir::Expr{
-                    .data = mir::StringLiteral{.value = std::string{}},
-                    .type = type});
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{
-                        .callee = mir::Construct{}, .arguments = {lit}},
-                .type = type};
-          },
           [&](const mir::RealType&) -> Answer {
-            return block.Get(BuildRealLiteral(unit, block, type, 0.0));
-          },
-          [&](const mir::ShortRealType&) -> Answer {
             return block.Get(BuildRealLiteral(unit, block, type, 0.0));
           },
           // LRM Table 7-1: a fixed unpacked array defaults to every element at
@@ -252,29 +197,6 @@ auto DefaultValueOf(
                         .arguments = {}},
                 .type = type};
           },
-          // LRM Table 7-1: a dynamic array's default and a queue's are the
-          // empty array, which its own construction builds from a list of no
-          // elements.
-          [&](const mir::DynamicArrayType&) -> Answer {
-            return BuildArrayConstructionCall(unit, block, type, {});
-          },
-          [&](const mir::QueueType&) -> Answer {
-            return BuildArrayConstructionCall(unit, block, type, {});
-          },
-          // LRM Table 7-1: an associative array's default is empty, which is
-          // its literal over no entries and no `default:` clause.
-          [&](const mir::AssociativeArrayType&) -> Answer {
-            return BuildAssociativeConstructionCall(
-                unit, block, type, {}, std::nullopt);
-          },
-          // A message of a mailbox of no stated type, before one is put, holds
-          // no value of any type (LRM 15.4.9).
-          [&](const mir::AnyType&) -> Answer {
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
-                .type = type};
-          },
           // What a declaration holds for an object whose class this unit does
           // not declare is a handle to it, and a handle starts out null; the
           // object type itself is what that handle points at, which a
@@ -303,39 +225,32 @@ auto DefaultValueOf(
           [&](const mir::ManagedRefType&) -> Answer {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
-          // A weak reference starts referring to nothing (LRM 8.30), the one
-          // value its construction makes.
-          [&](const mir::WeakManagedRefType&) -> Answer {
+          // A type the library declares starts as what the entry its
+          // declaration names builds out of nothing, and a type it names none
+          // for holds nothing a declaration could ask for.
+          [&](const mir::LibraryType& t) -> Answer {
+            const support::LibraryDeclData& declaration =
+                support::DeclarationOf(t.decl);
+            if (!declaration.default_value.has_value()) {
+              return holds_no_declared_value(declaration.name);
+            }
             return mir::Expr{
                 .data =
-                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
+                    mir::CallExpr{
+                        .callee = mir::BuiltinCalleeAnswering(
+                            *declaration.default_value, std::nullopt, type),
+                        .arguments = {}},
                 .type = type};
           },
-          // LRM 6.14: a chandle is always initialized to null.
-          [&](const mir::ChandleType&) -> Answer {
+          // LRM 6.14: a chandle is always initialized to null, and so is a
+          // virtual interface (LRM 25.9).
+          [&](const mir::UnmanagedRefType&) -> Answer {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
           // A declaration standing for no object holds a sequence of nothing,
           // which its own constructor builds from a list of no elements.
           [&](const mir::VectorType&) -> Answer {
             return BuildSequenceConstructionCall(unit, block, type, {});
-          },
-          // A type carrying no information has exactly one value, so that
-          // value is its default.
-          [&](const mir::EmptyType&) -> Answer {
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
-                .type = type};
-          },
-
-          // LRM 7.8 forbids an index type from declaring a type, so nothing is
-          // ever declared to be one and no declaration's default can be asked
-          // for. An index still reaches the entries of such an array, carrying
-          // whatever the expression that named it carried; what it never does
-          // is give a variable its type.
-          [&](const mir::WildcardIndexType&) -> Answer {
-            return holds_no_declared_value("an associative array's index");
           },
 
           // The machine vocabulary a lowering builds to carry a value: a count,
@@ -363,18 +278,10 @@ auto DefaultValueOf(
             return holds_no_declared_value("a machine function address");
           },
 
-          [&](const mir::RuntimeClassType&) -> Answer {
-            return holds_no_declared_value("an object of a runtime class");
-          },
-
-          // Storage the runtime installs and a service it provides: a cell that
-          // is observed, a net's resolution, a driver's contribution, a write
-          // open on one of them, the history a sampled value reads, what an
-          // assertion has in flight, the effects a body runs under, the open
-          // files, the diagnostic stream, and a type the library declares, a
-          // value of which a lowering builds where it uses one.
-          // What a declaration holds is the value inside one of these, which
-          // answers above.
+          // Storage the runtime installs: a cell that is observed, a net's
+          // resolution, a driver's contribution, and a write open on one of
+          // them. What a declaration holds is the value inside one of these,
+          // which answers above.
           [&](const mir::ObservableType&) -> Answer {
             return holds_no_declared_value("an observable cell");
           },
@@ -395,27 +302,6 @@ auto DefaultValueOf(
           },
           [&](const mir::ObjectWriteType&) -> Answer {
             return holds_no_declared_value("a write into an object");
-          },
-          [&](const mir::SampledHistoryType&) -> Answer {
-            return holds_no_declared_value("a sampled value's history");
-          },
-          [&](const mir::EvaluationAttemptsType&) -> Answer {
-            return holds_no_declared_value("an assertion's attempts");
-          },
-          [&](const mir::LoopBlocksType&) -> Answer {
-            return holds_no_declared_value("the blocks a loop built");
-          },
-          [&](const mir::RuntimeEffectsType&) -> Answer {
-            return holds_no_declared_value("the effects a body runs under");
-          },
-          [&](const mir::FilesType&) -> Answer {
-            return holds_no_declared_value("the open files");
-          },
-          [&](const mir::DiagnosticType&) -> Answer {
-            return holds_no_declared_value("the diagnostic stream");
-          },
-          [&](const mir::RuntimeLibraryType&) -> Answer {
-            return holds_no_declared_value("a runtime library value");
           },
 
           // Code, and the storage a body reaches through rather than holds: a
@@ -441,9 +327,8 @@ auto DefaultValueOf(
           },
 
           // LRM 7.3.2's `void` member occupies a value slot and is carried as
-          // the type holding no information, which answers above. Everywhere
-          // else `void` is the absence of a result, and an absence is not
-          // declared.
+          // the tuple of no components, which answers above. Everywhere else
+          // `void` is the absence of a result, and an absence is not declared.
           [&](const mir::VoidType&) -> Answer {
             return holds_no_declared_value("the absence of a result");
           },
@@ -489,136 +374,6 @@ auto BuildDefaultValueFromHir(
     -> mir::Expr {
   return BuildDefaultValueExpr(
       unit_lowerer.Unit(), block, unit_lowerer.TranslateType(hir_type));
-}
-
-auto RequiredContainerElementType(
-    const mir::CompilationUnit& unit, mir::TypeId container) -> mir::TypeId {
-  const std::optional<mir::TypeId> element =
-      unit.types.Get(container).ContainerElementType();
-  if (!element.has_value()) {
-    throw InternalError(
-        "RequiredContainerElementType: the type holds no elements, and the "
-        "caller reached it only because its own construction said it would -- "
-        "please report this as a bug");
-  }
-  return *element;
-}
-
-auto BuildFixedArrayConstructionCall(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    mir::TypeId array_type, std::vector<mir::ExprId> repeat_unit) -> mir::Expr {
-  const std::uint64_t element_count =
-      unit.types.Get(array_type).Get<mir::UnpackedArrayType>().Size();
-  if (repeat_unit.empty() || element_count % repeat_unit.size() != 0) {
-    throw InternalError(
-        std::format(
-            "BuildFixedArrayConstructionCall: {} elements laid down again and "
-            "again do not fill an array of {} -- please report this as a bug",
-            repeat_unit.size(), element_count));
-  }
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Construct{},
-              .arguments = {BuildElementList(
-                  unit, block, array_type, std::move(repeat_unit))}},
-      .type = array_type};
-}
-
-auto BuildArrayConstructionCall(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    mir::TypeId array_type, std::vector<mir::ExprId> elements) -> mir::Expr {
-  if (unit.types.Get(array_type).Is<mir::UnpackedArrayType>()) {
-    return BuildFixedArrayConstructionCall(
-        unit, block, array_type, std::move(elements));
-  }
-  const mir::ExprId list_id =
-      BuildElementList(unit, block, array_type, std::move(elements));
-  return BuildContainerFromElements(
-      unit, array_type, list_id, mir::BuildMachineIntLiteral(unit, block, 1));
-}
-
-auto BuildArrayRepeatCall(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    mir::TypeId array_type, std::vector<mir::ExprId> repeat_unit,
-    mir::ExprId count_id) -> mir::Expr {
-  const mir::ExprId repeat_unit_id =
-      BuildElementList(unit, block, array_type, std::move(repeat_unit));
-  return BuildContainerFromElements(unit, array_type, repeat_unit_id, count_id);
-}
-
-auto BuildSequenceConstructionCall(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    mir::TypeId sequence_type, std::vector<mir::ExprId> elements) -> mir::Expr {
-  const mir::TypePool& types = unit.types;
-  const mir::TypeId list_type = mir::MachineArrayOf(
-      types, types.Get(sequence_type).Get<mir::VectorType>().element,
-      elements.size());
-  const mir::ExprId list_id = block.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = std::move(elements)},
-          .type = list_type});
-  return mir::Expr{
-      .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {list_id}},
-      .type = sequence_type};
-}
-
-auto BuildAssociativeConstructionCall(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    mir::TypeId assoc_type,
-    std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
-    std::optional<mir::ExprId> stated_default) -> mir::Expr {
-  const auto* assoc =
-      unit.types.Get(assoc_type).As<mir::AssociativeArrayType>();
-  if (assoc == nullptr) {
-    throw InternalError(
-        "BuildAssociativeConstructionCall: result type is not "
-        "AssociativeArrayType");
-  }
-  const mir::TypeId key_type = assoc->key_type;
-  const mir::TypeId element_type = assoc->element_type;
-
-  const mir::TypeId tuple_type = unit.types.Intern(
-      mir::Type{mir::TupleType{.elements = {key_type, element_type}}});
-  std::vector<mir::ExprId> tuple_ids;
-  tuple_ids.reserve(entries.size());
-  // Each index and each value is assigned to where it lands (LRM 7.9.11,
-  // 10.8), and so is a `default:`, which the front end leaves unconverted
-  // since LRM 10.8 leaves a default correspondence out.
-  for (const auto& [key_id, value_id] : entries) {
-    tuple_ids.push_back(block.Add(
-        mir::Expr{
-            .data =
-                mir::CompositeExpr{
-                    .parts =
-                        {AtType(unit, block, key_id, key_type),
-                         AtType(unit, block, value_id, element_type)}},
-            .type = tuple_type}));
-  }
-  const mir::TypeId entries_type =
-      mir::MachineArrayOf(unit.types, tuple_type, tuple_ids.size());
-  const mir::ExprId entries_id = block.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = std::move(tuple_ids)},
-          .type = entries_type});
-
-  mir::Expr built{
-      .data =
-          mir::CallExpr{.callee = mir::Construct{}, .arguments = {entries_id}},
-      .type = assoc_type};
-  if (!stated_default.has_value()) {
-    return built;
-  }
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kAssocWithDefault,
-                      .receiver = block.Add(std::move(built))},
-              .arguments = {ConvertToType(
-                  unit, block, *stated_default, element_type)}},
-      .type = assoc_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

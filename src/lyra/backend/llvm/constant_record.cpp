@@ -4,7 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <llvm/IR/Constant.h>
@@ -12,9 +14,10 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Type.h>
 
+#include "lyra/abi/library_records.hpp"
 #include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/lir/type.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -85,62 +88,19 @@ auto LayoutOf() -> LibraryRecordLayout {
 
 }  // namespace
 
-auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
-    -> LibraryRecordLayout {
-  switch (kind) {
-    case lir::RuntimeLibraryKind::kObjectDefinition:
-      return LayoutOf<abi::ObjectDefinition>();
-    case lir::RuntimeLibraryKind::kScopeInfo:
-      return LayoutOf<abi::ScopeInfo>();
-    case lir::RuntimeLibraryKind::kScopeCallable:
-      return LayoutOf<abi::ScopeCallable>();
-    case lir::RuntimeLibraryKind::kClassObjectInfo:
-      return LayoutOf<abi::ClassObjectInfo>();
-    case lir::RuntimeLibraryKind::kInterfaceRow:
-      return LayoutOf<abi::InterfaceRow>();
-    case lir::RuntimeLibraryKind::kScopeMetadata:
-      return LayoutOf<abi::ScopeMetadata>();
-    case lir::RuntimeLibraryKind::kConstructionTable:
-      return LayoutOf<abi::ConstructionTable>();
-    case lir::RuntimeLibraryKind::kInstantiation:
-      return LayoutOf<abi::Instantiation>();
-    case lir::RuntimeLibraryKind::kGeneratePlaces:
-      return LayoutOf<abi::GeneratePlaces>();
-    case lir::RuntimeLibraryKind::kDumpEntry:
-      return LayoutOf<abi::DumpEntry>();
-    case lir::RuntimeLibraryKind::kDumpBlock:
-      return LayoutOf<abi::DumpBlock>();
-    case lir::RuntimeLibraryKind::kBitVec:
-    case lir::RuntimeLibraryKind::kEnumeration:
-    case lir::RuntimeLibraryKind::kPrintItem:
-    case lir::RuntimeLibraryKind::kFormatSpec:
-    case lir::RuntimeLibraryKind::kFormatArg:
-    case lir::RuntimeLibraryKind::kChannelCancellation:
-    case lir::RuntimeLibraryKind::kTimeFormat:
-    case lir::RuntimeLibraryKind::kHierarchySegment:
-    case lir::RuntimeLibraryKind::kDpiBitBuffer:
-    case lir::RuntimeLibraryKind::kDpiLogicBuffer:
-    case lir::RuntimeLibraryKind::kDpiBitChunk:
-    case lir::RuntimeLibraryKind::kDpiLogicChunk:
-    case lir::RuntimeLibraryKind::kDpiOpenArray:
-    case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
-    case lir::RuntimeLibraryKind::kWatchedPlace:
-    case lir::RuntimeLibraryKind::kTrigger:
-    case lir::RuntimeLibraryKind::kObservation:
-    case lir::RuntimeLibraryKind::kReadReport:
-    case lir::RuntimeLibraryKind::kWait:
-    case lir::RuntimeLibraryKind::kLeasedReference:
-    case lir::RuntimeLibraryKind::kObjectWrite:
-    case lir::RuntimeLibraryKind::kCancellationTarget:
-    case lir::RuntimeLibraryKind::kTimer:
-    case lir::RuntimeLibraryKind::kDeferredEffects:
-    case lir::RuntimeLibraryKind::kViolationReportKeeper:
-    case lir::RuntimeLibraryKind::kControlEffect:
-      break;
+auto LayoutOfLibraryRecord(support::LibraryDecl decl) -> LibraryRecordLayout {
+  std::optional<LibraryRecordLayout> layout;
+  abi::ForEachLibraryRecord([&]<typename Record>(support::LibraryDecl listed) {
+    if (listed == decl) {
+      layout = LayoutOf<Record>();
+    }
+  });
+  if (!layout.has_value()) {
+    throw InternalError(
+        "llvm codegen: a constant is stated as a library structure no "
+        "constant is made of -- please report this as a bug");
   }
-  throw InternalError(
-      "llvm codegen: a constant is stated as a library structure no constant "
-      "is made of -- please report this as a bug");
+  return *std::move(layout);
 }
 
 ConstantRecord::ConstantRecord(llvm::LLVMContext& context, std::uint64_t size)

@@ -10,6 +10,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/lowering/ast_to_hir/expression/operators.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -136,7 +137,10 @@ auto LowerDynamicCastExpr(
   if (!source_or) {
     return std::unexpected(std::move(source_or.error()));
   }
-  const hir::ExprId source = frame.Exprs().Add(*std::move(source_or));
+  const hir::ExprId source = NullAsTypeOf(
+      lowerer.Owner().Unit().types, frame,
+      frame.Exprs().Add(*std::move(source_or)),
+      frame.Exprs().Get(destination).type);
 
   auto type_id = lowerer.Owner().InternExpressionType(call, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));

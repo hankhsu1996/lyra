@@ -129,6 +129,18 @@ the detail lives in the entry itself.
   every holder asks -- the steps of a value's life and whether a write changed it -- and comparison,
   streaming, net resolution, takeover positions and key order are records handed to what asks each;
   a type's default is MIR's, handed with the type. One table holding every operation is rejected.
+- [a-type-the-library-declares-is-named-by-its-declaration](a-type-the-library-declares-is-named-by-its-declaration.md)
+  -- a type is MIR's own only where MIR's constructs make, take apart or lay out its values or a
+  language rule reads its parts; every other type is one alternative naming a declaration of the
+  library and its arguments, as rustc's `Adt(def, args)` -- the string, a value of any type and the
+  three containers among them -- and whatever any layer asks of it -- whether a variable may hold
+  one, what each argument is (an element type, an index type, a queue's bound), its movability, how
+  a holder holds it and how large it is, what a member of it is, the entry building what one starts
+  as, the constructor a construction reaches, its spellings -- is stated once by that declaration,
+  beside the layers that read it, the runtime asserting each stated size against the one class it
+  pairs the declaration with. A switch per question over a kind enumeration, a backend switch
+  choosing each one's construction entry, a starting value built from operands chosen per kind, and
+  a pointer as the declaration's identity, are rejected.
 - [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) -- on the
   execution backend a fixed-size unpacked array is its elements one after another at every size, an
   element reached by address arithmetic with the library answering only an index that names none.
@@ -1308,12 +1320,12 @@ the detail lives in the entry itself.
   [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).**
 - [a-virtual-interface-holds-which-instance](a-virtual-interface-holds-which-instance.md) -- a
   virtual interface's type fixes the interface and every position reached through it, so only the
-  instance is chosen at run time; its value is which instance it holds, the runtime's
-  pointer-identity value, with building one from an address and reading the address back stated as
-  operations; using a null one fails the simulation; a wait watches the variable in the instance the
-  handle holds, following it when the handle is assigned; and an interface a type names is compiled
-  whether or not it is instantiated. Resolving members by name at each access, a pointer as the
-  value, a cast between the two, and refusing an uninstantiated parameterization are rejected.
+  instance is chosen at run time; its value is a reference owning nothing, typed by the interface's
+  object, which an access dereferences directly; using a null one fails the simulation; a wait
+  watches the variable in the instance the handle holds, following it when the handle is assigned;
+  and an interface a type names is compiled whether or not it is instantiated. Resolving members by
+  name at each access, a pointer as the value, an untyped handle read back by a cast, and refusing
+  an uninstantiated parameterization are rejected.
 - [parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) -- every
   parameter is treated as code-shape-affecting for now (conservative over-approximation);
   classification and constructor-input threading are deferred. Superseded for value parameters by

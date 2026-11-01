@@ -48,6 +48,8 @@
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/dpi_abi.hpp"
+#include "lyra/support/float_width.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -64,15 +66,14 @@ auto CarrierTypeId(
     mir::CompilationUnit& unit, const support::DpiCarrier& carrier)
     -> mir::TypeId {
   if (std::holds_alternative<support::OpenArrayCarrier>(carrier)) {
-    return unit.types.Intern(
-        mir::Type{mir::RuntimeLibraryType{
-            .kind = mir::RuntimeLibraryKind::kDpiOpenArray}});
+    return mir::LibraryTypeOf(unit.types, support::LibraryDecl::kDpiOpenArray);
   }
   if (const auto* vec = std::get_if<support::VectorCarrier>(&carrier)) {
     return unit.types.Intern(
-        mir::Type{mir::RuntimeLibraryType{
-            .kind = vec->four_state ? mir::RuntimeLibraryKind::kDpiLogicBuffer
-                                    : mir::RuntimeLibraryKind::kDpiBitBuffer}});
+        mir::Type{mir::LibraryType{
+            .decl = vec->four_state ? support::LibraryDecl::kDpiLogicBuffer
+                                    : support::LibraryDecl::kDpiBitBuffer,
+            .args = {}}});
   }
   const auto machine_int = [&](mir::MachineIntWidth width,
                                mir::Signedness sign) {
@@ -93,8 +94,7 @@ auto CarrierTypeId(
       return machine_int(mir::MachineIntWidth::k64, mir::Signedness::kSigned);
     case support::DpiScalarAbi::kReal:
       return unit.types.Intern(
-          mir::Type{
-              mir::MachineFloatType{.width = mir::MachineFloatWidth::k64}});
+          mir::Type{mir::MachineFloatType{.width = support::FloatWidth::k64}});
     case support::DpiScalarAbi::kString:
       return unit.builtins.machine_c_string;
     case support::DpiScalarAbi::kChandle:
@@ -121,10 +121,11 @@ enum class ForeignHold : std::uint8_t {
 // its widest machine integer, narrowed to the carrier's C width by a machine
 // cast; a real yields its native floating value; a string yields a
 // NUL-terminated C string the foreign side may read for as long as `hold`
-// says. Reuses the ordinary value accessors; the boundary conversion is a
-// plain expression, not a DPI-specific primitive. Feeds an argument that
-// crosses by value, the seed of a scalar boundary object the callee writes
-// back through, and what an export hands back.
+// says; a chandle yields the address it holds. Reuses the ordinary value
+// accessors; the boundary conversion is a plain expression, not a DPI-specific
+// primitive. Feeds an argument that crosses by value, the seed of a scalar
+// boundary object the callee writes back through, and what an export hands
+// back.
 auto MarshalSvToCarrier(
     UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId sv_id,
     const support::DpiCarrier& carrier_desc, ForeignHold hold) -> mir::ExprId {
@@ -148,17 +149,10 @@ auto MarshalSvToCarrier(
           mir::Expr{
               .data = mir::CastExpr{.operand = machine_int}, .type = carrier});
     }
+    // A real crosses as the C double it is (LRM 35.5.6).
     case support::DpiScalarAbi::kReal:
       return block.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee =
-                          mir::Direct{
-                              .target = support::BuiltinFn::kRealValue,
-                              .receiver = sv_id},
-                      .arguments = {}},
-              .type = carrier});
+          mir::Expr{.data = mir::CastExpr{.operand = sv_id}, .type = carrier});
     case support::DpiScalarAbi::kString:
       switch (hold) {
         case ForeignHold::kForTheCall:
@@ -188,17 +182,10 @@ auto MarshalSvToCarrier(
                   .type = carrier});
       }
       throw InternalError("MarshalSvToCarrier: unknown ForeignHold");
+    // A chandle crosses as the address it holds (LRM 35.5.6).
     case support::DpiScalarAbi::kChandle:
       return block.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee =
-                          mir::Direct{
-                              .target = support::BuiltinFn::kChandlePtr,
-                              .receiver = sv_id},
-                      .arguments = {}},
-              .type = carrier});
+          mir::Expr{.data = mir::CastExpr{.operand = sv_id}, .type = carrier});
     case support::DpiScalarAbi::kLogicScalar:
       return block.Add(
           mir::Expr{
@@ -217,10 +204,10 @@ auto MarshalSvToCarrier(
 
 // Foreign ABI carrier -> SV value into a declared SV type's canonical shape. An
 // integral carrier is landed by the conversion from a machine integer, which is
-// told the declared type so width / signedness / state domain follow it; a real
-// / string / chandle carrier constructs the SV value directly. Feeds both a
-// function's marshaled return and the copy-back of an output / inout argument
-// into its actual.
+// told the declared type so width / signedness / state domain follow it; a
+// string carrier constructs the SV value directly, and a real or a chandle is
+// the carrier read as the SV value. Feeds both a function's marshaled return
+// and the copy-back of an output / inout argument into its actual.
 auto MarshalCarrierToSv(
     UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId call_id,
     const support::DpiCarrier& carrier_desc, mir::TypeId result_type)
@@ -253,13 +240,17 @@ auto MarshalCarrierToSv(
           support::BuiltinFn::kIntegralFromInt, std::nullopt, {machine_int},
           result_type);
     }
-    case support::DpiScalarAbi::kReal:
     case support::DpiScalarAbi::kString:
-    case support::DpiScalarAbi::kChandle:
       return mir::Expr{
           .data =
               mir::CallExpr{.callee = mir::Construct{}, .arguments = {call_id}},
           .type = result_type};
+    // A real is the C double that crossed, and a chandle holds the address
+    // that crossed (LRM 35.5.6).
+    case support::DpiScalarAbi::kReal:
+    case support::DpiScalarAbi::kChandle:
+      return mir::Expr{
+          .data = mir::CastExpr{.operand = call_id}, .type = result_type};
     case support::DpiScalarAbi::kLogicScalar:
       return mir::MakeBuiltinCall(
           unit_lowerer.Unit(), block.Body(), support::BuiltinFn::kFromSvLogic,
@@ -306,9 +297,10 @@ auto ChunkType(
     mir::CompilationUnit& unit, const support::VectorCarrier& carrier)
     -> mir::TypeId {
   return unit.types.Intern(
-      mir::Type{mir::RuntimeLibraryType{
-          .kind = carrier.four_state ? mir::RuntimeLibraryKind::kDpiLogicChunk
-                                     : mir::RuntimeLibraryKind::kDpiBitChunk}});
+      mir::Type{mir::LibraryType{
+          .decl = carrier.four_state ? support::LibraryDecl::kDpiLogicChunk
+                                     : support::LibraryDecl::kDpiBitChunk,
+          .args = {}}});
 }
 
 // The writable canonical chunk pointer of a boundary buffer, which feeds both
@@ -359,7 +351,7 @@ auto OpenArrayElementType(
   mir::TypeId cursor = actual_type;
   for (std::size_t d = 0; d < open.unpacked.size(); ++d) {
     const mir::Type& layer = unit.types.Get(cursor);
-    if (layer.Is<mir::DynamicArrayType>() || layer.Is<mir::QueueType>()) {
+    if (layer.IsLibrarySequence()) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedDpi,
           "a dynamic array or a queue passed to an open array formal of a "
@@ -498,10 +490,9 @@ auto BuildBoundaryArgument(
                                         support::BuiltinFn::kDpiOpenArrayHandle,
                                     .receiver = object},
                             .arguments = {}},
-                    .type = unit.types.Intern(
-                        mir::Type{mir::RuntimeLibraryType{
-                            .kind = mir::RuntimeLibraryKind::
-                                kDpiOpenArrayHandle}})});
+                    .type = mir::LibraryTypeOf(
+                        unit.types,
+                        support::LibraryDecl::kDpiOpenArrayHandle)});
           }},
       carrier);
 }
@@ -1000,9 +991,8 @@ auto ForeignBoundaryType(
   // An open array crosses by handle in either direction (LRM Annex H.8.6), so
   // its boundary type does not read the direction at all.
   if (std::holds_alternative<support::OpenArrayCarrier>(carrier)) {
-    return unit.types.Intern(
-        mir::Type{mir::RuntimeLibraryType{
-            .kind = mir::RuntimeLibraryKind::kDpiOpenArrayHandle}});
+    return mir::LibraryTypeOf(
+        unit.types, support::LibraryDecl::kDpiOpenArrayHandle);
   }
   if (const auto* vec = std::get_if<support::VectorCarrier>(&carrier)) {
     const mir::TypeId chunk = ChunkType(unit, *vec);
@@ -1134,9 +1124,8 @@ auto LowerForeignImportCallStmtForm(
 void CloseForeignCallerRegion(
     mir::CompilationUnit& unit, CallableBindings& bindings, mir::Builder block,
     mir::Block&& body) {
-  const mir::TypeId effect_type = unit.types.Intern(
-      mir::Type{mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kControlEffect}});
+  const mir::TypeId effect_type =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kControlEffect);
   const mir::BlockId region = block.AddScope(std::move(body));
   const mir::LocalId caught = bindings.DeclareAnonymous(effect_type);
   const mir::BlockId consumed = block.AddScope(mir::Block{});
@@ -1203,8 +1192,7 @@ void ReturnTheFallbackAnswer(
       case support::DpiScalarAbi::kReal:
         return block.Add(
             mir::Expr{
-                .data = mir::MachineFloatLiteral{.value = 0.0},
-                .type = carrier});
+                .data = mir::FloatingLiteral{.value = 0.0}, .type = carrier});
       case support::DpiScalarAbi::kString:
         return block.Add(mir::MakeStringLiteral(carrier, ""));
       case support::DpiScalarAbi::kChandle:

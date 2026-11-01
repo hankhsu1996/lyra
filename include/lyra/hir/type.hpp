@@ -349,22 +349,23 @@ struct UnitObjectsType {
   return objects;
 }
 
-// LRM 25.9 virtual interface: a variable's type that holds an instance of the
-// interface unit `unit_name`, or null. The unit is fixed by the type, which
-// includes the interface's parameters, so what an access through it reaches is
-// counted out of that unit's signature where this unit compiles; only the
-// instance is chosen while the simulation runs. A selected modport is not part
-// of it: which names a view offers is settled where an access is resolved, and
-// which assignments it admits is settled by the front end.
+// LRM 25.9 virtual interface: a variable's type that holds an instance of an
+// interface unit, or null, named by the scope class that unit's instances are
+// objects of. The unit is fixed by the type, which includes the interface's
+// parameters, so what an access through it reaches is counted out of that
+// unit's signature where this unit compiles; only the instance is chosen while
+// the simulation runs. A selected modport is not part of it: which names a
+// view offers is settled where an access is resolved, and which assignments it
+// admits is settled by the front end.
 struct VirtualInterfaceType {
-  std::string unit_name;
+  ScopeClassId scope_class;
 
   auto operator==(const VirtualInterfaceType&) const -> bool = default;
 };
 
-// LRM 8.4: the type slang gives the `null` literal. It is assignment- and
-// comparison-compatible with any class handle; the contextual handle determines
-// the operation, so this type carries no class identity of its own.
+// LRM 8.4, 6.14, 25.9: the type slang gives the `null` literal, a value of
+// every class handle, chandle and virtual interface type. The type it meets
+// decides which, so this type carries no identity of its own.
 struct NullType {
   auto operator==(const NullType&) const -> bool = default;
 };

@@ -17,6 +17,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -129,13 +130,13 @@ auto BindImplicitParameters(
     const mir::LocalId receiver =
         bindings.Declare(ReceiverOrigin{}, owner.self_pointer_type);
     bound.params.push_back(receiver);
-    const mir::ObjectLifetime lifetime = mir::LifetimeOfLineage(
+    const support::ObjectLifetime lifetime = mir::LifetimeOfLineage(
         mir::ClassRef{frame.current_class.id},
         [&](mir::ClassId cls) { return unit_lowerer.BaseOf(cls); });
     switch (lifetime) {
-      case mir::ObjectLifetime::kTheRun:
+      case support::ObjectLifetime::kTheRun:
         break;
-      case mir::ObjectLifetime::kWhileReferenced:
+      case support::ObjectLifetime::kWhileReferenced:
         HoldReceiverShare(
             unit_lowerer.Unit(), frame, receiver, owner.self_pointer_type);
         break;

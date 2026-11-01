@@ -29,6 +29,7 @@
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::mir {
 namespace {
@@ -264,7 +265,8 @@ TEST(ConsumedSignaturesTest, AConversionBetweenClassesReadsNeither) {
         body.Add(
             Expr{
                 .data = ReferenceExpr{.target = DefinitionRef{.of = derived}},
-                .type = ClassDefinitionType(u.types)}),
+                .type = LibraryTypeOf(
+                    u.types, support::LibraryDecl::kObjectDefinition)}),
         ClassDefinitionPointer(u.types)));
     body.AppendStmt(
         ExprStmt{

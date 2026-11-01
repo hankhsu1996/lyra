@@ -18,6 +18,7 @@
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
+#include "lyra/lir/operator.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -37,6 +38,11 @@ namespace lyra::backend::llvm_backend {
 
 class CodeGenModule;
 struct Planes;
+
+// The operation an operator of the layer above is over integral values (LRM
+// 11.4).
+auto IntegralOpOf(lir::BinaryOp op) -> support::IntegralOp;
+auto IntegralOpOf(lir::UnaryOp op) -> support::IntegralOp;
 
 // Per-function code generation: lowers one LIR callable body into its LLVM
 // function. Each LIR value becomes one LLVM value; reads resolve through the
@@ -325,6 +331,24 @@ class CodeGenFunction {
   auto LowerMachineBinary(
       const lir::BinaryInstr& binary, lir::Signedness signedness)
       -> diag::Result<llvm::Value*>;
+  auto LowerIdentityComparison(
+      const lir::BinaryInstr& binary, lir::TypeId result_type, llvm::Value* out)
+      -> diag::Result<llvm::Value*>;
+  auto LowerRealBinary(
+      const lir::BinaryInstr& binary, lir::TypeId result_type, llvm::Value* out)
+      -> diag::Result<llvm::Value*>;
+  // The machine boolean `holds` stored in `out` as the answer of a comparison
+  // stated at `result_type`, which is integral.
+  auto StoreComparison(
+      llvm::Value* holds, lir::TypeId result_type, llvm::Value* out)
+      -> llvm::Value*;
+  // The address a reference owning nothing holds, read where the reference
+  // lies.
+  auto HeldAddress(llvm::Value* reference) -> llvm::Value*;
+  // The machine float a real of `type` is, read where the real lies.
+  auto HeldFloat(llvm::Value* real, lir::TypeId type) -> llvm::Value*;
+  // The machine float a real of `type` is laid out as.
+  auto FloatOf(lir::TypeId type) -> llvm::Type*;
   auto LowerUnary(
       const lir::UnaryInstr& unary, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
@@ -396,8 +420,7 @@ class CodeGenFunction {
   auto LowerIntConst(const lir::IntConst& constant)
       -> diag::Result<llvm::Value*>;
   auto LowerStrConst(const lir::StrConst& constant) -> llvm::Value*;
-  auto LowerRealConst(const lir::RealConst& constant)
-      -> diag::Result<llvm::Value*>;
+  auto LowerFloatConst(const lir::FloatConst& constant) -> llvm::Value*;
   auto LowerNullConst(const lir::NullConst& constant) -> llvm::Value*;
   auto LowerTerminatorInto(const lir::Terminator& terminator)
       -> diag::Result<void>;

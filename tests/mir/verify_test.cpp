@@ -38,7 +38,7 @@
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
@@ -667,12 +667,8 @@ TEST(MirVerifyTest, AnOrdinalIsStatedAsAPosition) {
     return UnitWithBody([keyed, as_position](CompilationUnit& u, Builder body) {
       const TypeId element = u.builtins.int_type;
       const TypeId container =
-          keyed
-              ? u.types.Intern(
-                    Type{AssociativeArrayType{
-                        .element_type = element,
-                        .key_type = u.builtins.int_type}})
-              : u.types.Intern(Type{DynamicArrayType{.element_type = element}});
+          keyed ? AssociativeArrayOf(u.types, u.builtins.int_type, element)
+                : DynamicArrayOf(u.types, element);
       const support::BuiltinFn entry = keyed ? support::BuiltinFn::kAssocElement
                                              : support::BuiltinFn::kElement;
       const TypeId index_type =
@@ -712,8 +708,7 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
     return UnitWithBody([entry, mutability, as_reference](
                             CompilationUnit& u, Builder body) {
       const TypeId element = u.builtins.int_type;
-      const TypeId container =
-          u.types.Intern(Type{DynamicArrayType{.element_type = element}});
+      const TypeId container = DynamicArrayOf(u.types, element);
       const ExprId array =
           body.Add(Expr{.data = NullLiteral{}, .type = container});
       const ExprId at =
@@ -762,10 +757,8 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
     return UnitWithBody([inner, inner_mutability](
                             CompilationUnit& u, Builder body) {
       const TypeId element = u.builtins.int_type;
-      const TypeId row =
-          u.types.Intern(Type{DynamicArrayType{.element_type = element}});
-      const TypeId rows =
-          u.types.Intern(Type{DynamicArrayType{.element_type = row}});
+      const TypeId row = DynamicArrayOf(u.types, element);
+      const TypeId rows = DynamicArrayOf(u.types, row);
       const ExprId array = body.Add(Expr{.data = NullLiteral{}, .type = rows});
       const auto position = [&] {
         return body.Add(
@@ -822,8 +815,7 @@ TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
           PackedVectorOf(u.types, 8, IntegralStateKind::kFourState);
       const TypeId nibble =
           PackedVectorOf(u.types, 4, IntegralStateKind::kFourState);
-      const TypeId container =
-          u.types.Intern(Type{DynamicArrayType{.element_type = byte}});
+      const TypeId container = DynamicArrayOf(u.types, byte);
       const ExprId array =
           body.Add(Expr{.data = NullLiteral{}, .type = container});
       const ExprId at =
@@ -933,14 +925,11 @@ auto UnitCalling(
 TEST(MirVerifyTest, AnEntryIsCalledOnTheKindOfContainerItReaches) {
   const auto element = [](CompilationUnit& u) { return u.builtins.int_type; };
   const auto keyed = [](CompilationUnit& u) {
-    return u.types.Intern(
-        Type{AssociativeArrayType{
-            .element_type = u.builtins.int_type,
-            .key_type = u.builtins.int_type}});
+    return AssociativeArrayOf(
+        u.types, u.builtins.int_type, u.builtins.int_type);
   };
   const auto numbered = [](CompilationUnit& u) {
-    return u.types.Intern(
-        Type{DynamicArrayType{.element_type = u.builtins.int_type}});
+    return DynamicArrayOf(u.types, u.builtins.int_type);
   };
   const auto position = [](CompilationUnit& u) {
     return PositionType(u.types);
@@ -1356,8 +1345,8 @@ TEST(MirVerifyTest, AConstantOfAClassMeetsTheTypesItStates) {
   };
   const auto stating = [](Wrong wrong) {
     return UnitWithBody([wrong](CompilationUnit& u, Builder) {
-      const auto library = [&](RuntimeLibraryKind kind) {
-        return u.types.Intern(Type{RuntimeLibraryType{.kind = kind}});
+      const auto library = [&](support::LibraryDecl decl) {
+        return u.types.Intern(Type{LibraryType{.decl = decl, .args = {}}});
       };
       const auto read_only_pointer = [&](TypeId pointee) {
         return u.types.Intern(
@@ -1371,15 +1360,16 @@ TEST(MirVerifyTest, AConstantOfAClassMeetsTheTypesItStates) {
       cls.base = ClassRef{ManagedObjectRootRef{}};
       // `[{entry, table}]`: the instantiations one generate's places are made
       // by, one of them; none where they are to be another library structure.
-      const TypeId instantiation = library(RuntimeLibraryKind::kInstantiation);
+      const TypeId instantiation =
+          library(support::LibraryDecl::kInstantiation);
       const TypeId viewed = wrong == Wrong::kEntriesOfOtherRecord
-                                ? library(RuntimeLibraryKind::kScopeCallable)
+                                ? library(support::LibraryDecl::kScopeCallable)
                                 : instantiation;
       ValueBuild entries;
       std::vector<ExprId> rows;
       if (viewed == instantiation) {
         const std::span<const TypeId> members =
-            *u.LibraryRecordMembers(RuntimeLibraryKind::kInstantiation);
+            *u.LibraryRecordMembers(support::LibraryDecl::kInstantiation);
         const ExprId entry = entries.body.exprs.Add(
             Expr{.data = NullLiteral{}, .type = members[0]});
         const ExprId table = entries.body.exprs.Add(
@@ -1387,7 +1377,7 @@ TEST(MirVerifyTest, AConstantOfAClassMeetsTheTypesItStates) {
                 .data = NullLiteral{},
                 .type = wrong == Wrong::kEntryMember
                             ? read_only_pointer(
-                                  library(RuntimeLibraryKind::kScopeInfo))
+                                  library(support::LibraryDecl::kScopeInfo))
                             : members[1]});
         rows.push_back(entries.body.exprs.Add(
             Expr{
@@ -1413,20 +1403,20 @@ TEST(MirVerifyTest, AConstantOfAClassMeetsTheTypesItStates) {
       const ExprId address =
           block.exprs.Add(MakeAddressOfExpr(named, read_only_pointer(array)));
       const TypeId spanned = wrong == Wrong::kViewOfOtherEntries
-                                 ? library(RuntimeLibraryKind::kScopeCallable)
+                                 ? library(support::LibraryDecl::kScopeCallable)
                                  : viewed;
       const ExprId places = block.exprs.Add(
           Expr{
               .data = CallExpr{.callee = Construct{}, .arguments = {address}},
               .type =
                   u.types.Intern(Type{MachineSpanType{.element = spanned}})});
-      const TypeId generate = library(RuntimeLibraryKind::kGeneratePlaces);
+      const TypeId generate = library(support::LibraryDecl::kGeneratePlaces);
       build.value = block.exprs.Add(
           Expr{.data = CompositeExpr{.parts = {places}}, .type = generate});
       cls.constants.Add(
           ClassConstantDecl{
               .type = wrong == Wrong::kStatedType
-                          ? library(RuntimeLibraryKind::kDumpBlock)
+                          ? library(support::LibraryDecl::kDumpBlock)
                           : generate,
               .initializer = std::move(build)});
       u.DefineClass(id, std::move(cls));
@@ -1537,12 +1527,12 @@ TEST(MirVerifyTest, ACastReadsAValueAsATypeEveryTargetConvertsItTo) {
               .params = {param(u)}, .result = u.builtins.void_type}});
     };
   };
-  const auto handle_of = [](support::RuntimeClass which) {
+  const auto handle_of = [](support::LibraryDecl decl) {
     return [=](CompilationUnit& u) {
       return u.types.Intern(
           Type{ManagedRefType{
-              .pointee =
-                  u.types.Intern(Type{RuntimeClassType{.which = which}})}});
+              .pointee = u.types.Intern(
+                  Type{LibraryType{.decl = decl, .args = {}}})}});
     };
   };
   const auto erased = [](CompilationUnit& u) {
@@ -1555,8 +1545,8 @@ TEST(MirVerifyTest, ACastReadsAValueAsATypeEveryTargetConvertsItTo) {
               .referent = referent(u), .mutability = mutability}});
     };
   };
-  const auto problem = handle_of(support::RuntimeClass::kConstraintProblem);
-  const auto root = handle_of(support::RuntimeClass::kObject);
+  const auto problem = handle_of(support::LibraryDecl::kConstraintProblem);
+  const auto root = handle_of(support::LibraryDecl::kObjectRoot);
 
   EXPECT_NO_THROW(Verify(casting(int_type, machine_bool)));
   EXPECT_NO_THROW(Verify(casting(machine_int64, machine_bool)));
@@ -1653,7 +1643,9 @@ TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
           .elements = {
               held_tuple.builtins.int_type, held_tuple.builtins.string}}});
   held_tuple.types.Intern(
-      Type{QueueType{.element_type = held, .max_bound = std::nullopt}});
+      Type{LibraryType{
+          .decl = support::LibraryDecl::kQueue,
+          .args = {held, support::QueueBound{support::UnboundedQueue{}}}}});
   ExpectRefused(
       held_tuple, "the element type of an array has no default stated");
 
@@ -1683,8 +1675,7 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
   };
   const auto yielding = [](const auto& yield) {
     return UnitWithCode([&](CompilationUnit& u, CallableCode& code) {
-      const TypeId array = u.types.Intern(
-          Type{DynamicArrayType{.element_type = u.builtins.int_type}});
+      const TypeId array = DynamicArrayOf(u.types, u.builtins.int_type);
       Builder body(code.Body(), diag::SourceSpan{});
       const LocalId outer = code.locals.Add(LocalDecl{.type = array});
       body.AppendStmt(

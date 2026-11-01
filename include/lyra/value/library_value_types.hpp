@@ -5,8 +5,6 @@
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/bit_vec.hpp"
-#include "lyra/value/chandle.hpp"
-#include "lyra/value/empty.hpp"
 #include "lyra/value/integral_fwd.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/object_ref.hpp"
@@ -15,6 +13,7 @@
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
@@ -31,8 +30,7 @@ extern const ValueType lyra_rt_string_value_type;
 extern const ValueType lyra_rt_bitvec_value_type;
 extern const ValueType lyra_rt_real_value_type;
 extern const ValueType lyra_rt_shortreal_value_type;
-extern const ValueType lyra_rt_chandle_value_type;
-extern const ValueType lyra_rt_empty_value_type;
+extern const ValueType lyra_rt_unmanagedref_value_type;
 extern const ValueType lyra_rt_dynarray_value_type;
 extern const ValueType lyra_rt_queue_value_type;
 extern const ValueType lyra_rt_assocarray_value_type;
@@ -45,7 +43,7 @@ extern const ValueType lyra_rt_managedref_value_type;
 extern const OperationFunctions lyra_rt_string_operation_functions;
 extern const OperationFunctions lyra_rt_real_operation_functions;
 extern const OperationFunctions lyra_rt_shortreal_operation_functions;
-extern const OperationFunctions lyra_rt_chandle_operation_functions;
+extern const OperationFunctions lyra_rt_unmanagedref_operation_functions;
 extern const OperationFunctions lyra_rt_managedref_operation_functions;
 extern const OperationFunctions lyra_rt_dynarray_operation_functions;
 extern const OperationFunctions lyra_rt_queue_operation_functions;
@@ -53,7 +51,7 @@ extern const OperationFunctions lyra_rt_assocarray_operation_functions;
 extern const ValueOperations lyra_rt_string_value_operations;
 extern const ValueOperations lyra_rt_real_value_operations;
 extern const ValueOperations lyra_rt_shortreal_value_operations;
-extern const ValueOperations lyra_rt_chandle_value_operations;
+extern const ValueOperations lyra_rt_unmanagedref_value_operations;
 extern const ValueOperations lyra_rt_managedref_value_operations;
 }
 
@@ -74,10 +72,8 @@ template <typename T>
     return lyra_rt_real_value_type;
   } else if constexpr (std::is_same_v<T, ShortReal>) {
     return lyra_rt_shortreal_value_type;
-  } else if constexpr (std::is_same_v<T, Chandle>) {
-    return lyra_rt_chandle_value_type;
-  } else if constexpr (std::is_same_v<T, Empty>) {
-    return lyra_rt_empty_value_type;
+  } else if constexpr (std::is_same_v<T, UnmanagedRef>) {
+    return lyra_rt_unmanagedref_value_type;
   } else if constexpr (std::is_same_v<T, RuntimeDynamicArray>) {
     return lyra_rt_dynarray_value_type;
   } else if constexpr (std::is_same_v<T, RuntimeQueue>) {

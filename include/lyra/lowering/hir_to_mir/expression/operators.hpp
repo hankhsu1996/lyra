@@ -87,6 +87,16 @@ template <ExprLowerer Lowerer>
 auto LowerHirConditionalExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
+// An expression of `null`'s type taken as a value of `type` (LRM 8.4, 6.14,
+// 25.9): `null` itself is the null of `type`, decided by nothing it carries,
+// and a conditional choosing among `null`s is the conditional at `type`, its
+// predicate evaluated as written and each arm taken the same way. `null`'s
+// type is no MIR type: it is a value of whichever type refers where it is
+// used, so it reaches MIR only here, at the type its use gives it.
+template <ExprLowerer Lowerer>
+auto LowerNullAt(
+    Lowerer& lowerer, WalkFrame frame, const hir::Expr& source,
+    mir::TypeId type) -> diag::Result<mir::Expr>;
 template <ExprLowerer Lowerer>
 auto LowerHirConversionExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,

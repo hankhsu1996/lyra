@@ -595,7 +595,7 @@ auto TranslateType(
     // publishes, so it names the interface's unit.
     case slang::ast::SymbolKind::VirtualInterfaceType:
       return hir::Type{hir::VirtualInterfaceType{
-          .unit_name = unit_lowerer.Names().NameOf(
+          .scope_class = unit_lowerer.InterfaceClassOf(
               canonical.as<slang::ast::VirtualInterfaceType>().iface)}};
     default:
       return diag::Fail(

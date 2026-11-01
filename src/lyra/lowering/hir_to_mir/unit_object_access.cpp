@@ -20,7 +20,6 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -177,18 +176,21 @@ auto StepThroughPublished(
 auto InterfaceValueOf(
     mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object,
     mir::TypeId type) -> mir::Expr {
-  const mir::ExprId address = block.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = block.AsValue(unit.types, object)},
-          .type = mir::ErasedPointer(unit.types)});
-  return mir::Expr{
-      .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {address}},
-      .type = type};
+  // The reference holds the address of the instance's object, as the class the
+  // reference's type names.
+  const mir::ExprId address = ObjectAs(
+      block, object,
+      unit.types.Intern(
+          mir::Type{mir::PointerType{
+              .pointee =
+                  unit.types.Get(type).Get<mir::UnmanagedRefType>().pointee,
+              .ownership = mir::PointerOwnership::kBorrowed}}));
+  return mir::Expr{.data = mir::CastExpr{.operand = address}, .type = type};
 }
 
 auto ReachHeldInterface(
-    mir::CompilationUnit& unit, BlockBuilder& steps, mir::Expr handle,
-    mir::TypeId object_pointer) -> mir::Expr {
+    mir::CompilationUnit& unit, BlockBuilder& steps, mir::Expr handle)
+    -> mir::Expr {
   mir::Builder body = steps.Body();
   // The handle is tested and then reached through, and the source wrote it
   // once.
@@ -201,21 +203,7 @@ auto ReachHeldInterface(
   mir::AppendRunTimeCheck(
       unit, body, present,
       base::DiagMessage("use of a null virtual interface").TakeText());
-  // The handle is a value holding the instance's address, so reaching the
-  // instance reads that address out and states which unit's object it is.
-  const mir::ExprId address = body.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kChandlePtr,
-                          .receiver = held},
-                  .arguments = {}},
-          .type = mir::ErasedPointer(unit.types)});
-  return steps.Build(body.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = address}, .type = object_pointer}));
+  return steps.Build(held);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

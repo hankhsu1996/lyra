@@ -48,7 +48,9 @@
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/float_width.hpp"
 #include "lyra/support/integral_operation.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
 #include "lyra/value/frame_bound.hpp"
 
@@ -143,7 +145,7 @@ auto ComputesNothingItself(const ExprData& data) -> bool {
           [](const NullLiteral&) { return true; },
           [](const MachineBoolLiteral&) { return true; },
           [](const MachineIntLiteral&) { return true; },
-          [](const MachineFloatLiteral&) { return true; },
+          [](const FloatingLiteral&) { return true; },
           [](const ReferenceExpr&) { return true; },
           [](const DerefExpr&) { return true; },
           [](const AddressOfExpr&) { return true; },
@@ -184,7 +186,7 @@ auto Describe(const ExprData& data) -> std::string {
           [](const MachineIntLiteral&) -> std::string {
             return "an integer literal";
           },
-          [](const MachineFloatLiteral&) -> std::string {
+          [](const FloatingLiteral&) -> std::string {
             return "a float literal";
           },
           [](const ReferenceExpr&) -> std::string { return "a name"; },
@@ -503,7 +505,8 @@ void VerifyMemberReceivers(
       const Type& receiver =
           unit.types.Get(block.exprs.Get(access->receiver).type);
       if (receiver.Is<PointerType>() || receiver.Is<ManagedRefType>() ||
-          receiver.Is<ObjectWriteType>() || receiver.IsVariableRef()) {
+          receiver.Is<UnmanagedRefType>() || receiver.Is<ObjectWriteType>() ||
+          receiver.IsVariableRef()) {
         refuse(id);
       }
     }
@@ -716,7 +719,7 @@ auto RefersToStorageEndingWith(
           [](const NullLiteral&) { return false; },
           [](const MachineBoolLiteral&) { return false; },
           [](const MachineIntLiteral&) { return false; },
-          [](const MachineFloatLiteral&) { return false; },
+          [](const FloatingLiteral&) { return false; },
           [](const ReferenceExpr&) { return false; },
           [](const UnaryExpr&) { return false; },
           [](const BinaryExpr&) { return false; },
@@ -1080,6 +1083,9 @@ void VerifyEntryDeclarations(
           id,
           "calls an allocation function, which only a new-expression reaches");
     }
+    if (std::holds_alternative<support::Constructor>(declared.declaration)) {
+      refuse(id, "calls a constructor, which only a construction reaches");
+    }
     const std::optional<ExprId> receiver = CalleeReceiver(call->callee);
     const std::optional<ExprId> first = FirstOperand(*call);
     if (declared.over_integral_values.has_value() && first.has_value() &&
@@ -1142,7 +1148,8 @@ void VerifyEntryDeclarations(
       continue;
     }
     const bool keyed = ValueNamedBy(unit.types, block.exprs.Get(*receiver).type)
-                           .Is<AssociativeArrayType>();
+                           .IndexType()
+                           .has_value();
     switch (ReceiverReachOf(declared.operands.At(1))) {
       case ReceiverReach::kAny:
         break;
@@ -1272,6 +1279,15 @@ auto CodeReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
   return true;
 }
 
+// Whether `reference` holds the address `pointer` is: a borrowed pointer to
+// the same pointee, which may be written through.
+auto HoldsAs(const UnmanagedRefType& reference, const PointerType& pointer)
+    -> bool {
+  return pointer.pointee == reference.pointee &&
+         pointer.ownership == PointerOwnership::kBorrowed &&
+         pointer.mutability == Mutability::kMutable;
+}
+
 // Whether a cast may read a value of `from` as a value of `to`: each pair is
 // one every target writes in its own conversion syntax -- C++'s cast notation,
 // an LLVM cast instruction -- with the value unchanged or read as the machine
@@ -1279,12 +1295,17 @@ auto CodeReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
 // laying it out alike, an enumeration's and its base's; a machine integer at
 // another width; a pointer at another pointee; a code address as one the
 // target enters alike; a class handle as one of another class, the same object
-// whatever class it is seen as (LRM 8.15, 8.26.5); a reference at the same
-// referent made read-only, as clang states a qualification conversion (LRM
-// 13.5.2); and a reference held as a member read as the reference it holds, at
-// the same referent and never more writable. A value moved between
-// representations, and a handle asked whether its object is of a class, is a
-// call.
+// whatever class it is seen as (LRM 8.15, 8.26.5); a reference owning nothing
+// as the borrowed pointer to its pointee it holds and back, as C converts
+// between a pointer and an integer of its size -- how a chandle crosses to a
+// foreign call (LRM 35.5.6) and how a virtual interface is made of the
+// instance it names (LRM 25.9); a real as the machine float of its width and
+// back, which is the IEEE value it is (LRM 6.12) -- how a real crosses to a
+// foreign call (LRM 35.5.6); a reference at the same referent made read-only,
+// as clang states a qualification conversion (LRM 13.5.2); and a reference
+// held as a member read as the reference it holds, at the same referent and
+// never more writable. A value moved between representations, and a handle
+// asked whether its object is of a class, is a call.
 auto CastReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
   const Type& source = types.Get(from);
   const Type& destination = types.Get(to);
@@ -1296,8 +1317,24 @@ auto CastReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
   }
   if (destination.Is<MachineBoolType>()) {
     return is_machine_integer(source) || source.IsIntegral() ||
-           source.IsRealFamily() || source.Is<ManagedRefType>() ||
-           source.Is<ChandleType>();
+           source.Is<RealType>() || source.Is<ManagedRefType>() ||
+           source.Is<UnmanagedRefType>();
+  }
+  if (const auto* real = source.As<RealType>()) {
+    const auto* machine = destination.As<MachineFloatType>();
+    return machine != nullptr && machine->width == real->width;
+  }
+  if (const auto* real = destination.As<RealType>()) {
+    const auto* machine = source.As<MachineFloatType>();
+    return machine != nullptr && machine->width == real->width;
+  }
+  if (const auto* held = source.As<UnmanagedRefType>()) {
+    const auto* pointer = destination.As<PointerType>();
+    return pointer != nullptr && HoldsAs(*held, *pointer);
+  }
+  if (const auto* held = destination.As<UnmanagedRefType>()) {
+    const auto* pointer = source.As<PointerType>();
+    return pointer != nullptr && HoldsAs(*held, *pointer);
   }
   if (is_machine_integer(source) && is_machine_integer(destination)) {
     return true;
@@ -1444,8 +1481,8 @@ auto PositionsOf(const CompilationUnit& unit, TypeId type)
   if (const auto* elements = composed.As<MachineArrayType>()) {
     return std::vector<TypeId>(elements->size, elements->element);
   }
-  if (const auto* record = composed.As<RuntimeLibraryType>()) {
-    return unit.LibraryRecordMembers(record->kind)
+  if (const auto* record = composed.As<LibraryType>()) {
+    return unit.LibraryRecordMembers(record->decl)
         .transform([](std::span<const TypeId> members) {
           return std::vector<TypeId>(members.begin(), members.end());
         });
@@ -1733,10 +1770,8 @@ void VerifyConstantsMeetTheirTypes(
     return;
   }
   VerifyBuildMeetsItsTypes(unit, definition.body, describe);
-  const auto* built = unit.types.Get(TypeOf(definition.body, definition.value))
-                          .As<RuntimeLibraryType>();
-  if (built == nullptr ||
-      built->kind != RuntimeLibraryKind::kObjectDefinition) {
+  if (!unit.types.Get(TypeOf(definition.body, definition.value))
+           .IsDeclaredBy(support::LibraryDecl::kObjectDefinition)) {
     throw InternalError(
         std::format(
             "mir verify: {} builds its definition as something other than "
@@ -1867,7 +1902,7 @@ void VerifyConstantsAreFolded(
             },
             [](const StringLiteral&) {}, [](const NullLiteral&) {},
             [](const MachineBoolLiteral&) {}, [](const MachineIntLiteral&) {},
-            [](const MachineFloatLiteral&) {}, [](const ReferenceExpr&) {},
+            [](const FloatingLiteral&) {}, [](const ReferenceExpr&) {},
             [](const ConditionalExpr&) {}, [](const BlockExpr&) {},
             [](const AssignExpr&) {}, [](const NewExpr&) {},
             [](const DerefExpr&) {}, [](const AddressOfExpr&) {},
@@ -1933,7 +1968,7 @@ void VerifyAllocations(
               ? nullptr
               : unit.types.Get(block.exprs.Get(arguments.front()).type)
                     .As<PointerType>();
-      const std::optional<KeeperEntries> entries =
+      const std::optional<support::KeeperEntries> entries =
           keeper == nullptr ? std::nullopt
                             : KeeperEntriesOf(unit.types, keeper->pointee);
       if (!entries.has_value() ||
@@ -2505,7 +2540,7 @@ auto CrossesAs(
     const auto* machine = t.As<MachineIntType>();
     return machine != nullptr && machine->width == width;
   };
-  const auto floating = [&](MachineFloatWidth width) {
+  const auto floating = [&](support::FloatWidth width) {
     const auto* machine = t.As<MachineFloatType>();
     return machine != nullptr && machine->width == width;
   };
@@ -2523,9 +2558,9 @@ auto CrossesAs(
     case support::MachineKind::kInt64:
       return integer(MachineIntWidth::k64);
     case support::MachineKind::kFloat:
-      return floating(MachineFloatWidth::k32);
+      return floating(support::FloatWidth::k32);
     case support::MachineKind::kDouble:
-      return floating(MachineFloatWidth::k64);
+      return floating(support::FloatWidth::k64);
     // A closure is called with machine values one at a time, so no structure
     // crosses whole.
     case support::MachineKind::kAggregate:
@@ -2848,15 +2883,15 @@ class HandedClosures {
   // How long the object `pointee` lives, where it is one.
   [[nodiscard]] auto ReachOfObject(TypeId pointee) const
       -> std::optional<Reached> {
-    const std::optional<ObjectLifetime> lifetime =
+    const std::optional<support::ObjectLifetime> lifetime =
         ObjectLifetimeOf(*unit_, pointee);
     if (!lifetime.has_value()) {
       return std::nullopt;
     }
     switch (*lifetime) {
-      case ObjectLifetime::kTheRun:
+      case support::ObjectLifetime::kTheRun:
         return LivesForTheWholeRun{};
-      case ObjectLifetime::kWhileReferenced:
+      case support::ObjectLifetime::kWhileReferenced:
         return LivesWithTheObject{};
     }
     throw InternalError("mir verify: unknown ObjectLifetime");
@@ -2905,9 +2940,7 @@ class HandedClosures {
             [&](const NullLiteral&) -> Reached { RefuseUnfollowed(id); },
             [&](const MachineBoolLiteral&) -> Reached { RefuseUnfollowed(id); },
             [&](const MachineIntLiteral&) -> Reached { RefuseUnfollowed(id); },
-            [&](const MachineFloatLiteral&) -> Reached {
-              RefuseUnfollowed(id);
-            },
+            [&](const FloatingLiteral&) -> Reached { RefuseUnfollowed(id); },
             [&](const UnaryExpr&) -> Reached { RefuseUnfollowed(id); },
             [&](const BinaryExpr&) -> Reached { RefuseUnfollowed(id); },
             [&](const ConditionalExpr&) -> Reached { RefuseUnfollowed(id); },
@@ -3057,6 +3090,36 @@ class HandedClosures {
       inits_;
 };
 
+// A type the library declares is named with one argument for each parameter
+// its declaration takes, each of the kind that parameter takes: a type, or a
+// queue's bound. A reader asks an argument by the role its parameter plays, so
+// one missing or of the other kind would be read as something it is not.
+void VerifyLibraryTypes(const CompilationUnit& unit, std::string_view when) {
+  for (const TypeId id : unit.types.Ids()) {
+    const auto* library = unit.types.Get(id).As<LibraryType>();
+    if (library == nullptr) {
+      continue;
+    }
+    const std::span<const support::LibraryParam> params =
+        support::DeclarationOf(library->decl).params;
+    const bool matches =
+        library->args.size() == params.size() &&
+        std::ranges::equal(
+            library->args, params,
+            [](const LibraryType::Arg& arg, support::LibraryParam param) {
+              return std::holds_alternative<TypeId>(arg) ==
+                     support::TakesAType(param);
+            });
+    if (!matches) {
+      throw InternalError(
+          std::format(
+              "mir verify: unit '{}', {}, names a {} with arguments its "
+              "declaration does not take -- please report this as a bug",
+              unit.name, when, support::DeclarationOf(library->decl).name));
+    }
+  }
+}
+
 // An entry has one identity here however the name reaching it was written:
 // one this unit defines is never declared as another unit's, and one another
 // unit defines is declared once, by the unit and the name it published it
@@ -3204,7 +3267,7 @@ void VerifyTypeOperations(const CompilationUnit& unit, std::string_view when) {
   };
   std::set<std::pair<TypeId, support::ValueOperation>> answered;
   for (const TypeOperation& stated : unit.type_operations) {
-    if (!OperationsAreStatedPerUnit(unit.types.Get(stated.type)) &&
+    if (!OperationsStatedPerUnit(unit.types.Get(stated.type)).has_value() &&
         !is_bound_free_passage(stated) &&
         (stated.answers != default_value ||
          !may_state_default[stated.type.value])) {
@@ -3253,6 +3316,7 @@ void RequireLegalized(const CompilationUnit& unit, std::string_view reader) {
 }
 
 void Verify(const CompilationUnit& unit, std::string_view when) {
+  VerifyLibraryTypes(unit, when);
   VerifyDeclaredEntries(unit, when);
   VerifyTypeOperations(unit, when);
   const auto describer = [&](const CodeSource& at) {

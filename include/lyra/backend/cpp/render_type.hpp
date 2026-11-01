@@ -296,9 +296,10 @@ void WriteOne(TargetText& out, const CppInterfaceDispatchCallee& callee);
 // take it through the `operator*` and `operator->` their library types declare.
 // An object reference declares neither, being one type whatever class it
 // refers to, so it is opened as the class the code assumes, which is also
-// where a null reference is caught (LRM 8.4). Any other type
-// reaches nothing to dereference and is refused. A reference is already its
-// referent wherever C++ names it ([expr.type]), so opening one writes nothing.
+// where a null reference is caught (LRM 8.4); a reference owning nothing is
+// opened the same way. Any other type reaches nothing to dereference and is
+// refused. A reference is already its referent wherever C++ names it
+// ([expr.type]), so opening one writes nothing.
 struct DerefByOperator {};
 
 struct DerefAsClass {
@@ -378,9 +379,9 @@ using ReceiverSpelling = std::variant<ReceiverFromThis, ReceiverAsParameter>;
     -> ReceiverSpelling;
 
 // How a value of a type that names nothing is written (LRM 8.4, 6.14). An
-// object reference and a chandle are values of their own types, `T{}`; a
-// pointer and a code address are the null address. Any other type has no such
-// value on this target and is refused as unsupported.
+// object reference and a reference owning nothing are values of their own
+// types, `T{}`; a pointer and a code address are the null address. Any other
+// type has no such value on this target and is refused as unsupported.
 struct NullAsEmptyValue {
   mir::TypeId type;
 };

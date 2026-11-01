@@ -20,7 +20,6 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
@@ -41,8 +40,10 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -162,9 +163,7 @@ auto IsScalarNet(
 }
 
 // The steps of the scope's precision one written delay amount is, read where
-// `frame` stands as a delay control reads it (LRM 9.4.1, 3.14.1). Which entry
-// reads it follows the amount's own type: an integral amount counts whole time
-// units, a real one may name a fraction of one.
+// `frame` stands as a delay control reads it (LRM 9.4.1, 3.14.1).
 auto DelayTicksOf(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     hir::ExprId amount) -> diag::Result<mir::ExprId> {
@@ -172,14 +171,10 @@ auto DelayTicksOf(
   mir::Builder block = frame.Builder();
   auto lowered = lowerer.LowerExpr(lowerer.HirScope().exprs.Get(amount), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  mir::ExprId amount_id = block.Add(*std::move(lowered));
-  const mir::Type& amount_type = unit.types.Get(block.Get(amount_id).type);
-  const bool is_real = amount_type.IsRealFamily();
-  if (amount_type.Is<mir::ShortRealType>()) {
-    // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
-    // from them only in host precision, so the entry takes the wider.
-    amount_id = ConvertToType(unit, block, amount_id, unit.builtins.real);
-  }
+  const DelayRead read = ReadDelayAmount(
+      unit, block, block.Add(*std::move(lowered)),
+      {.integral = support::BuiltinFn::kDelayTicks,
+       .real = support::BuiltinFn::kDelayTicksReal});
   const TimeResolution resolution = lowerer.HirScope().time_resolution;
   const mir::ExprId unit_power = mir::BuildMachineIntLiteral(
       unit, block, std::int64_t{resolution.unit_power});
@@ -187,10 +182,8 @@ auto DelayTicksOf(
       unit, block, std::int64_t{resolution.precision_power});
   return block.Add(
       mir::MakeCallExpr(
-          mir::Direct{
-              .target = is_real ? support::BuiltinFn::kDelayTicksReal
-                                : support::BuiltinFn::kDelayTicks},
-          {amount_id, unit_power, precision_power},
+          mir::Direct{.target = read.entry},
+          {read.amount, unit_power, precision_power},
           unit.builtins.machine_word));
 }
 
@@ -507,9 +500,8 @@ auto LowerContinuousDrive(
     mir::Class& mir_class = *ctor_frame.current_class.cls;
     const ClassField scheduled = AddField(mir_class, entry.Get(*first).type);
     const ClassField timer = AddField(
-        mir_class, unit.types.Intern(
-                       mir::Type{mir::RuntimeLibraryType{
-                           .kind = mir::RuntimeLibraryKind::kTimer}}));
+        mir_class,
+        mir::LibraryTypeOf(unit.types, support::LibraryDecl::kTimer));
 
     ClosureBuilder propagation(unit, entry_frame, support::ClosureKind::kFn);
     if (auto stored = store(

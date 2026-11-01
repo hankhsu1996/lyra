@@ -13,6 +13,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -187,7 +188,8 @@ auto ReferenceReportsTo(
                       mir::Direct{
                           .target = support::BuiltinFn::kReferenceReportsTo},
                   .arguments = {block.AsValue(unit.types, reference)}},
-          .type = mir::WatchedPlace(unit.types)});
+          .type = mir::LibraryTypeOf(
+              unit.types, support::LibraryDecl::kWatchedPlace)});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

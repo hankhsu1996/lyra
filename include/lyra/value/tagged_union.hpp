@@ -52,8 +52,7 @@ class TaggedUnion {
 
   // LRM 11.9 leaves an uninitialized tagged union undefined, tag included; it
   // holds its first member at that member's default.
-  TaggedUnion()
-      : TaggedUnion(std::in_place_index<0>, detail::DefaultOf<Member<0>>()) {
+  TaggedUnion() : TaggedUnion(std::in_place_index<0>, DefaultOf<Member<0>>()) {
   }
 
   // The union holding member `I` as `value`.

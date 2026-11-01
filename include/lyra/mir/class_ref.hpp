@@ -45,9 +45,9 @@ using ClassRef = std::variant<ClassId, ObjectTreeRootRef, ManagedObjectRootRef>;
     -> ClassId;
 
 // The object a value of type `reaches` reaches, as the class it is reached as:
-// the class a handle is of, what a pointer points at, or the class a write in
-// progress is open on. A value of any other type reaches no object, so
-// asking is a producer's defect.
+// the class a handle is of, what a reference or a pointer points at, or the
+// class a write in progress is open on. A value of any other type reaches no
+// object, so asking is a producer's defect.
 [[nodiscard]] auto ObjectReachedThrough(const TypePool& types, TypeId reaches)
     -> TypeId;
 

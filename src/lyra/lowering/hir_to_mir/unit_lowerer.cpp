@@ -62,6 +62,7 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/dump.hpp"
 #include "lyra/mir/expr.hpp"
@@ -70,7 +71,8 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/def_path.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_callback.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -434,8 +436,9 @@ auto PublishObjectEntry(
                         body.Add(
                             mir::Expr{
                                 .data = mir::ReferenceExpr{.target = own},
-                                .type =
-                                    mir::ConstructionTableType(unit.types)}),
+                                .type = mir::LibraryTypeOf(
+                                    unit.types,
+                                    support::LibraryDecl::kConstructionTable)}),
                         table_type));
               }},
           table)};
@@ -458,6 +461,30 @@ auto PublishObjectEntry(
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
           .defining_unit = std::nullopt});
+}
+
+// Adds to `called` each operation of a tuple `block` calls, its inner blocks'
+// included.
+void TupleOperationsCalledIn(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    std::vector<mir::TypeOperationSource>& called) {
+  for (const mir::Expr& expr : block.exprs) {
+    const auto* call = std::get_if<mir::CallExpr>(&expr.data);
+    if (call == nullptr) continue;
+    const auto* direct = std::get_if<mir::Direct>(&call->callee);
+    if (direct == nullptr) continue;
+    const auto* target = std::get_if<mir::TypeOperationTarget>(&direct->target);
+    if (target == nullptr ||
+        !unit.types.Get(target->type).Is<mir::TupleType>()) {
+      continue;
+    }
+    called.push_back(
+        mir::TypeOperationSource{
+            .type = target->type, .answers = target->answers});
+  }
+  for (const mir::Block& inner : block.child_scopes) {
+    TupleOperationsCalledIn(unit, inner, called);
+  }
 }
 
 }  // namespace
@@ -822,16 +849,19 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     reporting_forms_.emplace(hir_id, TakeReportingForms(hir_id));
   }
 
-  // Every HIR type is MIR-representable: AST-to-HIR rejects the forms MIR has
-  // no shape for, so this projection never fails.
-  // A composite type's translation reads the translations of its components,
-  // which HIR minted before it, so the answers land one at a time and each one
-  // can see the ones before it.
+  // AST-to-HIR rejects the forms MIR has no shape for, so this projection
+  // never fails. A composite type's translation reads the translations of its
+  // components, which HIR minted before it, so the answers land one at a time
+  // and each one can see the ones before it.
   type_translations_ =
-      base::Translation<hir::TypeId, mir::TypeId>{hir_->types.size()};
+      base::Translation<hir::TypeId, std::optional<mir::TypeId>>{
+          hir_->types.size()};
   for (const hir::TypeId hir_id : hir_->types.Ids()) {
-    type_translations_.Append(
-        unit_.types.Intern(TranslateType(hir_->types.Get(hir_id))));
+    type_translations_.Append(TranslateType(hir_->types.Get(hir_id))
+                                  .transform([&](mir::Type translated) {
+                                    return unit_.types.Intern(
+                                        std::move(translated));
+                                  }));
   }
   // A struct or a union is named before what it holds is settled, since its
   // members may be of types minted after it; each is defined once every type
@@ -839,16 +869,20 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   // values of its type and read what its members hold, follow once every
   // record is defined.
   for (const hir::TypeId hir_id : hir_->types.Ids()) {
-    const mir::RecordId* id =
-        mir::RecordOf(unit_.types.Get(type_translations_.Get(hir_id)));
+    const std::optional<mir::TypeId>& translated =
+        type_translations_.Get(hir_id);
+    if (!translated.has_value()) continue;
+    const mir::RecordId* id = mir::RecordOf(unit_.types.Get(*translated));
     if (id == nullptr) continue;
     DefineRecord(hir_->types.Get(hir_id), *id);
   }
   for (const hir::TypeId hir_id : hir_->types.Ids()) {
-    const mir::TypeId translated = type_translations_.Get(hir_id);
-    const mir::RecordId* id = mir::RecordOf(unit_.types.Get(translated));
+    const std::optional<mir::TypeId>& translated =
+        type_translations_.Get(hir_id);
+    if (!translated.has_value()) continue;
+    const mir::RecordId* id = mir::RecordOf(unit_.types.Get(*translated));
     if (id == nullptr) continue;
-    DefineRecordMethods(hir_->types.Get(hir_id), *id, translated);
+    DefineRecordMethods(hir_->types.Get(hir_id), *id, *translated);
   }
 
   for (const hir::ClassId published : hir_->classes.ImportedIds()) {
@@ -954,15 +988,16 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
 
 void UnitLowerer::PublishTypeOperations() {
   // Run once every body of the unit is lowered, since a body may name an array
-  // no declaration does -- the keys a sort gathers -- and a call names an
-  // operation by its type rather than by what is stated here. A body built
-  // here interns types, and a type interned that way states its operations
-  // too, so the pool is walked by position and its size read again at every
-  // step.
+  // no declaration does -- the keys a sort gathers -- or call an operation of
+  // a tuple, and a call names an operation by its type rather than by what is
+  // stated here. A body built here interns types, and an array interned that
+  // way states its operations too, so the pool is walked by position and its
+  // size read again at every step.
   for (std::uint32_t i = 0; i < unit_.types.size(); ++i) {
     const mir::TypeId type{.value = i};
-    if (mir::OperationsAreStatedPerUnit(unit_.types.Get(type))) {
-      for (mir::TypeOperation& stated : ArrayOperationsOf(*this, type)) {
+    if (mir::OperationsStatedPerUnit(unit_.types.Get(type)) ==
+        mir::StatedPerUnit::kFixedArray) {
+      for (mir::TypeOperation& stated : TypeOperationsOf(*this, type)) {
         unit_.type_operations.push_back(std::move(stated));
       }
     }
@@ -974,6 +1009,45 @@ void UnitLowerer::PublishTypeOperations() {
         unit_.type_operations.push_back(std::move(stated));
       }
     }
+  }
+  // An array's operations are stated whole, since the code generator asks them
+  // of the array itself -- describing it to the library, taking over some of
+  // its positions -- where no call names them. A tuple is no type the source
+  // writes: a lowering composes one where its code needs a value of it -- a
+  // call's completion, the targets of a scan -- so each of a tuple's
+  // operations is built where some code calls it, and the body built is
+  // searched for the calls it makes in turn, as rustc builds `PartialEq` for a
+  // tuple only where something calls it.
+  std::vector<mir::TypeOperationSource> called;
+  mir::ForEachCode(
+      unit_, [&](const mir::CodeSource&, const mir::CallableCode& code) {
+        if (code.body.has_value()) {
+          TupleOperationsCalledIn(unit_, *code.body, called);
+        }
+      });
+  for (const mir::ClassId id : unit_.classes.Ids()) {
+    const mir::Class& cls = unit_.GetClass(id);
+    if (cls.defining_unit.has_value()) continue;
+    for (const mir::ClassConstantDecl& constant : cls.constants) {
+      TupleOperationsCalledIn(unit_, constant.initializer.body, called);
+    }
+    TupleOperationsCalledIn(
+        unit_, cls.object_definition_initializer.body, called);
+  }
+  std::set<mir::TypeOperationSource> asked;
+  while (!called.empty()) {
+    const mir::TypeOperationSource next = called.back();
+    called.pop_back();
+    if (!asked.insert(next).second) continue;
+    // A call of an operation the tuple lacks is the calling code's defect,
+    // which verifying the unit reports.
+    std::optional<mir::TypeOperation> answering =
+        TypeOperationOf(*this, next.type, next.answers);
+    if (!answering.has_value()) continue;
+    if (answering->code.body.has_value()) {
+      TupleOperationsCalledIn(unit_, *answering->code.body, called);
+    }
+    unit_.type_operations.push_back(*std::move(answering));
   }
   // A type whose operations the unit states has its default among them; every
   // other array element type is given one here, and every tuple where each of
@@ -1132,9 +1206,8 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   const DeclaredScopes package_scopes = ScopesOwningDisableTargets(
       scope.procedural_scopes, hir_->fixed_name,
       UnitStorage{.variables = &unit_.static_variables},
-      unit_.types.Intern(
-          mir::Type{mir::RuntimeLibraryType{
-              .kind = mir::RuntimeLibraryKind::kCancellationTarget}}),
+      mir::LibraryTypeOf(
+          unit_.types, support::LibraryDecl::kCancellationTarget),
       block_events);
 
   base::Translation<hir::StructuralSubroutineId, StaticVarBindings>
@@ -1553,7 +1626,7 @@ auto UnitLowerer::PublishedFieldsOf(const hir::ScopeClassSignature& signature)
   // The member holding the blocks a loop built, each under the value its
   // index stood at, which is what a name reaching one asks for.
   const mir::TypeId loop_blocks =
-      unit_.types.Intern(mir::Type{mir::LoopBlocksType{}});
+      mir::LibraryTypeOf(unit_.types, support::LibraryDecl::kLoopBlocks);
   for (std::size_t i = 0; i < signature.loops.size(); ++i) {
     fields.push_back(PublishedField{.name = std::nullopt, .type = loop_blocks});
   }
@@ -1567,9 +1640,8 @@ auto UnitLowerer::PublishedFieldsOf(const hir::ScopeClassSignature& signature)
     fields.push_back(
         PublishedField{.name = std::nullopt, .type = unit_.builtins.scope_ptr});
   }
-  const mir::TypeId cancellation_target = unit_.types.Intern(
-      mir::Type{mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kCancellationTarget}});
+  const mir::TypeId cancellation_target = mir::LibraryTypeOf(
+      unit_.types, support::LibraryDecl::kCancellationTarget);
   for (std::size_t i = 0; i < signature.disable_targets.size(); ++i) {
     fields.push_back(
         PublishedField{.name = std::nullopt, .type = cancellation_target});

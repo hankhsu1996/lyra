@@ -3,6 +3,8 @@
 #include <format>
 #include <optional>
 #include <string>
+#include <utility>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -120,8 +122,9 @@ auto EquivalenceIdentityOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
                 hir_unit.covergroups.KeyOf(t.covergroup);
             return "covergroup " + DeclarationText(key.unit_name, key.path);
           },
-          [](const hir::VirtualInterfaceType& t) {
-            return "virtual " + t.unit_name;
+          [&](const hir::VirtualInterfaceType& t) {
+            return "virtual " +
+                   hir_unit.scope_classes.KeyOf(t.scope_class).unit_name;
           },
           [&](const hir::UnitObjectType&) { return no_value("an instance"); },
           [&](const hir::UnitObjectsType&) {
@@ -145,22 +148,22 @@ auto WithoutQueueBounds(const mir::TypePool& types, mir::TypeId type)
             .element_type = element(array->element_type),
             .count = array->count}});
   }
-  if (const auto* array = held.As<mir::DynamicArrayType>()) {
-    return types.Intern(
-        mir::Type{mir::DynamicArrayType{
-            .element_type = element(array->element_type)}});
-  }
-  if (const auto* queue = held.As<mir::QueueType>()) {
-    return types.Intern(
-        mir::Type{mir::QueueType{
-            .element_type = element(queue->element_type),
-            .max_bound = std::nullopt}});
-  }
-  if (const auto* array = held.As<mir::AssociativeArrayType>()) {
-    return types.Intern(
-        mir::Type{mir::AssociativeArrayType{
-            .element_type = element(array->element_type),
-            .key_type = element(array->key_type)}});
+  // A container the library declares: each type it is named with taken the
+  // same way, an index type included, and a queue's own bound dropped.
+  if (held.IsLibraryContainer()) {
+    mir::LibraryType container = held.Get<mir::LibraryType>();
+    for (mir::LibraryType::Arg& arg : container.args) {
+      arg = std::visit(
+          Overloaded{
+              [&](mir::TypeId of) -> mir::LibraryType::Arg {
+                return element(of);
+              },
+              [](const support::QueueBound&) -> mir::LibraryType::Arg {
+                return support::QueueBound{support::UnboundedQueue{}};
+              }},
+          arg);
+    }
+    return types.Intern(mir::Type{std::move(container)});
   }
   return type;
 }

@@ -15,7 +15,10 @@
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/callable_bounds.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/float_width.hpp"
+#include "lyra/support/library_decl.hpp"
+#include "lyra/support/library_type.hpp"
+#include "lyra/support/movability.hpp"
 #include "lyra/value/integral_fwd.hpp"
 
 namespace lyra::mir {
@@ -95,64 +98,21 @@ struct UnpackedArrayType {
   auto operator==(const UnpackedArrayType&) const -> bool = default;
 };
 
-struct DynamicArrayType {
-  TypeId element_type;
-
-  auto operator==(const DynamicArrayType&) const -> bool = default;
-};
-
-struct QueueType {
-  TypeId element_type;
-  std::optional<std::uint64_t> max_bound;
-
-  auto operator==(const QueueType&) const -> bool = default;
-};
-
-struct AssociativeArrayType {
-  TypeId element_type;
-  TypeId key_type;
-
-  auto operator==(const AssociativeArrayType&) const -> bool = default;
-};
-
-// LRM 7.8.1 wildcard index type (`[*]`): the key type of an associative array
-// indexed by any integral value, identified by magnitude regardless of the
-// index expression's width. A parameter-less value type whose C++ realization
-// is `lyra::value::WildcardKey`; it is the key type that selects the
-// magnitude-identified, width-independent ordering instead of the fixed-shape
-// integral or lexicographic-string orderings.
-struct WildcardIndexType {
-  auto operator==(const WildcardIndexType&) const -> bool = default;
-};
-
-struct StringType {
-  auto operator==(const StringType&) const -> bool = default;
-};
-
-// A value of any type, kept with that type and with the identity a value is
-// tested by when it is asked to become a value of another type: C++'s
-// `std::any`, Swift's `Any`. The identity is the text of the type's identity,
-// which two types share exactly where a value of one may be taken as a value of
-// the other, so whichever unit made the value and whichever asks of it state
-// it alike without either knowing the other.
-struct AnyType {
-  auto operator==(const AnyType&) const -> bool = default;
-};
-
 // A value of a type known only where the program runs, which is reached only
 // through a reference: Rust's `dyn Any` behind a `&mut`. A reference to one
 // stands for a variable of a known type, made from a reference to it, and only
-// a value of that type's identity is written through it, as an `AnyType` value
-// carries one (LRM 15.4.5, 13.5.2). It has no value of its own to read or
-// hold, as an erased callable has none apart from a box or a borrow.
+// a value of that type's identity is written through it, as the library's
+// value of any type carries one (LRM 15.4.5, 13.5.2). It has no value of its
+// own to read or hold, as an erased callable has none apart from a box or a
+// borrow.
 struct ErasedValueType {
   auto operator==(const ErasedValueType&) const -> bool = default;
 };
 
 // A borrowed, NUL-terminated machine string (the generic-language `*const
-// c_char`, C `const char*`), distinct from the owning `StringType`, which is a
-// simulation value. It names raw character storage the value does not own, so
-// it copies nothing and carries no length.
+// c_char`, C `const char*`), distinct from the owning string the library
+// declares, which is a simulation value. It names raw character storage the
+// value does not own, so it copies nothing and carries no length.
 struct MachineCStringType {
   auto operator==(const MachineCStringType&) const -> bool = default;
 };
@@ -172,13 +132,10 @@ struct MachineBoolType {
 // type system names outright.
 enum class MachineIntWidth : std::uint8_t { k8, k16, k32, k64 };
 
-enum class MachineFloatWidth : std::uint8_t { k32, k64 };
-
 // The width as a number. A target names the type it has for each width rather
 // than spelling one from a count, so this is for a reader of the width and not
 // for composing a type name.
 [[nodiscard]] auto BitsOf(MachineIntWidth width) -> std::uint32_t;
-[[nodiscard]] auto BitsOf(MachineFloatWidth width) -> std::uint32_t;
 
 // A primitive machine integer (the generic-language `iN` / `uN`, C `intN_t`):
 // a fixed-width 2-state scalar, distinct from the SV `IntegralType`.
@@ -193,10 +150,14 @@ struct MachineIntType {
 };
 
 // A primitive machine float (the generic-language `fN`, C `float` / `double`):
-// plain machine data, distinct from the SV `RealType`, which is a simulation
-// value reached through a value wrapper. It lowers to a raw target float.
+// plain machine data, what crosses a foreign boundary or a runtime entry as a
+// raw target float. Distinct from the SV `RealType` for the reason a machine
+// integer is distinct from an integral value: a real is a value of the design,
+// carrying the language's own operators and conversions (LRM 11.4.3 `**`, the
+// rounding of LRM 6.12.1) and held in a variable's cell, and machine data is
+// neither.
 struct MachineFloatType {
-  MachineFloatWidth width;
+  support::FloatWidth width;
 
   auto operator==(const MachineFloatType&) const -> bool = default;
 };
@@ -241,14 +202,12 @@ struct MachineFunctionType {
   auto operator==(const MachineFunctionType&) const -> bool = default;
 };
 
+// An SV floating-point value (LRM 6.12), laid out as the IEEE 754 value of its
+// width, whose arithmetic and comparisons are the IEEE ones.
 struct RealType {
+  support::FloatWidth width;
+
   auto operator==(const RealType&) const -> bool = default;
-};
-struct ShortRealType {
-  auto operator==(const ShortRealType&) const -> bool = default;
-};
-struct ChandleType {
-  auto operator==(const ChandleType&) const -> bool = default;
 };
 
 struct VoidType {
@@ -266,208 +225,13 @@ struct ObjectType {
   auto operator==(const ObjectType&) const -> bool = default;
 };
 
-// The type of an instance of a class the runtime library defines. MIR does not
-// know its members either; unlike a class some unit declares it belongs to no
-// compilation unit, so which class it is is the whole identity and no unit
-// dependency follows from naming it.
-struct RuntimeClassType {
-  support::RuntimeClass which;
-
-  auto operator==(const RuntimeClassType&) const -> bool = default;
-};
-
-// The runtime capability surface `lyra::runtime::RuntimeEffects`. Reached
-// via ambient (`current_runtime()`) with no receiver; every runtime-effect
-// call threads it as a plain argument.
-struct RuntimeEffectsType {
-  auto operator==(const RuntimeEffectsType&) const -> bool = default;
-};
-
-// The file-IO subsystem handle `lyra::runtime::FileTable`, reached from the
-// runtime through its `Files` method. Opaque, never inspected by MIR.
-struct FilesType {
-  auto operator==(const FilesType&) const -> bool = default;
-};
-
-// The diagnostic subsystem handle `lyra::runtime::DiagnosticDispatcher`,
-// reached from the runtime through its `Diagnostic` method. The receiver of
-// severity-fixed emit methods (`EmitInfo` / `EmitWarning` / `EmitError`)
-// carrying a pre-formatted text. Opaque, never inspected by MIR.
-struct DiagnosticType {
-  auto operator==(const DiagnosticType&) const -> bool = default;
-};
-
-// A type the runtime library declares and MIR only names: a value of one is
-// built and reached through the library's calls, and MIR decides nothing about
-// what it holds. The one exception is a structure a unit states as a constant
-// -- a class's definition and what it is made of, a construction table, a dump
-// entry -- whose members the unit declares, each at the type the library's own
-// declaration gives it, and which MIR composes from a part for each member.
-// The branch selects which library type, and the backend maps the branch to the
-// concrete library name. An object-model handle is a different thing --
-// receiver semantics reason about one. One that reads a value where it lies --
-// a print item, a format operand -- is built over a reference to that value,
-// so the program states what it refers to.
-enum class RuntimeLibraryKind : std::uint8_t {
-  // A run of bits whose length is part of the value rather than of the type,
-  // the first most significant: the stream LRM 6.24.3 and 11.4.14.1 make of a
-  // value whose bit count only the running program has -- a dynamic array, a
-  // queue, an associative array, a string, and anything holding one. A stream
-  // all of whose parts have a width their types fix is an integral value
-  // instead. It is a value, copied and handed on as any value is, as Rust's
-  // `BitVec` and LLVM's `BitVector` are; how far a read of it has reached is
-  // kept by the reader, never by the run. It states no state domain: what a
-  // stream holds is read back only into values of types that state their own
-  // (LRM 6.24.3), so whether it could hold x or z changes nothing a program
-  // sees.
-  kBitVec,
-  // The members an enumeration declares, each its whole value at the base type
-  // and its name, in declared order: what the questions asked of a value
-  // against its members are answered from.
-  kEnumeration,
-  kPrintItem,
-  kFormatSpec,
-  // LRM 21.3.3 runtime-format operand: `lyra::value::FormatArg`, a type-erased
-  // value carrying no conversion of its own. A format string known only at
-  // simulation time binds each operand to a conversion as it is parsed, so the
-  // operand cannot be paired with a spec ahead of time the way a print item is.
-  kFormatArg,
-  // LRM 21.3.2 cancel-on-close token: `lyra::runtime::ChannelCancellation`,
-  // acquired by `FileTable::CancellationFor(fd)` at `$fstrobe` submit time
-  // and queried in the postponed-body guard.
-  kChannelCancellation,
-  // LRM 20.4.3 `$timeformat` display state: `lyra::value::TimeFormat`, read by
-  // the value-layer format step for `%t` directives. Threaded into `Format` as
-  // an explicit operand from the engine's current state.
-  kTimeFormat,
-  // LRM 9.4.2 / 9.4.2.2 / 9.4.3 one leaf of a value-change wait:
-  // `lyra::runtime::Trigger`, pairing the observable cell with the bits of its
-  // encoding the wait reads and what decides whether a change there is an
-  // event. A wait registers a set of these.
-  kTrigger,
-  // LRM 9.4.2 what an event control watches while a procedure waits at it:
-  // `lyra::runtime::Observation`, holding the expression whose value decides
-  // the event and the value it had when the wait began. The leaves of one
-  // event expression name one of these between them.
-  kObservation,
-  // LRM 9.4.2 what one evaluation a waiting process makes reached:
-  // `lyra::runtime::ReadReport`, into which the evaluation states what it
-  // reaches and every function it calls reports what a call of it reads. An
-  // `always_comb` or `always_latch` collects its implicit list into one too,
-  // once, told what is written as well (LRM 9.2.2.2.1).
-  kReadReport,
-  // LRM 9.4 a timing control as the body holds it: `lyra::runtime::Wait`,
-  // built where what it waits for stops changing and stopped at from there --
-  // once for the body's whole run where that is fixed storage, at the stop for
-  // a delay or a join -- so a stop only says that the body is waiting there.
-  kWait,
-  // LRM 13.5.2 / 8.29 a reference a call binds where what it names lies in
-  // something the program can let go of while the call runs, together with a
-  // lease keeping that thing in existence: `lyra::runtime::LeasedReference`.
-  // The binding holds one until at least the call returns and hands the call
-  // the reference it carries.
-  kLeasedReference,
-  // LRM 23.3.3.5 / 27.6 elaborated hierarchy segment:
-  // `lyra::runtime::HierarchySegment`, the per-scope structured identity each
-  // child carries from construction (base name plus per-dimension indices).
-  // The owner of a child threads this into the child's constructor as a
-  // single packaged value.
-  kHierarchySegment,
-  // The canonical buffer a packed vector crosses the DPI-C boundary in (LRM
-  // 35.5.6, Annex H.10.1.2): `lyra::value::DpiBitBuffer` holds `svBitVecVal`
-  // chunks, `lyra::value::DpiLogicBuffer` holds `svLogicVecVal` chunks. The
-  // buffer sizes itself from the SV value and hands the foreign side the
-  // canonical chunk pointer.
-  kDpiBitBuffer,
-  kDpiLogicBuffer,
-  // One canonical packed-vector chunk element (LRM 35.5.6, Annex H.10.1.2): the
-  // backend-neutral runtime-ABI storage unit a packed value crosses the foreign
-  // boundary as, used as a borrowed-pointer pointee to spell the by-pointer
-  // carrier an export's C entry point receives. This is a plumbing type, never
-  // an SV value type: it has no declared range, signedness, or four-state
-  // expression semantics, and no operation on an integral value acts on it.
-  // `kDpiBitChunk` is a 32-bit value-plane word; `kDpiLogicChunk` is a
-  // two-plane `{ aval, bval }` record, each plane a 32-bit word. Each backend's
-  // type mapping realizes it: the C++ backend as `svBitVecVal` /
-  // `svLogicVecVal`, a lower backend as the layout-equivalent word / record.
-  kDpiBitChunk,
-  kDpiLogicChunk,
-  // A DPI-C open array as the foreign side sees it (LRM 35.5.6.1, Annex H.12):
-  // `lyra::value::DpiOpenArray`, the canonical image of a whole actual plus the
-  // declared coordinate system of each dimension, built at the call site and
-  // read back after it. `kDpiOpenArrayHandle` is the opaque handle the foreign
-  // side receives in its place -- `svOpenArrayHandle`, the ABI spelling of a
-  // reference to that image, and the only one of the two a prototype names.
-  kDpiOpenArray,
-  kDpiOpenArrayHandle,
-  // LRM 9.4.2 a place a wait watches: `lyra::runtime::WatchedPlace`, where
-  // occurrences there are reported, or the member a reference was bound into
-  // where the place was reached through one, so a wait follows the member as a
-  // force rebinds it (LRM 10.6.2). One word, crossing to the library as that
-  // word.
-  kWatchedPlace,
-  // LRM 9.6.2 `disable`, in the three parts it takes: the per-instance
-  // `lyra::runtime::CancellationTarget` a scope is named through, carrying the
-  // generation an execution captures on entry and `disable` advances; and
-  // `lyra::runtime::ControlEffect`, the effect raised by leaving a disabled
-  // scope, which the region naming that scope binds and consumes.
-  kCancellationTarget,
-  kControlEffect,
-  // LRM 10.3.3 the one future event a continuous assignment carrying a delay
-  // propagates through: `lyra::runtime::Timer`, held by the scope that owns the
-  // assignment, bound once to what it fires and armed again in place of the
-  // event pending whenever the right-hand side changes to a new value.
-  kTimer,
-  // LRM 4.4 the effects one region of one time slot holds pending:
-  // `lyra::runtime::DeferredEffects`, kept by the run and reached by address.
-  // A closure a region keeps is emplaced in it: made in the storage it hands
-  // out and kept there, the region taking the closure over.
-  kDeferredEffects,
-  // LRM 12.4.2.1 where a violation report is kept:
-  // `lyra::runtime::ViolationReportKeeper`, kept by the run and reached by
-  // address. It keeps as a region's deferred effects do: a report is made in
-  // it, and it keeps the report on the condition that the raising process
-  // reaches no flush point first.
-  kViolationReportKeeper,
-  // What every object of one class carries, so the object answers what its
-  // class extends and what a class of the design hierarchy states of its
-  // instances: `lyra::abi::ObjectDefinition`. The class's unit emits it as
-  // a constant, which every unit naming the class reaches by its symbol.
-  kObjectDefinition,
-  // The parts a definition is made of, each a structure of the library a unit
-  // states as a constant: `lyra::abi::ScopeInfo` is what a class of the
-  // design hierarchy states of its instances, its `ScopeMetadata` its
-  // timescale and how it runs, `ScopeCallable` a DPI-C export's C name with
-  // its body (LRM 35.5.3), `ClassObjectInfo` what `randomize()` asks of an
-  // object of a class (LRM 18.6), and `InterfaceRow` one interface class the
-  // class implements with the bodies answering what it declares (LRM 8.26).
-  kScopeInfo,
-  kScopeMetadata,
-  kScopeCallable,
-  kClassObjectInfo,
-  kInterfaceRow,
-  // What a constructor of the design hierarchy is handed, how the object at one
-  // of its instantiations or at one place of one of its generates is made, and
-  // the places of one generate: `lyra::abi::ConstructionTable`,
-  // `lyra::abi::Instantiation` and `lyra::abi::GeneratePlaces`,
-  // constants the design's root unit states, which the library reads.
-  kConstructionTable,
-  kInstantiation,
-  kGeneratePlaces,
-  // What a class of the design hierarchy states of each thing a value dump may
-  // record of an instance, and of each named block, task or function around
-  // such things (LRM 21.7.1.2): `lyra::abi::DumpEntry` and `DumpBlock`,
-  // constants the class's unit states, which an instance describing itself
-  // names.
-  kDumpEntry,
-  kDumpBlock,
-};
-
-struct RuntimeLibraryType {
-  RuntimeLibraryKind kind;
-
-  auto operator==(const RuntimeLibraryType&) const -> bool = default;
-};
+// A type the runtime library declares, named by its declaration and the
+// arguments the language gives it. MIR makes, takes apart and lays out no
+// value of one: a value is built and reached through the library's calls, and
+// whatever MIR asks of one -- whether a temporary may stand in for it, how
+// large a frame holding one is, whether it is storage reached where it lies --
+// it reads off the declaration, which states it once for every layer.
+using LibraryType = support::LibraryType<TypeId>;
 
 // The call protocol of a coroutine callable: invoking it yields a coroutine the
 // site must await or spawn, and awaiting it produces a value of `payload` --
@@ -490,9 +254,9 @@ struct CoroutineType {
 // types are the declaration's. A structure's members each hold storage of their
 // own; a union's overlay one storage, read through any member (LRM 7.3); a
 // tagged union's do too, with the position of the member it holds observable
-// as its tag (LRM 7.3.2, 11.9), and a `void` member carries `EmptyType`. A
-// member is reached by position. A value of one is a value: reference
-// semantics come from the wrapper around it, never from the type.
+// as its tag (LRM 7.3.2, 11.9), and a `void` member carries the tuple of no
+// components. A member is reached by position. A value of one is a value:
+// reference semantics come from the wrapper around it, never from the type.
 struct RecordType {
   // Where the declaration sits in the unit's record registry, whichever unit
   // defines it.
@@ -623,16 +387,20 @@ struct ManagedRefType {
   auto operator==(const ManagedRefType&) const -> bool = default;
 };
 
-// A weak reference to a garbage-collected object (LRM 8.30), as Rust's `Weak`
-// and C++'s `std::weak_ptr` are to their strong pointers: an edge the
-// collector does not follow, so it keeps nothing reachable, and which reads no
-// object once its target is unreachable. It is a value: a copy refers to the
-// same target. A managed reference is made into one, and one is read back as
-// one, through the library.
-struct WeakManagedRefType {
+// A reference that owns nothing: the address of an object that lives for its
+// own reasons, or null, as C's `T*` and Rust's `*const T` are. It is a value of
+// the simulation all the same -- a variable holds one in a cell, it defaults to
+// null, it is printed and compared by identity -- which is what separates it
+// from a `PointerType`, a quantity of the machine no variable is declared as.
+// SystemVerilog has two: a `chandle` (LRM 6.14), whose pointee is `void`
+// because the simulation never reaches through it, and a virtual interface
+// (LRM 25.9), whose pointee is the object of the interface its type names and
+// which an access reaches through, the instance living as long as the
+// simulation does.
+struct UnmanagedRefType {
   TypeId pointee;
 
-  auto operator==(const WeakManagedRefType&) const -> bool = default;
+  auto operator==(const UnmanagedRefType&) const -> bool = default;
 };
 
 // A homogeneous sequence: one element type, laid down as many times as the
@@ -655,29 +423,25 @@ struct VectorType {
 // composes one for itself -- the `(key, value)` pair an associative literal is
 // a sequence of, a call's completion -- so two with the same components are one
 // type.
+//
+// The tuple of no components has exactly one value, so it is the type of a
+// value carrying no information, as Rust's `()` is. SystemVerilog reaches it
+// through a tagged union's `void` member (LRM 7.3.2), the one position where
+// `void` names a data type: a member is a value slot, which `VoidType`, the
+// absence of a type, cannot fill.
 struct TupleType {
   std::vector<TypeId> elements;
 
   auto operator==(const TupleType&) const -> bool = default;
 };
 
-// A value type carrying no information: it has exactly one value, so nothing
-// distinguishes two of them. Distinct from `VoidType`, which marks the absence
-// of a type -- a callable that yields nothing, a pointee left unspecified.
-// SystemVerilog reaches this through a tagged union's `void` member (LRM
-// 7.3.2), the one position where `void` names a data type; a value slot needs
-// a type that has a value, which absence-of-a-type cannot supply.
-struct EmptyType {
-  auto operator==(const EmptyType&) const -> bool = default;
-};
-
 // Observable storage wrapper around a value type. Declares that a member's
 // storage is a module-scope cell whose write fires the LRM 9.4.2 update event,
 // so subscribers wake on a change. The lowering wraps the storage of a variable
-// (LRM 6.5), a class handle's and a chandle's included; a pointer, a child
-// instance and a reference to storage elsewhere are not wrapped. The C++
-// backend renders the wrapper as `lyra::runtime::Var<T>` where T is the inner
-// value type; the C++ template requires `T` to satisfy
+// (LRM 6.5), a class handle's and an unmanaged reference's included; a pointer,
+// a child instance and a reference to storage elsewhere are not wrapped. The
+// C++ backend renders the wrapper as `lyra::runtime::Var<T>` where T is the
+// inner value type; the C++ template requires `T` to satisfy
 // `lyra::value::LyraValue`, so a value type that forgot to implement the
 // contract fails at template instantiation.
 struct ObservableType {
@@ -697,45 +461,6 @@ struct ResolvedType {
   TypeId value;
 
   auto operator==(const ResolvedType&) const -> bool = default;
-};
-
-// What the ticks of one clocking event have settled for one expression (LRM
-// 16.9.3). Declares that a member's storage keeps sampled values of the inner
-// value type: filled where the design activates, appended to at each tick, and
-// read by naming how far back the reader reaches.
-//
-// How deep it reaches is not part of the type. It is fixed by filling the
-// storage rather than by constructing it, so two histories of one value type
-// that reach back different distances are one type here and one realization
-// below -- which is what keeps a distinction with no realization behind it out
-// of the type pool.
-struct SampledHistoryType {
-  TypeId value;
-
-  auto operator==(const SampledHistoryType&) const -> bool = default;
-};
-
-// What one concurrent assertion has in flight: an evaluation attempt per tick
-// its clock has reached and not yet answered, each holding its own evaluations
-// (LRM 16.14.1). One assertion has one of these, and it holds every attempt
-// rather than one merged state, because each attempt carries its own result.
-//
-// How wide a position set is, and what the statements an outcome selects are,
-// are not part of the type. They are fixed by filling the storage rather than
-// by constructing it -- the same reason a history's depth is not -- so two
-// assertions over properties of different sizes are one type here and one
-// realization below.
-struct EvaluationAttemptsType {
-  auto operator==(const EvaluationAttemptsType&) const -> bool = default;
-};
-
-// The blocks one loop generate built in one object, each under the value its
-// index stood at (LRM 27.4). The object holding the loop files each block as
-// it builds it, and a hierarchical name reaching one asks for it by that value
-// (LRM 23.6), so which blocks there are is not part of the type: two loops of
-// different counts are one type here and one realization below.
-struct LoopBlocksType {
-  auto operator==(const LoopBlocksType&) const -> bool = default;
 };
 
 // The drive capability for a net: a handle to one of a `ResolvedType` net's
@@ -798,20 +523,6 @@ struct ObjectWriteType {
   auto operator==(const ObjectWriteType&) const -> bool = default;
 };
 
-// Whether a value an evaluation made can be held in a temporary that then
-// stands in its place, and how it leaves that temporary.
-enum class Movability : std::uint8_t {
-  // A copy holds the whole of it, so it is read out of the temporary.
-  kCopyable,
-  // It is moved into the temporary and moved out where it is used, since a
-  // copy would be a second owner, or nothing holds one.
-  kMovable,
-  // No temporary stands in for it: it is formed where it is used, and what
-  // inside it has to run first is taken ahead instead, as rustc calls a
-  // value that may not be moved once made immovable.
-  kImmovable,
-};
-
 // A type one MIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
 // that names each one rather than defaulting is what makes an alternative added
@@ -824,18 +535,14 @@ enum class Movability : std::uint8_t {
 class Type {
  private:
   using Data = std::variant<
-      IntegralType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
-      AssociativeArrayType, WildcardIndexType, StringType, AnyType,
-      ErasedValueType, MachineCStringType, MachineBoolType, MachineIntType,
-      MachineFloatType, MachineArrayType, MachineSpanType, MachineFunctionType,
-      RealType, ShortRealType, ChandleType, VoidType, ObjectType,
-      RuntimeClassType, RuntimeEffectsType, FilesType, DiagnosticType,
-      RuntimeLibraryType, CoroutineType, VariableRefType, ReferenceWrapperType,
-      PointerType, ReferenceType, ManagedRefType, WeakManagedRefType,
-      VectorType, TupleType, EmptyType, ObservableType, ResolvedType,
+      IntegralType, EnumType, UnpackedArrayType, ErasedValueType,
+      MachineCStringType, MachineBoolType, MachineIntType, MachineFloatType,
+      MachineArrayType, MachineSpanType, MachineFunctionType, RealType,
+      VoidType, ObjectType, LibraryType, CoroutineType, VariableRefType,
+      ReferenceWrapperType, PointerType, ReferenceType, ManagedRefType,
+      UnmanagedRefType, VectorType, TupleType, ObservableType, ResolvedType,
       DriverType, OpenWriteType, DesignationType, BitsReferenceType,
-      ObjectWriteType, SampledHistoryType, EvaluationAttemptsType,
-      LoopBlocksType, RecordType, ClosureType, ErasedCallableType>;
+      ObjectWriteType, RecordType, ClosureType, ErasedCallableType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -852,17 +559,14 @@ class Type {
   // width guess.
   [[nodiscard]] auto Integral() const -> const IntegralType&;
 
-  // True for the two SV floating-point types (LRM 6.12), which share one set
-  // of conversions -- the axis a cast or an operator decides on is the family,
-  // not which of the two.
-  [[nodiscard]] auto IsRealFamily() const -> bool;
+  // True for a type the library declares by `decl`, whatever its arguments.
+  [[nodiscard]] auto IsDeclaredBy(support::LibraryDecl decl) const -> bool;
 
-  // True for a stable runtime facade the backend realizes as a live reference
-  // rather than a movable value -- the runtime handle, the file table handle,
-  // the diagnostic dispatcher handle. A lowering site deciding whether an
-  // operand may be transferred consults this: an alias handle carries no
-  // ownership to move.
-  [[nodiscard]] auto IsAliasHandle() const -> bool;
+  // The declaration of the class of the runtime's a value of this type is an
+  // object of, where it is one rather than a class some unit declares or no
+  // object at all.
+  [[nodiscard]] auto RuntimeClassOf() const
+      -> std::optional<support::LibraryDecl>;
 
   // True for a wrapper that grants an access capability over a value it holds
   // rather than being that value: the observable cell, a procedural reference,
@@ -887,21 +591,21 @@ class Type {
   [[nodiscard]] auto OwnsPointee() const -> bool;
 
   // True for a value built of other values or represented by the library --
-  // an array of any kind, a structure, a union, a string, a real, a class
-  // handle -- as opposed to an integral value, a machine quantity or an address
+  // an array of any kind, a structure, a union, a string, a class handle -- as
+  // opposed to an integral value, a real, a machine quantity or an address
   // whose value is the address, which whoever holds it holds as one quantity
   // entire.
   //
   // Narrower than being a domain the runtime realizes values of, which a
-  // chandle also is: its value is the pointer it carries, and the pointer is in
-  // the holder's own hands.
+  // reference owning nothing also is: its value is the address it carries, and
+  // the address is in the holder's own hands.
   [[nodiscard]] auto IsRuntimeStoredValue() const -> bool;
 
   // Whether a temporary can hold a value of this type and stand in its place,
   // and whether it is then read out as a copy or moved out, as rustc's builder
   // consumes a place by `Operand::Copy` where its type is `Copy` and by
   // `Operand::Move` otherwise.
-  [[nodiscard]] auto ValueMovability() const -> Movability;
+  [[nodiscard]] auto ValueMovability() const -> support::Movability;
 
   // True for a value whose bits lie contiguously (LRM 7.4.1), so a write into
   // some of them lands on those bits where they lie, at the cost of those bits,
@@ -918,6 +622,20 @@ class Type {
   // not containers, being shapes a lowering builds rather than types a
   // declaration named.
   [[nodiscard]] auto ContainerElementType() const -> std::optional<TypeId>;
+
+  // True for a container the library declares, whose declaration names its
+  // element type among its arguments (LRM 7.5, 7.8, 7.10): every container but
+  // the fixed-size unpacked array, which MIR lays out.
+  [[nodiscard]] auto IsLibraryContainer() const -> bool;
+
+  // True for such a container whose elements are reached by position, a
+  // dynamic array or a queue (LRM 7.5, 7.10), as opposed to an associative
+  // array, whose elements are reached by an index of a type of its own.
+  [[nodiscard]] auto IsLibrarySequence() const -> bool;
+
+  // The type an associative array is indexed by (LRM 7.8), and nothing for a
+  // type whose elements are reached by position.
+  [[nodiscard]] auto IndexType() const -> std::optional<TypeId>;
 
   template <typename T>
   [[nodiscard]] auto Is() const -> bool {
@@ -968,5 +686,26 @@ class Type {
 // itself through its own declaration identity, which is what lets a recursive
 // type graph be built out of complete requests alone.
 using TypePool = base::Interner<Type, TypeId, Type::Hash>;
+
+// Whether `type` is a data type of the program (LRM 6.2): what a variable
+// declaration names, whose data object is value storage (LRM 6.5) and answers
+// every operation a value of the program does -- its default, `==`, `===`,
+// whether two are the same bits, whether it holds an unknown. A tuple is one
+// exactly where every component is, as rustc's `tuple_impls!` gives a tuple
+// `PartialEq` where every component has it, so the tuple of no components is
+// one. Everything a lowering builds to carry such a value, reach it, or run
+// the program around it is not.
+[[nodiscard]] auto IsDataType(const TypePool& types, TypeId type) -> bool;
+
+// The kinds of type each unit naming one states the operations of itself: a
+// fixed-size unpacked array, which the language identifies by its element and
+// its range rather than by a declaration (LRM 6.22.1 f), and a tuple, which is
+// identified by its components, so no declaration states them once for every
+// unit, as a structure's and a union's does.
+enum class StatedPerUnit : std::uint8_t { kFixedArray, kTuple };
+
+// Which of those kinds `type` is, and nothing for every other type.
+[[nodiscard]] auto OperationsStatedPerUnit(const Type& type)
+    -> std::optional<StatedPerUnit>;
 
 }  // namespace lyra::mir

@@ -34,7 +34,8 @@
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/float_width.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
@@ -341,28 +342,6 @@ class MirDumper {
                   "UnpackedArray(elem=Type[{}], count={})",
                   u.element_type.value, u.count);
             },
-            [](const DynamicArrayType& d) -> std::string {
-              return std::format(
-                  "DynamicArray(elem=Type[{}])", d.element_type.value);
-            },
-            [](const QueueType& q) -> std::string {
-              if (q.max_bound.has_value()) {
-                return std::format(
-                    "Queue(elem=Type[{}], max={})", q.element_type.value,
-                    *q.max_bound);
-              }
-              return std::format("Queue(elem=Type[{}])", q.element_type.value);
-            },
-            [](const AssociativeArrayType& a) -> std::string {
-              return std::format(
-                  "AssociativeArray(elem=Type[{}], key=Type[{}])",
-                  a.element_type.value, a.key_type.value);
-            },
-            [](const WildcardIndexType&) -> std::string {
-              return "WildcardIndexType";
-            },
-            [](const StringType&) -> std::string { return "StringType"; },
-            [](const AnyType&) -> std::string { return "AnyType"; },
             [](const ErasedValueType&) -> std::string {
               return "ErasedValueType";
             },
@@ -397,98 +376,37 @@ class MirDumper {
               return std::format(
                   "MachineFunction(({}) -> Type[{}])", params, m.result.value);
             },
-            [](const RealType&) -> std::string { return "RealType"; },
-            [](const ShortRealType&) -> std::string { return "ShortRealType"; },
-            [](const ChandleType&) -> std::string { return "ChandleType"; },
+            [](const RealType& r) -> std::string {
+              return std::format("RealType(width={})", BitsOf(r.width));
+            },
             [](const VoidType&) -> std::string { return "VoidType"; },
             [](const ObjectType& o) -> std::string {
               return std::format("Object({})", FormatClass(o.of));
             },
-            [](const RuntimeClassType& e) -> std::string {
-              return std::format(
-                  "RuntimeClass({})", support::RuntimeClassName(e.which));
-            },
-            [](const RuntimeEffectsType&) -> std::string {
-              return "RuntimeEffects";
-            },
-            [](const FilesType&) -> std::string { return "Files"; },
-            [](const DiagnosticType&) -> std::string { return "Diagnostic"; },
-            [](const RuntimeLibraryType& r) -> std::string {
-              switch (r.kind) {
-                case RuntimeLibraryKind::kEnumeration:
-                  return "RuntimeLibrary(Enumeration)";
-                case RuntimeLibraryKind::kPrintItem:
-                  return "RuntimeLibrary(PrintItem)";
-                case RuntimeLibraryKind::kCancellationTarget:
-                  return "RuntimeLibrary(CancellationTarget)";
-                case RuntimeLibraryKind::kTimer:
-                  return "RuntimeLibrary(Timer)";
-                case RuntimeLibraryKind::kDeferredEffects:
-                  return "RuntimeLibrary(DeferredEffects)";
-                case RuntimeLibraryKind::kViolationReportKeeper:
-                  return "RuntimeLibrary(ViolationReportKeeper)";
-                case RuntimeLibraryKind::kControlEffect:
-                  return "RuntimeLibrary(ControlEffect)";
-                case RuntimeLibraryKind::kFormatSpec:
-                  return "RuntimeLibrary(FormatSpec)";
-                case RuntimeLibraryKind::kFormatArg:
-                  return "RuntimeLibrary(FormatArg)";
-                case RuntimeLibraryKind::kChannelCancellation:
-                  return "RuntimeLibrary(ChannelCancellation)";
-                case RuntimeLibraryKind::kTimeFormat:
-                  return "RuntimeLibrary(TimeFormat)";
-                case RuntimeLibraryKind::kHierarchySegment:
-                  return "RuntimeLibrary(HierarchySegment)";
-                case RuntimeLibraryKind::kTrigger:
-                  return "RuntimeLibrary(Trigger)";
-                case RuntimeLibraryKind::kObservation:
-                  return "RuntimeLibrary(Observation)";
-                case RuntimeLibraryKind::kReadReport:
-                  return "RuntimeLibrary(ReadReport)";
-                case RuntimeLibraryKind::kWait:
-                  return "RuntimeLibrary(Wait)";
-                case RuntimeLibraryKind::kLeasedReference:
-                  return "RuntimeLibrary(LeasedReference)";
-                case RuntimeLibraryKind::kObjectDefinition:
-                  return "RuntimeLibrary(ObjectDefinition)";
-                case RuntimeLibraryKind::kConstructionTable:
-                  return "RuntimeLibrary(ConstructionTable)";
-                case RuntimeLibraryKind::kInstantiation:
-                  return "RuntimeLibrary(Instantiation)";
-                case RuntimeLibraryKind::kGeneratePlaces:
-                  return "RuntimeLibrary(GeneratePlaces)";
-                case RuntimeLibraryKind::kBitVec:
-                  return "RuntimeLibrary(BitVec)";
-                case RuntimeLibraryKind::kDpiBitBuffer:
-                  return "RuntimeLibrary(DpiBitBuffer)";
-                case RuntimeLibraryKind::kDpiLogicBuffer:
-                  return "RuntimeLibrary(DpiLogicBuffer)";
-                case RuntimeLibraryKind::kDpiOpenArray:
-                  return "RuntimeLibrary(DpiOpenArray)";
-                case RuntimeLibraryKind::kDpiOpenArrayHandle:
-                  return "RuntimeLibrary(DpiOpenArrayHandle)";
-                case RuntimeLibraryKind::kWatchedPlace:
-                  return "RuntimeLibrary(WatchedPlace)";
-                case RuntimeLibraryKind::kDpiBitChunk:
-                  return "RuntimeLibrary(DpiBitChunk)";
-                case RuntimeLibraryKind::kDpiLogicChunk:
-                  return "RuntimeLibrary(DpiLogicChunk)";
-                case RuntimeLibraryKind::kScopeInfo:
-                  return "RuntimeLibrary(ScopeInfo)";
-                case RuntimeLibraryKind::kScopeCallable:
-                  return "RuntimeLibrary(ScopeCallable)";
-                case RuntimeLibraryKind::kClassObjectInfo:
-                  return "RuntimeLibrary(ClassObjectInfo)";
-                case RuntimeLibraryKind::kInterfaceRow:
-                  return "RuntimeLibrary(InterfaceRow)";
-                case RuntimeLibraryKind::kScopeMetadata:
-                  return "RuntimeLibrary(ScopeMetadata)";
-                case RuntimeLibraryKind::kDumpEntry:
-                  return "RuntimeLibrary(DumpEntry)";
-                case RuntimeLibraryKind::kDumpBlock:
-                  return "RuntimeLibrary(DumpBlock)";
+            [](const LibraryType& l) -> std::string {
+              std::string args;
+              for (const LibraryType::Arg& arg : l.args) {
+                if (!args.empty()) args += ", ";
+                args += std::visit(
+                    Overloaded{
+                        [](TypeId type) {
+                          return std::format("Type[{}]", type.value);
+                        },
+                        [](const support::QueueBound& bound) {
+                          return std::visit(
+                              Overloaded{
+                                  [](const support::UnboundedQueue&)
+                                      -> std::string { return "unbounded"; },
+                                  [](const support::BoundedQueue& most) {
+                                    return std::format("max={}", most.count);
+                                  }},
+                              bound);
+                        }},
+                    arg);
               }
-              throw InternalError("dump: unknown RuntimeLibraryKind");
+              return std::format(
+                  "Library({}{}{})", support::DeclarationOf(l.decl).name,
+                  args.empty() ? "" : ", ", args);
             },
             [](const CoroutineType& c) -> std::string {
               return std::format(
@@ -553,9 +471,9 @@ class MirDumper {
               return std::format(
                   "ManagedRef(pointee=Type[{}])", m.pointee.value);
             },
-            [](const WeakManagedRefType& m) -> std::string {
+            [](const UnmanagedRefType& m) -> std::string {
               return std::format(
-                  "WeakManagedRef(pointee=Type[{}])", m.pointee.value);
+                  "UnmanagedRef(pointee=Type[{}])", m.pointee.value);
             },
             [](const VectorType& v) -> std::string {
               return std::format("Vector(elem=Type[{}])", v.element.value);
@@ -563,9 +481,6 @@ class MirDumper {
             [](const TupleType& t) -> std::string {
               return std::format(
                   "Tuple(elems=[{}])", FormatTypeList(t.elements));
-            },
-            [](const EmptyType&) -> std::string {
-              return std::string{"Empty"};
             },
             [](const ObservableType& o) -> std::string {
               return std::format("Observable(value=Type[{}])", o.value.value);
@@ -589,14 +504,6 @@ class MirDumper {
               return std::format(
                   "ObjectWrite(object=Type[{}])", w.object.value);
             },
-            [](const SampledHistoryType& h) -> std::string {
-              return std::format(
-                  "SampledHistory(value=Type[{}])", h.value.value);
-            },
-            [](const EvaluationAttemptsType&) -> std::string {
-              return "EvaluationAttempts";
-            },
-            [](const LoopBlocksType&) -> std::string { return "LoopBlocks"; },
         });
   }
 
@@ -837,8 +744,8 @@ class MirDumper {
             [](const StringLiteral& lit) -> std::string {
               return std::format("StringLiteral(\"{}\")", lit.value);
             },
-            [](const MachineFloatLiteral& lit) -> std::string {
-              return std::format("MachineFloatLiteral({})", lit.value);
+            [](const FloatingLiteral& lit) -> std::string {
+              return std::format("FloatingLiteral({})", lit.value);
             },
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
             [](const MachineBoolLiteral& lit) -> std::string {

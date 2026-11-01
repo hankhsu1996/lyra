@@ -19,6 +19,7 @@
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/float_width.hpp"
 
 namespace lyra::backend::cpp {
 namespace {
@@ -74,7 +75,8 @@ auto UnitWithNullOf(mir::TypeId (*type_of)(mir::CompilationUnit&))
 TEST(CppBackendRefusal, ANodeWithNoFormIsReportedAsUnsupported) {
   const mir::CompilationUnit refused =
       UnitWithNullOf([](mir::CompilationUnit& unit) {
-        return unit.types.Intern(mir::Type{mir::RealType{}});
+        return unit.types.Intern(
+            mir::Type{mir::RealType{.width = support::FloatWidth::k64}});
       });
   diag::DiagnosticSink refusals;
   std::ignore = EmitCppUnit(refused, refusals);
@@ -89,7 +91,9 @@ TEST(CppBackendRefusal, ANodeWithNoFormIsReportedAsUnsupported) {
 
   const mir::CompilationUnit written =
       UnitWithNullOf([](mir::CompilationUnit& unit) {
-        return unit.types.Intern(mir::Type{mir::ChandleType{}});
+        return unit.types.Intern(
+            mir::Type{
+                mir::UnmanagedRefType{.pointee = unit.builtins.void_type}});
       });
   diag::DiagnosticSink none;
   std::ignore = EmitCppUnit(written, none);

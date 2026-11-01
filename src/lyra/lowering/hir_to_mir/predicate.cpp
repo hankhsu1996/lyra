@@ -52,8 +52,8 @@ auto BuildCombinedArms(
     mir::LocalId other, mir::TypeId result_type) -> mir::ExprId {
   const mir::Type& type = unit.types.Get(result_type);
   const bool combines_by_part =
-      type.IsIntegral() || type.Is<mir::UnpackedArrayType>() ||
-      type.Is<mir::DynamicArrayType>() || type.Is<mir::QueueType>();
+      type.IsIntegral() || (type.ContainerElementType().has_value() &&
+                            !type.IndexType().has_value());
   if (combines_by_part) {
     const mir::ExprId one_value = block.ReadLocal(one, result_type);
     const mir::ExprId other_value = block.ReadLocal(other, result_type);

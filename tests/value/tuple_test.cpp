@@ -3,7 +3,11 @@
 #include <array>
 #include <cstddef>
 #include <gtest/gtest.h>
+#include <type_traits>
 #include <utility>
+
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::value {
 namespace {
@@ -53,6 +57,36 @@ TEST(Tuple, CopiesAProductOfOneComponent) {
   Tuple<int> product(7);
   const Tuple<int> copy(product);
   EXPECT_EQ(copy.Component<0>(), 7);
+}
+
+// A product answers each operation on its whole value as its components do
+// (LRM 11.4.5, 20.9), so the product of no components, which holds nothing, is
+// equal, case-equal and bit-identical to another and holds no unknown, and a
+// product holding an unknown compares unknown where no component is unequal.
+TEST(Tuple, AnswersEachWholeValueOperationAsItsComponentsDo) {
+  const Tuple<> none;
+  const Tuple<> other;
+  static_assert(std::is_same_v<decltype(none == other), Bit>);
+  EXPECT_EQ((none == other).Lsb(), FourStateBit::kOne);
+  EXPECT_EQ((none != other).Lsb(), FourStateBit::kZero);
+  EXPECT_TRUE(none.CaseEqual(other).IsTruthy());
+  EXPECT_TRUE(none.IsBitIdentical(other));
+  EXPECT_FALSE(none.HasUnknown());
+
+  using Pair = Tuple<Int, Logic>;
+  const Pair known(Int::FromInt(3), Logic::Filled(FourStateBit::kOne));
+  const Pair unknown(Int::FromInt(3), Logic::Filled(FourStateBit::kUnknown));
+  const Pair unequal(Int::FromInt(4), Logic::Filled(FourStateBit::kUnknown));
+  static_assert(std::is_same_v<decltype(known == unknown), Logic>);
+  EXPECT_EQ((known == known).Lsb(), FourStateBit::kOne);
+  EXPECT_EQ((known == unknown).Lsb(), FourStateBit::kUnknown);
+  EXPECT_EQ((known == unequal).Lsb(), FourStateBit::kZero);
+  EXPECT_TRUE(unknown.CaseEqual(unknown).IsTruthy());
+  EXPECT_FALSE(known.CaseEqual(unknown).IsTruthy());
+  EXPECT_TRUE(unknown.IsBitIdentical(unknown));
+  EXPECT_FALSE(known.IsBitIdentical(unknown));
+  EXPECT_FALSE(known.HasUnknown());
+  EXPECT_TRUE(unknown.HasUnknown());
 }
 
 }  // namespace
