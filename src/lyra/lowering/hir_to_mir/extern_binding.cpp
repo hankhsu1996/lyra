@@ -16,7 +16,6 @@
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
-#include "lyra/lowering/hir_to_mir/queue_building.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/builder.hpp"
@@ -316,7 +315,8 @@ auto ExternStorageType(mir::CompilationUnit& unit, const ExternBinding& binding)
     case hir::ExternForm::kExtern:
       return binding.handle;
     case hir::ExternForm::kExternForkJoin:
-      return QueueOf(unit, binding.handle);
+      return mir::QueueOf(
+          unit.types, binding.handle, support::UnboundedQueue{});
   }
   throw InternalError("hir_to_mir: unknown ExternForm");
 }
