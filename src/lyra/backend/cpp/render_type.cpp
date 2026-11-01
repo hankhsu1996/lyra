@@ -19,7 +19,8 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/support/def_path.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/float_width.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/integral_words.hpp"
 
@@ -44,25 +45,12 @@ namespace {
 // definition.
 auto IsObjectOfTheRoot(const mir::TypePool& types, mir::TypeId type) -> bool {
   const mir::Type& t = types.Get(type);
-  return t.Is<mir::ObjectType>() || t.Is<mir::RuntimeClassType>();
+  return t.Is<mir::ObjectType>() || t.RuntimeClassOf().has_value();
 }
 
-auto RuntimeClassCppType(support::RuntimeClass klass) -> std::string_view {
-  switch (klass) {
-    case support::RuntimeClass::kScope:
-      return "lyra::runtime::Scope";
-    case support::RuntimeClass::kObject:
-      return "lyra::runtime::GcObject";
-    case support::RuntimeClass::kClassObject:
-      return "lyra::runtime::ClassObject";
-    case support::RuntimeClass::kProcess:
-      return "lyra::runtime::RuntimeProcess";
-    case support::RuntimeClass::kSynchronizationObject:
-      return "lyra::runtime::SynchronizationObject";
-    case support::RuntimeClass::kConstraintProblem:
-      return "lyra::runtime::ConstraintProblem";
-  }
-  throw InternalError("backend::cpp: unknown runtime class");
+// The spelling the library's declaration of `decl` gives it.
+auto LibraryCppType(support::LibraryDecl decl) -> std::string_view {
+  return support::DeclarationOf(decl).cpp_spelling;
 }
 
 void WriteTypeList(
@@ -71,84 +59,6 @@ void WriteTypeList(
   WriteSeparated(out, types, ", ", [&](mir::TypeId type) {
     Write(out, CppType(unit, type));
   });
-}
-
-auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
-  switch (kind) {
-    case mir::RuntimeLibraryKind::kEnumeration:
-      return "lyra::value::EnumerationMembers";
-    case mir::RuntimeLibraryKind::kPrintItem:
-      return "lyra::value::PrintItem";
-    case mir::RuntimeLibraryKind::kCancellationTarget:
-      return "lyra::runtime::CancellationTarget";
-    case mir::RuntimeLibraryKind::kTimer:
-      return "lyra::runtime::Timer";
-    case mir::RuntimeLibraryKind::kDeferredEffects:
-      return "lyra::runtime::DeferredEffects";
-    case mir::RuntimeLibraryKind::kViolationReportKeeper:
-      return "lyra::runtime::ViolationReportKeeper";
-    case mir::RuntimeLibraryKind::kControlEffect:
-      return "lyra::runtime::ControlEffect";
-    case mir::RuntimeLibraryKind::kFormatSpec:
-      return "lyra::value::FormatSpec";
-    case mir::RuntimeLibraryKind::kFormatArg:
-      return "lyra::value::FormatArg";
-    case mir::RuntimeLibraryKind::kChannelCancellation:
-      return "lyra::runtime::ChannelCancellation";
-    case mir::RuntimeLibraryKind::kTimeFormat:
-      return "lyra::value::TimeFormat";
-    case mir::RuntimeLibraryKind::kHierarchySegment:
-      return "lyra::runtime::HierarchySegment";
-    case mir::RuntimeLibraryKind::kTrigger:
-      return "lyra::runtime::Trigger";
-    case mir::RuntimeLibraryKind::kObservation:
-      return "lyra::runtime::Observation";
-    case mir::RuntimeLibraryKind::kReadReport:
-      return "lyra::runtime::ReadReport";
-    case mir::RuntimeLibraryKind::kWait:
-      return "lyra::runtime::Wait";
-    case mir::RuntimeLibraryKind::kLeasedReference:
-      return "lyra::runtime::LeasedReference";
-    case mir::RuntimeLibraryKind::kObjectDefinition:
-      return "lyra::abi::ObjectDefinition";
-    case mir::RuntimeLibraryKind::kScopeInfo:
-      return "lyra::abi::ScopeInfo";
-    case mir::RuntimeLibraryKind::kScopeCallable:
-      return "lyra::abi::ScopeCallable";
-    case mir::RuntimeLibraryKind::kClassObjectInfo:
-      return "lyra::abi::ClassObjectInfo";
-    case mir::RuntimeLibraryKind::kInterfaceRow:
-      return "lyra::abi::InterfaceRow";
-    case mir::RuntimeLibraryKind::kScopeMetadata:
-      return "lyra::abi::ScopeMetadata";
-    case mir::RuntimeLibraryKind::kConstructionTable:
-      return "lyra::abi::ConstructionTable";
-    case mir::RuntimeLibraryKind::kInstantiation:
-      return "lyra::abi::Instantiation";
-    case mir::RuntimeLibraryKind::kGeneratePlaces:
-      return "lyra::abi::GeneratePlaces";
-    case mir::RuntimeLibraryKind::kDumpEntry:
-      return "lyra::abi::DumpEntry";
-    case mir::RuntimeLibraryKind::kDumpBlock:
-      return "lyra::abi::DumpBlock";
-    case mir::RuntimeLibraryKind::kBitVec:
-      return "lyra::value::BitVec";
-    case mir::RuntimeLibraryKind::kDpiBitBuffer:
-      return "lyra::value::DpiBitBuffer";
-    case mir::RuntimeLibraryKind::kDpiLogicBuffer:
-      return "lyra::value::DpiLogicBuffer";
-    case mir::RuntimeLibraryKind::kDpiBitChunk:
-      return "svBitVecVal";
-    case mir::RuntimeLibraryKind::kDpiLogicChunk:
-      return "svLogicVecVal";
-    case mir::RuntimeLibraryKind::kDpiOpenArray:
-      return "lyra::value::DpiOpenArray";
-    case mir::RuntimeLibraryKind::kDpiOpenArrayHandle:
-      return "const svOpenArrayHandle";
-    case mir::RuntimeLibraryKind::kWatchedPlace:
-      return "lyra::runtime::WatchedPlace";
-  }
-  throw InternalError("backend::cpp: unknown RuntimeLibraryKind");
 }
 
 auto MachineIntCppType(const mir::MachineIntType& m) -> std::string_view {
@@ -204,12 +114,22 @@ void WriteIntegralCppType(TargetText& out, const mir::IntegralType& t) {
 
 auto MachineFloatCppType(const mir::MachineFloatType& m) -> std::string_view {
   switch (m.width) {
-    case mir::MachineFloatWidth::k32:
+    case support::FloatWidth::k32:
       return "float";
-    case mir::MachineFloatWidth::k64:
+    case support::FloatWidth::k64:
       return "double";
   }
-  throw InternalError("backend::cpp: unknown MachineFloatWidth");
+  throw InternalError("backend::cpp: unknown FloatWidth");
+}
+
+auto RealCppType(const mir::RealType& r) -> std::string_view {
+  switch (r.width) {
+    case support::FloatWidth::k32:
+      return "lyra::value::ShortReal";
+    case support::FloatWidth::k64:
+      return "lyra::value::Real";
+  }
+  throw InternalError("backend::cpp: unknown FloatWidth");
 }
 
 }  // namespace
@@ -241,8 +161,6 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           // An enum holds a value of its base type; its member names do not
           // change how the value is stored.
           [&](const mir::EnumType& e) { WriteIntegralCppType(out, e.base); },
-          [&](const mir::StringType&) { out += "lyra::value::String"; },
-          [&](const mir::AnyType&) { out += "lyra::value::Any"; },
           // A value of no known type is held only through a reference, which
           // is spelled whole where it is.
           [&](const mir::ErasedValueType&) {
@@ -274,60 +192,45 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             WriteTypeList(out, unit, m.params);
             out += ")>";
           },
-          [&](const mir::ChandleType&) { out += "lyra::value::Chandle"; },
-          [&](const mir::RealType&) { out += "lyra::value::Real"; },
-          [&](const mir::ShortRealType&) { out += "lyra::value::ShortReal"; },
+          [&](const mir::RealType& r) { out += RealCppType(r); },
           [&](const mir::UnpackedArrayType& ua) {
             Write(
                 out, "lyra::value::UnpackedArray<", type(ua.element_type), ", ",
                 ua.Size(), ">");
           },
-          [&](const mir::DynamicArrayType& da) {
-            Write(
-                out, "lyra::value::DynamicArray<", type(da.element_type), ">");
-          },
-          // LRM 7.10.5: the bound is part of the queue's type, and a queue
-          // declaring none is spelled with a bound below zero.
-          [&](const mir::QueueType& q) {
-            const std::int64_t bound =
-                q.max_bound.has_value()
-                    ? static_cast<std::int64_t>(*q.max_bound)
-                    : -1;
-            Write(
-                out, "lyra::value::Queue<", type(q.element_type), ", ", bound,
-                ">");
-          },
-          [&](const mir::AssociativeArrayType& a) {
-            const CppType key = type(a.key_type);
-            const CppType element = type(a.element_type);
-            Write(
-                out, "lyra::value::AssociativeArray<", key, ", ", element, ">");
-          },
-          [&](const mir::WildcardIndexType&) {
-            out += "lyra::value::WildcardKey";
-          },
           // No C++ class is every object implementing an interface class,
           // so an object seen as one is the root every object is.
           [&](const mir::ObjectType& o) {
             if (unit.GetClass(o.of).is_interface_class) {
-              out += RuntimeClassCppType(support::RuntimeClass::kObject);
+              out += LibraryCppType(support::LibraryDecl::kObjectRoot);
               return;
             }
             Write(out, CppClassRef(unit, o.of));
           },
           [&](const mir::RecordType& r) { record(r.declaration); },
-          [&](const mir::RuntimeClassType& e) {
-            out += RuntimeClassCppType(e.which);
-          },
-          [&](const mir::RuntimeEffectsType&) {
-            out += "lyra::runtime::RuntimeEffects&";
-          },
-          [&](const mir::FilesType&) { out += "lyra::runtime::FileTable&"; },
-          [&](const mir::DiagnosticType&) {
-            out += "lyra::runtime::DiagnosticDispatcher&";
-          },
-          [&](const mir::RuntimeLibraryType& r) {
-            out += RuntimeLibraryCppType(r.kind);
+          // The class its declaration names, written over its arguments
+          // where they make it different classes. A queue's bound (LRM
+          // 7.10.5) is a value of the class template.
+          [&](const mir::LibraryType& l) {
+            const support::LibraryDeclData& declaration =
+                support::DeclarationOf(l.decl);
+            out += declaration.cpp_spelling;
+            if (!declaration.cpp_spelling_takes_args) {
+              return;
+            }
+            out += "<";
+            WriteSeparated(
+                out, l.args, ", ", [&](const mir::LibraryType::Arg& arg) {
+                  std::visit(
+                      Overloaded{
+                          [&](mir::TypeId t) { Write(out, type(t)); },
+                          [&](const support::QueueBound& bound) {
+                            WriteNumber(
+                                out, support::LibraryBoundOf(bound), 10);
+                          }},
+                      arg);
+                });
+            out += ">";
           },
           [&](const mir::CoroutineType& c) {
             Write(out, "lyra::runtime::Coroutine<", type(c.payload), ">");
@@ -410,8 +313,9 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           // units may hold one cell as different classes, and a type per
           // class would give that cell two types.
           [&](const mir::ManagedRefType&) { out += "lyra::value::ObjectRef"; },
-          [&](const mir::WeakManagedRefType&) {
-            out += "lyra::runtime::WeakObjectRef";
+          // One type too, for the same reason.
+          [&](const mir::UnmanagedRefType&) {
+            out += "lyra::value::UnmanagedRef";
           },
           [&](const mir::VectorType& v) {
             Write(out, "std::vector<", type(v.element), ">");
@@ -420,7 +324,6 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::TupleType& t) {
             Write(out, CppTupleComponents{.unit = &unit, .of = t.elements});
           },
-          [&](const mir::EmptyType&) { out += "lyra::value::Empty"; },
           [&](const mir::ObservableType& o) {
             Write(out, "lyra::runtime::Var<", type(o.value), ">");
           },
@@ -454,15 +357,6 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           // Named where it is opened, by constructing it on the object.
           [&](const mir::ObjectWriteType& w) {
             Write(out, "lyra::runtime::ObjectWrite<", type(w.object), ">");
-          },
-          [&](const mir::SampledHistoryType& h) {
-            Write(out, "lyra::runtime::SampledHistory<", type(h.value), ">");
-          },
-          [&](const mir::EvaluationAttemptsType&) {
-            out += "lyra::runtime::EvaluationAttempts";
-          },
-          [&](const mir::LoopBlocksType&) {
-            out += "lyra::runtime::LoopBlocks";
           },
           [&](const mir::ClosureType& c) {
             Write(out, CppClosureName(c.closure_id));
@@ -580,19 +474,15 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::ManagedRefType& m) -> DerefSpelling {
             return DerefAsClass{.pointee = m.pointee};
           },
-          [&](const mir::WeakManagedRefType&) { return reaches_nothing(); },
+          [&](const mir::UnmanagedRefType& u) -> DerefSpelling {
+            return DerefAsClass{.pointee = u.pointee};
+          },
           // Every other type is a value that reaches nothing, so there is
           // nothing to dereference.
           [&](const mir::IntegralType&) { return reaches_nothing(); },
           [&](const mir::EnumType&) { return reaches_nothing(); },
           [&](const mir::UnpackedArrayType&) { return reaches_nothing(); },
-          [&](const mir::DynamicArrayType&) { return reaches_nothing(); },
-          [&](const mir::QueueType&) { return reaches_nothing(); },
-          [&](const mir::AssociativeArrayType&) { return reaches_nothing(); },
-          [&](const mir::WildcardIndexType&) { return reaches_nothing(); },
-          [&](const mir::AnyType&) { return reaches_nothing(); },
           [&](const mir::ErasedValueType&) { return reaches_nothing(); },
-          [&](const mir::StringType&) { return reaches_nothing(); },
           [&](const mir::MachineCStringType&) { return reaches_nothing(); },
           [&](const mir::MachineBoolType&) { return reaches_nothing(); },
           [&](const mir::MachineIntType&) { return reaches_nothing(); },
@@ -601,25 +491,15 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::MachineSpanType&) { return reaches_nothing(); },
           [&](const mir::MachineFunctionType&) { return reaches_nothing(); },
           [&](const mir::RealType&) { return reaches_nothing(); },
-          [&](const mir::ShortRealType&) { return reaches_nothing(); },
-          [&](const mir::ChandleType&) { return reaches_nothing(); },
           [&](const mir::VoidType&) { return reaches_nothing(); },
-          [&](const mir::EmptyType&) { return reaches_nothing(); },
           [&](const mir::ObjectType&) { return reaches_nothing(); },
-          [&](const mir::RuntimeClassType&) { return reaches_nothing(); },
-          [&](const mir::RuntimeEffectsType&) { return reaches_nothing(); },
-          [&](const mir::FilesType&) { return reaches_nothing(); },
-          [&](const mir::DiagnosticType&) { return reaches_nothing(); },
-          [&](const mir::RuntimeLibraryType&) { return reaches_nothing(); },
+          [&](const mir::LibraryType&) { return reaches_nothing(); },
           [&](const mir::CoroutineType&) { return reaches_nothing(); },
           [&](const mir::VectorType&) { return reaches_nothing(); },
           [&](const mir::TupleType&) { return reaches_nothing(); },
           [&](const mir::ObservableType&) { return reaches_nothing(); },
           [&](const mir::ResolvedType&) { return reaches_nothing(); },
           [&](const mir::DriverType&) { return reaches_nothing(); },
-          [&](const mir::SampledHistoryType&) { return reaches_nothing(); },
-          [&](const mir::EvaluationAttemptsType&) { return reaches_nothing(); },
-          [&](const mir::LoopBlocksType&) { return reaches_nothing(); },
           [&](const mir::RecordType&) { return reaches_nothing(); },
           [&](const mir::ClosureType&) { return reaches_nothing(); },
           [&](const mir::ErasedCallableType&) { return reaches_nothing(); },
@@ -665,19 +545,11 @@ auto ReceiverSpellingAsCpp(
               [&](const mir::BitsReferenceType&) { return holds_no_object(); },
               [&](const mir::ObjectWriteType&) { return holds_no_object(); },
               [&](const mir::ManagedRefType&) { return holds_no_object(); },
-              [&](const mir::WeakManagedRefType&) { return holds_no_object(); },
+              [&](const mir::UnmanagedRefType&) { return holds_no_object(); },
               [&](const mir::IntegralType&) { return holds_no_object(); },
               [&](const mir::EnumType&) { return holds_no_object(); },
               [&](const mir::UnpackedArrayType&) { return holds_no_object(); },
-              [&](const mir::DynamicArrayType&) { return holds_no_object(); },
-              [&](const mir::QueueType&) { return holds_no_object(); },
-              [&](const mir::AssociativeArrayType&) {
-                return holds_no_object();
-              },
-              [&](const mir::WildcardIndexType&) { return holds_no_object(); },
-              [&](const mir::AnyType&) { return holds_no_object(); },
               [&](const mir::ErasedValueType&) { return holds_no_object(); },
-              [&](const mir::StringType&) { return holds_no_object(); },
               [&](const mir::MachineCStringType&) { return holds_no_object(); },
               [&](const mir::MachineBoolType&) { return holds_no_object(); },
               [&](const mir::MachineIntType&) { return holds_no_object(); },
@@ -688,27 +560,15 @@ auto ReceiverSpellingAsCpp(
                 return holds_no_object();
               },
               [&](const mir::RealType&) { return holds_no_object(); },
-              [&](const mir::ShortRealType&) { return holds_no_object(); },
-              [&](const mir::ChandleType&) { return holds_no_object(); },
               [&](const mir::VoidType&) { return holds_no_object(); },
-              [&](const mir::EmptyType&) { return holds_no_object(); },
               [&](const mir::ObjectType&) { return holds_no_object(); },
-              [&](const mir::RuntimeClassType&) { return holds_no_object(); },
-              [&](const mir::RuntimeEffectsType&) { return holds_no_object(); },
-              [&](const mir::FilesType&) { return holds_no_object(); },
-              [&](const mir::DiagnosticType&) { return holds_no_object(); },
-              [&](const mir::RuntimeLibraryType&) { return holds_no_object(); },
+              [&](const mir::LibraryType&) { return holds_no_object(); },
               [&](const mir::CoroutineType&) { return holds_no_object(); },
               [&](const mir::VectorType&) { return holds_no_object(); },
               [&](const mir::TupleType&) { return holds_no_object(); },
               [&](const mir::ObservableType&) { return holds_no_object(); },
               [&](const mir::ResolvedType&) { return holds_no_object(); },
               [&](const mir::DriverType&) { return holds_no_object(); },
-              [&](const mir::SampledHistoryType&) { return holds_no_object(); },
-              [&](const mir::EvaluationAttemptsType&) {
-                return holds_no_object();
-              },
-              [&](const mir::LoopBlocksType&) { return holds_no_object(); },
               [&](const mir::RecordType&) { return holds_no_object(); },
               [&](const mir::ClosureType&) { return holds_no_object(); },
               [&](const mir::ErasedCallableType&) { return holds_no_object(); },
@@ -718,7 +578,7 @@ auto ReceiverSpellingAsCpp(
 auto NullSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type)
     -> diag::Result<NullSpelling> {
   const mir::Type& t = unit.types.Get(type);
-  if (t.Is<mir::ManagedRefType>() || t.Is<mir::ChandleType>()) {
+  if (t.Is<mir::ManagedRefType>() || t.Is<mir::UnmanagedRefType>()) {
     return NullAsEmptyValue{.type = type};
   }
   if (t.Is<mir::PointerType>() || t.Is<mir::MachineFunctionType>()) {
@@ -782,7 +642,6 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
                 "backend::cpp: the object a class handle owns is allocated by "
                 "a new-expression, so no handle is constructed");
           },
-          [&](const mir::WeakManagedRefType& t) { by_naming_itself(t); },
           [](const mir::ReferenceType&) {
             throw InternalError(
                 "backend::cpp: a reference is bound to what already exists, so "
@@ -797,7 +656,6 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           },
           [&](const mir::IntegralType& t) { by_naming_itself(t); },
           [&](const mir::EnumType& t) { by_naming_itself(t); },
-          [&](const mir::StringType& t) { by_naming_itself(t); },
           [&](const mir::MachineCStringType& t) { by_naming_itself(t); },
           [&](const mir::MachineBoolType& t) { by_naming_itself(t); },
           [&](const mir::MachineIntType& t) { by_naming_itself(t); },
@@ -805,15 +663,9 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::MachineArrayType& t) { by_naming_itself(t); },
           [&](const mir::MachineSpanType& t) { by_naming_itself(t); },
           [&](const mir::MachineFunctionType& t) { by_naming_itself(t); },
-          [&](const mir::ChandleType& t) { by_naming_itself(t); },
+          [&](const mir::UnmanagedRefType& t) { by_naming_itself(t); },
           [&](const mir::RealType& t) { by_naming_itself(t); },
-          [&](const mir::ShortRealType& t) { by_naming_itself(t); },
           [&](const mir::UnpackedArrayType& t) { by_naming_itself(t); },
-          [&](const mir::DynamicArrayType& t) { by_naming_itself(t); },
-          [&](const mir::QueueType& t) { by_naming_itself(t); },
-          [&](const mir::AssociativeArrayType& t) { by_naming_itself(t); },
-          [&](const mir::WildcardIndexType& t) { by_naming_itself(t); },
-          [&](const mir::AnyType& t) { by_naming_itself(t); },
           [](const mir::ErasedValueType&) {
             throw InternalError(
                 "backend::cpp: a value of no known type is held only through a "
@@ -821,17 +673,12 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           },
           [&](const mir::ObjectType& t) { by_naming_itself(t); },
           [&](const mir::RecordType& t) { by_naming_itself(t); },
-          [&](const mir::RuntimeClassType& t) { by_naming_itself(t); },
-          [&](const mir::RuntimeEffectsType& t) { by_naming_itself(t); },
-          [&](const mir::FilesType& t) { by_naming_itself(t); },
-          [&](const mir::DiagnosticType& t) { by_naming_itself(t); },
-          [&](const mir::RuntimeLibraryType& t) { by_naming_itself(t); },
+          [&](const mir::LibraryType& t) { by_naming_itself(t); },
           [&](const mir::CoroutineType& t) { by_naming_itself(t); },
           [&](const mir::VariableRefType& t) { by_naming_itself(t); },
           [&](const mir::ReferenceWrapperType& t) { by_naming_itself(t); },
           [&](const mir::VoidType& t) { by_naming_itself(t); },
           [&](const mir::TupleType& t) { by_naming_itself(t); },
-          [&](const mir::EmptyType& t) { by_naming_itself(t); },
           [&](const mir::ObservableType& t) { by_naming_itself(t); },
           [&](const mir::ResolvedType& t) { by_naming_itself(t); },
           [&](const mir::DriverType& t) { by_naming_itself(t); },
@@ -839,9 +686,6 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::DesignationType& t) { by_naming_itself(t); },
           [&](const mir::BitsReferenceType& t) { by_naming_itself(t); },
           [&](const mir::ObjectWriteType& t) { by_naming_itself(t); },
-          [&](const mir::SampledHistoryType& t) { by_naming_itself(t); },
-          [&](const mir::EvaluationAttemptsType& t) { by_naming_itself(t); },
-          [&](const mir::LoopBlocksType& t) { by_naming_itself(t); },
           [&](const mir::ClosureType& t) { by_naming_itself(t); },
           [](const mir::ErasedCallableType&) {
             throw InternalError(
@@ -902,7 +746,7 @@ void WriteOne(TargetText& out, const CppObjectEnd& end) {
 void WriteOne(TargetText& out, const CppEntryPointerType& type) {
   Write(
       out, "std::add_pointer_t<", CppType(*type.unit, type.code->result_type),
-      "(", RuntimeClassCppType(support::RuntimeClass::kObject), "*");
+      "(", LibraryCppType(support::LibraryDecl::kObjectRoot), "*");
   for (const mir::LocalId param : type.code->ParamsAfterReceiver()) {
     Write(out, ", ", CppType(*type.unit, type.code->locals.Get(param).type));
   }
@@ -1003,10 +847,10 @@ void WriteOne(TargetText& out, const CppClassRef& ref) {
           // The tree's root is the library's scope class, spelled as a value
           // of that class's type is.
           [&](const mir::ObjectTreeRootRef&) {
-            out += RuntimeClassCppType(support::RuntimeClass::kScope);
+            out += LibraryCppType(support::LibraryDecl::kScope);
           },
           [&](const mir::ManagedObjectRootRef&) {
-            out += RuntimeClassCppType(support::RuntimeClass::kClassObject);
+            out += LibraryCppType(support::LibraryDecl::kClassObject);
           }},
       ref.Ref());
 }

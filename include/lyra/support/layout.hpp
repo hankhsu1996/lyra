@@ -15,4 +15,17 @@ struct Layout {
   friend auto operator==(const Layout&, const Layout&) -> bool = default;
 };
 
+// The storage an object needs, and whether ending one has anything to do, as
+// rustc's `needs_drop` asks of a type. The runtime answers it for each object
+// it builds, read off that object's own type; a holder keeping a value at its
+// tail answers it with that value's layout, so its size follows the type it
+// holds.
+struct ObjectLayout {
+  Layout layout;
+  bool needs_end;
+
+  friend auto operator==(const ObjectLayout&, const ObjectLayout&)
+      -> bool = default;
+};
+
 }  // namespace lyra::support

@@ -9,7 +9,7 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_callback.hpp"
 
 namespace lyra::mir {
 

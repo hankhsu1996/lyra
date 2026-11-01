@@ -372,9 +372,8 @@ auto DistributeRun(
                   frame, mul(window->count, count(w.element_width)));
               require_enough(compare(
                   mir::BinaryOp::kLessEqual, add(at_now(), bits), usable));
-              const mir::TypeId elements = unit.types.Intern(
-                  mir::Type{
-                      mir::DynamicArrayType{.element_type = windowed.element}});
+              const mir::TypeId elements =
+                  mir::DynamicArrayOf(unit.types, windowed.element);
               const mir::ExprId read = EvaluatedOnce(
                   frame, BuildFromBitVec(
                              unit, block,

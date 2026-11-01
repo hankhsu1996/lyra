@@ -58,32 +58,61 @@ what the construct means.
   language's own one-bit value. It is plain machine data, distinct from the simulation value types
   that a source language's `int`, `real`, or `string` lower to: an integral type is a width, a
   signedness and a state domain, and carries the language's own operators, where a machine integer
-  is a number a runtime entry takes or returns. Every value a runtime entry returns as a plain
-  scalar, every table a runtime record reads as raw storage, and every value that crosses a
-  foreign-call boundary is one of these.
-- The type system: value types (integral, real, string, ...); one object type, naming a class by the
-  identity the unit's class registry gives it, whichever unit defines it -- a class another
-  compilation unit defines is an entry there declared with what that unit published, as a record
-  declaration of clang's may be defined or only declared; three composing wrappers, pointer,
-  reference and vector, a pointer stating its ownership -- unique, shared or borrowed, the last two
-  written `Shared<T>` and `Borrowed<T>` in these docs -- and a reference, as in Rust and C++, being
-  bound once to a referent that exists elsewhere and never null, so holding one says only that the
-  referent is read where it lies rather than copied; and five categories: the **tuple**, the
-  structural product (positional; interned by its components, so two with the same components are
-  one type); the **record**, a declared struct, union or tagged union (positional like the tuple,
-  but its identity is its declaration, so two with the same members are two types); the **closure**,
-  an anonymous concrete callable value (capture fields plus one invoke body, a distinct type per
-  site); the **erased callable**, a closure of a type unknown where it is called, reached only
-  through a box or a borrow, of a signature of machine types and nothing else
-  (`compiler_generated_storage.md` invariant 10); and the **object** (`mir::Class`), the rich
-  nominal object with methods and dispatch. A component of a tuple or a record is reached the same
-  way: by its position, as a field step on the place holding it, whether that place is a variable, a
-  dereference or a value held for the full-expression; a union's members all lie at its start. The
-  closure and the object share a **field substrate** -- a field declaration, a field id keyed within
-  one declaration, and one access node -- while staying distinct types; an access names the
-  declaration it reaches into, so what the substrate shares is the vocabulary and never the
+  is a number a runtime entry takes or returns. A real is laid out as the machine float of its width
+  is, the IEEE 754 value LRM 6.12 makes it, and stays a type apart for the same reason: it carries
+  the language's own conversions and `**`, and a variable holds it in a cell. Every value a runtime
+  entry returns as a plain scalar, every table a runtime record reads as raw storage, and every
+  value that crosses a foreign-call boundary is one of these.
+- The type system: value types (integral, enumeration, real, fixed-size unpacked array, ...); one
+  object type, naming a class by the identity the unit's class registry gives it, whichever unit
+  defines it -- a class another compilation unit defines is an entry there declared with what that
+  unit published, as a record declaration of clang's may be defined or only declared; three
+  composing wrappers, pointer, reference and vector, a pointer stating its ownership -- unique,
+  shared or borrowed, the last two written `Shared<T>` and `Borrowed<T>` in these docs -- and a
+  reference, as in Rust and C++, being bound once to a referent that exists elsewhere and never
+  null, so holding one says only that the referent is read where it lies rather than copied; and
+  five categories: the **tuple**, the structural product (positional; interned by its components, so
+  two with the same components are one type); the **record**, a declared struct, union or tagged
+  union (positional like the tuple, but its identity is its declaration, so two with the same
+  members are two types); the **closure**, an anonymous concrete callable value (capture fields plus
+  one invoke body, a distinct type per site); the **erased callable**, a closure of a type unknown
+  where it is called, reached only through a box or a borrow, of a signature of machine types and
+  nothing else (`compiler_generated_storage.md` invariant 10); and the **object** (`mir::Class`),
+  the rich nominal object with methods and dispatch. A component of a tuple or a record is reached
+  the same way: by its position, as a field step on the place holding it, whether that place is a
+  variable, a dereference or a value held for the full-expression; a union's members all lie at its
+  start. The closure and the object share a **field substrate** -- a field declaration, a field id
+  keyed within one declaration, and one access node -- while staying distinct types; an access names
+  the declaration it reaches into, so what the substrate shares is the vocabulary and never the
   identity. Structural versus nominal, and storage versus callable, are the ordinary
   generic-language distinctions (C++/Rust/LLVM carry them).
+- Two references to an object that are values of the simulation, beside the machine pointer: a
+  managed reference, whose object lives while some reference reaches it (a class handle, LRM 8.3),
+  and one owning nothing (a `chandle`, LRM 6.14, whose pointee is `void`; a virtual interface, LRM
+  25.9, whose pointee is its interface's object). A variable holds either in a cell, defaults to
+  null, prints and compares by identity, which no machine pointer does; a chandle crosses a foreign
+  call as the machine pointer by a conversion, as an integral value crosses as its words. `null` has
+  no type of its own: it reaches MIR only at the type its use gives it, which HIR states as a
+  conversion -- the other operand's, or, formatted, the chandle's, since a handle naming nothing
+  prints alike whatever type of handle it is (LRM 21.2.1.6) -- as the null of that type.
+- One type for every type the runtime library declares, named by its declaration and the arguments
+  the language gives it -- a type, or a value such as a queue's bound -- as rustc's `Adt(def, args)`
+  names a definition of a library crate. A type is MIR's own only where MIR's constructs make, take
+  apart or lay out its values, or a rule of the language reads its parts; every other type is the
+  library's: a string, a value of any type, the containers whose size changes as the program runs --
+  a dynamic array, a queue, an associative array -- a run of bits, a wildcard index, a weak
+  reference, what a print or a wait is built from, the storage a scope, a timer or an assertion
+  keeps, the facilities the runtime holds, the structures a unit states constants of, and the
+  classes of the runtime's. Whatever MIR asks of one -- whether a variable may be declared to hold
+  one, which of its arguments is a container's element type, its index type or a queue's bound,
+  whether a temporary may stand in for it, whether it is storage reached only where it lies, how
+  large a frame holding one is, the entry that builds what a declared variable of it starts as and
+  the constructor a construction of one reaches, the type of the values it holds where it is storage
+  holding them -- it reads off that declaration, which states it once for every layer, and MIR holds
+  no per-type answer of its own. A rule the language gives containers -- iterating by key or by
+  position, leasing an element a call binds, what a queue's bound admits -- is MIR's to state, and
+  it reads the element type, the index type and the bound as the arguments the declaration names
+  them.
 - A record is an unpacked structure, union or tagged union the source declared (LRM 7.2, 7.3), as
   rustc's struct, union and enum are one kind of declared type. It carries its kind, its members'
   types, the name another unit reaches it by and a method for each operation the language defines on
@@ -142,32 +171,33 @@ what the construct means.
   runs where none is -- clang's `SwitchStmt` and rustc's `SwitchInt`. A loop, and a block standing
   as a statement, may carry a label, and every `break` names the one it leaves, as rustc's THIR
   names the scope every `break` leaves. No basic blocks at this layer.
-- A primitive expression set: literals, references, unary / binary / conditional operators, calls,
-  conversions, closures, the block expression -- a sequence of statements and the value it ends
-  with, which is how an evaluation of several steps stands where only an expression may, sequencing
-  alone: it is not a callable boundary, so its steps belong to the enclosing body and capture
-  nothing, and it has no control-flow effect, so control never leaves from among its steps; its
-  scope ends when it yields, once the value is taken out, so what its steps declare and what its
-  value makes end there and what it yields refers to none of it -- member access through an explicit
-  receiver expression, the field step that names a component of a product, a member of a union or a
-  member of a sum on the place holding it, the dereference, the read of a place, value-build
-  primitives for the literals that spell an aggregate, and the new-expression, which allocates
-  storage a pointer or a class handle owns and evaluates its initializer into that storage rather
-  than handing it over as an argument -- for an object, its construction, which first creates the
-  object whole and then enters its constructor on it, so the object is of its own class while every
-  constructor runs -- and in its placement form evaluates its initializer into storage an allocation
-  function hands out and answers a pointer owning nothing, as C++'s `new (p) T(x)` does, and the
-  borrow, which binds a reference to a place, or to a value it holds to the end of the
-  full-expression as a C++ reference bound to a temporary does. An element of an array is no node.
-  It is a call answering a reference, a read form or a write form, because the language gives a read
-  and a write of an element different outcomes, and the dereference of what it answers is the place.
-  Bits of a packed value are no node either: they are read by the value's `slice` and written
-  through the reference to them its `slice_mut` answers, as a C++ library's `bitset::operator[]`
-  answers a reference to a bit. A node's operands run in the order it lists them, an assignment's
-  value before its target and a call's arguments before its callee and the object it is entered on,
-  and a read takes what its storage holds when it runs. The set is closed under what a generic
-  programming-language AST needs to express; it does not grow to model a particular backend's
-  storage realization or runtime library shape.
+- A primitive expression set: literals -- a floating one typed at either floating type, the machine
+  float or the real of its width, as clang's `FloatingLiteral` takes its type -- references, unary /
+  binary / conditional operators, calls, conversions, closures, the block expression -- a sequence
+  of statements and the value it ends with, which is how an evaluation of several steps stands where
+  only an expression may, sequencing alone: it is not a callable boundary, so its steps belong to
+  the enclosing body and capture nothing, and it has no control-flow effect, so control never leaves
+  from among its steps; its scope ends when it yields, once the value is taken out, so what its
+  steps declare and what its value makes end there and what it yields refers to none of it -- member
+  access through an explicit receiver expression, the field step that names a component of a
+  product, a member of a union or a member of a sum on the place holding it, the dereference, the
+  read of a place, value-build primitives for the literals that spell an aggregate, and the
+  new-expression, which allocates storage a pointer or a class handle owns and evaluates its
+  initializer into that storage rather than handing it over as an argument -- for an object, its
+  construction, which first creates the object whole and then enters its constructor on it, so the
+  object is of its own class while every constructor runs -- and in its placement form evaluates its
+  initializer into storage an allocation function hands out and answers a pointer owning nothing, as
+  C++'s `new (p) T(x)` does, and the borrow, which binds a reference to a place, or to a value it
+  holds to the end of the full-expression as a C++ reference bound to a temporary does. An element
+  of an array is no node. It is a call answering a reference, a read form or a write form, because
+  the language gives a read and a write of an element different outcomes, and the dereference of
+  what it answers is the place. Bits of a packed value are no node either: they are read by the
+  value's `slice` and written through the reference to them its `slice_mut` answers, as a C++
+  library's `bitset::operator[]` answers a reference to a bit. A node's operands run in the order it
+  lists them, an assignment's value before its target and a call's arguments before its callee and
+  the object it is entered on, and a read takes what its storage holds when it runs. The set is
+  closed under what a generic programming-language AST needs to express; it does not grow to model a
+  particular backend's storage realization or runtime library shape.
 - Which values are held through a uniquely owning pointer because a value of their type is too large
   for a frame -- a local, a parameter taken by value wherever its signature is stated, a made value
   and a capture -- or because the values a body keeps before them already take what a frame may keep

@@ -25,6 +25,7 @@
 #include <llvm/IR/Module.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
+#include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/constant_record.hpp"
 #include "lyra/backend/llvm/integral_planes.hpp"
 #include "lyra/backend/llvm/machine_signature.hpp"
@@ -37,6 +38,7 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/value_step.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -46,6 +48,7 @@
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/queue_type.hpp"
+#include "lyra/value/scalar.hpp"
 #include "lyra/value/tuple_type.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -1188,18 +1191,49 @@ auto CodeGenValueTypes::GetAddrOfValueType(lir::TypeId type)
   }
   return std::visit(
       Overloaded{
-          [&](const lir::IntegralBits&) -> Answer {
-            return GetAddrOfIntegralType(type);
+          // An integral value's type is stated here from its width; the
+          // library states the type of each other scalar, whose bytes are what
+          // generated code lays out.
+          [&](const value::Scalar& scalar) -> Answer {
+            const auto stated_by_the_library = [&]() -> Answer {
+              return owner_->LibraryData(
+                  ValueTypeSymbol(value::FactsOf(scalar).domain));
+            };
+            return std::visit(
+                Overloaded{
+                    [&](const value::IntegralScalar&) -> Answer {
+                      return GetAddrOfIntegralType(type);
+                    },
+                    [&](const value::RealScalar&) -> Answer {
+                      return stated_by_the_library();
+                    },
+                    [&](const value::UnmanagedRefScalar&) -> Answer {
+                      return stated_by_the_library();
+                    }},
+                scalar);
           },
-          [&](ValueDomain domain) -> Answer {
-            // A type laid out by the design, whose table the code generator
-            // fills; any other domain's type is the library's own.
-            if (support::IsLaidOutByItsType(domain)) {
-              return GetAddrOfLaidOutType(type);
-            }
-            return owner_->LibraryData(ValueTypeSymbol(domain));
+          // A type laid out by the design, whose table the code generator
+          // fills.
+          [&](const lir::LaidOutByType&) -> Answer {
+            return GetAddrOfLaidOutType(type);
           },
-          [&](support::LibraryObject) -> Answer { return unrealized(); },
+          // A value domain's type is the library's own, and an object of the
+          // library's that is no value of the design is a value of no type the
+          // library states.
+          [&](const support::RuntimeObject& object) -> Answer {
+            return std::visit(
+                Overloaded{
+                    [&](ValueDomain domain) -> Answer {
+                      return owner_->LibraryData(ValueTypeSymbol(domain));
+                    },
+                    [&](support::LibraryDecl) -> Answer {
+                      return unrealized();
+                    },
+                    [&](support::LibraryObject) -> Answer {
+                      return unrealized();
+                    }},
+                object);
+          },
           [&](const lir::OwnedStorageAddress&) -> Answer {
             return unrealized();
           },
@@ -1213,19 +1247,10 @@ auto CodeGenValueTypes::GetAddrOfQueueType(lir::TypeId queue)
       found != queue_types_.end()) {
     return found->second;
   }
-  const auto* declared = unit_->types.Get(queue).As<lir::QueueType>();
-  if (declared == nullptr) {
-    throw InternalError(
-        "llvm codegen: a queue type's constant is asked of a type that is no "
-        "queue -- please report this as a bug");
-  }
-  // LRM 7.10.5: a queue declaring no bound holds any number of elements, which
-  // the constant states as a bound below zero.
+  const lir::Type& declared = unit_->types.Get(queue);
   const std::int64_t bound =
-      declared->max_bound.has_value()
-          ? static_cast<std::int64_t>(*declared->max_bound)
-          : -1;
-  auto element = GetAddrOfElementType(declared->element_type);
+      support::LibraryBoundOf(declared.Get<lir::LibraryType>().Bound());
+  auto element = GetAddrOfElementType(*declared.ContainerElementType());
   if (!element) {
     return std::unexpected(std::move(element.error()));
   }

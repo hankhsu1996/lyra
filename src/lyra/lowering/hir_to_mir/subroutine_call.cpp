@@ -42,6 +42,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -590,7 +591,8 @@ auto EvaluateOmitted(
 auto TakenAsAny(
     const UnitLowerer& unit_lowerer, mir::TypeId formal, hir::TypeId actual)
     -> bool {
-  return unit_lowerer.Unit().types.Get(formal).Is<mir::AnyType>() &&
+  return unit_lowerer.Unit().types.Get(formal).IsDeclaredBy(
+             support::LibraryDecl::kAny) &&
          !unit_lowerer.Hir().types.Get(actual).Is<hir::DynamicType>();
 }
 
@@ -616,7 +618,7 @@ auto MadeAny(
       WithoutQueueBounds(unit.types, unit_lowerer.TranslateType(type));
   return block.Add(
       mir::MakeCallExpr(
-          mir::Direct{.target = support::BuiltinFn::kMakeAny},
+          mir::Direct{.target = support::BuiltinFn::kAnyMake},
           {ConvertToType(unit, block, value, kept),
            IdentityText(unit_lowerer, block, type)},
           any));
@@ -1119,7 +1121,8 @@ auto EmitReportingCall(
       case hir::ParamDirection::kConstRef: {
         const mir::TypeId reference =
             *ParamTypeOf(unit, formal.type, formal.direction);
-        if (unit.types.Get(formal.type).Is<mir::AnyType>()) {
+        if (unit.types.Get(formal.type)
+                .IsDeclaredBy(support::LibraryDecl::kAny)) {
           call_args.push_back(block.Add(
               mir::Expr{
                   .data =

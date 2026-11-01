@@ -20,6 +20,7 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -77,8 +78,8 @@ auto BuildPriorTickRead(
   return mir::MakeSampledHistoryAtCallExpr(
       history, ticks_back,
       unit.types.Get(block.Get(history).type)
-          .Get<mir::SampledHistoryType>()
-          .value);
+          .Get<mir::LibraryType>()
+          .TypeArg(support::LibraryParam::kType));
 }
 
 }  // namespace

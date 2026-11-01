@@ -30,6 +30,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -47,7 +48,8 @@ auto BuildMatch(
   const mir::TypeId compared_at = block.Get(left).type;
   const mir::Type& type = unit.types.Get(compared_at);
   const bool integral = type.IsIntegral();
-  if (integral || type.IsRealFamily() || type.Is<mir::StringType>()) {
+  if (integral || type.Is<mir::RealType>() ||
+      type.IsDeclaredBy(support::LibraryDecl::kString)) {
     value = ConvertToType(unit, block, value, compared_at);
   }
   return block.Add(BuildMirBinaryExpr(

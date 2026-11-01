@@ -40,10 +40,10 @@ struct StringLiteral {
   std::string value;
 };
 
-// The null borrowed-pointer value. Distinct from a zero integral value: the
-// type system carries the pointee identity, and C++ rejects the functional-
-// cast construction (`T*()`) that the constructor primitive would otherwise
-// produce for a default-init pointer.
+// The null of its type, which the type alone decides: a class handle naming no
+// object (LRM 8.4), a reference owning nothing (LRM 6.14, 25.9), or a pointer.
+// Distinct from a zero integral value, and from a construction taking nothing,
+// which C++ rejects for a pointer (`T*()`).
 struct NullLiteral {};
 
 // A machine-boolean literal: a plain scalar, not a simulation value. It is what
@@ -61,10 +61,11 @@ struct MachineIntLiteral {
   std::int64_t value;
 };
 
-// A machine-float literal: a plain scalar, not a simulation value. Its own type
-// carries the precision it is read back at, so a consumer spelling it never
-// asks what it is a constant of.
-struct MachineFloatLiteral {
+// A floating-point literal, as clang's `FloatingLiteral` is: typed at a
+// machine float or at a real (LRM 6.12), each the IEEE 754 value of its width,
+// so its type carries the precision it is read back at and whether it is a
+// value of the design, and the literal states neither.
+struct FloatingLiteral {
   double value;
 };
 
@@ -83,15 +84,17 @@ struct UnaryExpr {
 // What reaches here moves no simulation value between representations, so
 // every target writes it in its own conversion syntax. A destination whose
 // representation differs is a reshape, which is a library call that lands at
-// that type on its own; reading an SV value out as a machine scalar is a call
-// for the same reason; and so is asking whether a handle's object is of a
+// that type on its own; and so is asking whether a handle's object is of a
 // class, which only the object answers. So the pairs that arrive are a value
-// read as the machine boolean a condition tests (LRM 12.4), a machine integer
-// at another, a pointer at another pointee and a code address at the signature
-// its definition was generated with, a class handle as one of another class --
-// the same object whatever class it is seen as (LRM 8.15, 8.26.5) -- an
-// integral value at a type laying it out alike -- an enumeration and its base
-// -- and a reference at the same referent read-only; the verification refuses
+// read as the machine boolean a condition tests (LRM 12.4); a machine integer
+// at another; a pointer at another pointee, and a code address at the
+// signature its definition was generated with; a class handle as one of
+// another class, the same object whatever class it is seen as (LRM 8.15,
+// 8.26.5); an integral value at a type laying it out alike, an enumeration's
+// and its base's; a real as the machine float of its width, and a reference
+// owning nothing as the pointer it holds, and back, each the same bits (LRM
+// 6.12, 6.14); a reference at the same referent read-only; and a reference
+// held as a member read as the reference it holds. The verification refuses
 // every other.
 struct CastExpr {
   ExprId operand;
@@ -721,7 +724,7 @@ struct ReferenceExpr {
 
 using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
-    MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
+    FloatingLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
     ConditionalExpr, BlockExpr, AssignExpr, CallExpr, NewExpr, DerefExpr,
     AddressOfExpr, BorrowExpr, MoveExpr, CopyExpr, DiscriminantExpr,
     FieldAccessExpr, ClosureExpr, CompositeExpr, UnionExpr, AwaitExpr, WaitExpr,

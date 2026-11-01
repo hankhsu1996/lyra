@@ -39,6 +39,7 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -386,7 +387,8 @@ auto LowerUnique(
   if (!array) return std::unexpected(std::move(array.error()));
   const mir::LocalId found = DeclareDefault(unit, steps.Frame(), result_type);
   const mir::TypeId key_type = KeyType(lowerer, ref, *array);
-  const mir::TypeId keys_type = QueueOf(unit, key_type);
+  const mir::TypeId keys_type =
+      mir::QueueOf(unit.types, key_type, support::UnboundedQueue{});
   const mir::LocalId seen_keys = DeclareDefault(unit, steps.Frame(), keys_type);
   auto walked = AppendKeyLoop(
       lowerer, ref, steps, *array, WalkOrder::kFromFirst,
@@ -456,8 +458,9 @@ auto LowerMap(
         "LowerArrayIteratorMethod: a map answers with something other than an "
         "unpacked array");
   }
-  const bool sized_while_running = answer.Is<mir::DynamicArrayType>();
-  const bool grows = answer.Is<mir::QueueType>();
+  const bool sized_while_running =
+      answer.IsDeclaredBy(support::LibraryDecl::kDynamicArray);
+  const bool grows = answer.IsDeclaredBy(support::LibraryDecl::kQueue);
   // A dynamic array is made as many elements long as the receiver, which the
   // loop then fills by position; every other kind starts empty, or at its
   // fixed size.
@@ -472,7 +475,7 @@ auto LowerMap(
                                 .callee =
                                     mir::Direct{
                                         .target = support::BuiltinFn::
-                                            kMakeDynamicArrayNew},
+                                            kDynamicArrayNew},
                                 .arguments = {BuildToInt64Call(
                                     unit, body,
                                     EntryCount(unit, body, *array))}},
@@ -602,7 +605,8 @@ auto LowerSort(
     if (!ref.with_clause.has_value()) {
       return NamedIn(array.path, body);
     }
-    const mir::TypeId keys_type = QueueOf(unit, key_type);
+    const mir::TypeId keys_type =
+        mir::QueueOf(unit.types, key_type, support::UnboundedQueue{});
     const mir::LocalId keys = DeclareDefault(unit, steps.Frame(), keys_type);
     auto walked = AppendKeyLoop(
         lowerer, ref, steps, array, WalkOrder::kFromFirst,

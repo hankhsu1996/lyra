@@ -163,9 +163,10 @@ auto lyra_rt_cancellation_for(void* files, std::int64_t descriptor, void* out)
 // taken (LRM 21.3.2), as an integral value laid out in `out`.
 auto lyra_rt_is_cancelled(const void* cancellation, void* out) -> void*;
 
-auto lyra_rt_string_make(void* cstr, void* out) -> void*;
+auto lyra_rt_string_from_text(void* cstr, void* out) -> void*;
+auto lyra_rt_string_default(void* out) -> void*;
 // A print item writing the text of a string as it is.
-auto lyra_rt_make_text_print_item(const void* text, void* out) -> void*;
+auto lyra_rt_text_print_item_make(const void* text, void* out) -> void*;
 auto lyra_rt_format(LyraSpan items, const void* time_format, void* out)
     -> void*;
 void lyra_rt_writeln(void* files, std::int64_t descriptor, void* text);
@@ -506,7 +507,7 @@ auto lyra_rt_object_adopt(void* object, void* out) -> void*;
 auto lyra_rt_string_shared_cell_make(void* out) -> void*;
 auto lyra_rt_real_shared_cell_make(void* out) -> void*;
 auto lyra_rt_shortreal_shared_cell_make(void* out) -> void*;
-auto lyra_rt_chandle_shared_cell_make(void* out) -> void*;
+auto lyra_rt_unmanagedref_shared_cell_make(void* out) -> void*;
 auto lyra_rt_managedref_shared_cell_make(void* out) -> void*;
 auto lyra_rt_laidout_shared_cell_make(const void* held_type, void* out)
     -> void*;
@@ -541,9 +542,9 @@ auto lyra_rt_dynamic_cast(const void* handle, const void* definition, void* out)
 auto lyra_rt_interface_table(const void* object, const void* iface) -> const
     void*;
 
-// Builds, at `at`, the part of an object the runtime library's class `which`
-// is, before any member of the object's own; and ends it there, after every
-// one of them.
+// `which` is the library declaration naming a class of the runtime's. Builds
+// that class's part of an object at `at`, before any member of the object's
+// own; and ends it there, after every one of them.
 void lyra_rt_begin_library_part(std::uint8_t which, void* at);
 void lyra_rt_end_library_part(std::uint8_t which, void* at);
 
@@ -685,7 +686,7 @@ void lyra_rt_timer_arm(
 // whole of it and what a named event's leaf carries. The steps and the pair
 // cross as machine integers, like every runtime scalar. The leaf is built in
 // storage the caller gives.
-auto lyra_rt_make_trigger(
+auto lyra_rt_trigger_make(
     void* observable, const void* observation, LyraSpan steps,
     std::int64_t lsb_bit_offset, std::int64_t bit_width, void* out) -> void*;
 
@@ -1007,7 +1008,8 @@ auto lyra_rt_dist_erlang(
 // Builds a scope's structural identity from its base label and per-dimension
 // indices (a span of machine integers, empty for a scalar), in storage the
 // caller gives.
-auto lyra_rt_make_segment(void* label, LyraSpan indices, void* out) -> void*;
+auto lyra_rt_hierarchy_segment_make(void* label, LyraSpan indices, void* out)
+    -> void*;
 
 // The hierarchical name of what `below` names inside the scope (LRM 21.2.1.5;
 // the `%m` source), as a string built in storage the caller gives.
@@ -1115,7 +1117,7 @@ void lyra_rt_drives_continuously(const void* reference);
 auto lyra_rt_string_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_real_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_shortreal_cell_refer(void* cell, void* out) -> void*;
-auto lyra_rt_chandle_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_unmanagedref_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_managedref_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_laidout_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_dynarray_cell_refer(void* cell, void* out) -> void*;
@@ -1194,10 +1196,10 @@ auto lyra_rt_shortreal_ref_get(void* reference) -> const void*;
 void lyra_rt_shortreal_ref_set(void* reference, const void* value);
 void lyra_rt_shortreal_ref_arm_sampling(void* reference);
 auto lyra_rt_shortreal_ref_sampled_get(void* reference) -> const void*;
-auto lyra_rt_chandle_ref_get(void* reference) -> const void*;
-void lyra_rt_chandle_ref_set(void* reference, const void* value);
-void lyra_rt_chandle_ref_arm_sampling(void* reference);
-auto lyra_rt_chandle_ref_sampled_get(void* reference) -> const void*;
+auto lyra_rt_unmanagedref_ref_get(void* reference) -> const void*;
+void lyra_rt_unmanagedref_ref_set(void* reference, const void* value);
+void lyra_rt_unmanagedref_ref_arm_sampling(void* reference);
+auto lyra_rt_unmanagedref_ref_sampled_get(void* reference) -> const void*;
 auto lyra_rt_managedref_ref_get(void* reference) -> const void*;
 void lyra_rt_managedref_ref_set(void* reference, const void* value);
 void lyra_rt_managedref_ref_arm_sampling(void* reference);
@@ -1475,26 +1477,14 @@ auto lyra_rt_string_le(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_string_gt(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_string_ge(const void* lhs, const void* rhs) -> std::uint8_t;
 
-// The `real` / `realtime` host-double value domain. A relational or equality
-// entry answers the comparison's scalar; the arithmetic entries yield a real.
-// `const` builds a real from a host-precision immediate, `from_int` from an
-// integer already read out of an integral value, and the `convert_from` pair
-// reshapes the other real precision. The cell entries hold a real in storage
-// that outlives the body that wrote it.
-auto lyra_rt_real_add(const void* lhs, const void* rhs, void* out) -> void*;
-auto lyra_rt_real_sub(const void* lhs, const void* rhs, void* out) -> void*;
-auto lyra_rt_real_mul(const void* lhs, const void* rhs, void* out) -> void*;
-auto lyra_rt_real_div(const void* lhs, const void* rhs, void* out) -> void*;
-auto lyra_rt_real_neg(const void* operand, void* out) -> void*;
-auto lyra_rt_real_eq(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_real_ne(const void* lhs, const void* rhs) -> std::uint8_t;
+// The `real` / `realtime` domain. A real is the C double generated code lays
+// out, copies and computes on itself (LRM 6.12), so what is here is what the
+// library has content for, each entry reading the real where it lies: `===`,
+// the mathematics, reading a real out as an integer or its bits and building
+// one from either, reshaping the other precision, a cell holding a real past
+// the body that wrote it, and printing.
 auto lyra_rt_real_case_equal(const void* lhs, const void* rhs, void* out)
     -> void*;
-auto lyra_rt_real_lt(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_real_le(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_real_gt(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_real_ge(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_real_to_bool(const void* operand) -> bool;
 
 // The LRM 20.8.2 Table 20-4 mathematics, whose behavior the standard defines
 // to be that of the C library function each is cross-listed with. The
@@ -1526,80 +1516,53 @@ auto lyra_rt_real_atanh(const void* value, void* out) -> void*;
 // Reading a real out as an integer: LRM 6.12.1 rounds, LRM 20.5 `$rtoi`
 // truncates, and the bit-pattern pair carries the IEEE 754 encoding itself.
 auto lyra_rt_real_round(const void* value) -> std::int64_t;
-auto lyra_rt_real_real_value(const void* value) -> double;
 auto lyra_rt_real_truncate(const void* value) -> std::int64_t;
 auto lyra_rt_real_to_bits(const void* value) -> std::int64_t;
 auto lyra_rt_real_from_bits(std::int64_t bits, void* out) -> void*;
 
-auto lyra_rt_real_const(double value, void* out) -> void*;
 auto lyra_rt_real_from_int(std::int64_t value, void* out) -> void*;
 auto lyra_rt_real_convert_from_shortreal(const void* value, void* out) -> void*;
 auto lyra_rt_real_convert_from_real(const void* value, void* out) -> void*;
 auto lyra_rt_real_value_cell_alloc() noexcept -> void*;
 void lyra_rt_real_value_cell_store(void* cell, const void* value) noexcept;
 auto lyra_rt_real_value_cell_load(void* cell) noexcept -> void*;
-auto lyra_rt_real_make_print_value_item(
+auto lyra_rt_real_print_item_make(
     const void* value, const void* spec, void* out) -> void*;
-auto lyra_rt_real_make_format_arg(const void* value, void* out) -> void*;
+auto lyra_rt_real_format_arg_make(const void* value, void* out) -> void*;
 
-// The `shortreal` host-float value domain, the single-precision peer of the
-// real domain above.
-auto lyra_rt_shortreal_add(const void* lhs, const void* rhs, void* out)
-    -> void*;
-auto lyra_rt_shortreal_sub(const void* lhs, const void* rhs, void* out)
-    -> void*;
-auto lyra_rt_shortreal_mul(const void* lhs, const void* rhs, void* out)
-    -> void*;
-auto lyra_rt_shortreal_div(const void* lhs, const void* rhs, void* out)
-    -> void*;
-auto lyra_rt_shortreal_neg(const void* operand, void* out) -> void*;
-auto lyra_rt_shortreal_eq(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_shortreal_ne(const void* lhs, const void* rhs) -> std::uint8_t;
+// The `shortreal` domain, the C float peer of the real domain above.
 auto lyra_rt_shortreal_case_equal(const void* lhs, const void* rhs, void* out)
     -> void*;
-auto lyra_rt_shortreal_lt(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_shortreal_le(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_shortreal_gt(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_shortreal_ge(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_shortreal_to_bool(const void* operand) -> bool;
 auto lyra_rt_shortreal_pow(const void* base, const void* exponent, void* out)
     -> void*;
 auto lyra_rt_shortreal_round(const void* value) -> std::int64_t;
-auto lyra_rt_shortreal_real_value(const void* value) -> float;
 auto lyra_rt_shortreal_to_bits(const void* value) -> std::int64_t;
 auto lyra_rt_shortreal_from_bits(std::int64_t bits, void* out) -> void*;
-auto lyra_rt_shortreal_const(float value, void* out) -> void*;
 auto lyra_rt_shortreal_from_int(std::int64_t value, void* out) -> void*;
 auto lyra_rt_shortreal_convert_from_real(const void* value, void* out) -> void*;
 auto lyra_rt_shortreal_value_cell_alloc() noexcept -> void*;
 void lyra_rt_shortreal_value_cell_store(void* cell, const void* value) noexcept;
 auto lyra_rt_shortreal_value_cell_load(void* cell) noexcept -> void*;
-auto lyra_rt_shortreal_make_print_value_item(
+auto lyra_rt_shortreal_print_item_make(
     const void* value, const void* spec, void* out) -> void*;
-auto lyra_rt_shortreal_make_format_arg(const void* value, void* out) -> void*;
+auto lyra_rt_shortreal_format_arg_make(const void* value, void* out) -> void*;
 
-// The `chandle` domain (LRM 6.14). LRM 6.14 admits only the equality family
-// and the boolean test; there is no arithmetic, no ordering and no format
-// entry. A chandle that names something came from a foreign call, and both
-// directions of that crossing are entries so that which bits the value is
-// stays the runtime's own answer.
-auto lyra_rt_chandle_default(void* out) -> void*;
-auto lyra_rt_chandle_make(void* pointer, void* out) -> void*;
-auto lyra_rt_chandle_ptr(const void* operand) -> void*;
-auto lyra_rt_chandle_eq(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_chandle_ne(const void* lhs, const void* rhs) -> std::uint8_t;
-auto lyra_rt_chandle_case_equal(const void* lhs, const void* rhs, void* out)
-    -> void*;
-auto lyra_rt_chandle_to_bool(const void* operand) -> bool;
-auto lyra_rt_chandle_value_cell_alloc() noexcept -> void*;
-void lyra_rt_chandle_value_cell_store(void* cell, const void* value) noexcept;
-auto lyra_rt_chandle_value_cell_load(void* cell) noexcept -> void*;
-auto lyra_rt_chandle_cell_get(void* cell) -> const void*;
-void lyra_rt_chandle_cell_initialize(
+// The domain of a reference that owns nothing: a chandle (LRM 6.14) and a
+// virtual interface (LRM 25.9). Its value is one address, which generated code
+// copies, compares, tests and converts itself, so what is here is what a
+// variable holding one and a whole-value question ask of the library.
+auto lyra_rt_unmanagedref_case_equal(
+    const void* lhs, const void* rhs, void* out) -> void*;
+auto lyra_rt_unmanagedref_value_cell_alloc() noexcept -> void*;
+void lyra_rt_unmanagedref_value_cell_store(
+    void* cell, const void* value) noexcept;
+auto lyra_rt_unmanagedref_value_cell_load(void* cell) noexcept -> void*;
+auto lyra_rt_unmanagedref_cell_get(void* cell) -> const void*;
+void lyra_rt_unmanagedref_cell_initialize(
     void* cell, const void* prototype) noexcept;
-void lyra_rt_chandle_cell_set(void* cell, const void* value);
-void lyra_rt_chandle_cell_arm_sampling(void* cell);
-auto lyra_rt_chandle_cell_sampled_get(void* cell) -> const void*;
+void lyra_rt_unmanagedref_cell_set(void* cell, const void* value);
+void lyra_rt_unmanagedref_cell_arm_sampling(void* cell);
+auto lyra_rt_unmanagedref_cell_sampled_get(void* cell) -> const void*;
 
 // The managed-reference domain (LRM 8.3, and the LRM 9.7 `process` a handle
 // names). What a handle carries is the object's address together with a share
@@ -1674,15 +1637,11 @@ void lyra_rt_laidout_ref_end_takeover(
 auto lyra_rt_laidout_cell_sampled_get(void* cell) -> const void*;
 auto lyra_rt_laidout_value_cell_alloc(const void* held_type) noexcept -> void*;
 
-// The empty domain: a tagged union's `void` member (LRM 7.3.2), a value with no
-// bits. `default` builds the one value it has.
-auto lyra_rt_empty_default(void* out) -> void*;
-
-// The dynamic-array domain (LRM 7.5), MIR's `DynamicArrayType`. A
-// run-time-sized homogeneous container carried behind an opaque handle, owning
-// its elements by value. `new` / `new_copy` are the LRM 7.5.1 constructors
-// (sized, sized-from-source); `from_literal` collects the elements of an
-// assignment pattern, the empty array being the one that collects none. Every
+// The dynamic-array domain (LRM 7.5). A run-time-sized homogeneous container
+// carried behind an opaque handle, owning its elements by value. `new` /
+// `new_copy` are the LRM 7.5.1 constructors (sized, sized-from-source);
+// `from_list` collects the elements of an assignment pattern, and `default`
+// is the array of none a variable starts as (LRM Table 7-1). Every
 // constructor is told the element type, which states the element's
 // representation and what an out-of-range read (LRM 7.4.5) and a resize fill
 // with. A literal's elements cross as bare handles, since that type is theirs,
@@ -1690,12 +1649,14 @@ auto lyra_rt_empty_default(void* out) -> void*;
 // `element` answers with it where it lies, for reading, and `element_mut` with
 // the same storage for a write to land in (LRM 7.4.6); `assign_element_slice`
 // writes a window into the elements already there (LRM 7.6).
-auto lyra_rt_make_dynamic_array_new(
+auto lyra_rt_dynamic_array_new(
     std::int64_t size, const void* answer_element_type, void* out) -> void*;
-auto lyra_rt_make_dynamic_array_new_copy(
+auto lyra_rt_dynamic_array_new_copy(
     std::int64_t size, const void* src, const void* answer_element_type,
     void* out) -> void*;
-auto lyra_rt_dynarray_from_literal(
+auto lyra_rt_dynarray_default(const void* answer_element_type, void* out)
+    -> void*;
+auto lyra_rt_dynarray_from_list(
     LyraSpan unit, std::int64_t count, const void* answer_element_type,
     void* out) -> void*;
 // LRM 7.6: one unpacked array kind taking another's elements. The entry names
@@ -1841,16 +1802,18 @@ void lyra_rt_laidout_driver_set(void* driver, const void* value);
 
 // The queue domain (LRM 7.10): a run-time-sized ordered container whose
 // elements are added and removed at either end, carried behind an opaque handle
-// and owning its elements by value. A queue is built over an element list,
-// empty or not, at the queue type it is told, which states its element type
-// and its bound (LRM 7.10.5), so a construction is handed no bound of its own.
+// and owning its elements by value. A queue is built over an element list, or
+// over none as the queue a variable starts as, at the queue type it is told,
+// which states its element type and its bound (LRM 7.10.5), so a construction
+// is handed no bound of its own.
 // The bound is the type's, so a queue built from another array's elements --
 // another queue's among them -- keeps what that type's bound admits. A slice
 // and a concatenation answer a queue of the receiver's type. An element write
 // appends when its index is the queue's size and is discarded at any other
 // invalid index (LRM 7.10.1); an element write, a push, an insert and a
 // delete each change the queue where it lies.
-auto lyra_rt_queue_from_literal(
+auto lyra_rt_queue_default(const void* answer_type, void* out) -> void*;
+auto lyra_rt_queue_from_list(
     LyraSpan unit, std::int64_t count, const void* answer_type, void* out)
     -> void*;
 auto lyra_rt_queue_queue_from_array(
@@ -1924,6 +1887,9 @@ auto lyra_rt_queue_value_cell_load(void* cell) noexcept -> void*;
 // An element write and a delete change the array where it lies. The order the
 // entries are held in is the one the declared index type imposes (LRM 7.8),
 // which the array is built holding, a wildcard index's (LRM 7.8.1) among them.
+auto lyra_rt_assocarray_default(
+    const void* key_index_order, const void* answer_element_type, void* out)
+    -> void*;
 auto lyra_rt_assocarray_from_entries(
     LyraSpan entries, const void* entry_type, const void* key_index_order,
     const void* answer_element_type, void* out) -> void*;
@@ -2264,7 +2230,8 @@ void lyra_rt_any_sampled_history_construct(void* storage);
 auto lyra_rt_string_bit_identical(const void* lhs, const void* rhs) -> bool;
 auto lyra_rt_real_bit_identical(const void* lhs, const void* rhs) -> bool;
 auto lyra_rt_shortreal_bit_identical(const void* lhs, const void* rhs) -> bool;
-auto lyra_rt_chandle_bit_identical(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_unmanagedref_bit_identical(const void* lhs, const void* rhs)
+    -> bool;
 auto lyra_rt_dynarray_bit_identical(const void* lhs, const void* rhs) -> bool;
 auto lyra_rt_queue_bit_identical(const void* lhs, const void* rhs) -> bool;
 auto lyra_rt_assocarray_bit_identical(const void* lhs, const void* rhs) -> bool;
@@ -2272,7 +2239,7 @@ auto lyra_rt_managedref_bit_identical(const void* lhs, const void* rhs) -> bool;
 auto lyra_rt_string_has_unknown(const void* value) -> bool;
 auto lyra_rt_real_has_unknown(const void* value) -> bool;
 auto lyra_rt_shortreal_has_unknown(const void* value) -> bool;
-auto lyra_rt_chandle_has_unknown(const void* value) -> bool;
+auto lyra_rt_unmanagedref_has_unknown(const void* value) -> bool;
 auto lyra_rt_dynarray_has_unknown(
     const void* value, const void* value_operations) -> bool;
 auto lyra_rt_queue_has_unknown(const void* value, const void* value_operations)
@@ -2351,18 +2318,18 @@ auto lyra_rt_laidout_with_window(
 // Builds one conversion's format specification, and the print item that pairs a
 // value with it. Each field arrives as a machine integer, like every runtime
 // scalar.
-auto lyra_rt_make_format_spec(
+auto lyra_rt_format_spec_make(
     std::int64_t kind, std::int64_t field_width, std::int64_t precision,
     std::int64_t zero_pad, std::int64_t left_align, std::int64_t timeunit_power,
     void* out) -> void*;
-auto lyra_rt_integral_make_print_value_item(
+auto lyra_rt_integral_print_item_make(
     const void* value, std::int64_t value_width, bool value_is_signed,
     bool value_is_four_state, const void* spec, void* out) -> void*;
-auto lyra_rt_string_make_print_value_item(
+auto lyra_rt_string_print_item_make(
     const void* value, const void* spec, void* out) -> void*;
-auto lyra_rt_chandle_make_print_value_item(
+auto lyra_rt_unmanagedref_print_item_make(
     const void* value, const void* spec, void* out) -> void*;
-auto lyra_rt_managedref_make_print_value_item(
+auto lyra_rt_managedref_print_item_make(
     const void* value, const void* spec, void* out) -> void*;
 
 // A format performed at run time (LRM 21.3.3), where the format string is not a
@@ -2377,21 +2344,22 @@ auto lyra_rt_format_runtime(
     const void* format, LyraSpan args, const void* scope_path,
     const void* library_binding, const void* time_format,
     std::int64_t timeunit_power, void* out) -> void*;
-auto lyra_rt_integral_make_format_arg(
+auto lyra_rt_integral_format_arg_make(
     const void* value, std::int64_t value_width, bool value_is_signed,
     bool value_is_four_state, void* out) -> void*;
-auto lyra_rt_string_make_format_arg(const void* value, void* out) -> void*;
+auto lyra_rt_string_format_arg_make(const void* value, void* out) -> void*;
 // The same operand, carrying the text LRM 21.2.1.6 renders it as -- composed
 // where the type that decides it was still in hand, because a format string
 // the program computes reaches no directive until it is parsed.
-auto lyra_rt_make_patterned_format_arg(
+auto lyra_rt_patterned_format_arg_make(
     const void* value, std::int64_t value_width, bool value_is_signed,
     bool value_is_four_state, const void* pattern, void* out) -> void*;
 // An operand that reads only as that text, there being no other conversion the
 // language defines for what it stands for.
-auto lyra_rt_make_rendered_format_arg(const void* pattern, void* out) -> void*;
-auto lyra_rt_chandle_make_format_arg(const void* value, void* out) -> void*;
-auto lyra_rt_managedref_make_format_arg(const void* value, void* out) -> void*;
+auto lyra_rt_rendered_format_arg_make(const void* pattern, void* out) -> void*;
+auto lyra_rt_unmanagedref_format_arg_make(const void* value, void* out)
+    -> void*;
+auto lyra_rt_managedref_format_arg_make(const void* value, void* out) -> void*;
 
 // The DPI-C boundary temporaries (LRM 35.5.6, Annex H.7.7, H.10). None of these
 // is an SV value: each exists inside one lowered call window, holding an image
@@ -2406,10 +2374,10 @@ auto lyra_rt_managedref_make_format_arg(const void* value, void* out) -> void*;
 // carries the value plane only, `logic` both planes. What the foreign side
 // writes through points into the buffer, so it stays writable for exactly as
 // long as the buffer does.
-auto lyra_rt_make_dpi_bit_buffer(
+auto lyra_rt_dpi_bit_buffer_make(
     const void* sv, std::int64_t sv_width, bool sv_is_four_state, void* out)
     -> void*;
-auto lyra_rt_make_dpi_logic_buffer(
+auto lyra_rt_dpi_logic_buffer_make(
     const void* sv, std::int64_t sv_width, bool sv_is_four_state, void* out)
     -> void*;
 auto lyra_rt_dpi_bit_buffer_data(void* buffer) -> void*;
@@ -2438,7 +2406,7 @@ auto lyra_rt_to_sv_logic(
 // rebuilds from it one SV value of the type a write-back direction states,
 // `answer_type`: fixed-size unpacked arrays down to integral elements, each
 // layer's count a fact of that type.
-auto lyra_rt_make_dpi_open_array(
+auto lyra_rt_dpi_open_array_make(
     const void* sv, const void* sv_type, LyraSpan bounds,
     bool addressable_elements, void* out) -> void*;
 auto lyra_rt_dpi_open_array_handle(void* image) -> void*;
@@ -2455,7 +2423,7 @@ auto lyra_rt_string_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_bitvec_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_real_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_shortreal_cell_open_for_write(void* cell, void* out) -> void*;
-auto lyra_rt_chandle_cell_open_for_write(void* cell, void* out) -> void*;
+auto lyra_rt_unmanagedref_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_managedref_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_laidout_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_dynarray_cell_open_for_write(void* cell, void* out) -> void*;
@@ -2464,7 +2432,8 @@ auto lyra_rt_assocarray_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_string_ref_open_for_write(void* reference, void* out) -> void*;
 auto lyra_rt_real_ref_open_for_write(void* reference, void* out) -> void*;
 auto lyra_rt_shortreal_ref_open_for_write(void* reference, void* out) -> void*;
-auto lyra_rt_chandle_ref_open_for_write(void* reference, void* out) -> void*;
+auto lyra_rt_unmanagedref_ref_open_for_write(void* reference, void* out)
+    -> void*;
 auto lyra_rt_managedref_ref_open_for_write(void* reference, void* out) -> void*;
 auto lyra_rt_laidout_ref_open_for_write(
     void* reference, const void* value_type, void* out) -> void*;
@@ -2564,8 +2533,7 @@ auto lyra_rt_string_land(const void* designation) noexcept -> void*;
 auto lyra_rt_bitvec_land(const void* designation) noexcept -> void*;
 auto lyra_rt_real_land(const void* designation) noexcept -> void*;
 auto lyra_rt_shortreal_land(const void* designation) noexcept -> void*;
-auto lyra_rt_chandle_land(const void* designation) noexcept -> void*;
-auto lyra_rt_empty_land(const void* designation) noexcept -> void*;
+auto lyra_rt_unmanagedref_land(const void* designation) noexcept -> void*;
 auto lyra_rt_laidout_land(
     const void* designation, const void* value_type) noexcept -> void*;
 auto lyra_rt_dynarray_land(const void* designation) noexcept -> void*;
@@ -2578,10 +2546,6 @@ auto lyra_rt_managedref_land(const void* designation) noexcept -> void*;
 // lies rather than being replaced by a new object (LRM 7.6).
 void lyra_rt_string_assign(void* storage, const void* value);
 void lyra_rt_bitvec_assign(void* storage, const void* value);
-void lyra_rt_real_assign(void* storage, const void* value);
-void lyra_rt_shortreal_assign(void* storage, const void* value);
-void lyra_rt_chandle_assign(void* storage, const void* value);
-void lyra_rt_empty_assign(void* storage, const void* value);
 void lyra_rt_dynarray_assign(void* storage, const void* value);
 void lyra_rt_queue_assign(void* storage, const void* value);
 void lyra_rt_assocarray_assign(void* storage, const void* value);
@@ -2635,10 +2599,6 @@ void lyra_rt_object_write_destroy(void* object);
 void lyra_rt_leased_reference_destroy(void* object);
 auto lyra_rt_string_copy(const void* value, void* out) -> void*;
 auto lyra_rt_bitvec_copy(const void* value, void* out) -> void*;
-auto lyra_rt_real_copy(const void* value, void* out) -> void*;
-auto lyra_rt_shortreal_copy(const void* value, void* out) -> void*;
-auto lyra_rt_chandle_copy(const void* value, void* out) -> void*;
-auto lyra_rt_empty_copy(const void* value, void* out) -> void*;
 auto lyra_rt_dynarray_copy(const void* value, void* out) -> void*;
 auto lyra_rt_queue_copy(const void* value, void* out) -> void*;
 auto lyra_rt_assocarray_copy(const void* value, void* out) -> void*;
@@ -2660,10 +2620,6 @@ auto lyra_rt_any_reference_copy(const void* value, void* out) -> void*;
 auto lyra_rt_weak_reference_copy(const void* value, void* out) -> void*;
 auto lyra_rt_string_move(void* value, void* out) -> void*;
 auto lyra_rt_bitvec_move(void* value, void* out) -> void*;
-auto lyra_rt_real_move(void* value, void* out) -> void*;
-auto lyra_rt_shortreal_move(void* value, void* out) -> void*;
-auto lyra_rt_chandle_move(void* value, void* out) -> void*;
-auto lyra_rt_empty_move(void* value, void* out) -> void*;
 auto lyra_rt_dynarray_move(void* value, void* out) -> void*;
 auto lyra_rt_queue_move(void* value, void* out) -> void*;
 auto lyra_rt_assocarray_move(void* value, void* out) -> void*;
@@ -2700,7 +2656,7 @@ void lyra_rt_string_cell_construct(void* storage);
 void lyra_rt_bitvec_cell_construct(void* storage);
 void lyra_rt_real_cell_construct(void* storage);
 void lyra_rt_shortreal_cell_construct(void* storage);
-void lyra_rt_chandle_cell_construct(void* storage);
+void lyra_rt_unmanagedref_cell_construct(void* storage);
 void lyra_rt_laidout_cell_construct(const void* held_type, void* storage);
 void lyra_rt_dynarray_cell_construct(void* storage);
 void lyra_rt_queue_cell_construct(void* storage);
@@ -2710,7 +2666,7 @@ void lyra_rt_string_value_cell_construct(void* storage);
 void lyra_rt_bitvec_value_cell_construct(void* storage);
 void lyra_rt_real_value_cell_construct(void* storage);
 void lyra_rt_shortreal_value_cell_construct(void* storage);
-void lyra_rt_chandle_value_cell_construct(void* storage);
+void lyra_rt_unmanagedref_value_cell_construct(void* storage);
 void lyra_rt_laidout_value_cell_construct(const void* held_type, void* storage);
 void lyra_rt_dynarray_value_cell_construct(void* storage);
 void lyra_rt_queue_value_cell_construct(void* storage);
@@ -2736,7 +2692,7 @@ void lyra_rt_string_cell_destroy(void* storage);
 void lyra_rt_bitvec_cell_destroy(void* storage);
 void lyra_rt_real_cell_destroy(void* storage);
 void lyra_rt_shortreal_cell_destroy(void* storage);
-void lyra_rt_chandle_cell_destroy(void* storage);
+void lyra_rt_unmanagedref_cell_destroy(void* storage);
 void lyra_rt_laidout_cell_destroy(void* storage);
 void lyra_rt_dynarray_cell_destroy(void* storage);
 void lyra_rt_queue_cell_destroy(void* storage);

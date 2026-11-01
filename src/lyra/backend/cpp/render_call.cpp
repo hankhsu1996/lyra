@@ -251,13 +251,18 @@ void WriteEntryCallee(
                     .arguments = stated,
                     .reached = NameReachedThrough::kAType});
           },
-          // A placement new-expression reaches an allocation function, and no
-          // call does.
+          // A placement new-expression reaches an allocation function, and a
+          // construction a constructor; no call reaches either.
           [](const support::AllocationFunction&) {
             throw InternalError(
                 "Direct call: a call names an allocation function, which only "
                 "a placement new-expression reaches -- please report this as "
                 "a bug");
+          },
+          [](const support::Constructor&) {
+            throw InternalError(
+                "Direct call: a call names a constructor, which only a "
+                "construction reaches -- please report this as a bug");
           }},
       entry.declaration);
 }

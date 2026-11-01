@@ -31,6 +31,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -91,9 +92,8 @@ void OpenActivationScope(
 namespace {
 
 auto CancellationTargetType(mir::CompilationUnit& unit) -> mir::TypeId {
-  return unit.types.Intern(
-      mir::Type{mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kCancellationTarget}});
+  return mir::LibraryTypeOf(
+      unit.types, support::LibraryDecl::kCancellationTarget);
 }
 
 // The expression reaching the target a region claims and a `disable`
@@ -154,9 +154,8 @@ auto BuildRegion(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
 
-  const mir::TypeId effect_type = unit.types.Intern(
-      mir::Type{mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kControlEffect}});
+  const mir::TypeId effect_type =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kControlEffect);
   const std::uint32_t site = unit_lowerer.NextSynthesizedSite();
   const BindingOriginId origin =
       SynthesizedOrigin{.owner_site = site, .ordinal = 0};

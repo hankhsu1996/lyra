@@ -13,6 +13,8 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/primary.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -286,10 +288,10 @@ auto BuildMirBinaryExpr(
             OneBitAnswerType(unit, std::array{lhs_type, rhs_type})));
   };
 
-  // LRM 8.4 admits `null` as either operand of a handle comparison, and the
-  // front end leaves it at a type of its own, so both operands of an equality
-  // are brought to the handle's type where one of them is a handle. Operands of
-  // any other kind are left as they are.
+  // A handle is compared with one of a class it extends or implements, the
+  // same object whichever class it is seen as (LRM 8.15, 8.26.5), so both
+  // operands of an equality are brought to one handle's type where one of them
+  // is a handle. Operands of any other kind are left as they are.
   struct Comparands {
     mir::ExprId lhs;
     mir::ExprId rhs;
@@ -509,6 +511,33 @@ auto LowerHirBinaryExpr(
   return BuildMirBinaryExpr(unit, block, b.op, *lhs_or, *rhs_or, result_type);
 }
 
+// Whether `expr` is of `null`'s type, which a value of it has only until a
+// conversion says which type it is a value of.
+template <ExprLowerer Lowerer>
+auto IsOfNullType(const Lowerer& lowerer, const hir::Expr& expr) -> bool {
+  return lowerer.Owner()
+      .Hir()
+      .types.Get(expr.type)
+      .template Is<hir::NullType>();
+}
+
+template <ExprLowerer Lowerer>
+auto LowerNullAt(
+    Lowerer& lowerer, WalkFrame frame, const hir::Expr& source,
+    mir::TypeId type) -> diag::Result<mir::Expr> {
+  if (const auto* chosen = std::get_if<hir::ConditionalExpr>(&source.data)) {
+    return LowerHirConditionalExpr(lowerer, frame, *chosen, type);
+  }
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&source.data);
+  if (primary == nullptr ||
+      !std::holds_alternative<hir::NullLiteral>(primary->data)) {
+    throw InternalError(
+        "hir_to_mir: an expression of null's type is neither `null` nor a "
+        "conditional choosing among them -- please report this as a bug");
+  }
+  return mir::Expr{.data = mir::NullLiteral{}, .type = type};
+}
+
 // The conditional operator: a selection by its predicate, a series of clauses,
 // between its two expressions (LRM 11.4.11, 12.6.3). A third operand that is
 // itself a conditional of the same type goes on with the selection, so
@@ -527,6 +556,12 @@ auto LowerHirConditionalExpr(
                          result_type](hir::ExprId value) -> Evaluation {
     return [&lowerer, &unit, value,
             result_type](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+      const hir::Expr& arm = lowerer.HirExprs().Get(value);
+      if (IsOfNullType(lowerer, arm)) {
+        auto null_or = LowerNullAt(lowerer, at, arm, result_type);
+        if (!null_or) return std::unexpected(std::move(null_or.error()));
+        return at.current_block->exprs.Add(*std::move(null_or));
+      }
       auto value_or = LowerAndAddOperand(lowerer, at, value);
       if (!value_or) return value_or;
       return ConvertToType(unit, at.Builder(), *value_or, result_type);
@@ -543,7 +578,8 @@ auto LowerHirConditionalExpr(
         lowerer.HirExprs().Get(conditional->else_value);
     const auto* nested = std::get_if<hir::ConditionalExpr>(&otherwise.data);
     if (nested == nullptr ||
-        lowerer.Owner().TranslateType(otherwise.type) != result_type) {
+        (!IsOfNullType(lowerer, otherwise) &&
+         lowerer.Owner().TranslateType(otherwise.type) != result_type)) {
       break;
     }
     conditional = nested;
@@ -556,7 +592,11 @@ template <ExprLowerer Lowerer>
 auto LowerHirConversionExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const diag::SourceSpan span = lowerer.HirExprs().Get(cv.operand).span;
+  const hir::Expr& source = lowerer.HirExprs().Get(cv.operand);
+  const diag::SourceSpan span = source.span;
+  if (IsOfNullType(lowerer, source)) {
+    return LowerNullAt(lowerer, frame, source, result_type);
+  }
   // A stream is asked of a value where it lies, which a struct's own method
   // borrows there; every other conversion takes the operand's value.
   auto operand_or = LowerAndAddNamed(lowerer, frame, cv.operand);
@@ -617,6 +657,12 @@ template auto LowerHirConditionalExpr(
 template auto LowerHirConditionalExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::ConditionalExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerNullAt(
+    ProcessLowerer&, WalkFrame, const hir::Expr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerNullAt(
+    const StructuralScopeLowerer&, WalkFrame, const hir::Expr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
 template auto LowerHirConversionExpr(
     ProcessLowerer&, WalkFrame, const hir::ConversionExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;

@@ -15,7 +15,9 @@
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/mir/type_builders.hpp"
+#include "lyra/support/float_width.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -97,11 +99,11 @@ auto UnitLowerer::UnionMemberTypes(const hir::UnpackedUnionDefinition& src)
     -> std::vector<mir::TypeId> {
   std::vector<mir::TypeId> members = TranslateMemberTypes(*this, src.fields);
   // A `void` member (LRM 7.3.2) occupies a value slot, so its component is
-  // the type carrying no information rather than the absence of a type the SV
-  // keyword otherwise names.
+  // the tuple of no components, whose one value carries no information, rather
+  // than the absence of a type the SV keyword otherwise names.
   for (mir::TypeId& member : members) {
     if (unit_.types.Get(member).Is<mir::VoidType>()) {
-      member = unit_.types.Intern(mir::Type{mir::EmptyType{}});
+      member = unit_.types.Intern(mir::Type{mir::TupleType{}});
     }
   }
   return members;
@@ -159,10 +161,11 @@ void UnitLowerer::DefineRecordMethods(
   }());
 }
 
-auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
+auto UnitLowerer::TranslateType(const hir::Type& type)
+    -> std::optional<mir::Type> {
   return type.Visit(
       Overloaded{
-          [&](const hir::ScalarBitType& src) -> mir::Type {
+          [&](const hir::ScalarBitType& src) -> std::optional<mir::Type> {
             // A bare scalar is a one-bit unsigned vector.
             return mir::Type{mir::IntegralType{
                 .bit_width = 1,
@@ -170,21 +173,21 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
                 .state_kind = StateKindOf(src.atom),
             }};
           },
-          [&](const hir::PackedArrayType& src) -> mir::Type {
+          [&](const hir::PackedArrayType& src) -> std::optional<mir::Type> {
             return mir::Type{IntegralOfPackedArray(*this, src)};
           },
           // A packed aggregate is the vector its members project onto: every
           // value operation runs on that vector, and a member is reached as a
           // part-select of it, placed where the select is lowered.
-          [&](const hir::PackedStructType& src) -> mir::Type {
+          [&](const hir::PackedStructType& src) -> std::optional<mir::Type> {
             return mir::Type{IntegralOfPackedAggregate(
                 ProjectPackedAggregate(*this, type), src.signedness)};
           },
-          [&](const hir::PackedUnionType& src) -> mir::Type {
+          [&](const hir::PackedUnionType& src) -> std::optional<mir::Type> {
             return mir::Type{IntegralOfPackedAggregate(
                 ProjectPackedAggregate(*this, type), src.signedness)};
           },
-          [&](const hir::EnumType& declared) -> mir::Type {
+          [&](const hir::EnumType& declared) -> std::optional<mir::Type> {
             // An enumeration keeps a MIR type of its own, carrying its base
             // integral type and its members. A value operation reads the base
             // and so treats the value as that integral; only what an
@@ -194,11 +197,11 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             // translation: a definition another unit published names types
             // minted after the enumeration naming it.
             const hir::EnumDefinition& src = Hir().DefinitionOf(declared);
-            const auto* base = Unit()
-                                   .types
-                                   .Get(unit_.types.Intern(TranslateType(
-                                       Hir().types.Get(src.base_type))))
-                                   .As<mir::IntegralType>();
+            const std::optional<mir::Type> base_type =
+                TranslateType(Hir().types.Get(src.base_type));
+            const auto* base = base_type.has_value()
+                                   ? base_type->As<mir::IntegralType>()
+                                   : nullptr;
             if (base == nullptr) {
               throw InternalError(
                   "TranslateType: enum base did not lower to an integral "
@@ -218,85 +221,100 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
                 .members = std::move(members),
             }};
           },
-          [&](const hir::UnpackedStructType&) -> mir::Type {
+          [&](const hir::UnpackedStructType&) -> std::optional<mir::Type> {
             return mir::Type{DeclareRecord()};
           },
-          [&](const hir::UnpackedUnionType&) -> mir::Type {
+          [&](const hir::UnpackedUnionType&) -> std::optional<mir::Type> {
             return mir::Type{DeclareRecord()};
           },
-          [&](const hir::UnpackedArrayType& src) -> mir::Type {
+          [&](const hir::UnpackedArrayType& src) -> std::optional<mir::Type> {
             return mir::Type{mir::UnpackedArrayType{
                 .element_type = TranslateType(src.element_type),
                 .count = src.dim.ElementCount(),
             }};
           },
-          [&](const hir::DynamicArrayType& src) -> mir::Type {
-            return mir::Type{mir::DynamicArrayType{
-                .element_type = TranslateType(src.element_type),
-            }};
+          [&](const hir::DynamicArrayType& src) -> std::optional<mir::Type> {
+            return unit_.types.Get(
+                mir::DynamicArrayOf(
+                    unit_.types, TranslateType(src.element_type)));
           },
-          [&](const hir::QueueType& src) -> mir::Type {
-            return mir::Type{mir::QueueType{
-                .element_type = TranslateType(src.element_type),
-                .max_bound = src.max_bound,
-            }};
+          [&](const hir::QueueType& src) -> std::optional<mir::Type> {
+            const support::QueueBound bound =
+                src.max_bound.has_value()
+                    ? support::QueueBound{support::BoundedQueue{
+                          .count = *src.max_bound}}
+                    : support::QueueBound{support::UnboundedQueue{}};
+            return unit_.types.Get(
+                mir::QueueOf(
+                    unit_.types, TranslateType(src.element_type), bound));
           },
-          [&](const hir::AssociativeArrayType& src) -> mir::Type {
-            return mir::Type{mir::AssociativeArrayType{
-                .element_type = TranslateType(src.element_type),
-                .key_type = TranslateType(src.key_type),
-            }};
+          [&](const hir::AssociativeArrayType& src)
+              -> std::optional<mir::Type> {
+            return unit_.types.Get(
+                mir::AssociativeArrayOf(
+                    unit_.types, TranslateType(src.key_type),
+                    TranslateType(src.element_type)));
           },
-          [](const hir::WildcardIndexType&) -> mir::Type {
-            return mir::Type{mir::WildcardIndexType{}};
+          [](const hir::WildcardIndexType&) -> std::optional<mir::Type> {
+            return mir::Type{mir::LibraryType{
+                .decl = support::LibraryDecl::kWildcardIndex, .args = {}}};
           },
-          [](const hir::StringType&) -> mir::Type {
-            return mir::Type{mir::StringType{}};
+          [](const hir::StringType&) -> std::optional<mir::Type> {
+            return mir::Type{mir::LibraryType{
+                .decl = support::LibraryDecl::kString, .args = {}}};
           },
-          [](const hir::DynamicType&) -> mir::Type {
-            return mir::Type{mir::AnyType{}};
+          [](const hir::DynamicType&) -> std::optional<mir::Type> {
+            return mir::Type{mir::LibraryType{
+                .decl = support::LibraryDecl::kAny, .args = {}}};
           },
           // LRM 6.17: an event is a handle to a synchronization object, so
           // it is held, copied, compared and nulled as a class handle is.
-          [&](const hir::EventType&) -> mir::Type {
+          [&](const hir::EventType&) -> std::optional<mir::Type> {
             return unit_.types.Get(unit_.builtins.event);
           },
-          [](const hir::RealType&) -> mir::Type {
-            return mir::Type{mir::RealType{}};
+          // LRM 6.12: a `real` is a C double and a `shortreal` a C float,
+          // and `realtime` is synonymous with `real`.
+          [](const hir::RealType&) -> std::optional<mir::Type> {
+            return mir::Type{mir::RealType{.width = support::FloatWidth::k64}};
           },
-          [](const hir::ShortRealType&) -> mir::Type {
-            return mir::Type{mir::ShortRealType{}};
+          [](const hir::ShortRealType&) -> std::optional<mir::Type> {
+            return mir::Type{mir::RealType{.width = support::FloatWidth::k32}};
           },
-          // LRM 6.12: `realtime` is synonymous with `real`.
-          [](const hir::RealTimeType&) -> mir::Type {
-            return mir::Type{mir::RealType{}};
+          [](const hir::RealTimeType&) -> std::optional<mir::Type> {
+            return mir::Type{mir::RealType{.width = support::FloatWidth::k64}};
           },
-          [](const hir::ChandleType&) -> mir::Type {
-            return mir::Type{mir::ChandleType{}};
+          // LRM 6.14: a chandle holds a pointer a foreign call handed back,
+          // which the simulation never reaches through.
+          [&](const hir::ChandleType&) -> std::optional<mir::Type> {
+            return mir::Type{
+                mir::UnmanagedRefType{.pointee = unit_.builtins.void_type}};
           },
           // A class handle is a managed reference to the class object.
-          [&](const hir::ClassHandleType& src) -> mir::Type {
+          [&](const hir::ClassHandleType& src) -> std::optional<mir::Type> {
             return mir::Type{
                 mir::ManagedRefType{.pointee = ClassPointee(src.class_id)}};
           },
-          [&](const hir::ImportedClassHandleType& src) -> mir::Type {
+          [&](const hir::ImportedClassHandleType& src)
+              -> std::optional<mir::Type> {
             // A handle to an imported runtime-library class is the same managed
             // reference, its pointee the runtime-provided object type.
             return mir::Type{mir::ManagedRefType{
                 .pointee = ImportedRuntimeObjectType(src.klass)}};
           },
           // A handle held weakly refers to the object the handle names.
-          [&](const hir::WeakHandleType& src) -> mir::Type {
+          [&](const hir::WeakHandleType& src) -> std::optional<mir::Type> {
             const mir::TypeId handle = TranslateType(src.handle);
-            return mir::Type{mir::WeakManagedRefType{
-                .pointee = unit_.types.Get(handle)
-                               .Get<mir::ManagedRefType>()
-                               .pointee}};
+            return mir::Type{mir::LibraryType{
+                .decl = support::LibraryDecl::kWeakReference,
+                .args = {unit_.types.Get(handle)
+                             .Get<mir::ManagedRefType>()
+                             .pointee}}};
           },
           // A covergroup instance is an object of the class the covergroup is
           // written as (LRM 19.3), reached through a managed reference as an
           // object of any class is.
-          [&](const hir::CovergroupHandleType& src) -> mir::Type {
+          [&](const hir::CovergroupHandleType& src)
+              -> std::optional<mir::Type> {
             return mir::Type{mir::ManagedRefType{
                 .pointee = CovergroupObjectType(src.covergroup)}};
           },
@@ -305,7 +323,7 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           // definition is unseen is still a pointer to that class: what this
           // unit depends on that unit for is decided by what it reads, and the
           // name alone reads nothing.
-          [&](const hir::UnitObjectType& src) -> mir::Type {
+          [&](const hir::UnitObjectType& src) -> std::optional<mir::Type> {
             return mir::Type{
                 mir::ObjectType{.of = ScopeClassIdentity(src.scope_class)}};
           },
@@ -316,39 +334,33 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           // only that there are several. One kind is held as itself; several
           // are held as the scope every one of them is, and a step viewing
           // the one a select picks out names its kind.
-          [&](const hir::UnitObjectsType& src) -> mir::Type {
-            mir::Type held = src.kinds.size() == 1
-                                 ? mir::Type{mir::ObjectType{
-                                       .of = ScopeClassIdentity(
-                                           src.kinds.front().scope_class)}}
-                                 : mir::Type{mir::RuntimeClassType{
-                                       .which = support::RuntimeClass::kScope}};
+          [&](const hir::UnitObjectsType& src) -> std::optional<mir::Type> {
+            mir::Type held =
+                src.kinds.size() == 1
+                    ? mir::Type{mir::ObjectType{
+                          .of = ScopeClassIdentity(
+                              src.kinds.front().scope_class)}}
+                    : mir::Type{mir::LibraryType{
+                          .decl = support::LibraryDecl::kScope, .args = {}}};
             for (std::size_t d = 0; d < src.ranges.size(); ++d) {
               held = mir::Type{mir::VectorType{
                   .element = unit_.types.Intern(std::move(held))}};
             }
             return held;
           },
-          // What a virtual interface holds is which instance it names, or none
-          // (LRM 25.9): a host pointer compared by identity and null until
-          // assigned, which the instance's lifetime -- the simulation's --
-          // lets it hold without owning anything. That is the chandle's value
-          // exactly, so it is held, copied, compared and stored in containers
-          // as one; an access turns it into a pointer to the unit's object
-          // there, where the access names that unit.
-          [](const hir::VirtualInterfaceType&) -> mir::Type {
-            return mir::Type{mir::ChandleType{}};
+          // What a virtual interface holds is which instance of its interface
+          // it names, or none (LRM 25.9), and the instance lives as long as the
+          // simulation, so the reference owns nothing. An access reaches
+          // through it to the interface's object.
+          [&](const hir::VirtualInterfaceType& src)
+              -> std::optional<mir::Type> {
+            return mir::Type{mir::UnmanagedRefType{
+                .pointee = UnitObjectType(src.scope_class)}};
           },
-          [](const hir::NullType&) -> mir::Type {
-            // The `null` literal names no object, so it carries no class of its
-            // own and is typed as the opaque handle. What it is read at is
-            // whatever it meets: a comparison against a handle brings it to
-            // that handle's type first, because which kind of value it is
-            // decides which runtime object it is, and an opaque handle holds a
-            // bare pointer where a class handle holds a share of ownership.
-            return mir::Type{mir::ChandleType{}};
+          [](const hir::NullType&) -> std::optional<mir::Type> {
+            return std::nullopt;
           },
-          [](const hir::VoidType&) -> mir::Type {
+          [](const hir::VoidType&) -> std::optional<mir::Type> {
             return mir::Type{mir::VoidType{}};
           },
       });

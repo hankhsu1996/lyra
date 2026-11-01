@@ -19,7 +19,9 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -107,7 +109,7 @@ auto ToReal(
     mir::TypeId destination) -> mir::Expr {
   const mir::Type& source = unit.types.Get(block.Get(operand).type);
   // LRM 6.12.1: crossing precisions is the destination type's own conversion.
-  if (source.IsRealFamily()) {
+  if (source.Is<mir::RealType>()) {
     return MakeRealConversionCall(
         support::BuiltinFn::kConvertFrom, operand, destination);
   }
@@ -123,7 +125,7 @@ auto ToIntegral(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
   const mir::Type& source = unit.types.Get(block.Get(operand).type);
-  if (source.IsRealFamily()) {
+  if (source.Is<mir::RealType>()) {
     const mir::ExprId rounded = block.Add(MakeRoundCall(unit, operand));
     return mir::MakeBuiltinCall(
         unit, block.Body(), support::BuiltinFn::kIntegralFromInt, std::nullopt,
@@ -134,7 +136,7 @@ auto ToIntegral(
         unit, block.Body(), operand, destination);
   }
   // LRM 5.9: right-justified into the destination type.
-  if (source.Is<mir::StringType>()) {
+  if (source.IsDeclaredBy(support::LibraryDecl::kString)) {
     return mir::MakeBuiltinCall(
         unit, block.Body(), support::BuiltinFn::kIntegralFromString,
         std::nullopt, {operand}, destination);
@@ -200,18 +202,18 @@ auto MakeBytesFromTextCall(
 
 // Whether `type` is an unpacked array of any of the four kinds.
 auto IsUnpackedArrayKind(const mir::Type& type) -> bool {
-  return type.Is<mir::UnpackedArrayType>() ||
-         type.Is<mir::DynamicArrayType>() || type.Is<mir::QueueType>() ||
-         type.Is<mir::AssociativeArrayType>();
+  return type.ContainerElementType().has_value();
 }
 
-// Whether the two arrays are of one kind at their outermost dimension.
+// Whether the two arrays are of one kind at their outermost dimension: both of
+// fixed size, or both declared by one declaration of the library's.
 auto AreOneKind(const mir::Type& a, const mir::Type& b) -> bool {
-  return (a.Is<mir::UnpackedArrayType>() && b.Is<mir::UnpackedArrayType>()) ||
-         (a.Is<mir::DynamicArrayType>() && b.Is<mir::DynamicArrayType>()) ||
-         (a.Is<mir::QueueType>() && b.Is<mir::QueueType>()) ||
-         (a.Is<mir::AssociativeArrayType>() &&
-          b.Is<mir::AssociativeArrayType>());
+  if (a.Is<mir::UnpackedArrayType>() || b.Is<mir::UnpackedArrayType>()) {
+    return a.Is<mir::UnpackedArrayType>() && b.Is<mir::UnpackedArrayType>();
+  }
+  const auto* left = a.As<mir::LibraryType>();
+  const auto* right = b.As<mir::LibraryType>();
+  return left != nullptr && right != nullptr && left->decl == right->decl;
 }
 
 // The type of the array kind `array` is -- its count, its bound, its index
@@ -225,14 +227,8 @@ auto WithElement(
         mir::Type{mir::UnpackedArrayType{
             .element_type = element, .count = fixed->count}});
   }
-  if (held.Is<mir::DynamicArrayType>()) {
-    return types.Intern(
-        mir::Type{mir::DynamicArrayType{.element_type = element}});
-  }
-  if (const auto* queue = held.As<mir::QueueType>()) {
-    return types.Intern(
-        mir::Type{mir::QueueType{
-            .element_type = element, .max_bound = queue->max_bound}});
+  if (held.IsLibrarySequence()) {
+    return mir::WithElementType(types, array, element);
   }
   RefuseConversion("an array of another element type");
 }
@@ -243,10 +239,10 @@ auto FromArrayEntry(const mir::Type& destination) -> support::BuiltinFn {
   if (destination.Is<mir::UnpackedArrayType>()) {
     return support::BuiltinFn::kUnpackedArrayFromArray;
   }
-  if (destination.Is<mir::DynamicArrayType>()) {
+  if (destination.IsDeclaredBy(support::LibraryDecl::kDynamicArray)) {
     return support::BuiltinFn::kDynamicArrayFromArray;
   }
-  if (destination.Is<mir::QueueType>()) {
+  if (destination.IsDeclaredBy(support::LibraryDecl::kQueue)) {
     return support::BuiltinFn::kQueueFromArray;
   }
   RefuseConversion("an array of another kind");
@@ -334,7 +330,7 @@ auto ToFixedSizeArray(
     return ToArrayOfAnotherType(unit, block, operand, destination);
   }
   if (IsArrayOfBytes(unit, array)) {
-    if (source.Is<mir::StringType>()) {
+    if (source.IsDeclaredBy(support::LibraryDecl::kString)) {
       return MakeBytesFromTextCall(
           operand, destination, support::BuiltinFn::kByteArrayFromString);
     }
@@ -392,13 +388,6 @@ auto BuildValueConversion(
   if (operand_expr.type == dst_type) {
     return operand_expr;
   }
-  // LRM 8.4: `null` is a value of every class-handle type, so what a null
-  // literal denotes is decided by where it is used and by nothing it carries.
-  // It is the literal that is polymorphic rather than any pair of types, which
-  // is why this reads the operand rather than the conversion's endpoints.
-  if (std::holds_alternative<mir::NullLiteral>(operand_expr.data)) {
-    return mir::Expr{.data = mir::NullLiteral{}, .type = dst_type};
-  }
 
   // A type no conversion answers a value of: the source language converts
   // nothing into it, or no declaration of the source language names it.
@@ -410,38 +399,36 @@ auto BuildValueConversion(
           [&](const mir::RealType&) {
             return ToReal(unit, block, operand_id, dst_type);
           },
-          [&](const mir::ShortRealType&) {
-            return ToReal(unit, block, operand_id, dst_type);
-          },
           [&](const mir::IntegralType&) {
             return ToIntegral(unit, block, operand_id, dst_type);
           },
           [&](const mir::EnumType&) {
             return ToIntegral(unit, block, operand_id, dst_type);
           },
-          [&](const mir::StringType&) {
-            return ToString(unit, block, operand_id, dst_type);
-          },
           [&](const mir::UnpackedArrayType&) {
             return ToFixedSizeArray(unit, block, operand_id, dst_type);
-          },
-          [&](const mir::DynamicArrayType&) {
-            return ToContainer(unit, block, operand_id, dst_type);
-          },
-          [&](const mir::QueueType&) {
-            return ToContainer(unit, block, operand_id, dst_type);
-          },
-          [&](const mir::AssociativeArrayType&) {
-            return ToContainer(unit, block, operand_id, dst_type);
           },
           [&](const mir::ManagedRefType&) {
             return ToClassHandle(unit, block, operand_id, dst_type);
           },
-          [&](const mir::WildcardIndexType&) {
-            return ToWildcardIndex(unit, block, operand_id, dst_type);
+          // Of the types the library declares, a value is converted into a
+          // container sized while the program runs, a string (LRM 6.16), and
+          // an index of a wildcard-indexed array, which an integral value
+          // names as an index kept with its type (LRM 7.8.1); nothing is
+          // converted into any other.
+          [&](const mir::LibraryType& t) {
+            const mir::Type& to = unit.types.Get(dst_type);
+            if (to.IsLibraryContainer()) {
+              return ToContainer(unit, block, operand_id, dst_type);
+            }
+            if (to.IsDeclaredBy(support::LibraryDecl::kString)) {
+              return ToString(unit, block, operand_id, dst_type);
+            }
+            if (to.IsDeclaredBy(support::LibraryDecl::kWildcardIndex)) {
+              return ToWildcardIndex(unit, block, operand_id, dst_type);
+            }
+            return none(t);
           },
-          [&](const mir::AnyType& t) { return none(t); },
-          [&](const mir::WeakManagedRefType& t) { return none(t); },
           [&](const mir::ErasedValueType& t) { return none(t); },
           [&](const mir::MachineCStringType& t) { return none(t); },
           [&](const mir::MachineBoolType& t) { return none(t); },
@@ -450,14 +437,8 @@ auto BuildValueConversion(
           [&](const mir::MachineArrayType& t) { return none(t); },
           [&](const mir::MachineSpanType& t) { return none(t); },
           [&](const mir::MachineFunctionType& t) { return none(t); },
-          [&](const mir::ChandleType& t) { return none(t); },
           [&](const mir::VoidType& t) { return none(t); },
           [&](const mir::ObjectType& t) { return none(t); },
-          [&](const mir::RuntimeClassType& t) { return none(t); },
-          [&](const mir::RuntimeEffectsType& t) { return none(t); },
-          [&](const mir::FilesType& t) { return none(t); },
-          [&](const mir::DiagnosticType& t) { return none(t); },
-          [&](const mir::RuntimeLibraryType& t) { return none(t); },
           [&](const mir::CoroutineType& t) { return none(t); },
           // LRM 13.5.2: a `ref` formal binds an actual of an equivalent type,
           // and a `const ref` one takes it read-only, so what the actual
@@ -474,10 +455,10 @@ auto BuildValueConversion(
           },
           [&](const mir::ReferenceWrapperType& t) { return none(t); },
           [&](const mir::PointerType& t) { return none(t); },
+          [&](const mir::UnmanagedRefType& t) { return none(t); },
           [&](const mir::ReferenceType& t) { return none(t); },
           [&](const mir::VectorType& t) { return none(t); },
           [&](const mir::TupleType& t) { return none(t); },
-          [&](const mir::EmptyType& t) { return none(t); },
           [&](const mir::ObservableType& t) { return none(t); },
           [&](const mir::ResolvedType& t) { return none(t); },
           [&](const mir::DriverType& t) { return none(t); },
@@ -485,9 +466,6 @@ auto BuildValueConversion(
           [&](const mir::DesignationType& t) { return none(t); },
           [&](const mir::BitsReferenceType& t) { return none(t); },
           [&](const mir::ObjectWriteType& t) { return none(t); },
-          [&](const mir::SampledHistoryType& t) { return none(t); },
-          [&](const mir::EvaluationAttemptsType& t) { return none(t); },
-          [&](const mir::LoopBlocksType& t) { return none(t); },
           [&](const mir::RecordType& t) { return none(t); },
           [&](const mir::ClosureType& t) { return none(t); },
           [&](const mir::ErasedCallableType& t) { return none(t); },

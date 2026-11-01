@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
+#include "lyra/backend/llvm/entry_realizations.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -19,6 +20,8 @@
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
+#include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/integral.hpp"
 
@@ -76,8 +79,9 @@ auto ValuesHeldBy(const lir::Type& type) -> std::optional<lir::TypeId> {
           WrapperOf(type)) {
     return wrapper->second;
   }
-  if (const auto* history = type.As<lir::SampledHistoryType>()) {
-    return history->value;
+  // A type the library declares holds the values its declaration says.
+  if (const auto* library = type.As<lir::LibraryType>()) {
+    return library->FindValuesHeld();
   }
   if (const auto* designation = type.As<lir::DesignationType>()) {
     return designation->value;
@@ -252,14 +256,14 @@ auto ToldModeOf(
             if (t.after != index) {
               return std::nullopt;
             }
-            const auto* keyed = pool.Get(own).As<lir::AssociativeArrayType>();
-            if (keyed == nullptr) {
+            const std::optional<lir::TypeId> key = pool.Get(own).IndexType();
+            if (!key.has_value()) {
               throw InternalError(
                   "llvm codegen: a realization told the type a memory's keys "
                   "are built at is handed no associative array -- please "
                   "report this as a bug");
             }
-            return PassWithType{.type = keyed->key_type};
+            return PassWithType{.type = *key};
           },
           [&](const ToldEntryType& t) -> Mode {
             if (t.after != index) {
@@ -365,7 +369,10 @@ auto TypeArgsToldAs(
       if (built.Is<lir::UnpackedArrayType>()) {
         return {TypeConstantArg{.type = answered}};
       }
-      if (built.Is<lir::QueueType>()) {
+      // A queue is told its whole type, whose bound is part of it (LRM
+      // 7.10).
+      if (const auto* library = built.As<lir::LibraryType>();
+          library != nullptr && library->FindBound().has_value()) {
         return {QueueTypeArg{.type = answered}};
       }
       const std::optional<lir::TypeId> element = built.ContainerElementType();
@@ -376,10 +383,8 @@ auto TypeArgsToldAs(
       }
       // An associative array holds its entries in the order its index type
       // imposes (LRM 7.8), which it is built holding.
-      if (const auto* keyed = built.As<lir::AssociativeArrayType>()) {
-        return {
-            IndexOrderArg{.key = keyed->key_type},
-            ElementTypeArg{.type = *element}};
+      if (const std::optional<lir::TypeId> key = built.IndexType()) {
+        return {IndexOrderArg{.key = *key}, ElementTypeArg{.type = *element}};
       }
       return {ElementTypeArg{.type = *element}};
     }
@@ -702,77 +707,12 @@ auto CallArranger::ConstructionOf(
         "'--backend llvm'",
         types.Get(result).KindName());
   };
-  // An entry named by the representation of the value the construction is built
-  // over, which the call's first operand refers to. An integral value has one
-  // entry serving every integral type, where every other value has its
-  // domain's.
-  const auto over_operand = [&](RuntimeOp of_a_domain,
-                                RuntimeOp of_an_integral) -> Built {
-    const std::optional<lir::TypeId> referred =
-        types.Get(OperandType(call.args.at(0))).Pointee();
-    if (!referred.has_value()) {
-      throw InternalError(
-          "llvm codegen: a print item or a format operand is built over a "
-          "value rather than a reference to it -- please report this as a "
-          "bug");
-    }
-    const lir::TypeId operand = *referred;
-    if (module_->Types().IntegralShapeOf(operand).has_value()) {
-      return entry(of_an_integral);
-    }
-    auto domain = module_->DomainOf(operand);
-    if (!domain) {
-      return std::unexpected(std::move(domain.error()));
-    }
-    return entry_over(*domain, operand, of_a_domain);
-  };
-  const auto real_from_host = [&]() -> Built {
-    if (!types.Get(OperandType(call.args.at(0))).Is<lir::MachineFloatType>()) {
-      return Unsupported(
-          "building a value of type '{}' from a host scalar is not yet "
-          "supported with '--backend llvm'",
-          types.Get(result).KindName());
-    }
-    auto domain = module_->DomainOf(result);
-    if (!domain) {
-      return std::unexpected(std::move(domain.error()));
-    }
-    return entry_over(*domain, result, RuntimeOp::kConst);
-  };
   return types.Get(result).Visit(
       Overloaded{
-          [&](const lir::StringType&) -> Built {
-            return entry_over(
-                support::ValueDomain::kString, result, RuntimeOp::kMake);
-          },
-          // LRM 6.14: a chandle is a host pointer, so the domain carries its
-          // value inline and what comes into existence is the pointer the
-          // boundary handed back.
-          [&](const lir::ChandleType&) -> Built {
-            return entry_over(
-                support::ValueDomain::kChandle, result, RuntimeOp::kMake);
-          },
-          // LRM 7.8.1: a wildcard index is built over the integral value it
-          // is, which keeps the type it was written in.
-          [&](const lir::WildcardIndexType&) -> Built {
-            return entry(RuntimeOp::kMakeWildcardIndex);
-          },
           [&](const lir::ClosureType&) -> Built {
             throw InternalError(
                 "llvm codegen: a closure is built by an instruction of its "
                 "own, never by a construction -- please report this as a bug");
-          },
-          // A container is built over an element list laid down a stated number
-          // of times, and a queue holds as many as the bound its type declares
-          // admits (LRM 7.10.5), which the entry is told with that type.
-          [&](const lir::DynamicArrayType&) -> Built {
-            return entry_over(
-                support::ValueDomain::kDynArray, result,
-                RuntimeOp::kFromLiteral);
-          },
-          [&](const lir::QueueType&) -> Built {
-            return entry_over(
-                support::ValueDomain::kQueue, result, RuntimeOp::kFromLiteral);
           },
           // A fixed-size unpacked array's type fixes how many elements it has,
           // so its element list is all it is built over.
@@ -781,13 +721,6 @@ auto CallArranger::ConstructionOf(
                 support::ValueDomain::kLaidOut, result,
                 RuntimeOp::kFromElements);
           },
-          // LRM 7.8: the index type imposes the order the entries are held in,
-          // which the array is built holding.
-          [&](const lir::AssociativeArrayType&) -> Built {
-            return entry_over(
-                support::ValueDomain::kAssocArray, result,
-                RuntimeOp::kFromEntries);
-          },
           // A sequence outlives the body that built it -- the owner keeps
           // its address, and a dimension above it keeps that address as an
           // ordinary element -- so the runtime takes the handles rather than
@@ -795,87 +728,17 @@ auto CallArranger::ConstructionOf(
           [&](const lir::VectorType&) -> Built {
             return entry(RuntimeOp::kSequenceMake);
           },
-          [&](const lir::RuntimeLibraryType& r) -> Built {
-            switch (r.kind) {
-              // A run of bits is constructed holding none; every bit it holds
-              // is laid onto it afterwards (LRM 11.4.14.1).
-              case lir::RuntimeLibraryKind::kBitVec:
-                return entry_over(
-                    support::ValueDomain::kBitVec, result, RuntimeOp::kDefault);
-              case lir::RuntimeLibraryKind::kHierarchySegment:
-                return entry(RuntimeOp::kMakeSegment);
-              case lir::RuntimeLibraryKind::kTrigger:
-                return entry(RuntimeOp::kMakeTrigger);
-              case lir::RuntimeLibraryKind::kFormatSpec:
-                return entry(RuntimeOp::kMakeFormatSpec);
-              // What a value formats as is the value's own answer, so both of
-              // these are named by the representation of what they are built
-              // over, which each is handed a reference to. A print item made
-              // from text is made by a factory of its own.
-              case lir::RuntimeLibraryKind::kPrintItem:
-                return over_operand(
-                    RuntimeOp::kMakePrintValueItem,
-                    RuntimeOp::kMakeIntegralPrintValueItem);
-              case lir::RuntimeLibraryKind::kFormatArg:
-                return over_operand(
-                    RuntimeOp::kMakeFormatArg,
-                    RuntimeOp::kMakeIntegralFormatArg);
-              // The DPI-C boundary temporaries (LRM 35.5.6.1, Annex H.7.7).
-              // Each images one SV value in the canonical form the C side
-              // reads, so the entry is one function over every value it can
-              // image: a vector's reads its bits, and an open array's is
-              // handed the actual with its type.
-              case lir::RuntimeLibraryKind::kDpiBitBuffer:
-                return entry(RuntimeOp::kMakeDpiBitBuffer);
-              case lir::RuntimeLibraryKind::kDpiLogicBuffer:
-                return entry(RuntimeOp::kMakeDpiLogicBuffer);
-              case lir::RuntimeLibraryKind::kDpiOpenArray:
-                return entry(RuntimeOp::kMakeDpiOpenArray);
-              // The rest come into existence some other way, so a construction
-              // naming one would have nothing to call. A time format, an
-              // open-array handle, a control effect, an observation and a
-              // keeper a deferred closure is emplaced in are what some other
-              // entry answers with, and so are a read report and a held wait; a
-              // chunk is the element type a canonical buffer's pointer
-              // addresses rather than a value; a cancellation target, a timer
-              // and a channel's joint cancel state are storage the owner holds
-              // and reaches by address; and a write into an object is opened by
-              // the entry that opens it.
-              case lir::RuntimeLibraryKind::kTimeFormat:
-              case lir::RuntimeLibraryKind::kDpiBitChunk:
-              case lir::RuntimeLibraryKind::kDpiLogicChunk:
-              case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
-              case lir::RuntimeLibraryKind::kWatchedPlace:
-              case lir::RuntimeLibraryKind::kControlEffect:
-              case lir::RuntimeLibraryKind::kObservation:
-              case lir::RuntimeLibraryKind::kReadReport:
-              case lir::RuntimeLibraryKind::kWait:
-              case lir::RuntimeLibraryKind::kLeasedReference:
-              case lir::RuntimeLibraryKind::kObjectWrite:
-              case lir::RuntimeLibraryKind::kCancellationTarget:
-              case lir::RuntimeLibraryKind::kTimer:
-              case lir::RuntimeLibraryKind::kDeferredEffects:
-              case lir::RuntimeLibraryKind::kViolationReportKeeper:
-              case lir::RuntimeLibraryKind::kChannelCancellation:
-              // A class's definition, what a definition is made of, an
-              // enumeration's member table and a construction table are
-              // constants a unit emits, so a body names one and never builds
-              // one.
-              case lir::RuntimeLibraryKind::kEnumeration:
-              case lir::RuntimeLibraryKind::kObjectDefinition:
-              case lir::RuntimeLibraryKind::kScopeInfo:
-              case lir::RuntimeLibraryKind::kScopeCallable:
-              case lir::RuntimeLibraryKind::kClassObjectInfo:
-              case lir::RuntimeLibraryKind::kInterfaceRow:
-              case lir::RuntimeLibraryKind::kScopeMetadata:
-              case lir::RuntimeLibraryKind::kConstructionTable:
-              case lir::RuntimeLibraryKind::kInstantiation:
-              case lir::RuntimeLibraryKind::kGeneratePlaces:
-              case lir::RuntimeLibraryKind::kDumpEntry:
-              case lir::RuntimeLibraryKind::kDumpBlock:
-                return no_construct();
+          // A type the library declares is built by the constructor its
+          // declaration names, where it names one; the rest come into
+          // existence some other way, so a construction naming one would have
+          // nothing to call.
+          [&](const lir::LibraryType& l) -> Built {
+            const std::optional<support::LibraryConstructor> constructor =
+                support::DeclarationOf(l.decl).constructor;
+            if (!constructor.has_value()) {
+              return no_construct();
             }
-            throw InternalError("llvm codegen: unknown runtime library kind");
+            return ConstructorEntryOf(*constructor, call, result);
           },
           // A shared owner answers with a hold, because what it brings into
           // existence outlives the scope that asked for it and ends with the
@@ -903,15 +766,8 @@ auto CallArranger::ConstructionOf(
                 if (!domain) {
                   return std::unexpected(std::move(domain.error()));
                 }
-                return Construction{
-                    .symbol =
-                        RuntimeSymbol(*domain, RuntimeOp::kSharedCellMake),
-                    .operands = OperandReadingsOf(RuntimeOp::kSharedCellMake),
-                    .realization =
-                        Realization{
-                            .told = ToldOf(*domain, RuntimeOp::kSharedCellMake),
-                            .of = cell->value},
-                    .answer_told = AnswerToldOf(RuntimeOp::kSharedCellMake)};
+                return entry_over(
+                    *domain, cell->value, RuntimeOp::kSharedCellMake);
               }
               case lir::PointerOwnership::kBorrowed:
                 return no_construct();
@@ -923,41 +779,12 @@ auto CallArranger::ConstructionOf(
           [&](const lir::ManagedRefType&) -> Built {
             return entry(RuntimeOp::kObjectAdopt);
           },
-          // Landing a machine integer in a real and reshaping across precisions
-          // are named conversions, so what reaches the real family here is a
-          // build over a host scalar: a constant of the destination's own
-          // precision. Anything else the boundary hands back has no entry.
-          [&](const lir::RealType&) -> Built { return real_from_host(); },
-          [&](const lir::ShortRealType&) -> Built { return real_from_host(); },
-          // A value carrying no bits has exactly one value (a tagged union's
-          // void member, LRM 7.3.2), so its construction takes nothing and
-          // yields that value.
-          [&](const lir::EmptyType&) -> Built {
-            return entry_over(
-                support::ValueDomain::kEmpty, result, RuntimeOp::kDefault);
-          },
-          // A value of any type is built holding none, the one construction it
-          // has (LRM 15.4.9).
-          [&](const lir::AnyType&) -> Built {
-            return entry_over(
-                support::ValueDomain::kAny, result, RuntimeOp::kDefault);
-          },
           // A reference to a value of any type is built referring to nothing,
           // which receives nothing (LRM 15.4.9).
           [&](const lir::AnyReferenceType&) -> Built {
             return Construction{
                 .symbol = RuntimeSymbol(
                     support::LibraryObject::kAnyReference, RuntimeOp::kDefault),
-                .operands = OperandReadingsOf(RuntimeOp::kDefault),
-                .realization = std::nullopt,
-                .answer_told = AnswerToldOf(RuntimeOp::kDefault)};
-          },
-          // A weak reference is built referring to nothing (LRM 8.30).
-          [&](const lir::WeakManagedRefType&) -> Built {
-            return Construction{
-                .symbol = RuntimeSymbol(
-                    support::LibraryObject::kWeakReference,
-                    RuntimeOp::kDefault),
                 .operands = OperandReadingsOf(RuntimeOp::kDefault),
                 .realization = std::nullopt,
                 .answer_told = AnswerToldOf(RuntimeOp::kDefault)};
@@ -972,6 +799,9 @@ auto CallArranger::ConstructionOf(
           // A value that is a vector of bits, or a host scalar standing beside
           // one.
           [&](const lir::IntegralType&) -> Built { return no_construct(); },
+          // A real is the machine float of its width, which a conversion from
+          // that float states.
+          [&](const lir::RealType&) -> Built { return no_construct(); },
           [&](const lir::MachineBoolType&) -> Built { return no_construct(); },
           [&](const lir::MachineIntType&) -> Built { return no_construct(); },
           [&](const lir::MachineFloatType&) -> Built { return no_construct(); },
@@ -979,6 +809,9 @@ auto CallArranger::ConstructionOf(
             return no_construct();
           },
           [&](const lir::VoidType&) -> Built { return no_construct(); },
+          // A reference owning nothing is the address it is given, which a
+          // conversion from that address states.
+          [&](const lir::UnmanagedRefType&) -> Built { return no_construct(); },
 
           // Aggregates this layer lays out itself, and the code address of a
           // body.
@@ -1001,7 +834,6 @@ auto CallArranger::ConstructionOf(
           // construction of the unique owner whose pointee it is, so the node
           // type itself never names an entry.
           [&](const lir::ObjectType&) -> Built { return no_construct(); },
-          [&](const lir::RuntimeClassType&) -> Built { return no_construct(); },
 
           // A reference is bound to storage that already exists, naming it
           // rather than bringing it about, so nothing constructs one.
@@ -1012,26 +844,99 @@ auto CallArranger::ConstructionOf(
           [&](const lir::ObservableType&) -> Built { return no_construct(); },
           [&](const lir::ResolvedType&) -> Built { return no_construct(); },
           [&](const lir::DriverType&) -> Built { return no_construct(); },
-          [&](const lir::SampledHistoryType&) -> Built {
-            return no_construct();
-          },
-          [&](const lir::EvaluationAttemptsType&) -> Built {
-            return no_construct();
-          },
-          [&](const lir::LoopBlocksType&) -> Built { return no_construct(); },
           // A write is opened by the wrapper it writes through, which is an
           // operation on the wrapper rather than a value anything builds, and
           // a part designated within it is built by the step that reaches it.
           [&](const lir::OpenWriteType&) -> Built { return no_construct(); },
           [&](const lir::DesignationType&) -> Built { return no_construct(); },
-
-          // A stable runtime facade, realized as a live reference rather than
-          // as a value anything builds.
-          [&](const lir::RuntimeEffectsType&) -> Built {
+          // A write into an object's properties is opened on the object,
+          // which is an operation on the object rather than a value anything
+          // builds.
+          [&](const lir::ObjectWriteType&) -> Built {
             return no_construct();
+          }});
+}
+
+auto CallArranger::ConstructorEntryOf(
+    const support::LibraryConstructor& declaring, const lir::CallInstr& call,
+    lir::TypeId result) const -> diag::Result<Construction> {
+  using Built = diag::Result<Construction>;
+  const lir::TypePool& types = module_->Unit().types;
+  const support::BuiltinFn constructor = declaring.entry;
+  const support::RuntimeEntry declared = support::RuntimeEntryOf(constructor);
+  // The constructor `fn` realized once, and the declared constructor realized
+  // for the domain values of `of` are held in.
+  const auto alone = [](support::BuiltinFn fn) -> Built {
+    const support::RuntimeEntry entry = support::RuntimeEntryOf(fn);
+    return Construction{
+        .symbol = RuntimeSymbol(fn),
+        .operands = entry.operands,
+        .realization = std::nullopt,
+        .answer_told = entry.answer_told};
+  };
+  const auto over = [&](lir::TypeId of) -> Built {
+    auto domain = module_->DomainOf(of);
+    if (!domain) {
+      return std::unexpected(std::move(domain.error()));
+    }
+    return Construction{
+        .symbol = RuntimeSymbol(*domain, constructor),
+        .operands = declared.operands,
+        .realization =
+            Realization{.told = ToldOf(*domain, constructor), .of = of},
+        .answer_told = declared.answer_told};
+  };
+  return std::visit(
+      Overloaded{
+          [&](const NamedAlone&) { return alone(constructor); },
+          [&](const NamedByResult&) { return over(result); },
+          // What a value formats as is the value's own answer, and a
+          // construction over a value is handed a reference to it, so the
+          // entry is named by the representation of what that reference
+          // reaches -- or is the one serving every integral value.
+          [&](const NamedByValue& named) -> Built {
+            const std::optional<lir::TypeId> referred =
+                types.Get(OperandType(call.args.at(named.operand))).Pointee();
+            if (!referred.has_value()) {
+              throw InternalError(
+                  "llvm codegen: a construction over a value is handed the "
+                  "value rather than a reference to it -- please report this "
+                  "as a bug");
+            }
+            if (module_->Types().IntegralShapeOf(*referred).has_value() &&
+                declaring.integral_entry.has_value()) {
+              return alone(*declaring.integral_entry);
+            }
+            return over(*referred);
           },
-          [&](const lir::FilesType&) -> Built { return no_construct(); },
-          [&](const lir::DiagnosticType&) -> Built { return no_construct(); }});
+          [&](const NamedByWrapper&) -> Built {
+            throw InternalError(
+                "llvm codegen: a constructor is named by the storage a wrapper "
+                "stands for -- please report this as a bug");
+          },
+          [&](const NamedByStorageDomain&) -> Built {
+            throw InternalError(
+                "llvm codegen: a constructor is named by the storage it acts "
+                "on -- please report this as a bug");
+          },
+          [&](const NamedByConversion&) -> Built {
+            throw InternalError(
+                "llvm codegen: a constructor is named as a conversion -- "
+                "please report this as a bug");
+          },
+          [&](const OverIntegralValues&) -> Built {
+            return Unsupported(
+                "the construction '{}' over integral values is not yet "
+                "supported with '--backend llvm'",
+                declared.name);
+          },
+          [&](const NotRealized& unrealized) -> Built {
+            return Unsupported(
+                "the construction '{}', which {}, is not yet supported with "
+                "'--backend llvm'",
+                declared.name, unrealized.shape);
+          }},
+      EntryNamingOf(constructor));
 }
 
 auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)

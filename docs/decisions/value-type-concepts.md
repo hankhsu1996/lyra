@@ -190,14 +190,18 @@ just another runtime library API.
 
 `Real` / `ShortReal` wrap `double` / `float` and satisfy `LyraValue`, `CaseEqualComparable` and
 `Ordered`, and their `===` compares values. `RealTime` is the same C++ type as `Real` per LRM
-6.12.1. The runtime exposes the full LRM operator surface -- arithmetic (`+` / `-` / `*` / `/` /
+6.12.1. The class exposes the full LRM operator surface -- arithmetic (`+` / `-` / `*` / `/` /
 `**`), unary negation, relational (`<` / `<=` / `>` / `>=` returning a 1-bit `PackedArray`),
 equality (`==` / `!=` returning 1-bit `PackedArray`), `IsBitIdentical` via
 `std::bit_cast<std::uint64_t>(double)` so `+0.0` / `-0.0` and NaN bit-patterns classify by identity
-(required for LRM 9.4.2 update-event detection), and the SV `int<->real` conversions. HIR-to-MIR's
-observable wrap rule treats `RealType` / `ShortRealType` like any other value-storage type (a
-`realtime` is a `real` there, LRM 6.12); a module-level `real` signal is observable through the same
-mechanism as a module-level `int` signal.
+(required for LRM 9.4.2 update-event detection), and the SV `int<->real` conversions. Each class is
+its float and nothing besides, laid out and copied as that float, because MIR lays a real out as the
+IEEE 754 value of its width ([a-value-is-its-machine-data](a-value-is-its-machine-data.md) D1): the
+execution backend computes the arithmetic and the comparisons itself, and the library keeps what it
+has content for -- a cell, a container, the conversions, `**`, printing. HIR-to-MIR's observable
+wrap rule treats a real of either width like any other value-storage type (a `realtime` is a `real`
+there, LRM 6.12); a module-level `real` signal is observable through the same mechanism as a
+module-level `int` signal.
 
 ## Forbidden shapes
 

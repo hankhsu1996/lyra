@@ -50,8 +50,8 @@ enum class ValueDomain : std::uint8_t {
   kBitVec,
   kReal,
   kShortReal,
-  kChandle,
-  kEmpty,
+  // A reference that owns nothing: one address, or null.
+  kUnmanagedRef,
   // A value laid out by a type the design is compiled with, which the type it
   // is told describes: a structure, a union, a tuple a lowering composes, or a
   // fixed-size unpacked array. The library does what it does with one by the
@@ -71,10 +71,5 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view;
 // Whether a value of this domain is the bytes a type the design is compiled
 // with lays out, rather than an object of the library's.
 auto IsLaidOutByItsType(ValueDomain domain) -> bool;
-
-// Whether a value of this domain is an integral value no wider than a word,
-// whose layout the domain states whole. What holds one is the bytes
-// themselves, read where the holder lies.
-auto IsIntegralLayout(ValueDomain domain) -> bool;
 
 }  // namespace lyra::support

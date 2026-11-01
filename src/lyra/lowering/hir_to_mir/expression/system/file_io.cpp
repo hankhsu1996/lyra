@@ -35,6 +35,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -142,7 +143,8 @@ auto LowerFileFlushCall(
 auto RequireStringDestination(
     const mir::CompilationUnit& unit, mir::TypeId destination,
     std::string_view name, diag::SourceSpan span) -> diag::Result<void> {
-  if (unit.types.Get(destination).Is<mir::StringType>()) return {};
+  if (unit.types.Get(destination).IsDeclaredBy(support::LibraryDecl::kString))
+    return {};
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
       "'{}' into an integral destination, whose width bounds the read, is not "

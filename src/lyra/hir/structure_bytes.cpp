@@ -245,7 +245,7 @@ class Writer {
             },
             [&](const VirtualInterfaceType& t) {
               Mark('V');
-              Reference(t.unit_name, support::DefPath{});
+              ScopeClass(t.scope_class);
             },
             [&](const NullType&) { Mark('n'); },
             [&](const DynamicType&) { Mark('y'); },

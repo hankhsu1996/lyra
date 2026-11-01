@@ -4,8 +4,8 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/lir/type.hpp"
 #include "lyra/support/layout.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace llvm {
@@ -51,7 +51,7 @@ struct LibraryRecordLayout {
 };
 
 // Throws for a kind no constant is stated as.
-[[nodiscard]] auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
+[[nodiscard]] auto LayoutOfLibraryRecord(support::LibraryDecl decl)
     -> LibraryRecordLayout;
 
 // A constant the runtime library reads as one of its own structures, laid out

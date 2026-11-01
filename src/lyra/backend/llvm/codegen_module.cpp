@@ -29,7 +29,9 @@
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
 #include "lyra/backend/llvm/codegen_function.hpp"
+#include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/constant_record.hpp"
+#include "lyra/backend/llvm/entry_realizations.hpp"
 #include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/machine_signature.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
@@ -45,7 +47,6 @@
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/callable_bounds.hpp"
-#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/enumeration.hpp"
@@ -544,6 +545,9 @@ auto CodeGenModule::EmitLibraryStep(
           [&](support::ValueDomain domain) -> std::optional<Realization> {
             return Realization{.told = ToldOf(domain, op), .of = type};
           },
+          [](support::LibraryDecl) -> std::optional<Realization> {
+            return std::nullopt;
+          },
           [](support::LibraryObject) -> std::optional<Realization> {
             return std::nullopt;
           }},
@@ -604,7 +608,7 @@ auto CodeGenModule::NameConstant(std::string_view name) -> llvm::Constant* {
 
 auto CodeGenModule::RecordData(const lir::ConstantRecord& record)
     -> llvm::Constant* {
-  const LibraryRecordLayout layout = LayoutOfLibraryRecord(record.kind);
+  const LibraryRecordLayout layout = LayoutOfLibraryRecord(record.decl);
   if (layout.fields.size() != record.parts.size()) {
     throw InternalError(
         std::format(
@@ -728,7 +732,7 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
           [&](const lir::ConstantRecord& record) {
             return DefineConstant(
                 symbol, RecordData(record), LinkageOf(constant.linkage),
-                llvm::Align(LayoutOfLibraryRecord(record.kind).layout.align));
+                llvm::Align(LayoutOfLibraryRecord(record.decl).layout.align));
           },
           // Every element of an array is of one type, so the first says what
           // the array is of; an array of none holds nothing of any type.
@@ -741,7 +745,7 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
                   Overloaded{
                       [&](const lir::ConstantRecord& record) {
                         elements.push_back(RecordData(record));
-                        align = LayoutOfLibraryRecord(record.kind).layout.align;
+                        align = LayoutOfLibraryRecord(record.decl).layout.align;
                       },
                       [&](const lir::ConstantFunction& function) {
                         elements.push_back(UnitFunction(function.function));
@@ -844,10 +848,11 @@ void CodeGenModule::EndObject(
 
 namespace {
 
-// The part the library builds where a class extends one of its classes, which
-// holds the object's class's definition at its start.
-auto LibraryClassPart(support::RuntimeClass which) -> PlacedMembers {
-  const support::ObjectLayout layout = runtime::LayoutOf(which);
+// The part the library builds where a class extends the class of the
+// runtime's `decl` states, which holds the object's class's definition at its
+// start.
+auto LibraryClassPart(support::LibraryDecl decl) -> PlacedMembers {
+  const support::ObjectLayout layout = runtime::LibraryPartLayoutOf(decl);
   return PlacedMembers{
       .types = {},
       .storage = {},
@@ -952,15 +957,15 @@ auto CodeGenModule::PlacedMembersOf(lir::TypeId type)
   }
   const lir::Type& named = unit_->types.Get(type);
   const std::optional<lir::TypeDeclaration> declaration = named.Declaration();
-  const auto* library = named.As<lir::RuntimeClassType>();
-  if (library == nullptr && !declaration.has_value()) {
+  const std::optional<support::LibraryDecl> library = named.RuntimeClassOf();
+  if (!library.has_value() && !declaration.has_value()) {
     throw InternalError(
         "llvm codegen: members are placed for a type that declares no storage "
         "-- please report this as a bug");
   }
   auto laid =
-      library != nullptr
-          ? diag::Result<PlacedMembers>{LibraryClassPart(library->which)}
+      library.has_value()
+          ? diag::Result<PlacedMembers>{LibraryClassPart(*library)}
           : std::visit(
                 Overloaded{
                     [&](const lir::ObjectType&) -> diag::Result<PlacedMembers> {
@@ -1012,28 +1017,37 @@ auto CodeGenModule::AllocationLayoutOf(lir::TypeId type)
 
 auto CodeGenModule::HoldsItsBytesInline(
     lir::TypeId type, support::DeclaredMemberStorage storage) const -> bool {
-  const lir::Type& held = unit_->types.Get(type);
-  switch (storage.kind) {
-    case support::MemberStorageKind::kInlineValue:
-      return lir::IsLaidOutByItsType(held) || held.Is<lir::MachineIntType>() ||
-             held.IsMoveOnly() || types_.IntegralShapeOf(type).has_value();
-    case support::MemberStorageKind::kObservableCell:
-    case support::MemberStorageKind::kResolvedNet:
-    case support::MemberStorageKind::kSampledHistory:
-    case support::MemberStorageKind::kValueCell:
-    case support::MemberStorageKind::kBorrowedHandle:
-    case support::MemberStorageKind::kReference:
-    case support::MemberStorageKind::kAnyReference:
-    case support::MemberStorageKind::kWeakReference:
-    case support::MemberStorageKind::kSharedPointer:
-    case support::MemberStorageKind::kCancellationTarget:
-    case support::MemberStorageKind::kChannelCancellation:
-    case support::MemberStorageKind::kEvaluationAttempts:
-    case support::MemberStorageKind::kTimer:
-    case support::MemberStorageKind::kLoopBlocks:
-      return false;
-  }
-  throw InternalError("llvm codegen: unknown member storage kind");
+  const auto held_elsewhere = [](const auto&) { return false; };
+  return std::visit(
+      Overloaded{
+          // A value of the program held inline is its own bytes where this
+          // target lays it out -- a scalar, or a value laid out by its type --
+          // and an object of the library's otherwise.
+          [&](const support::InlineValueMember&) {
+            const lir::Type& held = unit_->types.Get(type);
+            return lir::IsScalar(held) || lir::IsLaidOutByItsType(held);
+          },
+          [](const support::InlineBytesMember&) { return true; },
+          [&](const support::ObservableCellMember& m) {
+            return held_elsewhere(m);
+          },
+          [&](const support::ResolvedNetMember& m) {
+            return held_elsewhere(m);
+          },
+          [&](const support::SampledHistoryMember& m) {
+            return held_elsewhere(m);
+          },
+          [&](const support::ValueCellMember& m) { return held_elsewhere(m); },
+          [&](const support::BorrowedHandleMember& m) {
+            return held_elsewhere(m);
+          },
+          [&](const support::LibraryDeclMember& m) {
+            return held_elsewhere(m);
+          },
+          [&](const support::LibraryObjectMember& m) {
+            return held_elsewhere(m);
+          }},
+      storage);
 }
 
 auto CodeGenModule::MemberLayout(
@@ -1144,7 +1158,7 @@ auto CodeGenModule::EndStorageAt(
   if (HoldsItsBytesInline(type, storage)) {
     return EmitStep(builder, type, lir::ValueStep::kEnd, args);
   }
-  if (MemberLayout(type, storage).ends_with_nothing_to_do) {
+  if (!MemberLayout(type, storage).needs_end) {
     return {};
   }
   builder.CreateCall(MemberStorageDestructor(storage), args);
@@ -1167,24 +1181,10 @@ auto CodeGenModule::ValueFunction(const std::string& symbol)
           .getCallee());
 }
 
-namespace {
-
-// The library class `type` names, where it names one rather than a declared
-// class.
-auto LibraryClassOf(const lir::TypePool& types, lir::TypeId type)
-    -> std::optional<support::RuntimeClass> {
-  if (const auto* library = types.Get(type).As<lir::RuntimeClassType>()) {
-    return library->which;
-  }
-  return std::nullopt;
-}
-
-}  // namespace
-
 void CodeGenModule::BeginParts(
     llvm::IRBuilderBase& builder, lir::TypeId cls, llvm::Value* value) {
-  if (const std::optional<support::RuntimeClass> library =
-          LibraryClassOf(unit_->types, cls)) {
+  if (const std::optional<support::LibraryDecl> library =
+          unit_->types.Get(cls).RuntimeClassOf()) {
     llvm::Type* const result = types_.Void();
     llvm::Type* const kind = builder.getInt8Ty();
     llvm::Type* const object = types_.Ptr();
@@ -1205,8 +1205,8 @@ void CodeGenModule::BeginParts(
 
 void CodeGenModule::EndParts(
     llvm::IRBuilderBase& builder, lir::TypeId cls, llvm::Value* value) {
-  if (const std::optional<support::RuntimeClass> library =
-          LibraryClassOf(unit_->types, cls)) {
+  if (const std::optional<support::LibraryDecl> library =
+          unit_->types.Get(cls).RuntimeClassOf()) {
     llvm::Type* const result = types_.Void();
     llvm::Type* const kind = builder.getInt8Ty();
     llvm::Type* const object = types_.Ptr();
@@ -1450,7 +1450,7 @@ auto CodeGenModule::StateSharedStorage(
       !built) {
     return built;
   }
-  if (MemberLayout(storage.type, *described).ends_with_nothing_to_do) {
+  if (!MemberLayout(storage.type, *described).needs_end) {
     return {};
   }
   const std::array<llvm::Value*, 3> at_exit{

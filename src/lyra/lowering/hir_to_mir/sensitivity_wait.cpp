@@ -36,6 +36,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -209,7 +210,8 @@ auto BuildObservablePtrExpr(
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kNetReportsTo},
                   .arguments = {net}},
-          .type = mir::WatchedPlace(unit.types)});
+          .type = mir::LibraryTypeOf(
+              unit.types, support::LibraryDecl::kWatchedPlace)});
 }
 
 // Which part of a place a leaf watches, as a wait's trigger and a report take
@@ -318,7 +320,8 @@ auto BuildEventTriggerExpr(
           mir::Direct{
               .target = support::BuiltinFn::kEventReportsTo,
               .receiver = block.LocalPlace(event.handle, unit.builtins.event)},
-          {}, mir::WatchedPlace(unit.types)));
+          {},
+          mir::LibraryTypeOf(unit.types, support::LibraryDecl::kWatchedPlace)));
   const LeafPart whole = WholePlace(unit, block);
   return block.Add(
       mir::Expr{

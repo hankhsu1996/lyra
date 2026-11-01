@@ -51,6 +51,11 @@ using StepRealization = std::variant<
     StepIsBytes, StepByLibrary, StepByFunction, StepThroughDefinition,
     StepThroughPointee, NoSuchStep>;
 
+// Whether a value of `type` is a scalar the IR lays out -- an integral value, a
+// real, a reference owning nothing -- held as its own bytes, which every
+// holder copies, moves and ends as those bytes.
+[[nodiscard]] auto IsScalar(const Type& type) -> bool;
+
 // Whether a value of `type` is the bytes its type lays out -- a tuple, a
 // structure, a union of either kind, a fixed-size unpacked array -- which
 // state nothing of it, so whatever holds one is told the type beside it.

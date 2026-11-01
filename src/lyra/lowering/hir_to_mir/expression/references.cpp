@@ -81,10 +81,6 @@ auto LowerHirStringLiteral(
       .type = type};
 }
 
-auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
-  return mir::Expr{.data = mir::NullLiteral{}, .type = type};
-}
-
 // The object a `randomize() with` call randomizes (LRM 18.7), which the call
 // evaluated once and holds for the constraints written with it.
 auto LowerHirRandomizedObject(const WalkFrame& frame, mir::TypeId type)
@@ -292,8 +288,10 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::RealLiteral& r) -> mir::Expr {
             return LowerHirRealLiteral(process.Owner(), frame, r, result_type);
           },
-          [&](const hir::NullLiteral&) -> mir::Expr {
-            return LowerHirNullLiteral(result_type);
+          [](const hir::NullLiteral&) -> mir::Expr {
+            throw InternalError(
+                "hir_to_mir: `null` is lowered apart from the conversion it is "
+                "the operand of -- please report this as a bug");
           },
           [&](const hir::ThisHandle&) -> mir::Expr {
             return BuildThisHandle(frame);
@@ -353,8 +351,10 @@ auto LowerHirPrimaryExprStructural(
           [&](const hir::RealLiteral& r) -> mir::Expr {
             return LowerHirRealLiteral(lowerer.Owner(), frame, r, result_type);
           },
-          [&](const hir::NullLiteral&) -> mir::Expr {
-            return LowerHirNullLiteral(result_type);
+          [](const hir::NullLiteral&) -> mir::Expr {
+            throw InternalError(
+                "hir_to_mir: `null` is lowered apart from the conversion it is "
+                "the operand of -- please report this as a bug");
           },
           [](const hir::ThisHandle&) -> mir::Expr {
             throw InternalError(

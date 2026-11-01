@@ -26,7 +26,7 @@
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/dump_kind.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_callback.hpp"
 #include "lyra/support/scope_execution.hpp"
 
 namespace lyra::mir {

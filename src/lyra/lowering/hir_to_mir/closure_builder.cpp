@@ -22,6 +22,7 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -158,7 +159,7 @@ auto BuildEmplacedClosure(
   const mir::TypeId keeper_pointer = keeper.type;
   const mir::TypeId keeper_type =
       types.Get(keeper_pointer).Get<mir::PointerType>().pointee;
-  const std::optional<mir::KeeperEntries> entries =
+  const std::optional<support::KeeperEntries> entries =
       mir::KeeperEntriesOf(types, keeper_type);
   if (!entries.has_value()) {
     throw InternalError(

@@ -12,7 +12,7 @@
 namespace lyra::value {
 
 class String;
-class Chandle;
+class UnmanagedRef;
 class ObjectRef;
 template <typename Host>
 class RealValue;
@@ -153,7 +153,7 @@ struct FormatArg {
   template <IntegralValue T>
   explicit FormatArg(const T& value);
   explicit FormatArg(const String& value);
-  explicit FormatArg(const Chandle& value);
+  explicit FormatArg(const UnmanagedRef& value);
   explicit FormatArg(const ObjectRef& value);
   template <typename Host>
   explicit FormatArg(const RealValue<Host>& value);
@@ -201,7 +201,7 @@ FormatArg::FormatArg(const T& value) : FormatArg(MakeFormatArg(value)) {
 inline FormatArg::FormatArg(const String& value)
     : FormatArg(MakeFormatArg(value)) {
 }
-inline FormatArg::FormatArg(const Chandle& value)
+inline FormatArg::FormatArg(const UnmanagedRef& value)
     : FormatArg(MakeFormatArg(value)) {
 }
 inline FormatArg::FormatArg(const ObjectRef& value)
@@ -263,8 +263,8 @@ struct Formatter<String> {
 // that is spelled, so two handles naming one object print alike and no two
 // objects share a text.
 template <>
-struct Formatter<Chandle> {
-  static auto Format(const FormatSpec& spec, const Chandle& value)
+struct Formatter<UnmanagedRef> {
+  static auto Format(const FormatSpec& spec, const UnmanagedRef& value)
       -> std::string;
 };
 
@@ -313,7 +313,7 @@ struct PrintValueItem {
   PrintValueItem(const String& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
   }
-  PrintValueItem(const Chandle& value, FormatSpec spec)
+  PrintValueItem(const UnmanagedRef& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
   }
   PrintValueItem(const ObjectRef& value, FormatSpec spec)

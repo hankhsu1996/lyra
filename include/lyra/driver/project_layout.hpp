@@ -85,6 +85,11 @@ inline constexpr std::string_view kCxxStandardFlag = "-std=c++23";
 // no aliasing by type either, so both read the program alike.
 inline constexpr std::string_view kNoTypeBasedAliasingFlag =
     "-fno-strict-aliasing";
+// A real's arithmetic is the IEEE 754 one of its width (LRM 6.12), so a product
+// and the sum reading it are rounded each on its own. A compiler allowed to
+// contract them into one fused multiply-add rounds once, which is a different
+// answer; GCC contracts by default wherever the target has the instruction.
+inline constexpr std::string_view kNoFloatContractionFlag = "-ffp-contract=off";
 // Whose layout a directory a link keeps its per-module compiles in has: LLVM's
 // ThinLTO cache, which Lyra's own link and a host clang's linker both write
 // under keys carrying the LLVM release, or GCC's incremental one.
@@ -137,8 +142,8 @@ inline constexpr std::array<LinkTimeForm, 5> kLinkTimeForms{{
 // quote, since the project's recipe writes it out quoted so.
 inline constexpr std::string_view kLinkTimeProbe = "int main() { return 0; }\n";
 // How every compile of the design's own code reads it.
-inline constexpr std::array<std::string_view, 2> kDesignCompileFlags{
-    kCxxStandardFlag, kNoTypeBasedAliasingFlag};
+inline constexpr std::array<std::string_view, 3> kDesignCompileFlags{
+    kCxxStandardFlag, kNoTypeBasedAliasingFlag, kNoFloatContractionFlag};
 
 // What a host compile and a host link are told to check a program with
 // `sanitizer`: the compiler's own sanitizer, which its driver links its own

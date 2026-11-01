@@ -140,11 +140,14 @@ only type it serves; and the call has no operand whose type names a representati
 reaches for one that is a machine word or a pointer and refuses a value nothing was wrong with.
 
 **The same totality is owed by a construction.** Which entry builds a value is read from the type
-being built, on the same footing as which entry an operation reaches, so a runtime-library value
-gaining a kind must break the build here until someone says either which entry brings one into
-existence or that nothing brings one into existence at all. Where that was a fallback arm, four
-kinds shared one refusal that named none of them and read as a capability gap for a value nobody
-constructs.
+being built, on the same footing as which entry an operation reaches, so a value gaining a kind must
+say either which entry brings one into existence or that nothing brings one into existence at all.
+Where that was a fallback arm, four kinds shared one refusal that named none of them and read as a
+capability gap for a value nobody constructs. A type the library declares says it in its
+declaration, which names its constructor as an entry of the builtin set, declared as one no call
+reaches, so the same naming rule and the same table name it
+([a-type-the-library-declares-is-named-by-its-declaration](a-type-the-library-declares-is-named-by-its-declaration.md)
+D3).
 
 **What this does not reach, stated so nobody assumes otherwise.** A signature taken from the call
 agrees about how many values cross and what shape each one has, and that is all it agrees about.

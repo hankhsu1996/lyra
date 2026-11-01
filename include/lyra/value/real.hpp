@@ -6,9 +6,12 @@
 #include <string>
 #include <type_traits>
 
+#include "lyra/support/float_width.hpp"
+#include "lyra/support/layout.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/scalar.hpp"
 
 namespace lyra::value {
 
@@ -238,6 +241,12 @@ class RealValue {
     return v_ != Host{0};
   }
 
+  // A real read as the C float of its width, which it is (LRM 6.12), as a
+  // real crossing to a foreign call is (LRM 35.5.6).
+  explicit operator Host() const {
+    return v_;
+  }
+
  private:
   using BitsType =
       std::conditional_t<sizeof(Host) == 8, std::uint64_t, std::uint32_t>;
@@ -272,6 +281,17 @@ struct Formatter<RealValue<Host>> {
     return Formatter<Host>::Format(spec, value.Value(), ctx);
   }
 };
+
+// Generated code lays a real out as the scalar it is and copies it as its
+// bytes, so the class is that scalar and nothing besides.
+static_assert(
+    support::Layout{.size = sizeof(Real), .align = alignof(Real)} ==
+        FactsOf(RealScalar{.width = support::FloatWidth::k64}).layout &&
+    std::is_trivially_copyable_v<Real>);
+static_assert(
+    support::Layout{.size = sizeof(ShortReal), .align = alignof(ShortReal)} ==
+        FactsOf(RealScalar{.width = support::FloatWidth::k32}).layout &&
+    std::is_trivially_copyable_v<ShortReal>);
 
 static_assert(LyraValue<Real>);
 static_assert(LyraValue<ShortReal>);

@@ -2,7 +2,6 @@
 
 #include <expected>
 #include <optional>
-#include <string>
 #include <utility>
 #include <variant>
 
@@ -29,7 +28,7 @@ namespace {
 // An interface the held instance instantiates, reached as a whole.
 struct HeldInstance {
   hir::InterfaceInstanceAccessExpr access;
-  std::string unit_name;
+  hir::ScopeClassId scope_class;
 };
 
 // A variable or net of the held instance, or of one it instantiates.
@@ -85,7 +84,7 @@ auto ReachThroughHandle(
   if (instance != nullptr) {
     return HeldInstance{
         .access = std::move(descent->instance),
-        .unit_name = unit_lowerer.Names().NameOf(*instance)};
+        .scope_class = unit_lowerer.InterfaceClassOf(*instance)};
   }
 
   const hir::ScopeClassId scope_class = descent->place.scope_class;
@@ -180,7 +179,7 @@ auto LowerVirtualInterfaceMember(
             return hir::Expr{
                 .type = unit_lowerer.Unit().types.Intern(
                     hir::Type{hir::VirtualInterfaceType{
-                        .unit_name = std::move(held.unit_name)}}),
+                        .scope_class = held.scope_class}}),
                 .data = std::move(held.access),
                 .span = span};
           },

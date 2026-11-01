@@ -66,11 +66,11 @@ concept ElementPolicy =
 template <typename T>
 concept HasDeclaredDefault = requires { T::DeclaredDefault(); };
 
-namespace detail {
-
-// The two below are of the element type alone, so every array of one element
-// type shares them. A type with a declared default is built at it where it is
-// kept; every other type's is what its own default construction builds.
+// What a value of `T` starts as before anything is written to it (LRM Table
+// 6-7, Table 7-1): the default a type's declaration states, and otherwise what
+// its own default construction builds, as a C++ class's value-initialized
+// object is. It is of the type alone, so every array of one element type and
+// every variable of one type share it.
 template <typename T>
 [[nodiscard]] auto DefaultOf() -> const T& {
   static const T element_default = [] {
@@ -83,6 +83,10 @@ template <typename T>
   return element_default;
 }
 
+namespace detail {
+
+// Where a write the language discards lands, which is of the element type
+// alone, so every array of one element type shares it.
 template <typename T>
 [[nodiscard]] auto DiscardedWriteOf() -> T& {
   static T discarded;
@@ -109,7 +113,7 @@ class StaticElem {
   }
 
   [[nodiscard]] static auto Default() -> const void* {
-    return &detail::DefaultOf<T>();
+    return &DefaultOf<T>();
   }
   [[nodiscard]] static auto DiscardedWrite() -> void* {
     return &detail::DiscardedWriteOf<T>();

@@ -182,10 +182,10 @@ class AssociativeArray {
   // index to report and the query reads the index type's default, which is
   // `'x` for a 4-state index type, as LRM 20.7 requires.
   [[nodiscard]] auto MinIndex() const -> K {
-    return FirstIndex().value_or(detail::DefaultOf<K>());
+    return FirstIndex().value_or(DefaultOf<K>());
   }
   [[nodiscard]] auto MaxIndex() const -> K {
-    return LastIndex().value_or(detail::DefaultOf<K>());
+    return LastIndex().value_or(DefaultOf<K>());
   }
 
   // LRM 7.9.6 / 7.9.7: the smallest stored index strictly greater than `probe`

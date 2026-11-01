@@ -23,9 +23,11 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -41,6 +43,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/format_parse.hpp"
 
@@ -127,10 +130,10 @@ auto BuildPrintValueItem(
   mir::Expr lowered = *std::move(lowered_or);
 
   const mir::Type& value_type = lowerer.Owner().Unit().types.Get(lowered.type);
-  const bool is_string = value_type.Is<mir::StringType>();
+  const bool is_string = value_type.IsDeclaredBy(support::LibraryDecl::kString);
   const bool is_integral = value_type.IsIntegral();
-  const bool is_handle =
-      value_type.Is<mir::ChandleType>() || value_type.Is<mir::ManagedRefType>();
+  const bool is_handle = value_type.Is<mir::UnmanagedRefType>() ||
+                         value_type.Is<mir::ManagedRefType>();
   const hir::TypeId source_type = lowerer.HirExprs().Get(hir_arg).type;
 
   // LRM 21.2.1.6 gives a handle a text under the assignment pattern and the
@@ -246,12 +249,12 @@ auto BuildRuntimeFormatOperand(
           mir::Construct{}, {mir::Borrow(unit, block, read_value())});
     case PatternReading::kTheTypeNamesTheValue:
       return make_arg(
-          mir::Direct{.target = support::BuiltinFn::kMakePatternedFormatArg},
+          mir::Direct{.target = support::BuiltinFn::kPatternedFormatArgMake},
           {mir::Borrow(unit, block, read_value()),
            mir::Borrow(unit, block, bind_text())});
     case PatternReading::kTheTypeNamesItsMembers:
       return make_arg(
-          mir::Direct{.target = support::BuiltinFn::kMakeRenderedFormatArg},
+          mir::Direct{.target = support::BuiltinFn::kRenderedFormatArgMake},
           {mir::Borrow(unit, block, bind_text())});
     case PatternReading::kNothingCanAnswer:
       return RefuseAssignmentPatternText(lowerer, hir_arg);
@@ -442,7 +445,7 @@ auto BuildPrintItemExpr(
                         .callee =
                             mir::Direct{
                                 .target =
-                                    support::BuiltinFn::kMakeTextPrintItem},
+                                    support::BuiltinFn::kTextPrintItemMake},
                         .arguments = {mir::Borrow(unit, block, text)}},
                 .type = unit.builtins.print_item};
           },

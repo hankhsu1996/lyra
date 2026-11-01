@@ -600,7 +600,8 @@ class HirDumper {
                   "UnitObjectsType{}({}){}", ranges, kinds, taken);
             },
             [](const VirtualInterfaceType& v) -> std::string {
-              return std::format("VirtualInterfaceType(unit={})", v.unit_name);
+              return std::format(
+                  "VirtualInterfaceType(scope_class={})", v.scope_class.value);
             },
             [](const NullType&) -> std::string { return "NullType"; },
             [](const DynamicType&) -> std::string { return "DynamicType"; },

@@ -146,7 +146,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     requires HasDeclaredDefault<T>
   {
     return Built([](UnpackedArray& array) {
-      std::ranges::fill(array.items_, detail::DefaultOf<T>());
+      std::ranges::fill(array.items_, DefaultOf<T>());
     });
   }
 
@@ -581,7 +581,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // The element type's default (LRM Table 7-1), which a read answers with
   // where no element of the array is named.
   [[nodiscard]] static auto ElementDefault() -> const T& {
-    return detail::DefaultOf<T>();
+    return DefaultOf<T>();
   }
 
   // Where a write through an invalid index lands (LRM 7.4.5): storage no read

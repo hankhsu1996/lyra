@@ -39,6 +39,7 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/container_construction.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
@@ -74,7 +75,9 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_callback.hpp"
+#include "lyra/support/library_decl.hpp"
+#include "lyra/support/movability.hpp"
 #include "lyra/support/strength_level.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -791,9 +794,8 @@ auto PointerTypeOf(UnitLowerer& unit_lowerer, const hir::ScopeLeaf& leaf)
 auto DisableTargetPointerType(mir::TypePool& types) -> mir::TypeId {
   return types.Intern(
       mir::Type{mir::PointerType{
-          .pointee = types.Intern(
-              mir::Type{mir::RuntimeLibraryType{
-                  .kind = mir::RuntimeLibraryKind::kCancellationTarget}}),
+          .pointee = mir::LibraryTypeOf(
+              types, support::LibraryDecl::kCancellationTarget),
           .ownership = mir::PointerOwnership::kBorrowed}});
 }
 
@@ -2609,7 +2611,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
         unit_lowerer.TranslateType(hir_scope.exprs.Get(history.subject).type);
     sampled_history_fields.push_back(
         shape.AddField(unit_lowerer.Unit().types.Intern(
-            mir::Type{mir::SampledHistoryType{.value = value_type}})));
+            mir::Type{mir::LibraryType{
+                .decl = support::LibraryDecl::kSampledHistory,
+                .args = {value_type}}})));
   }
   sampled_history_fields_ = {
       hir_scope.sampled_histories.size(), std::move(sampled_history_fields)};
@@ -2622,9 +2626,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   std::vector<mir::FieldId> concurrent_assertion_fields;
   concurrent_assertion_fields.reserve(hir_scope.concurrent_assertions.size());
   for (std::size_t i = 0; i < hir_scope.concurrent_assertions.size(); ++i) {
-    concurrent_assertion_fields.push_back(
-        shape.AddField(unit_lowerer.Unit().types.Intern(
-            mir::Type{mir::EvaluationAttemptsType{}})));
+    concurrent_assertion_fields.push_back(shape.AddField(
+        mir::LibraryTypeOf(
+            unit_lowerer.Unit().types,
+            support::LibraryDecl::kEvaluationAttempts)));
   }
   concurrent_assertion_fields_ = {
       hir_scope.concurrent_assertions.size(),
@@ -2701,9 +2706,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     } else if (scope.source_name.has_value()) {
       declared.disable_target = DeclareStaticCell(
           InstanceStorage{.owner = class_id_, .shape = &shape, .placed = {}},
-          unit_lowerer.Unit().types.Intern(
-              mir::Type{mir::RuntimeLibraryType{
-                  .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
+          mir::LibraryTypeOf(
+              unit_lowerer.Unit().types,
+              support::LibraryDecl::kCancellationTarget));
     }
     scopes.push_back(std::move(declared));
   }
@@ -2811,8 +2816,8 @@ namespace {
 // the class extends the root of the design hierarchy, giving the part every
 // scope shares its place -- which nothing of the scope's own runs before. The
 // parent is handed on as the base every scope extends, whatever class this
-// scope takes it as, each other prefix is forwarded as a consuming use, then
-// the trailing ones.
+// scope takes it as, each other prefix is forwarded -- read where a copy holds
+// the whole of it, moved otherwise -- then the trailing ones.
 void ConstructBaseFirst(
     mir::CompilationUnit& unit, const mir::ClassRef& base,
     mir::CallableCode& ctor_code, mir::LocalId self,
@@ -2828,7 +2833,8 @@ void ConstructBaseFirst(
        prefix_local_ids.subspan(kParentPrefix.value + 1)) {
     const mir::TypeId ty = ctor_code.locals.Get(id).type;
     const mir::ExprId local_ref = body.LocalPlace(id, ty);
-    if (unit.types.Get(ty).IsAliasHandle()) {
+    if (unit.types.Get(ty).ValueMovability() ==
+        support::Movability::kCopyable) {
       base_args.push_back(body.Read(local_ref));
     } else {
       base_args.push_back(body.Add(

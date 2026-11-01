@@ -19,6 +19,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -69,7 +70,8 @@ auto BuildFinishNumber(
   const mir::Type& type = unit.types.Get(block.Get(value).type);
   // A real is rounded (LRM 6.12.1) and a string read as the bits of its
   // characters (LRM 5.9), the conversions a cast to `int` makes.
-  if (type.IsIntegral() || type.IsRealFamily() || type.Is<mir::StringType>()) {
+  if (type.IsIntegral() || type.Is<mir::RealType>() ||
+      type.IsDeclaredBy(support::LibraryDecl::kString)) {
     return BuildToInt64Call(
         unit, block, ConvertToType(unit, block, value, unit.builtins.int_type));
   }

@@ -33,6 +33,7 @@
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -597,7 +598,8 @@ void RenderClass(
           decl.initializer, defined_as, out, code);
     }
     RenderClassConstant(
-        unit, report, id, mir::ClassDefinitionType(unit.types),
+        unit, report, id,
+        mir::LibraryTypeOf(unit.types, support::LibraryDecl::kObjectDefinition),
         CppDefinitionName(), s.object_definition_initializer, defined_as, out,
         code);
   }

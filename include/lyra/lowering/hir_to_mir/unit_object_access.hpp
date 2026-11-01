@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/path_select.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
@@ -52,36 +53,32 @@ auto ReachPublishedDisableTarget(
 
 // The rest of reaching the instance a virtual interface holds, given the handle
 // already lowered into `steps`: the handle evaluated once, checked to hold an
-// instance, and yielded as `object_pointer`.
+// instance, and yielded.
 auto ReachHeldInterface(
-    mir::CompilationUnit& unit, BlockBuilder& steps, mir::Expr handle,
-    mir::TypeId object_pointer) -> mir::Expr;
+    mir::CompilationUnit& unit, BlockBuilder& steps, mir::Expr handle)
+    -> mir::Expr;
 
 // An interface instance reached through a virtual interface, as a pointer to
-// its unit's object: the instance the handle holds, taken as the object of the
-// unit the access was resolved against -- which the handle's own value does not
-// carry -- then each step of the descent. Using a handle that holds null is a
-// fatal run-time error (LRM 25.9), so the handle is checked before the instance
-// is reached, and it is evaluated once whatever the access does with the answer
-// -- which is why it is lowered here, into the steps that bind it, rather than
-// handed in lowered.
+// its unit's object: the object the handle refers to, which its type names as
+// an object of the unit the access was resolved against, then each step of the
+// descent. Using a handle that holds null is a fatal run-time error (LRM 25.9),
+// so the handle is checked before the instance is reached, and it is evaluated
+// once whatever the access does with the answer -- which is why it is lowered
+// here, into the steps that bind it, rather than handed in lowered.
 template <ExprLowerer Lowerer>
 auto HeldInterfaceObject(
     Lowerer& lowerer, const WalkFrame& frame,
     const hir::InterfaceInstanceAccessExpr& access)
     -> diag::Result<mir::ExprId> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const mir::TypeId object_pointer = unit.types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = lowerer.Owner().UnitObjectType(access.scope_class),
-          .ownership = mir::PointerOwnership::kBorrowed}});
   BlockBuilder steps(frame);
   auto handle_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(access.handle), steps.Frame());
   if (!handle_or) return std::unexpected(std::move(handle_or.error()));
   mir::Builder block = frame.Builder();
-  mir::ExprId reached = block.Add(
-      ReachHeldInterface(unit, steps, *std::move(handle_or), object_pointer));
+  mir::ExprId reached = BuildObjectPointer(
+      unit, block,
+      block.Add(ReachHeldInterface(unit, steps, *std::move(handle_or))));
   const SelectEvaluator evaluate_select = EvaluateSelectsIn(lowerer, frame);
   for (const hir::PublishedStep& step : access.steps) {
     auto next = StepThroughPublished(
@@ -108,8 +105,8 @@ auto HeldInterfaceMember(
 }
 
 // An interface instance named as a value (LRM 25.9), given a pointer to its
-// object: the value a virtual interface holds, built from that address -- which
-// instance it is, and nothing about what reaching into it needs.
+// object: the reference a virtual interface of `type` holds, converted from
+// that address.
 auto InterfaceValueOf(
     mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object,
     mir::TypeId type) -> mir::Expr;

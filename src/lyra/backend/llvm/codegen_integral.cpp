@@ -23,6 +23,7 @@
 #include "lyra/backend/llvm/integral_planes.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/lir/operator.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/runtime/integral_abi.hpp"
 #include "lyra/support/integral_operation.hpp"
@@ -346,6 +347,56 @@ auto CodeGenFunction::LowerIntegral(
     IntegralOp op, std::span<const OperandRef> operands,
     lir::TypeId answer_type, llvm::Value* out) -> llvm::Value* {
   return IntegralEmitter(*this).Lower(op, operands, answer_type, out);
+}
+
+auto IntegralOpOf(lir::BinaryOp op) -> support::IntegralOp {
+  switch (op) {
+    case lir::BinaryOp::kAdd:
+      return support::IntegralOp::kAdd;
+    case lir::BinaryOp::kSub:
+      return support::IntegralOp::kSubtract;
+    case lir::BinaryOp::kMul:
+      return support::IntegralOp::kMultiply;
+    case lir::BinaryOp::kDiv:
+      return support::IntegralOp::kDivide;
+    case lir::BinaryOp::kMod:
+      return support::IntegralOp::kModulo;
+    case lir::BinaryOp::kBitwiseAnd:
+      return support::IntegralOp::kBitwiseAnd;
+    case lir::BinaryOp::kBitwiseOr:
+      return support::IntegralOp::kBitwiseOr;
+    case lir::BinaryOp::kBitwiseXor:
+      return support::IntegralOp::kBitwiseXor;
+    case lir::BinaryOp::kEquality:
+      return support::IntegralOp::kEqual;
+    case lir::BinaryOp::kInequality:
+      return support::IntegralOp::kNotEqual;
+    case lir::BinaryOp::kLessThan:
+      return support::IntegralOp::kLess;
+    case lir::BinaryOp::kLessEqual:
+      return support::IntegralOp::kLessEqual;
+    case lir::BinaryOp::kGreaterThan:
+      return support::IntegralOp::kGreater;
+    case lir::BinaryOp::kGreaterEqual:
+      return support::IntegralOp::kGreaterEqual;
+    case lir::BinaryOp::kLogicalAnd:
+      return support::IntegralOp::kLogicalAnd;
+    case lir::BinaryOp::kLogicalOr:
+      return support::IntegralOp::kLogicalOr;
+  }
+  throw InternalError("llvm codegen: unknown binary operator");
+}
+
+auto IntegralOpOf(lir::UnaryOp op) -> support::IntegralOp {
+  switch (op) {
+    case lir::UnaryOp::kMinus:
+      return support::IntegralOp::kNegate;
+    case lir::UnaryOp::kBitwiseNot:
+      return support::IntegralOp::kBitwiseNot;
+    case lir::UnaryOp::kLogicalNot:
+      return support::IntegralOp::kLogicalNot;
+  }
+  throw InternalError("llvm codegen: unknown unary operator");
 }
 
 }  // namespace lyra::backend::llvm_backend

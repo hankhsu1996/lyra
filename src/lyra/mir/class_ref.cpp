@@ -9,6 +9,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::mir {
 
@@ -28,6 +29,9 @@ auto ObjectReachedThrough(const TypePool& types, TypeId reaches) -> TypeId {
   if (const auto* handle = type.As<ManagedRefType>()) {
     return handle->pointee;
   }
+  if (const auto* reference = type.As<UnmanagedRefType>()) {
+    return reference->pointee;
+  }
   if (const auto* pointer = type.As<PointerType>()) {
     return pointer->pointee;
   }
@@ -35,9 +39,9 @@ auto ObjectReachedThrough(const TypePool& types, TypeId reaches) -> TypeId {
     return write->object;
   }
   throw InternalError(
-      "mir: an object is reached through a class handle, a pointer, or a "
-      "write in progress into it, and this is none of those -- please report "
-      "this as a bug");
+      "mir: an object is reached through a class handle, a reference or a "
+      "pointer to it, or a write in progress into it, and this is none of "
+      "those -- please report this as a bug");
 }
 
 auto ClassOfObject(const TypePool& types, TypeId object) -> ClassId {
@@ -56,19 +60,15 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> ClassId {
           [](const ObjectType& o) -> ClassId { return o.of; },
           // A class the runtime library defines: a symbol is its whole
           // identity, so no declaration of this unit stands behind it.
-          [&](const RuntimeClassType&) {
-            return refers_to_no_class("an object of a runtime class");
+          [&](const LibraryType& t) {
+            return support::DeclarationOf(t.decl).runtime_class.has_value()
+                       ? refers_to_no_class("an object of a runtime class")
+                       : not_an_object();
           },
           [&](const IntegralType&) { return not_an_object(); },
           [&](const EnumType&) { return not_an_object(); },
           [&](const UnpackedArrayType&) { return not_an_object(); },
-          [&](const DynamicArrayType&) { return not_an_object(); },
-          [&](const QueueType&) { return not_an_object(); },
-          [&](const AssociativeArrayType&) { return not_an_object(); },
-          [&](const WildcardIndexType&) { return not_an_object(); },
-          [&](const AnyType&) { return not_an_object(); },
           [&](const ErasedValueType&) { return not_an_object(); },
-          [&](const StringType&) { return not_an_object(); },
           [&](const MachineCStringType&) { return not_an_object(); },
           [&](const MachineBoolType&) { return not_an_object(); },
           [&](const MachineIntType&) { return not_an_object(); },
@@ -77,21 +77,14 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> ClassId {
           [&](const MachineSpanType&) { return not_an_object(); },
           [&](const MachineFunctionType&) { return not_an_object(); },
           [&](const RealType&) { return not_an_object(); },
-          [&](const ShortRealType&) { return not_an_object(); },
-          [&](const ChandleType&) { return not_an_object(); },
           [&](const VoidType&) { return not_an_object(); },
-          [&](const EmptyType&) { return not_an_object(); },
-          [&](const RuntimeEffectsType&) { return not_an_object(); },
-          [&](const FilesType&) { return not_an_object(); },
-          [&](const DiagnosticType&) { return not_an_object(); },
-          [&](const RuntimeLibraryType&) { return not_an_object(); },
           [&](const CoroutineType&) { return not_an_object(); },
           [&](const VariableRefType&) { return not_an_object(); },
           [&](const ReferenceWrapperType&) { return not_an_object(); },
           [&](const PointerType&) { return not_an_object(); },
           [&](const ReferenceType&) { return not_an_object(); },
           [&](const ManagedRefType&) { return not_an_object(); },
-          [&](const WeakManagedRefType&) { return not_an_object(); },
+          [&](const UnmanagedRefType&) { return not_an_object(); },
           [&](const VectorType&) { return not_an_object(); },
           [&](const TupleType&) { return not_an_object(); },
           [&](const ObservableType&) { return not_an_object(); },
@@ -101,9 +94,6 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> ClassId {
           [&](const DesignationType&) { return not_an_object(); },
           [&](const BitsReferenceType&) { return not_an_object(); },
           [&](const ObjectWriteType&) { return not_an_object(); },
-          [&](const SampledHistoryType&) { return not_an_object(); },
-          [&](const EvaluationAttemptsType&) { return not_an_object(); },
-          [&](const LoopBlocksType&) { return not_an_object(); },
           [&](const RecordType&) { return not_an_object(); },
           [&](const ClosureType&) { return not_an_object(); },
           [&](const ErasedCallableType&) { return not_an_object(); }});

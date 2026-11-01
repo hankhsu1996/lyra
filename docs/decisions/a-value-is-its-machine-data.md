@@ -17,6 +17,11 @@ the array's type as constant data -- a count and the element's type -- with the 
 for the array type. The element's type is handed with the function that builds its default, for an
 array of any kind
 ([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)).
+D1 and D2 hold of a `real` and a `shortreal` as well: MIR lays each out as the IEEE 754 value of its
+width (LRM 6.12), and the execution backend computes its arithmetic and its comparisons as the
+machine's float instructions, with no flag letting the optimizer change a result the standard fixes;
+what the library has content for -- a conversion, `**`, a mathematical function, printing -- stays a
+call handed the value where it lies.
 
 ## Context
 

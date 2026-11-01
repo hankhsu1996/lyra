@@ -36,7 +36,8 @@
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/value_build.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_callback.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -407,8 +408,9 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
 }
 
 auto UnitLowerer::BaseType(const mir::ClassRef& base) -> lir::TypeId {
-  const auto library_class = [&](support::RuntimeClass which) {
-    return out_.types.Intern(lir::Type{lir::RuntimeClassType{.which = which}});
+  const auto library_class = [&](support::LibraryDecl decl) {
+    return out_.types.Intern(
+        lir::Type{lir::LibraryType{.decl = decl, .args = {}}});
   };
   return std::visit(
       Overloaded{
@@ -416,10 +418,10 @@ auto UnitLowerer::BaseType(const mir::ClassRef& base) -> lir::TypeId {
             return ClassValueType(declared);
           },
           [&](const mir::ObjectTreeRootRef&) {
-            return library_class(support::RuntimeClass::kScope);
+            return library_class(support::LibraryDecl::kScope);
           },
           [&](const mir::ManagedObjectRootRef&) {
-            return library_class(support::RuntimeClass::kClassObject);
+            return library_class(support::LibraryDecl::kClassObject);
           }},
       base);
 }
@@ -801,12 +803,9 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
           // from its members, or an array from its elements.
           [&](const mir::CompositeExpr& c) -> lir::Constant {
             const mir::Type& type = mir_->types.Get(expr.type);
-            if (const auto* record = type.As<mir::RuntimeLibraryType>()) {
+            if (const auto* record = type.As<mir::LibraryType>()) {
               return {lir::ConstantRecord{
-                  .kind = TranslateRuntimeLibrary(record->kind)
-                              .Get<lir::RuntimeLibraryType>()
-                              .kind,
-                  .parts = parts_of(c.parts)}};
+                  .decl = record->decl, .parts = parts_of(c.parts)}};
             }
             if (type.Is<mir::MachineArrayType>()) {
               return {lir::ConstantArray{.elements = parts_of(c.parts)}};
@@ -816,8 +815,8 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
           [&](const mir::MachineBoolLiteral&) {
             return not_data("a machine boolean");
           },
-          [&](const mir::MachineFloatLiteral&) {
-            return not_data("a machine float");
+          [&](const mir::FloatingLiteral&) {
+            return not_data("a floating literal");
           },
           [&](const mir::UnaryExpr&) { return not_data("a unary operation"); },
           [&](const mir::BinaryExpr&) {

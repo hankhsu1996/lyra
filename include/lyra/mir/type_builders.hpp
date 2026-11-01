@@ -7,6 +7,7 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::mir {
 
@@ -46,6 +47,25 @@ auto IsPositionType(const TypePool& types, TypeId id) -> bool;
 auto MachineArrayOf(const TypePool& types, TypeId element, std::size_t size)
     -> TypeId;
 
+// The containers the library declares (LRM 7.5, 7.8, 7.10): a dynamic array of
+// `element`, a queue of `element` holding up to `bound`, and an associative
+// array of `element` indexed by `index`. Which argument each type is named
+// with where is its declaration's, settled here once.
+auto DynamicArrayOf(const TypePool& types, TypeId element) -> TypeId;
+auto QueueOf(const TypePool& types, TypeId element, support::QueueBound bound)
+    -> TypeId;
+auto AssociativeArrayOf(const TypePool& types, TypeId index, TypeId element)
+    -> TypeId;
+
+// `container`, a container the library declares, holding elements of
+// `element`: everything else it is named with -- a queue's bound, an
+// associative array's index type -- kept.
+auto WithElementType(const TypePool& types, TypeId container, TypeId element)
+    -> TypeId;
+
+// The type the library declares by `decl`, which takes no arguments.
+auto LibraryTypeOf(const TypePool& types, support::LibraryDecl decl) -> TypeId;
+
 // A code address with its prototype erased: no parameters and no result, which
 // names an address and says nothing about calling it. This is the type a table
 // of entries with differing prototypes holds, and the one every side of such a
@@ -65,10 +85,6 @@ auto IsErasedFunction(const TypePool& types, TypeId id) -> bool;
 // that says what was assumed.
 auto ErasedPointer(const TypePool& types) -> TypeId;
 
-// What a wait watches at a place, as the runtime answers where it is asked
-// what a write there is told to.
-auto WatchedPlace(const TypePool& types) -> TypeId;
-
 // A box of `value`: a pointer uniquely owning storage of dynamic duration
 // holding one, as Rust's `Box` is.
 auto BoxOf(const TypePool& types, TypeId value) -> TypeId;
@@ -79,31 +95,27 @@ auto BoxOf(const TypePool& types, TypeId value) -> TypeId;
 auto AllocatedType(const TypePool& types, TypeId owner)
     -> std::optional<TypeId>;
 
-// The definition every object of one class carries, which the unit declaring
-// the class emits as a constant, whichever class it is of, and the address of
-// one, through which it is only read.
-auto ClassDefinitionType(const TypePool& types) -> TypeId;
+// The address of the definition every object of one class carries, which the
+// unit declaring the class emits as a constant, whichever class it is of,
+// through which it is only read.
 auto ClassDefinitionPointer(const TypePool& types) -> TypeId;
 
 // The machine function type `code` has, named as code: every parameter it
 // takes, its receiver among them, and what it results in.
 auto FunctionTypeOf(const TypePool& types, const CallableCode& code) -> TypeId;
 
-// The root every object is, and a pointer to it: how the library hands an
-// object over to a body it enters, whatever class the object is of.
-auto ObjectRootType(const TypePool& types) -> TypeId;
+// A pointer to the root every object is: how the library hands an object over
+// to a body it enters, whatever class the object is of.
 auto ObjectRootPointer(const TypePool& types) -> TypeId;
 
-// The table a constructor of the design hierarchy is handed, and its address,
+// The address of the table a constructor of the design hierarchy is handed,
 // through which it is only read.
-auto ConstructionTableType(const TypePool& types) -> TypeId;
 auto ConstructionTablePointer(const TypePool& types) -> TypeId;
 
-// The observable-cell type for a variable of `value_type`: a SystemVerilog
-// value-storage data object (LRM 6.5) is an observable cell, so its writes fire
-// subscribers and its value is reached through the cell; any other type -- a
-// handle, a container, an object, a runtime facade, a machine primitive -- is
-// its own storage and passes through unwrapped.
+// The observable-cell type for a variable of `value_type`: a variable of a
+// data type is value storage (LRM 6.5) and so an observable cell, whose writes
+// fire subscribers and whose value is reached through the cell; any other type
+// is its own storage and passes through unwrapped.
 auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId;
 
 }  // namespace lyra::mir

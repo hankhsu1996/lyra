@@ -11,8 +11,12 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/float_width.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
+#include "lyra/value/integral_fwd.hpp"
+#include "lyra/value/scalar.hpp"
 
 namespace lyra::lir {
 
@@ -48,90 +52,17 @@ void Combine(std::size_t& seed, const IntegralType& integral) {
   Combine(seed, integral.state_kind);
 }
 
-// Which runtime-library value this is. A reader that could not handle one needs
-// to know which of them it met, and the kind is the whole of what separates
-// them.
-auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
-  switch (kind) {
-    case RuntimeLibraryKind::kEnumeration:
-      return "enumeration";
-    case RuntimeLibraryKind::kPrintItem:
-      return "print item";
-    case RuntimeLibraryKind::kFormatSpec:
-      return "format specification";
-    case RuntimeLibraryKind::kFormatArg:
-      return "format argument";
-    case RuntimeLibraryKind::kChannelCancellation:
-      return "channel cancellation";
-    case RuntimeLibraryKind::kTimeFormat:
-      return "time format";
-    case RuntimeLibraryKind::kHierarchySegment:
-      return "hierarchy segment";
-    case RuntimeLibraryKind::kBitVec:
-      return "bit vector";
-    case RuntimeLibraryKind::kDpiBitBuffer:
-      return "DPI canonical bit buffer";
-    case RuntimeLibraryKind::kDpiLogicBuffer:
-      return "DPI canonical logic buffer";
-    case RuntimeLibraryKind::kDpiBitChunk:
-      return "DPI bit chunk";
-    case RuntimeLibraryKind::kDpiLogicChunk:
-      return "DPI logic chunk";
-    case RuntimeLibraryKind::kDpiOpenArray:
-      return "DPI open array";
-    case RuntimeLibraryKind::kDpiOpenArrayHandle:
-      return "DPI open array handle";
-    case RuntimeLibraryKind::kWatchedPlace:
-      return "watched place";
-    case RuntimeLibraryKind::kTrigger:
-      return "trigger";
-    case RuntimeLibraryKind::kObservation:
-      return "observation";
-    case RuntimeLibraryKind::kReadReport:
-      return "read report";
-    case RuntimeLibraryKind::kWait:
-      return "wait";
-    case RuntimeLibraryKind::kLeasedReference:
-      return "leased reference";
-    case RuntimeLibraryKind::kObjectWrite:
-      return "object write";
-    case RuntimeLibraryKind::kCancellationTarget:
-      return "cancellation target";
-    case RuntimeLibraryKind::kTimer:
-      return "timer";
-    case RuntimeLibraryKind::kDeferredEffects:
-      return "deferred effects";
-    case RuntimeLibraryKind::kViolationReportKeeper:
-      return "violation report keeper";
-    case RuntimeLibraryKind::kControlEffect:
-      return "control effect";
-    case RuntimeLibraryKind::kObjectDefinition:
-      return "object definition";
-    case RuntimeLibraryKind::kScopeInfo:
-      return "scope info";
-    case RuntimeLibraryKind::kScopeCallable:
-      return "scope callable";
-    case RuntimeLibraryKind::kClassObjectInfo:
-      return "class object info";
-    case RuntimeLibraryKind::kInterfaceRow:
-      return "interface row";
-    case RuntimeLibraryKind::kScopeMetadata:
-      return "scope metadata";
-    case RuntimeLibraryKind::kConstructionTable:
-      return "construction table";
-    case RuntimeLibraryKind::kInstantiation:
-      return "instantiation";
-    case RuntimeLibraryKind::kGeneratePlaces:
-      return "generate places";
-    case RuntimeLibraryKind::kDumpEntry:
-      return "dump entry";
-    case RuntimeLibraryKind::kDumpBlock:
-      return "dump block";
-  }
-  throw InternalError("lir::RuntimeLibraryKindName: unknown kind");
-}
-
 }  // namespace
+
+auto StateDomainOf(IntegralStateKind state) -> value::StateDomain {
+  switch (state) {
+    case IntegralStateKind::kTwoState:
+      return value::StateDomain::kTwoState;
+    case IntegralStateKind::kFourState:
+      return value::StateDomain::kFourState;
+  }
+  throw InternalError("lir: unknown integral state kind");
+}
 
 auto BitsOf(MachineIntWidth width) -> std::uint32_t {
   switch (width) {
@@ -156,20 +87,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             Combine(seed, t.element_type);
             Combine(seed, t.size);
           },
-          [&](const DynamicArrayType& t) { Combine(seed, t.element_type); },
-          [&](const QueueType& t) {
-            Combine(seed, t.element_type);
-            Combine(seed, t.max_bound.value_or(0));
-            Combine(seed, static_cast<std::uint64_t>(t.max_bound.has_value()));
-          },
-          [&](const AssociativeArrayType& t) {
-            Combine(seed, t.element_type);
-            Combine(seed, t.key_type);
-          },
-          [](const WildcardIndexType&) {},
-          [](const AnyType&) {},
           [](const AnyReferenceType&) {},
-          [](const StringType&) {},
           [](const MachineCStringType&) {},
           [](const MachineBoolType&) {},
           [&](const MachineIntType& t) {
@@ -188,13 +106,9 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             }
             Combine(seed, t.result);
           },
-          [](const RealType&) {},
-          [](const ShortRealType&) {},
-          [](const ChandleType&) {},
+          [&](const RealType& t) { Combine(seed, t.width); },
           [](const VoidType&) {},
-          [](const EmptyType&) {},
           [&](const ObjectType& t) { Combine(seed, t.class_id); },
-          [&](const RuntimeClassType& t) { Combine(seed, t.which); },
           [&](const ClosureType& t) { Combine(seed, t.closure_id.value); },
           [&](const ErasedCallableType& t) {
             for (const TypeId param : t.params) {
@@ -202,10 +116,23 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             }
             Combine(seed, t.result);
           },
-          [](const RuntimeEffectsType&) {},
-          [](const FilesType&) {},
-          [](const DiagnosticType&) {},
-          [&](const RuntimeLibraryType& t) { Combine(seed, t.kind); },
+          [&](const LibraryType& t) {
+            Combine(seed, t.decl);
+            for (const LibraryType::Arg& arg : t.args) {
+              std::visit(
+                  Overloaded{
+                      [&](TypeId type) { Combine(seed, type); },
+                      [&](const support::QueueBound& bound) {
+                        Combine(
+                            seed, static_cast<std::uint64_t>(bound.index()));
+                        if (const auto* most =
+                                std::get_if<support::BoundedQueue>(&bound)) {
+                          Combine(seed, most->count);
+                        }
+                      }},
+                  arg);
+            }
+          },
           [&](const CoroutineType& t) { Combine(seed, t.payload); },
           [&](const VariableRefType& t) {
             Combine(seed, t.pointee);
@@ -217,75 +144,65 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             Combine(seed, t.mutability);
           },
           [&](const ManagedRefType& t) { Combine(seed, t.pointee); },
-          [&](const WeakManagedRefType& t) { Combine(seed, t.pointee); },
+          [&](const UnmanagedRefType& t) { Combine(seed, t.pointee); },
           [&](const VectorType& t) { Combine(seed, t.element); },
           [&](const TupleType& t) { Combine(seed, t.elements); },
           [&](const RecordType& t) { Combine(seed, t.declaration.value); },
           [&](const ResolvedType& t) { Combine(seed, t.value); },
           [&](const DriverType& t) { Combine(seed, t.value); },
           [&](const ObservableType& t) { Combine(seed, t.value); },
-          [&](const SampledHistoryType& t) { Combine(seed, t.value); },
-          [](const EvaluationAttemptsType&) {},
-          [](const LoopBlocksType&) {},
           [&](const OpenWriteType& t) { Combine(seed, t.value); },
-          [&](const DesignationType& t) { Combine(seed, t.value); }});
+          [&](const DesignationType& t) { Combine(seed, t.value); },
+          [](const ObjectWriteType&) {}});
   return seed;
 }
 
 auto Type::KindName() const -> std::string_view {
+  using Name = std::string_view;
   return Visit(
       Overloaded{
-          [](const IntegralType&) { return "integral"; },
-          [](const UnpackedArrayType&) { return "unpacked array"; },
-          [](const DynamicArrayType&) { return "dynamic array"; },
-          [](const QueueType&) { return "queue"; },
-          [](const AssociativeArrayType&) { return "associative array"; },
-          [](const WildcardIndexType&) { return "wildcard index"; },
-          [](const AnyType&) { return "value of any type"; },
-          [](const AnyReferenceType&) {
+          [](const IntegralType&) -> Name { return "integral"; },
+          [](const UnpackedArrayType&) -> Name { return "unpacked array"; },
+          [](const AnyReferenceType&) -> Name {
             return "reference to a value of any type";
           },
-          [](const StringType&) { return "string"; },
-          [](const MachineCStringType&) { return "machine C string"; },
-          [](const MachineBoolType&) { return "machine boolean"; },
-          [](const MachineIntType&) { return "machine integer"; },
-          [](const MachineFloatType&) { return "machine float"; },
-          [](const MachineArrayType&) { return "machine array"; },
-          [](const MachineSpanType&) { return "machine span"; },
-          [](const MachineFunctionType&) { return "machine function"; },
-          [](const RealType&) { return "real"; },
-          [](const ShortRealType&) { return "shortreal"; },
-          [](const ChandleType&) { return "chandle"; },
-          [](const VoidType&) { return "void"; },
-          [](const EmptyType&) { return "empty"; },
-          [](const ObjectType&) { return "class object"; },
-          [](const RuntimeClassType&) { return "runtime class"; },
-          [](const ClosureType&) { return "closure"; },
-          [](const ErasedCallableType&) { return "erased callable"; },
-          [](const RecordType&) { return "record"; },
-          [](const RuntimeEffectsType&) { return "runtime services"; },
-          [](const FilesType&) { return "file table"; },
-          [](const DiagnosticType&) { return "diagnostic dispatcher"; },
-          [](const RuntimeLibraryType& t) {
-            return RuntimeLibraryKindName(t.kind);
+          [](const MachineCStringType&) -> Name { return "machine C string"; },
+          [](const MachineBoolType&) -> Name { return "machine boolean"; },
+          [](const MachineIntType&) -> Name { return "machine integer"; },
+          [](const MachineFloatType&) -> Name { return "machine float"; },
+          [](const MachineArrayType&) -> Name { return "machine array"; },
+          [](const MachineSpanType&) -> Name { return "machine span"; },
+          [](const MachineFunctionType&) -> Name { return "machine function"; },
+          [](const RealType& t) -> Name {
+            switch (t.width) {
+              case support::FloatWidth::k32:
+                return "shortreal";
+              case support::FloatWidth::k64:
+                return "real";
+            }
+            throw InternalError("lir: unknown real width");
           },
-          [](const CoroutineType&) { return "coroutine"; },
-          [](const VariableRefType&) { return "variable reference"; },
-          [](const PointerType&) { return "pointer"; },
-          [](const ManagedRefType&) { return "managed reference"; },
-          [](const WeakManagedRefType&) { return "weak reference"; },
-          [](const VectorType&) { return "vector"; },
-          [](const TupleType&) { return "tuple"; },
-          [](const ResolvedType&) { return "net resolution node"; },
-          [](const DriverType&) { return "net driver"; },
-          [](const ObservableType&) { return "observable cell"; },
-          [](const SampledHistoryType&) { return "sampled value history"; },
-          [](const EvaluationAttemptsType&) {
-            return "concurrent assertion attempts";
+          [](const VoidType&) -> Name { return "void"; },
+          [](const ObjectType&) -> Name { return "class object"; },
+          [](const ClosureType&) -> Name { return "closure"; },
+          [](const ErasedCallableType&) -> Name { return "erased callable"; },
+          [](const RecordType&) -> Name { return "record"; },
+          [](const LibraryType& t) -> Name {
+            return support::DeclarationOf(t.decl).name;
           },
-          [](const LoopBlocksType&) { return "loop generate blocks"; },
-          [](const OpenWriteType&) { return "open write"; },
-          [](const DesignationType&) { return "designation"; }});
+          [](const CoroutineType&) -> Name { return "coroutine"; },
+          [](const VariableRefType&) -> Name { return "variable reference"; },
+          [](const PointerType&) -> Name { return "pointer"; },
+          [](const ManagedRefType&) -> Name { return "managed reference"; },
+          [](const UnmanagedRefType&) -> Name { return "unmanaged reference"; },
+          [](const VectorType&) -> Name { return "vector"; },
+          [](const TupleType&) -> Name { return "tuple"; },
+          [](const ResolvedType&) -> Name { return "net resolution node"; },
+          [](const DriverType&) -> Name { return "net driver"; },
+          [](const ObservableType&) -> Name { return "observable cell"; },
+          [](const OpenWriteType&) -> Name { return "open write"; },
+          [](const DesignationType&) -> Name { return "designation"; },
+          [](const ObjectWriteType&) -> Name { return "object write"; }});
 }
 
 auto Type::Declaration() const -> std::optional<TypeDeclaration> {
@@ -305,18 +222,9 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           // A value, however it is shaped and however its elements are held.
           [&](const IntegralType&) { return names_none(); },
           [&](const UnpackedArrayType&) { return names_none(); },
-          [&](const DynamicArrayType&) { return names_none(); },
-          [&](const QueueType&) { return names_none(); },
-          [&](const AssociativeArrayType&) { return names_none(); },
-          [&](const WildcardIndexType&) { return names_none(); },
-          [&](const AnyType&) { return names_none(); },
           [&](const AnyReferenceType&) { return names_none(); },
-          [&](const StringType&) { return names_none(); },
           [&](const RealType&) { return names_none(); },
-          [&](const ShortRealType&) { return names_none(); },
-          [&](const ChandleType&) { return names_none(); },
           [&](const TupleType&) { return names_none(); },
-          [&](const EmptyType&) { return names_none(); },
           [&](const VoidType&) { return names_none(); },
 
           // The machine vocabulary, which crosses to a target on the target's
@@ -330,29 +238,23 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const MachineFunctionType&) { return names_none(); },
           [&](const ErasedCallableType&) { return names_none(); },
 
-          // A class the runtime library defines: a symbol is its whole
-          // identity, so no declaration of this unit stands behind it.
-          [&](const RuntimeClassType&) { return names_none(); },
+          // A type the library declares: its declaration is the library's,
+          // so no declaration of this unit stands behind it.
+          [&](const LibraryType&) { return names_none(); },
 
-          // Storage, a service, and an address. Each stands for something
-          // else; what a declaration is behind is whatever it stands for.
+          // Storage and an address. Each stands for something else; what a
+          // declaration is behind is whatever it stands for.
           [&](const ObservableType&) { return names_none(); },
           [&](const ResolvedType&) { return names_none(); },
           [&](const DriverType&) { return names_none(); },
-          [&](const SampledHistoryType&) { return names_none(); },
-          [&](const EvaluationAttemptsType&) { return names_none(); },
-          [&](const LoopBlocksType&) { return names_none(); },
           [&](const OpenWriteType&) { return names_none(); },
           [&](const DesignationType&) { return names_none(); },
-          [&](const RuntimeEffectsType&) { return names_none(); },
-          [&](const FilesType&) { return names_none(); },
-          [&](const DiagnosticType&) { return names_none(); },
-          [&](const RuntimeLibraryType&) { return names_none(); },
+          [&](const ObjectWriteType&) { return names_none(); },
           [&](const CoroutineType&) { return names_none(); },
           [&](const VariableRefType&) { return names_none(); },
           [&](const PointerType&) { return names_none(); },
           [&](const ManagedRefType&) { return names_none(); },
-          [&](const WeakManagedRefType&) { return names_none(); },
+          [&](const UnmanagedRefType&) { return names_none(); },
           [&](const VectorType&) { return names_none(); }});
 }
 
@@ -360,13 +262,12 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
   using Element = std::optional<TypeId>;
   return Visit(
       Overloaded{
-          // The four a declaration names as holding a sequence of values,
-          // however the sequence is sized and however it is indexed.
+          // A sequence of values whose count is the type's, and a container
+          // the library declares, which says which of its arguments is its
+          // element type.
           [](const UnpackedArrayType& t) -> Element { return t.element_type; },
-          [](const DynamicArrayType& t) -> Element { return t.element_type; },
-          [](const QueueType& t) -> Element { return t.element_type; },
-          [](const AssociativeArrayType& t) -> Element {
-            return t.element_type;
+          [](const LibraryType& t) -> Element {
+            return t.FindTypeArg(support::LibraryParam::kElement);
           },
 
           // These hold a sequence of values too and are still not containers: a
@@ -386,18 +287,12 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const RecordType&) -> Element { return std::nullopt; },
 
           // A single quantity or a single token.
-          [](const WildcardIndexType&) -> Element { return std::nullopt; },
-          [](const AnyType&) -> Element { return std::nullopt; },
           [](const AnyReferenceType&) -> Element { return std::nullopt; },
-          [](const StringType&) -> Element { return std::nullopt; },
           [](const MachineCStringType&) -> Element { return std::nullopt; },
           [](const MachineBoolType&) -> Element { return std::nullopt; },
           [](const MachineIntType&) -> Element { return std::nullopt; },
           [](const MachineFloatType&) -> Element { return std::nullopt; },
           [](const RealType&) -> Element { return std::nullopt; },
-          [](const ShortRealType&) -> Element { return std::nullopt; },
-          [](const ChandleType&) -> Element { return std::nullopt; },
-          [](const EmptyType&) -> Element { return std::nullopt; },
           [](const VoidType&) -> Element { return std::nullopt; },
 
           // Storage that keeps one value, and a write open on such storage;
@@ -405,11 +300,9 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const ObservableType&) -> Element { return std::nullopt; },
           [](const ResolvedType&) -> Element { return std::nullopt; },
           [](const DriverType&) -> Element { return std::nullopt; },
-          [](const SampledHistoryType&) -> Element { return std::nullopt; },
-          [](const EvaluationAttemptsType&) -> Element { return std::nullopt; },
-          [](const LoopBlocksType&) -> Element { return std::nullopt; },
           [](const OpenWriteType&) -> Element { return std::nullopt; },
           [](const DesignationType&) -> Element { return std::nullopt; },
+          [](const ObjectWriteType&) -> Element { return std::nullopt; },
 
           // These refer to a value living elsewhere rather than holding one,
           // so a container reached through one is reached by dereferencing it
@@ -417,23 +310,23 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const VariableRefType&) -> Element { return std::nullopt; },
           [](const PointerType&) -> Element { return std::nullopt; },
           [](const ManagedRefType&) -> Element { return std::nullopt; },
-          [](const WeakManagedRefType&) -> Element { return std::nullopt; },
+          [](const UnmanagedRefType&) -> Element { return std::nullopt; },
           [](const CoroutineType&) -> Element { return std::nullopt; },
           [](const MachineFunctionType&) -> Element { return std::nullopt; },
 
           // A nominal type names a declaration, and a declaration is not a run
           // of anything.
           [](const ObjectType&) -> Element { return std::nullopt; },
-          [](const RuntimeClassType&) -> Element { return std::nullopt; },
           [](const ClosureType&) -> Element { return std::nullopt; },
-          [](const ErasedCallableType&) -> Element { return std::nullopt; },
+          [](const ErasedCallableType&) -> Element { return std::nullopt; }});
+}
 
-          // A handle to a runtime facility, and a type the library declares,
-          // whose shape is the library's.
-          [](const RuntimeEffectsType&) -> Element { return std::nullopt; },
-          [](const FilesType&) -> Element { return std::nullopt; },
-          [](const DiagnosticType&) -> Element { return std::nullopt; },
-          [](const RuntimeLibraryType&) -> Element { return std::nullopt; }});
+auto Type::IndexType() const -> std::optional<TypeId> {
+  const auto* library = As<LibraryType>();
+  if (library == nullptr) {
+    return std::nullopt;
+  }
+  return library->FindTypeArg(support::LibraryParam::kIndex);
 }
 
 auto Type::Pointee() const -> std::optional<TypeId> {
@@ -445,6 +338,9 @@ auto Type::Pointee() const -> std::optional<TypeId> {
   }
   if (const auto* managed = As<ManagedRefType>()) {
     return managed->pointee;
+  }
+  if (const auto* unmanaged = As<UnmanagedRefType>()) {
+    return unmanaged->pointee;
   }
   return std::nullopt;
 }
@@ -463,114 +359,49 @@ auto Type::DerefTarget() const -> std::optional<TypeId> {
 }
 
 auto Type::IsAddressOnly() const -> bool {
-  if (const auto* library = As<RuntimeLibraryType>()) {
-    switch (library->kind) {
-      // Storage an owner holds and reaches by its address: what a disable
-      // names, what a delayed continuous assignment propagates through, and
-      // the keepers a deferred closure is emplaced in.
-      case RuntimeLibraryKind::kCancellationTarget:
-      case RuntimeLibraryKind::kTimer:
-      case RuntimeLibraryKind::kDeferredEffects:
-      case RuntimeLibraryKind::kViolationReportKeeper:
-        return true;
-      case RuntimeLibraryKind::kBitVec:
-      case RuntimeLibraryKind::kEnumeration:
-      case RuntimeLibraryKind::kPrintItem:
-      case RuntimeLibraryKind::kFormatSpec:
-      case RuntimeLibraryKind::kFormatArg:
-      case RuntimeLibraryKind::kChannelCancellation:
-      case RuntimeLibraryKind::kTimeFormat:
-      case RuntimeLibraryKind::kHierarchySegment:
-      case RuntimeLibraryKind::kDpiBitBuffer:
-      case RuntimeLibraryKind::kDpiLogicBuffer:
-      case RuntimeLibraryKind::kDpiBitChunk:
-      case RuntimeLibraryKind::kDpiLogicChunk:
-      case RuntimeLibraryKind::kDpiOpenArray:
-      case RuntimeLibraryKind::kDpiOpenArrayHandle:
-      case RuntimeLibraryKind::kWatchedPlace:
-      case RuntimeLibraryKind::kTrigger:
-      case RuntimeLibraryKind::kObservation:
-      case RuntimeLibraryKind::kReadReport:
-      case RuntimeLibraryKind::kWait:
-      case RuntimeLibraryKind::kLeasedReference:
-      case RuntimeLibraryKind::kObjectWrite:
-      case RuntimeLibraryKind::kControlEffect:
-      case RuntimeLibraryKind::kObjectDefinition:
-      case RuntimeLibraryKind::kScopeInfo:
-      case RuntimeLibraryKind::kScopeCallable:
-      case RuntimeLibraryKind::kClassObjectInfo:
-      case RuntimeLibraryKind::kInterfaceRow:
-      case RuntimeLibraryKind::kScopeMetadata:
-      case RuntimeLibraryKind::kConstructionTable:
-      case RuntimeLibraryKind::kInstantiation:
-      case RuntimeLibraryKind::kGeneratePlaces:
-      case RuntimeLibraryKind::kDumpEntry:
-      case RuntimeLibraryKind::kDumpBlock:
-        return false;
-    }
-    throw InternalError("lir: unknown runtime library kind");
+  if (const auto* library = As<LibraryType>()) {
+    return support::IsAddressOnly(library->decl);
   }
-  return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>() ||
-         Is<RuntimeClassType>() || Is<SampledHistoryType>() ||
-         Is<EvaluationAttemptsType>() || Is<LoopBlocksType>();
+  return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>();
 }
 
 auto Type::HeldAs() const -> std::optional<Holding> {
   using Held = std::optional<Holding>;
   using support::LibraryObject;
+  using support::RuntimeObject;
   using support::ValueDomain;
   return Visit(
       Overloaded{
-          [](const IntegralType&) -> Held { return IntegralBits{}; },
-          // LRM 7.8.1 gives a wildcard-indexed array no index data type, so
-          // this type names where an index goes rather than what one is made
-          // of. What goes there is always integral, at whatever width the
-          // expression carried, which is why it is held with its type.
-          [](const WildcardIndexType&) -> Held {
-            return ValueDomain::kWildcardIndex;
+          // A scalar the IR lays out is its own bytes: an integral value, a
+          // real as the IEEE value of its width (LRM 6.12), and a reference
+          // owning nothing as the address it holds, which is the whole value
+          // (LRM 6.14, 25.9).
+          [](const IntegralType& integral) -> Held {
+            return value::Scalar{value::IntegralScalar{
+                .width = integral.bit_width,
+                .states = StateDomainOf(integral.state_kind)}};
           },
-          [](const StringType&) -> Held { return ValueDomain::kString; },
-          [](const AnyType&) -> Held { return ValueDomain::kAny; },
+          [](const RealType& real) -> Held {
+            return value::Scalar{value::RealScalar{.width = real.width}};
+          },
+          [](const UnmanagedRefType&) -> Held {
+            return value::Scalar{value::UnmanagedRefScalar{}};
+          },
           [](const AnyReferenceType&) -> Held {
-            return LibraryObject::kAnyReference;
+            return RuntimeObject{LibraryObject::kAnyReference};
           },
-          [](const WeakManagedRefType&) -> Held {
-            return LibraryObject::kWeakReference;
-          },
-          [](const RealType&) -> Held { return ValueDomain::kReal; },
-          [](const ShortRealType&) -> Held { return ValueDomain::kShortReal; },
-          // A chandle (LRM 6.14) is a value holding one host pointer.
-          [](const ChandleType&) -> Held { return ValueDomain::kChandle; },
           // A value laid out by its type -- a tuple, a structure, a union of
           // either kind, a fixed-size unpacked array (LRM 7.4.2) -- is held as
           // the bytes that type lays out, whatever the type says lies where.
-          [](const TupleType&) -> Held { return ValueDomain::kLaidOut; },
-          [](const RecordType&) -> Held { return ValueDomain::kLaidOut; },
-          [](const UnpackedArrayType&) -> Held {
-            return ValueDomain::kLaidOut;
-          },
-          // A tagged union's `void` member (LRM 7.3.2) is a value carrying no
-          // bits, a value of its own so a build's payload is uniform whatever
-          // the member type.
-          [](const EmptyType&) -> Held { return ValueDomain::kEmpty; },
-          // A container whose size changes as the program runs holds its
-          // elements in storage of its own, and nothing its declaration says:
-          // a queue's bound (LRM 7.10) and an associative array's index type
-          // (LRM 7.8) each reach an operation as an operand of their own, so
-          // one runtime value per kind serves every declared shape.
-          [](const DynamicArrayType&) -> Held {
-            return ValueDomain::kDynArray;
-          },
-          [](const QueueType&) -> Held { return ValueDomain::kQueue; },
-          [](const AssociativeArrayType&) -> Held {
-            return ValueDomain::kAssocArray;
-          },
+          [](const TupleType&) -> Held { return LaidOutByType{}; },
+          [](const RecordType&) -> Held { return LaidOutByType{}; },
+          [](const UnpackedArrayType&) -> Held { return LaidOutByType{}; },
           // A class handle (LRM 8.3) refers to an object the simulator owns.
           // Which object it refers to is the whole value, so the value's
           // operations are the ones over a reference -- defaulting to null,
           // copying, and comparing identity.
           [](const ManagedRefType&) -> Held {
-            return ValueDomain::kManagedRef;
+            return RuntimeObject{ValueDomain::kManagedRef};
           },
 
           [](const ClosureType&) -> Held { return ClosureStorage{}; },
@@ -581,7 +412,7 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           [](const PointerType& pointer) -> Held {
             switch (pointer.ownership) {
               case PointerOwnership::kShared:
-                return LibraryObject::kSharedPointer;
+                return RuntimeObject{LibraryObject::kSharedPointer};
               case PointerOwnership::kUnique:
                 return OwnedStorageAddress{};
               case PointerOwnership::kBorrowed:
@@ -589,76 +420,12 @@ auto Type::HeldAs() const -> std::optional<Holding> {
             }
             throw InternalError("lir: unknown pointer ownership");
           },
-          [](const RuntimeLibraryType& library) -> Held {
-            switch (library.kind) {
-              // A value of the library's own, held as any value is.
-              case RuntimeLibraryKind::kBitVec:
-                return ValueDomain::kBitVec;
-              // Built for one use by the call that answers with one.
-              case RuntimeLibraryKind::kPrintItem:
-                return LibraryObject::kPrintItem;
-              case RuntimeLibraryKind::kFormatSpec:
-                return LibraryObject::kFormatSpec;
-              case RuntimeLibraryKind::kFormatArg:
-                return LibraryObject::kFormatArg;
-              case RuntimeLibraryKind::kChannelCancellation:
-                return LibraryObject::kChannelCancellation;
-              case RuntimeLibraryKind::kHierarchySegment:
-                return LibraryObject::kHierarchySegment;
-              case RuntimeLibraryKind::kDpiBitBuffer:
-                return LibraryObject::kDpiBitBuffer;
-              case RuntimeLibraryKind::kDpiLogicBuffer:
-                return LibraryObject::kDpiLogicBuffer;
-              case RuntimeLibraryKind::kDpiOpenArray:
-                return LibraryObject::kDpiOpenArray;
-              case RuntimeLibraryKind::kTrigger:
-                return LibraryObject::kTrigger;
-              case RuntimeLibraryKind::kObservation:
-                return LibraryObject::kObservation;
-              // Held by the waiting frame across the waits it states into.
-              case RuntimeLibraryKind::kReadReport:
-                return LibraryObject::kReadReport;
-              // Held by the body across every stop it makes at it.
-              case RuntimeLibraryKind::kWait:
-                return LibraryObject::kWait;
-              // Held by the binding while the call runs; ending it lets go of
-              // what it kept.
-              case RuntimeLibraryKind::kLeasedReference:
-                return LibraryObject::kLeasedReference;
-              // Held by the writer for as long as the write lasts; ending it
-              // is what tells the object it was written.
-              case RuntimeLibraryKind::kObjectWrite:
-                return LibraryObject::kObjectWrite;
-              // Kept by the run -- an enumeration's members, a class's
-              // record, the time format, a construction table -- or reached
-              // inside something else -- a buffer's chunk, an image's handle,
-              // the effect a departure carries, the target a disable names,
-              // the timer a delayed continuous assignment propagates through.
-              case RuntimeLibraryKind::kConstructionTable:
-              case RuntimeLibraryKind::kInstantiation:
-              case RuntimeLibraryKind::kGeneratePlaces:
-              case RuntimeLibraryKind::kEnumeration:
-              case RuntimeLibraryKind::kTimeFormat:
-              case RuntimeLibraryKind::kDpiBitChunk:
-              case RuntimeLibraryKind::kDpiLogicChunk:
-              case RuntimeLibraryKind::kDpiOpenArrayHandle:
-              case RuntimeLibraryKind::kWatchedPlace:
-              case RuntimeLibraryKind::kCancellationTarget:
-              case RuntimeLibraryKind::kTimer:
-              case RuntimeLibraryKind::kDeferredEffects:
-              case RuntimeLibraryKind::kViolationReportKeeper:
-              case RuntimeLibraryKind::kControlEffect:
-              case RuntimeLibraryKind::kObjectDefinition:
-              case RuntimeLibraryKind::kScopeInfo:
-              case RuntimeLibraryKind::kScopeCallable:
-              case RuntimeLibraryKind::kClassObjectInfo:
-              case RuntimeLibraryKind::kInterfaceRow:
-              case RuntimeLibraryKind::kScopeMetadata:
-              case RuntimeLibraryKind::kDumpEntry:
-              case RuntimeLibraryKind::kDumpBlock:
-                return std::nullopt;
-            }
-            throw InternalError("lir: unknown runtime library kind");
+          // A type the library declares is held as its declaration says: as
+          // an object of the library's, or not at all where the run keeps it
+          // or another object holds it, which is reached where it lies and so
+          // is not this holder's to end.
+          [](const LibraryType& library) -> Held {
+            return support::ObjectOf(library.decl);
           },
 
           // Machine data is held as itself: a scalar, an array, a code address.
@@ -677,16 +444,9 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           // holds: each is reached where it lives rather than held, and what it
           // holds or answers with is a value of its own.
           [](const ObjectType&) -> Held { return std::nullopt; },
-          [](const RuntimeClassType&) -> Held { return std::nullopt; },
           [](const ObservableType&) -> Held { return std::nullopt; },
           [](const ResolvedType&) -> Held { return std::nullopt; },
           [](const DriverType&) -> Held { return std::nullopt; },
-          [](const SampledHistoryType&) -> Held { return std::nullopt; },
-          [](const EvaluationAttemptsType&) -> Held { return std::nullopt; },
-          [](const LoopBlocksType&) -> Held { return std::nullopt; },
-          [](const RuntimeEffectsType&) -> Held { return std::nullopt; },
-          [](const FilesType&) -> Held { return std::nullopt; },
-          [](const DiagnosticType&) -> Held { return std::nullopt; },
           [](const VectorType&) -> Held { return std::nullopt; },
           // A body in flight is taken by whoever drives it, the moment it is
           // made, so nothing is left for its maker to hold.
@@ -695,16 +455,19 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           // what reports the write. A part designated within it is built by
           // the step that reaches it and borrows the write.
           [](const OpenWriteType&) -> Held {
-            return LibraryObject::kOpenWrite;
+            return RuntimeObject{LibraryObject::kOpenWrite};
           },
           [](const DesignationType&) -> Held {
-            return LibraryObject::kDesignation;
+            return RuntimeObject{LibraryObject::kDesignation};
+          },
+          [](const ObjectWriteType&) -> Held {
+            return RuntimeObject{LibraryObject::kObjectWrite};
           },
           // Where a value lies and the variable, if any, it belongs to, so a
           // write through it is told to whoever waits on that variable. The
           // storage it names is somebody else's, so ending it ends nothing.
           [](const VariableRefType&) -> Held {
-            return LibraryObject::kReference;
+            return RuntimeObject{LibraryObject::kReference};
           }});
 }
 
@@ -719,6 +482,15 @@ auto Type::IsHeldInStorage() const -> bool {
 auto Type::IsMoveOnly() const -> bool {
   const std::optional<Holding> held = HeldAs();
   return held.has_value() && std::holds_alternative<OwnedStorageAddress>(*held);
+}
+
+auto Type::RuntimeClassOf() const -> std::optional<support::LibraryDecl> {
+  const auto* library = As<LibraryType>();
+  if (library == nullptr ||
+      !support::DeclarationOf(library->decl).runtime_class.has_value()) {
+    return std::nullopt;
+  }
+  return library->decl;
 }
 
 auto Type::MachineIntegerSignedness() const -> std::optional<Signedness> {

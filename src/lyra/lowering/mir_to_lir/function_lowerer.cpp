@@ -39,6 +39,7 @@
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -2414,7 +2415,7 @@ auto FunctionLowerer::LowerPlace(
           [&](const mir::MachineIntLiteral&) {
             return names_no_place("a literal");
           },
-          [&](const mir::MachineFloatLiteral&) {
+          [&](const mir::FloatingLiteral&) {
             return names_no_place("a literal");
           },
           [&](const mir::UnaryExpr&) {
@@ -2602,8 +2603,8 @@ auto FunctionLowerer::ObjectAddress(
   // lies where the object does whatever class it is reached as.
   return Emit(
       AddressType(unit_->Types().Intern(
-          lir::Type{
-              lir::RuntimeClassType{.which = support::RuntimeClass::kObject}})),
+          lir::Type{lir::LibraryType{
+              .decl = support::LibraryDecl::kObjectRoot, .args = {}}})),
       lir::CastInstr{.operand = reached});
 }
 
@@ -3460,8 +3461,8 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return lir::Operand{lir::StrConst{
                 .value = lit.value, .type = unit_->TranslateType(type)}};
           },
-          [&](const mir::MachineFloatLiteral& lit) -> Lowered {
-            return lir::Operand{lir::RealConst{
+          [&](const mir::FloatingLiteral& lit) -> Lowered {
+            return lir::Operand{lir::FloatConst{
                 .value = lit.value, .type = unit_->TranslateType(type)}};
           },
           [&](const mir::NullLiteral&) -> Lowered {
@@ -3761,10 +3762,10 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
               return std::unexpected(std::move(operand.error()));
             }
             const lir::UnaryOp op = TranslateUnaryOp(un.op);
-            // A logical-not over a machine boolean -- the reduced predicate
-            // a real- or chandle-family `!` produces before `from_bool`
-            // widens it back -- stays a machine boolean; its surface 1-bit
-            // type is restored by the enclosing `from_bool`.
+            // A logical-not over a machine boolean -- the reduced predicate a
+            // real's or a reference's `!` produces before `from_bool` widens
+            // it back -- stays a machine boolean; its surface 1-bit type is
+            // restored by the enclosing `from_bool`.
             const lir::TypeId result_type =
                 (op == lir::UnaryOp::kLogicalNot &&
                  lir::OperandType(fn_, *operand) == unit_->MachineBoolType())
@@ -3790,7 +3791,7 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
                     .op = op, .lhs = *std::move(lhs), .rhs = *std::move(rhs)});
           },
           [&](const mir::StringLiteral&) { return used(); },
-          [&](const mir::MachineFloatLiteral&) { return used(); },
+          [&](const mir::FloatingLiteral&) { return used(); },
           [&](const mir::NullLiteral&) { return used(); },
           [&](const mir::MachineBoolLiteral&) { return used(); },
           [&](const mir::MachineIntLiteral&) { return used(); },
@@ -3846,7 +3847,7 @@ auto FunctionLowerer::LowerExprInto(
           [&](const mir::MoveExpr&) { return assigned(); },
           [&](const mir::CopyExpr&) { return assigned(); },
           [&](const mir::StringLiteral&) { return assigned(); },
-          [&](const mir::MachineFloatLiteral&) { return assigned(); },
+          [&](const mir::FloatingLiteral&) { return assigned(); },
           [&](const mir::NullLiteral&) { return assigned(); },
           [&](const mir::MachineBoolLiteral&) { return assigned(); },
           [&](const mir::MachineIntLiteral&) { return assigned(); },

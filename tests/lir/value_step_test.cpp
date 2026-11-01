@@ -11,6 +11,7 @@
 #include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
@@ -25,7 +26,8 @@ struct Types {
           .bit_width = 32,
           .signedness = Signedness::kSigned,
           .state_kind = IntegralStateKind::kFourState}});
-  TypeId string = unit.types.Intern(Type{StringType{}});
+  TypeId string = unit.types.Intern(
+      Type{LibraryType{.decl = support::LibraryDecl::kString, .args = {}}});
 
   auto Record(RecordKind kind, std::vector<TypeId> members) -> TypeId {
     const RecordId id = unit.records.Add(

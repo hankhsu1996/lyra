@@ -6,25 +6,26 @@
 #include <memory>
 #include <utility>
 
-#include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/real.hpp"
+#include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
 
-// LRM 6.24.3: a real and a chandle are the kinds that hold no stream of bits,
-// so a streaming conversion of one is a program the front end rejected. Every
-// other kind is one a program may stream.
+// LRM 6.24.3: a real and a reference owning nothing -- a chandle, a virtual
+// interface -- are the kinds that hold no stream of bits, so a streaming
+// conversion of one is a program the front end rejected. Every other kind is
+// one a program may stream.
 template <typename T>
 inline constexpr bool kIsBitStreamType = true;
 template <typename Host>
 inline constexpr bool kIsBitStreamType<RealValue<Host>> = false;
 template <>
-inline constexpr bool kIsBitStreamType<Chandle> = false;
+inline constexpr bool kIsBitStreamType<UnmanagedRef> = false;
 
 // A value of `T` holds parts ordered by position, each a value of a type the
 // value states and handed out where it lies.

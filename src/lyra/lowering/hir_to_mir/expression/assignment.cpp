@@ -119,7 +119,7 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
           [&](const mir::NullLiteral&) { return not_a_target(); },
           [&](const mir::MachineBoolLiteral&) { return not_a_target(); },
           [&](const mir::MachineIntLiteral&) { return not_a_target(); },
-          [&](const mir::MachineFloatLiteral&) { return not_a_target(); },
+          [&](const mir::FloatingLiteral&) { return not_a_target(); },
           [&](const mir::UnaryExpr&) { return not_a_target(); },
           [&](const mir::BinaryExpr&) { return not_a_target(); },
           [&](const mir::CastExpr&) { return not_a_target(); },

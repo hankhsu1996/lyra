@@ -43,7 +43,7 @@ struct IndexOrder {
 extern "C" {
 extern const IndexOrder lyra_rt_integral_index_order;
 extern const IndexOrder lyra_rt_string_index_order;
-extern const IndexOrder lyra_rt_chandle_index_order;
+extern const IndexOrder lyra_rt_unmanagedref_index_order;
 extern const IndexOrder lyra_rt_managedref_index_order;
 extern const IndexOrder lyra_rt_wildcard_index_index_order;
 }

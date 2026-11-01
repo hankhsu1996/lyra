@@ -11,7 +11,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/timing.hpp"
-#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -35,10 +34,6 @@ namespace {
 // The effects of the NBA region of the slot a delay names (LRM 9.4.5). The
 // amount crosses unscaled with its scope's powers, because LRM 9.4.1 reads a
 // delay expression's own value before any scaling.
-//
-// Which entry carries it follows the amount's own type, because the language
-// reads the same written value differently in each: an integral amount counts
-// whole time units, while a real one may name a fraction of one.
 auto BuildNbaEffectsAfterCall(
     ProcessLowerer& process, WalkFrame frame, const hir::DelayControl& delay)
     -> diag::Result<mir::Expr> {
@@ -47,24 +42,18 @@ auto BuildNbaEffectsAfterCall(
   auto duration_or =
       process.LowerExpr(process.HirBody().exprs.Get(delay.duration), frame);
   if (!duration_or) return std::unexpected(std::move(duration_or.error()));
-  mir::ExprId duration_id = block.Add(*std::move(duration_or));
-  const mir::Type& duration_type = unit.types.Get(block.Get(duration_id).type);
-  const bool is_real = duration_type.IsRealFamily();
-  if (duration_type.Is<mir::ShortRealType>()) {
-    // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
-    // from them only in host precision, so the entry takes the wider.
-    duration_id = ConvertToType(unit, block, duration_id, unit.builtins.real);
-  }
+  const DelayRead read = ReadDelayAmount(
+      unit, block, block.Add(*std::move(duration_or)),
+      {.integral = support::BuiltinFn::kNbaEffectsAfter,
+       .real = support::BuiltinFn::kNbaEffectsAfterReal});
   const mir::ExprId unit_power_id = mir::BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));
   const mir::ExprId precision_power_id = mir::BuildMachineIntLiteral(
       unit, block,
       static_cast<std::int64_t>(process.Resolution().precision_power));
   return BuildRegionEffectsCallExpr(
-      process.Owner(), block,
-      is_real ? support::BuiltinFn::kNbaEffectsAfterReal
-              : support::BuiltinFn::kNbaEffectsAfter,
-      {duration_id, unit_power_id, precision_power_id});
+      process.Owner(), block, read.entry,
+      {read.amount, unit_power_id, precision_power_id});
 }
 
 // The wait an event control is, built into the carrier's body. A repeat count

@@ -60,7 +60,7 @@ void ForEachOperand(Data& data, const auto& reach) {
           [](AsConstAs<Data, NullLiteral>&) {},
           [](AsConstAs<Data, MachineBoolLiteral>&) {},
           [](AsConstAs<Data, MachineIntLiteral>&) {},
-          [](AsConstAs<Data, MachineFloatLiteral>&) {},
+          [](AsConstAs<Data, FloatingLiteral>&) {},
           [](AsConstAs<Data, ReferenceExpr>&) {},
           [&](AsConstAs<Data, UnaryExpr>& e) { value(e.operand); },
           [&](AsConstAs<Data, BinaryExpr>& e) {

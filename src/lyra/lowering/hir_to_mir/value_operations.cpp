@@ -127,16 +127,17 @@ auto EqualityAnswerOver(
   throw InternalError("EqualityAnswerOver: unknown record kind");
 }
 
-// LRM 6.24.3: neither a real nor a chandle is a bit-stream type, and a value
-// holding one has no stream either. A stream takes an untagged union as its
-// first member and a tagged one not at all (LRM 11.4.14.1).
+// LRM 6.24.3: neither a real nor a reference owning nothing -- a chandle, a
+// virtual interface -- is a bit-stream type, and a value holding one has no
+// stream either. A stream takes an untagged union as its first member and a
+// tagged one not at all (LRM 11.4.14.1).
 auto HasBitStream(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
   if (const std::optional<mir::RecordKind> kind =
           mir::RecordKindOf(unit, type)) {
     return HasBitStreamOver(unit, *kind, PartTypes(unit, type));
   }
   const mir::Type& t = unit.types.Get(type);
-  return !t.IsRealFamily() && !t.Is<mir::ChandleType>() &&
+  return !t.Is<mir::RealType>() && !t.Is<mir::UnmanagedRefType>() &&
          EveryPart(unit, PartTypes(unit, type), HasBitStream);
 }
 
@@ -245,7 +246,7 @@ auto OwnOperationTarget(
   if (const mir::RecordId* record = mir::RecordOf(t)) {
     return mir::RecordMethodTarget{.record = *record, .answers = answers};
   }
-  if (mir::OperationsAreStatedPerUnit(t)) {
+  if (mir::OperationsStatedPerUnit(t).has_value()) {
     return mir::TypeOperationTarget{.type = type, .answers = answers};
   }
   return std::nullopt;
@@ -706,20 +707,21 @@ auto MethodsOf(mir::RecordId record) -> OperationBodies::OwnTarget {
   };
 }
 
-// Builds the methods of one struct while its declaration is being made, so
-// every fact about the struct itself is read off its members rather than off a
-// declaration that does not exist yet, and another of its methods is named by
-// the declaration being made.
-class StructBodies : public OperationBodies {
+// Builds the operations of one product, a structure (LRM 7.2) or a tuple: its
+// components side by side, so every operation on the whole value is that
+// operation on each component in turn, the first most significant in a
+// stream. Every fact about the product is read off its components rather than
+// off a declaration, since a structure's methods are built while its
+// declaration is being made, and another of its operations is named as `own`
+// says.
+class ProductBodies : public OperationBodies {
  public:
-  StructBodies(
-      UnitLowerer& lowerer, const hir::UnpackedStructDefinition& source,
-      mir::RecordId record, mir::TypeId structure,
-      std::vector<mir::TypeId> members)
+  ProductBodies(
+      UnitLowerer& lowerer, mir::TypeId product,
+      std::vector<mir::TypeId> components, OwnTarget own)
       : OperationBodies(
-            lowerer, structure, members,
-            OneBitAnswerType(lowerer.Unit(), members), MethodsOf(record)),
-        source_(&source) {
+            lowerer, product, components,
+            OneBitAnswerType(lowerer.Unit(), components), std::move(own)) {
   }
 
   auto Equality() -> mir::CallableCode;
@@ -734,19 +736,19 @@ class StructBodies : public OperationBodies {
   auto FromBitVec() -> mir::CallableCode;
   auto Fold(support::BuiltinFn fold) -> mir::CallableCode;
   auto FilledLike() -> mir::CallableCode;
-  auto DeclaredDefault() -> mir::CallableCode;
   auto PositionCount() -> mir::CallableCode;
   auto TakePositions() -> mir::CallableCode;
+  using OperationBodies::DeclaredDefault;
   using OperationBodies::Inequality;
 
  private:
-  // The stream this struct makes, which every method over one has.
+  // The stream this product makes, which every body over one has.
   auto Stream() -> StreamShape {
     return *FixedStreamShapeOfParts(Unit(), Members());
   }
 
-  // The `int` sum of what `term(i)` answers for each member `i`, added into a
-  // local of `code` one statement per member.
+  // The `int` sum of what `term(i)` answers for each component `i`, added into
+  // a local of `code` one statement per component.
   auto SumOverMembers(
       mir::CallableCode& code, mir::Builder block, const auto& term)
       -> mir::ExprId {
@@ -762,7 +764,7 @@ class StructBodies : public OperationBodies {
         Unit(), block, mir::BinaryOp::kAdd, zero, sum, count, terms);
   }
 
-  // The struct built from one value per member.
+  // The product built from one value per component.
   auto Built(mir::Builder block, std::vector<mir::ExprId> members)
       -> mir::ExprId {
     return block.Add(
@@ -770,14 +772,31 @@ class StructBodies : public OperationBodies {
             .data = mir::CompositeExpr{.parts = std::move(members)},
             .type = WholeType()});
   }
+};
 
+// The methods of one struct, named by the declaration being made, and what a
+// variable of it starts as, which its declaration gives.
+class StructBodies : public ProductBodies {
+ public:
+  StructBodies(
+      UnitLowerer& lowerer, const hir::UnpackedStructDefinition& source,
+      mir::RecordId record, mir::TypeId structure,
+      std::vector<mir::TypeId> members)
+      : ProductBodies(
+            lowerer, structure, std::move(members), MethodsOf(record)),
+        source_(&source) {
+  }
+
+  auto DeclaredDefault() -> mir::CallableCode;
+
+ private:
   const hir::UnpackedStructDefinition* source_;
 };
 
 // LRM 11.4.5: equal when every pair of members is, and unknown where no pair is
 // unequal and some pair is unknown -- which is the logical AND of the members'
-// own answers, each taken to the structure's own answer type first.
-auto StructBodies::Equality() -> mir::CallableCode {
+// own answers, each taken to the product's own answer type first.
+auto ProductBodies::Equality() -> mir::CallableCode {
   const mir::TypeId answer_type = EqualityAnswer();
   return BodyOf(
       support::ValueOperator::kEquality, {WholeType(), WholeType()},
@@ -796,7 +815,7 @@ auto StructBodies::Equality() -> mir::CallableCode {
       });
 }
 
-auto StructBodies::CaseEqual() -> mir::CallableCode {
+auto ProductBodies::CaseEqual() -> mir::CallableCode {
   const mir::TypeId bit = Unit().builtins.bit1;
   return BodyOf(
       support::BuiltinFn::kCaseEqual, {WholeType(), WholeType()}, bit,
@@ -816,7 +835,7 @@ auto StructBodies::CaseEqual() -> mir::CallableCode {
 
 // Identical where every pair of members is, asked in order and answered at the
 // first pair that is not: one statement per member, one after another.
-auto StructBodies::BitIdentical() -> mir::CallableCode {
+auto ProductBodies::BitIdentical() -> mir::CallableCode {
   const mir::TypeId boolean = Unit().builtins.machine_bool;
   return Body(
       support::BuiltinFn::kBitIdentical, {WholeType(), WholeType()}, boolean,
@@ -838,7 +857,7 @@ auto StructBodies::BitIdentical() -> mir::CallableCode {
 
 // Holding an x or z where any member does, asked in order and answered at the
 // first member that holds one.
-auto StructBodies::HasUnknown() -> mir::CallableCode {
+auto ProductBodies::HasUnknown() -> mir::CallableCode {
   const mir::TypeId boolean = Unit().builtins.machine_bool;
   return Body(
       support::BuiltinFn::kHasUnknown, {WholeType()}, boolean,
@@ -854,8 +873,8 @@ auto StructBodies::HasUnknown() -> mir::CallableCode {
       });
 }
 
-// LRM 20.6.2: a structure holds the bits its members hold.
-auto StructBodies::BitWidth() -> mir::CallableCode {
+// LRM 20.6.2: a structure, as any product, holds the bits its members hold.
+auto ProductBodies::BitWidth() -> mir::CallableCode {
   return BodyOf(
       support::BuiltinFn::kBitstreamWidth, {WholeType()},
       Unit().builtins.int_type,
@@ -867,9 +886,9 @@ auto StructBodies::BitWidth() -> mir::CallableCode {
       });
 }
 
-// LRM 20.9: a structure's stream is its members' laid end to end, so the count
+// LRM 20.9: a product's stream is its members' laid end to end, so the count
 // over it is the sum of theirs under the same control set.
-auto StructBodies::CountBits() -> mir::CallableCode {
+auto ProductBodies::CountBits() -> mir::CallableCode {
   const mir::TypeId control = BitCountControlType(Unit());
   return BodyOf(
       support::BuiltinFn::kCountBits, {WholeType(), control},
@@ -887,7 +906,7 @@ auto StructBodies::CountBits() -> mir::CallableCode {
 // LRM 6.24.3: the first member's stream most significant, each after it
 // concatenated below. A stream is only built where the type fixes its width, so
 // no member can refuse.
-auto StructBodies::ToBitstream() -> mir::CallableCode {
+auto ProductBodies::ToBitstream() -> mir::CallableCode {
   const StreamShape shape = Stream();
   const mir::TypeId stream =
       mir::PackedVectorOf(Unit().types, shape.width, shape.state_kind);
@@ -901,7 +920,7 @@ auto StructBodies::ToBitstream() -> mir::CallableCode {
               Unit(), block, Member(block, p[0], i), diag::SourceSpan{});
           if (!member) {
             throw InternalError(
-                "StructBodies::ToBitstream: a member of a structure whose "
+                "ProductBodies::ToBitstream: a component of a product whose "
                 "stream is fixed has none");
           }
           streams.push_back(block.AsValue(Unit().types, *member));
@@ -916,7 +935,7 @@ auto StructBodies::ToBitstream() -> mir::CallableCode {
 // The inverse: each member reads its own width off the stream, the first from
 // the most significant end (LRM 11.4.14.3). The type fixes every member's
 // width, so where each one starts is known here.
-auto StructBodies::FromBitstream() -> mir::CallableCode {
+auto ProductBodies::FromBitstream() -> mir::CallableCode {
   const StreamShape shape = Stream();
   const mir::TypeId stream =
       mir::PackedVectorOf(Unit().types, shape.width, shape.state_kind);
@@ -940,7 +959,7 @@ auto StructBodies::FromBitstream() -> mir::CallableCode {
 
 // LRM 6.24.3: where a member's width is the running program's, the members'
 // streams laid end to end into a run of bits, the first most significant.
-auto StructBodies::ToBitVec() -> mir::CallableCode {
+auto ProductBodies::ToBitVec() -> mir::CallableCode {
   const mir::TypeId run = Unit().builtins.bit_vec;
   return BodyOf(
       support::BuiltinFn::kToBitVec, {WholeType()}, run,
@@ -952,7 +971,7 @@ auto StructBodies::ToBitVec() -> mir::CallableCode {
               Unit(), block, Member(block, p[0], i), diag::SourceSpan{});
           if (!member) {
             throw InternalError(
-                "StructBodies::ToBitVec: a member of a structure holding a "
+                "ProductBodies::ToBitVec: a component of a product holding a "
                 "stream has none");
           }
           streams.push_back(block.AsValue(Unit().types, *member));
@@ -961,11 +980,11 @@ auto StructBodies::ToBitVec() -> mir::CallableCode {
       });
 }
 
-// The inverse, out of a run holding exactly the structure's bits: a member
+// The inverse, out of a run holding exactly the product's bits: a member
 // whose type fixes its width takes that many, and one whose width is the
 // program's takes what the members after it leave where they are empty, so
 // the first such member takes the rest (LRM 11.4.14.4).
-auto StructBodies::FromBitVec() -> mir::CallableCode {
+auto ProductBodies::FromBitVec() -> mir::CallableCode {
   const mir::TypeId run = Unit().builtins.bit_vec;
   return BodyOf(
       support::BuiltinFn::kFromBitVec, {run}, WholeType(),
@@ -1024,8 +1043,8 @@ auto StructBodies::FromBitVec() -> mir::CallableCode {
 }
 
 // Two contributions folded member by member (LRM 6.7.1 composes a net of a
-// structure out of its members' bits).
-auto StructBodies::Fold(support::BuiltinFn fold) -> mir::CallableCode {
+// structure out of its members' bits, and any product likewise).
+auto ProductBodies::Fold(support::BuiltinFn fold) -> mir::CallableCode {
   return Body(
       fold, {WholeType(), WholeType()}, WholeType(),
       [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
@@ -1040,7 +1059,7 @@ auto StructBodies::Fold(support::BuiltinFn fold) -> mir::CallableCode {
       });
 }
 
-auto StructBodies::FilledLike() -> mir::CallableCode {
+auto ProductBodies::FilledLike() -> mir::CallableCode {
   const mir::TypeId fill = FillType(Unit());
   return Body(
       support::BuiltinFn::kFilledLike, {WholeType(), fill}, WholeType(),
@@ -1067,8 +1086,8 @@ auto StructBodies::DeclaredDefault() -> mir::CallableCode {
       });
 }
 
-// A structure's positions are its members', the first member's first.
-auto StructBodies::PositionCount() -> mir::CallableCode {
+// A product's positions are its members', the first member's first.
+auto ProductBodies::PositionCount() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kPositionCount, {}, Unit().builtins.machine_int64,
       [&](mir::Builder block, const std::vector<mir::LocalId>&) {
@@ -1076,7 +1095,7 @@ auto StructBodies::PositionCount() -> mir::CallableCode {
       });
 }
 
-auto StructBodies::TakePositions() -> mir::CallableCode {
+auto ProductBodies::TakePositions() -> mir::CallableCode {
   const mir::TypeId number = Unit().builtins.machine_int64;
   return BodyOf(
       support::BuiltinFn::kTakePositions,
@@ -1321,16 +1340,14 @@ class TaggedUnionBodies : public OperationBodies {
   // refers to holds member `i`, returned by the member they hold, and what
   // `neither(taken)` builds where they hold no one member alike. Each value's
   // tag is read once, and two tags are compared before any member is, as
-  // rustc's derived comparison of an enum compares the discriminants first. A
-  // `void` member carries no information (LRM 7.3.2), so values holding it are
-  // alike in every respect and answer what `alike(taken)` builds. Each answer
-  // is built in the scope that returns it, so a member is read only where it
-  // is held.
-  template <typename Held, typename Alike, typename Neither>
+  // rustc's derived comparison of an enum compares the discriminants first.
+  // Each answer is built in the scope that returns it, so a member is read only
+  // where it is held.
+  template <typename Held, typename Neither>
   auto ByHeldMember(
       mir::CallableCode& code, mir::Builder block,
-      std::span<const mir::LocalId> locals, Held held, Alike alike,
-      Neither neither) -> mir::ExprId {
+      std::span<const mir::LocalId> locals, Held held, Neither neither)
+      -> mir::ExprId {
     const mir::TypeId tag_type = Unit().builtins.machine_int64;
     const mir::TypeId boolean = Unit().builtins.machine_bool;
     std::vector<mir::LocalId> tags;
@@ -1356,8 +1373,6 @@ class TaggedUnionBodies : public OperationBodies {
           neither);
     }
     for (std::size_t i = 0; i < Members().size(); ++i) {
-      const bool carries_nothing =
-          Unit().types.Get(Members()[i]).Is<mir::EmptyType>();
       const mir::ExprId lhs = block.ReadLocal(tags.front(), tag_type);
       const mir::ExprId rhs = mir::BuildMachineIntLiteral(
           Unit(), block, static_cast<std::int64_t>(i));
@@ -1367,9 +1382,7 @@ class TaggedUnionBodies : public OperationBodies {
               mir::MakeBinary(
                   Unit(), block.Body(), mir::BinaryOp::kEquality, lhs, rhs,
                   boolean)),
-          [&](mir::Builder taken) {
-            return carries_nothing ? alike(taken) : held(taken, i);
-          });
+          [&](mir::Builder taken) { return held(taken, i); });
     }
     return neither(block);
   }
@@ -1392,9 +1405,6 @@ auto TaggedUnionBodies::Equality() -> mir::CallableCode {
               return PartEqual(taken, lhs, rhs, Members()[i]);
             },
             [&](mir::Builder taken) {
-              return KnownBit(taken, answer_type, true);
-            },
-            [&](mir::Builder taken) {
               return KnownBit(taken, answer_type, false);
             });
       });
@@ -1412,9 +1422,6 @@ auto TaggedUnionBodies::CaseEqual() -> mir::CallableCode {
               const mir::ExprId lhs = Member(taken, p[0], i);
               const mir::ExprId rhs = Member(taken, p[1], i);
               return BuildCaseEquality(Unit(), taken, lhs, rhs);
-            },
-            [&](mir::Builder taken) {
-              return mir::BuildBit1Literal(Unit(), taken, true);
             },
             [&](mir::Builder taken) {
               return mir::BuildBit1Literal(Unit(), taken, false);
@@ -1436,9 +1443,6 @@ auto TaggedUnionBodies::BitIdentical() -> mir::CallableCode {
               return BuildBitIdentity(Unit(), taken, lhs, rhs);
             },
             [&](mir::Builder taken) {
-              return BuildMachineBool(Unit(), taken, true);
-            },
-            [&](mir::Builder taken) {
               return BuildMachineBool(Unit(), taken, false);
             });
       });
@@ -1454,9 +1458,6 @@ auto TaggedUnionBodies::HasUnknown() -> mir::CallableCode {
             code, block, std::span{p}.first(1),
             [&](mir::Builder taken, std::size_t i) {
               return BuildHasUnknown(Unit(), taken, Member(taken, p[0], i));
-            },
-            [&](mir::Builder taken) {
-              return BuildMachineBool(Unit(), taken, false);
             },
             [&](mir::Builder taken) {
               return BuildMachineBool(Unit(), taken, false);
@@ -2067,6 +2068,110 @@ auto OperationsHadByUnion(
       .net_folds = IsValidForNetOver(unit, mir::RecordKind::kUnion, members)};
 }
 
+// What a product has of the operations a type may lack, read off its
+// components: a stream where every component has one, written out as a run of
+// bits where none holds a class handle and read back where every one may be a
+// destination, and a net's folds where a net admits every component.
+auto OperationsHadByProduct(
+    const mir::CompilationUnit& unit, std::span<const mir::TypeId> components)
+    -> OperationsHad {
+  const bool stream = EveryPart(unit, components, HasBitStream);
+  const bool fixed_stream =
+      IsFixedStream(FixedStreamShapeOfParts(unit, components));
+  return OperationsHad{
+      .stream = stream,
+      .fixed_stream = fixed_stream,
+      .run_written = stream && !fixed_stream &&
+                     std::ranges::none_of(
+                         components,
+                         [&](mir::TypeId component) {
+                           return HoldsClassHandle(unit, component);
+                         }),
+      .run_read = stream && !fixed_stream &&
+                  std::ranges::all_of(
+                      components,
+                      [&](mir::TypeId component) {
+                        return IsStreamDestination(unit, component);
+                      }),
+      .net_folds = EveryPart(unit, components, IsValidForNet)};
+}
+
+// Hands `add` every body `bodies` builds for a product, which a structure and
+// a tuple have alike.
+template <typename Bodies, typename Add>
+void StateProductOperations(Bodies& bodies, const OperationsHad& had, Add add) {
+  StateWholeValue(bodies, add);
+  // What the library holding an array of the product asks of it, where it
+  // takes positions element by element; a union, held whole, needs none.
+  add(support::BuiltinFn::kPositionCount, bodies.PositionCount());
+  StateStreamAndFolds(bodies, had, add);
+  StateRunBodies(bodies, had, add);
+}
+
+// What a fixed-size unpacked array has of the operations a type may lack,
+// read off the array itself, which is interned whole before any body is
+// built: a stream where its element has one, written out as a run of bits
+// where it holds no class handle and read back where it may be a destination,
+// and a net's folds where a net admits it.
+auto OperationsHadByArray(const mir::CompilationUnit& unit, mir::TypeId array)
+    -> OperationsHad {
+  const bool stream = HasBitStream(unit, array);
+  const bool fixed_stream = IsFixedStream(FixedStreamShapeOf(unit, array));
+  return OperationsHad{
+      .stream = stream,
+      .fixed_stream = fixed_stream,
+      .run_written = stream && !fixed_stream && !HoldsClassHandle(unit, array),
+      .run_read = stream && !fixed_stream && IsStreamDestination(unit, array),
+      .net_folds = IsValidForNet(unit, array)};
+}
+
+// A body for every operation on a whole value the fixed-size unpacked array
+// `type`, which `array` states, has (LRM 7.4.2), each element's in turn.
+auto ArrayOperationsOf(
+    UnitLowerer& lowerer, mir::TypeId type, const mir::UnpackedArrayType& array)
+    -> std::vector<mir::TypeOperation> {
+  std::vector<mir::TypeOperation> operations;
+  const auto add = [&](support::ValueOperation answers,
+                       mir::CallableCode code) {
+    operations.push_back(
+        mir::TypeOperation{
+            .type = type, .answers = answers, .code = std::move(code)});
+  };
+  const OperationsHad had = OperationsHadByArray(lowerer.Unit(), type);
+  ArrayBodies bodies(lowerer, type, array.element_type, array.count);
+  StateWholeValue(bodies, add);
+  StateStreamAndFolds(bodies, had, add);
+  StateRunBodies(bodies, had, add);
+  return operations;
+}
+
+// A body for every operation on a whole value the tuple `type` of
+// `components` has, each component's in turn, where the tuple is a data type,
+// every component being one; a tuple of anything else answers none.
+auto TupleOperationsOf(
+    UnitLowerer& lowerer, mir::TypeId type, std::vector<mir::TypeId> components)
+    -> std::vector<mir::TypeOperation> {
+  const mir::CompilationUnit& unit = lowerer.Unit();
+  std::vector<mir::TypeOperation> operations;
+  if (!mir::IsDataType(unit.types, type)) {
+    return operations;
+  }
+  const auto add = [&](support::ValueOperation answers,
+                       mir::CallableCode code) {
+    operations.push_back(
+        mir::TypeOperation{
+            .type = type, .answers = answers, .code = std::move(code)});
+  };
+  const OperationsHad had = OperationsHadByProduct(unit, components);
+  ProductBodies bodies(
+      lowerer, type, std::move(components),
+      [type](support::ValueOperation answers) -> mir::DirectTarget {
+        return mir::TypeOperationTarget{.type = type, .answers = answers};
+      });
+  StateProductOperations(bodies, had, add);
+  return operations;
+}
+
 }  // namespace
 
 auto ReferenceTo(const mir::CompilationUnit& unit, mir::TypeId type)
@@ -2097,31 +2202,7 @@ auto StructMethodsOf(
     methods.push_back(
         mir::RecordMethod{.answers = answers, .code = std::move(code)});
   };
-  const bool stream = EveryPart(unit, members, HasBitStream);
-  const bool fixed_stream =
-      IsFixedStream(FixedStreamShapeOfParts(unit, members));
-  const OperationsHad had{
-      .stream = stream,
-      .fixed_stream = fixed_stream,
-      .run_written = stream && !fixed_stream &&
-                     std::ranges::none_of(
-                         members,
-                         [&](mir::TypeId member) {
-                           return HoldsClassHandle(unit, member);
-                         }),
-      .run_read = stream && !fixed_stream &&
-                  std::ranges::all_of(
-                      members,
-                      [&](mir::TypeId member) {
-                        return IsStreamDestination(unit, member);
-                      }),
-      .net_folds = EveryPart(unit, members, IsValidForNet)};
-  StateWholeValue(bodies, add);
-  // What the library holding an array of the structure asks of it, where it
-  // takes positions element by element; a union, held whole, needs none.
-  add(support::BuiltinFn::kPositionCount, bodies.PositionCount());
-  StateStreamAndFolds(bodies, had, add);
-  StateRunBodies(bodies, had, add);
+  StateProductOperations(bodies, OperationsHadByProduct(unit, members), add);
   return methods;
 }
 
@@ -2157,33 +2238,25 @@ auto TaggedUnionMethodsOf(
   return methods;
 }
 
-auto ArrayOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
+auto TypeOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
     -> std::vector<mir::TypeOperation> {
-  const mir::CompilationUnit& unit = lowerer.Unit();
-  std::vector<mir::TypeOperation> operations;
-  const auto add = [&](support::ValueOperation answers,
-                       mir::CallableCode code) {
-    operations.push_back(
-        mir::TypeOperation{
-            .type = type, .answers = answers, .code = std::move(code)});
-  };
-  // Read off the type itself, which is interned whole before any body is
-  // built.
-  const bool stream = HasBitStream(unit, type);
-  const bool fixed_stream = IsFixedStream(FixedStreamShapeOf(unit, type));
-  const OperationsHad had{
-      .stream = stream,
-      .fixed_stream = fixed_stream,
-      .run_written = stream && !fixed_stream && !HoldsClassHandle(unit, type),
-      .run_read = stream && !fixed_stream && IsStreamDestination(unit, type),
-      .net_folds = IsValidForNet(unit, type)};
-  const mir::UnpackedArrayType array =
-      unit.types.Get(type).Get<mir::UnpackedArrayType>();
-  ArrayBodies bodies(lowerer, type, array.element_type, array.count);
-  StateWholeValue(bodies, add);
-  StateStreamAndFolds(bodies, had, add);
-  StateRunBodies(bodies, had, add);
-  return operations;
+  const mir::Type& stated = lowerer.Unit().types.Get(type);
+  const std::optional<mir::StatedPerUnit> kind =
+      mir::OperationsStatedPerUnit(stated);
+  if (!kind.has_value()) {
+    throw InternalError(
+        "hir_to_mir: a unit is asked the operations of a type a declaration "
+        "states them for, or none does -- please report this as a bug");
+  }
+  switch (*kind) {
+    case mir::StatedPerUnit::kFixedArray:
+      return ArrayOperationsOf(
+          lowerer, type, stated.Get<mir::UnpackedArrayType>());
+    case mir::StatedPerUnit::kTuple:
+      return TupleOperationsOf(
+          lowerer, type, stated.Get<mir::TupleType>().elements);
+  }
+  throw InternalError("hir_to_mir: unknown kind stated per unit");
 }
 
 auto CarriesUnknowns(const mir::CompilationUnit& unit, mir::TypeId type)
@@ -2218,10 +2291,11 @@ auto PositionCountOf(const mir::CompilationUnit& unit, mir::TypeId type)
   if (const auto* array = t.As<mir::UnpackedArrayType>()) {
     return array->count * PositionCountOf(unit, array->element_type);
   }
-  if (mir::RecordKindOf(unit, type) == mir::RecordKind::kStruct) {
+  if (const std::optional<std::span<const mir::TypeId>> components =
+          mir::ProductElements(unit, type)) {
     std::uint64_t count = 0;
-    for (const mir::TypeId member : PartTypes(unit, type)) {
-      count += PositionCountOf(unit, member);
+    for (const mir::TypeId component : *components) {
+      count += PositionCountOf(unit, component);
     }
     return count;
   }

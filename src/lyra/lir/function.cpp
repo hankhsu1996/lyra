@@ -145,7 +145,7 @@ auto OperandType(const Function& fn, const Operand& operand) -> TypeId {
           [&](const Use& use) { return fn.values.Get(use.value).type; },
           [](const IntConst& c) { return c.type; },
           [](const StrConst& c) { return c.type; },
-          [](const RealConst& c) { return c.type; },
+          [](const FloatConst& c) { return c.type; },
           [](const NullConst& c) { return c.type; },
           [](const BoolConst& c) { return c.type; },
           [](const VoidConst& c) { return c.type; },

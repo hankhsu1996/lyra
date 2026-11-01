@@ -5,11 +5,11 @@
 #include <string>
 #include <vector>
 
-#include "lyra/value/chandle.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/wildcard_index.hpp"
 
 // The order an associative array keeps the indices of each index type in (LRM
@@ -93,10 +93,10 @@ struct WildcardKeyLess {
 // therefore a host storage choice, not an SV operator -- `<` is not defined on
 // a chandle -- and `std::less` supplies the total order `std::map` needs over
 // unrelated pointers.
-struct ChandleKeyLess {
-  [[nodiscard]] auto operator()(const Chandle& a, const Chandle& b) const
-      -> bool {
-    return std::less<>{}(a.Ptr(), b.Ptr());
+struct UnmanagedRefKeyLess {
+  [[nodiscard]] auto operator()(
+      const UnmanagedRef& a, const UnmanagedRef& b) const -> bool {
+    return std::less<>{}(a.Address(), b.Address());
   }
 };
 
@@ -133,8 +133,8 @@ struct AssocKeyTraits<WildcardKey> {
 };
 
 template <>
-struct AssocKeyTraits<Chandle> {
-  using Less = ChandleKeyLess;
+struct AssocKeyTraits<UnmanagedRef> {
+  using Less = UnmanagedRefKeyLess;
 };
 
 template <>

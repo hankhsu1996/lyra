@@ -617,18 +617,18 @@ enum class BuiltinFn : std::uint16_t {
   // carry. A factory rather than a constructor, an operand that reads by
   // conversion and one that reads only as its pattern being two ways of making
   // one thing out of the same argument type.
-  kMakeRenderedFormatArg,
+  kRenderedFormatArgMake,
   // An operand of such a format string that reads by conversion and also
   // carries the text its type renders it as (LRM 21.2.1.6): an enumeration,
   // which is its base integral under every other conversion. A factory of its
   // own, so which of the two operations a construction is never depends on how
   // many operands it was handed.
-  kMakePatternedFormatArg,
+  kPatternedFormatArgMake,
   // A print item writing the text it is handed as it is (LRM 21.2.1). A
   // factory rather than a constructor, an item being built over a value and
   // its specification the other way, so which of the two an item is never
   // depends on how many operands it was handed.
-  kMakeTextPrintItem,
+  kTextPrintItemMake,
   kWrite,
   kWriteln,
   // Diagnostic subsystem accessor and severity-fixed emit operations.
@@ -958,7 +958,7 @@ enum class BuiltinFn : std::uint16_t {
   kUnsize,
   // A value of any type (LRM 15.4.9), holding a copy of its operand, kept with
   // the operand's type and the identity the call's second operand names.
-  kMakeAny,
+  kAnyMake,
   // A reference to a value of any type, as Rust's unsizing coercion makes a
   // `&mut dyn Any` of a `&mut T`: a value of the identity its second operand
   // names is written into the storage its first operand refers to, of the
@@ -1243,14 +1243,10 @@ enum class BuiltinFn : std::uint16_t {
   kTruncate,
   kToBits,
   kFromBits,
-  // Machine-value accessors used by DPI-C marshaling (LRM 35.5.6):
-  // `kRealValue` reads a `Real` / `ShortReal` out as its machine float;
-  // `kStringCStr` borrows a `String` as a NUL-terminated C string valid for the
-  // owning string's lifetime; `kChandlePtr` reads a `Chandle` out as the opaque
-  // pointer it carries. Each takes that value as its receiver.
-  kRealValue,
+  // The machine-value accessor DPI-C marshaling reads a string through (LRM
+  // 35.5.6): it borrows a `String` as a NUL-terminated C string valid for the
+  // owning string's lifetime, and takes that string as its receiver.
   kStringCStr,
-  kChandlePtr,
   // A `String` an export hands to the foreign code that called it -- its
   // result, an output or an inout string (LRM Annex H.8.10) -- as a C string
   // the runtime keeps until the import call that let that code in returns,
@@ -1361,8 +1357,43 @@ enum class BuiltinFn : std::uint16_t {
   // container builds from a list the same way, so its own type names that
   // factory. The call answers with the array, as it does for any static
   // factory.
-  kMakeDynamicArrayNew,
-  kMakeDynamicArrayNewCopy,
+  kDynamicArrayNew,
+  kDynamicArrayNewCopy,
+  // The values the types the library declares start as, each built out of no
+  // operands and called at the type it builds: a string of no characters, a
+  // value of any type holding none and a run of no bits (LRM Table 6-7,
+  // 15.4.9, 11.4.14.1); a dynamic array, a queue and an associative array of no
+  // elements, each told the type it builds (LRM Table 7-1); and a weak
+  // reference referring to nothing (LRM 8.30).
+  kDefault,
+  kContainerDefault,
+  kWeakReferenceDefault,
+  // The constructors of the types the library declares, each reached by a
+  // construction of the type it builds and by no call. A string is built from
+  // the host text it holds; a dynamic array and a queue from an element list
+  // laid down a stated number of times, and an associative array from its
+  // entries (LRM 7.9.11); a wildcard index from the integral value it is,
+  // which keeps the type it was written in (LRM 7.8.1).
+  kStringFromText,
+  kSequenceFromList,
+  kAssociativeArrayFromEntries,
+  kWildcardIndexMake,
+  // What a print, a wait and a call across the DPI-C boundary are built from:
+  // the identity a child of the hierarchy carries (LRM 23.3.3.5), a leaf of a
+  // value-change wait (LRM 9.4.2), a format specification, a print item and a
+  // format argument over a value each reads (LRM 21.2.1), the last two with an
+  // entry of their own serving every integral value, and the images of a value
+  // in the form the C side reads (LRM 35.5.6.1, Annex H.7.7).
+  kHierarchySegmentMake,
+  kTriggerMake,
+  kFormatSpecMake,
+  kPrintItemMake,
+  kIntegralPrintItemMake,
+  kFormatArgMake,
+  kIntegralFormatArgMake,
+  kDpiBitBufferMake,
+  kDpiLogicBufferMake,
+  kDpiOpenArrayMake,
   // LRM 11.4.12.2 concatenation of strings: every part the source lists, one
   // list of strings, joined in order into one string sized once.
   kConcatStrings,
@@ -1474,12 +1505,19 @@ struct StaticFactory {
 // alignment a new-expression assumes, which no other type's exceeds.
 struct AllocationFunction {};
 
-// How code reaches the entry -- a call in one of three forms, or a placement
-// new-expression naming it as its allocation function. Every entry is one of
-// these, because an operation no runtime library carries out is not named here
-// at all: it is answered where the source is read and no layer below meets it.
-using EntryDeclaration =
-    std::variant<FreeFunction, Method, StaticFactory, AllocationFunction>;
+// A constructor of the type the entry builds, as a C++ class's is: no call
+// reaches it, a construction of that type does, naming the type. A target whose
+// construction names the type writes it; one that calls the entry itself is
+// handed it by the declaration of the type built.
+struct Constructor {};
+
+// How code reaches the entry -- a call in one of three forms, a placement
+// new-expression naming it as its allocation function, or a construction of the
+// type it builds. Every entry is one of these, because an operation no runtime
+// library carries out is not named here at all: it is answered where the source
+// is read and no layer below meets it.
+using EntryDeclaration = std::variant<
+    FreeFunction, Method, StaticFactory, AllocationFunction, Constructor>;
 
 // The ways a call can end, which decide what follows it: a call that returns
 // is followed by the statement after it, one that is unwound out of by the

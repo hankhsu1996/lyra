@@ -31,6 +31,7 @@
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
+#include "lyra/support/float_width.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -468,38 +469,38 @@ void RenderDerefExpr(
 // How a float literal is written so it reads back exactly: the fewest digits
 // that round-trip the width (9 for 32-bit, 17 for 64-bit), and an `f` suffix
 // to keep a 32-bit one single precision.
-struct MachineFloatSpelling {
+struct FloatSpelling {
   int digits;
   std::string_view suffix;
 };
 
-auto FloatSpellingOf(mir::MachineFloatWidth width) -> MachineFloatSpelling {
+auto FloatSpellingOf(support::FloatWidth width) -> FloatSpelling {
   switch (width) {
-    case mir::MachineFloatWidth::k32:
+    case support::FloatWidth::k32:
       return {.digits = 9, .suffix = "f"};
-    case mir::MachineFloatWidth::k64:
+    case support::FloatWidth::k64:
       return {.digits = 17, .suffix = ""};
   }
-  throw InternalError("FloatSpellingOf: unknown MachineFloatWidth");
+  throw InternalError("FloatSpellingOf: unknown FloatWidth");
 }
 
 // A value with its sign bit set is written with a leading minus, which makes it
 // a prefix form rather than a literal.
-void RenderMachineFloatLiteral(
-    const mir::MachineFloatLiteral& f, mir::MachineFloatWidth width,
+void RenderFloatingLiteral(
+    const mir::FloatingLiteral& f, support::FloatWidth width,
     Precedence at_least, TargetText& out) {
   const Enclosure enclosure(
       out, std::signbit(f.value) ? Precedence::kPrefix : Precedence::kPostfix,
       at_least);
-  const MachineFloatSpelling spelling = FloatSpellingOf(width);
+  const FloatSpelling spelling = FloatSpellingOf(width);
   std::array<char, 64> room{};
   const std::to_chars_result converted = std::to_chars(
       room.data(), room.data() + room.size(), f.value,
       std::chars_format::general, spelling.digits);
   if (converted.ec != std::errc{}) {
     throw InternalError(
-        "RenderMachineFloatLiteral: a machine float did not fit the room kept "
-        "for writing one -- please report this as a bug");
+        "RenderFloatingLiteral: a float did not fit the room kept for "
+        "writing one -- please report this as a bug");
   }
   const std::string_view body{
       room.data(), static_cast<std::size_t>(converted.ptr - room.data())};
@@ -591,10 +592,21 @@ void RenderExpr(
           [&](const mir::MachineBoolLiteral& b) {
             out += b.value ? "true" : "false";
           },
-          [&](const mir::MachineFloatLiteral& f) {
-            const auto& machine =
-                view.Unit().types.Get(expr.type).Get<mir::MachineFloatType>();
-            RenderMachineFloatLiteral(f, machine.width, at_least, out);
+          // A real is the library's class built from the C float of its
+          // width, which is what a machine float of that width is written as.
+          [&](const mir::FloatingLiteral& f) {
+            const mir::Type& type = view.Unit().types.Get(expr.type);
+            if (const auto* machine = type.As<mir::MachineFloatType>()) {
+              RenderFloatingLiteral(f, machine->width, at_least, out);
+              return;
+            }
+            Write(
+                out, CppConstructorName{.of = CppType(view.Unit(), expr.type)},
+                "(");
+            RenderFloatingLiteral(
+                f, type.Get<mir::RealType>().width, Precedence::kAssignment,
+                out);
+            out += ")";
           },
           [&](const mir::MachineIntLiteral& h) {
             // An unsigned integer is written in hex, `0xffULL`, since a signed

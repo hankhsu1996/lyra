@@ -132,7 +132,11 @@ two ways.
 3. **Type mapping is the only entry that names a runtime library type literal.** Every MIR type
    variant maps to a target-language type representation through one dispatch. Value emission
    entries render types only via that dispatch; they never compose a target-language type literal
-   directly. A runtime library type's spelling lives at one place; nowhere else.
+   directly. A runtime library type's spelling lives at one place; nowhere else. For a type the
+   library declares, that place is its declaration, which states the C++ type a holder names it by
+   and the C spelling a DPI-C prototype names, and which each type mapping reads rather than
+   restating. Where it holds one by value, every backend gives it the storage the declaration
+   states, which the runtime checks every class each backend builds there against.
 
    A target also needs types for what MIR states as **structure** rather than as a value -- an
    extent whose exit is an effect, the root a managed object is emitted over -- and no MIR type

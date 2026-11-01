@@ -19,6 +19,8 @@
 
 #include "lyra/backend/llvm/codegen_function.hpp"
 #include "lyra/backend/llvm/codegen_module.hpp"
+#include "lyra/backend/llvm/codegen_types.hpp"
+#include "lyra/backend/llvm/entry_realizations.hpp"
 #include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/integral_planes.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
@@ -33,8 +35,10 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/member_storage_kind.hpp"
+#include "lyra/support/declared_member_storage.hpp"
+#include "lyra/support/float_width.hpp"
 #include "lyra/support/runtime_object.hpp"
+#include "lyra/support/value_domain.hpp"
 #include "lyra/value/integral.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -294,15 +298,13 @@ auto CodeGenFunction::ContentsOf(
   switch (kind) {
     case WrapperKind::kCell:
       if (const std::optional<llvm::Value*> held = HeldAt(
-              wrapper, {.kind = support::MemberStorageKind::kObservableCell,
-                        .domain = domain})) {
+              wrapper, support::ObservableCellMember{.domain = domain})) {
         return *held;
       }
       break;
     case WrapperKind::kNet:
-      if (const std::optional<llvm::Value*> held = HeldAt(
-              wrapper, {.kind = support::MemberStorageKind::kResolvedNet,
-                        .domain = domain})) {
+      if (const std::optional<llvm::Value*> held =
+              HeldAt(wrapper, support::ResolvedNetMember{.domain = domain})) {
         return *held;
       }
       break;
@@ -319,9 +321,8 @@ auto CodeGenFunction::ContentsOf(
 
 auto CodeGenFunction::ValueCellContents(
     support::ValueDomain domain, llvm::Value* cell) -> llvm::Value* {
-  if (const std::optional<llvm::Value*> held = HeldAt(
-          cell,
-          {.kind = support::MemberStorageKind::kValueCell, .domain = domain})) {
+  if (const std::optional<llvm::Value*> held =
+          HeldAt(cell, support::ValueCellMember{.domain = domain})) {
     return *held;
   }
   const std::array<llvm::Value*, 1> args{cell};
@@ -377,9 +378,8 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     if (const std::optional<support::ValueDomain> cell =
             PlaceValueCellDomain(store.place, stored)) {
       // A cell holding the value as its own bytes takes them where they lie.
-      if (const std::optional<llvm::Value*> held = HeldAt(
-              *address, {.kind = support::MemberStorageKind::kValueCell,
-                         .domain = *cell})) {
+      if (const std::optional<llvm::Value*> held =
+              HeldAt(*address, support::ValueCellMember{.domain = *cell})) {
         auto assigned = AssignValue(stored, *value, *held);
         if (!assigned) {
           return std::unexpected(std::move(assigned.error()));
@@ -571,7 +571,12 @@ auto CodeGenFunction::ResolvePlaceAddress(
               if (!domain) {
                 return std::unexpected(std::move(domain.error()));
               }
-              const ElementEntries entries = ElementEntriesOf(*domain);
+              // A container indexed by a type is reached by a key, which
+              // crosses with the type it was written in (LRM 7.8).
+              const ElementEntries entries =
+                  module_->Unit().types.Get(reached).IndexType().has_value()
+                      ? KeyedElementEntries()
+                      : PositionedElementEntries(*domain);
               const StepEntry& step = EntryFor(access, entries);
               std::vector<ArgAbi> arranged = Addresses(1);
               std::vector<llvm::Value*> args{address};
@@ -733,6 +738,9 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
     -> llvm::Value* {
   const lir::Type& referring = module_->Unit().types.Get(type);
   std::optional<std::string> opening;
+  if (referring.Is<lir::UnmanagedRefType>()) {
+    return HeldAddress(reference);
+  }
   if (referring.Is<lir::ManagedRefType>()) {
     opening = RuntimeSymbol(support::BuiltinFn::kObjectOf);
   } else if (const auto* pointer = referring.As<lir::PointerType>()) {
@@ -824,6 +832,12 @@ auto CodeGenFunction::LowerBinary(
   // what clang makes of the same comparison.
   if (module_->Unit().types.Get(operand_type).Is<lir::PointerType>()) {
     return LowerMachineBinary(binary, lir::Signedness::kUnsigned);
+  }
+  if (module_->Unit().types.Get(operand_type).Is<lir::UnmanagedRefType>()) {
+    return LowerIdentityComparison(binary, result_type, out);
+  }
+  if (module_->Unit().types.Get(operand_type).Is<lir::RealType>()) {
+    return LowerRealBinary(binary, result_type, out);
   }
   auto lhs = LowerOperand(binary.lhs);
   if (!lhs) {
@@ -954,12 +968,153 @@ auto CodeGenFunction::LowerMachineBinary(
   throw InternalError("llvm codegen: unknown binary operator");
 }
 
+// Two references owning nothing are equal where they hold one address (LRM
+// 6.14, 25.9), which is the machine comparison of the two addresses, answered
+// as the one-bit value of the design the instruction states.
+auto CodeGenFunction::LowerIdentityComparison(
+    const lir::BinaryInstr& binary, lir::TypeId result_type, llvm::Value* out)
+    -> diag::Result<llvm::Value*> {
+  auto lhs = LowerOperand(binary.lhs);
+  if (!lhs) {
+    return std::unexpected(std::move(lhs.error()));
+  }
+  auto rhs = LowerOperand(binary.rhs);
+  if (!rhs) {
+    return std::unexpected(std::move(rhs.error()));
+  }
+  llvm::Value* const left = HeldAddress(*lhs);
+  llvm::Value* const right = HeldAddress(*rhs);
+  llvm::Value* same = nullptr;
+  switch (binary.op) {
+    case lir::BinaryOp::kEquality:
+      same = builder_.CreateICmpEQ(left, right);
+      break;
+    case lir::BinaryOp::kInequality:
+      same = builder_.CreateICmpNE(left, right);
+      break;
+    case lir::BinaryOp::kAdd:
+    case lir::BinaryOp::kSub:
+    case lir::BinaryOp::kMul:
+    case lir::BinaryOp::kDiv:
+    case lir::BinaryOp::kMod:
+    case lir::BinaryOp::kBitwiseAnd:
+    case lir::BinaryOp::kBitwiseOr:
+    case lir::BinaryOp::kBitwiseXor:
+    case lir::BinaryOp::kLessThan:
+    case lir::BinaryOp::kLessEqual:
+    case lir::BinaryOp::kGreaterThan:
+    case lir::BinaryOp::kGreaterEqual:
+    case lir::BinaryOp::kLogicalAnd:
+    case lir::BinaryOp::kLogicalOr:
+      throw InternalError(
+          "llvm codegen: a reference owning nothing has only its equality "
+          "operators (LRM 6.14) -- please report this as a bug");
+  }
+  return StoreComparison(same, result_type, out);
+}
+
+auto CodeGenFunction::StoreComparison(
+    llvm::Value* holds, lir::TypeId result_type, llvm::Value* out)
+    -> llvm::Value* {
+  StoreComparisonAnswer(
+      builder_, builder_.CreateZExt(holds, builder_.getInt8Ty()), out,
+      module_->Types().RequiredIntegralShapeOf(result_type));
+  return out;
+}
+
+auto CodeGenFunction::HeldAddress(llvm::Value* reference) -> llvm::Value* {
+  return builder_.CreateLoad(module_->Types().Ptr(), reference);
+}
+
+// LRM 6.12 makes a real the IEEE 754 value of its width, so its arithmetic and
+// its comparisons are the IEEE ones, each the one instruction that computes it.
+// None carries a fast-math flag, and none may: such a flag lets the optimizer
+// assume no operand is a NaN or an infinity, reassociate a sum, or fuse a
+// product into the sum that reads it, and each of those changes a result the
+// standard fixes. An ordered comparison is false where either operand is a NaN
+// and the unordered inequality true, as LRM 11.4.5 compares two reals as
+// values.
+auto CodeGenFunction::LowerRealBinary(
+    const lir::BinaryInstr& binary, lir::TypeId result_type, llvm::Value* out)
+    -> diag::Result<llvm::Value*> {
+  auto lhs = LowerOperand(binary.lhs);
+  if (!lhs) {
+    return std::unexpected(std::move(lhs.error()));
+  }
+  auto rhs = LowerOperand(binary.rhs);
+  if (!rhs) {
+    return std::unexpected(std::move(rhs.error()));
+  }
+  const lir::TypeId operand_type = OperandType(binary.lhs);
+  llvm::Value* const left = HeldFloat(*lhs, operand_type);
+  llvm::Value* const right = HeldFloat(*rhs, operand_type);
+  const auto computed = [&](llvm::Value* value) -> llvm::Value* {
+    builder_.CreateStore(value, out);
+    return out;
+  };
+  const auto compared = [&](llvm::Value* holds) -> llvm::Value* {
+    return StoreComparison(holds, result_type, out);
+  };
+  switch (binary.op) {
+    case lir::BinaryOp::kAdd:
+      return computed(builder_.CreateFAdd(left, right));
+    case lir::BinaryOp::kSub:
+      return computed(builder_.CreateFSub(left, right));
+    case lir::BinaryOp::kMul:
+      return computed(builder_.CreateFMul(left, right));
+    case lir::BinaryOp::kDiv:
+      return computed(builder_.CreateFDiv(left, right));
+    case lir::BinaryOp::kEquality:
+      return compared(builder_.CreateFCmpOEQ(left, right));
+    case lir::BinaryOp::kInequality:
+      return compared(builder_.CreateFCmpUNE(left, right));
+    case lir::BinaryOp::kLessThan:
+      return compared(builder_.CreateFCmpOLT(left, right));
+    case lir::BinaryOp::kLessEqual:
+      return compared(builder_.CreateFCmpOLE(left, right));
+    case lir::BinaryOp::kGreaterThan:
+      return compared(builder_.CreateFCmpOGT(left, right));
+    case lir::BinaryOp::kGreaterEqual:
+      return compared(builder_.CreateFCmpOGE(left, right));
+    case lir::BinaryOp::kMod:
+    case lir::BinaryOp::kBitwiseAnd:
+    case lir::BinaryOp::kBitwiseOr:
+    case lir::BinaryOp::kBitwiseXor:
+      throw InternalError(
+          "llvm codegen: an operator LRM 11.3.1 gives no real operand -- "
+          "please report this as a bug");
+    // A logical operator reads its operands' truths, which a real reaches it
+    // reduced to (LRM 11.4.7).
+    case lir::BinaryOp::kLogicalAnd:
+    case lir::BinaryOp::kLogicalOr:
+      throw InternalError(
+          "llvm codegen: a logical operator is handed a real rather than its "
+          "truth -- please report this as a bug");
+  }
+  throw InternalError("llvm codegen: unknown binary operator");
+}
+
+auto CodeGenFunction::HeldFloat(llvm::Value* real, lir::TypeId type)
+    -> llvm::Value* {
+  return builder_.CreateLoad(FloatOf(type), real);
+}
+
+auto CodeGenFunction::FloatOf(lir::TypeId type) -> llvm::Type* {
+  switch (module_->Unit().types.Get(type).Get<lir::RealType>().width) {
+    case support::FloatWidth::k32:
+      return builder_.getFloatTy();
+    case support::FloatWidth::k64:
+      return builder_.getDoubleTy();
+  }
+  throw InternalError("llvm codegen: unknown real width");
+}
+
 auto CodeGenFunction::LowerUnary(
     const lir::UnaryInstr& unary, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
   const lir::TypeId operand_type = OperandType(unary.operand);
   // A machine integer's operator is the machine instruction over one scalar.
-  // This is how the reduced predicate a real- or chandle-family `!` produces
+  // This is how the reduced predicate a real's or a reference's `!` produces
   // is negated before it is widened back to a one-bit integral value.
   if (module_->Unit()
           .types.Get(operand_type)
@@ -976,12 +1131,18 @@ auto CodeGenFunction::LowerUnary(
         OperandRef{.value = *operand, .type = operand_type}};
     return LowerIntegral(IntegralOpOf(unary.op), operands, result_type, out);
   }
-  auto domain = DomainOf(operand_type);
-  if (!domain) {
-    return std::unexpected(std::move(domain.error()));
+  // A real's negation is the IEEE one (LRM 6.12), which flips the sign of a
+  // zero and of a NaN as well; its `!` is reduced to a predicate before it
+  // arrives here.
+  if (module_->Unit().types.Get(operand_type).Is<lir::RealType>() &&
+      unary.op == lir::UnaryOp::kMinus) {
+    builder_.CreateStore(
+        builder_.CreateFNeg(HeldFloat(*operand, operand_type)), out);
+    return out;
   }
-  return BuildInto(
-      RuntimeSymbol(*domain, unary.op), Addresses(1), {*operand}, out);
+  throw InternalError(
+      "llvm codegen: a unary operator over a value no instruction computes -- "
+      "please report this as a bug");
 }
 
 auto CodeGenFunction::LowerMachineUnary(const lir::UnaryInstr& unary)
@@ -1036,6 +1197,40 @@ auto CodeGenFunction::LowerCast(
     throw InternalError(
         "llvm codegen: a cast between integral types laid out differently -- "
         "please report this as a bug");
+  }
+  // A reference owning nothing is held where the address it is lies, so it is
+  // read as that address and made by putting one there; whether it is true is
+  // whether the address is null (LRM 6.14).
+  const lir::TypePool& types = module_->Unit().types;
+  if (types.Get(operand_type).Is<lir::UnmanagedRefType>() &&
+      !types.Get(result_type).Is<lir::UnmanagedRefType>()) {
+    llvm::Value* const held = HeldAddress(*operand);
+    if (types.Get(result_type).Is<lir::MachineBoolType>()) {
+      return builder_.CreateIsNotNull(held);
+    }
+    return held;
+  }
+  if (types.Get(result_type).Is<lir::UnmanagedRefType>() &&
+      !types.Get(operand_type).Is<lir::UnmanagedRefType>()) {
+    llvm::Value* const storage = StorageFor(result_type);
+    builder_.CreateStore(*operand, storage);
+    return storage;
+  }
+  // A real is held where the IEEE value it is lies (LRM 6.12), so it is read
+  // as the machine float of its width and made by putting one there; whether
+  // it is true is whether it differs from zero, which a NaN does (LRM 12.4).
+  if (types.Get(operand_type).Is<lir::RealType>()) {
+    llvm::Value* const held = HeldFloat(*operand, operand_type);
+    if (types.Get(result_type).Is<lir::MachineBoolType>()) {
+      return builder_.CreateFCmpUNE(
+          held, llvm::ConstantFP::getZero(held->getType()));
+    }
+    return held;
+  }
+  if (types.Get(result_type).Is<lir::RealType>()) {
+    llvm::Value* const storage = StorageFor(result_type);
+    builder_.CreateStore(*operand, storage);
+    return storage;
   }
   llvm::Type* target = module_->Types().Map(result_type);
   if ((*operand)->getType() == target) {
@@ -1323,9 +1518,8 @@ auto CodeGenFunction::LowerCall(
                 if (!handle) {
                   return std::unexpected(std::move(handle.error()));
                 }
-                const std::optional<llvm::Value*> held = HeldAt(
-                    *handle, {.kind = support::MemberStorageKind::kValueCell,
-                              .domain = domain});
+                const std::optional<llvm::Value*> held =
+                    HeldAt(*handle, support::ValueCellMember{.domain = domain});
                 if (!held.has_value()) {
                   return called(cell);
                 }
@@ -1912,8 +2106,8 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
           [&](const lir::StrConst& c) -> diag::Result<llvm::Value*> {
             return LowerStrConst(c);
           },
-          [&](const lir::RealConst& c) -> diag::Result<llvm::Value*> {
-            return LowerRealConst(c);
+          [&](const lir::FloatConst& c) -> diag::Result<llvm::Value*> {
+            return LowerFloatConst(c);
           },
           [&](const lir::NullConst& c) -> diag::Result<llvm::Value*> {
             return LowerNullConst(c);
@@ -2001,30 +2195,36 @@ auto CodeGenFunction::LowerStrConst(const lir::StrConst& constant)
   return builder_.CreateGlobalString(constant.value);
 }
 
-// A real constant is a machine float, a native LLVM constant. A real-family
-// value is a runtime object, so a constant of one reaches this backend as a
-// construction over a machine float.
-auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
-    -> diag::Result<llvm::Value*> {
-  const auto* machine =
-      module_->Unit().types.Get(constant.type).As<lir::MachineFloatType>();
-  if (machine == nullptr) {
-    return Unsupported(
-        "a real constant of type '{}' is not yet supported with "
-        "'--backend llvm'",
-        module_->Unit().types.Get(constant.type).KindName());
+// A machine float's constant is a native LLVM constant. A real is held where
+// the IEEE value it is lies (LRM 6.12), so its constant is that float put
+// there, as a real is made from any float.
+auto CodeGenFunction::LowerFloatConst(const lir::FloatConst& constant)
+    -> llvm::Value* {
+  const lir::Type& type = module_->Unit().types.Get(constant.type);
+  if (type.Is<lir::MachineFloatType>()) {
+    return llvm::ConstantFP::get(
+        module_->Types().Map(constant.type), constant.value);
   }
-  return llvm::ConstantFP::get(
-      module_->Types().Map(constant.type), constant.value);
+  llvm::Value* const storage = StorageFor(constant.type);
+  builder_.CreateStore(
+      llvm::ConstantFP::get(FloatOf(constant.type), constant.value), storage);
+  return storage;
 }
 
 auto CodeGenFunction::LowerNullConst(const lir::NullConst& constant)
     -> llvm::Value* {
   // Referring to nothing is a value of the type like any other, so where the
   // type's values are objects the null one is too, built in the frame like any
-  // other. It holds nothing, so its storage going away is the whole of its
-  // end. A pointer has no object behind it to build, so there the null is the
-  // null pointer itself.
+  // other, and where they are an address held where it lies the null one is
+  // the null address held there. It holds nothing, so its storage going away
+  // is the whole of its end. A pointer has no object behind it to build, so
+  // there the null is the null pointer itself.
+  if (module_->Unit().types.Get(constant.type).Is<lir::UnmanagedRefType>()) {
+    llvm::Value* const storage = StorageFor(constant.type);
+    builder_.CreateStore(
+        llvm::ConstantPointerNull::get(module_->Types().Ptr()), storage);
+    return storage;
+  }
   const std::optional<support::ValueDomain> domain =
       ValueDomainOf(module_->Unit(), constant.type);
   if (domain.has_value()) {
@@ -2132,11 +2332,19 @@ auto CodeGenFunction::PlaceValueCellDomain(
             return std::nullopt;
           }},
       place.chain.back());
-  if (!role.has_value() || MemberStorageKindOf(module_->Unit(), value, *role) !=
-                               support::MemberStorageKind::kValueCell) {
+  if (!role.has_value()) {
     return std::nullopt;
   }
-  return ValueDomainOf(module_->Unit(), value);
+  const std::optional<support::DeclaredMemberStorage> storage =
+      DeclaredStorageOf(module_->Unit(), value, *role);
+  if (!storage.has_value()) {
+    return std::nullopt;
+  }
+  const auto* cell = std::get_if<support::ValueCellMember>(&*storage);
+  if (cell == nullptr) {
+    return std::nullopt;
+  }
+  return cell->domain;
 }
 
 }  // namespace lyra::backend::llvm_backend

@@ -34,11 +34,13 @@
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/float_width.hpp"
 #include "lyra/support/layout.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
@@ -128,20 +130,13 @@ struct ConsumedObjectEntry {
 using ConsumedSignature =
     std::variant<ConsumedNamespace, ConsumedClass, ConsumedObjectEntry>;
 
-// Whether each unit naming `type` states its operations itself: a fixed-size
-// unpacked array, which the language identifies by its element and its range
-// rather than by a declaration (LRM 6.22.1 f), so no declaration states them
-// once for every unit, as a structure's and a union's does.
-[[nodiscard]] inline auto OperationsAreStatedPerUnit(const Type& type) -> bool {
-  return type.Is<UnpackedArrayType>();
-}
-
 // The body a unit states for the operation `answers` at `type`. A type whose
 // operations are stated per unit has every operation on its whole value stated
 // so (LRM 7.4.2), as rustc instantiates a generic function in each crate that
-// uses it: an array's is each element's in turn. Every type an array of
-// the unit has as its element, of whatever kind, has its default stated here
-// too (LRM Table 6-7, Table 7-1): what a read through an index naming no
+// uses it: an array's is each element's in turn, and a tuple's each
+// component's, where every component has it. Every type an array of the unit
+// has as its element, of whatever kind, has its default stated here too (LRM
+// Table 6-7, Table 7-1): what a read through an index naming no
 // element answers (LRM 7.4.5) and what an array that grows fills each new
 // position with (LRM 7.5.1). A container's default depends on its element
 // type, which the library's one type of each container does not know. A tuple,
@@ -248,10 +243,6 @@ struct BuiltinMirTypes {
   // as a number: a set of positions is stated as a sequence of these, one bit
   // per position.
   TypeId machine_word;
-  // The two machine floats a real-family value wraps: single precision for a
-  // `shortreal`, double for a `real` or a `realtime` (LRM 6.12).
-  TypeId machine_float32;
-  TypeId machine_float64;
   // A borrowed C string, the text a runtime entry is handed as plain
   // characters.
   TypeId machine_c_string;
@@ -457,93 +448,53 @@ struct CompilationUnit {
                 Type{MachineIntType{
                     .width = MachineIntWidth::k64,
                     .signedness = Signedness::kUnsigned}}),
-            .machine_float32 = types.Intern(
-                Type{MachineFloatType{.width = MachineFloatWidth::k32}}),
-            .machine_float64 = types.Intern(
-                Type{MachineFloatType{.width = MachineFloatWidth::k64}}),
             .machine_c_string = types.Intern(Type{MachineCStringType{}}),
-            .string = types.Intern(Type{StringType{}}),
-            .bit_vec = types.Intern(
-                Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kBitVec}}),
+            .string = LibraryTypeOf(types, support::LibraryDecl::kString),
+            .bit_vec = LibraryTypeOf(types, support::LibraryDecl::kBitVec),
             .void_type = types.Intern(Type{VoidType{}}),
-            .real = types.Intern(Type{RealType{}}),
+            .real = types.Intern(Type{RealType{.width = support::FloatWidth::k64}}),
             .time = types.Intern(
                 Type{IntegralType{
                     .bit_width = 64,
                     .signedness = Signedness::kUnsigned,
                     .state_kind = IntegralStateKind::kFourState}}),
-            .effects = types.Intern(Type{RuntimeEffectsType{}}),
+            .effects = LibraryTypeOf(types, support::LibraryDecl::kRuntimeEffects),
             .scope_ptr = types.Intern(
                 Type{PointerType{
-                    .pointee = types.Intern(
-                        Type{RuntimeClassType{
-                            .which = support::RuntimeClass::kScope}}),
+                    .pointee = LibraryTypeOf(types, support::LibraryDecl::kScope),
                     .ownership = PointerOwnership::kBorrowed}}),
-            .process_object = types.Intern(
-                Type{RuntimeClassType{
-                    .which = support::RuntimeClass::kProcess}}),
+            .process_object = LibraryTypeOf(types, support::LibraryDecl::kProcess),
             .event = types.Intern(
                 Type{ManagedRefType{
-                    .pointee = types.Intern(
-                        Type{RuntimeClassType{
-                            .which = support::RuntimeClass::
-                                kSynchronizationObject}})}}),
+                    .pointee = LibraryTypeOf(types, support::LibraryDecl::kSynchronizationObject)}}),
             .constraint_problem = types.Intern(
                 Type{ManagedRefType{
-                    .pointee = types.Intern(
-                        Type{RuntimeClassType{
-                            .which =
-                                support::RuntimeClass::kConstraintProblem}})}}),
-            .files = types.Intern(Type{FilesType{}}),
-            .diagnostic = types.Intern(Type{DiagnosticType{}}),
-            .enumeration = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kEnumeration}}),
-            .channel_cancellation = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kChannelCancellation}}),
-            .print_item = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kPrintItem}}),
-            .format_spec = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kFormatSpec}}),
-            .format_arg = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kFormatArg}}),
-            .time_format = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kTimeFormat}}),
-            .hierarchy_segment = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kHierarchySegment}}),
-            .trigger = types.Intern(
-                Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kTrigger}}),
-            .observation = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kObservation}}),
-            .read_report = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kReadReport}}),
+                    .pointee = LibraryTypeOf(types, support::LibraryDecl::kConstraintProblem)}}),
+            .files = LibraryTypeOf(types, support::LibraryDecl::kFileTable),
+            .diagnostic = LibraryTypeOf(types, support::LibraryDecl::kDiagnosticDispatcher),
+            .enumeration = LibraryTypeOf(types, support::LibraryDecl::kEnumeration),
+            .channel_cancellation = LibraryTypeOf(types, support::LibraryDecl::kChannelCancellation),
+            .print_item = LibraryTypeOf(types, support::LibraryDecl::kPrintItem),
+            .format_spec = LibraryTypeOf(types, support::LibraryDecl::kFormatSpec),
+            .format_arg = LibraryTypeOf(types, support::LibraryDecl::kFormatArg),
+            .time_format = LibraryTypeOf(types, support::LibraryDecl::kTimeFormat),
+            .hierarchy_segment = LibraryTypeOf(types, support::LibraryDecl::kHierarchySegment),
+            .trigger = LibraryTypeOf(types, support::LibraryDecl::kTrigger),
+            .observation = LibraryTypeOf(types, support::LibraryDecl::kObservation),
+            .read_report = LibraryTypeOf(types, support::LibraryDecl::kReadReport),
             .read_report_ptr = TypeId{},
-            .wait = types.Intern(
-                Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kWait}}),
+            .wait = LibraryTypeOf(types, support::LibraryDecl::kWait),
             .wait_ptr = TypeId{},
             .deferred_effects_ptr = types.Intern(
                 Type{PointerType{
-                    .pointee = types.Intern(
-                        Type{RuntimeLibraryType{
-                            .kind = RuntimeLibraryKind::kDeferredEffects}}),
+                    .pointee = LibraryTypeOf(types, support::LibraryDecl::kDeferredEffects),
                     .ownership = PointerOwnership::kBorrowed}}),
             .violation_report_keeper_ptr = types.Intern(
                 Type{PointerType{
-                    .pointee = types.Intern(
-                        Type{RuntimeLibraryType{
-                            .kind =
-                                RuntimeLibraryKind::kViolationReportKeeper}}),
+                    .pointee = LibraryTypeOf(types, support::LibraryDecl::kViolationReportKeeper),
                     .ownership = PointerOwnership::kBorrowed}}),
             .coroutine_void = TypeId{},
-            .wildcard_index = types.Intern(Type{WildcardIndexType{}}),
+            .wildcard_index = LibraryTypeOf(types, support::LibraryDecl::kWildcardIndex),
         },
         library_records(DeclareLibraryRecords(types)) {
     // `Coroutine<void>` is the completion type of a process or void task, a
@@ -566,13 +517,13 @@ struct CompilationUnit {
             .ownership = mir::PointerOwnership::kBorrowed}});
   }
 
-  // The types of the members of the library's structure `kind` names, in the
-  // order the library declares them; none for a type of the library no
+  // The types of the members of the library's structure `decl` declares, in
+  // the order the library declares them; none for a type of the library no
   // constant is stated as.
-  [[nodiscard]] auto LibraryRecordMembers(RuntimeLibraryKind kind) const
+  [[nodiscard]] auto LibraryRecordMembers(support::LibraryDecl decl) const
       -> std::optional<std::span<const TypeId>> {
     for (const LibraryRecordDecl& record : library_records) {
-      if (record.kind == kind) {
+      if (record.decl == decl) {
         return record.members;
       }
     }

@@ -15,6 +15,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/abi/library_records.hpp"
 #include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/lowering_ref.hpp"
@@ -32,11 +33,11 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/dispatch_table.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/library_records.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/dump_kind.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -46,7 +47,8 @@ auto BuildDefinitionRead(
   const mir::ExprId definition = block.Add(
       mir::Expr{
           .data = mir::ReferenceExpr{.target = mir::DefinitionRef{.of = of}},
-          .type = mir::ClassDefinitionType(unit.types)});
+          .type = mir::LibraryTypeOf(
+              unit.types, support::LibraryDecl::kObjectDefinition)});
   return block.Add(
       mir::Expr{
           .data = mir::AddressOfExpr{.operand = definition},
@@ -72,11 +74,6 @@ namespace {
 //
 // A table is an array the class holds, and whatever points at one holds a
 // view of all of it, made from the array's address.
-
-auto LibraryType(const mir::CompilationUnit& unit, mir::RuntimeLibraryKind kind)
-    -> mir::TypeId {
-  return unit.types.Intern(mir::Type{mir::RuntimeLibraryType{.kind = kind}});
-}
 
 auto ReadOnlyPointerTo(const mir::CompilationUnit& unit, mir::TypeId pointee)
     -> mir::TypeId {
@@ -104,7 +101,7 @@ template <typename Record>
 auto MembersOf(const mir::CompilationUnit& unit)
     -> std::span<const mir::TypeId> {
   const std::optional<std::span<const mir::TypeId>> members =
-      unit.LibraryRecordMembers(mir::LibraryRecordKind<Record>());
+      unit.LibraryRecordMembers(abi::LibraryDeclOf<Record>());
   if (!members.has_value()) {
     throw InternalError(
         "hir_to_mir: a unit declares no structure of the library a constant "
@@ -131,8 +128,7 @@ auto MemberTypeOf(const mir::CompilationUnit& unit, Member Record::* member)
 template <typename Record>
 class LibraryRecordBuilder {
  public:
-  static constexpr mir::RuntimeLibraryKind kKind =
-      mir::LibraryRecordKind<Record>();
+  static constexpr support::LibraryDecl kDecl = abi::LibraryDeclOf<Record>();
 
   LibraryRecordBuilder(const mir::CompilationUnit& unit, mir::Builder block)
       : unit_(&unit), block_(block) {
@@ -186,7 +182,7 @@ class LibraryRecordBuilder {
     return block_.Add(
         mir::Expr{
             .data = mir::CompositeExpr{.parts = std::move(parts)},
-            .type = LibraryType(*unit_, kKind)});
+            .type = mir::LibraryTypeOf(unit_->types, kDecl)});
   }
 
  private:
@@ -248,7 +244,8 @@ auto Table(
     mir::Class& cls, std::size_t count,
     const std::function<mir::ExprId(mir::Builder, std::size_t)>& write)
     -> mir::ExprId {
-  const mir::TypeId entry = LibraryType(unit, mir::LibraryRecordKind<Entry>());
+  const mir::TypeId entry =
+      mir::LibraryTypeOf(unit.types, abi::LibraryDeclOf<Entry>());
   mir::ValueBuild build;
   mir::Builder record(build.body, diag::SourceSpan{});
   std::vector<mir::ExprId> elements;
@@ -739,7 +736,8 @@ class ConstructionTables {
         .owner = id_,
         .constant = cls_->constants.Add(
             mir::ClassConstantDecl{
-                .type = mir::ConstructionTableType(unit_->types),
+                .type = mir::LibraryTypeOf(
+                    unit_->types, support::LibraryDecl::kConstructionTable),
                 .initializer = std::move(build)})};
   }
 
@@ -755,9 +753,11 @@ class ConstructionTables {
                                    entry, made.made, made.block, entry_type,
                                    record.TypeOf(&Instantiation::entry)));
     record.Set(
-        &Instantiation::table, AddressOfConstant(
-                                   *unit_, entry, made.table,
-                                   mir::ConstructionTableType(unit_->types)));
+        &Instantiation::table,
+        AddressOfConstant(
+            *unit_, entry, made.table,
+            mir::LibraryTypeOf(
+                unit_->types, support::LibraryDecl::kConstructionTable)));
     return std::move(record).Build();
   }
 

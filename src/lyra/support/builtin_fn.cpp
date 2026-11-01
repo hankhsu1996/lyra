@@ -968,18 +968,18 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "format_runtime",
           .declaration = ValueFunction("FormatRuntime")};
-    case BuiltinFn::kMakeRenderedFormatArg:
+    case BuiltinFn::kRenderedFormatArgMake:
       return {
-          .name = "make_rendered_format_arg",
+          .name = "rendered_format_arg_make",
           .declaration = StaticFactory{"Rendered"}};
-    case BuiltinFn::kMakePatternedFormatArg:
+    case BuiltinFn::kPatternedFormatArgMake:
       return {
-          .name = "make_patterned_format_arg",
+          .name = "patterned_format_arg_make",
           .declaration = StaticFactory{"Patterned"},
           .operands = {kNumber}};
-    case BuiltinFn::kMakeTextPrintItem:
+    case BuiltinFn::kTextPrintItemMake:
       return {
-          .name = "make_text_print_item", .declaration = StaticFactory{"Text"}};
+          .name = "text_print_item_make", .declaration = StaticFactory{"Text"}};
     case BuiltinFn::kWrite:
       return {.name = "write", .declaration = Method{"Write"}};
     case BuiltinFn::kWriteln:
@@ -1488,7 +1488,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = RuntimeFunction("Unsize"),
           .takes_a_type_argument = true,
           .type_argument_named = TypeArgumentNamed::kTheCallSignature};
-    case BuiltinFn::kMakeAny:
+    case BuiltinFn::kAnyMake:
       return {
           .name = "any_make",
           .declaration = RuntimeFunction("MakeAny"),
@@ -2037,12 +2037,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "from_bits",
           .declaration = StaticFactory{"FromBits"},
           .takes_a_type_argument = true};
-    case BuiltinFn::kRealValue:
-      return {.name = "real_value", .declaration = Method{"Value"}};
     case BuiltinFn::kStringCStr:
       return {.name = "string_cstr", .declaration = Method{"CStr"}};
-    case BuiltinFn::kChandlePtr:
-      return {.name = "chandle_ptr", .declaration = Method{"Ptr"}};
     case BuiltinFn::kHandStringToForeignCaller:
       return {
           .name = "hand_string_to_foreign_caller",
@@ -2159,16 +2155,96 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "queue_from_array",
           .declaration = StaticFactory{"FromArray"},
           .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kMakeDynamicArrayNew:
+    case BuiltinFn::kDynamicArrayNew:
       return {
-          .name = "make_dynamic_array_new",
+          .name = "dynamic_array_new",
           .declaration = StaticFactory{"New"},
           .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kMakeDynamicArrayNewCopy:
+    case BuiltinFn::kDynamicArrayNewCopy:
       return {
-          .name = "make_dynamic_array_new_copy",
+          .name = "dynamic_array_new_copy",
           .declaration = StaticFactory{"NewCopy"},
           .answer_told = AnswerTold::kBuiltArray};
+    // A value a type starts as is the library's value of that type built out
+    // of nothing, as a C++ class's is its value-initialized object; a
+    // container is told the type it builds, whose elements and bound no
+    // operand states (LRM 7.10.5).
+    case BuiltinFn::kDefault:
+      return {
+          .name = "default",
+          .declaration = ValueFunction("DefaultOf"),
+          .takes_a_type_argument = true};
+    case BuiltinFn::kContainerDefault:
+      return {
+          .name = "default",
+          .declaration = ValueFunction("DefaultOf"),
+          .takes_a_type_argument = true,
+          .answer_told = AnswerTold::kBuiltArray};
+    case BuiltinFn::kWeakReferenceDefault:
+      return {
+          .name = "weak_reference_default",
+          .declaration = ValueFunction("DefaultOf"),
+          .takes_a_type_argument = true};
+    case BuiltinFn::kStringFromText:
+      return {.name = "from_text", .declaration = Constructor{}};
+    // Each array is built holding elements of a type no operand states, and a
+    // queue as many as a bound no operand states either (LRM 7.10.5).
+    case BuiltinFn::kSequenceFromList:
+      return {
+          .name = "from_list",
+          .declaration = Constructor{},
+          .answer_told = AnswerTold::kBuiltArray};
+    case BuiltinFn::kAssociativeArrayFromEntries:
+      return {
+          .name = "from_entries",
+          .declaration = Constructor{},
+          .answer_told = AnswerTold::kBuiltArray};
+    // A wildcard index and the image of an open array are each built over a
+    // value whose type nothing else states (LRM 7.8.1, 35.5.6.1).
+    case BuiltinFn::kWildcardIndexMake:
+      return {
+          .name = "wildcard_index_make",
+          .declaration = Constructor{},
+          .operands = {kTyped}};
+    case BuiltinFn::kHierarchySegmentMake:
+      return {.name = "hierarchy_segment_make", .declaration = Constructor{}};
+    case BuiltinFn::kTriggerMake:
+      return {.name = "trigger_make", .declaration = Constructor{}};
+    case BuiltinFn::kFormatSpecMake:
+      return {.name = "format_spec_make", .declaration = Constructor{}};
+    // What a value formats as is the value's own answer, so each is realized
+    // once per kind of value it is built over, which it is handed a reference
+    // to, and once for every integral value, which it reads as a number (LRM
+    // 21.2.1).
+    case BuiltinFn::kPrintItemMake:
+      return {.name = "print_item_make", .declaration = Constructor{}};
+    case BuiltinFn::kIntegralPrintItemMake:
+      return {
+          .name = "integral_print_item_make",
+          .declaration = Constructor{},
+          .operands = {kNumber}};
+    case BuiltinFn::kFormatArgMake:
+      return {.name = "format_arg_make", .declaration = Constructor{}};
+    case BuiltinFn::kIntegralFormatArgMake:
+      return {
+          .name = "integral_format_arg_make",
+          .declaration = Constructor{},
+          .operands = {kNumber}};
+    case BuiltinFn::kDpiBitBufferMake:
+      return {
+          .name = "dpi_bit_buffer_make",
+          .declaration = Constructor{},
+          .operands = {kBits}};
+    case BuiltinFn::kDpiLogicBufferMake:
+      return {
+          .name = "dpi_logic_buffer_make",
+          .declaration = Constructor{},
+          .operands = {kBits}};
+    case BuiltinFn::kDpiOpenArrayMake:
+      return {
+          .name = "dpi_open_array_make",
+          .declaration = Constructor{},
+          .operands = {kTyped}};
     case BuiltinFn::kConcatStrings:
       return {.name = "concat", .declaration = StaticFactory{"Concat"}};
     case BuiltinFn::kReplicateBits:

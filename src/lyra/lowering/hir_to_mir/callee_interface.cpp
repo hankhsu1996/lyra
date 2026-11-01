@@ -25,6 +25,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -83,7 +84,8 @@ auto ParamTypeOf(
       return unit.types.Intern(
           mir::Type{mir::VariableRefType{
               .pointee =
-                  unit.types.Get(value_type).Is<mir::AnyType>()
+                  unit.types.Get(value_type)
+                          .IsDeclaredBy(support::LibraryDecl::kAny)
                       ? unit.types.Intern(mir::Type{mir::ErasedValueType{}})
                       : value_type,
               .mutability = direction == hir::ParamDirection::kConstRef

@@ -8,24 +8,24 @@
 #include "lyra/runtime/value_cell.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/runtime/var.hpp"
-#include "lyra/value/chandle.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
+#include "lyra/value/unmanaged_ref.hpp"
 
 namespace lyra::runtime {
 
-// The storage families over the value types no design shapes: a string, the
-// two reals, a chandle, a class handle, and the empty product a body completes
-// with when it produces nothing. Every design holds values of these same
-// types, so a family over one is a family the library can state in full, and
-// each declaration below says the library has already compiled it: a unit that
-// uses it refers to that copy instead of compiling its own, which every unit
-// would otherwise do for every family member it touches, leaving the linker to
-// discard all but one. A value type composed from a design's own declarations
-// -- an integral type, an array, a structure -- is not here: a unit compiled
-// with the design's types compiles the families over them itself.
+// The storage families over the value types no design shapes: a string, the two
+// reals, a reference owning nothing, a class handle, and the empty product a
+// body completes with when it produces nothing. Every design holds values of
+// these same types, so a family over one is a family the library can state in
+// full, and each declaration below says the library has already compiled it: a
+// unit that uses it refers to that copy instead of compiling its own, which
+// every unit would otherwise do for every family member it touches, leaving the
+// linker to discard all but one. A value type composed from a design's own
+// declarations -- an integral type, an array, a structure -- is not here: a
+// unit compiled with the design's types compiles the families over them itself.
 //
 // A declaration here does not reach a constructor or destructor defaulted where
 // it is declared, which a unit defines itself wherever it constructs one; that
@@ -37,19 +37,19 @@ namespace lyra::runtime {
 extern template class ValueStorageCore<value::String>;
 extern template class ValueStorageCore<value::Real>;
 extern template class ValueStorageCore<value::ShortReal>;
-extern template class ValueStorageCore<value::Chandle>;
+extern template class ValueStorageCore<value::UnmanagedRef>;
 extern template class ValueStorageCore<value::ObjectRef>;
 
 extern template class Cell<ValueStorageCore<value::String>>;
 extern template class Cell<ValueStorageCore<value::Real>>;
 extern template class Cell<ValueStorageCore<value::ShortReal>>;
-extern template class Cell<ValueStorageCore<value::Chandle>>;
+extern template class Cell<ValueStorageCore<value::UnmanagedRef>>;
 extern template class Cell<ValueStorageCore<value::ObjectRef>>;
 
 extern template class Var<value::String>;
 extern template class Var<value::Real>;
 extern template class Var<value::ShortReal>;
-extern template class Var<value::Chandle>;
+extern template class Var<value::UnmanagedRef>;
 extern template class Var<value::ObjectRef>;
 
 extern template class CellRareState<ValueStorageCore<value::String>>;
@@ -60,25 +60,25 @@ extern template class CellRareState<ValueStorageCore<value::ObjectRef>>;
 extern template class VariableRef<value::String>;
 extern template class VariableRef<value::Real>;
 extern template class VariableRef<value::ShortReal>;
-extern template class VariableRef<value::Chandle>;
+extern template class VariableRef<value::UnmanagedRef>;
 extern template class VariableRef<value::ObjectRef>;
 
 extern template class ScopedMutation<VariableRef<value::String>>;
 extern template class ScopedMutation<VariableRef<value::Real>>;
 extern template class ScopedMutation<VariableRef<value::ShortReal>>;
-extern template class ScopedMutation<VariableRef<value::Chandle>>;
+extern template class ScopedMutation<VariableRef<value::UnmanagedRef>>;
 extern template class ScopedMutation<VariableRef<value::ObjectRef>>;
 
 extern template class Takeovers<value::String>;
 extern template class Takeovers<value::Real>;
 extern template class Takeovers<value::ShortReal>;
-extern template class Takeovers<value::Chandle>;
+extern template class Takeovers<value::UnmanagedRef>;
 extern template class Takeovers<value::ObjectRef>;
 
 extern template class ValueCell<value::String>;
 extern template class ValueCell<value::Real>;
 extern template class ValueCell<value::ShortReal>;
-extern template class ValueCell<value::Chandle>;
+extern template class ValueCell<value::UnmanagedRef>;
 extern template class ValueCell<value::ObjectRef>;
 
 extern template class SampledHistory<value::String>;
@@ -92,7 +92,7 @@ extern template class SampledHistory<value::ObjectRef>;
 extern template class CompletionSlot<value::String>;
 extern template class CompletionSlot<value::Real>;
 extern template class CompletionSlot<value::ShortReal>;
-extern template class CompletionSlot<value::Chandle>;
+extern template class CompletionSlot<value::UnmanagedRef>;
 extern template class CompletionSlot<value::ObjectRef>;
 extern template class CompletionSlot<value::Tuple<>>;
 
@@ -100,7 +100,7 @@ extern template class Coroutine<void>;
 extern template class Coroutine<value::String>;
 extern template class Coroutine<value::Real>;
 extern template class Coroutine<value::ShortReal>;
-extern template class Coroutine<value::Chandle>;
+extern template class Coroutine<value::UnmanagedRef>;
 extern template class Coroutine<value::ObjectRef>;
 extern template class Coroutine<value::Tuple<>>;
 
@@ -109,7 +109,7 @@ extern template class Coroutine<value::Tuple<>>;
 extern template class KeptPart<value::String>;
 extern template class KeptPart<value::Real>;
 extern template class KeptPart<value::ShortReal>;
-extern template class KeptPart<value::Chandle>;
+extern template class KeptPart<value::UnmanagedRef>;
 extern template class KeptPart<value::ObjectRef>;
 
 extern template auto StepTo<value::String>(const value::String& key)

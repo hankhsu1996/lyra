@@ -1,28 +1,10 @@
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_callback.hpp"
 
 #include <string_view>
 
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::support {
-
-auto RuntimeClassName(RuntimeClass klass) -> std::string_view {
-  switch (klass) {
-    case RuntimeClass::kScope:
-      return "Scope";
-    case RuntimeClass::kObject:
-      return "Object";
-    case RuntimeClass::kClassObject:
-      return "ClassObject";
-    case RuntimeClass::kProcess:
-      return "Process";
-    case RuntimeClass::kSynchronizationObject:
-      return "SynchronizationObject";
-    case RuntimeClass::kConstraintProblem:
-      return "ConstraintProblem";
-  }
-  throw InternalError("RuntimeClassName: unknown runtime class");
-}
 
 auto LibraryCallbackName(LibraryCallback callback) -> std::string_view {
   switch (callback) {

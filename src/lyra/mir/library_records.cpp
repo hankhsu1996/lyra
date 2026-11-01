@@ -5,9 +5,11 @@
 #include <type_traits>
 #include <vector>
 
+#include "lyra/abi/library_records.hpp"
 #include "lyra/abi/records.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/value/object_ref.hpp"
 
 namespace lyra::mir {
@@ -83,7 +85,9 @@ auto MirTypeOf(const TypePool& types) -> TypeId {
     return types.Intern(
         Type{ReferenceType{
             .referent = types.Intern(
-                Type{ManagedRefType{.pointee = ObjectRootType(types)}}),
+                Type{ManagedRefType{
+                    .pointee = LibraryTypeOf(
+                        types, support::LibraryDecl::kObjectRoot)}}),
             .mutability = Mutability::kReadOnly}});
   } else if constexpr (abi::kIsConstantSpan<Field>) {
     // The library lays a view of entries out as where the first one is and
@@ -100,7 +104,7 @@ auto MirTypeOf(const TypePool& types) -> TypeId {
         Type{MachineSpanType{.element = MirTypeOf<Entry>(types)}});
   } else if constexpr (std::is_class_v<Field>) {
     return types.Intern(
-        Type{RuntimeLibraryType{.kind = LibraryRecordKind<Field>()}});
+        Type{LibraryType{.decl = abi::LibraryDeclOf<Field>(), .args = {}}});
   } else if constexpr (
       std::is_pointer_v<Field> &&
       std::is_function_v<std::remove_pointer_t<Field>>) {
@@ -138,9 +142,9 @@ auto MembersOf(const TypePool& types) -> std::vector<TypeId> {
 auto DeclareLibraryRecords(const TypePool& types)
     -> std::vector<LibraryRecordDecl> {
   std::vector<LibraryRecordDecl> records;
-  ForEachLibraryRecord([&]<typename Record>(RuntimeLibraryKind kind) {
+  abi::ForEachLibraryRecord([&]<typename Record>(support::LibraryDecl decl) {
     records.push_back(
-        LibraryRecordDecl{.kind = kind, .members = MembersOf<Record>(types)});
+        LibraryRecordDecl{.decl = decl, .members = MembersOf<Record>(types)});
   });
   return records;
 }

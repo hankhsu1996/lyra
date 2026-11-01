@@ -44,6 +44,7 @@
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/event_edge.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -267,8 +268,10 @@ auto ReadingOfValueChange(
   if (const auto* handle =
           unit.types.Get(type).template As<mir::ManagedRefType>();
       handle != nullptr && change.edge == support::EventEdge::kAnyChange) {
-    const mir::TypeId weak =
-        unit.types.Intern(mir::Type{mir::WeakManagedRefType{handle->pointee}});
+    const mir::TypeId weak = unit.types.Intern(
+        mir::Type{mir::LibraryType{
+            .decl = support::LibraryDecl::kWeakReference,
+            .args = {handle->pointee}}});
     return EntryReading{
         .watches = std::span<const hir::SensitivityEntry>{change.cells},
         .now = *now,
@@ -481,14 +484,10 @@ auto ArmEntry(
 // 3.14.2); the runtime rounds that amount to the scope's precision (LRM
 // 3.14.1) and scales it to the design-global tick (LRM 3.14.3). The amount is
 // evaluated here, where the statement is reached, so a later write to anything
-// it read does not reach a wait already under way.
-//
-// Which entry carries it follows the amount's own type, because the language
-// reads the same written value differently in each: an integral amount counts
-// whole time units and gives its unknown and negative values meanings of their
-// own, while a real one may name a fraction of a unit. The front end has
-// already refused an amount that is neither (a delay expression must be
-// numeric), so the two together are the whole of what arrives.
+// it read does not reach a wait already under way. The front end has already
+// refused an amount that is neither integral nor real (a delay expression must
+// be numeric), so the two entries the amount's type picks between are the
+// whole of what arrives.
 auto BuildDelayWaitStmt(
     ProcessLowerer& process, WalkFrame frame, mir::Builder block,
     const hir::DelayControl& d) -> diag::Result<mir::Stmt> {
@@ -496,16 +495,10 @@ auto BuildDelayWaitStmt(
   auto duration_or =
       process.LowerExpr(process.HirBody().exprs.Get(d.duration), frame);
   if (!duration_or) return std::unexpected(std::move(duration_or.error()));
-  mir::ExprId duration_id = block.Add(*std::move(duration_or));
-
-  const mir::Type& duration_type = unit.types.Get(block.Get(duration_id).type);
-  const bool is_real = duration_type.IsRealFamily();
-  if (duration_type.Is<mir::ShortRealType>()) {
-    // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
-    // from them only in host precision, so the entry takes the wider and the
-    // narrower reshapes into it.
-    duration_id = ConvertToType(unit, block, duration_id, unit.builtins.real);
-  }
+  const DelayRead read = ReadDelayAmount(
+      unit, block, block.Add(*std::move(duration_or)),
+      {.integral = support::BuiltinFn::kDelay,
+       .real = support::BuiltinFn::kDelayReal});
 
   const mir::ExprId runtime_id =
       block.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
@@ -514,12 +507,10 @@ auto BuildDelayWaitStmt(
   const mir::ExprId precision_power_id = mir::BuildMachineIntLiteral(
       unit, block,
       static_cast<std::int64_t>(process.Resolution().precision_power));
-  const support::BuiltinFn entry =
-      is_real ? support::BuiltinFn::kDelayReal : support::BuiltinFn::kDelay;
   const mir::ExprId wait_id = block.Add(
       mir::MakeCallExpr(
-          mir::Direct{.target = entry},
-          {runtime_id, duration_id, unit_power_id, precision_power_id},
+          mir::Direct{.target = read.entry},
+          {runtime_id, read.amount, unit_power_id, precision_power_id},
           unit.builtins.wait));
   return BuildStopStmt(
       process.Owner(), frame.WithBlock(&block.Body()), wait_id);

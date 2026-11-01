@@ -215,7 +215,7 @@ auto EvaluationOrder::EffectsOf(const Block& block, ExprId id)
             [](const NullLiteral&) {},
             [](const MachineBoolLiteral&) {},
             [](const MachineIntLiteral&) {},
-            [](const MachineFloatLiteral&) {},
+            [](const FloatingLiteral&) {},
             [](const ReferenceExpr&) {},
         },
         expr.data);

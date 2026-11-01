@@ -20,6 +20,7 @@
 #include <llvm/IR/Type.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
+#include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/codegen_value_type.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -157,7 +158,7 @@ auto CodeGenFunction::LaidOutStorage(support::ObjectLayout layout)
 
 auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
     -> llvm::Value* {
-  return LaidOutStorage(runtime::LayoutOf(object));
+  return LaidOutStorage(HolderStorageOf(object));
 }
 
 auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
@@ -400,7 +401,7 @@ auto CodeGenFunction::StorageAtPlace(const lir::Place& place)
     return std::unexpected(std::move(address.error()));
   }
   const lir::Type& stated = module_->Unit().types.Get(type);
-  if (stated.Is<lir::RuntimeClassType>() || stated.Is<lir::ObjectType>()) {
+  if (stated.RuntimeClassOf().has_value() || stated.Is<lir::ObjectType>()) {
     return NamedStorage{.type = type, .storage = std::nullopt, .at = *address};
   }
   MemberSlotRole role = MemberSlotRole::kVariable;

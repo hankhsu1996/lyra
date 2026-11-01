@@ -12,7 +12,7 @@
 #include "lyra/lir/value_step.hpp"
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_callback.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {

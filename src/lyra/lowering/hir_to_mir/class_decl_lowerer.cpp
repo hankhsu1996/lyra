@@ -53,7 +53,8 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/runtime_class.hpp"
+#include "lyra/support/library_callback.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -522,9 +523,8 @@ auto ClassDeclLowerer::DeclareShape(
       unit_lowerer, hir_class_id_, *replicating_, block_events);
   scopes_ = ScopesOwningDisableTargets(
       hir_class.procedural_scopes, hir_class.fixed_name, class_storage,
-      unit_lowerer.Unit().types.Intern(
-          mir::Type{mir::RuntimeLibraryType{
-              .kind = mir::RuntimeLibraryKind::kCancellationTarget}}),
+      mir::LibraryTypeOf(
+          unit_lowerer.Unit().types, support::LibraryDecl::kCancellationTarget),
       block_events);
 
   if (!unit_lowerer.HasClassShape(class_id_)) {
