@@ -10,7 +10,9 @@ Accepted. Builds on `interface-port-binding.md` and
 `calling-a-subroutine-on-another-units-object.md`, reversing neither. The plan written before it
 resolved a member by name at every access, and that was never required. Revised 2026-10-30: D2's
 value is a reference typed by the interface's object, so the operation that read an untyped address
-back out as that object is gone.
+back out as that object is gone. Revised 2026-11-01: D1 states that the unit is found from the
+interface and its parameters alone, since a type written inside the interface, or in one it names,
+had named a unit of its own once that reference was typed.
 
 ## Why this decision matters
 
@@ -42,10 +44,12 @@ and no place in a container.
 
 A member, a subroutine, a name a modport defines, and a component of an interface the instance
 itself instantiates are all found in what the interface's unit published, at the positions its
-signature gave them, where the referring unit compiles. That is the lookup slang performs against
-the type's own interface body, and what C++ does with `p->m` on a `T*`. An access evaluates the
-handle, and then reaches through it the way an interface port reaches through the instance it is
-bound to.
+signature gave them, where the referring unit compiles. The unit is found from the interface and its
+parameters alone, so a type naming it is the same type wherever it is written -- in a module, in a
+class, in another interface, or in that interface itself -- and an instance of the interface is
+assignable to it wherever both appear. That is the lookup slang performs against the type's own
+interface body, and what C++ does with `p->m` on a `T*`. An access evaluates the handle, and then
+reaches through it the way an interface port reaches through the instance it is bound to.
 
 ### D2. The value is a reference to the instance, which owns nothing
 

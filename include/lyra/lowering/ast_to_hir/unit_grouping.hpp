@@ -18,6 +18,11 @@
 //   top-down, to make the unit;
 // - any other, by its unit.
 //
+// A type naming an interface (LRM 25.9) names none of these: it names the
+// interface and its parameters, and is written by them. So it reads alike
+// wherever the front end placed the instance standing for the type, and in a
+// lowering of that interface itself, whose unit is not found yet.
+//
 // A generate block's class is found the same way inside its unit. A unit is
 // named by its definition, with the digest of all of it where the definition
 // has more than one unit, so the name moves only where what referrers compile
@@ -68,6 +73,8 @@ class UnitNames final : public InstanceNames {
 
   [[nodiscard]] auto NameOf(const slang::ast::InstanceSymbol& inst) const
       -> std::string override;
+  [[nodiscard]] auto InterfaceNameOf(
+      const slang::ast::InstanceSymbol& iface) const -> std::string override;
   [[nodiscard]] auto BlockStepOf(const slang::ast::GenerateBlockSymbol& block)
       const -> support::GenerateBlockStep override;
 

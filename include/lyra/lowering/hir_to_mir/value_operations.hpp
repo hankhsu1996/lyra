@@ -59,6 +59,12 @@ class UnitLowerer;
 [[nodiscard]] auto TypeOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
     -> std::vector<mir::TypeOperation>;
 
+// The one of those bodies answering `asked`, or nothing where `type` has no
+// such operation.
+[[nodiscard]] auto TypeOperationOf(
+    UnitLowerer& lowerer, mir::TypeId type, support::ValueOperation asked)
+    -> std::optional<mir::TypeOperation>;
+
 // How many positions a procedural continuous assignment may hold some of in a
 // value of `type` (LRM 10.6.2): an integral value's bits, a product's
 // components' and a fixed-size unpacked array's elements' positions one part

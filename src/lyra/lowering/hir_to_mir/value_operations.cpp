@@ -2001,51 +2001,56 @@ struct OperationsHad {
   bool net_folds;
 };
 
-// Hands `add` every body `bodies` builds for an operation on the whole value
-// every such type has, in one order for every kind of type.
+// Hands `add` each operation on the whole value every such type has, in one
+// order for every kind of type, with what builds its body from `bodies`, so
+// that whoever states only some of them builds only those.
 template <typename Bodies, typename Add>
 void StateWholeValue(Bodies& bodies, Add add) {
-  add(support::BuiltinFn::kDeclaredDefault, bodies.DeclaredDefault());
-  add(support::ValueOperator::kEquality, bodies.Equality());
-  add(support::ValueOperator::kInequality, bodies.Inequality());
-  add(support::BuiltinFn::kCaseEqual, bodies.CaseEqual());
-  add(support::BuiltinFn::kBitIdentical, bodies.BitIdentical());
-  add(support::BuiltinFn::kHasUnknown, bodies.HasUnknown());
-  add(support::BuiltinFn::kTakePositions, bodies.TakePositions());
+  add(support::BuiltinFn::kDeclaredDefault,
+      [&] { return bodies.DeclaredDefault(); });
+  add(support::ValueOperator::kEquality, [&] { return bodies.Equality(); });
+  add(support::ValueOperator::kInequality, [&] { return bodies.Inequality(); });
+  add(support::BuiltinFn::kCaseEqual, [&] { return bodies.CaseEqual(); });
+  add(support::BuiltinFn::kBitIdentical, [&] { return bodies.BitIdentical(); });
+  add(support::BuiltinFn::kHasUnknown, [&] { return bodies.HasUnknown(); });
+  add(support::BuiltinFn::kTakePositions,
+      [&] { return bodies.TakePositions(); });
 }
 
-// Hands `add` the bodies of a stream (LRM 6.24.3) and a net's folds (LRM
+// Hands `add` a stream's operations (LRM 6.24.3) and a net's folds (LRM
 // 6.7.1) where `had` says the type has them. A tagged union has neither, so it
 // is asked for none.
 template <typename Bodies, typename Add>
 void StateStreamAndFolds(Bodies& bodies, const OperationsHad& had, Add add) {
   if (had.stream) {
-    add(support::BuiltinFn::kBitstreamWidth, bodies.BitWidth());
-    add(support::BuiltinFn::kCountBits, bodies.CountBits());
+    add(support::BuiltinFn::kBitstreamWidth, [&] { return bodies.BitWidth(); });
+    add(support::BuiltinFn::kCountBits, [&] { return bodies.CountBits(); });
     if (had.fixed_stream) {
-      add(support::BuiltinFn::kToBitstream, bodies.ToBitstream());
-      add(support::BuiltinFn::kFromBitstream, bodies.FromBitstream());
+      add(support::BuiltinFn::kToBitstream,
+          [&] { return bodies.ToBitstream(); });
+      add(support::BuiltinFn::kFromBitstream,
+          [&] { return bodies.FromBitstream(); });
     }
   }
   if (had.net_folds) {
     for (const support::BuiltinFn fold : kNetFolds) {
-      add(fold, bodies.Fold(fold));
+      add(fold, [&] { return bodies.Fold(fold); });
     }
-    add(support::BuiltinFn::kFilledLike, bodies.FilledLike());
+    add(support::BuiltinFn::kFilledLike, [&] { return bodies.FilledLike(); });
   }
 }
 
-// Hands `add` the bodies of a stream as a run of bits where `had` says the
+// Hands `add` a stream's operations as a run of bits where `had` says the
 // type holds a stream whose width the running program decides (LRM 6.24.3):
 // a structure or an array holding a dynamic array, a queue, an associative
 // array or a string somewhere.
 template <typename Bodies, typename Add>
 void StateRunBodies(Bodies& bodies, const OperationsHad& had, Add add) {
   if (had.run_written) {
-    add(support::BuiltinFn::kToBitVec, bodies.ToBitVec());
+    add(support::BuiltinFn::kToBitVec, [&] { return bodies.ToBitVec(); });
   }
   if (had.run_read) {
-    add(support::BuiltinFn::kFromBitVec, bodies.FromBitVec());
+    add(support::BuiltinFn::kFromBitVec, [&] { return bodies.FromBitVec(); });
   }
 }
 
@@ -2096,14 +2101,15 @@ auto OperationsHadByProduct(
       .net_folds = EveryPart(unit, components, IsValidForNet)};
 }
 
-// Hands `add` every body `bodies` builds for a product, which a structure and
-// a tuple have alike.
+// Hands `add` every operation a product has, which a structure and a tuple
+// have alike.
 template <typename Bodies, typename Add>
 void StateProductOperations(Bodies& bodies, const OperationsHad& had, Add add) {
   StateWholeValue(bodies, add);
   // What the library holding an array of the product asks of it, where it
   // takes positions element by element; a union, held whole, needs none.
-  add(support::BuiltinFn::kPositionCount, bodies.PositionCount());
+  add(support::BuiltinFn::kPositionCount,
+      [&] { return bodies.PositionCount(); });
   StateStreamAndFolds(bodies, had, add);
   StateRunBodies(bodies, had, add);
 }
@@ -2125,51 +2131,49 @@ auto OperationsHadByArray(const mir::CompilationUnit& unit, mir::TypeId array)
       .net_folds = IsValidForNet(unit, array)};
 }
 
-// A body for every operation on a whole value the fixed-size unpacked array
-// `type`, which `array` states, has (LRM 7.4.2), each element's in turn.
-auto ArrayOperationsOf(
-    UnitLowerer& lowerer, mir::TypeId type, const mir::UnpackedArrayType& array)
-    -> std::vector<mir::TypeOperation> {
-  std::vector<mir::TypeOperation> operations;
-  const auto add = [&](support::ValueOperation answers,
-                       mir::CallableCode code) {
-    operations.push_back(
-        mir::TypeOperation{
-            .type = type, .answers = answers, .code = std::move(code)});
-  };
-  const OperationsHad had = OperationsHadByArray(lowerer.Unit(), type);
-  ArrayBodies bodies(lowerer, type, array.element_type, array.count);
-  StateWholeValue(bodies, add);
-  StateStreamAndFolds(bodies, had, add);
-  StateRunBodies(bodies, had, add);
-  return operations;
-}
-
-// A body for every operation on a whole value the tuple `type` of
-// `components` has, each component's in turn, where the tuple is a data type,
-// every component being one; a tuple of anything else answers none.
-auto TupleOperationsOf(
-    UnitLowerer& lowerer, mir::TypeId type, std::vector<mir::TypeId> components)
-    -> std::vector<mir::TypeOperation> {
+// Hands `add` every operation on a whole value `type`, a type whose operations
+// each unit naming it states as its own, has, with what builds its body: a
+// fixed-size unpacked array's each element's in turn (LRM 7.4.2), and a
+// tuple's each component's in turn where the tuple is a data type, every
+// component being one; a tuple of anything else has none.
+template <typename Add>
+void StatePerUnitOperations(UnitLowerer& lowerer, mir::TypeId type, Add add) {
   const mir::CompilationUnit& unit = lowerer.Unit();
-  std::vector<mir::TypeOperation> operations;
-  if (!mir::IsDataType(unit.types, type)) {
-    return operations;
+  const std::optional<mir::StatedPerUnit> kind =
+      mir::OperationsStatedPerUnit(unit.types.Get(type));
+  if (!kind.has_value()) {
+    throw InternalError(
+        "hir_to_mir: a unit is asked the operations of a type a declaration "
+        "states them for, or none does -- please report this as a bug");
   }
-  const auto add = [&](support::ValueOperation answers,
-                       mir::CallableCode code) {
-    operations.push_back(
-        mir::TypeOperation{
-            .type = type, .answers = answers, .code = std::move(code)});
-  };
-  const OperationsHad had = OperationsHadByProduct(unit, components);
-  ProductBodies bodies(
-      lowerer, type, std::move(components),
-      [type](support::ValueOperation answers) -> mir::DirectTarget {
-        return mir::TypeOperationTarget{.type = type, .answers = answers};
-      });
-  StateProductOperations(bodies, had, add);
-  return operations;
+  switch (*kind) {
+    case mir::StatedPerUnit::kFixedArray: {
+      const mir::UnpackedArrayType array =
+          unit.types.Get(type).Get<mir::UnpackedArrayType>();
+      const OperationsHad had = OperationsHadByArray(unit, type);
+      ArrayBodies bodies(lowerer, type, array.element_type, array.count);
+      StateWholeValue(bodies, add);
+      StateStreamAndFolds(bodies, had, add);
+      StateRunBodies(bodies, had, add);
+      return;
+    }
+    case mir::StatedPerUnit::kTuple: {
+      if (!mir::IsDataType(unit.types, type)) {
+        return;
+      }
+      std::vector<mir::TypeId> components =
+          unit.types.Get(type).Get<mir::TupleType>().elements;
+      const OperationsHad had = OperationsHadByProduct(unit, components);
+      ProductBodies bodies(
+          lowerer, type, std::move(components),
+          [type](support::ValueOperation answers) -> mir::DirectTarget {
+            return mir::TypeOperationTarget{.type = type, .answers = answers};
+          });
+      StateProductOperations(bodies, had, add);
+      return;
+    }
+  }
+  throw InternalError("hir_to_mir: unknown kind stated per unit");
 }
 
 }  // namespace
@@ -2197,10 +2201,8 @@ auto StructMethodsOf(
   StructBodies bodies(
       lowerer, source, record, structure, {members.begin(), members.end()});
   std::vector<mir::RecordMethod> methods;
-  const auto add = [&](support::ValueOperation answers,
-                       mir::CallableCode code) {
-    methods.push_back(
-        mir::RecordMethod{.answers = answers, .code = std::move(code)});
+  const auto add = [&](support::ValueOperation answers, const auto& build) {
+    methods.push_back(mir::RecordMethod{.answers = answers, .code = build()});
   };
   StateProductOperations(bodies, OperationsHadByProduct(unit, members), add);
   return methods;
@@ -2210,10 +2212,8 @@ auto UnionMethodsOf(
     UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
   std::vector<mir::RecordMethod> methods;
-  const auto add = [&](support::ValueOperation answers,
-                       mir::CallableCode code) {
-    methods.push_back(
-        mir::RecordMethod{.answers = answers, .code = std::move(code)});
+  const auto add = [&](support::ValueOperation answers, const auto& build) {
+    methods.push_back(mir::RecordMethod{.answers = answers, .code = build()});
   };
   const OperationsHad had = OperationsHadByUnion(lowerer.Unit(), members);
   UnionBodies bodies(
@@ -2227,10 +2227,8 @@ auto TaggedUnionMethodsOf(
     UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
   std::vector<mir::RecordMethod> methods;
-  const auto add = [&](support::ValueOperation answers,
-                       mir::CallableCode code) {
-    methods.push_back(
-        mir::RecordMethod{.answers = answers, .code = std::move(code)});
+  const auto add = [&](support::ValueOperation answers, const auto& build) {
+    methods.push_back(mir::RecordMethod{.answers = answers, .code = build()});
   };
   TaggedUnionBodies bodies(
       lowerer, record, overlay, {members.begin(), members.end()});
@@ -2240,23 +2238,28 @@ auto TaggedUnionMethodsOf(
 
 auto TypeOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
     -> std::vector<mir::TypeOperation> {
-  const mir::Type& stated = lowerer.Unit().types.Get(type);
-  const std::optional<mir::StatedPerUnit> kind =
-      mir::OperationsStatedPerUnit(stated);
-  if (!kind.has_value()) {
-    throw InternalError(
-        "hir_to_mir: a unit is asked the operations of a type a declaration "
-        "states them for, or none does -- please report this as a bug");
-  }
-  switch (*kind) {
-    case mir::StatedPerUnit::kFixedArray:
-      return ArrayOperationsOf(
-          lowerer, type, stated.Get<mir::UnpackedArrayType>());
-    case mir::StatedPerUnit::kTuple:
-      return TupleOperationsOf(
-          lowerer, type, stated.Get<mir::TupleType>().elements);
-  }
-  throw InternalError("hir_to_mir: unknown kind stated per unit");
+  std::vector<mir::TypeOperation> operations;
+  StatePerUnitOperations(
+      lowerer, type, [&](support::ValueOperation answers, const auto& build) {
+        operations.push_back(
+            mir::TypeOperation{
+                .type = type, .answers = answers, .code = build()});
+      });
+  return operations;
+}
+
+auto TypeOperationOf(
+    UnitLowerer& lowerer, mir::TypeId type, support::ValueOperation asked)
+    -> std::optional<mir::TypeOperation> {
+  std::optional<mir::TypeOperation> answering;
+  StatePerUnitOperations(
+      lowerer, type, [&](support::ValueOperation answers, const auto& build) {
+        if (answers == asked) {
+          answering = mir::TypeOperation{
+              .type = type, .answers = answers, .code = build()};
+        }
+      });
+  return answering;
 }
 
 auto CarriesUnknowns(const mir::CompilationUnit& unit, mir::TypeId type)

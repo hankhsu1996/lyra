@@ -62,6 +62,7 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/dump.hpp"
 #include "lyra/mir/expr.hpp"
@@ -460,6 +461,30 @@ auto PublishObjectEntry(
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
           .defining_unit = std::nullopt});
+}
+
+// Adds to `called` each operation of a tuple `block` calls, its inner blocks'
+// included.
+void TupleOperationsCalledIn(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    std::vector<mir::TypeOperationSource>& called) {
+  for (const mir::Expr& expr : block.exprs) {
+    const auto* call = std::get_if<mir::CallExpr>(&expr.data);
+    if (call == nullptr) continue;
+    const auto* direct = std::get_if<mir::Direct>(&call->callee);
+    if (direct == nullptr) continue;
+    const auto* target = std::get_if<mir::TypeOperationTarget>(&direct->target);
+    if (target == nullptr ||
+        !unit.types.Get(target->type).Is<mir::TupleType>()) {
+      continue;
+    }
+    called.push_back(
+        mir::TypeOperationSource{
+            .type = target->type, .answers = target->answers});
+  }
+  for (const mir::Block& inner : block.child_scopes) {
+    TupleOperationsCalledIn(unit, inner, called);
+  }
 }
 
 }  // namespace
@@ -963,14 +988,15 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
 
 void UnitLowerer::PublishTypeOperations() {
   // Run once every body of the unit is lowered, since a body may name an array
-  // or a tuple no declaration does -- the keys a sort gathers, a call's
-  // completion -- and a call names an operation by its type rather than by
-  // what is stated here. A body built here interns types, and a type interned
-  // that way states its operations too, so the pool is walked by position and
-  // its size read again at every step.
+  // no declaration does -- the keys a sort gathers -- or call an operation of
+  // a tuple, and a call names an operation by its type rather than by what is
+  // stated here. A body built here interns types, and an array interned that
+  // way states its operations too, so the pool is walked by position and its
+  // size read again at every step.
   for (std::uint32_t i = 0; i < unit_.types.size(); ++i) {
     const mir::TypeId type{.value = i};
-    if (mir::OperationsStatedPerUnit(unit_.types.Get(type)).has_value()) {
+    if (mir::OperationsStatedPerUnit(unit_.types.Get(type)) ==
+        mir::StatedPerUnit::kFixedArray) {
       for (mir::TypeOperation& stated : TypeOperationsOf(*this, type)) {
         unit_.type_operations.push_back(std::move(stated));
       }
@@ -983,6 +1009,45 @@ void UnitLowerer::PublishTypeOperations() {
         unit_.type_operations.push_back(std::move(stated));
       }
     }
+  }
+  // An array's operations are stated whole, since the code generator asks them
+  // of the array itself -- describing it to the library, taking over some of
+  // its positions -- where no call names them. A tuple is no type the source
+  // writes: a lowering composes one where its code needs a value of it -- a
+  // call's completion, the targets of a scan -- so each of a tuple's
+  // operations is built where some code calls it, and the body built is
+  // searched for the calls it makes in turn, as rustc builds `PartialEq` for a
+  // tuple only where something calls it.
+  std::vector<mir::TypeOperationSource> called;
+  mir::ForEachCode(
+      unit_, [&](const mir::CodeSource&, const mir::CallableCode& code) {
+        if (code.body.has_value()) {
+          TupleOperationsCalledIn(unit_, *code.body, called);
+        }
+      });
+  for (const mir::ClassId id : unit_.classes.Ids()) {
+    const mir::Class& cls = unit_.GetClass(id);
+    if (cls.defining_unit.has_value()) continue;
+    for (const mir::ClassConstantDecl& constant : cls.constants) {
+      TupleOperationsCalledIn(unit_, constant.initializer.body, called);
+    }
+    TupleOperationsCalledIn(
+        unit_, cls.object_definition_initializer.body, called);
+  }
+  std::set<mir::TypeOperationSource> asked;
+  while (!called.empty()) {
+    const mir::TypeOperationSource next = called.back();
+    called.pop_back();
+    if (!asked.insert(next).second) continue;
+    // A call of an operation the tuple lacks is the calling code's defect,
+    // which verifying the unit reports.
+    std::optional<mir::TypeOperation> answering =
+        TypeOperationOf(*this, next.type, next.answers);
+    if (!answering.has_value()) continue;
+    if (answering->code.body.has_value()) {
+      TupleOperationsCalledIn(unit_, *answering->code.body, called);
+    }
+    unit_.type_operations.push_back(*std::move(answering));
   }
   // A type whose operations the unit states has its default among them; every
   // other array element type is given one here, and every tuple where each of

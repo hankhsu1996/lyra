@@ -133,6 +133,9 @@ what the construct means.
   a use calls by the type and the operation, handing each value by reference as a record's method
   takes it. Each unit naming the type states them, as each translation unit instantiates a template
   it names.
+- The operations of a tuple, which has no declaration either: the same bodies built from its
+  components' operations, where every component has each. No source writes a tuple, so each body is
+  built in the unit whose code calls it, as a generic impl is instantiated where it is used.
 - For an array of any kind holding a bounded queue below its outermost dimension, a value of it
   taken into the form of its type with no queue bounded, and a value of that form built as one of
   it, each element built afresh. Every type equivalent to it has that form (a bound is no part of

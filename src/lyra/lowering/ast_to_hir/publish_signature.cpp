@@ -1028,7 +1028,7 @@ auto UnitLowerer::InterfaceClassOf(const slang::ast::InstanceSymbol& instance)
     -> hir::ScopeClassId {
   return unit_.scope_classes.Import(
       hir::ScopeClassKey{
-          .unit_name = Names().NameOf(instance),
+          .unit_name = Names().InterfaceNameOf(instance),
           .class_path = hir::UnitScopeClassPath()});
 }
 

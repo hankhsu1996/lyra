@@ -114,7 +114,9 @@ class Grouping;
 // The naming one lowering is described in while units are found: the
 // instance being described and every other instance of its lowering by one
 // mark, an instance it holds by what that one publishes, one outside it that
-// its text reaches by where it stands among those, and any other by its unit.
+// its text reaches by where it stands among those, and any other by its unit;
+// and an interface a type names by all the type names of it, which holds
+// whichever of these the front end's instance standing for the type is.
 class GroupingNames final : public InstanceNames {
  public:
   GroupingNames(
@@ -129,6 +131,11 @@ class GroupingNames final : public InstanceNames {
 
   [[nodiscard]] auto NameOf(const slang::ast::InstanceSymbol& inst) const
       -> std::string override;
+
+  [[nodiscard]] auto InterfaceNameOf(
+      const slang::ast::InstanceSymbol& iface) const -> std::string override {
+    return "i:" + InterfaceIdentity(iface, *this);
+  }
 
   [[nodiscard]] auto BlockStepOf(const slang::ast::GenerateBlockSymbol& block)
       const -> support::GenerateBlockStep override {
@@ -476,6 +483,11 @@ auto UnitNames::NameOf(const slang::ast::InstanceSymbol& inst) const
             inst.getHierarchicalPath()));
   }
   return unit->second;
+}
+
+auto UnitNames::InterfaceNameOf(const slang::ast::InstanceSymbol& iface) const
+    -> std::string {
+  return NameOf(iface);
 }
 
 auto UnitNames::BlockStepOf(const slang::ast::GenerateBlockSymbol& block) const
