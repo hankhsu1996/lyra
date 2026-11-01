@@ -2,7 +2,6 @@
 
 #include <filesystem>
 #include <nlohmann/json.hpp>
-#include <optional>
 #include <string_view>
 
 #include "conformance/framework/process.hpp"
@@ -21,16 +20,34 @@ auto ResolveShippedExamples() -> std::filesystem::path;
 // listing nothing for an object it cannot read and still exiting 0.
 auto ResolveLlvmNm() -> std::filesystem::path;
 
+// The clang++ of the LLVM release Lyra links, as this run was given it. A test
+// whose answer depends on what clang makes of a program names this one rather
+// than whatever a machine has on PATH, so it gives the same answer wherever it
+// runs, the remote executor included, which has no clang of its own.
+auto ResolveClangxx() -> std::filesystem::path;
+
+// The GCC of the machine running the test. The remote executor's image carries
+// one, so a test that asks a question of GCC beside clang runs anywhere.
+auto ResolveHostGcc() -> std::filesystem::path;
+
+// The clang installed on the machine running the test, with everything an
+// installation carries beside the compiler: a linker that reads bitcode, the
+// sanitizer's headers. Only a machine with one can run a test that asks for it.
+auto ResolveHostClang() -> std::filesystem::path;
+
+// A host compiler a case runs under: what the case is called under it, and
+// where the test finds it. A case run under each, side by side, is a question
+// about what each compiler does with the same input.
+struct HostCompiler {
+  std::string_view name;
+  std::filesystem::path (*find)();
+};
+
 // Runs lyra from `dir`, which is what a declaration search reads and what no
 // argument can express.
 auto RunLyraFrom(
     const std::filesystem::path& lyra, const std::filesystem::path& dir,
     std::string_view args) -> conformance::framework::ProcessOutcome;
-
-// Clang, where this host has it. What a build costs is a fact about the
-// compiler that ran it, so a test measuring one asks for that compiler by name
-// rather than for whatever this machine happens to call a C++ compiler.
-auto FindClang() -> std::optional<std::filesystem::path>;
 
 // The smallest design that produces observable output. What the cases using it
 // are about is what surrounds a design, so the design itself carries no weight

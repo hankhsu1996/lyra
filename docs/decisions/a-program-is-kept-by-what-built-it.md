@@ -200,8 +200,8 @@ recipes for one question.
 - The prepared-header cache moves under the same store and the same trimming. `--pch-cache-dir`
   becomes `--cache-dir`, naming the whole store.
 - Every conformance case links a program with whatever C++ compiler the executing machine has, so
-  the corpus, foreign cases included, runs on remote executors as one target per path; only a test
-  about clang itself stays where clang is.
+  the corpus, foreign cases included, runs on remote executors as one target per path; a test about
+  clang itself is handed the pinned clang and runs there too.
 
 ## Cross-references
 

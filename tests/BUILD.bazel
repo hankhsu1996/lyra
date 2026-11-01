@@ -18,9 +18,12 @@ package(features = ["parse_headers"])
 # `no-remote-exec` says where it can run. A test that shells out to the host C++
 # compiler spawns something that is not a Bazel action, so it runs on whatever
 # machine executes it and finds that machine's compiler on PATH. The remote
-# image has the platform's own C++ compiler and no clang, so a test runs
-# remotely unless what it asserts is about clang itself, or about clang and GCC
-# side by side, and the tag holds that one on a machine that has clang.
+# image has the platform's own C++ compiler and no clang, so a test whose
+# answer is about clang is handed the clang of the release Lyra links
+# (`@llvm//tools:clang++`, with its resource headers) rather than looking for
+# one, and runs remotely like any other. That clang is the compiler and its
+# headers and no more, so the tag holds a test that asks what a whole clang
+# installation does on a machine that has one.
 #
 # `nightly` says when its cost is paid, and what it draws is one subject rather
 # than one price: whether an emitted C++ project still builds and runs. Two
@@ -736,23 +739,37 @@ cc_test(
     ],
 )
 
-# How much of the stack a program's body takes is its host compiler's as much
-# as the compiler's, and clang's is the one that reserves stack for what a
-# coroutine's frame holds, so the case builds with clang and stays where clang
-# is.
+# A program keeps a value larger than its stack off that stack, one target per
+# backend so the two long builds run side by side. The C++ backend's half is
+# handed the clang of the release Lyra links, because how much stack its
+# program takes is partly that compiler's.
 cc_test(
-    name = "values_off_the_stack_tests",
+    name = "values_off_the_stack_llvm_tests",
     size = "medium",
-    srcs = ["values_off_the_stack_test.cpp"],
+    srcs = ["values_off_the_stack_llvm_test.cpp"],
     copts = LYRA_COPTS,
     data = ["//:lyra"],
-    tags = [
-        "cost",
-        "no-remote-exec",
-    ],
+    tags = ["cost"],
     deps = [
         ":framework",
-        "//:driver",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "values_off_the_stack_cpp_tests",
+    size = "medium",
+    srcs = ["values_off_the_stack_cpp_test.cpp"],
+    copts = LYRA_COPTS,
+    data = [
+        "//:lyra",
+        "@llvm//:builtin_resource_dir",
+        "@llvm//tools:clang++",
+    ],
+    env = {"CLANGXX": "$(rlocationpath @llvm//tools:clang++)"},
+    tags = ["cost"],
+    deps = [
+        ":framework",
         "@googletest//:gtest_main",
     ],
 )
@@ -805,7 +822,13 @@ cc_test(
     copts = LYRA_COPTS,
     data = ["//:lyra"],
     shard_count = 50,
-    tags = ["nightly"],
+    # The cases asking what each compiler makes of an optimized link compile
+    # the runtime beside the design, under the clang and the GCC a machine has
+    # installed, so they run where both are.
+    tags = [
+        "nightly",
+        "no-remote-exec",
+    ],
     deps = [
         ":framework",
         "//:driver",
@@ -817,11 +840,15 @@ cc_test(
     name = "prepared_header_test",
     srcs = ["prepared_header_test.cpp"],
     copts = LYRA_COPTS,
-    data = ["//:lyra"],
     # Each case runs under clang and under GCC, since what a compiler checks of
-    # a prepared header and which flags it takes are its own, and the remote
-    # image has only GCC.
-    tags = ["no-remote-exec"],
+    # a prepared header and which flags it takes are its own: the clang of the
+    # release Lyra links, which it is handed, and the executing machine's GCC.
+    data = [
+        "//:lyra",
+        "@llvm//:builtin_resource_dir",
+        "@llvm//tools:clang++",
+    ],
+    env = {"CLANGXX": "$(rlocationpath @llvm//tools:clang++)"},
     deps = [
         ":framework",
         "//:driver",
@@ -834,14 +861,19 @@ cc_test(
     name = "runtime_surface_test",
     srcs = ["runtime_surface_test.cpp"],
     copts = LYRA_COPTS,
+    # Emits a design, compiles its units against the shipped headers with the
+    # clang of the release Lyra links, and reads what each object defines with
+    # that release's symbol lister.
     data = [
         "//:lyra",
+        "@llvm//:builtin_resource_dir",
+        "@llvm//tools:clang++",
         "@llvm//tools:llvm-nm",
     ],
-    env = {"LLVM_NM": "$(rlocationpath @llvm//tools:llvm-nm)"},
-    # Emits a design, compiles its units against the shipped headers and reads
-    # what each object defines, which needs the host C++ compiler.
-    tags = ["no-remote-exec"],
+    env = {
+        "CLANGXX": "$(rlocationpath @llvm//tools:clang++)",
+        "LLVM_NM": "$(rlocationpath @llvm//tools:llvm-nm)",
+    },
     deps = [
         ":framework",
         "//:driver",

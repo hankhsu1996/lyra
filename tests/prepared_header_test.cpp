@@ -8,7 +8,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 #include "lyra/driver/action_cache.hpp"
@@ -43,24 +42,20 @@ auto AgeByADay(const std::filesystem::path& p) -> void {
       p, std::filesystem::last_write_time(p) - std::chrono::hours(24));
 }
 
-// A compiler a build may meet: what a case is called under it, and the name
-// it is found by. Each case runs under every one this host has, since what a
-// compiler checks of a prepared header, and which flags it takes, are its own.
-struct HostCompiler {
-  std::string_view name;
-  std::string_view executable;
-};
-
-class PreparedHeader : public testing::TestWithParam<HostCompiler> {
+// Each case runs under clang and under GCC, since what a compiler checks of a
+// prepared header, and which flags it takes, are its own.
+class PreparedHeader : public testing::TestWithParam<lyra::test::HostCompiler> {
  protected:
   void SetUp() override {
-    auto found = lyra::driver::FindOnPath(GetParam().executable);
-    if (!found) {
-      GTEST_SKIP() << GetParam().executable << " is not on the PATH";
-    }
-    cxx_ = *std::move(found);
+    cxx_ = GetParam().find();
+    ASSERT_FALSE(cxx_.empty()) << GetParam().name << " was not found";
   }
 
+  [[nodiscard]] auto Cxx() const -> const std::filesystem::path& {
+    return cxx_;
+  }
+
+ private:
   std::filesystem::path cxx_;
 };
 
@@ -107,7 +102,7 @@ TEST_P(PreparedHeader, IsNamedByEveryFileItReads) {
   listing.insert(
       listing.end(),
       {"-I", include_root.string(), "-M", "-xc++-header", prelude.string()});
-  const auto listed = lyra::driver::RunProcessCaptured(cxx_, listing);
+  const auto listed = lyra::driver::RunProcessCaptured(Cxx(), listing);
   ASSERT_TRUE(listed) << listed.error().Text();
   EXPECT_NE(
       listed->stdout_text.find(lyra::support::kHostEntryHeader),
@@ -126,13 +121,13 @@ TEST_P(PreparedHeader, IsNamedByEveryFileItReads) {
     lyra::driver::ActionCache actions(
         project / "store", project / "scratch", true);
     auto inputs = lyra::driver::DigestOfPreludeInputs(
-        cxx_, include_root, optimization, sanitizer);
+        Cxx(), include_root, optimization, sanitizer);
     if (!inputs) {
       ADD_FAILURE() << inputs.error().primary.message;
       return std::nullopt;
     }
     return lyra::driver::pch::OfferPrelude(
-        cxx_, include_root, *inputs, lyra::driver::pch::Policy::kAttempt,
+        Cxx(), include_root, *inputs, lyra::driver::pch::Policy::kAttempt,
         actions, optimization, sanitizer, build_dir);
   };
 
@@ -151,7 +146,7 @@ TEST_P(PreparedHeader, IsNamedByEveryFileItReads) {
     args.insert(args.end(), offered.flags.begin(), offered.flags.end());
     args.insert(
         args.end(), {"-c", unit.string(), "-o", (project / "unit.o").string()});
-    auto compiled = lyra::driver::RunProcessCaptured(cxx_, args);
+    auto compiled = lyra::driver::RunProcessCaptured(Cxx(), args);
     ASSERT_TRUE(compiled) << compiled.error().Text();
     EXPECT_EQ(compiled->exit_code, 0) << compiled->stderr_text;
   };
@@ -195,7 +190,7 @@ TEST_P(PreparedHeader, TakesEachFlagTheCompilerTakesAlone) {
         wrapper, std::format(
                      "#!/bin/sh\ncase \" $* \" in {}) {} ;; esac\n"
                      "exec '{}' \"$@\"\n",
-                     watched, does, cxx_.string()));
+                     watched, does, Cxx().string()));
     std::filesystem::permissions(
         wrapper, std::filesystem::perms::owner_all,
         std::filesystem::perm_options::add);
@@ -227,8 +222,10 @@ TEST_P(PreparedHeader, TakesEachFlagTheCompilerTakesAlone) {
 INSTANTIATE_TEST_SUITE_P(
     EachCompiler, PreparedHeader,
     testing::Values(
-        HostCompiler{.name = "clang", .executable = "clang++"},
-        HostCompiler{.name = "gcc", .executable = "g++"}),
-    [](const testing::TestParamInfo<HostCompiler>& info) {
+        lyra::test::HostCompiler{
+            .name = "clang", .find = &lyra::test::ResolveClangxx},
+        lyra::test::HostCompiler{
+            .name = "gcc", .find = &lyra::test::ResolveHostGcc}),
+    [](const testing::TestParamInfo<lyra::test::HostCompiler>& info) {
       return std::string(info.param.name);
     });

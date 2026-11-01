@@ -40,7 +40,6 @@ using conformance::framework::RunChildProcess;
 using lyra::test::ResolveLyra;
 using lyra::test::WriteTrivialSource;
 using testing::Ne;
-using namespace std::chrono_literals;
 
 // A design that crosses the DPI-C boundary in both directions (LRM 35): the
 // module imports a C function, which calls back the package function the
@@ -183,13 +182,6 @@ constexpr std::array<LinkTimeRefusal, 3> kLinkTimeRefusals{{
      .refuses = false},
 }};
 
-// A compiler a case runs under: what the case is called, and the name the
-// compiler is found by.
-struct HostCompiler {
-  std::string_view name;
-  std::string_view executable;
-};
-
 // The two things that build a design: the recipe a project ships, and the
 // build Lyra runs itself.
 enum class Builder : std::uint8_t {
@@ -209,7 +201,7 @@ auto NameOf(Builder builder) -> std::string_view {
 
 class LinkTimeOptimizationRefused
     : public testing::TestWithParam<
-          std::tuple<HostCompiler, std::size_t, Builder>> {};
+          std::tuple<lyra::test::HostCompiler, std::size_t, Builder>> {};
 
 // What a case is called: the compiler, what its wrapper refuses, and what
 // builds.
@@ -239,10 +231,8 @@ auto LinkTimeRefusalName(
 TEST_P(LinkTimeOptimizationRefused, StillBuildsAProgram) {
   const auto [compiler, refusal, builder] = GetParam();
   const LinkTimeRefusal& watching = kLinkTimeRefusals.at(refusal);
-  auto real = lyra::driver::FindOnPath(compiler.executable);
-  if (!real) {
-    GTEST_SKIP() << compiler.executable << " is not on the PATH";
-  }
+  const std::filesystem::path real = compiler.find();
+  ASSERT_FALSE(real.empty()) << compiler.name << " was not found";
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto sh_or = lyra::driver::FindOnPath("sh");
@@ -263,7 +253,7 @@ TEST_P(LinkTimeOptimizationRefused, StillBuildsAProgram) {
                          << (watching.refuses ? "; exit 1" : "")
                          << " ;; *libcpp_runtime.a*) touch '"
                          << plain_marker.string() << "' ;; esac\n"
-                         << "exec '" << real->string() << "' \"$@\"\n";
+                         << "exec '" << real.string() << "' \"$@\"\n";
   std::filesystem::permissions(
       wrapper, std::filesystem::perms::owner_all,
       std::filesystem::perm_options::add);
@@ -324,8 +314,10 @@ INSTANTIATE_TEST_SUITE_P(
     LyraEmittedProject, LinkTimeOptimizationRefused,
     testing::Combine(
         testing::Values(
-            HostCompiler{.name = "clang", .executable = "clang++"},
-            HostCompiler{.name = "gcc", .executable = "g++"}),
+            lyra::test::HostCompiler{
+                .name = "clang", .find = &lyra::test::ResolveHostClang},
+            lyra::test::HostCompiler{
+                .name = "gcc", .find = &lyra::test::ResolveHostGcc}),
         testing::Range<std::size_t>(0, kLinkTimeRefusals.size()),
         testing::Values(Builder::kRecipe, Builder::kLyra)),
     LinkTimeRefusalName);
@@ -460,7 +452,8 @@ TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
        std::filesystem::recursive_directory_iterator(headers)) {
     if (!entry.is_regular_file()) continue;
     std::filesystem::last_write_time(
-        entry.path(), std::filesystem::last_write_time(entry.path()) + 24h);
+        entry.path(), std::filesystem::last_write_time(entry.path()) +
+                          std::chrono::hours(24));
     ++moved;
   }
   ASSERT_GT(moved, 0U) << "no header to move under " << headers.string();

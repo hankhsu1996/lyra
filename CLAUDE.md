@@ -47,9 +47,11 @@ actions there because that is the only place it exists. Every warning is fatal a
 warns of things the other does not, so the merge gate builds under both; that build is checked only
 for its warnings and is not a Lyra anyone runs, so what it writes is not held to match the pinned
 clang's (`docs/decisions/the-pinned-clang-builds-the-lyra-that-is-run.md`). A test that drives the
-host C++ compiler finds whichever one the machine executing it has on its PATH; the remote image has
-GCC and no clang, so only a test about clang itself, or about clang and GCC side by side, is tagged
-to stay local.
+host C++ compiler finds whichever one the machine executing it has on its PATH, and the remote image
+has GCC and no clang; so a test whose answer is about clang is handed the clang of the release Lyra
+links as a declared input, and runs remotely like any other. That clang is the compiler and its
+headers alone, so a test asking what a whole installation does -- its linker reading bitcode, its
+sanitizer's headers -- runs on a machine with clang installed.
 
 **The runtime library a program links is compiled by the clang of the LLVM release Lyra links,
 whichever compiler builds Lyra**, and one number in `MODULE.bazel` names both; by default that clang
@@ -165,9 +167,11 @@ case is the usual thing to ask for:
 bazel test //tests:external_design_tests --test_arg=--gtest_filter='*VeeR_EL2*' --test_output=streamed
 ```
 
-A run someone is waiting on stops at the first case that fails; a scheduled one reports every
-failure instead. So a red local run names one case and not the list, and
-`--test_arg=--gtest_fail_fast=false` is how to ask for the list.
+Every run, local or scheduled, reports every case that fails rather than stopping at the first, and
+nothing passes a test binary an argument the gate does not: what a test is handed is part of its
+cache key, so a passing result is shared between a local run and the gate only while both hand it
+the same. To stop the external design suite at its first failure, ask for it on that command line,
+`--test_arg=--gtest_fail_fast`.
 
 ## Code style
 
