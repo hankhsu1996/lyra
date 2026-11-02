@@ -214,8 +214,7 @@ auto RunEveryDefinition(
   const mir::TypeId queue = ExternStorageType(unit, binding);
   mir::Builder block = frame.Builder();
 
-  const mir::ExprId runtime =
-      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  const mir::ExprId runtime = block.Add(BuildCurrentRuntimeCallExpr(unit));
   ClosureBuilder starting(unit, frame, support::ClosureKind::kFnOnce);
   const WalkFrame starter = starting.Frame().WithRunsAsFunctionCall(false);
   mir::Builder start = starter.Builder();
@@ -229,8 +228,8 @@ auto RunEveryDefinition(
   const mir::ExprId any_left = ReduceToCondition(
       unit, start,
       start.Add(BuildBuiltinMethodCall(
-          unit_lowerer, start, support::BuiltinFn::kSize,
-          start.LocalPlace(left, queue), {}, builtins.integer)));
+          unit, start, support::BuiltinFn::kSize, start.LocalPlace(left, queue),
+          {}, builtins.integer)));
 
   mir::Block loop;
   const WalkFrame each = starter.WithBlock(&loop);
@@ -243,7 +242,7 @@ auto RunEveryDefinition(
       mir::LocalDeclStmt{
           .target = taken,
           .init = step.Add(BuildBuiltinMethodCall(
-              unit_lowerer, step, support::BuiltinFn::kPopFront,
+              unit, step, support::BuiltinFn::kPopFront,
               step.LocalPlace(left, queue), {}, binding.handle))});
   ClosureBuilder running(unit, each, support::ClosureKind::kFnOnce);
   const WalkFrame branch = running.Frame().WithRunsAsFunctionCall(false);
@@ -268,8 +267,7 @@ auto RunEveryDefinition(
                               mir::Direct{
                                   .target = support::BuiltinFn::kSpawnAll},
                           .arguments =
-                              {step.Add(
-                                   BuildCurrentRuntimeCallExpr(unit_lowerer)),
+                              {step.Add(BuildCurrentRuntimeCallExpr(unit)),
                                one}},
                   .type = builtins.void_type})});
   start.AppendStmt(
@@ -284,7 +282,7 @@ auto RunEveryDefinition(
                       .callee =
                           mir::Direct{.target = support::BuiltinFn::kWaitFork},
                       .arguments = {start.Add(
-                          BuildCurrentRuntimeCallExpr(unit_lowerer))}},
+                          BuildCurrentRuntimeCallExpr(unit))}},
               .type = builtins.wait})));
 
   const mir::ExprId branches = block.Add(
@@ -356,7 +354,7 @@ auto WriteExternTaskBody(
           ReduceToCondition(
               unit, block,
               block.Add(BuildBuiltinMethodCall(
-                  process.Owner(), block, support::BuiltinFn::kSize,
+                  unit, block, support::BuiltinFn::kSize,
                   ExternStoragePlace(unit, frame, owner, storage, queue), {},
                   unit.builtins.integer))));
       mir::Block report;
@@ -442,8 +440,8 @@ auto ExternBindCode(
       block.AppendStmt(
           mir::ExprStmt{
               .expr = block.Add(BuildBuiltinMethodCall(
-                  unit_lowerer, block, support::BuiltinFn::kPushBack, target,
-                  {handed}, unit.builtins.void_type))});
+                  unit, block, support::BuiltinFn::kPushBack, target, {handed},
+                  unit.builtins.void_type))});
       return code;
   }
   throw InternalError("hir_to_mir: unknown ExternForm");
