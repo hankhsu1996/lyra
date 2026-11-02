@@ -1529,7 +1529,8 @@ auto PositionsOf(const CompilationUnit& unit, TypeId type)
 // callable returns. Each block is asked on its own, in a body and in what a
 // constant is built from alike.
 void VerifyExprsMeetTheirTypes(
-    const CompilationUnit& unit, const Block& block, const auto& describe) {
+    const CompilationUnit& unit, Phase phase, const Block& block,
+    const auto& describe) {
   const auto refuse = [&](std::string_view what, TypeId expected,
                           TypeId handed) {
     RefuseValueOfType(unit, what, expected, handed, describe);
@@ -1687,7 +1688,7 @@ void VerifyExprsMeetTheirTypes(
     if (callee != nullptr) {
       for (const LocalId param : callee->params) {
         const bool stated_later =
-            unit.phase == Phase::kBuilt && param == callee->caller_location;
+            phase == Phase::kBuilt && param == callee->caller_location;
         if (param != callee->receiver && !stated_later) {
           parameters.push_back(callee->locals.Get(param).type);
         }
@@ -1726,8 +1727,8 @@ void VerifyExprsMeetTheirTypes(
 // a body answers. A value only alike in representation is converted where it
 // is built, so one handed over as it is is a value the program never stated.
 void VerifyValuesMeetTheirTypes(
-    const CompilationUnit& unit, const CallableCode& code, const Block& block,
-    const auto& describe) {
+    const CompilationUnit& unit, Phase phase, const CallableCode& code,
+    const Block& block, const auto& describe) {
   const Type& result = unit.types.Get(code.result_type);
   const auto* coroutine = result.As<CoroutineType>();
   const TypeId answered =
@@ -1759,10 +1760,10 @@ void VerifyValuesMeetTheirTypes(
       }
     }
   }
-  VerifyExprsMeetTheirTypes(unit, block, describe);
+  VerifyExprsMeetTheirTypes(unit, phase, block, describe);
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyValuesMeetTheirTypes(
-        unit, code, block.child_scopes.Get(id), describe);
+        unit, phase, code, block.child_scopes.Get(id), describe);
   }
 }
 
@@ -1770,7 +1771,7 @@ void VerifyValuesMeetTheirTypes(
 // as in a body.
 void VerifyBuildMeetsItsTypes(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
-  VerifyExprsMeetTheirTypes(unit, block, describe);
+  VerifyExprsMeetTheirTypes(unit, unit.phase, block, describe);
   for (const Block& inner : block.child_scopes) {
     VerifyBuildMeetsItsTypes(unit, inner, describe);
   }
@@ -2573,7 +2574,7 @@ void VerifyCode(
       *code.body, std::set<LocalId>(code.params.begin(), code.params.end()),
       named, describe);
   VerifyWritesLandInWritableStorage(unit, *code.body, describe);
-  VerifyValuesMeetTheirTypes(unit, code, *code.body, describe);
+  VerifyValuesMeetTheirTypes(unit, phase, code, *code.body, describe);
   VerifyStorageWithoutAnAddress(unit, *code.body, describe);
   VerifyMemberReceivers(unit, *code.body, describe);
   VerifyReferenceBindings(unit, *code.body, describe);

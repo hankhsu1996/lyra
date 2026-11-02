@@ -689,7 +689,8 @@ auto SynthesizeDefaultConstructor(
       .body = std::move(body),
       .root_stmt = root_stmt,
       .reads = {},
-      .track_caller = track_caller};
+      .track_caller = track_caller,
+      .span = span};
 }
 
 // The class declaring `member`, a method or a constraint block. A method
@@ -853,7 +854,8 @@ auto LowerConstraintBlockDecl(
       .result_var = std::nullopt,
       .body = std::move(body),
       .root_stmt = root_stmt,
-      .reads = {}};
+      .reads = {},
+      .span = span};
 }
 
 }  // namespace

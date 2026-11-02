@@ -3384,8 +3384,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
         mir_class.callables.Define(
             declared.callable,
             mir::CallableDecl{
-                .code =
-                    ExternFunctionCode(unit_lowerer, class_id_, field, binding),
+                .code = ExternFunctionCode(
+                    unit_lowerer, class_id_, field, binding, src.span),
                 .foreign = std::nullopt,
                 .virtual_dispatch =
                     unit_lowerer.GetClassShape(class_id_)
@@ -3437,7 +3437,15 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
         mir::CallableDecl{
             .code = ExternBindCode(
                 unit_lowerer, class_id_, extern_realizations_[i].field,
-                extern_bindings[i]),
+                extern_bindings[i],
+                hir_scope.structural_subroutines
+                    .Get(hir_scope.published.callables.Get(
+                        hir_scope.published.signature.externs
+                            .Get(
+                                hir::PublishedExternId{
+                                    .value = static_cast<std::uint32_t>(i)})
+                            .callable))
+                    .span),
             .foreign = std::nullopt,
             .virtual_dispatch =
                 unit_lowerer.GetClassShape(class_id_)

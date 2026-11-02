@@ -1063,7 +1063,9 @@ auto EmitReportingCall(
         "other than a function");
   }
   const SubroutineCallee& plan = *planned;
-  mir::Builder block = frame.Builder();
+  // Built from the call the list follows, so a callee that reports where it
+  // was called is told that call.
+  mir::Builder block = frame.Builder().At(hir_call.span);
 
   const mir::TypeId payload_type =
       CompletionPayloadType(unit, plan.completion.components);

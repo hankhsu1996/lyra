@@ -70,13 +70,15 @@ auto OwnObject(
 }
 
 // A body stating `prototype` as a method of `cls`: the same formals and answer,
-// taken on an object of `cls`, and nothing in it yet.
+// taken on an object of `cls`, and nothing in it yet. It is lowered from
+// `declared`, where the subroutine it stands for is declared.
 auto BodyOfPrototype(
     UnitLowerer& unit_lowerer, const mir::CallableCode& prototype,
-    mir::ClassId cls) -> mir::CallableCode {
+    mir::ClassId cls, diag::SourceSpan declared) -> mir::CallableCode {
   mir::CallableCode code = prototype;
   code.locals = {};
   code.named_locals = {};
+  code.span = declared;
   std::vector<mir::LocalId> params{
       code.AddLocal(unit_lowerer.SelfPointerTo(cls))};
   for (const mir::LocalId param : prototype.ParamsAfterReceiver()) {
@@ -320,10 +322,13 @@ auto ExternStorageType(mir::CompilationUnit& unit, const ExternBinding& binding)
 }
 
 auto WriteExternTaskBody(
-    ProcessLowerer& process, const WalkFrame& frame,
+    ProcessLowerer& process, const WalkFrame& body_frame,
     const hir::SubroutineDecl& declared, mir::ClassId owner,
     mir::FieldId storage, const ExternBinding& binding) -> diag::Result<void> {
   mir::CompilationUnit& unit = process.Owner().Unit();
+  // The task has no body of its own, so what is written for it is lowered from
+  // its declaration.
+  const WalkFrame frame = body_frame.WithSpan(declared.span);
   mir::Builder block = frame.Builder();
   switch (binding.form) {
     case hir::ExternForm::kExtern: {
@@ -398,9 +403,11 @@ void InitializeExternStorage(
 
 auto ExternFunctionCode(
     UnitLowerer& unit_lowerer, mir::ClassId owner, mir::FieldId storage,
-    const ExternBinding& binding) -> mir::CallableCode {
+    const ExternBinding& binding, diag::SourceSpan declared)
+    -> mir::CallableCode {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::CallableCode code = BodyOfPrototype(unit_lowerer, binding.invoke, owner);
+  mir::CallableCode code =
+      BodyOfPrototype(unit_lowerer, binding.invoke, owner, declared);
   mir::Builder block(code.Body(), code.span);
 
   const mir::ExprId kept = block.Read(block.Add(
@@ -416,10 +423,11 @@ auto ExternFunctionCode(
 
 auto ExternBindCode(
     UnitLowerer& unit_lowerer, mir::ClassId owner, mir::FieldId storage,
-    const ExternBinding& binding) -> mir::CallableCode {
+    const ExternBinding& binding, diag::SourceSpan declared)
+    -> mir::CallableCode {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::CallableCode code =
-      BodyOfPrototype(unit_lowerer, binding.bind_prototype, owner);
+      BodyOfPrototype(unit_lowerer, binding.bind_prototype, owner, declared);
   mir::Builder block(code.Body(), code.span);
   const mir::ExprId target = block.Add(
       mir::MakeFieldAccessExpr(
@@ -486,7 +494,8 @@ auto DefineExternCallback(
   }
   cls.constructor = mir::ConstructorDecl{.code = std::move(constructor)};
 
-  mir::CallableCode invoke = BodyOfPrototype(unit_lowerer, binding.invoke, id);
+  mir::CallableCode invoke =
+      BodyOfPrototype(unit_lowerer, binding.invoke, id, binding.invoke.span);
   {
     mir::Builder block(invoke.Body(), invoke.span);
     const mir::ExprId object_held = block.Read(block.Add(

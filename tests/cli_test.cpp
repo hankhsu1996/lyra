@@ -2011,6 +2011,38 @@ TEST(LyraRun, ACoverStatementIsOneGoalAcrossSpecializations) {
   }
 }
 
+// A task an interface leaves to a connected module has no body of its own, so
+// a failure of what the tool writes for it -- no module defining an `extern
+// forkjoin` task that is called (LRM 25.7.4) -- names the task's declaration,
+// which is where the user supplies a definition.
+TEST(LyraRun, AnExternTaskWithNoDefinitionNamesItsDeclaration) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "extern.sv",
+      "interface Bus;\n"
+      "  extern forkjoin task Ping();\n"
+      "endinterface\n"
+      "module Top;\n"
+      "  Bus bus ();\n"
+      "  initial bus.Ping();\n"
+      "endmodule\n");
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Top extern.sv", backend));
+    EXPECT_THAT(run, ExitedWithCode(0)) << backend << ": " << run.stderr_text;
+    EXPECT_EQ(
+        run.stderr_text,
+        "extern.sv:2:24: error: no connected module defines the task 'Ping'\n"
+        "note: in 'Top' at time 0\n")
+        << backend;
+  }
+}
+
 // A unit states another unit's class by its declaration, which has no body to
 // show: the class's constructor among its members.
 TEST(LyraDump, AUnitStatingAnotherUnitsClassCanBeDumped) {
@@ -2677,20 +2709,27 @@ TEST(LyraRun, AFailureOfForeignCodeIsPlacedAtTheImportCall) {
       "endmodule\n";
   for (const Failure& failure :
        {Failure{
-            kInAModule, "svSetScope((svScope)0x10);\n",
-            "test.sv:11:5: error: a DPI export was reached under a handle "
-            "'svSetScope' was given that no DPI function returned"},
+            .design = kInAModule,
+            .scope_set = "svSetScope((svScope)0x10);\n",
+            .report =
+                "test.sv:11:5: error: a DPI export was reached under a handle "
+                "'svSetScope' was given that no DPI function returned"},
         Failure{
-            kInAModule, "svSetScope(svGetScopeFromName(\"Test.u\"));\n",
-            "test.sv:11:5: error: DPI export 'speak' was entered under scope "
-            "'Test.u', which declares no such export"},
+            .design = kInAModule,
+            .scope_set = "svSetScope(svGetScopeFromName(\"Test.u\"));\n",
+            .report =
+                "test.sv:11:5: error: DPI export 'speak' was entered under "
+                "scope 'Test.u', which declares no such export"},
         Failure{
-            kInAPackage, "",
-            "test.sv:10:5: error: a DPI export was reached without a scope"},
+            .design = kInAPackage,
+            .scope_set = "",
+            .report = "test.sv:10:5: error: a DPI export was reached without a "
+                      "scope"},
         Failure{
-            kATaskFromAFunction, "",
-            "test.sv:9:5: error: a DPI export was reached from outside a "
-            "foreign call"}}) {
+            .design = kATaskFromAFunction,
+            .scope_set = "",
+            .report = "test.sv:9:5: error: a DPI export was reached from "
+                      "outside a foreign call"}}) {
     SCOPED_TRACE(failure.report);
     const auto src = *tmp_or / "test.sv";
     std::ofstream(src) << failure.design;

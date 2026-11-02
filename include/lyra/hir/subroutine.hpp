@@ -56,6 +56,10 @@ struct SubroutineParam {
 // placed at the call that reached it rather than at the body's own lines,
 // which is so for a body of the tool's own text; it says of the body what the
 // callee interface says of a call to it.
+//
+// `span` is where the subroutine is declared, which a body the tool writes for
+// a declaration with none of its own -- one an interface leaves to a connected
+// module (LRM 25.7) -- is lowered from.
 struct SubroutineDecl {
   std::string name;
   SubroutineKind kind;
@@ -66,6 +70,7 @@ struct SubroutineDecl {
   std::optional<StmtId> root_stmt;
   Reads reads;
   bool track_caller = false;
+  diag::SourceSpan span;
 
   auto operator==(const SubroutineDecl&) const -> bool = default;
 };

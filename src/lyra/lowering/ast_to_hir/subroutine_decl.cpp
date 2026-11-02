@@ -480,7 +480,8 @@ auto LowerSubroutineDeclImpl(
               .body = std::move(body),
               .root_stmt = root_stmt,
               .reads = std::move(reads),
-              .track_caller = DeclaredInLibraryText(sym)},
+              .track_caller = DeclaredInLibraryText(sym),
+              .span = frontend::PointSpanOf(sym.location)},
       .base_arguments = std::move(base_arguments)};
 }
 
@@ -556,7 +557,8 @@ auto LowerEvaluatorDecl(
       .result_var = result_var,
       .body = std::move(body),
       .root_stmt = root_stmt,
-      .reads = std::move(reads)};
+      .reads = std::move(reads),
+      .span = span};
 }
 
 auto BaseCallArguments(const slang::ast::Expression& base_call)
@@ -643,6 +645,7 @@ auto LowerMethodPrototypeDecl(
       .root_stmt = std::nullopt,
       .reads = {},
       .track_caller = DeclaredInLibraryText(proto),
+      .span = frontend::PointSpanOf(proto.location),
   };
 }
 
