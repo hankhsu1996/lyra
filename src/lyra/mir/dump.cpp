@@ -173,20 +173,6 @@ class MirDumper {
       DumpCallable(unit.named_callables, id, unit.callables.Get(id), id.value);
     }
     Dedent();
-    // The operations the unit states for the types it names that have no
-    // declaration.
-    Line("TypeOperations:");
-    Indent();
-    for (const TypeOperation& stated : unit.type_operations) {
-      Line(
-          std::format(
-              R"(Type[{}] "{}")", stated.type.value,
-              support::ValueOperationName(stated.answers)));
-      Indent();
-      DumpCallableBody(stated.code);
-      Dedent();
-    }
-    Dedent();
     // The foreign names this unit declares on a scope: a prototype no callable
     // of the unit carries, and the symbol the unit writes for it, which belongs
     // to no unit and so sits outside the pool above.

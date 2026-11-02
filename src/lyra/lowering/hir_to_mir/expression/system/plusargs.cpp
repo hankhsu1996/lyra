@@ -47,7 +47,7 @@ auto LowerTestPlusargs(
   const mir::ExprId user_id =
       ConvertToType(unit, body, raw_user_id, unit.builtins.string);
   const mir::ExprId runtime_id =
-      body.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+      body.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner().Unit()));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -90,7 +90,8 @@ auto LowerValuePlusargs(
   const mir::TypeId target_type = unit_lowerer.TranslateType(target_hir.type);
   auto place_or = LowerLvalue(lowerer, target_hir, step_frame);
   if (!place_or) return std::unexpected(std::move(place_or.error()));
-  auto target = ReadThenWrite(unit_lowerer, step_frame, *std::move(place_or));
+  auto target =
+      ReadThenWrite(unit_lowerer.Unit(), step_frame, *std::move(place_or));
   if (!target) return std::unexpected(std::move(target.error()));
 
   const CompletionLayout layout = BuildCompletionLayout(
@@ -99,7 +100,7 @@ auto LowerValuePlusargs(
       unit.builtins.int_type);
   const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
   const mir::ExprId runtime_id =
-      body.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      body.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
   // A plusarg is converted into an integral destination by its size and into
   // a string as text, so each has an entry.
   const support::BuiltinFn entry =

@@ -253,11 +253,11 @@ struct RecordMethodTarget {
   auto operator==(const RecordMethodTarget&) const -> bool = default;
 };
 
-// Identity of the body a unit states for an operation on a whole value of a
-// type with no declaration -- a fixed-size unpacked array (LRM 7.4.2) -- or for
-// an array element type's default: the type, and the operation. Each unit
-// naming the type states that body itself, so the pair names it within the
-// unit.
+// An operation of a type no declaration states it for, named by the type and
+// the operation: an operation of a fixed-size unpacked array (LRM 7.4.2) or a
+// tuple, an array's passage through the form of it with no queue bounded (LRM
+// 7.6), or a data type's default (LRM 7.4.5). MIR holds no body for it: each
+// unit using one has it built once something below MIR finds the use.
 struct TypeOperationTarget {
   TypeId type;
   support::ValueOperation answers;
@@ -320,12 +320,13 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 // unit (`ClosureTarget`), a unit's namespace, whichever unit it is
 // (`UnitCallableTarget`), the closed set of runtime library entries
 // (`BuiltinFn`), a class's constructor (`ConstructorTarget`), a declared
-// struct's or union's methods (`RecordMethodTarget`), the operations this unit
-// states for a type with no declaration (`TypeOperationTarget`), the bodies
-// another unit's namespace is brought up through (`ExternalBringUpTarget`), and
-// the DPI-C name space (`ForeignSymbolTarget`, LRM 35.4). Nothing here says
-// whether the call dispatches on an object -- that is the callee's receiver --
-// and none is recovered from the receiver's runtime type.
+// struct's or union's methods (`RecordMethodTarget`), an operation of a type
+// with no declaration, whose body is built below MIR (`TypeOperationTarget`),
+// the bodies another unit's namespace is brought up through
+// (`ExternalBringUpTarget`), and the DPI-C name space (`ForeignSymbolTarget`,
+// LRM 35.4). Nothing here says whether the call dispatches on an object -- that
+// is the callee's receiver -- and none is recovered from the receiver's runtime
+// type.
 using DirectTarget = std::variant<
     CallableTarget, ClosureTarget, UnitCallableTarget, support::BuiltinFn,
     ConstructorTarget, RecordMethodTarget, TypeOperationTarget,

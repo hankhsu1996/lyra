@@ -141,7 +141,7 @@ auto AppendKeyLoop(
     BlockBuilder& steps, const WalkedArray& array, WalkOrder order,
     const KeyUse& use) -> diag::Result<void> {
   auto walked = BuildEntryLoopStmt(
-      lowerer.Owner(), steps.Frame(), array, order, IndexOrigin(ref),
+      lowerer.Owner().Unit(), steps.Frame(), array, order, IndexOrigin(ref),
       [&](const WalkFrame& at,
           const VisitedEntry& entry) -> diag::Result<void> {
         auto key = EvaluateKey(lowerer, ref, at, entry);
@@ -196,7 +196,7 @@ auto WalkedOperand(
   const mir::ExprId array = block.Add(*object);
   const std::optional<hir::UnpackedRange> declared =
       DeclaredRangeOf(lowerer.Owner(), operand.type);
-  return WalkedArrayOf(lowerer.Owner(), frame, array, declared);
+  return WalkedArrayOf(lowerer.Owner().Unit(), frame, array, declared);
 }
 
 // LRM 7.12.3: the keys folded by `op`, the first seeding the fold, at the type
@@ -290,7 +290,7 @@ auto LowerLocator(
         mir::Block taken;
         mir::Builder taken_builder = b.Into(taken);
         AppendPushBack(
-            unit_lowerer, taken_builder, found, result_type,
+            unit_lowerer.Unit(), taken_builder, found, result_type,
             CollectedOf(taken_builder, key, entry, collected));
         if (walk.ends_at_first_found) {
           taken_builder.AppendStmt(
@@ -364,7 +364,7 @@ auto LowerMinMax(
   mir::Block answered;
   mir::Builder answered_builder = body.Into(answered);
   AppendPushBack(
-      unit_lowerer, answered_builder, found, result_type,
+      unit_lowerer.Unit(), answered_builder, found, result_type,
       answered_builder.ReadLocal(best_item, item_type));
   const mir::ExprId any_seen = body.ReadLocal(seen, boolean);
   body.AppendIfThen(any_seen, std::move(answered));
@@ -399,9 +399,10 @@ auto LowerUnique(
             DeclareLocal(at, ConvertToType(unit, b, key.key, key_type));
         const mir::LocalId repeated = DeclareFlag(unit, at);
         const WalkedArray seen = WalkedArrayOf(
-            unit_lowerer, at, b.LocalPlace(seen_keys, keys_type), std::nullopt);
+            unit_lowerer.Unit(), at, b.LocalPlace(seen_keys, keys_type),
+            std::nullopt);
         auto searched = BuildEntryLoopStmt(
-            unit_lowerer, at, seen, WalkOrder::kFromFirst, std::nullopt,
+            unit_lowerer.Unit(), at, seen, WalkOrder::kFromFirst, std::nullopt,
             [&](const WalkFrame& in,
                 const VisitedEntry& earlier) -> diag::Result<void> {
               mir::Builder ib = in.Builder();
@@ -422,10 +423,10 @@ auto LowerUnique(
         mir::Block first;
         mir::Builder first_builder = b.Into(first);
         AppendPushBack(
-            unit_lowerer, first_builder, seen_keys, keys_type,
+            unit_lowerer.Unit(), first_builder, seen_keys, keys_type,
             first_builder.ReadLocal(held, key_type));
         AppendPushBack(
-            unit_lowerer, first_builder, found, result_type,
+            unit_lowerer.Unit(), first_builder, found, result_type,
             CollectedOf(first_builder, key, entry, collected));
         const mir::ExprId unseen =
             BuildConditionNot(unit, b, b.ReadLocal(repeated, boolean));
@@ -489,7 +490,7 @@ auto LowerMap(
         const mir::ExprId value =
             ConvertToType(unit, b, key.key, *mapped_element);
         if (grows) {
-          AppendPushBack(unit_lowerer, b, mapped, result_type, value);
+          AppendPushBack(unit_lowerer.Unit(), b, mapped, result_type, value);
           return {};
         }
         const mir::ExprId owner = b.LocalPlace(mapped, result_type);
@@ -585,14 +586,14 @@ auto LowerSort(
   WalkedArray array = [&] {
     if (!ReachesOverlaidStorage(*target)) {
       return WalkedArrayAt(
-          unit_lowerer, steps.Frame(), *std::move(target), declared);
+          unit_lowerer.Unit(), steps.Frame(), *std::move(target), declared);
     }
     ReadThenWritten changed =
-        ReadThenWrite(unit_lowerer, steps.Frame(), *std::move(target));
+        ReadThenWrite(unit_lowerer.Unit(), steps.Frame(), *std::move(target));
     const mir::TypeId type = body.Get(changed.incoming).type;
     written_back = std::move(changed.place);
     return WalkedArrayAt(
-        unit_lowerer, steps.Frame(),
+        unit_lowerer.Unit(), steps.Frame(),
         AccessPath{
             .owner = body.LocalPlace(
                 DeclareLocal(steps.Frame(), changed.incoming), type),
@@ -612,7 +613,8 @@ auto LowerSort(
         lowerer, ref, steps, array, WalkOrder::kFromFirst,
         [&](const WalkFrame& at, const VisitedEntry&,
             const EntryKey& key) -> diag::Result<void> {
-          AppendPushBack(unit_lowerer, at.Builder(), keys, keys_type, key.key);
+          AppendPushBack(
+              unit_lowerer.Unit(), at.Builder(), keys, keys_type, key.key);
           return {};
         });
     if (!walked) return std::unexpected(std::move(walked.error()));
@@ -623,7 +625,7 @@ auto LowerSort(
   const mir::ExprId order =
       BuildIsLess(unit_lowerer, steps.Frame(), *compared, key_type, comparison);
   const mir::ExprId sorted = body.Add(BuildBuiltinMethodCall(
-      unit_lowerer, body, support::BuiltinFn::kSort,
+      unit_lowerer.Unit(), body, support::BuiltinFn::kSort,
       PathPlace(unit, body, NamedIn(array.path, body)), {order},
       unit.builtins.void_type));
   if (!written_back.has_value()) {

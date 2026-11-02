@@ -16,7 +16,8 @@ a stream of bits takes a prototype), a queue's bound as an operand of its constr
 in [queue-operators](queue-operators.md) decision 3, and the empty reduction's element-shaped zero
 in [array-method-dispatch](array-method-dispatch.md). D6's reduction clause superseded 2026-10-17 by
 D3 of [an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md): a reduction
-is a loop at its call whose result starts at its answer type's default.
+is a loop at its call whose result starts at its answer type's default. D2 revised 2026-11-01: a
+default is built where something in the unit needs it, not for every element type the unit names.
 
 ## Context
 
@@ -86,13 +87,16 @@ construction" reaches it as a function handed over with the type.
 element type.** It is the same for a fixed-size array, a dynamic array, a queue and an associative
 array, so no layer tells the kinds apart to answer it.
 
-**D2. A unit states it once per element type, in MIR.** For every type that is the element type of
-an array type the unit holds, of any kind, the unit states the code that builds that type's default:
-for a structure its declared default, member initializers included (LRM 7.2.2), for a variable-size
-array its empty value, for a fixed-size array its elements' in turn. It may state one for a tuple as
-well, where each component has one (no declaration holds a wildcard index, LRM 7.8.1), since a tuple
-has no declaration of its own to state it. The unit states one for no other type; its verification
-requires it of every element type and admits it for a tuple.
+**D2. A unit builds it once per element type, as MIR.** For every type whose element-type constant
+(D4) something in the unit hands over, the unit builds the code that makes that type's default: a
+structure has it as a method, its declared default with member initializers included (LRM 7.2.2),
+and for any other type it is a body, for a variable-size array its empty value and for a fixed-size
+array its elements' in turn. A tuple has one the same way where each component has one (no
+declaration holds a wildcard index, LRM 7.8.1), since a tuple has no declaration of its own to state
+it. What needs one is found on finished LIR and a type the unit only names has none
+([a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)).
+A call may name a default for any data type; emission refuses to hand over a type whose default
+nothing asked for.
 
 **D3. No call carries it.** A construction, `new[n]` and `new[n](src)`, a conversion from one array
 kind to another and a concatenation state what can differ between two evaluations -- the elements, a
@@ -100,18 +104,18 @@ run-time count, the source -- and never what an element of the answer starts as.
 therefore has one operand list whatever kind of array it answers.
 
 **D4. The prebuilt library is handed the element's type, and the default with it.** On the execution
-backend a unit writes one constant per element type: the type, and the address of the function D2
-states. An entry that builds an array is handed the type of the array it builds, before the storage
-it builds into: for a fixed-size array and a queue the array's own type, which names the element
-type's constant, since a fixed-size array's bytes state nothing and a queue's type states its bound
-as well (D6); for any other kind the element type's constant, which the array it builds keeps the
-address of. Which of the two is decided by the type answered, in one place, and an entry declares
-only that it is told the array it builds. The two answers of LRM 7.4.5 -- the value an invalid read
-returns and the storage a discarded write lands on -- are asked of the element type's constant,
-whatever kind of array the position belongs to; each is built from the function the first time it is
-asked for and kept beside the constant, once per element type per unit, for as long as the program
-runs. A cell and a net are built from the same constant for the type they hold, so storage before
-its first write starts at what MIR states and no type answers its own default
+backend a unit writes one constant per element type it hands over: the type, and the address of the
+function D2 states. An entry that builds an array is handed the type of the array it builds, before
+the storage it builds into: for a fixed-size array and a queue the array's own type, which names the
+element type's constant, since a fixed-size array's bytes state nothing and a queue's type states
+its bound as well (D6); for any other kind the element type's constant, which the array it builds
+keeps the address of. Which of the two is decided by the type answered, in one place, and an entry
+declares only that it is told the array it builds. The two answers of LRM 7.4.5 -- the value an
+invalid read returns and the storage a discarded write lands on -- are asked of the element type's
+constant, whatever kind of array the position belongs to; each is built from the function the first
+time it is asked for and kept beside the constant, once per element type per unit, for as long as
+the program runs. A cell and a net are built from the same constant for the type they hold, so
+storage before its first write starts at what MIR states and no type answers its own default
 ([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
 D5). On the C++ backend nothing is emitted for any of this: the host compiler's default construction
 of the element type is the same statement, and each container asks it where a fixed-size array
@@ -205,8 +209,8 @@ default, since each comes out the same at every evaluation:
   element-sized values per object, so an empty queue of a large structure cost two structures.
 - Every site that built such an array built a default value of its element type first, and now does
   not.
-- A unit states a default for every type it holds an array of, where it stated one only for the
-  element types of its fixed-size arrays.
+- A unit builds a default for every type it hands over as an element type, where it stated one only
+  for the element types of its fixed-size arrays.
 - One operand list per operation holds for every array kind, so the lowering, the table of library
   entries and the check of a call against its entry carry no case for the kind of array answered.
   The one place that tells the kinds apart is the one that decides which type an entry building an

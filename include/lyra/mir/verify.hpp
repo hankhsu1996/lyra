@@ -2,7 +2,10 @@
 
 #include <string_view>
 
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/phase.hpp"
 
 namespace lyra::mir {
 
@@ -26,6 +29,13 @@ struct CompilationUnit;
 // rather than as a machine-level fault one lowering later, as another
 // compiler's error against generated text, or as an operand that runs twice.
 void Verify(const CompilationUnit& unit, std::string_view when);
+
+// The same for `code`, a body at `at` that `unit` does not hold, which stands
+// on what the unit states and is checked as a body the unit holds is in
+// `phase`.
+void VerifyBody(
+    const CompilationUnit& unit, Phase phase, const CodeSource& at,
+    const CallableCode& code, std::string_view when);
 
 // Refuses a unit `reader` is handed that is not legalized, which is the one
 // phase a backend reads: anything earlier still holds what only a conversion

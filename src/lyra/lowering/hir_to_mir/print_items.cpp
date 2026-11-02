@@ -595,7 +595,7 @@ auto BuildRuntimeFormatCallExpr(
   const mir::ExprId binding_id = BuildLibraryBindingExpr(lowerer, step_frame);
 
   const mir::ExprId runtime_id =
-      body.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+      body.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner().Unit()));
   const mir::ExprId time_format_id = body.Add(
       mir::Expr{
           .data =

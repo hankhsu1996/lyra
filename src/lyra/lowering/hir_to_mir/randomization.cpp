@@ -612,7 +612,7 @@ auto NameModeVariables(const ConstraintWriter& w, hir::ExprId id)
   auto path = w.Lowerer().LowerLhsExpr(HirExpr(w, id), w.Frame());
   if (!path) return std::unexpected(std::move(path.error()));
   const SettledPath settled =
-      SettledForRead(unit_lowerer, w.Frame(), *std::move(path));
+      SettledForRead(unit_lowerer.Unit(), w.Frame(), *std::move(path));
   const auto bind = [&](const AccessPath& at) {
     const mir::TypeId value_type = PathValueType(unit, block.Body(), at);
     const mir::TypeId reference_type =
@@ -1338,7 +1338,7 @@ auto FoldElements(
   auto path = w.Lowerer().LowerAccessPath(array, w.Frame());
   if (!path) return std::unexpected(std::move(path.error()));
   const SettledPath settled =
-      SettledForRead(unit_lowerer, w.Frame(), *std::move(path));
+      SettledForRead(unit_lowerer.Unit(), w.Frame(), *std::move(path));
   const mir::ExprId count =
       fixed.has_value()
           ? mir::BuildIntLiteral(unit, block, *fixed)
@@ -1831,7 +1831,7 @@ auto LowerRandomizeExpr(
                     begin,
                     {outer.Block().ReadLocal(*object, handle_type),
                      outer.Block().Add(
-                         BuildCurrentRuntimeCallExpr(lowerer.Owner()))},
+                         BuildCurrentRuntimeCallExpr(lowerer.Owner().Unit()))},
                     unit.builtins.constraint_problem));
             return {};
           },
@@ -1843,7 +1843,7 @@ auto LowerRandomizeExpr(
                 outer.Call(
                     BuiltinFn::kRandomizeScope,
                     {outer.Block().Add(
-                        BuildCurrentRuntimeCallExpr(lowerer.Owner()))},
+                        BuildCurrentRuntimeCallExpr(lowerer.Owner().Unit()))},
                     unit.builtins.constraint_problem));
             return {};
           }},

@@ -230,14 +230,14 @@ auto DistributeFixedStream(
       frame, BuildReorderedStream(
                  unit, block,
                  block.Add(BuildPackedBitsRead(
-                     unit_lowerer, block, source,
+                     unit_lowerer.Unit(), block, source,
                      stream.bit_width - members_width, stream_type)),
                  block_bits));
   std::uint64_t offset = members_width;
   for (const FixedSegment& segment : segments) {
     offset -= segment.shape.width;
     const mir::ExprId bits = block.Add(BuildPackedBitsRead(
-        unit_lowerer, block, held, offset,
+        unit_lowerer.Unit(), block, held, offset,
         mir::PackedVectorOf(
             unit.types, segment.shape.width, stream.state_kind)));
     auto handed = Deliver(unit_lowerer, frame, segment.recipient, bits, sink);

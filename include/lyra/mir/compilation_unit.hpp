@@ -130,48 +130,6 @@ struct ConsumedObjectEntry {
 using ConsumedSignature =
     std::variant<ConsumedNamespace, ConsumedClass, ConsumedObjectEntry>;
 
-// The body a unit states for the operation `answers` at `type`. A type whose
-// operations are stated per unit has every operation on its whole value stated
-// so (LRM 7.4.2), as rustc instantiates a generic function in each crate that
-// uses it: an array's is each element's in turn, and a tuple's each
-// component's, where every component has it. Every type an array of the unit
-// has as its element, of whatever kind, has its default stated here too (LRM
-// Table 6-7, Table 7-1): what a read through an index naming no
-// element answers (LRM 7.4.5) and what an array that grows fills each new
-// position with (LRM 7.5.1). A container's default depends on its element
-// type, which the library's one type of each container does not know. A tuple,
-// which no declaration states a default for, has one stated here where each
-// of its components has one (LRM Table 7-1).
-//
-// A use in the program calls one by the type and the operation; code compiled
-// before the type existed -- what holds a value of it, what an array grows
-// with -- is handed it with the type instead, which is why a body nothing in
-// the program calls is stated as well.
-struct TypeOperation {
-  TypeId type;
-  support::ValueOperation answers;
-  CallableCode code;
-};
-
-// Each type some array of `types` holds as its element, whatever the array's
-// kind, once and in the order the pool first names it. A unit states the
-// default of each, since what a position naming none reads and what a new one
-// starts at is the element type's (LRM 7.4.5, 7.5.1), and the code holding the
-// array asks for it by that type alone.
-[[nodiscard]] inline auto ArrayElementTypes(const TypePool& types)
-    -> std::vector<TypeId> {
-  std::vector<bool> taken(types.size(), false);
-  std::vector<TypeId> elements;
-  for (const Type& type : types) {
-    const std::optional<TypeId> element = type.ContainerElementType();
-    if (element.has_value() && !taken[element->value]) {
-      taken[element->value] = true;
-      elements.push_back(*element);
-    }
-  }
-  return elements;
-}
-
 // A unit whose instances are a tree of objects the runtime drives (LRM 23.3):
 // the class at the root of the tree, the one body that brings one into
 // existence, and, for each of its block bodies, the one that brings a block of
@@ -361,11 +319,6 @@ struct CompilationUnit {
   // declares, under the name that unit published it. A body the compiler
   // synthesized is not here.
   std::vector<NamedCallable> named_callables;
-  // The operations this unit states for each type it names whose operations
-  // are stated per unit, the default of each type it holds an array of, and
-  // the default of each tuple whose components each have one.
-  // One per type and operation.
-  std::vector<TypeOperation> type_operations;
   // Static variables the unit's namespace owns directly rather than through one
   // of its classes -- a package's variables (LRM 26.2), one program-global cell
   // each, shared and reached by name. A class's own static storage lives on
@@ -759,19 +712,6 @@ using NamespaceReach = std::variant<
     return ReachedByName{*name};
   }
   return ReachedByPosition{id};
-}
-
-// The body this unit states for `answers` at `type`, or null where it states
-// none.
-[[nodiscard]] inline auto FindTypeOperation(
-    const CompilationUnit& unit, TypeId type, support::ValueOperation answers)
-    -> const TypeOperation* {
-  for (const TypeOperation& stated : unit.type_operations) {
-    if (stated.type == type && stated.answers == answers) {
-      return &stated;
-    }
-  }
-  return nullptr;
 }
 
 // The members' types of the record `record`, wherever it was declared, in

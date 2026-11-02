@@ -110,12 +110,12 @@ equalities, the bit stream and the net folds in the records handed to whatever a
 D4)
 ([a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)).
 This revises the earlier rule that the library carried each of them out over the count and the
-element's type, which had the library interpret the type. Every unit naming an array type states its
-constant under a name the count and the element settle, and the linker keeps one of them, as it
-keeps one of a template's static data member however many translation units instantiate it; one
-array type is therefore one object in the program, and the library tells two types apart by which
-object each is (revised 2026-10-16: two units' constants were two objects, compared by count and
-element).
+element's type, which had the library interpret the type. Every unit handing an array type over
+states its constant under a name the count and the element settle, and the linker keeps one of them,
+as it keeps one of a template's static data member however many translation units instantiate it;
+one array type is therefore one object in the program, and the library tells two types apart by
+which object each is (revised 2026-10-16: two units' constants were two objects, compared by count
+and element).
 
 **D5. An array crossing to the library is its bytes, and its type crosses once** (revised
 2026-10-15). An entry realized for arrays of one type takes that type once, after its operands, as a

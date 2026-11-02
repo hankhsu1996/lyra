@@ -39,7 +39,7 @@ auto DumpCall(
     ProcessLowerer& process, mir::Builder block, support::BuiltinFn entry,
     std::vector<mir::ExprId> operands) -> mir::Expr {
   std::vector<mir::ExprId> arguments{
-      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()))};
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit()))};
   arguments.insert(arguments.end(), operands.begin(), operands.end());
   return mir::Expr{
       .data =

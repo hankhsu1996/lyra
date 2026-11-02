@@ -36,7 +36,7 @@ class UnitLowerer;
 // that whether a callee suspends its caller is readable from the call's type
 // rather than re-decided wherever the call is built.
 auto SubroutineCallType(
-    mir::CompilationUnit& unit, hir::SubroutineKind kind,
+    const mir::CompilationUnit& unit, hir::SubroutineKind kind,
     mir::TypeId result_type) -> mir::TypeId;
 
 // The type a call hands its caller: the product of the values the callee
@@ -46,8 +46,8 @@ auto SubroutineCallType(
 // bind and project from, and so that the count is read off the type rather than
 // carried beside it.
 auto CompletionPayloadType(
-    mir::CompilationUnit& unit, const std::vector<mir::TypeId>& components)
-    -> mir::TypeId;
+    const mir::CompilationUnit& unit,
+    const std::vector<mir::TypeId>& components) -> mir::TypeId;
 
 // Where a completion carries the callee's result: ahead of every component a
 // formal receives (LRM 13.5), which is the order the layout is built in. A
@@ -136,7 +136,7 @@ auto ReportParamTypeOf(
 // which no other subroutine takes. This is the sole statement of it, so a
 // block, its prototype and every call of it agree.
 auto ConstraintProblemParamTypeOf(
-    mir::CompilationUnit& unit, hir::SubroutineKind kind)
+    const mir::CompilationUnit& unit, hir::SubroutineKind kind)
     -> std::optional<mir::TypeId>;
 
 // A subroutine declaration's formals, read into the shape a completion derives

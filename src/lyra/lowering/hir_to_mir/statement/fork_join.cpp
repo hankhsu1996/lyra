@@ -114,8 +114,8 @@ auto LowerForkStmt(
   }
 
   const auto& builtins = process.Owner().Unit().builtins;
-  const mir::ExprId runtime_id =
-      fork_block_builder.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+  const mir::ExprId runtime_id = fork_block_builder.Add(
+      BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
 
   std::vector<mir::ExprId> branches;
   branches.reserve(f.branches.size());
@@ -185,7 +185,7 @@ auto LowerWaitForkStmt(
   mir::Builder block = frame.Builder();
   const auto& builtins = process.Owner().Unit().builtins;
   const mir::ExprId runtime_id =
-      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
   const mir::ExprId wait_id = block.Add(
       mir::Expr{
           .data =
@@ -210,7 +210,7 @@ auto LowerDisableForkStmt(
   mir::Builder block = frame.Builder();
   const auto& builtins = process.Owner().Unit().builtins;
   const mir::ExprId runtime_id =
-      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
   const mir::ExprId call_id = block.Add(
       mir::Expr{
           .data =

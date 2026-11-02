@@ -111,7 +111,7 @@ rustc's answer is taken.
   the pointer moved into the new value owns. No lowering makes one -- a value too large for a frame
   is boxed whole, never as a part -- so a step asked of one stops as a compiler error rather than
   freeing twice. A tagged union's move copies its live member.
-- A tuple's default is stated in MIR, as an array element type's is
+- A tuple's default is built as MIR where the unit needs it, as an array element type's is
   ([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
   D2), so the code generator composes none.
 

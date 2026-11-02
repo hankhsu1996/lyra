@@ -176,8 +176,8 @@ auto MarshalSvToCarrier(
                                   .target = support::BuiltinFn::
                                       kHandStringToForeignCaller},
                           .arguments =
-                              {block.Add(
-                                   BuildCurrentRuntimeCallExpr(unit_lowerer)),
+                              {block.Add(BuildCurrentRuntimeCallExpr(
+                                   unit_lowerer.Unit())),
                                sv_id}},
                   .type = carrier});
       }
@@ -682,7 +682,8 @@ auto PopulateForeignImportBoundary(
       const hir::Expr& actual_hir = hir_exprs.Get(actual);
       auto place_or = LowerLvalue(lowerer, actual_hir, cframe);
       if (!place_or) return std::unexpected(std::move(place_or.error()));
-      auto taken = ReadThenWrite(unit_lowerer, cframe, *std::move(place_or));
+      auto taken =
+          ReadThenWrite(unit_lowerer.Unit(), cframe, *std::move(place_or));
       if (!taken) return std::unexpected(std::move(taken.error()));
       // What crosses is a value of the formal's type, which the actual's is
       // brought to as an assignment to the formal would bring it (LRM 13.5).
@@ -956,7 +957,7 @@ auto LowerForeignImportTask(
   const mir::ExprId fiber_id =
       BuildKeptClosure(unit, body, fiber_body.BuildVoid());
   const mir::ExprId runtime_id =
-      body.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      body.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
   // A foreign task may consume simulation time (LRM 35.5.1.1), so its call is
   // a suspending construct like a delay: the runtime carries it on a stack of
   // its own and answers whether this execution must park at all, and the
@@ -1159,7 +1160,7 @@ void ReturnTheFallbackAnswer(
                                       .target =
                                           support::BuiltinFn::kDisableIsActive},
                               .arguments = {block.Add(
-                                  BuildCurrentRuntimeCallExpr(module))}},
+                                  BuildCurrentRuntimeCallExpr(module.Unit()))}},
                       .type =
                           ForeignBoundaryReturnType(unit, ret_abi, true)})});
       return;
@@ -1423,7 +1424,8 @@ auto SynthesizeForeignExportEntry(
     call_args.push_back(body_builder.Add(
         mir::MakeCallExpr(
             mir::Direct{.target = support::BuiltinFn::kEvaluationInProgress},
-            {body_builder.Add(BuildCurrentRuntimeCallExpr(module))}, *report)));
+            {body_builder.Add(BuildCurrentRuntimeCallExpr(module.Unit()))},
+            *report)));
   }
 
   // The completion payload the writeback loop below destructures is the

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <span>
 #include <string>
@@ -38,6 +39,17 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
 auto PlaceType(
     const CompilationUnit& unit, const Function& fn, const Place& place)
     -> TypeId;
+
+// The type of what `place` has arrived at where step `index` of its chain
+// applies.
+auto PlaceTypeBefore(
+    const CompilationUnit& unit, const Function& fn, const Place& place,
+    std::ptrdiff_t index) -> TypeId;
+
+// The type of what `destination` receives.
+auto DestinationType(
+    const CompilationUnit& unit, const Function& fn,
+    const Destination& destination) -> TypeId;
 
 // Whether the operand names a local that is storage of its own. Such an operand
 // already is the address the storage lives at; every other operand is a value,

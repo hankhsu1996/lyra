@@ -94,7 +94,7 @@ template <ExprLowerer Lowerer>
 // value of that type. Nothing is checked: the caller states which bits it
 // wants.
 [[nodiscard]] auto BuildPackedBitsRead(
-    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId base,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId base,
     std::uint64_t bit_offset, mir::TypeId result_type) -> mir::Expr;
 
 // Member `index` of the aggregate `projection` describes, at `result_type`.

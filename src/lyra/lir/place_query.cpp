@@ -1,5 +1,6 @@
 #include "lyra/lir/place_query.hpp"
 
+#include <cstddef>
 #include <format>
 #include <optional>
 #include <span>
@@ -227,6 +228,28 @@ auto PlaceType(
         step);
   }
   return current;
+}
+
+auto PlaceTypeBefore(
+    const CompilationUnit& unit, const Function& fn, const Place& place,
+    std::ptrdiff_t index) -> TypeId {
+  const Place prefix{
+      .base = place.base,
+      .chain = {place.chain.begin(), place.chain.begin() + index}};
+  return prefix.chain.empty() ? OperandType(fn, prefix.base)
+                              : PlaceType(unit, fn, prefix);
+}
+
+auto DestinationType(
+    const CompilationUnit& unit, const Function& fn,
+    const Destination& destination) -> TypeId {
+  return std::visit(
+      Overloaded{
+          [&](const Transient& defined) {
+            return fn.values.Get(defined.value).type;
+          },
+          [&](const Place& place) { return PlaceType(unit, fn, place); }},
+      destination);
 }
 
 }  // namespace lyra::lir

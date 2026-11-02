@@ -1,7 +1,9 @@
 #pragma once
 
-#include <map>
+#include <cstddef>
+#include <functional>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -21,6 +23,7 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/value_step.hpp"
 #include "lyra/mir/bring_up_entry.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
@@ -40,21 +43,50 @@ namespace lyra::lowering::mir_to_lir {
 [[nodiscard]] auto BringUpEntrySymbol(
     std::string_view unit_name, mir::BringUpEntry entry) -> std::string;
 
+// Where the legalized body of an operation of a type comes from, none where the
+// language gives the type no such operation. It is handed in, since building
+// one is the work of the layer above and which are needed is learned below.
+using OperationBodyProvider = std::function<std::optional<mir::CallableCode>(
+    mir::TypeId, support::ValueOperation)>;
+
 // Per-unit lowerer for the MIR-to-LIR pass. Reads the source MIR, owns the
 // in-progress LIR unit, and memoizes type translation so each distinct MIR type
-// mints one canonical LIR type. After `Run` returns, the produced LIR unit
-// holds no reference to the MIR it was lowered from.
+// mints one canonical LIR type. Every construct is rejected with a diagnostic
+// rather than passed through where it cannot be lowered yet. Once `Finish`
+// returns, the produced LIR unit holds no reference to the MIR it was lowered
+// from.
+//
+// Whoever drives it lowers what the unit declares, then alternates asking for
+// the operations of types no declaration states them for and stating those
+// asked, each named by a function on the first ask, until nothing new is asked.
 class UnitLowerer {
  public:
-  // The unit being produced carries its source's name from the moment it
-  // exists: it is the one thing about the output that is settled before any
-  // lowering happens, and everything else here is minted as the pass runs.
-  explicit UnitLowerer(const mir::CompilationUnit& mir) : mir_(&mir) {
-    out_.name = mir.name;
-    out_.body_name = mir.body_name;
-  }
+  // A lowerer holding every body of `mir` lowered, and what each class it
+  // defines answers about its parts.
+  [[nodiscard]] static auto LowerUnit(const mir::CompilationUnit& mir)
+      -> diag::Result<UnitLowerer>;
 
-  auto Run() -> diag::Result<lir::CompilationUnit>;
+  // Marks `operation` as used by the unit, which the language may give its type
+  // no such thing as.
+  void MarkOperationUsed(const lir::TypeOperation& operation);
+
+  // Lowers each operation marked used since the last call, its body obtained
+  // from `bodies`, and answers whether there was any. Two types MIR tells apart
+  // and LIR does not are one representation with one function per operation,
+  // which the first of them states: a type's bodies read only what LIR keeps of
+  // it, so the two bodies are the same.
+  auto StateTypeOperations(const OperationBodyProvider& bodies)
+      -> diag::Result<bool>;
+
+  // Translates what a body may add to and nothing lowers from, and hands over
+  // the unit.
+  auto Finish() && -> lir::CompilationUnit;
+
+  // States, for every type named since the last call, a function for each step
+  // whose answer is one, and for a value laid out by its type one for every
+  // step it has, which the library holding one reaches through its table. A
+  // body is what names a type, so it is called once lowered bodies have.
+  void StateTypeSteps();
 
   [[nodiscard]] auto Mir() const -> const mir::CompilationUnit& {
     return *mir_;
@@ -148,7 +180,8 @@ class UnitLowerer {
   [[nodiscard]] auto ClassConstantSymbolOf(
       const mir::ClassConstantRef& constant) const -> std::string;
 
-  // The function of this unit answering `answers` at `type`.
+  // The function of this unit answering `answers` at `type`, which a call names
+  // whether or not its body is lowered yet.
   [[nodiscard]] auto TypeOperationFunction(
       mir::TypeId type, support::ValueOperation answers) -> lir::FunctionId;
 
@@ -182,6 +215,17 @@ class UnitLowerer {
       -> std::string;
 
  private:
+  // The unit being produced carries its source's name from the moment it
+  // exists: it is the one thing about the output that is settled before any
+  // lowering happens, and everything else here is minted as the pass runs.
+  explicit UnitLowerer(const mir::CompilationUnit& mir) : mir_(&mir) {
+    out_.name = mir.name;
+    out_.body_name = mir.body_name;
+  }
+
+  // Fills the unit being produced with what `mir_` declares.
+  auto Populate() -> diag::Result<void>;
+
   // The type of what a class extends: a class some unit declares, or the
   // library class either root is.
   [[nodiscard]] auto BaseType(const mir::ClassRef& base) -> lir::TypeId;
@@ -269,11 +313,6 @@ class UnitLowerer {
   // table holds its address as data, and nothing here calls through it.
   auto TableBodyPrototype() const -> lir::TypeId;
 
-  // States, for every type the unit names, a function for each step whose
-  // answer is one, and for a value laid out by its type one for every step it
-  // has, which the library holding one reaches through its table. Runs once
-  // every body is lowered, since a body is what names a type.
-  void StateTypeSteps();
   [[nodiscard]] auto NeedsStepFunction(
       lir::TypeId type, lir::ValueStep step) const -> bool;
   // The function carrying out `step` of a value of `type`, built from its
@@ -289,13 +328,23 @@ class UnitLowerer {
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;
   std::unordered_map<mir::TypeId, lir::TypeId> type_memo_;
+  // The first MIR type each LIR type translates, which is what an operation
+  // found to be used below MIR is built at.
+  std::unordered_map<lir::TypeId, mir::TypeId> mir_type_of_;
   base::Translation<mir::ClassId, ClassIdentities> class_identities_;
   base::Translation<mir::ClosureId, ClosureIdentities> closure_identities_;
   base::Translation<mir::RecordId, lir::RecordId> record_identities_;
-  // The function answering each operation of each type the unit states its
-  // operations for, by the type and the operation.
-  std::map<std::pair<lir::TypeId, support::ValueOperation>, lir::FunctionId>
-      type_operation_functions_;
+  // An operation marked used and not yet lowered, with the MIR type it is built
+  // at.
+  struct PendingOperation {
+    lir::TypeOperation operation;
+    mir::TypeId mir_type;
+  };
+  std::vector<PendingOperation> pending_;
+  // Every operation ever handed to `pending_`, so each is lowered once.
+  std::set<lir::TypeOperation> visited_;
+  // How many types of the pool have had their steps stated, in pool order.
+  std::size_t types_seen_ = 0;
 };
 
 }  // namespace lyra::lowering::mir_to_lir

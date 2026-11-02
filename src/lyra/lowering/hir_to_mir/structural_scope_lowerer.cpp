@@ -1435,7 +1435,8 @@ auto JoinedSideOf(
     if (!named) return std::unexpected(std::move(named.error()));
     operands.push_back(
         JoinedPositions{
-            .part = Settled(lowerer.Owner(), resolve_frame, *std::move(named)),
+            .part = Settled(
+                lowerer.Owner().Unit(), resolve_frame, *std::move(named)),
             .offset = operand.offset,
             .width = operand.width});
   }
@@ -2347,7 +2348,7 @@ auto DescribeDumped(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
   const auto runtime = [&] {
-    return block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+    return block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
   };
   const auto append = [&](mir::Expr call) {
     block.AppendStmt(mir::ExprStmt{.expr = block.Add(std::move(call))});

@@ -34,7 +34,6 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
-#include "lyra/lowering/hir_to_mir/bound_free_conversion.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/class_code.hpp"
@@ -306,7 +305,7 @@ void GuardNamespaceInitialization(
   mir::Block outer;
   mir::Builder outer_builder(outer, diag::SourceSpan{});
   const mir::ExprId runtime =
-      outer_builder.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      outer_builder.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
   const mir::ExprId name = outer_builder.Add(
       mir::MakeStringLiteral(unit.builtins.machine_c_string, unit.name));
   const mir::ExprId claimed = outer_builder.Add(
@@ -461,30 +460,6 @@ auto PublishObjectEntry(
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
           .defining_unit = std::nullopt});
-}
-
-// Adds to `called` each operation of a tuple `block` calls, its inner blocks'
-// included.
-void TupleOperationsCalledIn(
-    const mir::CompilationUnit& unit, const mir::Block& block,
-    std::vector<mir::TypeOperationSource>& called) {
-  for (const mir::Expr& expr : block.exprs) {
-    const auto* call = std::get_if<mir::CallExpr>(&expr.data);
-    if (call == nullptr) continue;
-    const auto* direct = std::get_if<mir::Direct>(&call->callee);
-    if (direct == nullptr) continue;
-    const auto* target = std::get_if<mir::TypeOperationTarget>(&direct->target);
-    if (target == nullptr ||
-        !unit.types.Get(target->type).Is<mir::TupleType>()) {
-      continue;
-    }
-    called.push_back(
-        mir::TypeOperationSource{
-            .type = target->type, .answers = target->answers});
-  }
-  for (const mir::Block& inner : block.child_scopes) {
-    TupleOperationsCalledIn(unit, inner, called);
-  }
 }
 
 }  // namespace
@@ -997,114 +972,6 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
   }
 }
 
-void UnitLowerer::PublishTypeOperations() {
-  // Run once every body of the unit is lowered, since a body may name an array
-  // no declaration does -- the keys a sort gathers -- or call an operation of
-  // a tuple, and a call names an operation by its type rather than by what is
-  // stated here. A body built here interns types, and an array interned that
-  // way states its operations too, so the pool is walked by position and its
-  // size read again at every step.
-  for (std::uint32_t i = 0; i < unit_.types.size(); ++i) {
-    const mir::TypeId type{.value = i};
-    if (mir::OperationsStatedPerUnit(unit_.types.Get(type)) ==
-        mir::StatedPerUnit::kFixedArray) {
-      for (mir::TypeOperation& stated : TypeOperationsOf(*this, type)) {
-        unit_.type_operations.push_back(std::move(stated));
-      }
-    }
-    // An array holding a bounded queue below its outermost dimension is
-    // assigned across the types equivalent to it through the form of it with
-    // no queue bounded, whatever its kind (LRM 7.6, 7.10.5).
-    if (HoldsBoundedQueueBelow(unit_.types, type)) {
-      for (mir::TypeOperation& stated : BoundFreeConversionsOf(*this, type)) {
-        unit_.type_operations.push_back(std::move(stated));
-      }
-    }
-  }
-  // An array's operations are stated whole, since the code generator asks them
-  // of the array itself -- describing it to the library, taking over some of
-  // its positions -- where no call names them. A tuple is no type the source
-  // writes: a lowering composes one where its code needs a value of it -- a
-  // call's completion, the targets of a scan -- so each of a tuple's
-  // operations is built where some code calls it, and the body built is
-  // searched for the calls it makes in turn, as rustc builds `PartialEq` for a
-  // tuple only where something calls it.
-  std::vector<mir::TypeOperationSource> called;
-  mir::ForEachCode(
-      unit_, [&](const mir::CodeSource&, const mir::CallableCode& code) {
-        if (code.body.has_value()) {
-          TupleOperationsCalledIn(unit_, *code.body, called);
-        }
-      });
-  for (const mir::ClassId id : unit_.classes.Ids()) {
-    const mir::Class& cls = unit_.GetClass(id);
-    if (cls.defining_unit.has_value()) continue;
-    for (const mir::ClassConstantDecl& constant : cls.constants) {
-      TupleOperationsCalledIn(unit_, constant.initializer.body, called);
-    }
-    TupleOperationsCalledIn(
-        unit_, cls.object_definition_initializer.body, called);
-  }
-  std::set<mir::TypeOperationSource> asked;
-  while (!called.empty()) {
-    const mir::TypeOperationSource next = called.back();
-    called.pop_back();
-    if (!asked.insert(next).second) continue;
-    // A call of an operation the tuple lacks is the calling code's defect,
-    // which verifying the unit reports.
-    std::optional<mir::TypeOperation> answering =
-        TypeOperationOf(*this, next.type, next.answers);
-    if (!answering.has_value()) continue;
-    if (answering->code.body.has_value()) {
-      TupleOperationsCalledIn(unit_, *answering->code.body, called);
-    }
-    unit_.type_operations.push_back(*std::move(answering));
-  }
-  // A type whose operations the unit states has its default among them; every
-  // other array element type is given one here, and every tuple where each of
-  // its components has one. Building one can intern a type that needs one too
-  // -- a tuple a default is built of -- so this runs until a pass interns
-  // nothing, having visited every type there is.
-  const support::ValueOperation default_value =
-      support::BuiltinFn::kDeclaredDefault;
-  std::size_t visited = 0;
-  while (visited != unit_.types.size()) {
-    visited = unit_.types.size();
-    std::vector<bool> is_element(visited, false);
-    for (const mir::TypeId element : mir::ArrayElementTypes(unit_.types)) {
-      is_element[element.value] = true;
-    }
-    // A type a default interns is visited by the next pass.
-    for (const mir::TypeId type : unit_.types.Ids()) {
-      const bool element = is_element[type.value];
-      if ((!element && !unit_.types.Get(type).Is<mir::TupleType>()) ||
-          mir::FindTypeOperation(unit_, type, default_value) != nullptr) {
-        continue;
-      }
-      mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
-      code.result_type = type;
-      mir::Builder block(code.Body(), diag::SourceSpan{});
-      std::expected<mir::Expr, std::string_view> built =
-          DefaultValueOf(unit_, block, type);
-      if (!built) {
-        if (!element) {
-          continue;
-        }
-        throw InternalError(
-            std::format(
-                "UnitLowerer::PublishTypeOperations: an array holds {}, which "
-                "has no default, since it holds {} -- please report this as a "
-                "bug",
-                mir::DumpType(unit_, type), built.error()));
-      }
-      block.AppendStmt(mir::ReturnStmt{.value = block.Add(*std::move(built))});
-      unit_.type_operations.push_back(
-          mir::TypeOperation{
-              .type = type, .answers = default_value, .code = std::move(code)});
-    }
-  }
-}
-
 auto UnitLowerer::ScopeExecution() const -> support::ScopeExecution {
   switch (hir_->role) {
     case hir::UnitRole::kModuleOrInterface:
@@ -1178,7 +1045,6 @@ auto UnitLowerer::PopulateModuleRoot(
       .object_entry = PublishObjectEntry(
           unit_, *top_r, published, handed, root.ConstructionTable()),
       .block_entries = std::move(block_entries)};
-  PublishTypeOperations();
   StateObjectDefinitions(unit_);
   return {};
 }
@@ -1354,7 +1220,6 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
 
   PublishNamespaceStorageBringUp(
       *this, unit_, std::move(install_code), std::move(value_code));
-  PublishTypeOperations();
   StateObjectDefinitions(unit_);
 
   return std::move(unit_);

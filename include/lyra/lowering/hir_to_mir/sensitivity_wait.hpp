@@ -54,8 +54,9 @@ struct ObservedLeaf {
 // watches.
 template <typename Lowerer>
 [[nodiscard]] auto BuildObservableCellExpr(
-    mir::Builder block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    Lowerer& lowerer, const hir::ValueTarget& cell) -> mir::ExprId;
+    mir::Builder block, const WalkFrame& frame,
+    const mir::CompilationUnit& unit, Lowerer& lowerer,
+    const hir::ValueTarget& cell) -> mir::ExprId;
 
 // What an evaluation reaches through `object` -- a class handle, or the running
 // method's own object -- to be read through: the same value, stated as reached
@@ -63,13 +64,13 @@ template <typename Lowerer>
 // handed one (LRM 9.4.2). One event source covers every property of an object,
 // so the object is what is stated.
 [[nodiscard]] auto ReportedObject(
-    mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId object)
-    -> mir::ExprId;
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::ExprId object) -> mir::ExprId;
 
 // The same for `place`, a pointer to a variable an evaluation reaches through a
 // virtual interface (LRM 25.9).
 [[nodiscard]] auto ReportedPlace(
-    mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
     -> mir::ExprId;
 
 // Whether the local `report` holds a report at all, as a machine boolean added

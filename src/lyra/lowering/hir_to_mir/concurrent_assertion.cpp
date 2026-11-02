@@ -768,7 +768,7 @@ auto LowerTick(
 
   call_stmt(
       body_builder, support::BuiltinFn::kEvaluationAttemptsSettle,
-      {body_builder.Add(BuildCurrentRuntimeCallExpr(action.Owner()))});
+      {body_builder.Add(BuildCurrentRuntimeCallExpr(action.Owner().Unit()))});
   return body;
 }
 
@@ -1131,7 +1131,8 @@ auto LowerExpectStmt(
           mir::MakeCallExpr(
               mir::Direct{
                   .target = support::BuiltinFn::kWaitOnPropertyEvaluation},
-              {scope_builder.Add(BuildCurrentRuntimeCallExpr(process.Owner())),
+              {scope_builder.Add(
+                   BuildCurrentRuntimeCallExpr(process.Owner().Unit())),
                *clock, *disable_reads,
                Word(scope_builder, word_type, automaton.words)},
               unit.builtins.wait)));
@@ -1312,7 +1313,7 @@ void AppendConcurrentAssertionInstall(
       mir::ExprStmt{
           .expr = AttemptsCall(
               block, support::BuiltinFn::kEvaluationAttemptsInstall, attempts,
-              {block.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())),
+              {block.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner().Unit())),
                Word(block, unit.builtins.machine_word, installed.words),
                arm(installed.pass_action), arm(installed.fail_action)},
               void_type)});

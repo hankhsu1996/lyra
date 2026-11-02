@@ -192,27 +192,29 @@ the detail lives in the entry itself.
 - [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
   -- what a position of an array holds before it is written (LRM 7.4.5, Table 7-1) is a fact of the
   element type, for a fixed-size array, a dynamic array, a queue and an associative array alike. A
-  unit states it once per element type, and per tuple, in MIR and the prebuilt library is handed it
-  with the type, so no construction, `new[]`, conversion, `map` or locator carries it and no array
-  object keeps a copy. An associative literal's own `default:` stays an operand, of an operation on
-  the array its entries built. Every other fact a type fixes reaches the library with the type too:
-  a reduction over no entries and an unallocated dimension's `$low` / `$high` answer their answer
-  type's default, a conversion out of a stream of bits is told its answer's type and takes no
-  prototype, and a queue's bound is its type's, so no call is handed one. Carrying the operand
-  everywhere with the fixed-size array ignoring it, omitting it only where the answer is a
-  fixed-size array, a prototype standing for a type, and a bound as an operand are rejected.
+  unit builds it once per element type it hands over, and per tuple, as MIR, and the prebuilt
+  library is handed it with the type, so no construction, `new[]`, conversion, `map` or locator
+  carries it and no array object keeps a copy. An associative literal's own `default:` stays an
+  operand, of an operation on the array its entries built. Every other fact a type fixes reaches the
+  library with the type too: a reduction over no entries and an unallocated dimension's `$low` /
+  `$high` answer their answer type's default, a conversion out of a stream of bits is told its
+  answer's type and takes no prototype, and a queue's bound is its type's, so no call is handed one.
+  Carrying the operand everywhere with the fixed-size array ignoring it, omitting it only where the
+  answer is a fixed-size array, a prototype standing for a type, and a bound as an operand are
+  rejected.
 - [a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md) -- `==`,
   `===`, `$bits`, `$countbits`, `$isunknown`, the bit stream and the net folds on a structure or a
   union are methods its declaration states in MIR, one per operation the type has, and the program's
   use is a call of one. Each backend compiles them like any other declared body; the execution
   backend also hands its runtime records of them. Composing them in a backend is rejected.
 - [a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)
-  -- a fixed-size array, which has no declaration, has its whole-value operations stated as MIR
-  bodies by each unit naming the type, built from its elements' operations, and a use calls one by
-  the type and the operation. The execution backend compiles them into the records it hands whatever
-  asks one, beside the type's lifecycle the lowering to LIR states; the C++ backend spells the call
-  as its library template's member. The library carrying them out from a description of the type,
-  the code generator instantiating them itself, and a union stated the same way are rejected.
+  -- a fixed-size array, which has no declaration, has its whole-value operations built as MIR
+  bodies by each unit that needs them, found on finished LIR, built from its elements' operations,
+  and a use calls one by the type and the operation. The execution backend compiles them into the
+  records it hands whatever asks one, beside the type's lifecycle the lowering to LIR states; the
+  C++ backend spells the call as its library template's member. The library carrying them out from a
+  description of the type, the code generator instantiating them itself, and a union stated the same
+  way are rejected.
 - [a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md) -- what copying, moving,
   writing over and ending a value of a type does, and how an object of a class is created and ended,
   is stated once per type and per class in LIR by the lowering from MIR, as rustc builds drop glue

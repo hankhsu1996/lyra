@@ -128,32 +128,34 @@ what the construct means.
   rendering a value (LRM 21.2.1.6) -- is computation built from the source type before this layer.
   An enumeration's member list is part of what the type is, because its value is asked for its
   member's name at run time (LRM 6.19.5).
-- The operations of a fixed-size unpacked array, which has no declaration to state them: one body
-  per operation the language defines on its whole value, built from its elements' operations, which
-  a use calls by the type and the operation, handing each value by reference as a record's method
-  takes it. Each unit naming the type states them, as each translation unit instantiates a template
-  it names.
-- The operations of a tuple, which has no declaration either: the same bodies built from its
-  components' operations, where every component has each. No source writes a tuple, so each body is
-  built in the unit whose code calls it, as a generic impl is instantiated where it is used.
+- The operations of a fixed-size unpacked array, which has no declaration to state them: one per
+  operation the language defines on its whole value, built from its elements' operations, which a
+  use calls by the type and the operation, handing each value by reference as a record's method
+  takes it. The same for a tuple, built from its components' operations where every component has
+  each. A unit holds no such body, as a call in rustc's THIR holds no instance: a body is built when
+  something below this layer finds the unit needs it, as a generic impl is instantiated where it is
+  used, from the unit's types and nothing of the source, then legalized and verified alone and
+  lowered with the unit. What needs one is a call naming it, or a record of the library that a value
+  of the type is handed over with, which only the target realizing the record can state. A type the
+  unit only names has none, and a call is well formed without one.
 - For an array of any kind holding a bounded queue below its outermost dimension, a value of it
   taken into the form of its type with no queue bounded, and a value of that form built as one of
   it, each element built afresh. Every type equivalent to it has that form (a bound is no part of
   equivalence), so a value is assigned across two such types by passing through it, each queue
-  keeping what its own bound admits. Each unit naming the type states the two, as it states a
-  fixed-size array's operations.
-- What a value of a type is before anything is written to it, for every type the unit holds an array
-  of and every tuple whose components each have one: the code that builds it, stated once for the
-  type, because the source's declaration decides it -- a structure member's own initializer is part
-  of it (LRM 7.2.2, 7.4.5) -- and nothing below this layer has that declaration. An array's type
-  names its element type, so whatever builds, sizes or answers an array of any kind learns how its
-  elements start from the type. It is one of the type's operations above, stated for the element
-  type. It is what reading an entry an array does not have answers (LRM Table 7-1), and for every
-  type but one it is also what a declaration that writes no initializer starts at (Table 6-7). The
-  exception is a reference to a runtime object that the source language makes anew for each
-  declaration -- an event's synchronization object (LRM 6.17) -- which reads as no object and starts
-  as a new one, each position its own; a declaration, and an array growing by `new[N]`, state that
-  object on top of the type's value, so no copy of one value stands for several objects.
+  keeping what its own bound admits. Each is built where a call reaches it, as a fixed-size array's
+  operations are.
+- What a value of a type is before anything is written to it: the code that builds it, stated once
+  for the type, because the source's declaration decides it -- a structure member's own initializer
+  is part of it (LRM 7.2.2, 7.4.5) -- and nothing below this layer has that declaration. An array's
+  type names its element type, so whatever builds, sizes or answers an array of any kind learns how
+  its elements start from the type. It is one of the type's operations above, built as they are for
+  a type no declaration states it for, and a tuple's is each component's where each has one. It is
+  what reading an entry an array does not have answers (LRM Table 7-1), and for every type but one
+  it is also what a declaration that writes no initializer starts at (Table 6-7). The exception is a
+  reference to a runtime object that the source language makes anew for each declaration -- an
+  event's synchronization object (LRM 6.17) -- which reads as no object and starts as a new one,
+  each position its own; a declaration, and an array growing by `new[N]`, state that object on top
+  of the type's value, so no copy of one value stands for several objects.
 - Capability wrappers: types that represent a storage place instead of being a value -- an
   observable cell, a reference, a net's resolved value, a net driver's contribution. A capability
   wrapper composes over the value type it represents, and the wrapper and that storage are distinct
@@ -421,19 +423,22 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
   MIR's own vocabulary. The unit is in one of two phases, which it records: built, as HIR-to-MIR
   states it, and legalized, with no node leaving two of its operands a target could run in the other
   order to another answer and no frame holding a value too large for one or more than a frame keeps
-  together, which is the only phase a consumer takes. A conversion -- the rewrites that bring the
-  unit from one phase into the next -- is what a correct program needs, so no build skips one; every
-  other rewrite runs inside a phase, leaves the same program at another cost, and a build may skip
-  it. The conversions are this layer's rather than each consumer's because one consumer writes MIR
-  out as C++, whose own rules would otherwise decide the order operands run in and where a value
-  lies; rustc keeps its required conversions at the layer below, which has no such consumer. The
-  verification asks of a unit what its phase requires; it is verified once, as it leaves the
-  rewrites, since that is the form every consumer reads, and on reaching each phase and after each
-  optional rewrite where a build asks; a dump, which a person reads rather than a consumer, shows it
-  unchecked. A rewrite builds a node through the same builders as the lowering, folding included. A
-  consumer cannot tell a node a rewrite built from one the lowering built, so a cost the program's
-  meaning does not decide -- how a process that stops only at the head of its loop is compiled -- is
-  taken out once for both backends, and HIR-to-MIR still states the meaning one way.
+  together, which is the only phase a consumer takes. A body built after the unit left its rewrites
+  goes through the same rewrites alone before anything reads it, as rustc runs its passes over a
+  shim built on demand, so a consumer reads no body that is not of the unit's phase. A conversion --
+  the rewrites that bring the unit from one phase into the next -- is what a correct program needs,
+  so no build skips one; every other rewrite runs inside a phase, leaves the same program at another
+  cost, and a build may skip it. The conversions are this layer's rather than each consumer's
+  because one consumer writes MIR out as C++, whose own rules would otherwise decide the order
+  operands run in and where a value lies; rustc keeps its required conversions at the layer below,
+  which has no such consumer. The verification asks of a unit what its phase requires; it is
+  verified once, as it leaves the rewrites, since that is the form every consumer reads, and on
+  reaching each phase and after each optional rewrite where a build asks; a dump, which a person
+  reads rather than a consumer, shows it unchecked. A rewrite builds a node through the same
+  builders as the lowering, folding included. A consumer cannot tell a node a rewrite built from one
+  the lowering built, so a cost the program's meaning does not decide -- how a process that stops
+  only at the head of its loop is compiled -- is taken out once for both backends, and HIR-to-MIR
+  still states the meaning one way.
 - `binding_and_capture.md` owns the lexical reference contract MIR's value references obey: a
   reference names a binding materialized in its own callable body, and a binding crosses a closure
   boundary only as a captured environment field. MIR carries no navigation distance to a

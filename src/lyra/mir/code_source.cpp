@@ -126,11 +126,6 @@ void ForEachCode(const CompilationUnit& unit, const CodeVisit& visit) {
           method.code);
     }
   }
-  for (const TypeOperation& stated : unit.type_operations) {
-    visit(
-        TypeOperationSource{.type = stated.type, .answers = stated.answers},
-        stated.code);
-  }
   for (const ClosureId closure : unit.closures.Ids()) {
     visit(ClosureSource{.closure = closure}, unit.GetClosure(closure).invoke);
   }
@@ -194,11 +189,6 @@ auto RewriteEachCode(CompilationUnit unit, const CodeRewrite& rewrite)
             }
             return methods;
           });
-  for (TypeOperation& stated : unit.type_operations) {
-    replace(
-        TypeOperationSource{.type = stated.type, .answers = stated.answers},
-        stated.code);
-  }
   unit.closures = std::move(unit.closures)
                       .TransformValues([&](ClosureId id, ClosureDecl closure) {
                         replace(ClosureSource{.closure = id}, closure.invoke);

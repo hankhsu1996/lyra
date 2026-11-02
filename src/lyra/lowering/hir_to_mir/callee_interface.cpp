@@ -30,7 +30,7 @@
 namespace lyra::lowering::hir_to_mir {
 
 auto SubroutineCallType(
-    mir::CompilationUnit& unit, hir::SubroutineKind kind,
+    const mir::CompilationUnit& unit, hir::SubroutineKind kind,
     mir::TypeId result_type) -> mir::TypeId {
   return kind == hir::SubroutineKind::kTask
              ? unit.types.Intern(
@@ -39,8 +39,8 @@ auto SubroutineCallType(
 }
 
 auto CompletionPayloadType(
-    mir::CompilationUnit& unit, const std::vector<mir::TypeId>& components)
-    -> mir::TypeId {
+    const mir::CompilationUnit& unit,
+    const std::vector<mir::TypeId>& components) -> mir::TypeId {
   return unit.types.Intern(mir::Type{mir::TupleType{.elements = components}});
 }
 
@@ -124,7 +124,7 @@ auto ConstructorFormalsOf(UnitLowerer& unit_lowerer, hir::ClassId cls)
 }
 
 auto ConstraintProblemParamTypeOf(
-    mir::CompilationUnit& unit, hir::SubroutineKind kind)
+    const mir::CompilationUnit& unit, hir::SubroutineKind kind)
     -> std::optional<mir::TypeId> {
   switch (kind) {
     case hir::SubroutineKind::kTask:

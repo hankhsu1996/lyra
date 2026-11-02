@@ -50,9 +50,8 @@ auto EntryCall(
 // what its own bound admits, so what it discards is never built (LRM 7.10.5);
 // an associative array keeps the value its absent indexes read (LRM 7.9.11).
 auto ConversionBody(
-    UnitLowerer& lowerer, support::BuiltinFn answers, mir::TypeId from,
-    mir::TypeId to) -> mir::CallableCode {
-  mir::CompilationUnit& unit = lowerer.Unit();
+    const mir::CompilationUnit& unit, support::BuiltinFn answers,
+    mir::TypeId from, mir::TypeId to) -> mir::CallableCode {
   mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   CallableBindings bindings(unit, code);
   const mir::TypeId reference = ReferenceTo(unit, from);
@@ -90,7 +89,7 @@ auto ConversionBody(
   }
 
   const WalkedArray walked = WalkedArrayAt(
-      lowerer, frame, AccessPath{.owner = source, .descent = {}}, std::nullopt);
+      unit, frame, AccessPath{.owner = source, .descent = {}}, std::nullopt);
   const mir::LocalId built = DeclareLocal(
       frame,
       to_type.IsDeclaredBy(support::LibraryDecl::kDynamicArray)
@@ -102,14 +101,14 @@ auto ConversionBody(
           : block.Add(BuildDefaultValueExpr(unit, block, to)));
 
   auto loop = BuildEntryLoopStmt(
-      lowerer, frame, walked, WalkOrder::kFromFirst, std::nullopt,
+      unit, frame, walked, WalkOrder::kFromFirst, std::nullopt,
       [&](const WalkFrame& at,
           const VisitedEntry& entry) -> diag::Result<void> {
         mir::Builder b = at.Builder();
         const mir::ExprId value =
             ConvertToType(unit, b, entry.element, element);
         if (to_type.IsDeclaredBy(support::LibraryDecl::kQueue)) {
-          AppendPushBack(lowerer, b, built, to, value);
+          AppendPushBack(unit, b, built, to, value);
           return {};
         }
         AccessPath whole{.owner = b.LocalPlace(built, to), .descent = {}};
@@ -121,7 +120,7 @@ auto ConversionBody(
       });
   if (!loop) {
     throw InternalError(
-        "BoundFreeConversionsOf: a walk over an array's entries refused to "
+        "hir_to_mir: a walk over an array's entries refused to "
         "build -- please report this as a bug");
   }
   block.AppendStmt(*std::move(loop));
@@ -157,23 +156,18 @@ auto ConversionBody(
 
 }  // namespace
 
-auto BoundFreeConversionsOf(UnitLowerer& lowerer, mir::TypeId type)
-    -> std::vector<mir::TypeOperation> {
-  const mir::TypeId bound_free = WithoutQueueBounds(lowerer.Unit().types, type);
-  std::vector<mir::TypeOperation> stated;
-  stated.push_back(
-      mir::TypeOperation{
-          .type = type,
-          .answers = support::BuiltinFn::kToBoundFree,
-          .code = ConversionBody(
-              lowerer, support::BuiltinFn::kToBoundFree, type, bound_free)});
-  stated.push_back(
-      mir::TypeOperation{
-          .type = type,
-          .answers = support::BuiltinFn::kFromBoundFree,
-          .code = ConversionBody(
-              lowerer, support::BuiltinFn::kFromBoundFree, bound_free, type)});
-  return stated;
+auto BuildToBoundFreeBody(const mir::CompilationUnit& unit, mir::TypeId type)
+    -> mir::CallableCode {
+  return ConversionBody(
+      unit, support::BuiltinFn::kToBoundFree, type,
+      WithoutQueueBounds(unit.types, type));
+}
+
+auto BuildFromBoundFreeBody(const mir::CompilationUnit& unit, mir::TypeId type)
+    -> mir::CallableCode {
+  return ConversionBody(
+      unit, support::BuiltinFn::kFromBoundFree,
+      WithoutQueueBounds(unit.types, type), type);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

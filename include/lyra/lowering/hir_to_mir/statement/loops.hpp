@@ -43,7 +43,7 @@ auto BuildCountingLoopStmt(
 // outlives the loop where something still reads it afterwards: `position` is
 // the path to that storage, named in `block`, and evaluates nothing.
 auto BuildCountingLoopStmt(
-    mir::CompilationUnit& unit, WalkFrame frame, mir::Builder block,
+    const mir::CompilationUnit& unit, WalkFrame frame, mir::Builder block,
     mir::ExprId count, const AccessPath& position, mir::BlockId body_scope,
     std::optional<mir::LabelId> break_label) -> mir::Stmt;
 
@@ -70,7 +70,7 @@ auto BuildPositionWalkStmt(
 // belongs to the block it is added to. `break_label` is as a counting loop's
 // is.
 auto BuildKeyLoopStmt(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
     const std::function<mir::ExprId(const WalkFrame&)>& array,
     const std::function<AccessPath(const WalkFrame&)>& key,
     mir::TypeId key_type, WalkOrder order, mir::BlockId body_scope,
@@ -81,9 +81,10 @@ auto BuildKeyLoopStmt(
 // runs, and `body_scope` runs at each. `index` is a path as the stored position
 // of a counting loop is, and `break_label` is as that loop's is.
 auto BuildRangeLoopStmt(
-    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& index,
-    std::int64_t left, std::int64_t right, mir::BlockId body_scope,
-    std::optional<mir::LabelId> break_label) -> mir::Stmt;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const AccessPath& index, std::int64_t left, std::int64_t right,
+    mir::BlockId body_scope, std::optional<mir::LabelId> break_label)
+    -> mir::Stmt;
 
 // The same loop for a body that runs a number of times and never asks which
 // time this is (LRM 12.7.3, and the repeat event control of LRM 9.4.5).

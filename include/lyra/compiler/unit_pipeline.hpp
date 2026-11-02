@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/compilation_unit.hpp"
@@ -26,10 +28,24 @@ auto LowerUnitToSemantic(
 // composes it tells of it.
 void RecordSemanticForm(const mir::CompilationUnit& unit);
 
+// What a target finds a unit uses of the operations of types no declaration
+// states them for, read off LIR as the unit grows: each call answers what the
+// unit gained since the last. Which of them a realization needs is the target's
+// to say, so the pipeline is handed this, as rustc's driver is handed its
+// `CodegenBackend`, and names no target.
+using TypeOperationCollection =
+    std::function<lir::UsedTypeOperations(const lir::CompilationUnit&)>;
+
 // Takes one unit from its semantic model into the form a session loads or a
 // target compiles. Every unit has one, a namespace included: a package's
-// variable initializers and its subroutines are code like any other.
-auto LowerUnitToExecutable(const mir::CompilationUnit& unit)
+// variable initializers and its subroutines are code like any other. What the
+// unit's bodies come to need of types no declaration states operations for is
+// built here, rewritten as `passes` asks of a body and lowered with them, so
+// the form that leaves is complete. It joins the lowering above to what
+// `collection` finds, which is why it stands above the lowerings.
+auto LowerUnitToExecutable(
+    const mir::CompilationUnit& unit, const mir_transform::PassOptions& passes,
+    const TypeOperationCollection& collection)
     -> diag::Result<lir::CompilationUnit>;
 
 }  // namespace lyra::compiler

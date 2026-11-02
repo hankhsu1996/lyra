@@ -18,9 +18,10 @@ namespace lyra::mir {
 
 struct CompilationUnit;
 
-// Where a unit holds a callable's code, as rustc's `MirSource` names the item
-// a body belongs to. Every code a unit holds is at exactly one of these, and a
-// callable is at the target a call names it by.
+// Where a callable's code sits, as rustc's `MirSource` names the item a body
+// belongs to. Every code a unit holds is at exactly one of these, a callable at
+// the target a call names it by; a body built below MIR, which the unit does
+// not hold, is named the same way.
 struct ConstructorSource {
   ClassId owner;
 

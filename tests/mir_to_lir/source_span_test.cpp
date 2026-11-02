@@ -10,7 +10,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
-#include "lyra/lowering/mir_to_lir/lower.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -21,6 +20,7 @@
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "tests/mir_to_lir/lowered.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 namespace {
@@ -110,7 +110,7 @@ auto SpansOfNamedBody(const lir::CompilationUnit& unit)
 // names a narrower one; nothing of one statement is attributed to the other.
 TEST(MirToLirSourceSpanTest, AnInstructionNamesTheSourceOfWhatItLowers) {
   const diag::Result<lir::CompilationUnit> lowered =
-      LowerUnit(UnitOfTwoStatements());
+      Lowered(UnitOfTwoStatements());
   ASSERT_TRUE(lowered.has_value());
   const std::vector<diag::SourceSpan> spans = SpansOfNamedBody(*lowered);
   ASSERT_FALSE(spans.empty());

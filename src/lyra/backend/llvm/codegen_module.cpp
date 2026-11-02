@@ -32,7 +32,7 @@
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/constant_record.hpp"
 #include "lyra/backend/llvm/entry_realizations.hpp"
-#include "lyra/backend/llvm/fn_abi.hpp"
+#include "lyra/backend/llvm/llvm_fn_abi.hpp"
 #include "lyra/backend/llvm/machine_signature.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -150,7 +150,7 @@ auto LinkageOf(lir::Linkage linkage) -> llvm::GlobalValue::LinkageTypes {
 auto CodeGenModule::FunctionTypeOf(
     std::span<const lir::TypeId> params, lir::TypeId result)
     -> llvm::FunctionType* {
-  std::vector<ArgAbi> arranged;
+  std::vector<LlvmArgAbi> arranged;
   arranged.reserve(params.size());
   for (const lir::TypeId param : params) {
     arranged.push_back(CallArranger::Direct(types_.Map(param)));
@@ -234,8 +234,8 @@ auto CodeGenModule::CreateRuntimeFunction(
   return entry;
 }
 
-auto CodeGenModule::RuntimeFunction(std::string_view symbol, const FnAbi& abi)
-    -> llvm::FunctionCallee {
+auto CodeGenModule::RuntimeFunction(
+    std::string_view symbol, const LlvmFnAbi& abi) -> llvm::FunctionCallee {
   return CreateRuntimeFunction(types_.GetFunctionType(abi), symbol);
 }
 
@@ -250,7 +250,7 @@ auto CodeGenModule::FourStateArg(const value::IntegralShape& shape)
 }
 
 auto CodeGenModule::BuildCallArgs(
-    const FnAbi& abi, std::span<llvm::Value* const> operands)
+    const LlvmFnAbi& abi, std::span<llvm::Value* const> operands)
     -> diag::Result<std::vector<llvm::Value*>> {
   if (operands.size() != abi.args.size()) {
     throw InternalError(
@@ -538,23 +538,9 @@ auto CodeGenModule::EmitLibraryStep(
       break;
   }
   const RuntimeOp op = RuntimeOpOf(step);
-  // A value of the design crosses as the realization for its domain is told it
-  // does, and an object that is no value of the design as the address it is.
-  const std::optional<Realization> realization = std::visit(
-      Overloaded{
-          [&](support::ValueDomain domain) -> std::optional<Realization> {
-            return Realization{.told = ToldOf(domain, op), .of = type};
-          },
-          [](support::LibraryDecl) -> std::optional<Realization> {
-            return std::nullopt;
-          },
-          [](support::LibraryObject) -> std::optional<Realization> {
-            return std::nullopt;
-          }},
-      object);
-  const std::vector<StatedOperand> stated(
-      operands.size(), StatedOperand{ValueOperand{.type = type}});
-  const FnAbi abi = FnAbiOf(*this, op, stated, realization, std::nullopt, ret);
+  const LlvmFnAbi abi = AtMachineTypes(
+      *this,
+      ArrangeLibraryStep(unit_->types, type, object, op, operands.size()), ret);
   auto crossed = BuildCallArgs(abi, operands);
   if (!crossed) {
     return std::unexpected(std::move(crossed.error()));
@@ -1057,14 +1043,16 @@ auto CodeGenModule::MemberLayout(
     return types_.LayoutOf(type);
   }
   return runtime::LayoutOf(
-      storage, ValuesHeldByMember(type).transform(
-                   [&](lir::TypeId held) { return types_.LayoutOf(held); }));
+      storage,
+      ValuesHeldByMember(*unit_, type).transform([&](lir::TypeId held) {
+        return types_.LayoutOf(held);
+      }));
 }
 
 auto CodeGenModule::CellStorage(lir::TypeId cell) const
     -> support::DeclaredMemberStorage {
   const std::optional<support::DeclaredMemberStorage> storage =
-      DeclaredStorageOf(*unit_, cell, MemberSlotRole::kVariable);
+      VariableStorageOf(*unit_, cell);
   if (!storage) {
     throw InternalError(
         "llvm codegen: a cell is asked of a type held as none -- please "
@@ -1077,15 +1065,6 @@ auto CodeGenModule::BuildCell(
     llvm::IRBuilderBase& builder, lir::TypeId cell, llvm::Value* storage)
     -> diag::Result<void> {
   return BuildMemberStorage(builder, cell, CellStorage(cell), storage);
-}
-
-// A member holding no value of the program's holds none.
-auto CodeGenModule::ValuesHeldByMember(lir::TypeId type) const
-    -> std::optional<lir::TypeId> {
-  if (types_.HasAggregateEvaluationKind(type)) {
-    return type;
-  }
-  return ValuesHeldBy(unit_->types.Get(type));
 }
 
 auto CodeGenModule::BeginMember(
@@ -1118,16 +1097,10 @@ auto CodeGenModule::BuildMemberStorage(
     llvm::IRBuilderBase& builder, lir::TypeId type,
     support::DeclaredMemberStorage storage, llvm::Value* at)
     -> diag::Result<void> {
-  const std::array<StatedOperand, 1> stated{
-      MachineOperand{.type = types_.Ptr()}};
-  const std::optional<Realization> realization =
-      ValuesHeldByMember(type).transform([&](lir::TypeId held) {
-        return Realization{.told = ToldBuilding(storage), .of = held};
-      });
   llvm::Type* const result = types_.Void();
-  const FnAbi abi = ArrangeCall(
-      *this, support::OperandReadings{support::OperandReading::kMachine},
-      stated, realization, std::nullopt, {}, ReturnDirect{.type = result});
+  const LlvmFnAbi abi = AtMachineTypes(
+      *this, ArrangeMemberBuild(*unit_, type, storage),
+      ReturnDirect{.type = result});
   const std::array<llvm::Value*, 1> operands{at};
   auto args = BuildCallArgs(abi, operands);
   if (!args) {
@@ -1384,21 +1357,13 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
 
 auto CodeGenModule::DomainOf(lir::TypeId type) const
     -> diag::Result<support::ValueDomain> {
-  const std::optional<support::ValueDomain> domain =
-      ValueDomainOf(*unit_, type);
-  if (!domain) {
-    return diag::Fail(
-        diag::DiagCode::kUnsupportedTypeKind,
-        "a value of type '{}' is not yet supported with '--backend llvm'",
-        unit_->types.Get(type).KindName());
-  }
-  return *domain;
+  return RealizedDomainOf(*unit_, type);
 }
 
 auto CodeGenModule::SharedStorageOf(const lir::StaticStorage& storage)
     -> diag::Result<support::DeclaredMemberStorage> {
   const std::optional<support::DeclaredMemberStorage> described =
-      DeclaredStorageOf(*unit_, storage.type, MemberSlotRole::kVariable);
+      VariableStorageOf(*unit_, storage.type);
   if (!described) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedTypeKind,

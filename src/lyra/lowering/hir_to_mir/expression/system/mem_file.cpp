@@ -185,7 +185,7 @@ auto NameMemory(
 auto MemoryWriteTarget(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path,
     const hir::Expr& memory) -> Lvalue {
-  SettleForTagChecks(unit_lowerer, frame, path);
+  SettleForTagChecks(unit_lowerer.Unit(), frame, path);
   return Lvalue{
       .form = std::move(path),
       .type = unit_lowerer.TranslateType(memory.type),
@@ -288,7 +288,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
     mem_value = PathValue(unit, body, memory->path);
   } else {
     auto read = ReadThenWrite(
-        unit_lowerer, step_frame,
+        unit_lowerer.Unit(), step_frame,
         MemoryWriteTarget(
             unit_lowerer, step_frame, std::move(memory->path), mem_hir));
     if (!read) return std::unexpected(std::move(read.error()));
@@ -302,7 +302,8 @@ auto LowerMemFileSystemSubroutineCallStmt(
       !is_store && unit.types.Get(elem_mir).Is<mir::EnumType>();
 
   std::vector<mir::ExprId> operands;
-  operands.push_back(body.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
+  operands.push_back(
+      body.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit())));
   operands.push_back(mem_value);
   if (enumerated) {
     operands.push_back(mir::BuildEnumTableRef(unit, body, elem_mir));

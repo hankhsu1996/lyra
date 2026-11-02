@@ -15,7 +15,7 @@
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/codegen_value_type.hpp"
 #include "lyra/backend/llvm/emit.hpp"
-#include "lyra/backend/llvm/fn_abi.hpp"
+#include "lyra/backend/llvm/llvm_fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -132,13 +132,14 @@ class CodeGenModule {
       -> llvm::FunctionCallee;
   // The library entry `symbol`, declared at the type a call crossing to it as
   // `abi` arranges has.
-  auto RuntimeFunction(std::string_view symbol, const FnAbi& abi)
+  auto RuntimeFunction(std::string_view symbol, const LlvmFnAbi& abi)
       -> llvm::FunctionCallee;
   // What a callee a call crosses to as `abi` arranges is handed ahead of the
   // storage its answer is built in, given the operands the call states. Each
   // thing an entry is told of a type is a constant, so building the list
   // emits nothing.
-  auto BuildCallArgs(const FnAbi& abi, std::span<llvm::Value* const> operands)
+  auto BuildCallArgs(
+      const LlvmFnAbi& abi, std::span<llvm::Value* const> operands)
       -> diag::Result<std::vector<llvm::Value*>>;
   // The arguments the operand `value` crosses as, appended to `args`.
   auto BuildCallArg(
@@ -293,10 +294,6 @@ class CodeGenModule {
   [[nodiscard]] auto MemberLayout(
       lir::TypeId type, support::DeclaredMemberStorage storage)
       -> support::ObjectLayout;
-  // The values a member of `type` holds: its own value, or what the storage
-  // it is holds.
-  [[nodiscard]] auto ValuesHeldByMember(lir::TypeId type) const
-      -> std::optional<lir::TypeId>;
   // How a variable's cell of the type `cell` is held, which is how a body holds
   // one of its variables.
   [[nodiscard]] auto CellStorage(lir::TypeId cell) const

@@ -308,8 +308,9 @@ auto BuildLevelLoopStmt(
               return IndexPath(nest, at, level);
             };
             return BuildKeyLoopStmt(
-                process.Owner(), frame, iterated, index_path, level.index_type,
-                WalkOrder::kFromFirst, body_scope, break_label);
+                process.Owner().Unit(), frame, iterated, index_path,
+                level.index_type, WalkOrder::kFromFirst, body_scope,
+                break_label);
           }},
       level.indices);
 }
@@ -398,7 +399,7 @@ auto LowerForeachLoops(
     auto path = process.LowerAccessPath(array, wrapper_frame);
     if (!path) return std::unexpected(std::move(path.error()));
     settled_array =
-        SettledForRead(unit_lowerer, wrapper_frame, *std::move(path));
+        SettledForRead(unit_lowerer.Unit(), wrapper_frame, *std::move(path));
   }
 
   BreakTarget leaves(*frame.bindings);

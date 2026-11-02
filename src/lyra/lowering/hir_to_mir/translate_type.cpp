@@ -153,9 +153,9 @@ void UnitLowerer::DefineRecordMethods(
             *this, Hir().DefinitionOf(source.Get<hir::UnpackedStructType>()),
             id, type, declared.elements);
       case mir::RecordKind::kUnion:
-        return UnionMethodsOf(*this, id, type, declared.elements);
+        return UnionMethodsOf(Unit(), id, type, declared.elements);
       case mir::RecordKind::kTaggedUnion:
-        return TaggedUnionMethodsOf(*this, id, type, declared.elements);
+        return TaggedUnionMethodsOf(Unit(), id, type, declared.elements);
     }
     throw InternalError("hir_to_mir: unknown record kind");
   }());

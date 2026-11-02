@@ -16,6 +16,7 @@
 
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
+#include "lyra/backend/llvm/witness_tables.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -52,11 +53,11 @@ class CodeGenModule;
 // other operation the language defines on the whole value -- comparing and
 // streaming it, folding it in a net, taking some of its positions -- is handed
 // to the routine that needs it. Each is a method a record's declaration states
-// or a body a unit states for an array. Such a value's bytes state nothing of
-// it, so whatever hands one to the runtime hands the type beside it. It is laid
-// out as the record the library declares for its kind, opening with the address
-// of a table of this module's bodies, one where the table's declaration lays
-// out each function.
+// or a body a unit states for an array or a tuple. Such a value's bytes state
+// nothing of it, so whatever hands one to the runtime hands the type beside it.
+// It is laid out as the record the library declares for its kind, opening with
+// the address of a table of this module's bodies, one where the table's
+// declaration lays out each function.
 //
 // The type of a struct or a union is its declaring unit's, one in the
 // program, which every other module refers to. An array's and an integral
@@ -144,21 +145,18 @@ class CodeGenValueTypes {
   // type, which this one only refers to.
   [[nodiscard]] auto LinkageOfItsOperations(lir::TypeId type) const
       -> std::optional<llvm::GlobalValue::LinkageTypes>;
+  // The functions of the language's operations on a value of `type`, a type
+  // laid out by the design, which its operations name. Made where a call hands
+  // the operations over, since no holder keeps them.
+  auto GetAddrOfOperationFunctions(lir::TypeId type) -> llvm::GlobalVariable*;
   // The name a type has in every unit, which tells one type's code and
   // constants from another's.
   auto KeyOf(lir::TypeId type) -> const std::string&;
-  // A function of this unit answering one operation of the type, and the
-  // operation it answers.
-  struct OwnOperation {
-    support::ValueOperation answers;
-    lir::FunctionId function;
-  };
-  // The functions the type answers its operations with: a record's methods,
-  // and the bodies the unit states for an array or a tuple.
-  [[nodiscard]] auto OwnOperations(lir::TypeId type) const
-      -> std::vector<OwnOperation>;
-  // The function of this unit answering `operation` for `type`, where the type
-  // states one.
+  // The function of this unit answering `operation` for `type`: a record's
+  // method, or the body the unit states for an array or a tuple, and nothing
+  // where the language gives the type no such operation. Every record is
+  // planned before emission, so an operation nothing asked for is a defect in
+  // the plan and is refused here, while the program is compiled.
   [[nodiscard]] auto OwnOperationOf(
       lir::TypeId type, support::ValueOperation operation) const
       -> std::optional<lir::FunctionId>;
@@ -182,6 +180,16 @@ class CodeGenValueTypes {
   auto Body(
       lir::TypeId type, std::string_view witness,
       const support::MachineSignature& stands_in_for, llvm::Function* filling)
+      -> llvm::Constant*;
+  // The body filling `witness` of `type`, where its table's declaration lays it
+  // out.
+  auto FillWitness(lir::TypeId type, const Witness& witness) -> llvm::Constant*;
+  // The body doing what `method` does for `witness` of `type`, with the
+  // crossing `crossing` names, or the library's failing where there is no such
+  // function.
+  auto WitnessFromOperation(
+      lir::TypeId type, const Witness& witness,
+      std::optional<lir::FunctionId> method, const IntegralCrossing& crossing)
       -> llvm::Constant*;
   // A body doing what a type's own function does where the two differ in how
   // one integral value crosses, opened and left for its caller to fill: it

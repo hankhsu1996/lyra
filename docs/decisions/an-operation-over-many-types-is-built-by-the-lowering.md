@@ -113,6 +113,6 @@ place, is kept in D4.
 - [construct-in-final-home](construct-in-final-home.md) -- making a deferred effect in its keeper's
   storage, D2's operation.
 - [a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)
-  -- per-type bodies a unit states for each array type, which D3 covers.
+  -- per-type bodies a unit builds for each array type it reaches, which D3 covers.
 - [a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)
   -- the representation decision a returning generic function would be made concrete ahead of.

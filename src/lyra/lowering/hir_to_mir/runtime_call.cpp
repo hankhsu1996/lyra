@@ -23,8 +23,9 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-auto BuildCurrentRuntimeCallExpr(const UnitLowerer& unit_lowerer) -> mir::Expr {
-  return mir::MakeCurrentRuntimeCallExpr(unit_lowerer.Unit().builtins.effects);
+auto BuildCurrentRuntimeCallExpr(const mir::CompilationUnit& unit)
+    -> mir::Expr {
+  return mir::MakeCurrentRuntimeCallExpr(unit.builtins.effects);
 }
 
 void AppendRuntimeEffectStmt(
@@ -32,7 +33,8 @@ void AppendRuntimeEffectStmt(
     support::BuiltinFn entry, std::vector<mir::ExprId> operands) {
   std::vector<mir::ExprId> arguments;
   arguments.reserve(operands.size() + 1);
-  arguments.push_back(block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
+  arguments.push_back(
+      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit())));
   arguments.insert(arguments.end(), operands.begin(), operands.end());
   block.AppendStmt(
       mir::ExprStmt{
@@ -70,7 +72,7 @@ auto BuildParkStmt(
     -> mir::Stmt {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::ExprId runtime_id =
-      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
   const mir::ExprId wait_ptr = block.Add(
       mir::MakeAddressOfExpr(
           block.LocalPlace(wait, unit.builtins.wait), unit.builtins.wait_ptr));
@@ -122,7 +124,7 @@ auto BuildFilesCallExpr(const UnitLowerer& unit_lowerer, mir::Builder block)
     -> mir::Expr {
   const auto& builtins = unit_lowerer.Unit().builtins;
   const mir::ExprId runtime_id =
-      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -143,7 +145,7 @@ auto BuildKeeperCallExpr(
     support::BuiltinFn keeper, std::vector<mir::ExprId> arguments,
     mir::TypeId keeper_type) -> mir::Expr {
   const mir::ExprId runtime_id =
-      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
   return mir::Expr{
       .data =
           mir::CallExpr{

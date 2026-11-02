@@ -235,7 +235,7 @@ constexpr std::array kWholeValueEntries{
 
 // The body answering `answers` for a value of `type`, where the type answers
 // it with a body of its own: the method of the structure or the union it is,
-// or the body the unit states for the fixed-size array it is.
+// or the structural operation of the fixed-size array it is.
 auto OwnOperationTarget(
     const mir::CompilationUnit& unit, mir::TypeId type,
     support::ValueOperation answers) -> std::optional<mir::DirectTarget> {
@@ -246,7 +246,7 @@ auto OwnOperationTarget(
   if (const mir::RecordId* record = mir::RecordOf(t)) {
     return mir::RecordMethodTarget{.record = *record, .answers = answers};
   }
-  if (mir::OperationsStatedPerUnit(t).has_value()) {
+  if (mir::StructuralOperationsTypeOf(t).has_value()) {
     return mir::TypeOperationTarget{.type = type, .answers = answers};
   }
   return std::nullopt;
@@ -334,9 +334,10 @@ class OperationBodies {
   using OwnTarget = std::function<mir::DirectTarget(support::ValueOperation)>;
 
   OperationBodies(
-      UnitLowerer& lowerer, mir::TypeId whole, std::vector<mir::TypeId> members,
-      mir::TypeId equality_answer, OwnTarget own)
-      : lowerer_(&lowerer),
+      const mir::CompilationUnit& unit, mir::TypeId whole,
+      std::vector<mir::TypeId> members, mir::TypeId equality_answer,
+      OwnTarget own)
+      : unit_(&unit),
         whole_(whole),
         members_(std::move(members)),
         equality_answer_(equality_answer),
@@ -344,11 +345,8 @@ class OperationBodies {
   }
 
  protected:
-  auto Lowerer() -> UnitLowerer& {
-    return *lowerer_;
-  }
-  auto Unit() -> mir::CompilationUnit& {
-    return lowerer_->Unit();
+  [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
+    return *unit_;
   }
   [[nodiscard]] auto WholeType() const -> mir::TypeId {
     return whole_;
@@ -691,7 +689,7 @@ class OperationBodies {
   }
 
  private:
-  UnitLowerer* lowerer_;
+  const mir::CompilationUnit* unit_;
   mir::TypeId whole_;
   std::vector<mir::TypeId> members_;
   mir::TypeId equality_answer_;
@@ -717,11 +715,11 @@ auto MethodsOf(mir::RecordId record) -> OperationBodies::OwnTarget {
 class ProductBodies : public OperationBodies {
  public:
   ProductBodies(
-      UnitLowerer& lowerer, mir::TypeId product,
+      const mir::CompilationUnit& unit, mir::TypeId product,
       std::vector<mir::TypeId> components, OwnTarget own)
       : OperationBodies(
-            lowerer, product, components,
-            OneBitAnswerType(lowerer.Unit(), components), std::move(own)) {
+            unit, product, components, OneBitAnswerType(unit, components),
+            std::move(own)) {
   }
 
   auto Equality() -> mir::CallableCode;
@@ -783,13 +781,15 @@ class StructBodies : public ProductBodies {
       mir::RecordId record, mir::TypeId structure,
       std::vector<mir::TypeId> members)
       : ProductBodies(
-            lowerer, structure, std::move(members), MethodsOf(record)),
+            lowerer.Unit(), structure, std::move(members), MethodsOf(record)),
+        lowerer_(&lowerer),
         source_(&source) {
   }
 
   auto DeclaredDefault() -> mir::CallableCode;
 
  private:
+  const UnitLowerer* lowerer_;
   const hir::UnpackedStructDefinition* source_;
 };
 
@@ -948,8 +948,7 @@ auto ProductBodies::FromBitstream() -> mir::CallableCode {
           const std::uint64_t width = FixedStreamShapeOf(Unit(), member)->width;
           taken += width;
           const mir::ExprId bits = block.Add(BuildPackedBitsRead(
-              Lowerer(), block, Referent(block, p[0], stream),
-              shape.width - taken,
+              Unit(), block, Referent(block, p[0], stream), shape.width - taken,
               mir::PackedVectorOf(Unit().types, width, shape.state_kind)));
           members.push_back(BuildFromBitstream(Unit(), block, bits, member));
         }
@@ -1082,7 +1081,7 @@ auto StructBodies::DeclaredDefault() -> mir::CallableCode {
       support::BuiltinFn::kDeclaredDefault, {}, WholeType(),
       [&](mir::Builder block, const std::vector<mir::LocalId>&) {
         return block.Add(
-            BuildDeclaredStructValue(Lowerer(), block, *source_, WholeType()));
+            BuildDeclaredStructValue(*lowerer_, block, *source_, WholeType()));
       });
 }
 
@@ -1126,12 +1125,11 @@ auto ProductBodies::TakePositions() -> mir::CallableCode {
 class UnionBodies : public OperationBodies {
  public:
   UnionBodies(
-      UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
-      std::vector<mir::TypeId> members)
+      const mir::CompilationUnit& unit, mir::RecordId record,
+      mir::TypeId overlay, std::vector<mir::TypeId> members)
       : OperationBodies(
-            lowerer, overlay, members,
-            EqualityAnswerOver(
-                lowerer.Unit(), mir::RecordKind::kUnion, members),
+            unit, overlay, members,
+            EqualityAnswerOver(unit, mir::RecordKind::kUnion, members),
             MethodsOf(record)) {
   }
 
@@ -1277,7 +1275,7 @@ auto UnionBodies::FromBitstream() -> mir::CallableCode {
       support::BuiltinFn::kFromBitstream, {stream}, WholeType(),
       [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
         const mir::ExprId bits = block.Add(BuildPackedBitsRead(
-            Lowerer(), block, Referent(block, p[0], stream), 0, stream));
+            Unit(), block, Referent(block, p[0], stream), 0, stream));
         return Holding(
             block, BuildFromBitstream(Unit(), block, bits, FirstType()));
       });
@@ -1313,12 +1311,11 @@ auto UnionBodies::FilledLike() -> mir::CallableCode {
 class TaggedUnionBodies : public OperationBodies {
  public:
   TaggedUnionBodies(
-      UnitLowerer& lowerer, mir::RecordId record, mir::TypeId tagged,
-      std::vector<mir::TypeId> members)
+      const mir::CompilationUnit& unit, mir::RecordId record,
+      mir::TypeId tagged, std::vector<mir::TypeId> members)
       : OperationBodies(
-            lowerer, tagged, members,
-            EqualityAnswerOver(
-                lowerer.Unit(), mir::RecordKind::kTaggedUnion, members),
+            unit, tagged, members,
+            EqualityAnswerOver(unit, mir::RecordKind::kTaggedUnion, members),
             MethodsOf(record)) {
   }
 
@@ -1473,11 +1470,10 @@ auto TaggedUnionBodies::HasUnknown() -> mir::CallableCode {
 class ArrayBodies : public OperationBodies {
  public:
   ArrayBodies(
-      UnitLowerer& lowerer, mir::TypeId array, mir::TypeId element,
+      const mir::CompilationUnit& unit, mir::TypeId array, mir::TypeId element,
       std::uint64_t count)
       : OperationBodies(
-            lowerer, array, {element},
-            EqualityAnswerType(lowerer.Unit(), array),
+            unit, array, {element}, EqualityAnswerType(unit, array),
             [array](support::ValueOperation answers) -> mir::DirectTarget {
               return mir::TypeOperationTarget{
                   .type = array, .answers = answers};
@@ -2131,33 +2127,33 @@ auto OperationsHadByArray(const mir::CompilationUnit& unit, mir::TypeId array)
       .net_folds = IsValidForNet(unit, array)};
 }
 
-// Hands `add` every operation on a whole value `type`, a type whose operations
-// each unit naming it states as its own, has, with what builds its body: a
+// Hands `add` every operation on a whole value `type`, a type no declaration
+// states them for, has, with what builds its body: a
 // fixed-size unpacked array's each element's in turn (LRM 7.4.2), and a
 // tuple's each component's in turn where the tuple is a data type, every
 // component being one; a tuple of anything else has none.
 template <typename Add>
-void StatePerUnitOperations(UnitLowerer& lowerer, mir::TypeId type, Add add) {
-  const mir::CompilationUnit& unit = lowerer.Unit();
-  const std::optional<mir::StatedPerUnit> kind =
-      mir::OperationsStatedPerUnit(unit.types.Get(type));
+void ForEachStructuralOperation(
+    const mir::CompilationUnit& unit, mir::TypeId type, Add add) {
+  const std::optional<mir::StructuralOperationsType> kind =
+      mir::StructuralOperationsTypeOf(unit.types.Get(type));
   if (!kind.has_value()) {
     throw InternalError(
         "hir_to_mir: a unit is asked the operations of a type a declaration "
         "states them for, or none does -- please report this as a bug");
   }
   switch (*kind) {
-    case mir::StatedPerUnit::kFixedArray: {
+    case mir::StructuralOperationsType::kFixedArray: {
       const mir::UnpackedArrayType array =
           unit.types.Get(type).Get<mir::UnpackedArrayType>();
       const OperationsHad had = OperationsHadByArray(unit, type);
-      ArrayBodies bodies(lowerer, type, array.element_type, array.count);
+      ArrayBodies bodies(unit, type, array.element_type, array.count);
       StateWholeValue(bodies, add);
       StateStreamAndFolds(bodies, had, add);
       StateRunBodies(bodies, had, add);
       return;
     }
-    case mir::StatedPerUnit::kTuple: {
+    case mir::StructuralOperationsType::kTuple: {
       if (!mir::IsDataType(unit.types, type)) {
         return;
       }
@@ -2165,7 +2161,7 @@ void StatePerUnitOperations(UnitLowerer& lowerer, mir::TypeId type, Add add) {
           unit.types.Get(type).Get<mir::TupleType>().elements;
       const OperationsHad had = OperationsHadByProduct(unit, components);
       ProductBodies bodies(
-          lowerer, type, std::move(components),
+          unit, type, std::move(components),
           [type](support::ValueOperation answers) -> mir::DirectTarget {
             return mir::TypeOperationTarget{.type = type, .answers = answers};
           });
@@ -2173,7 +2169,7 @@ void StatePerUnitOperations(UnitLowerer& lowerer, mir::TypeId type, Add add) {
       return;
     }
   }
-  throw InternalError("hir_to_mir: unknown kind stated per unit");
+  throw InternalError("hir_to_mir: unknown type of structural operations");
 }
 
 }  // namespace
@@ -2209,54 +2205,40 @@ auto StructMethodsOf(
 }
 
 auto UnionMethodsOf(
-    UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
+    const mir::CompilationUnit& unit, mir::RecordId record, mir::TypeId overlay,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
   std::vector<mir::RecordMethod> methods;
   const auto add = [&](support::ValueOperation answers, const auto& build) {
     methods.push_back(mir::RecordMethod{.answers = answers, .code = build()});
   };
-  const OperationsHad had = OperationsHadByUnion(lowerer.Unit(), members);
-  UnionBodies bodies(
-      lowerer, record, overlay, {members.begin(), members.end()});
+  const OperationsHad had = OperationsHadByUnion(unit, members);
+  UnionBodies bodies(unit, record, overlay, {members.begin(), members.end()});
   StateWholeValue(bodies, add);
   StateStreamAndFolds(bodies, had, add);
   return methods;
 }
 
 auto TaggedUnionMethodsOf(
-    UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
+    const mir::CompilationUnit& unit, mir::RecordId record, mir::TypeId overlay,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
   std::vector<mir::RecordMethod> methods;
   const auto add = [&](support::ValueOperation answers, const auto& build) {
     methods.push_back(mir::RecordMethod{.answers = answers, .code = build()});
   };
   TaggedUnionBodies bodies(
-      lowerer, record, overlay, {members.begin(), members.end()});
+      unit, record, overlay, {members.begin(), members.end()});
   StateWholeValue(bodies, add);
   return methods;
 }
 
-auto TypeOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
-    -> std::vector<mir::TypeOperation> {
-  std::vector<mir::TypeOperation> operations;
-  StatePerUnitOperations(
-      lowerer, type, [&](support::ValueOperation answers, const auto& build) {
-        operations.push_back(
-            mir::TypeOperation{
-                .type = type, .answers = answers, .code = build()});
-      });
-  return operations;
-}
-
-auto TypeOperationOf(
-    UnitLowerer& lowerer, mir::TypeId type, support::ValueOperation asked)
-    -> std::optional<mir::TypeOperation> {
-  std::optional<mir::TypeOperation> answering;
-  StatePerUnitOperations(
-      lowerer, type, [&](support::ValueOperation answers, const auto& build) {
-        if (answers == asked) {
-          answering = mir::TypeOperation{
-              .type = type, .answers = answers, .code = build()};
+auto BuildStructuralOperationBody(
+    const mir::CompilationUnit& unit, mir::TypeId type,
+    support::ValueOperation answers) -> std::optional<mir::CallableCode> {
+  std::optional<mir::CallableCode> answering;
+  ForEachStructuralOperation(
+      unit, type, [&](support::ValueOperation stated, const auto& build) {
+        if (stated == answers) {
+          answering = build();
         }
       });
   return answering;

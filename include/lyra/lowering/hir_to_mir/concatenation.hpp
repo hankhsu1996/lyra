@@ -31,12 +31,12 @@ namespace lyra::lowering::hir_to_mir {
 // LRM 11.8.1 makes of a source-level join -- is the caller's, reached by
 // converting the read.
 [[nodiscard]] auto BuildBitsJoin(
-    mir::CompilationUnit& unit, mir::Builder block, mir::LocalId joined,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId joined,
     std::span<const mir::ExprId> parts) -> mir::ExprId;
 
 // The same, into a local the steps of `frame`'s block declare.
 [[nodiscard]] auto BuildBitsJoin(
-    mir::CompilationUnit& unit, const WalkFrame& frame,
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
     std::span<const mir::ExprId> parts) -> mir::ExprId;
 
 // Builds the string `parts` join into, their characters in the order given

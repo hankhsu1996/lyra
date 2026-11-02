@@ -9,7 +9,6 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/verify.hpp"
-#include "lyra/lowering/mir_to_lir/lower.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -19,6 +18,7 @@
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "tests/mir_to_lir/lowered.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 namespace {
@@ -106,7 +106,7 @@ auto UnitCallingTwice(support::BuiltinFn callee) -> mir::CompilationUnit {
 TEST(MirToLirCleanupTest, EachCallThatCanDepartHasALandingOfItsOwn) {
   const mir::CompilationUnit unit =
       UnitCallingTwice(support::BuiltinFn::kDisable);
-  const diag::Result<lir::CompilationUnit> lowered = LowerUnit(unit);
+  const diag::Result<lir::CompilationUnit> lowered = Lowered(unit);
   ASSERT_TRUE(lowered.has_value());
   EXPECT_NO_THROW(lir::Verify(*lowered));
 }
@@ -118,7 +118,7 @@ TEST(MirToLirCleanupTest, ACleanupThatCouldDepartIsRefused) {
   const mir::CompilationUnit unit =
       UnitWithCleanupCalling(support::BuiltinFn::kDisable);
   try {
-    std::ignore = LowerUnit(unit);
+    std::ignore = Lowered(unit);
     FAIL() << "a cleanup calling an entry that can depart was lowered";
   } catch (const InternalError& error) {
     EXPECT_NE(std::string(error.what()).find("cleanup"), std::string::npos)

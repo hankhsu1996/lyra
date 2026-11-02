@@ -6,7 +6,9 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/statistics.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
 
@@ -16,6 +18,15 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // it is none.
   const auto& [name, body_name, types, classes, closures, records, functions, type_operations, type_steps, static_storage, constants, enum_tables, integral_constants, root] =
       unit;
+
+  std::uint64_t operations = 0;
+  std::uint64_t operations_of_arrays = 0;
+  for (const auto& [operation, function] : type_operations) {
+    if (!function.has_value()) continue;
+    ++operations;
+    operations_of_arrays +=
+        types.Get(operation.type).Is<UnpackedArrayType>() ? 1 : 0;
+  }
 
   std::uint64_t declared = 0;
   std::uint64_t members = 0;
@@ -48,7 +59,8 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
       {.kind = "closures", .held = closures.size()},
       {.kind = "captures", .held = captures},
       {.kind = "records", .held = records.size()},
-      {.kind = "type operations", .held = type_operations.size()},
+      {.kind = "type operations", .held = operations},
+      {.kind = "type operations of arrays", .held = operations_of_arrays},
       {.kind = "type steps", .held = type_steps.size()},
       {.kind = "static storage", .held = static_storage.size()},
       {.kind = "constants", .held = constants.size()},

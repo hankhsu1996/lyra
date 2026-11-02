@@ -891,24 +891,20 @@ class BodyTemporaries {
 
 }  // namespace
 
-auto OrderEvaluation(mir::CompilationUnit unit) -> mir::CompilationUnit {
-  return mir::RewriteEachCode(
-      std::move(unit),
-      [](const mir::CompilationUnit& unit, const mir::CodeSource& at,
-         const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
-        // A foreign body is entered by the convention its declaration states,
-        // which nothing here changes.
-        if (mir::IsEnteredForeign(unit, at) || !code.body.has_value()) {
-          return std::nullopt;
-        }
-        mir::EvaluationOrder order(unit.types, *code.body);
-        if (!HasOrderToMakeExplicit(unit, *code.body, order)) {
-          return std::nullopt;
-        }
-        BodyTemporaries temporaries(
-            unit, code, ForEvaluationOrder{.order = &order});
-        return temporaries.Rewritten();
-      });
+auto OrderEvaluationOnBody(
+    const mir::CompilationUnit& unit, const mir::CodeSource& at,
+    const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
+  // A foreign body is entered by the convention its declaration states, which
+  // nothing here changes.
+  if (mir::IsEnteredForeign(unit, at) || !code.body.has_value()) {
+    return std::nullopt;
+  }
+  mir::EvaluationOrder order(unit.types, *code.body);
+  if (!HasOrderToMakeExplicit(unit, *code.body, order)) {
+    return std::nullopt;
+  }
+  BodyTemporaries temporaries(unit, code, ForEvaluationOrder{.order = &order});
+  return temporaries.Rewritten();
 }
 
 auto GiveTemporariesToValuesKeptApart(

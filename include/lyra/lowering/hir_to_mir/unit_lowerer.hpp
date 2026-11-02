@@ -725,14 +725,6 @@ class UnitLowerer {
   // so no class is its owner.
   void PublishAssignmentPatternTexts();
 
-  // States what each type the unit names with no declaration answers with a
-  // body of the unit's own: every operation on a whole value of a fixed-size
-  // unpacked array (LRM 7.4.2), each operation of a tuple that some code of
-  // the unit calls, an array's passage into and out of the form of it with no
-  // queue bounded (LRM 7.6), and the default of every type the unit holds an
-  // array of, whatever the array's kind (LRM 7.4.5), and of every tuple.
-  void PublishTypeOperations();
-
   // The MIR type an HIR type is, and nothing for one MIR has no type for.
   [[nodiscard]] auto TranslateType(const hir::Type& type)
       -> std::optional<mir::Type>;

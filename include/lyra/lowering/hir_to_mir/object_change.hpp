@@ -17,7 +17,7 @@ namespace lyra::lowering::hir_to_mir {
 // The event source of the object `object` reaches, which a wait reaching the
 // object enrols on: one per object, covering every property (LRM 9.4.2).
 [[nodiscard]] auto ObjectEventSourceOf(
-    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object)
     -> mir::ExprId;
 
 // The storage `property`, holding a value of `type`, occupies on the object
@@ -25,7 +25,7 @@ namespace lyra::lowering::hir_to_mir {
 // own object, or a write in progress into the object, which is dereferenced to
 // the object as a guard is.
 [[nodiscard]] auto PropertyStorage(
-    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object,
     const mir::ClassFieldTarget& property, mir::TypeId type) -> mir::Expr;
 
 // A write opened on the object `receiver` reaches, alone, for a write to one of
@@ -33,7 +33,7 @@ namespace lyra::lowering::hir_to_mir {
 // property and ending it tells the object (LRM 9.4.2), and it is dereferenced
 // to the object as the class the property is reached through.
 [[nodiscard]] auto OpenObjectWrite(
-    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver)
     -> mir::ExprId;
 
 // A reference to `property`, holding a value of `type`, of the object
@@ -42,7 +42,7 @@ namespace lyra::lowering::hir_to_mir {
 // lands (LRM 9.4.2), which no write held open around the call that is lent it
 // could do.
 [[nodiscard]] auto PropertyReference(
-    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver,
     const mir::ClassFieldTarget& property, mir::TypeId type) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

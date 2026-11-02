@@ -140,22 +140,6 @@ TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
   }
 }
 
-// The default of `type` stated as a body of the unit. What a verifier holds a
-// stated operation to is the type it is stated for, so a value standing in for
-// one the program computes is the body.
-auto DefaultOf(TypeId type) -> TypeOperation {
-  CallableCode code = CallableCode::Defined(diag::SourceSpan{});
-  code.result_type = type;
-  Builder block(code.Body(), diag::SourceSpan{});
-  block.AppendStmt(
-      ReturnStmt{
-          .value = block.Add(Expr{.data = NullLiteral{}, .type = type})});
-  return TypeOperation{
-      .type = type,
-      .answers = support::BuiltinFn::kDeclaredDefault,
-      .code = std::move(code)};
-}
-
 // A unit whose one body, `f`, is the code `fill` writes into it.
 template <typename Fill>
 auto UnitWithCode(const Fill& fill) -> CompilationUnit {
@@ -164,14 +148,6 @@ auto UnitWithCode(const Fill& fill) -> CompilationUnit {
   CallableCode code = CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
   fill(unit, code);
-  // Every unit states the default of each type an array it holds has as its
-  // element, so one built here does too, whatever its body reaches.
-  for (const TypeId element : ArrayElementTypes(unit.types)) {
-    if (FindTypeOperation(
-            unit, element, support::BuiltinFn::kDeclaredDefault) == nullptr) {
-      unit.type_operations.push_back(DefaultOf(element));
-    }
-  }
   const CallableId id = unit.callables.Add(
       CallableDecl{
           .code = std::move(code),
@@ -1569,18 +1545,13 @@ TEST(MirVerifyTest, ACastReadsAValueAsATypeEveryTargetConvertsItTo) {
       "which a cast does not join");
 }
 
-// A unit states operations only for a type it states them for per unit, and a
-// default for each type an array of it holds, and may for a tuple, each once,
-// and a call names one only where the unit states it.
-TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
-  const auto calling_the_default = [](bool stated) {
-    return UnitWithBody([stated](CompilationUnit& u, Builder body) {
-      const TypeId array = u.types.Intern(
-          Type{UnpackedArrayType{
-              .element_type = u.builtins.int_type, .count = 4}});
-      if (stated) {
-        u.type_operations.push_back(DefaultOf(array));
-      }
+// A call names an operation of a type no declaration states it for only where
+// the type can have one, and no body has to exist for the call to be whole.
+TEST(MirVerifyTest, ACallNamesOnlyAnOperationItsTypeCanHave) {
+  const auto calling = [](const auto& type_of,
+                          support::ValueOperation answers) {
+    return UnitWithBody([&](CompilationUnit& u, Builder body) {
+      const TypeId type = type_of(u);
       body.AppendStmt(
           ExprStmt{
               .expr = body.Add(
@@ -1591,68 +1562,34 @@ TEST(MirVerifyTest, AUnitStatesEachTypeOperationOnceAndCallsOnlyThose) {
                                   Direct{
                                       .target =
                                           TypeOperationTarget{
-                                              .type = array,
-                                              .answers = support::BuiltinFn::
-                                                  kDeclaredDefault}},
+                                              .type = type,
+                                              .answers = answers}},
                               .arguments = {}},
-                      .type = array})});
+                      .type = type})});
     });
   };
+  const auto array = [](CompilationUnit& u) {
+    return u.types.Intern(
+        Type{UnpackedArrayType{
+            .element_type = u.builtins.int_type, .count = 4}});
+  };
+  const auto string_type = [](CompilationUnit& u) { return u.builtins.string; };
+  const auto machine_bool = [](CompilationUnit& u) {
+    return u.builtins.machine_bool;
+  };
+  const auto int_type = [](CompilationUnit& u) { return u.builtins.int_type; };
+  const support::ValueOperation default_value =
+      support::BuiltinFn::kDeclaredDefault;
 
-  EXPECT_NO_THROW(Verify(calling_the_default(true)));
+  EXPECT_NO_THROW(Verify(calling(array, default_value)));
+  EXPECT_NO_THROW(Verify(calling(string_type, default_value)));
+  // What is no data type has no default, and a type whose other operations
+  // are the library's has no other.
   ExpectRefused(
-      calling_the_default(false), "which its unit states no body for");
-
-  // A type no array holds and no tuple has no default stated, and an element
-  // type whose other operations are the library's has no other.
-  CompilationUnit unasked = calling_the_default(true);
-  unasked.type_operations.push_back(DefaultOf(unasked.builtins.string));
+      calling(machine_bool, default_value), "which that type cannot have");
   ExpectRefused(
-      unasked,
-      "an operation is stated for a type whose operations are not stated per "
-      "unit, or a default for a type that states none");
-  CompilationUnit compared = calling_the_default(true);
-  TypeOperation equality = DefaultOf(compared.builtins.int_type);
-  equality.answers = support::ValueOperator::kEquality;
-  compared.type_operations.push_back(std::move(equality));
-  ExpectRefused(
-      compared,
-      "an operation is stated for a type whose operations are not stated per "
-      "unit, or a default for a type that states none");
-
-  CompilationUnit unanswered = calling_the_default(true);
-  std::erase_if(unanswered.type_operations, [&](const TypeOperation& stated) {
-    return stated.type == unanswered.builtins.int_type;
-  });
-  ExpectRefused(
-      unanswered, "the element type of an array has no default stated");
-
-  // A tuple has no declaration to state its default, so the unit may state
-  // one for it and need not -- unless an array holds it, which asks for its
-  // element's default as for any other.
-  CompilationUnit tupled = calling_the_default(true);
-  const TypeId tuple = tupled.types.Intern(
-      Type{TupleType{
-          .elements = {tupled.builtins.int_type, tupled.builtins.string}}});
-  EXPECT_NO_THROW(Verify(tupled));
-  tupled.type_operations.push_back(DefaultOf(tuple));
-  EXPECT_NO_THROW(Verify(tupled));
-  CompilationUnit held_tuple = calling_the_default(true);
-  const TypeId held = held_tuple.types.Intern(
-      Type{TupleType{
-          .elements = {
-              held_tuple.builtins.int_type, held_tuple.builtins.string}}});
-  held_tuple.types.Intern(
-      Type{LibraryType{
-          .decl = support::LibraryDecl::kQueue,
-          .args = {held, support::QueueBound{support::UnboundedQueue{}}}}});
-  ExpectRefused(
-      held_tuple, "the element type of an array has no default stated");
-
-  CompilationUnit twice = calling_the_default(true);
-  twice.type_operations.push_back(
-      DefaultOf(twice.type_operations.front().type));
-  ExpectRefused(twice, "a type has one operation stated twice");
+      calling(int_type, support::ValueOperator::kEquality),
+      "which that type cannot have");
 }
 
 // A block expression's scope ends when it yields, so what it yields refers to

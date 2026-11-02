@@ -58,11 +58,10 @@ auto IndexAtPosition(
 // The loop over an array that numbers its elements: a count of positions, run
 // from the first or from the last.
 auto BuildPositionLoopStmt(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, const WalkedArray& array,
-    mir::TypeId element_type, WalkOrder order,
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    const WalkedArray& array, mir::TypeId element_type, WalkOrder order,
     std::optional<BindingOriginId> index_origin, const EntryVisit& visit)
     -> diag::Result<mir::Stmt> {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
   const mir::TypeId int_type = unit.builtins.int_type;
   const mir::ExprId count = EntryCount(unit, block, array);
@@ -99,11 +98,10 @@ auto BuildPositionLoopStmt(
 // The loop over an associative array of `element` indexed by `key_type`, by
 // its keys, which the index variable holds in turn.
 auto BuildKeyedLoopStmt(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, const WalkedArray& array,
-    mir::TypeId key_type, mir::TypeId element, WalkOrder order,
-    std::optional<BindingOriginId> index_origin, const EntryVisit& visit)
-    -> diag::Result<mir::Stmt> {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    const WalkedArray& array, mir::TypeId key_type, mir::TypeId element,
+    WalkOrder order, std::optional<BindingOriginId> index_origin,
+    const EntryVisit& visit) -> diag::Result<mir::Stmt> {
   mir::Builder block = frame.Builder();
 
   const mir::LocalId key = IndexLocal(frame, index_origin, key_type);
@@ -138,15 +136,15 @@ auto BuildKeyedLoopStmt(
         .owner = in.Builder().LocalPlace(key, key_type), .descent = {}};
   };
   return BuildKeyLoopStmt(
-      unit_lowerer, frame, array_value, key_place, key_type, order, body_scope,
+      unit, frame, array_value, key_place, key_type, order, body_scope,
       walk.Label());
 }
 
 }  // namespace
 
 auto StepToVisited(
-    mir::CompilationUnit& unit, mir::Builder block, const EntryPlace& place,
-    mir::TypeId part_type) -> DescentStep {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const EntryPlace& place, mir::TypeId part_type) -> DescentStep {
   if (place.position.has_value()) {
     return DescentStep{
         .to =
@@ -174,34 +172,33 @@ auto DeclaredRangeOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
 }
 
 auto WalkedArrayAt(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path,
+    const mir::CompilationUnit& unit, const WalkFrame& frame, AccessPath path,
     std::optional<hir::UnpackedRange> declared) -> WalkedArray {
-  const mir::TypeId type =
-      PathValueType(unit_lowerer.Unit(), frame.Builder().Body(), path);
+  const mir::TypeId type = PathValueType(unit, frame.Builder().Body(), path);
   return WalkedArray{
-      .path = SettledForRead(unit_lowerer, frame, std::move(path)),
+      .path = SettledForRead(unit, frame, std::move(path)),
       .type = type,
       .declared = declared};
 }
 
 auto WalkedArrayOf(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId object,
-    std::optional<hir::UnpackedRange> declared) -> WalkedArray {
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::ExprId object, std::optional<hir::UnpackedRange> declared)
+    -> WalkedArray {
   mir::Builder block = frame.Builder();
-  const mir::ExprId lying =
-      mir::ReadIfOverlaid(unit_lowerer.Unit(), block, object);
+  const mir::ExprId lying = mir::ReadIfOverlaid(unit, block, object);
   const mir::TypeId type = block.Get(lying).type;
   const mir::ExprId owner =
       mir::IsPlace(block.Get(lying).data)
           ? lying
           : block.LocalPlace(DeclareLocal(frame, lying), type);
   return WalkedArrayAt(
-      unit_lowerer, frame, AccessPath{.owner = owner, .descent = {}}, declared);
+      unit, frame, AccessPath{.owner = owner, .descent = {}}, declared);
 }
 
 auto EntryCount(
-    mir::CompilationUnit& unit, mir::Builder block, const WalkedArray& array)
-    -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const WalkedArray& array) -> mir::ExprId {
   const auto* fixed = unit.types.Get(array.type).As<mir::UnpackedArrayType>();
   if (fixed != nullptr) {
     const auto size = static_cast<std::int64_t>(fixed->Size());
@@ -221,10 +218,11 @@ auto EntryCount(
 }
 
 auto BuildEntryLoopStmt(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, const WalkedArray& array,
-    WalkOrder order, std::optional<BindingOriginId> index_origin,
-    const EntryVisit& visit) -> diag::Result<mir::Stmt> {
-  const mir::Type& type = unit_lowerer.Unit().types.Get(array.type);
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    const WalkedArray& array, WalkOrder order,
+    std::optional<BindingOriginId> index_origin, const EntryVisit& visit)
+    -> diag::Result<mir::Stmt> {
+  const mir::Type& type = unit.types.Get(array.type);
   const std::optional<mir::TypeId> element = type.ContainerElementType();
   if (!element.has_value()) {
     throw InternalError(
@@ -233,11 +231,10 @@ auto BuildEntryLoopStmt(
   }
   if (const std::optional<mir::TypeId> key_type = type.IndexType()) {
     return BuildKeyedLoopStmt(
-        unit_lowerer, frame, array, *key_type, *element, order, index_origin,
-        visit);
+        unit, frame, array, *key_type, *element, order, index_origin, visit);
   }
   return BuildPositionLoopStmt(
-      unit_lowerer, frame, array, *element, order, index_origin, visit);
+      unit, frame, array, *element, order, index_origin, visit);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

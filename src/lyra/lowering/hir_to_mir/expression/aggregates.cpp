@@ -97,7 +97,7 @@ auto BuildUnpackedConcatSteps(
     std::span<const hir::ExprId> parts, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   UnitLowerer& owner = lowerer.Owner();
-  mir::CompilationUnit& unit = owner.Unit();
+  const mir::CompilationUnit& unit = owner.Unit();
   const mir::Type& result = unit.types.Get(result_type);
   const mir::TypeId element_type =
       RequiredContainerElementType(unit, result_type);
@@ -116,17 +116,17 @@ auto BuildUnpackedConcatSteps(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     const mir::ExprId value = body.Add(*std::move(lowered));
     if (!ContributesItsElements(unit, body.Get(value).type, element_type)) {
-      AppendPushBack(owner, body, appended, queue_type, value);
+      AppendPushBack(owner.Unit(), body, appended, queue_type, value);
       continue;
     }
     const WalkedArray array = WalkedArrayOf(
-        owner, steps.Frame(), value, DeclaredRangeOf(owner, part.type));
+        owner.Unit(), steps.Frame(), value, DeclaredRangeOf(owner, part.type));
     auto walked = BuildEntryLoopStmt(
-        owner, steps.Frame(), array, WalkOrder::kFromFirst, std::nullopt,
+        owner.Unit(), steps.Frame(), array, WalkOrder::kFromFirst, std::nullopt,
         [&](const WalkFrame& at,
             const VisitedEntry& entry) -> diag::Result<void> {
           AppendPushBack(
-              owner, at.Builder(), appended, queue_type, entry.element);
+              owner.Unit(), at.Builder(), appended, queue_type, entry.element);
           return {};
         });
     if (!walked) return std::unexpected(std::move(walked.error()));
@@ -147,7 +147,7 @@ auto LowerHirConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   mir::Builder block = frame.Builder();
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& result_ty = unit.types.Get(result_type);
   // A queue or a dynamic array is grown from the parts, and so is a fixed-size
   // unpacked array where one part spreads, since that part's element count is
@@ -192,7 +192,7 @@ auto LowerHirStreamingConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::StreamingConcatExpr& s)
     -> diag::Result<mir::Expr> {
   mir::Builder block = frame.Builder();
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   // LRM 11.4.14.1: each operand contributes its own bits, appended to the right
   // of what the operands before it contributed, so the first is most
   // significant -- which is the order a join composes in. A `with` takes the
@@ -237,7 +237,7 @@ auto LowerHirReplicationExpr(
   auto concat_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.concat), frame);
   if (!concat_or) return std::unexpected(std::move(concat_or.error()));
   const mir::ExprId concat_id = block.Add(*std::move(concat_or));
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   if (unit.types.Get(result_type).IsIntegral()) {
     return BuildBitsReplication(unit, block.Body(), concat_id, result_type);
   }
@@ -258,8 +258,8 @@ auto LowerHirReplicationExpr(
 }
 
 auto BuildPositionalAggregate(
-    mir::CompilationUnit& unit, const WalkFrame& frame, mir::TypeId result_type,
-    std::vector<mir::ExprId> elements) -> mir::Expr {
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::TypeId result_type, std::vector<mir::ExprId> elements) -> mir::Expr {
   mir::Builder block = frame.Builder();
   const auto& result_ty = unit.types.Get(result_type);
   if (BuildsFromAnElementList(result_ty)) {
@@ -323,7 +323,7 @@ auto BuildKeyedPatternBase(
     hir::TypeId hir_result_type, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   mir::Builder block = frame.Builder();
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   if (!k.default_value.has_value()) {
     return BuildDefaultValueFromHir(lowerer.Owner(), block, hir_result_type);
   }
@@ -365,7 +365,7 @@ auto LowerHirAssignmentPatternKeyedExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternKeyedExpr& k,
     hir::TypeId hir_result_type, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& hir_ty = lowerer.Owner().Hir().types.Get(hir_result_type);
   const mir::TypeId element_type = [&] {
     if (const auto* packed = hir_ty.template As<hir::PackedArrayType>()) {
@@ -426,7 +426,7 @@ auto LowerHirAssignmentPatternReplicationExpr(
     const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   mir::Builder block = frame.Builder();
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto lower_item = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
     auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
@@ -501,7 +501,7 @@ auto LowerHirDynamicArrayNewExpr(
     -> diag::Result<mir::Expr> {
   mir::Builder block = frame.Builder();
   UnitLowerer& unit_lowerer = lowerer.Owner();
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::TypeId element = unit_lowerer.Hir()
                                   .types.Get(hir_result_type)
                                   .template As<hir::DynamicArrayType>()

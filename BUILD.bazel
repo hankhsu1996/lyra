@@ -493,6 +493,7 @@ cc_library(
         ":driver",
         ":lir",
         ":mir",
+        ":mir_transform",
         ":profiling",
         ":runtime",
         ":status",

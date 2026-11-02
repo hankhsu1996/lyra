@@ -21,6 +21,7 @@
 
 #include <slang/driver/Driver.h>
 
+#include "lyra/backend/llvm/type_operation_collector.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -106,7 +107,8 @@ TEST(
   ASSERT_TRUE(design.has_value());
   std::vector<lyra::lir::CompilationUnit> units;
   const auto executable = lyra::compiler::LowerToExecutable(
-      *design, sources, lyra::mir_transform::PassOptions{}, sink, 1,
+      *design, sources, lyra::mir_transform::PassOptions{},
+      lyra::backend::llvm_backend::TypeOperationCollectionOf, sink, 1,
       [](lyra::lir::CompilationUnit unit)
           -> lyra::diag::Result<lyra::lir::CompilationUnit> { return unit; },
       [&](lyra::lir::CompilationUnit unit) {

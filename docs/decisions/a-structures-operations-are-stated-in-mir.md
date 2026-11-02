@@ -134,7 +134,7 @@ call, and so is every whole-value question a structure's own body asks of a memb
   its members are the declaration's. The declaration is settled where its type is first translated,
   and its methods stated beside it once that type is interned, as rustc's derived implementation is
   an item beside the definition it derives from, since a method reaches the record's own members. A
-  fixed-size array has no declaration, and each unit naming one states its operations
+  fixed-size array has no declaration, and each unit reaching one states the operations it reaches
   ([a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)).
 - [a-type-owned-computation-has-no-object](a-type-owned-computation-has-no-object.md) rejected a MIR
   target keyed by a type and a reading, because enumerating the readings would let the source

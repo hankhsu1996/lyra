@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 
@@ -29,7 +30,9 @@ namespace lyra::mir_transform {
 // change or end is one such, so the node is handed what was read rather than
 // what is there by the time it runs (LRM 8.29 reclaims only an object "no
 // longer being used").
-auto OrderEvaluation(mir::CompilationUnit unit) -> mir::CompilationUnit;
+auto OrderEvaluationOnBody(
+    const mir::CompilationUnit& unit, const mir::CodeSource& at,
+    const mir::CallableCode& code) -> std::optional<mir::CallableCode>;
 
 // Which values of one body its frame keeps apart, each held through a box:
 // which of its locals, by their position among them, and which of the values

@@ -35,7 +35,7 @@ auto Call(
 }  // namespace
 
 auto ObjectEventSourceOf(
-    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object)
     -> mir::ExprId {
   return Call(
       unit, block, support::BuiltinFn::kObjectEventSource, std::nullopt, object,
@@ -43,14 +43,14 @@ auto ObjectEventSourceOf(
 }
 
 auto PropertyStorage(
-    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object,
     const mir::ClassFieldTarget& property, mir::TypeId type) -> mir::Expr {
   return mir::MakeFieldAccessExpr(
       BuildObjectDeref(unit, block, object), property, type);
 }
 
 auto OpenObjectWrite(
-    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver)
     -> mir::ExprId {
   return block.Add(
       mir::Expr{
@@ -65,7 +65,7 @@ auto OpenObjectWrite(
 }
 
 auto PropertyReference(
-    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver,
     const mir::ClassFieldTarget& property, mir::TypeId type) -> mir::ExprId {
   const mir::TypeId reference = unit.types.Intern(
       mir::Type{mir::VariableRefType{
