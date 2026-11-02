@@ -117,13 +117,10 @@ class FunctionLowerer {
     std::optional<lir::BlockId> unwind_entry;
   };
 
-  // Where a source local's storage is. A local whose type the runtime holds
-  // values of gets storage of its own among the body's variables, and the
-  // binding names it by its address there, taken where its declaration begins
-  // it -- which is the one storage a reference can bind and the one that
-  // outlives a suspension of the body. A local whose type is stable as it
-  // stands -- an integral value, a pointer, a code reference, a machine scalar
-  // -- is a slot of the body's own frame.
+  // Where a source local's storage is. A cell MIR declared lies among the
+  // body's variables, and the binding names it by its address there, taken
+  // where its declaration begins it. Any other local is a slot of the body's
+  // own frame.
   //
   // Nothing about what the body does with the local is consulted. The two
   // follow from the declared type alone, so a local's storage is settled where
@@ -181,10 +178,9 @@ class FunctionLowerer {
   // nothing.
   auto LowerDiscardedInto(const mir::Block& block, mir::ExprId id)
       -> diag::Result<void>;
-  // A declaration: its initializer is a full-expression, and the value it
-  // settles is the local's -- copied into the variable the local begins, or
-  // taken by the frame slot the local is; either ends with the enclosing
-  // block.
+  // A declaration: a cell begins here and the initialization that follows
+  // fills it; any other local's initializer is a full-expression whose value
+  // the frame slot takes. Either ends with the enclosing block.
   auto DeclareLocal(
       const mir::Block& block, mir::LocalId local, mir::ExprId init)
       -> diag::Result<void>;
@@ -374,28 +370,12 @@ class FunctionLowerer {
   // declares the entry to a call site that writes it out.
   auto LowerCallOperands(const mir::Block& block, const mir::CallExpr& call)
       -> diag::Result<std::vector<lir::Operand>>;
-  // What an access does to the place it names: reads it, writes it whole, or
-  // writes into a part of it. Only the last asks anything of the storage: a
-  // write into what a subscribable cell holds is made through a write opened
-  // on the cell, which tells the cell once what the write did, while reading
-  // it and replacing it whole are the cell's own operations.
-  enum class Reach : std::uint8_t { kRead, kWhole, kInto };
-  // What reaching a part asks of the value holding it: reading a part reads
-  // the holder, and writing a part, whole or in part, writes into the holder.
-  static auto HolderReach(Reach part) -> Reach;
-  // What binding a reference asks of its referent: one read through reads it,
-  // and one written through reaches the whole of it.
-  static auto BorrowReach(mir::Mutability mutability) -> Reach;
-  // Whether the access writes into what the storage holds, which is what a
-  // cell reporting its writes has to be opened for.
-  static auto WritesInto(Reach reach) -> bool;
-  auto LowerPlace(const mir::Block& block, mir::ExprId id, Reach reach)
+  auto LowerPlace(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Place>;
   // The storage a reference names, or why the referent has none. Whether a
   // referent has storage is the target's own fact, so the place side owns that
   // answer and a use in value position reads it.
-  auto ReferencePlace(
-      const mir::ReferenceTarget& target, mir::TypeId type, Reach reach)
+  auto ReferencePlace(const mir::ReferenceTarget& target, mir::TypeId type)
       -> diag::Result<lir::Place>;
   // The storage a program-wide symbol names. The symbol carries the cell's
   // address, so the place opens there and dereferences it -- the same shape a
@@ -419,12 +399,6 @@ class FunctionLowerer {
   // or an owner is reached through, as C++ enters `operator*` on the object.
   auto WrapperOperand(const mir::Block& block, mir::ExprId wrapper)
       -> diag::Result<lir::Operand>;
-  // Opens a write into what a wrapper stands for -- an object held for the rest
-  // of the full-expression, whose end tells the wrapper what the write did --
-  // and answers with the whole of what the wrapper holds, designated within
-  // it. `handle` reaches the wrapper, and `value` is the type of what it holds.
-  auto OpenWrite(lir::Operand handle, lir::TypeId value)
-      -> diag::Result<lir::Operand>;
   // Where a write lands: the part `designation` names, whose value from before
   // the write the write keeps (LRM 4.3), named as the storage a store writes
   // into. `value` is what the part holds.
@@ -434,10 +408,8 @@ class FunctionLowerer {
   auto AddressType(lir::TypeId value) -> lir::TypeId;
   // The place the element `element` reaches lies in: the place holding its
   // receiver, then the step to the element, the receiver evaluated before the
-  // coordinates. Reaching the element for any write is writing into that
-  // place.
-  auto ElementPlace(
-      const mir::Block& block, const mir::CallExpr& element, Reach reach)
+  // coordinates.
+  auto ElementPlace(const mir::Block& block, const mir::CallExpr& element)
       -> diag::Result<lir::Place>;
   // The step a call reaching a part takes into the value it is taken on.
   auto PartStep(const mir::Block& block, const mir::CallExpr& part)
@@ -445,7 +417,7 @@ class FunctionLowerer {
   // The place the value `id` evaluates to is reached in. An expression naming
   // storage names its place; any other value is held in a slot of this frame
   // for the rest of the full-expression, which is then its place.
-  auto PlaceHolding(const mir::Block& block, mir::ExprId id, Reach reach)
+  auto PlaceHolding(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Place>;
   // A slot of this frame holding `value` for the rest of the full-expression.
   auto HeldInSlot(lir::Operand value, lir::TypeId type) -> lir::ValueId;
@@ -567,12 +539,6 @@ class FunctionLowerer {
   // it is a class handle, a pointer, or a write in progress into the object.
   auto ObjectAddress(const mir::Block& block, mir::ExprId reaches)
       -> diag::Result<lir::Operand>;
-  // The place naming the storage a reference binds. It is the same storage a
-  // write to the referent descends into, so what may be lent and what may be
-  // written are one question; only a local the body gave storage of its own is
-  // reached differently, by the handle the body already holds on it.
-  auto LowerCellPlace(const mir::Block& block, mir::ExprId referent)
-      -> diag::Result<lir::Place>;
   auto LowerAssign(const mir::Block& block, const mir::AssignExpr& assign)
       -> diag::Result<lir::Operand>;
   // A method that changes the object it is applied to. The entry changes the
@@ -620,8 +586,8 @@ class FunctionLowerer {
   // A new frame slot of `type`, its bytes in use from here where it is to own
   // what it holds, not yet holding a value.
   auto NewLiveSlot(lir::TypeId type) -> lir::ValueId;
-  // The frame slot a local the body gave no storage of its own becomes, in
-  // use from here and not yet holding a value.
+  // The frame slot a local that is no cell becomes, in use from here and not
+  // yet holding a value.
   auto OpenLocalSlot(mir::LocalId local, lir::TypeId type) -> lir::ValueId;
   auto Load(lir::Place place, lir::TypeId type) -> lir::Operand;
   auto Store(lir::Place place, lir::Operand value) -> lir::Operand;
@@ -654,13 +620,9 @@ class FunctionLowerer {
   // Installs a cell's representation and initial contents, the one write it
   // takes before it will accept a store.
   void InitializeCell(lir::Operand cell, lir::Operand value);
-  // The place an address opens to, and the place reached by opening that in
-  // turn. What the first names is storage, reached through whatever protocol
-  // that storage has rather than by loading it; the second is for an address
-  // whose storage holds a value of its own, where reaching the value takes the
-  // storage's step and then the value's.
+  // The place an address opens to, which is storage, reached through whatever
+  // protocol that storage has rather than by loading it.
   [[nodiscard]] static auto StorageAt(lir::Operand address) -> lir::Place;
-  [[nodiscard]] static auto ValueAt(lir::Operand address) -> lir::Place;
   auto NewBlock() -> lir::BlockId;
   void SetCurrent(lir::BlockId id);
   void Terminate(lir::TerminatorData data);

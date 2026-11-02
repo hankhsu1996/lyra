@@ -1,12 +1,15 @@
 # Cross-suspension value storage: an activation value cell
 
-Date: 2026-07-15 Status: accepted
+Date: 2026-07-15 Status: accepted; superseded 2026-11-01 for every local by
+[a-declared-local-is-storage](a-declared-local-is-storage.md) D2
 
 Since 2026-09-24 a value the generated side makes lives in its own frame rather than in a
 per-stretch arena ([a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md)), so
 the context below describes the store this cell was an answer to, not one that exists. The cell
-itself -- one per value-typed local of a suspending body, owned by the execution -- is unchanged,
-and a load from it builds its copy in the reader's frame.
+itself was then unchanged. Since 2026-11-01 no local lives in one: a variable a process can wait on
+is a cell MIR states, and every other local is a slot of the frame
+([a-declared-local-is-storage](a-declared-local-is-storage.md) D2). A value cell remains what holds
+a task's answer for the caller that awaits it.
 
 ## Context
 
@@ -102,6 +105,9 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
 1. A value whose lifetime crosses a suspension does not live in a per-stretch `GeneratedCallScope`.
    Its storage is an activation-owned cell reached through a frame-held handle.
 
+   **Superseded 2026-11-01:** no local lives in such a cell; what remains is an awaited call's
+   answer.
+
 2. In a suspending body, every value-typed non-managed local and parameter that is not lent is an
    activation cell. The choice is decided from the result type at MIR-to-LIR, never from a
    cross-suspension liveness analysis the emitter runs. A lent local is not one: it lives in a cell
@@ -135,6 +141,9 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
    escape its stretch, are settled in
    [activation-frame-and-transient-scope](activation-frame-and-transient-scope.md).
 
+   **Superseded 2026-11-01:** no local lives in such a cell; what remains is an awaited call's
+   answer.
+
 ## Rejected
 
 - **Native in-frame value layout as the cross-suspension fix.** Laying a value's bytes in the
@@ -153,9 +162,8 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
 
   The other half, the size and alignment per concrete type, was never owed either: a value's size
   follows its type, which the compiler lays out, and temporaries live in the frame on that basis
-  ([a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md)). Whether a value
-  crossing a suspension should live in the frame too is not reopened here; the cell stands because
-  it is the storage a reference binds, not because the frame could not hold the value.
+  ([a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md)). Reopened 2026-11-01:
+  a value crossing a suspension lies in the frame, and a reference binds it there.
 
 - **A backend-private arena for cross-suspension values, invisible to the storage model.** Storage a
   value crosses a suspension in must be a first-class runtime concept the activation owns, not an

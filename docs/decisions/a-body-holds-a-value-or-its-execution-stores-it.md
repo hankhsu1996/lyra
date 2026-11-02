@@ -1,6 +1,9 @@
 # A body holds a value or its execution stores it
 
-Date: 2026-09-17 Status: accepted
+Date: 2026-09-17 Status: accepted. D1 is superseded 2026-11-01: where a local lies follows whether
+MIR states it as a cell ([a-declared-local-is-storage](a-declared-local-is-storage.md) D2), and
+every other local is a slot of the frame whatever its type. The classification of D2 stands, and
+what reads it now is how much of a frame a value takes. D3 and the survey stand.
 
 ## Context
 
@@ -55,7 +58,7 @@ side it is on. A list of the ones somebody remembered answers false for the rest
 a wrong one rather than a refusal: the body goes on holding a handle after what it named is gone.
 
 **D3. A variable naming an object answers a change of which object it names.** A body's variable is
-storage a process may wait on, so D1 puts a handle in a cell that publishes changes -- and LRM 9.4.2
+storage a process may wait on, so a handle lies in a cell that publishes changes -- and LRM 9.4.2
 says exactly what such a wait means: "If the event expression is a reference to a simple object
 handle or `chandle` variable, an event is created when a write to that variable is not equal to its
 previous value." The clause's own example places a wait on a property beside a wait on the handle
@@ -99,15 +102,11 @@ also what root enumeration walks.
 
 ## Invariants
 
-1. A declared variable's storage belongs to the execution that declared it whenever the body does
-   not hold the whole of the variable's value. Neither the body's shape nor what it does with the
-   variable takes part.
-
-2. Which types the body holds the whole of is stated once, as a classification that answers for
+1. Which types the body holds the whole of is stated once, as a classification that answers for
    every type. A question of that kind belongs on the type beside its other named questions rather
    than at the site that asks it.
 
-3. A variable naming an object answers a change of which object it names, and a write naming what it
+2. A variable naming an object answers a change of which object it names, and a write naming what it
    already named is no event. A wait on a property of the object is a different wait.
 
 ## Rejected
@@ -122,7 +121,12 @@ also what root enumeration walks.
   body's slots is the target's, and where it puts each one is its decision, so a reference held
   there is in state nothing can enumerate. It is also measured to be the wrong place already:
   storage put in such a frame was destroyed one step before the frame itself, and a subroutine's
-  `output` came back as a default value with nothing reported.
+  `output` came back as a default value with nothing reported. Taken back 2026-11-01: a declared
+  variable stays a cell, so what moved to the frame is what a body makes for itself, and the first
+  objection holds of every value a running call makes whatever this decides. The second was storage
+  ended ahead of the frame; every way out of a scope now ends what it holds where the scope is left,
+  the abandoned suspension included, and a program killed while parked over such values runs clean
+  under the address sanitizer.
 
 - **A second alternative in the erased value carrier for the monomorphized handle.** A handle's
   value is which object it names; the pointer a target carries beside that is how it reaches a
@@ -134,13 +138,10 @@ also what root enumeration walks.
 
 - A body that takes a handle, waits, and then uses it runs on both targets -- which is what every
   testbench written in classes does, since LRM 8.6 makes every method automatic.
-- A variable of class type is an observable cell, so `@handle` runs. A chandle's is not, and the
-  refusal that stands in front of it now gives the reason that holds rather than the one LRM 9.4.2
-  contradicts.
-- The translation reads a classification rather than keeping its own list, so the shape that gave
-  two wrong answers is gone from this question. The enforcement that would have caught it reaches an
-  enumeration read by `==` and a visit with an unnamed arm, and not a predicate built from a chain
-  of type tests.
+- A variable of class type is an observable cell, so `@handle` runs.
+- The frame-size question reads a classification rather than a list of its own. The enforcement that
+  would have caught it reaches an enumeration read by `==` and a visit with an unnamed arm, and not
+  a predicate built from a chain of type tests.
 
 ## Cross-references
 

@@ -60,9 +60,7 @@ there.**
   (LRM 4.3); what it keeps to say so is the part it lands on
   ([a-write-compares-what-it-reached](a-write-compares-what-it-reached.md)). While a procedural
   continuous assignment is in effect, the write lands where nothing reads it (LRM 10.6), as a
-  whole-value write is discarded. A local whose storage is a cell of the execution's store is opened
-  the same way when a part of it is written, since the cell reports its writes whether or not the
-  source's plain variable says so.
+  whole-value write is discarded.
 - **A store through an element or component step is an assignment into the object there.** It is not
   the end of one object and the start of another, so storage that names the part goes on naming it
   (LRM 7.6).

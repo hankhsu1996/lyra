@@ -38,8 +38,8 @@ auto LayoutOf(
 // offset in storage holding an integral value no wider than a word as its own
 // bytes. Storage that keeps the value's address keeps it at an offset, which is
 // the same whatever the value's type: a net, whose value is its own or that of
-// the object its one driver carries, and a variable or a procedural local
-// laying its value out after itself, where it lies at its end or apart by its
+// the object its one driver carries, and a variable or a value cell laying
+// its value out after itself, where it lies at its end or apart by its
 // size. Nothing for storage whose contents its own access hands out.
 struct ContentsAt {
   std::uint64_t offset;

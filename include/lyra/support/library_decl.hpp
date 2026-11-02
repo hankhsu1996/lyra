@@ -394,7 +394,7 @@ constexpr auto OwnObjectEntries(LibraryDecl decl) -> std::string_view {
 // Whether a value of one lies in storage of its own its holder keeps a claim
 // on -- an object of a value domain -- as opposed to a payload built for the
 // call reading it, storage the runtime keeps, or a reference.
-auto IsRuntimeStoredValue(LibraryDecl decl) -> bool;
+auto IsDomainObject(LibraryDecl decl) -> bool;
 
 // Whether one is storage with no value to read, consumed only where it lies:
 // held by no holder by value, and never moved.

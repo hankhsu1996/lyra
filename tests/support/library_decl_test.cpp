@@ -56,7 +56,7 @@ TEST(LibraryDeclTest, EachDeclarationStatesAConsistentType) {
     // A data type is a value its holder keeps whole, which a copy duplicates
     // and a declared variable starts as something (LRM 6.2, Table 6-7).
     if (d.is_a_data_type) {
-      EXPECT_TRUE(IsRuntimeStoredValue(decl));
+      EXPECT_TRUE(IsDomainObject(decl));
       EXPECT_EQ(d.movability, Movability::kCopyable);
       EXPECT_TRUE(d.default_value.has_value());
     }
