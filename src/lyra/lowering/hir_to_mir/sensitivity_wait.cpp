@@ -68,7 +68,7 @@ auto BodyVariableSource(
         "BodyVariableSource: a wait outside a procedural body named a variable "
         "of one");
   } else {
-    mir::CompilationUnit& unit = lowerer.Owner().Unit();
+    const mir::CompilationUnit& unit = lowerer.Owner().Unit();
     const hir::ProceduralVarDecl& decl =
         lowerer.HirBody().procedural_vars.Get(var.var);
     const WalkFrame block_frame = frame.WithBlock(&block.Body());
@@ -108,8 +108,9 @@ auto BodyVariableSource(
 
 template <typename Lowerer>
 auto BuildObservableCellExpr(
-    mir::Builder block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    Lowerer& lowerer, const hir::ValueTarget& cell) -> mir::ExprId {
+    mir::Builder block, const WalkFrame& frame,
+    const mir::CompilationUnit& unit, Lowerer& lowerer,
+    const hir::ValueTarget& cell) -> mir::ExprId {
   return std::visit(
       Overloaded{
           [&](const hir::RoutedValueRef& reference) -> mir::ExprId {
@@ -155,8 +156,9 @@ namespace {
 // with its address, and a net with what it shows its value through.
 template <typename Lowerer>
 auto BuildObservablePtrExpr(
-    mir::Builder block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    Lowerer& lowerer, const hir::SensitivityEntry& entry) -> mir::ExprId {
+    mir::Builder block, const WalkFrame& frame,
+    const mir::CompilationUnit& unit, Lowerer& lowerer,
+    const hir::SensitivityEntry& entry) -> mir::ExprId {
   const auto address_of_cell =
       [&](const hir::ValueTarget& sealed) -> mir::ExprId {
     const mir::ExprId cell =
@@ -251,8 +253,9 @@ auto WholePlace(const mir::CompilationUnit& unit, mir::Builder block)
 
 template <typename Lowerer>
 auto LeafPartOf(
-    mir::Builder block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    Lowerer& lowerer, const hir::WatchedPart& part) -> diag::Result<LeafPart> {
+    mir::Builder block, const WalkFrame& frame,
+    const mir::CompilationUnit& unit, Lowerer& lowerer,
+    const hir::WatchedPart& part) -> diag::Result<LeafPart> {
   const auto count = [&](std::uint64_t value) {
     return mir::BuildMachineCount(unit, block, value);
   };
@@ -290,9 +293,10 @@ auto LeafPartOf(
 // there is an event, and which bits of that place's packed encoding it reads.
 template <typename Lowerer>
 auto BuildTriggerExpr(
-    mir::Builder block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    Lowerer& lowerer, const hir::SensitivityEntry& entry,
-    mir::LocalId observation) -> diag::Result<mir::ExprId> {
+    mir::Builder block, const WalkFrame& frame,
+    const mir::CompilationUnit& unit, Lowerer& lowerer,
+    const hir::SensitivityEntry& entry, mir::LocalId observation)
+    -> diag::Result<mir::ExprId> {
   const mir::ExprId observable_ptr = block.AsValue(
       unit.types, BuildObservablePtrExpr(block, frame, unit, lowerer, entry));
   auto watched = LeafPartOf(block, frame, unit, lowerer, entry.part);
@@ -357,7 +361,7 @@ template <typename Lowerer>
 auto ReportedCellOf(
     Lowerer& lowerer, const WalkFrame& frame, const hir::SensitivityEntry& cell)
     -> diag::Result<ReportedCell> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Builder block = frame.Builder();
   const mir::ExprId place =
       BuildObservablePtrExpr(block, frame, unit, lowerer, cell);
@@ -385,7 +389,7 @@ void ReportCell(
 // in the local, evaluated into it once.
 template <typename State>
 auto Reported(
-    mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId value,
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId value,
     State state) -> mir::ExprId {
   if (!frame.reports_reached_to.has_value()) {
     return value;
@@ -465,8 +469,8 @@ auto ClosureFrameReportingTo(
 }
 
 auto ReportedObject(
-    mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId object)
-    -> mir::ExprId {
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::ExprId object) -> mir::ExprId {
   return Reported(
       unit, frame, object,
       [&](mir::Builder at, mir::LocalId report, mir::ExprId held) {
@@ -476,7 +480,7 @@ auto ReportedObject(
 }
 
 auto ReportedPlace(
-    mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
     -> mir::ExprId {
   return Reported(
       unit, frame, place,
@@ -651,7 +655,7 @@ auto BuildValueChangeWaitStmt(
 auto HoldImplicitList(
     const WalkFrame& frame, ProcessLowerer& lowerer, const hir::Reads& reads)
     -> diag::Result<mir::LocalId> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Builder block = frame.Builder();
   // A report no evaluation makes, so a function called to report into it runs
   // nothing of its body.
@@ -683,10 +687,10 @@ auto HoldImplicitList(
 
 // One instantiation per lowering a wait is built in.
 template auto BuildObservableCellExpr(
-    mir::Builder, const WalkFrame&, mir::CompilationUnit&, ProcessLowerer&,
-    const hir::ValueTarget&) -> mir::ExprId;
+    mir::Builder, const WalkFrame&, const mir::CompilationUnit&,
+    ProcessLowerer&, const hir::ValueTarget&) -> mir::ExprId;
 template auto BuildObservableCellExpr(
-    mir::Builder, const WalkFrame&, mir::CompilationUnit&,
+    mir::Builder, const WalkFrame&, const mir::CompilationUnit&,
     const StructuralScopeLowerer&, const hir::ValueTarget&) -> mir::ExprId;
 template auto ReportReads(
     ProcessLowerer&, const WalkFrame&, const hir::Reads&, mir::LocalId)

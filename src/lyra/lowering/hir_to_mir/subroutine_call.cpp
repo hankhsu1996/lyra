@@ -815,7 +815,7 @@ auto EmitSubroutineCall(
         auto place_or = LowerLvalue(lowerer, hir_arg, frame);
         if (!place_or) return std::unexpected(std::move(place_or.error()));
         auto actual =
-            ReadThenWrite(lowerer.Owner(), frame, *std::move(place_or));
+            ReadThenWrite(lowerer.Owner().Unit(), frame, *std::move(place_or));
         if (!actual) return std::unexpected(std::move(actual.error()));
         call_args.push_back(
             ConvertToType(unit, block, actual->incoming, formal.type));

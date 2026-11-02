@@ -36,6 +36,7 @@
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/value_build.hpp"
+#include "lyra/mir/verify.hpp"
 #include "lyra/support/library_callback.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -100,13 +101,33 @@ auto TranslateRecordKind(mir::RecordKind kind) -> lir::RecordKind {
   throw InternalError("mir_to_lir: unknown record kind");
 }
 
+// A call of an operation the language does not give its type is a call no
+// program states, so it is the compiler's own defect.
+[[noreturn]] void RefuseOperationNotGiven(support::ValueOperation answers) {
+  throw InternalError(
+      std::format(
+          "mir_to_lir: a call names the operation \"{}\" of a type the "
+          "language gives no such operation -- please report this as a bug",
+          support::ValueOperationName(answers)));
+}
+
 }  // namespace
 
-auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
-  // Every identity the unit will hold is taken before any body is lowered,
-  // because a body may name a function whose own body is lowered later --
-  // including itself, and a body may build a closure whose own body is lowered
-  // after it.
+auto UnitLowerer::LowerUnit(const mir::CompilationUnit& mir)
+    -> diag::Result<UnitLowerer> {
+  mir::RequireLegalized(mir, "mir_to_lir");
+  UnitLowerer lowerer(mir);
+  if (auto populated = lowerer.Populate(); !populated) {
+    return std::unexpected(std::move(populated.error()));
+  }
+  return lowerer;
+}
+
+auto UnitLowerer::Populate() -> diag::Result<void> {
+  // Every identity a declaration gives the unit is taken before any body is
+  // lowered, because a body may name a function whose own body is lowered
+  // later -- including itself, and a body may build a closure whose own body
+  // is lowered after it.
   std::vector<ClassIdentities> classes;
   classes.reserve(mir_->classes.size());
   for (const mir::ClassId id : mir_->classes.Ids()) {
@@ -157,25 +178,6 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     }
     out_.records.Define(RecordDeclaration(id), std::move(lowered));
   }
-  // Each operation a type whose operations the unit states answers is
-  // reserved the same way, since a body of the unit may call it. Two types MIR
-  // tells apart and LIR does not are one representation with one function per
-  // operation, which the first of them states: a type's bodies read only what
-  // LIR keeps of it, so the two bodies are the same.
-  std::vector<const mir::CallableCode*> stating;
-  for (const mir::TypeOperation& stated : mir_->type_operations) {
-    const lir::TypeId type = TranslateType(stated.type);
-    const auto [at, reserved] = type_operation_functions_.try_emplace(
-        std::pair{type, stated.answers}, lir::FunctionId{});
-    if (reserved) {
-      at->second = out_.functions.Declare();
-      out_.type_operations.push_back(
-          lir::TypeOperation{
-              .type = type, .answers = stated.answers, .function = at->second});
-      stating.push_back(&stated.code);
-    }
-  }
-
   // A variable the unit's namespace owns -- a package's (LRM 26.2), a
   // `$unit` scope's (LRM 3.12.1) -- is one cell for the whole program that no
   // instance holds, so the unit publishes it under a symbol instead. Every
@@ -304,23 +306,60 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     out_.closures.Define(ClosureDeclaration(id), std::move(closure));
   }
 
-  // An operation a type with no declaration answers is a function no other
-  // unit names, under a symbol composed from the type and the operation, which
-  // is named once every declaration the type may name is.
-  for (std::size_t i = 0; i < stating.size(); ++i) {
-    const lir::TypeOperation stated = out_.type_operations[i];
+  StateClassSteps();
+  return {};
+}
+
+void UnitLowerer::MarkOperationUsed(const lir::TypeOperation& operation) {
+  const auto stated = mir_type_of_.find(operation.type);
+  if (stated == mir_type_of_.end()) {
+    throw InternalError(
+        std::format(
+            "mir_to_lir: the operation \"{}\" is asked of a type no type of "
+            "the unit's model translates to -- please report this as a bug",
+            support::ValueOperationName(operation.answers)));
+  }
+  if (visited_.insert(operation).second) {
+    pending_.push_back(
+        PendingOperation{.operation = operation, .mir_type = stated->second});
+  }
+}
+
+auto UnitLowerer::StateTypeOperations(const OperationBodyProvider& bodies)
+    -> diag::Result<bool> {
+  std::vector<PendingOperation> pending = std::exchange(pending_, {});
+  for (const auto& [operation, mir_type] : pending) {
+    std::optional<mir::CallableCode> body = bodies(mir_type, operation.answers);
+    const auto called = out_.type_operations.find(operation);
+    if (!body.has_value()) {
+      if (called != out_.type_operations.end()) {
+        RefuseOperationNotGiven(operation.answers);
+      }
+      out_.type_operations.emplace(operation, std::nullopt);
+      continue;
+    }
+    const lir::FunctionId function = called != out_.type_operations.end()
+                                         ? *called->second
+                                         : out_.functions.Declare();
+    out_.type_operations.insert_or_assign(operation, function);
+    // A body no other unit names, under a symbol composed from the type and the
+    // operation.
     auto fn = FunctionLowerer(
-                  *this, *stating[i],
+                  *this, *body,
                   lir::TypeOperationSymbol(
-                      out_.body_name, lir::SymbolPartOf(out_, stated.type),
-                      stated.answers))
+                      out_.body_name, lir::SymbolPartOf(out_, operation.type),
+                      operation.answers))
                   .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    out_.functions.Define(stated.function, *std::move(fn));
+    fn->linkage = lir::Linkage::kInternal;
+    out_.functions.Define(function, *std::move(fn));
   }
+  return !pending.empty();
+}
 
+auto UnitLowerer::Finish() && -> lir::CompilationUnit {
   // An integral constant is its type and its bits here, which is the whole of
   // a value of an integral type.
   base::Translation<lir::IntegralConstantId, lir::IntegralConstantDecl>
@@ -357,8 +396,6 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     tables.Append(std::move(table));
   }
   out_.enum_tables = std::move(tables);
-  StateTypeSteps();
-  StateClassSteps();
   return std::move(out_);
 }
 
@@ -997,16 +1034,19 @@ auto UnitLowerer::RecordDeclaration(mir::RecordId record) const
 
 auto UnitLowerer::TypeOperationFunction(
     mir::TypeId type, support::ValueOperation answers) -> lir::FunctionId {
-  const auto found =
-      type_operation_functions_.find(std::pair{TranslateType(type), answers});
-  if (found != type_operation_functions_.end()) {
-    return found->second;
+  const lir::TypeOperation operation{
+      .type = TranslateType(type), .answers = answers};
+  const auto found = out_.type_operations.find(operation);
+  if (found != out_.type_operations.end()) {
+    if (!found->second.has_value()) {
+      RefuseOperationNotGiven(answers);
+    }
+    return *found->second;
   }
-  throw InternalError(
-      std::format(
-          "mir_to_lir: a call names the operation \"{}\" of a type the unit "
-          "states no such operation for -- please report this as a bug",
-          support::ValueOperationName(answers)));
+  const lir::FunctionId function = out_.functions.Declare();
+  out_.type_operations.emplace(operation, function);
+  MarkOperationUsed(operation);
+  return function;
 }
 
 auto UnitLowerer::MachineBoolType() -> lir::TypeId {

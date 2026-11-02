@@ -22,6 +22,7 @@
 #include "lyra/backend/llvm/machine_signature.hpp"
 #include "lyra/backend/llvm/object_file.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
+#include "lyra/backend/llvm/type_operation_collector.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -2021,9 +2022,11 @@ struct UnitModule {
   backend::llvm_backend::EmittedModule module;
 };
 
-auto EmitUnitModule(const mir::CompilationUnit& unit)
+auto EmitUnitModule(
+    const mir::CompilationUnit& unit, const mir_transform::PassOptions& passes)
     -> diag::Result<UnitModule> {
-  auto lowered = compiler::LowerUnitToExecutable(unit);
+  auto lowered = compiler::LowerUnitToExecutable(
+      unit, passes, backend::llvm_backend::TypeOperationCollectionOf);
   if (!lowered) {
     return std::unexpected(std::move(lowered.error()));
   }
@@ -2102,7 +2105,7 @@ auto ArtifactOf(const driver::ActionResult& object)
 auto BuildUnit(
     const mir::CompilationUnit& unit, const ObjectBuild& build,
     driver::ActionCache& actions) -> diag::Result<BuiltUnit> {
-  auto emitted = EmitUnitModule(unit);
+  auto emitted = EmitUnitModule(unit, build.passes);
   if (!emitted) {
     return std::unexpected(std::move(emitted.error()));
   }
@@ -2136,7 +2139,7 @@ void ProgramSink::Collect(BuiltUnit unit) {
 auto ProgramSink::Finish(
     const mir::CompilationUnit& root, const ObjectBuild& build,
     driver::ActionCache& actions) && -> diag::Result<ProgramObjects> {
-  auto emitted = EmitUnitModule(root);
+  auto emitted = EmitUnitModule(root, build.passes);
   if (!emitted) {
     return std::unexpected(std::move(emitted.error()));
   }

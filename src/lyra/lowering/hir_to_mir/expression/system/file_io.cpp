@@ -279,7 +279,8 @@ auto LowerFileReadCall(
                            unit_lowerer, step_frame, named->path, dest_hir))
                      : LowerLvalue(process, dest_hir, step_frame);
   if (!dest_or) return std::unexpected(std::move(dest_or.error()));
-  auto dest = ReadThenWrite(unit_lowerer, step_frame, *std::move(dest_or));
+  auto dest =
+      ReadThenWrite(unit_lowerer.Unit(), step_frame, *std::move(dest_or));
   if (!dest) return std::unexpected(std::move(dest.error()));
   const CompletionLayout layout = BuildCompletionLayout(
       {CalleeFormal{

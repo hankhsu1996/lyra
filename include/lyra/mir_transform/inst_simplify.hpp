@@ -1,5 +1,9 @@
 #pragma once
 
+#include <optional>
+
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::mir_transform {
@@ -9,6 +13,8 @@ namespace lyra::mir_transform {
 // its first, at the value's own kind of part, is reading the value, and
 // writing them is writing it, so a select of the whole is the whole wherever
 // it stands.
-auto InstSimplify(mir::CompilationUnit unit) -> mir::CompilationUnit;
+auto InstSimplifyOnBody(
+    const mir::CompilationUnit& unit, const mir::CodeSource& at,
+    const mir::CallableCode& code) -> std::optional<mir::CallableCode>;
 
 }  // namespace lyra::mir_transform

@@ -1,8 +1,11 @@
 #include "lyra/lir/verify.hpp"
 
+#include <cstdint>
 #include <gtest/gtest.h>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -12,6 +15,8 @@
 #include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
 namespace {
@@ -232,6 +237,175 @@ TEST(LirVerifyTest, AnElementIsTakenByValueOnlyOfASequenceOfHandles) {
                           .vector = Use{.value = body.x},
                           .index = Use{.value = body.x}}}},
       "a sequence of handles");
+}
+
+// A call of a function of the unit states what the function takes and answers,
+// since below this layer two references are one machine address and a call at
+// the wrong type would still link.
+TEST(LirVerifyTest, ACallStatesWhatTheFunctionItEntersTakesAndAnswers) {
+  // A body calling a function that takes a machine integer and answers a pair
+  // with `args`, keeping the answer at `answered`.
+  const auto calling = [](auto&& args_of, auto&& answered_of,
+                          const std::string& because) {
+    PairBody body;
+    Function callee;
+    callee.name = "callee";
+    callee.result_type = body.pair;
+    callee.params.push_back(callee.values.Add(
+        Local{.name = "p", .type = body.integer, .kind = LocalKind::kParam}));
+    const FunctionId called = body.unit.functions.Add(std::move(callee));
+    const Instr call{
+        .data = AssignInstr{
+            .destination = body.Transient(answered_of(body)),
+            .value = CallInstr{
+                .target = FunctionTarget{.function = called},
+                .args = args_of(body)}}};
+    if (because.empty()) {
+      EXPECT_NO_THROW(body.VerifyRunning(call));
+    } else {
+      ExpectRefused(body, call, because);
+    }
+  };
+  const auto one_integer = [](PairBody& body) {
+    return std::vector<Operand>{Use{.value = body.x}};
+  };
+  const auto a_pair = [](PairBody& body) { return body.pair; };
+  calling(one_integer, a_pair, "");
+  calling(
+      [](PairBody&) { return std::vector<Operand>{}; }, a_pair,
+      "states 0 arguments where it takes 1");
+  calling(
+      [](PairBody& body) {
+        return std::vector<Operand>{Use{.value = body.slot}};
+      },
+      a_pair, "of another type than its parameter");
+  calling(
+      one_integer, [](PairBody& body) { return body.integer; },
+      "at another type than it answers");
+}
+
+// A body of a class hands its own object to what a class it derives from
+// declares, so a receiver meets its parameter as an address of the same kind of
+// any object, and nothing else does.
+TEST(LirVerifyTest, OnlyAReceiverMeetsAnAddressOfAnotherClass) {
+  // A body calling a function of two parameters, `first` and `second`, with
+  // arguments of `first_handed` and `second_handed`.
+  const auto calling = [](auto&& types_of, const std::string& because) {
+    PairBody body;
+    const auto [first, second, first_handed, second_handed] = types_of(body);
+    Function callee;
+    callee.name = "callee";
+    callee.result_type = body.unit.types.Intern(Type{VoidType{}});
+    callee.params.push_back(callee.values.Add(
+        Local{.name = "a", .type = first, .kind = LocalKind::kParam}));
+    callee.params.push_back(callee.values.Add(
+        Local{.name = "b", .type = second, .kind = LocalKind::kParam}));
+    const FunctionId called = body.unit.functions.Add(std::move(callee));
+    const ValueId one = body.fn.values.Add(
+        Local{.name = "p", .type = first_handed, .kind = LocalKind::kParam});
+    const ValueId other = body.fn.values.Add(
+        Local{.name = "q", .type = second_handed, .kind = LocalKind::kParam});
+    const Instr call{
+        .data = AssignInstr{
+            .destination = body.Transient(body.fn.result_type),
+            .value = CallInstr{
+                .target = FunctionTarget{.function = called},
+                .args = {Use{.value = one}, Use{.value = other}}}}};
+    if (because.empty()) {
+      EXPECT_NO_THROW(body.VerifyRunning(call));
+    } else {
+      ExpectRefused(body, call, because);
+    }
+  };
+  const auto object = [](PairBody& body, std::uint32_t id) {
+    return body.unit.types.Intern(
+        Type{ObjectType{.class_id = ClassId{.value = id}}});
+  };
+  const auto address = [](PairBody& body, TypeId pointee,
+                          PointerOwnership ownership) {
+    return body.unit.types.Intern(
+        Type{PointerType{
+            .pointee = pointee,
+            .ownership = ownership,
+            .mutability = Mutability::kReadOnly}});
+  };
+  struct Types {
+    TypeId first;
+    TypeId second;
+    TypeId first_handed;
+    TypeId second_handed;
+  };
+  calling(
+      [&](PairBody& body) {
+        const TypeId base =
+            address(body, object(body, 0), PointerOwnership::kBorrowed);
+        const TypeId derived =
+            address(body, object(body, 1), PointerOwnership::kBorrowed);
+        return Types{base, body.integer, derived, body.integer};
+      },
+      "");
+  calling(
+      [&](PairBody& body) {
+        const TypeId base =
+            address(body, object(body, 0), PointerOwnership::kBorrowed);
+        const TypeId shared =
+            address(body, object(body, 1), PointerOwnership::kShared);
+        return Types{base, body.integer, shared, body.integer};
+      },
+      "of another type than its parameter");
+  calling(
+      [&](PairBody& body) {
+        const TypeId base =
+            address(body, object(body, 0), PointerOwnership::kBorrowed);
+        const TypeId derived =
+            address(body, object(body, 1), PointerOwnership::kBorrowed);
+        return Types{base, base, base, derived};
+      },
+      "of another type than its parameter");
+}
+
+// A type's default is reached through what the type is told to the library by,
+// so no call states what it answers.
+TEST(LirVerifyTest, ATypesDefaultAnswersAValueOfThatType) {
+  const support::ValueOperation default_value =
+      support::BuiltinFn::kDeclaredDefault;
+  CompilationUnit unit;
+  const TypeId integer = unit.types.Intern(
+      Type{MachineIntType{
+          .width = MachineIntWidth::k32, .signedness = Signedness::kSigned}});
+  const TypeId other = unit.types.Intern(
+      Type{MachineIntType{
+          .width = MachineIntWidth::k64, .signedness = Signedness::kSigned}});
+  Function fn;
+  fn.name = "default";
+  fn.result_type = other;
+  fn.blocks.push_back(
+      BasicBlock{.instrs = {}, .terminator = Terminator{.data = ReturnTerm{}}});
+  const FunctionId function = unit.functions.Add(std::move(fn));
+  unit.type_operations.emplace(
+      TypeOperation{.type = integer, .answers = default_value}, function);
+  try {
+    Verify(unit);
+    FAIL() << "a default of another type passed";
+  } catch (const InternalError& refused) {
+    EXPECT_NE(
+        std::string_view{refused.what()}.find("a value of another type"),
+        std::string_view::npos);
+  }
+}
+
+// A unit leaves here complete, so a call naming a function reaches a body.
+TEST(LirVerifyTest, EveryFunctionDeclaredIsDefined) {
+  CompilationUnit unit;
+  unit.functions.Declare();
+  try {
+    Verify(unit);
+    FAIL() << "a declared function with no body passed";
+  } catch (const InternalError& refused) {
+    EXPECT_NE(
+        std::string_view{refused.what()}.find("defines nothing"),
+        std::string_view::npos);
+  }
 }
 
 }  // namespace

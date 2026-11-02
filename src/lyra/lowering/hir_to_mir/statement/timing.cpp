@@ -181,7 +181,7 @@ auto EvaluatedReporting(
         mir::ExprStmt{
             .expr = BuildReportCall(
                 unit, at, report, entry,
-                {at.Add(BuildCurrentRuntimeCallExpr(unit_lowerer))},
+                {at.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()))},
                 unit.builtins.void_type)});
   };
   mir::Builder block = frame.Builder();
@@ -501,7 +501,7 @@ auto BuildDelayWaitStmt(
        .real = support::BuiltinFn::kDelayReal});
 
   const mir::ExprId runtime_id =
-      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
   const mir::ExprId unit_power_id = mir::BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));
   const mir::ExprId precision_power_id = mir::BuildMachineIntLiteral(
@@ -737,7 +737,7 @@ auto BuildTriggerCallExpr(
     UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId event_id)
     -> mir::Expr {
   const mir::ExprId runtime_id =
-      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
   return mir::Expr{
       .data =
           mir::CallExpr{

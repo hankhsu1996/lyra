@@ -33,7 +33,7 @@ auto PositionType(const mir::CompilationUnit& unit) -> mir::TypeId {
 }
 
 auto Arithmetic(
-    mir::CompilationUnit& unit, mir::Builder block, mir::BinaryOp op,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::BinaryOp op,
     mir::ExprId lhs, mir::ExprId rhs) -> mir::ExprId {
   const mir::TypeId type = PositionType(unit);
   return block.Add(mir::MakeBinary(unit, block.Body(), op, lhs, rhs, type));
@@ -42,7 +42,7 @@ auto Arithmetic(
 }  // namespace
 
 auto BuildOrdinalPosition(
-    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId ordinal)
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId ordinal)
     -> mir::ExprId {
   const mir::TypeId type = PositionType(unit);
   if (block.Get(ordinal).type == type) {
@@ -55,7 +55,7 @@ auto BuildOrdinalPosition(
 }
 
 auto BuildPositionSum(
-    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId base,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId base,
     mir::ExprId offset) -> mir::ExprId {
   const mir::ExprId lhs = BuildOrdinalPosition(unit, block, base);
   const mir::ExprId rhs = BuildOrdinalPosition(unit, block, offset);
@@ -132,7 +132,7 @@ auto PositionMapOf(const UnitLowerer& unit_lowerer, hir::TypeId receiver)
 }
 
 auto BuildConstantPosition(
-    mir::CompilationUnit& unit, mir::Builder block, std::int64_t position)
+    const mir::CompilationUnit& unit, mir::Builder block, std::int64_t position)
     -> mir::ExprId {
   return mir::BuildIntegralLiteral(
       unit, block, PositionType(unit),
@@ -164,8 +164,9 @@ auto BuildLeastSignificantBit(
 }
 
 auto WrapIndexAsPosition(
-    mir::CompilationUnit& unit, mir::Builder block, const PositionMap& map,
-    mir::ExprId index, std::int64_t shift) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const PositionMap& map, mir::ExprId index, std::int64_t shift)
+    -> mir::ExprId {
   mir::ExprId position = BuildOrdinalPosition(unit, block, index);
   if (map.reversed) {
     position = Arithmetic(
@@ -190,7 +191,7 @@ auto WrapIndexAsPosition(
 }
 
 auto BuildSpanEnd(
-    mir::CompilationUnit& unit, mir::Builder block, mir::ExprId start,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId start,
     mir::ExprId count, bool up) -> mir::ExprId {
   const mir::ExprId from = BuildOrdinalPosition(unit, block, start);
   const mir::ExprId lhs = BuildOrdinalPosition(unit, block, count);

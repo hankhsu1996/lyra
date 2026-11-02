@@ -142,7 +142,7 @@ auto RunCarrierDetached(
   mir::Builder block = frame.Builder();
   const mir::ExprId started_id = block.Add(std::move(started));
   const mir::ExprId runtime_id =
-      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
   return mir::Expr{
       .data =
           mir::CallExpr{

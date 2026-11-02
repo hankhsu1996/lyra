@@ -47,7 +47,7 @@ auto DistributePacked(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const Lvalue& lvalue,
     const LvalueJoin& join, mir::ExprId value, const ShareSink& sink)
     -> diag::Result<void> {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
   const mir::IntegralType whole = unit.types.Get(lvalue.type).Integral();
   const mir::ExprId held = EvaluatedOnce(
@@ -64,7 +64,7 @@ auto DistributePacked(
     const std::uint64_t width = member_type.Integral().bit_width;
     offset -= width;
     const mir::ExprId bits = block.Add(BuildPackedBitsRead(
-        unit_lowerer, block, held, offset,
+        unit_lowerer.Unit(), block, held, offset,
         mir::PackedVectorOf(unit.types, width, whole.state_kind)));
     auto taken = Distribute(
         unit_lowerer, frame, member,
@@ -79,7 +79,7 @@ auto DistributePacked(
 // are numbered (LRM 10.9.1, 10.9.2). Nothing for an aggregate whose members
 // are not counted by its type.
 auto PatternMemberStep(
-    mir::CompilationUnit& unit, mir::Builder block, mir::TypeId whole,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId whole,
     std::size_t position) -> std::optional<DescentStep> {
   if (const auto components = mir::ProductElements(unit, whole)) {
     return DescentStep{
@@ -105,7 +105,7 @@ auto DistributeUnpacked(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const Lvalue& lvalue,
     const LvalueJoin& join, mir::ExprId value, const ShareSink& sink)
     -> diag::Result<void> {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
   // Each member is taken where it lies in what is distributed; a value that
   // lies nowhere is held in a local first, as a place is needed to step into.
@@ -264,15 +264,14 @@ auto AppendStores(
   const mir::ExprId held = block.LocalPlace(local, block.Get(value).type);
   Lvalue located = lvalue;
   ForEachPlace(located, [&](AccessPath& place) {
-    place = Settled(unit_lowerer, frame, std::move(place));
+    place = Settled(unit_lowerer.Unit(), frame, std::move(place));
   });
   return Distribute(unit_lowerer, frame, located, held, store);
 }
 
 auto ReadThenWrite(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, Lvalue lvalue)
+    const mir::CompilationUnit& unit, const WalkFrame& frame, Lvalue lvalue)
     -> diag::Result<LvalueReadThenWritten> {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
   // What the members of a join hold together is the value the join stands
   // for: their bits end to end, or the aggregate they are the members of.
@@ -280,7 +279,7 @@ auto ReadThenWrite(
     std::vector<mir::ExprId> incoming;
     incoming.reserve(join.members.size());
     for (Lvalue& member : join.members) {
-      auto settled = ReadThenWrite(unit_lowerer, frame, std::move(member));
+      auto settled = ReadThenWrite(unit, frame, std::move(member));
       if (!settled) return std::unexpected(std::move(settled.error()));
       member = std::move(settled->lvalue);
       incoming.push_back(settled->incoming);
@@ -310,7 +309,7 @@ auto ReadThenWrite(
       Overloaded{
           [&](AccessPath& place) -> diag::Result<mir::ExprId> {
             ReadThenWritten settled =
-                ReadThenWrite(unit_lowerer, frame, std::move(place));
+                ReadThenWrite(unit, frame, std::move(place));
             place = std::move(settled.place);
             return settled.incoming;
           },

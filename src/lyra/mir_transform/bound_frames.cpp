@@ -317,10 +317,27 @@ auto BoxedBuild(const mir::CompilationUnit& unit, const mir::ValueBuild& build)
 
 }  // namespace
 
-auto BoundFrames(mir::CompilationUnit unit) -> mir::CompilationUnit {
-  // A capture of a large value is held through its box, as a local is. A
-  // closure is as large as its captures as it holds them, so the fields are
-  // replaced first, before any body asks how large a closure is.
+auto BoundFramesOnBody(
+    const mir::CompilationUnit& unit, const mir::CodeSource& at,
+    const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
+  // A foreign body is entered by the convention its declaration states, which
+  // nothing here changes.
+  if (mir::IsEnteredForeign(unit, at)) {
+    return std::nullopt;
+  }
+  FramePlan plan = PlanFrame(unit, code);
+  const std::optional<mir::CallableCode> given =
+      GiveTemporariesToValuesKeptApart(unit, code, plan);
+  BodyBoxing boxing(unit, given.has_value() ? *given : code, plan.locals_apart);
+  if (!given.has_value() && !boxing.ChangesAnything()) {
+    return std::nullopt;
+  }
+  return boxing.Rewritten();
+}
+
+auto BoundFramesOfDeclarations(mir::CompilationUnit unit)
+    -> mir::CompilationUnit {
+  // A capture of a large value is held through its box, as a local is.
   std::vector<base::Arena<mir::FieldDecl, mir::FieldId>> fields(
       unit.closures.size());
   for (const mir::ClosureId id : unit.closures.Ids()) {
@@ -350,25 +367,7 @@ auto BoundFrames(mir::CompilationUnit unit) -> mir::CompilationUnit {
                 BoxedBuild(unit, cls.object_definition_initializer);
             return cls;
           });
-  return mir::RewriteEachCode(
-      std::move(unit),
-      [](const mir::CompilationUnit& unit, const mir::CodeSource& at,
-         const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
-        // A foreign body is entered by the convention its declaration states,
-        // which nothing here changes.
-        if (mir::IsEnteredForeign(unit, at)) {
-          return std::nullopt;
-        }
-        FramePlan plan = PlanFrame(unit, code);
-        const std::optional<mir::CallableCode> given =
-            GiveTemporariesToValuesKeptApart(unit, code, plan);
-        BodyBoxing boxing(
-            unit, given.has_value() ? *given : code, plan.locals_apart);
-        if (!given.has_value() && !boxing.ChangesAnything()) {
-          return std::nullopt;
-        }
-        return boxing.Rewritten();
-      });
+  return unit;
 }
 
 }  // namespace lyra::mir_transform

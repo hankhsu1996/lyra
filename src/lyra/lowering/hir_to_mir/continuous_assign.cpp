@@ -260,7 +260,7 @@ auto AppendArm(
   auto ticks = PropagationDelayOf(lowerer, frame, delay, changed_to);
   if (!ticks) return std::unexpected(std::move(ticks.error()));
   const mir::ExprId runtime =
-      block.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+      block.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner().Unit()));
   const mir::ExprId precision_power = mir::BuildMachineIntLiteral(
       unit, block,
       std::int64_t{lowerer.HirScope().time_resolution.precision_power});

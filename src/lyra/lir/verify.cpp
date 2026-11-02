@@ -14,10 +14,12 @@
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
+#include "lyra/lir/function_id.hpp"
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
 
@@ -80,11 +82,70 @@ void RequireBitsStoreWellFormed(
   }
 }
 
-// What a call's target requires of the operands the call states. A write of
-// designated bits takes the designation and the bits.
+// Whether `argument` meets `parameter`, the parameter at `position`. A body of
+// a class entering what a class it derives from declares hands its own object,
+// whose class is another type (LRM 8.13), so a receiver is met by an address of
+// the same kind of any object, as MIR leaves a receiver out of what a call
+// meets.
+auto MeetsParameter(
+    const TypePool& types, std::size_t position, TypeId argument,
+    TypeId parameter) -> bool {
+  if (argument == parameter) {
+    return true;
+  }
+  const auto* handed = types.Get(argument).As<PointerType>();
+  const auto* taken = types.Get(parameter).As<PointerType>();
+  return position == 0 && handed != nullptr && taken != nullptr &&
+         handed->ownership == taken->ownership &&
+         types.Get(handed->pointee).Is<ObjectType>() &&
+         types.Get(taken->pointee).Is<ObjectType>();
+}
+
+// A call of a function of this unit states what that function takes and
+// answers. Below this layer two references are one machine address, so nothing
+// later can tell a call of the wrong type from a call of the right one.
+void RequireCallMeetsFunction(
+    const TypePool& types, const Function& caller, const Function& callee,
+    std::span<const Operand> args, TypeId result_type) {
+  if (args.size() != callee.params.size()) {
+    throw InternalError(
+        std::format(
+            "lir verify: a call of '{}' states {} arguments where it takes {}",
+            callee.name, args.size(), callee.params.size()));
+  }
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    const TypeId argument = OperandType(caller, args[i]);
+    const TypeId parameter = callee.values.Get(callee.params[i]).type;
+    if (!MeetsParameter(types, i, argument, parameter)) {
+      throw InternalError(
+          std::format(
+              "lir verify: argument {} of a call of '{}' is of another type "
+              "than its parameter ({} [{}], parameter {} [{}])",
+              i, callee.name, types.Get(argument).KindName(), argument.value,
+              types.Get(parameter).KindName(), parameter.value));
+    }
+  }
+  if (result_type != callee.result_type) {
+    throw InternalError(
+        std::format(
+            "lir verify: a call of '{}' takes its answer at another type than "
+            "it answers",
+            callee.name));
+  }
+}
+
+// What a call's target requires of the operands the call states and of the
+// answer it takes. A write of designated bits takes the designation and the
+// bits.
 void RequireCallWellFormed(
     const CompilationUnit& unit, const Function& fn, const CallTarget& target,
-    std::span<const Operand> args) {
+    std::span<const Operand> args, TypeId result_type) {
+  if (const auto* called = std::get_if<FunctionTarget>(&target)) {
+    RequireCallMeetsFunction(
+        unit.types, fn, unit.functions.Get(called->function), args,
+        result_type);
+    return;
+  }
   const auto* bits = std::get_if<DesignatedBitsTarget>(&target);
   if (bits == nullptr) {
     return;
@@ -177,19 +238,6 @@ auto HoldsNothingYet(
   }
   return allocated.at(base->value.value) && place.chain.size() == 1 &&
          std::holds_alternative<DerefProjection>(place.chain.front());
-}
-
-// The type of the value an assignment puts where `destination` says.
-auto DestinationType(
-    const CompilationUnit& unit, const Function& fn,
-    const Destination& destination) -> TypeId {
-  return std::visit(
-      Overloaded{
-          [&](const Transient& defined) {
-            return fn.values.Get(defined.value).type;
-          },
-          [&](const Place& place) { return PlaceType(unit, fn, place); }},
-      destination);
 }
 
 // A value is put into storage only where it is made, and only into storage
@@ -397,7 +445,8 @@ void VerifyRvalue(
             }
           },
           [&](const CallInstr& call) {
-            RequireCallWellFormed(unit, fn, call.target, call.args);
+            RequireCallWellFormed(
+                unit, fn, call.target, call.args, result_type);
           },
           [](const ProductInstr&) {},
           [&](const ClosureInstr& built) {
@@ -472,6 +521,20 @@ void VerifyLandings(const Function& fn) {
   }
 }
 
+// A type's default is reached through what the type is told to the library by,
+// with no call stating what it answers.
+void VerifyDefaults(const CompilationUnit& unit) {
+  for (const auto& [operation, function] : unit.type_operations) {
+    if (function.has_value() &&
+        operation.answers ==
+            support::ValueOperation{support::BuiltinFn::kDeclaredDefault} &&
+        unit.functions.Get(*function).result_type != operation.type) {
+      throw InternalError(
+          "lir verify: a type's default answers a value of another type");
+    }
+  }
+}
+
 void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
   const auto in_function = diag::FailureContext::InFunction(fn.name);
   const bool is_coroutine = unit.types.Get(fn.result_type).Is<CoroutineType>();
@@ -485,7 +548,9 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
     if (const auto* call = std::get_if<InvokeTerm>(&block.terminator.data)) {
       RequireInitializes(
           unit, fn, allocated, call->destination, CallMakesValue(call->target));
-      RequireCallWellFormed(unit, fn, call->target, call->args);
+      RequireCallWellFormed(
+          unit, fn, call->target, call->args,
+          DestinationType(unit, fn, call->destination));
     }
     // Only a body whose call protocol is the coroutine one can hand control
     // back to the scheduler; a suspension anywhere else has no one to resume
@@ -508,9 +573,19 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
 }  // namespace
 
 void Verify(const CompilationUnit& unit) {
-  for (const Function& fn : unit.functions) {
-    VerifyFunction(unit, fn);
+  for (const FunctionId id : unit.functions.Ids()) {
+    if (!unit.functions.IsDefined(id)) {
+      throw InternalError(
+          std::format(
+              "lir verify: unit '{}' declares function {} and defines nothing "
+              "for it -- please report this as a bug",
+              unit.body_name, id.value));
+    }
   }
+  for (const FunctionId id : unit.functions.Ids()) {
+    VerifyFunction(unit, unit.functions.Get(id));
+  }
+  VerifyDefaults(unit);
 }
 
 }  // namespace lyra::lir

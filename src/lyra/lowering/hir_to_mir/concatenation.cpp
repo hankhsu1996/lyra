@@ -41,7 +41,7 @@ auto JoinedBitsType(
 }
 
 auto BuildBitsJoin(
-    mir::CompilationUnit& unit, mir::Builder block, mir::LocalId joined,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId joined,
     std::span<const mir::ExprId> parts) -> mir::ExprId {
   const mir::TypeId type = JoinedBitsType(unit, block.Body(), parts);
   block.AppendStmt(
@@ -74,7 +74,7 @@ auto BuildBitsJoin(
 }
 
 auto BuildBitsJoin(
-    mir::CompilationUnit& unit, const WalkFrame& frame,
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
     std::span<const mir::ExprId> parts) -> mir::ExprId {
   mir::Builder block = frame.Builder();
   return BuildBitsJoin(

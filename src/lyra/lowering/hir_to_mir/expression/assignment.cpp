@@ -319,7 +319,7 @@ auto StoreOf(
     return AssignedStore{.target = std::move(target), .stored = rhs};
   }
   ReadThenWritten settled =
-      ReadThenWrite(unit_lowerer, frame, std::move(target));
+      ReadThenWrite(unit_lowerer.Unit(), frame, std::move(target));
   const mir::ExprId applied = AppliedTo(
       unit_lowerer.Unit(), frame.Builder(), *assign.compound,
       unit_lowerer.TranslateType(assign.compound->applied_at), settled.incoming,
@@ -345,7 +345,8 @@ auto StepJoin(
   mir::Builder block = frame.Builder();
   auto lvalue = LowerLvalue(lowerer, target, frame);
   if (!lvalue) return std::unexpected(std::move(lvalue.error()));
-  auto settled = ReadThenWrite(lowerer.Owner(), frame, *std::move(lvalue));
+  auto settled =
+      ReadThenWrite(lowerer.Owner().Unit(), frame, *std::move(lvalue));
   if (!settled) return std::unexpected(std::move(settled.error()));
   const mir::TypeId stepped_at = type.value_or(settled->lvalue.type);
   const mir::ExprId before = EvaluatedOnce(
@@ -380,7 +381,7 @@ auto AssignToJoin(
   // An assignment operator applies to what the members hold together, with
   // every member settled once for the read and the write (LRM 11.4.1).
   if (assign.compound.has_value()) {
-    auto settled = ReadThenWrite(unit_lowerer, frame, std::move(lvalue));
+    auto settled = ReadThenWrite(unit_lowerer.Unit(), frame, std::move(lvalue));
     if (!settled) return std::unexpected(std::move(settled.error()));
     lvalue = std::move(settled->lvalue);
     stored = AppliedTo(
@@ -517,7 +518,7 @@ auto LowerHirIncDecWrite(
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   // The target is settled once for the read and the write (LRM 11.4.2).
   const ReadThenWritten settled =
-      ReadThenWrite(lowerer.Owner(), frame, *std::move(target_or));
+      ReadThenWrite(lowerer.Owner().Unit(), frame, *std::move(target_or));
   const mir::TypeId type = block.Get(settled.incoming).type;
   return BuildStoreExpr(
       unit, block, settled.place,
@@ -547,8 +548,8 @@ auto LowerHirIncDecExpr(
   // The value before the step and the value after it are both held, since a
   // postfix form yields the first and the write stores the second (LRM
   // 11.4.2), and the target is settled once for the read and the write.
-  const ReadThenWritten settled =
-      ReadThenWrite(lowerer.Owner(), steps.Frame(), *std::move(target_or));
+  const ReadThenWritten settled = ReadThenWrite(
+      lowerer.Owner().Unit(), steps.Frame(), *std::move(target_or));
   const mir::LocalId before = steps.DeclareLocal(
       result_type, ConvertToType(unit, body, settled.incoming, result_type));
   const auto read = [&](mir::LocalId local) {

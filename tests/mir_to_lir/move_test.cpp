@@ -11,7 +11,6 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/verify.hpp"
-#include "lyra/lowering/mir_to_lir/lower.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -22,6 +21,7 @@
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "tests/mir_to_lir/lowered.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 namespace {
@@ -170,7 +170,7 @@ auto NamedBody(const lir::CompilationUnit& unit) -> const lir::Function* {
 // source, ending, releases nothing. A read leaves two values, each ended.
 TEST(MirToLirMoveTest, AMovedValueIsEndedByWhatTookItAndNotByItsSource) {
   const diag::Result<lir::CompilationUnit> moved =
-      LowerUnit(UnitTakingASharedPointer(true));
+      Lowered(UnitTakingASharedPointer(true));
   ASSERT_TRUE(moved.has_value());
   EXPECT_NO_THROW(lir::Verify(*moved));
   const lir::Function* moving = NamedBody(*moved);
@@ -181,7 +181,7 @@ TEST(MirToLirMoveTest, AMovedValueIsEndedByWhatTookItAndNotByItsSource) {
   EXPECT_EQ(after_move.ended, std::set{*after_move.taker});
 
   const diag::Result<lir::CompilationUnit> read =
-      LowerUnit(UnitTakingASharedPointer(false));
+      Lowered(UnitTakingASharedPointer(false));
   ASSERT_TRUE(read.has_value());
   const lir::Function* reading = NamedBody(*read);
   ASSERT_NE(reading, nullptr);

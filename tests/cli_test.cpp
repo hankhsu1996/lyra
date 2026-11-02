@@ -3055,6 +3055,63 @@ TEST(LyraCommandLine, RefusesAPlaceItCannotWriteBeforeReadingTheDesign) {
       << "something besides the three files named was left beside them";
 }
 
+// How many operations of arrays the unit `Test` of a design has built for it.
+auto ArrayOperationsBuiltFor(const std::string& design) -> std::uint64_t {
+  const auto lyra = ResolveLyra();
+  auto tmp_or = MakeScratchDir();
+  EXPECT_TRUE(tmp_or.has_value());
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << design;
+  const auto stats_path = *tmp_or / "stats.json";
+  const std::vector<std::string> args = {
+      "build",
+      "--backend",
+      "llvm",
+      "--top",
+      "Test",
+      "-o",
+      (*tmp_or / "program").string(),
+      "--cache-dir",
+      (*tmp_or / "cache").string(),
+      "--stats-file",
+      stats_path.string(),
+      src.string()};
+  const auto built = RunChildProcess(lyra, args);
+  EXPECT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
+  std::uint64_t operations = 0;
+  for (const nlohmann::json& body : ReadJson(stats_path).at("bodies")) {
+    if (body.at("name") != "Test") continue;
+    operations += body.at("counts")
+                      .at("lir")
+                      .at("type operations of arrays")
+                      .get<std::uint64_t>();
+  }
+  return operations;
+}
+
+// An array only held asks whether a write changed it and how one starts, and
+// nothing that compares or streams it, whether it lies in a variable's cell or,
+// too large for a frame, through an owning pointer. Comparing one is what asks
+// for the rest.
+TEST(LyraBuild, AnArrayOnlyHeldHasNoComparisonOrStreamBuilt) {
+  const std::uint64_t none =
+      ArrayOperationsBuiltFor("module Test; initial $display(1); endmodule\n");
+  const std::uint64_t held = ArrayOperationsBuiltFor(
+      "module Test; int a[4]; initial a[1] = 1; endmodule\n");
+  EXPECT_EQ(held, none + 2);
+  const std::uint64_t written_whole = ArrayOperationsBuiltFor(
+      "module Test; int a[4]; int b[4]; initial a = b; endmodule\n");
+  EXPECT_EQ(written_whole, none + 2);
+  const std::uint64_t in_a_box = ArrayOperationsBuiltFor(
+      "module Test; initial begin int a[1000000]; a[1] = 1; end endmodule\n");
+  EXPECT_EQ(in_a_box, none + 2);
+  const std::uint64_t compared = ArrayOperationsBuiltFor(
+      "module Test; int a[4]; int b[4];\n"
+      "  initial if (a == b) $display(1);\n"
+      "endmodule\n");
+  EXPECT_GT(compared, none + 2);
+}
+
 // A host compiler that says it started and then never finishes, so a build
 // reaches the tool and stays there.
 auto WriteCompilerThatNeverFinishes(

@@ -817,9 +817,9 @@ void VerifyTypeArguments(
   }
 }
 
-// A call naming an operation of a type the unit states per type, or a method of
-// a record the unit declares, names a body the unit states; one naming another
-// leaves the call bound to nothing.
+// A call naming a method of a record the unit declares names one its
+// declaration states, and one naming an operation stated per type names a type
+// that can have it; another leaves the call bound to nothing.
 void VerifyTypeOperationCalls(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   for (const ExprId id : block.exprs.Ids()) {
@@ -850,12 +850,13 @@ void VerifyTypeOperationCalls(
     }
     const auto* target = std::get_if<TypeOperationTarget>(&direct->target);
     if (target != nullptr &&
-        FindTypeOperation(unit, target->type, target->answers) == nullptr) {
+        !TypeOperationKindOf(unit.types, target->type, target->answers)
+             .has_value()) {
       throw InternalError(
           std::format(
               "mir verify: {} calls the operation \"{}\" of type {} "
-              "(expression {} of its block), which its unit states no body "
-              "for -- please report this as a bug",
+              "(expression {} of its block), which that type cannot have -- "
+              "please report this as a bug",
               describe(), support::ValueOperationName(target->answers),
               target->type.value, id.value));
     }
@@ -1409,10 +1410,10 @@ auto CodeEntered(const CompilationUnit& unit, const Direct& direct)
             }
             return nullptr;
           },
-          [&](const TypeOperationTarget& t) -> const CallableCode* {
-            const TypeOperation* operation =
-                FindTypeOperation(unit, t.type, t.answers);
-            return operation == nullptr ? nullptr : &operation->code;
+          // Such a body is built once something below this layer finds it
+          // is needed, so no unit holds one.
+          [](const TypeOperationTarget&) -> const CallableCode* {
+            return nullptr;
           },
           [](const ExternalBringUpTarget&) -> const CallableCode* {
             return nullptr;
@@ -2454,9 +2455,9 @@ void VerifyMovesAreLastUses(
 // report: the check runs over every body of every unit, and composing a name
 // for each one costs more than the check itself.
 void VerifyCode(
-    const CompilationUnit& unit, const CallableCode& code,
+    const CompilationUnit& unit, Phase phase, const CallableCode& code,
     const auto& describe) {
-  switch (unit.phase) {
+  switch (phase) {
     case Phase::kBuilt:
       break;
     case Phase::kLegalized:
@@ -3230,67 +3231,6 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
   }
 }
 
-// Every element type of an array -- fixed-size, dynamic, associative or a
-// queue -- has its default stated, since the code holding the array asks for
-// it by the element type alone (LRM 7.4.5), and a tuple may have one; a type
-// whose operations are stated per unit has
-// its other operations stated; an array of any kind may have its passage into
-// and out of the form of it with no queue bounded stated (LRM 7.6, 7.10.5);
-// and no other type has any. A pair stated twice leaves which body answers to
-// chance.
-void VerifyTypeOperations(const CompilationUnit& unit, std::string_view when) {
-  const auto refuse = [&](TypeId type, std::string_view defect) {
-    throw InternalError(
-        std::format(
-            "mir verify: in unit '{}', {}, {} (type {}) -- please report this "
-            "as a bug",
-            unit.name, when, defect, DumpType(unit, type)));
-  };
-  const support::ValueOperation default_value =
-      support::BuiltinFn::kDeclaredDefault;
-  const std::vector<TypeId> elements = ArrayElementTypes(unit.types);
-  std::vector<bool> may_state_default(unit.types.size(), false);
-  for (const TypeId type : elements) {
-    may_state_default[type.value] = true;
-  }
-  for (const TypeId type : unit.types.Ids()) {
-    if (unit.types.Get(type).Is<TupleType>()) {
-      may_state_default[type.value] = true;
-    }
-  }
-  const auto is_bound_free_passage = [&](const TypeOperation& stated) {
-    return unit.types.Get(stated.type).ContainerElementType().has_value() &&
-           (stated.answers ==
-                support::ValueOperation{support::BuiltinFn::kToBoundFree} ||
-            stated.answers ==
-                support::ValueOperation{support::BuiltinFn::kFromBoundFree});
-  };
-  std::set<std::pair<TypeId, support::ValueOperation>> answered;
-  for (const TypeOperation& stated : unit.type_operations) {
-    if (!OperationsStatedPerUnit(unit.types.Get(stated.type)).has_value() &&
-        !is_bound_free_passage(stated) &&
-        (stated.answers != default_value ||
-         !may_state_default[stated.type.value])) {
-      refuse(
-          stated.type,
-          "an operation is stated for a type whose operations are not stated "
-          "per unit, or a default for a type that states none");
-    }
-    if (!answered.emplace(stated.type, stated.answers).second) {
-      refuse(stated.type, "a type has one operation stated twice");
-    }
-    if (stated.answers == default_value &&
-        stated.code.result_type != stated.type) {
-      refuse(stated.type, "a type's default answers a value of another type");
-    }
-  }
-  for (const TypeId type : elements) {
-    if (!answered.contains({type, default_value})) {
-      refuse(type, "the element type of an array has no default stated");
-    }
-  }
-}
-
 }  // namespace
 
 auto EvaluatesNothing(const Block& block, ExprId id) -> bool {
@@ -3315,17 +3255,24 @@ void RequireLegalized(const CompilationUnit& unit, std::string_view reader) {
   }
 }
 
+void VerifyBody(
+    const CompilationUnit& unit, Phase phase, const CodeSource& at,
+    const CallableCode& code, std::string_view when) {
+  VerifyCode(unit, phase, code, [&unit, &at, when] {
+    return std::format("{}, {}", Describe(unit, at), when);
+  });
+}
+
 void Verify(const CompilationUnit& unit, std::string_view when) {
   VerifyLibraryTypes(unit, when);
   VerifyDeclaredEntries(unit, when);
-  VerifyTypeOperations(unit, when);
   const auto describer = [&](const CodeSource& at) {
     return [&unit, &at, when] {
       return std::format("{}, {}", Describe(unit, at), when);
     };
   };
   ForEachCode(unit, [&](const CodeSource& at, const CallableCode& code) {
-    VerifyCode(unit, code, describer(at));
+    VerifyCode(unit, unit.phase, code, describer(at));
   });
   for (const ClassId id : unit.classes.Ids()) {
     const Class& cls = unit.GetClass(id);

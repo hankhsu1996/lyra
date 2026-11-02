@@ -14,7 +14,7 @@ namespace lyra::lowering::hir_to_mir {
 // to the back of the queue held in `queue`, which then holds it to its bound
 // (LRM 7.10.2.7).
 void AppendPushBack(
-    UnitLowerer& unit_lowerer, mir::Builder block, mir::LocalId queue,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId queue,
     mir::TypeId queue_type, mir::ExprId value);
 
 }  // namespace lyra::lowering::hir_to_mir

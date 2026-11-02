@@ -241,8 +241,8 @@ auto LowerScanSystemSubroutineCall(
       throw InternalError(
           "LowerScanSystemSubroutineCall: $fscanf fd is not packed-integer");
     }
-    const mir::ExprId runtime_id =
-        scan_body_builder.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+    const mir::ExprId runtime_id = scan_body_builder.Add(
+        BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
     const mir::ExprId files_id = scan_body_builder.Add(
         mir::Expr{
             .data =

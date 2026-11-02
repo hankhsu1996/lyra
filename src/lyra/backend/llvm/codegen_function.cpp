@@ -43,7 +43,8 @@ CodeGenFunction::CodeGenFunction(CodeGenModule& module, lir::FunctionId id)
       fn_(&module.Unit().functions.Get(id)),
       value_(module.UnitFunction(id)),
       builder_(module.Context()),
-      arranger_(module, *fn_) {
+      lowering_(module.Unit(), *fn_),
+      arranger_(module, lowering_) {
 }
 
 auto CodeGenFunction::IsCoroutine() const -> bool {
@@ -182,13 +183,14 @@ auto CodeGenFunction::ResolveDestination(const lir::Destination& destination)
             return PendingOperand{.value = defined.value};
           },
           [&](const lir::Place& place) -> diag::Result<DestinationRef> {
-            auto address = ResolvePlaceAddress(place, Access::kWrite);
+            auto address = ResolvePlaceAddress(place, PlaceAccess::kWrite);
             if (!address) {
               return std::unexpected(std::move(address.error()));
             }
             return PlaceRef{
                 .address = *address,
-                .type = ReachedType(place, std::ssize(place.chain))};
+                .type = lir::PlaceTypeBefore(
+                    module_->Unit(), *fn_, place, std::ssize(place.chain))};
           }},
       destination);
 }
@@ -239,14 +241,15 @@ void CodeGenFunction::StoreInto(
 }
 
 auto CodeGenFunction::Addresses(std::size_t count) const
-    -> std::vector<ArgAbi> {
-  return std::vector<ArgAbi>(
+    -> std::vector<LlvmArgAbi> {
+  return std::vector<LlvmArgAbi>(
       count, CallArranger::Direct(module_->Types().Ptr()));
 }
 
 auto CodeGenFunction::CallEntry(
-    std::string_view symbol, llvm::Type* result, std::vector<ArgAbi> arranged,
-    std::span<llvm::Value* const> args) -> llvm::Value* {
+    std::string_view symbol, llvm::Type* result,
+    std::vector<LlvmArgAbi> arranged, std::span<llvm::Value* const> args)
+    -> llvm::Value* {
   return builder_.CreateCall(
       module_->RuntimeFunction(
           symbol, CallArranger::Arrange(
@@ -255,7 +258,7 @@ auto CodeGenFunction::CallEntry(
 }
 
 auto CodeGenFunction::BuildInto(
-    std::string_view symbol, std::vector<ArgAbi> arranged,
+    std::string_view symbol, std::vector<LlvmArgAbi> arranged,
     std::vector<llvm::Value*> args, llvm::Value* out) -> llvm::Value* {
   args.push_back(out);
   builder_.CreateCall(
@@ -422,34 +425,15 @@ auto CodeGenFunction::LowerBeginVariable(const lir::BeginVariableInstr& begun)
 auto CodeGenFunction::StorageAtPlace(const lir::Place& place)
     -> diag::Result<NamedStorage> {
   const lir::TypeId type = lir::PlaceType(module_->Unit(), *fn_, place);
-  auto address = ResolvePlaceAddress(place, Access::kRead);
+  auto address = ResolvePlaceAddress(place, PlaceAccess::kRead);
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
-  const lir::Type& stated = module_->Unit().types.Get(type);
-  if (stated.RuntimeClassOf().has_value() || stated.Is<lir::ObjectType>()) {
-    return NamedStorage{.type = type, .storage = std::nullopt, .at = *address};
-  }
-  MemberSlotRole role = MemberSlotRole::kVariable;
-  if (!place.chain.empty()) {
-    if (const auto* member =
-            std::get_if<lir::MemberProjection>(&place.chain.back())) {
-      const std::optional<lir::TypeDeclaration> declaration =
-          module_->Unit().types.Get(member->member.declared_by).Declaration();
-      if (declaration.has_value()) {
-        role = MemberSlotRoleOf(*declaration);
-      }
-    }
-  }
-  const std::optional<support::DeclaredMemberStorage> storage =
-      DeclaredStorageOf(module_->Unit(), type, role);
+  auto storage = lowering_.StorageAt(place);
   if (!storage) {
-    return diag::Fail(
-        diag::DiagCode::kUnsupportedTypeKind,
-        "storage of type '{}' is not yet supported with '--backend llvm'",
-        stated.KindName());
+    return std::unexpected(std::move(storage.error()));
   }
-  return NamedStorage{.type = type, .storage = storage, .at = *address};
+  return NamedStorage{.type = type, .storage = *storage, .at = *address};
 }
 
 auto CodeGenFunction::LowerBeginStorage(const lir::BeginStorageInstr& begun)

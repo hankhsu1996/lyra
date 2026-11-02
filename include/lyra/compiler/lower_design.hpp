@@ -174,14 +174,15 @@ auto LowerToSemantic(
 template <typename Produce, typename Consume>
 auto LowerToExecutable(
     ElaboratedDesign& design, const diag::SourceManager& sources,
-    const mir_transform::PassOptions& passes, diag::DiagnosticSink& sink,
+    const mir_transform::PassOptions& passes,
+    const TypeOperationCollection& collection, diag::DiagnosticSink& sink,
     std::size_t width, Produce produce, Consume consume)
     -> std::optional<ExecutableDesign> {
   using Produced = std::invoke_result_t<Produce, lir::CompilationUnit>;
   auto semantic = LowerToSemantic(
       design, sources, passes, sink, width,
       [&](mir::CompilationUnit unit) -> Produced {
-        auto executable = LowerUnitToExecutable(unit);
+        auto executable = LowerUnitToExecutable(unit, passes, collection);
         if (!executable) {
           return std::unexpected(std::move(executable.error()));
         }
@@ -195,7 +196,7 @@ auto LowerToExecutable(
   const auto in_unit = diag::FailureContext::InUnit(kDesignRootUnitName);
   auto root = [&] {
     const profiling::StageScope stage("lower root to LIR");
-    return LowerUnitToExecutable(semantic->root);
+    return LowerUnitToExecutable(semantic->root, passes, collection);
   }();
   if (!root) {
     sink.Report(std::move(root.error()));

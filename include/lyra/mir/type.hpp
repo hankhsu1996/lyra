@@ -19,6 +19,7 @@
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/library_type.hpp"
 #include "lyra/support/movability.hpp"
+#include "lyra/support/value_operation.hpp"
 #include "lyra/value/integral_fwd.hpp"
 
 namespace lyra::mir {
@@ -697,15 +698,33 @@ using TypePool = base::Interner<Type, TypeId, Type::Hash>;
 // the program around it is not.
 [[nodiscard]] auto IsDataType(const TypePool& types, TypeId type) -> bool;
 
-// The kinds of type each unit naming one states the operations of itself: a
-// fixed-size unpacked array, which the language identifies by its element and
-// its range rather than by a declaration (LRM 6.22.1 f), and a tuple, which is
-// identified by its components, so no declaration states them once for every
-// unit, as a structure's and a union's does.
-enum class StatedPerUnit : std::uint8_t { kFixedArray, kTuple };
+// The kinds of type whose operations are built from their parts for each unit
+// using one: a fixed-size unpacked array, which the language identifies by its
+// element and its range rather than by a declaration (LRM 6.22.1 f), and a
+// tuple, which is identified by its components, so no declaration states them
+// once for every unit, as a structure's and a union's does.
+enum class StructuralOperationsType : std::uint8_t { kFixedArray, kTuple };
 
 // Which of those kinds `type` is, and nothing for every other type.
-[[nodiscard]] auto OperationsStatedPerUnit(const Type& type)
-    -> std::optional<StatedPerUnit>;
+[[nodiscard]] auto StructuralOperationsTypeOf(const Type& type)
+    -> std::optional<StructuralOperationsType>;
+
+// What the body of an operation of a type no declaration states it for is built
+// from: an array's passage into or out of the form of it with no queue bounded
+// (LRM 7.6, 7.10.5), the parts of a value no declaration states operations for,
+// or the default of a data type, which code holding an array asks for by the
+// element type alone (LRM 7.4.5).
+enum class TypeOperationKind : std::uint8_t {
+  kToBoundFree,
+  kFromBoundFree,
+  kStructural,
+  kDefault
+};
+
+// Which of those `answers` is at `type`, and nothing where no unit can state
+// it.
+[[nodiscard]] auto TypeOperationKindOf(
+    const TypePool& types, TypeId type, support::ValueOperation answers)
+    -> std::optional<TypeOperationKind>;
 
 }  // namespace lyra::mir

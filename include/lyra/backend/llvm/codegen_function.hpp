@@ -14,7 +14,7 @@
 
 #include "lyra/backend/llvm/codegen_module.hpp"
 #include "lyra/backend/llvm/codegen_value_type.hpp"
-#include "lyra/backend/llvm/fn_abi.hpp"
+#include "lyra/backend/llvm/llvm_fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
@@ -129,17 +129,19 @@ class CodeGenFunction {
       const DestinationRef& destination, llvm::Value* value,
       llvm::IRBuilderBase& at);
   // `count` arguments that are each an address this target computed.
-  [[nodiscard]] auto Addresses(std::size_t count) const -> std::vector<ArgAbi>;
+  [[nodiscard]] auto Addresses(std::size_t count) const
+      -> std::vector<LlvmArgAbi>;
   // Calls the library entry `symbol` on this target's own account, handing it
   // `args` as `arranged` says each of what they were built from crosses. The
   // entry answers the machine value `result`, which is what this answers.
   auto CallEntry(
-      std::string_view symbol, llvm::Type* result, std::vector<ArgAbi> arranged,
-      std::span<llvm::Value* const> args) -> llvm::Value*;
+      std::string_view symbol, llvm::Type* result,
+      std::vector<LlvmArgAbi> arranged, std::span<llvm::Value* const> args)
+      -> llvm::Value*;
   // The same of an entry that builds its answer in `out`, handed to it last;
   // what the call answers is `out`.
   auto BuildInto(
-      std::string_view symbol, std::vector<ArgAbi> arranged,
+      std::string_view symbol, std::vector<LlvmArgAbi> arranged,
       std::vector<llvm::Value*> args, llvm::Value* out) -> llvm::Value*;
   // The steps of an owned value's life, each carried out as the unit says.
   // `EndValue` ends the value `value` names. `CopyValue` builds a second value
@@ -255,6 +257,10 @@ class CodeGenFunction {
   // the types it states, never by the values in hand.
   auto LowerCall(const lir::CallInstr& call, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
+  // The same for an ordinary call.
+  auto LowerOrdinaryCall(
+      const lir::CallInstr& call, const DestinationRef& destination)
+      -> diag::Result<llvm::Value*>;
   // Opens a landing: the pad the platform transfers to, answering what is
   // unwinding as the pointer the unwinder carries.
   auto LowerLanding(const lir::LandingInstr& landing) -> llvm::Value*;
@@ -269,7 +275,7 @@ class CodeGenFunction {
   // What a call arranged as `abi` enters; a dispatch finds the body through
   // the definition of the object `args` leads with.
   auto ResolveCallee(
-      const lir::CallInstr& call, lir::TypeId result_type, const FnAbi& abi,
+      const lir::CallInstr& call, lir::TypeId result_type, const LlvmFnAbi& abi,
       std::span<llvm::Value* const> args) -> diag::Result<llvm::FunctionCallee>;
   // A {pointer, length} view over `storage` of `element`, which this fills
   // with `values`, for an entry that takes a sequence of them.
@@ -329,6 +335,10 @@ class CodeGenFunction {
   auto LowerBinary(
       const lir::BinaryInstr& binary, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
+  // An operator carried out by the library's `entry`.
+  auto LowerEntryBinary(
+      const lir::BinaryInstr& binary, const EntryCall& entry,
+      lir::TypeId result_type, llvm::Value* out) -> diag::Result<llvm::Value*>;
   auto LowerMachineBinary(
       const lir::BinaryInstr& binary, lir::Signedness signedness)
       -> diag::Result<llvm::Value*>;
@@ -390,14 +400,9 @@ class CodeGenFunction {
   void EmitCoroutineSuspend(
       llvm::BasicBlock* resume, llvm::BasicBlock* abandoned, bool is_final);
 
-  // Which way an access goes through a place. A step into a container reaches
-  // a different element for each: a read of one that is not there reads the
-  // default and changes nothing, and a write to one allocates or discards it by
-  // the container's own rule.
-  enum class Access : std::uint8_t { kRead, kWrite };
   // What an address of `address_type` may be used for: a read-only pointer
   // only reads, and every other address may be written through.
-  auto AccessGranted(lir::TypeId address_type) const -> Access;
+  auto AccessGranted(lir::TypeId address_type) const -> PlaceAccess;
   // The planes of `position`, which has to be stated as the position type
   // every ordinal of the layer above is brought to.
   auto LoadPosition(const OperandRef& position) -> Planes;
@@ -407,17 +412,12 @@ class CodeGenFunction {
   // element default for a read and storage no read reaches for a write.
   auto ArrayElementAddress(
       lir::TypeId array_type, llvm::Value* array, const OperandRef& position,
-      Access access) -> diag::Result<llvm::Value*>;
+      const StepWithinArray& step) -> diag::Result<llvm::Value*>;
   // The address a place names. The base contributes the storage the chain
   // starts from, either a place local's own frame slot or the referent of a
   // reference value, and each further step walks one projection.
-  auto ResolvePlaceAddress(const lir::Place& place, Access access)
+  auto ResolvePlaceAddress(const lir::Place& place, PlaceAccess access)
       -> diag::Result<llvm::Value*>;
-  // Which of an element's two entries an access steps through: the one
-  // answering with the element as it is, or the one answering with the storage
-  // a write lands in.
-  static auto EntryFor(Access access, const ElementEntries& entries)
-      -> const StepEntry&;
   auto LowerIntConst(const lir::IntConst& constant)
       -> diag::Result<llvm::Value*>;
   auto LowerStrConst(const lir::StrConst& constant) -> llvm::Value*;
@@ -428,6 +428,9 @@ class CodeGenFunction {
 
   // Where the value `storage` holds lies, or nothing where what `held` states
   // is storage that hands its contents out through its own access.
+  auto HeldContentsAt(
+      llvm::Value* storage, const runtime::HeldContents& contents)
+      -> llvm::Value*;
   auto HeldAt(llvm::Value* storage, support::DeclaredMemberStorage held)
       -> std::optional<llvm::Value*>;
   // Appends to `args` the arguments `operands` cross as, and to `arranged`
@@ -435,34 +438,15 @@ class CodeGenFunction {
   // the value an entry acts on, and each is read the way `readings` says the
   // operand after that value is.
   auto SelectorArgs(
-      const support::OperandReadings& readings,
-      std::span<const lir::Operand> operands, std::vector<ArgAbi>& arranged,
-      std::vector<llvm::Value*>& args) -> diag::Result<void>;
+      std::span<const lir::Operand> operands, std::span<const PassMode> modes,
+      std::vector<LlvmArgAbi>& arranged, std::vector<llvm::Value*>& args)
+      -> diag::Result<void>;
 
   // The type of an operand, and the value domain a library entry is chosen by.
   [[nodiscard]] auto OperandType(const lir::Operand& operand) const
       -> lir::TypeId;
   [[nodiscard]] auto DomainOf(lir::TypeId type) const
       -> diag::Result<support::ValueDomain>;
-  // The domain of the value cell `place` names, where the storage it reaches is
-  // one. Such storage is written and read through itself rather than off its
-  // address, so an access to it is that storage's own operation. A place naming
-  // anything else answers nothing.
-  [[nodiscard]] auto PlaceValueCellDomain(
-      const lir::Place& place, lir::TypeId value) const
-      -> std::optional<support::ValueDomain>;
-  // Place access: the capability wrapper a place names the storage of, which
-  // wrapper it is, and the domain that representation picks its library entries
-  // by; nothing when the place names ordinary addressable storage. It is the
-  // one site that asks that of a place, so however deep the chain is an access
-  // through a wrapper is classified once.
-  struct WrapperPlace {
-    support::ValueDomain domain{};
-    WrapperKind kind{};
-    lir::Place wrapper;
-  };
-  [[nodiscard]] auto WrapperPlaceOf(const lir::Place& place) const
-      -> diag::Result<std::optional<WrapperPlace>>;
   // The contents of the wrapper at `wrapper`, as the storage a read of them
   // answers with.
   auto ContentsOf(
@@ -487,9 +471,6 @@ class CodeGenFunction {
   auto MemberStorage(llvm::Value* owner, const lir::StatedMemberRef& member)
       -> diag::Result<llvm::Value*>;
 
-  [[nodiscard]] auto ReachedType(
-      const lir::Place& place, std::ptrdiff_t index) const -> lir::TypeId;
-
   auto OpenedReferent(llvm::Value* reference, lir::TypeId type) -> llvm::Value*;
 
   CodeGenModule* module_;
@@ -497,6 +478,7 @@ class CodeGenFunction {
   const lir::Function* fn_;
   llvm::Function* value_;
   llvm::IRBuilder<> builder_;
+  TargetLowering lowering_;
   CallArranger arranger_;
   // Where the call being lowered goes on from, while that call is one that can
   // depart; nothing while what is lowered continues in place.

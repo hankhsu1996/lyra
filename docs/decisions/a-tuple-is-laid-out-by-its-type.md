@@ -53,8 +53,8 @@ through it.
   states in MIR, handed to whatever asks one beside the table.
 - **A structure's table is its declaring unit's**, one in the program, whose operation slots hold
   the structure's methods; every other unit's values of the structure carry that table. A tuple a
-  lowering composes has no operations, so a table of one holds the lifecycle alone and each module
-  keeps its own.
+  lowering composes has no declaration, so each module keeps its own table, filled as its unit needs
+  it.
 - **Generated code calls the operations directly**: `==` on two structures is a call of the unit's
   function, and copying one into a local is a call of the lifecycle step.
 - **The runtime holds a tuple in that same layout**, in storage of its own, and every family

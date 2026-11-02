@@ -286,6 +286,18 @@ two ways.
 
 ## Notes / Examples
 
+What a target's realization asks of a type's operations is that target's to state, and it is stated
+over LIR, naming no target type, so the unit is complete before anything is emitted. The execution
+backend hands the library records of a type: a type, an element type, the operations a call compares
+or streams by, the function taking some positions and a net's folds. What each call, store, step and
+variable hands over, and how each is carried out, is one decision of the target's lowering, the role
+of LLVM's `TargetLowering`, read by the query for what the unit needs as it walks LIR and by
+emission as it arranges; a record is made whole, as a vtable collects every method of its trait, and
+what a type's constant names of other types is one list both read. An operation the query did not
+ask for is a compile-time defect at emission, never a failure at run time, and one the language does
+not give the type fills its slot with the library's failing of it. The C++ backend asks for nothing:
+the host compiler instantiates what a call names.
+
 The canonical write rule for any value-emission entry: write it as if the target were LLVM IR. If
 you cannot write a mechanical translation rule for it -- if your draft contains an `if` whose arms
 produce different LLVM instruction sequences -- the MIR primitive set is incomplete. Fix MIR; render

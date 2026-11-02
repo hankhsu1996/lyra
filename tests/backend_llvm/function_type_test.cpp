@@ -9,7 +9,7 @@
 #include <llvm/IR/Value.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
-#include "lyra/backend/llvm/fn_abi.hpp"
+#include "lyra/backend/llvm/llvm_fn_abi.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -31,16 +31,16 @@ TEST(FunctionTypeTest, TheTypeIsWhatTheArrangementHandsOver) {
   llvm::Type* const f64 = llvm::Type::getDoubleTy(ctx);
   const lir::TypeId any{};
 
-  const FnAbi abi{
+  const LlvmFnAbi abi{
       .implicit_arg = WidthMetadataArg{.of = any},
       .named_part = NamedPartArg{.before = 1, .position = 3},
       .args =
-          {ArgAbi{.type = ptr, .mode = PassDirect{}},
-           ArgAbi{.type = ptr, .mode = PassWithExtent{.type = any}},
-           ArgAbi{.type = ptr, .mode = PassWithShape{.type = any}},
-           ArgAbi{.type = ptr, .mode = PassWithType{.type = any}},
-           ArgAbi{.type = ptr, .mode = PassWithWidth{.type = any}},
-           ArgAbi{.type = f64, .mode = PassDirect{}}},
+          {LlvmArgAbi{.type = ptr, .mode = PassDirect{}},
+           LlvmArgAbi{.type = ptr, .mode = PassWithExtent{.type = any}},
+           LlvmArgAbi{.type = ptr, .mode = PassWithShape{.type = any}},
+           LlvmArgAbi{.type = ptr, .mode = PassWithType{.type = any}},
+           LlvmArgAbi{.type = ptr, .mode = PassWithWidth{.type = any}},
+           LlvmArgAbi{.type = f64, .mode = PassDirect{}}},
       .type_args =
           {TypeConstantArg{.type = any}, TypeExtentArg{.type = any},
            ElementTypeArg{.type = any}, QueueTypeArg{.type = any}},
@@ -67,9 +67,9 @@ TEST(FunctionTypeTest, ANameDeclaredAtTwoTypesIsRefused) {
   const lir::CompilationUnit unit;
   CodeGenModule module(unit);
   llvm::Type* const ptr = module.Types().Ptr();
-  const FnAbi one = CallArranger::Arrange(
+  const LlvmFnAbi one = CallArranger::Arrange(
       {CallArranger::Direct(ptr)}, ReturnDirect{.type = ptr});
-  const FnAbi other = CallArranger::Arrange(
+  const LlvmFnAbi other = CallArranger::Arrange(
       {CallArranger::Direct(ptr), CallArranger::Direct(ptr)},
       ReturnDirect{.type = ptr});
   const llvm::Value* const declared =

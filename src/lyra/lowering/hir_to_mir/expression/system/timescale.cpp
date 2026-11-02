@@ -40,7 +40,7 @@ auto LowerTimeFormatSystemSubroutineCall(
 
   const auto& unit = process.Owner().Unit();
   const mir::ExprId runtime_id =
-      body.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      body.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
   // Every argument but the suffix is a number the runtime keeps as its own
   // setting rather than a value of the design.
   constexpr std::size_t kSuffixPosition = 2;

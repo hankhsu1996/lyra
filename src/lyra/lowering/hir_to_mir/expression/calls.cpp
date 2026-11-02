@@ -97,7 +97,7 @@ auto LowerAssociativeTraversal(
   auto idx_lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(idx_hir), step_frame);
   if (!idx_lhs_or) return std::unexpected(std::move(idx_lhs_or.error()));
   return BuildAssociativeTraversal(
-      unit_lowerer, steps, b.method, map_read_id, *std::move(idx_lhs_or),
+      unit_lowerer.Unit(), steps, b.method, map_read_id, *std::move(idx_lhs_or),
       key_type, result_type);
 }
 
@@ -291,7 +291,7 @@ auto LowerSystemSubroutineCall(
 // passed into its formal (LRM 7.10.2, 13.5.1), so it is brought to the element
 // type. Every other operand is stated as it stands.
 auto StatedAsRead(
-    mir::CompilationUnit& unit, mir::Builder block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::OperandReading reading, std::optional<mir::TypeId> element,
     mir::ExprId operand) -> mir::ExprId {
   switch (reading) {
@@ -335,7 +335,7 @@ auto LowerBuiltinMethodCall(
   }
   const auto& unit_lowerer = lowerer.Owner();
   const auto& hir_exprs = lowerer.HirExprs();
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
 
   // The entry reads its operands in one order: the object it acts on where it
   // has one, the engine where it reaches it, the report of the evaluation
@@ -385,7 +385,8 @@ auto LowerBuiltinMethodCall(
           unit, into, b.method, receiver, std::move(args), result_type));
     }
     return BuildBuiltinMethodCall(
-        unit_lowerer, into, b.method, receiver, std::move(args), result_type);
+        unit_lowerer.Unit(), into, b.method, receiver, std::move(args),
+        result_type);
   };
 
   mir::Builder block = frame.Builder();
@@ -404,7 +405,7 @@ auto LowerBuiltinMethodCall(
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
       if (ReachesOverlaidStorage(*recv_or)) {
         ReadThenWritten changed =
-            ReadThenWrite(lowerer.Owner(), frame, *std::move(recv_or));
+            ReadThenWrite(lowerer.Owner().Unit(), frame, *std::move(recv_or));
         const mir::TypeId type = block.Get(changed.incoming).type;
         receiver =
             block.LocalPlace(DeclareLocal(frame, changed.incoming), type);
@@ -468,7 +469,7 @@ auto LowerLibraryHookCall(
     const hir::BuiltinHookCallee& hook, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   const UnitLowerer& unit_lowerer = lowerer.Owner();
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Builder block = frame.Builder();
   const bool runs_objects_hook =
       unit_lowerer.Hir().classes.IsInterfaceClass(hook.cls);
@@ -500,7 +501,7 @@ auto LowerLibraryHookCall(
       ref.receiver);
   if (!object) return std::unexpected(std::move(object.error()));
   return BuildBuiltinMethodCall(
-      unit_lowerer, block, fn, std::nullopt,
+      unit_lowerer.Unit(), block, fn, std::nullopt,
       {StatedAsRead(
           unit, block, support::RuntimeEntryOf(fn).operands.At(0), std::nullopt,
           *object)},
@@ -510,7 +511,7 @@ auto LowerLibraryHookCall(
 }  // namespace
 
 auto BuildBuiltinMethodCall(
-    const UnitLowerer& unit_lowerer, mir::Builder block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::BuiltinFn method, std::optional<mir::ExprId> receiver,
     std::vector<mir::ExprId> operands, mir::TypeId result_type) -> mir::Expr {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(method);
@@ -521,7 +522,7 @@ auto BuildBuiltinMethodCall(
   std::vector<mir::ExprId> arguments;
   arguments.reserve(operands.size() + 2);
   if (entry.takes_the_runtime_handle) {
-    arguments.push_back(block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
+    arguments.push_back(block.Add(BuildCurrentRuntimeCallExpr(unit)));
   }
   arguments.insert(arguments.end(), operands.begin(), operands.end());
 
@@ -530,24 +531,22 @@ auto BuildBuiltinMethodCall(
   // yields. The source type would say `void` for a task like LRM 9.7's
   // `await`, and nothing could be stopped at.
   const mir::TypeId answered =
-      entry.answers_a_wait ? unit_lowerer.Unit().builtins.wait : result_type;
+      entry.answers_a_wait ? unit.builtins.wait : result_type;
   return mir::MakeBuiltinCall(
-      unit_lowerer.Unit(), block.Body(), method, receiver, std::move(arguments),
-      answered);
+      unit, block.Body(), method, receiver, std::move(arguments), answered);
 }
 
 auto BuildAssociativeTraversal(
-    UnitLowerer& unit_lowerer, BlockBuilder& steps, support::BuiltinFn method,
-    mir::ExprId array, AccessPath index, mir::TypeId key_type,
-    mir::TypeId result_type) -> mir::Expr {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
+    const mir::CompilationUnit& unit, BlockBuilder& steps,
+    support::BuiltinFn method, mir::ExprId array, AccessPath index,
+    mir::TypeId key_type, mir::TypeId result_type) -> mir::Expr {
   mir::Builder body = steps.Body();
   // `first` / `last` ignore the index's current value and `next` / `prev` read
   // it as the search bound, so every form takes it as an ordinary operand. The
   // index is then written with the one visited, so it is read and written
   // through one path.
   const ReadThenWritten visited_into =
-      ReadThenWrite(unit_lowerer, steps.Frame(), std::move(index));
+      ReadThenWrite(unit, steps.Frame(), std::move(index));
 
   const mir::TypeId payload_type =
       CompletionPayloadType(unit, {result_type, key_type});

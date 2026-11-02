@@ -31,7 +31,7 @@ namespace lyra::lowering::hir_to_mir {
 // so a package function, a class method on a plain SV class, and a class
 // static method all use the same runtime-access path as a scope-method
 // body.
-[[nodiscard]] auto BuildCurrentRuntimeCallExpr(const UnitLowerer& unit_lowerer)
+[[nodiscard]] auto BuildCurrentRuntimeCallExpr(const mir::CompilationUnit& unit)
     -> mir::Expr;
 
 // Appends a statement calling `entry`, a runtime entry that answers nothing and

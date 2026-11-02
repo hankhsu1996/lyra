@@ -12,18 +12,21 @@
 #include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir_transform/pass.hpp"
 #include "lyra/support/sanitizer.hpp"
 
 namespace lyra::program {
 
-// How this build turns a unit's module into an object: how hard to compile
-// it, whether for a link that optimizes it with the runtime, what the program
-// checks of itself while it runs, and which build of the code generator does.
+// How this build turns a unit into an object: how hard to compile it, whether
+// for a link that optimizes it with the runtime, what the program checks of
+// itself while it runs, which build of the code generator does, and what is
+// asked of the rewrites of a body built for the module.
 struct ObjectBuild {
   driver::OptimizationLevel optimization;
   driver::LinkTimeOptimization link_time;
   support::Sanitizer sanitizer;
   std::filesystem::path code_generator;
+  mir_transform::PassOptions passes;
 };
 
 // The pipeline level LLVM runs for `optimization`, which is the one clang runs

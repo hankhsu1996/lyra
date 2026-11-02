@@ -17,7 +17,7 @@
 #include <vector>
 
 #include "lyra/backend/llvm/entry_realizations.hpp"
-#include "lyra/backend/llvm/fn_abi.hpp"
+#include "lyra/backend/llvm/llvm_fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"

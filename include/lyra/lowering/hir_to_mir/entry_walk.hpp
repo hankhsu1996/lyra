@@ -41,7 +41,7 @@ struct WalkedArray {
 // The array `path` names, settled in the frame's block, numbered by
 // `declared`.
 [[nodiscard]] auto WalkedArrayAt(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path,
+    const mir::CompilationUnit& unit, const WalkFrame& frame, AccessPath path,
     std::optional<hir::UnpackedRange> declared) -> WalkedArray;
 
 // The array `object` evaluates to, already in the frame's block: the storage
@@ -49,15 +49,16 @@ struct WalkedArray {
 // that block for as long as the loop runs, as Rust's `for` holds the value it
 // iterates.
 [[nodiscard]] auto WalkedArrayOf(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId object,
-    std::optional<hir::UnpackedRange> declared) -> WalkedArray;
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::ExprId object, std::optional<hir::UnpackedRange> declared)
+    -> WalkedArray;
 
 // How many entries `array` holds, read in `block`: fixed by the declaration
 // for a fixed-size array (LRM 7.4), and read while the program runs otherwise
 // (LRM 7.5, 7.10).
 [[nodiscard]] auto EntryCount(
-    mir::CompilationUnit& unit, mir::Builder block, const WalkedArray& array)
-    -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const WalkedArray& array) -> mir::ExprId;
 
 // Where one entry lies while the loop visits it: the variable holding its
 // index (LRM 7.12.4) -- the key an associative array holds it under, the index
@@ -82,8 +83,8 @@ struct VisitedEntry {
 // is of `part_type`: its position for an array that numbers its elements, its
 // key for an associative one.
 [[nodiscard]] auto StepToVisited(
-    mir::CompilationUnit& unit, mir::Builder block, const EntryPlace& place,
-    mir::TypeId part_type) -> DescentStep;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const EntryPlace& place, mir::TypeId part_type) -> DescentStep;
 
 // What runs at each entry, lowered into the block the frame names. A `break`
 // naming the loop the frame says a break leaves ends the walk.
@@ -99,8 +100,9 @@ using EntryVisit = std::function<diag::Result<void>(
 // the frame's block, whose statements must therefore run before the returned
 // loop.
 auto BuildEntryLoopStmt(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, const WalkedArray& array,
-    WalkOrder order, std::optional<BindingOriginId> index_origin,
-    const EntryVisit& visit) -> diag::Result<mir::Stmt>;
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    const WalkedArray& array, WalkOrder order,
+    std::optional<BindingOriginId> index_origin, const EntryVisit& visit)
+    -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

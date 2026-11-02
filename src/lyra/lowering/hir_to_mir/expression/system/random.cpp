@@ -94,7 +94,8 @@ auto LowerRandomSystemSubroutineCall(
   mir::Builder body = frame.Builder();
 
   std::vector<mir::ExprId> arguments;
-  arguments.push_back(body.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())));
+  arguments.push_back(
+      body.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner().Unit())));
   for (const hir::ExprId operand : operands) {
     auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(operand), frame);
     if (!lowered) {
@@ -140,7 +141,7 @@ auto LowerDistributionSystemSubroutineCall(
             mir::CallExpr{
                 .callee = mir::Direct{.target = support::BuiltinFn::kRandom},
                 .arguments = {block.Add(
-                    BuildCurrentRuntimeCallExpr(unit_lowerer))}},
+                    BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()))}},
         .type = int_type};
   }
 
@@ -166,7 +167,7 @@ auto LowerDistributionSystemSubroutineCall(
     return std::unexpected(std::move(seed_place_or.error()));
   }
   auto seed =
-      ReadThenWrite(unit_lowerer, step_frame, *std::move(seed_place_or));
+      ReadThenWrite(unit_lowerer.Unit(), step_frame, *std::move(seed_place_or));
   if (!seed) return std::unexpected(std::move(seed.error()));
 
   // Every argument is an integer value (LRM 20.14.2) whatever integral type the

@@ -385,7 +385,7 @@ auto Renderer::PackedMember(
   const ProjectedMember& projected = projection.members.at(index.value);
   const mir::ExprId subject = frame.Builder().LocalPlace(value, mir_type);
   const mir::ExprId member = block.Add(BuildPackedBitsRead(
-      Owner(), block, subject, projected.bit_offset,
+      Owner().Unit(), block, subject, projected.bit_offset,
       Owner().TranslateType(field.type)));
   return Named(frame, field.name, Render(frame, member, field.type));
 }
@@ -614,8 +614,8 @@ auto Renderer::TraversalStep(
   const mir::ExprId array = inner.Builder().LocalPlace(value, mir_type);
   const mir::ExprId visited = inner.Builder().LocalPlace(key, key_type);
   return frame.Builder().Add(BuildAssociativeTraversal(
-      Owner(), step, entry, array, AccessPath{.owner = visited, .descent = {}},
-      key_type, IntType()));
+      Owner().Unit(), step, entry, array,
+      AccessPath{.owner = visited, .descent = {}}, key_type, IntType()));
 }
 
 // The entries of an associative array (LRM 7.8), each printed under the index

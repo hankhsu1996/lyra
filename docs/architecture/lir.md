@@ -106,6 +106,9 @@ below LIR, at LIR-to-LLVM.
   graph, and only what the artifact emits distinguishes them. A step into another unit's object
   reaches only a member its scope published, which leads that object's storage in the order the
   publication states; what lowering added to the object is reached by no step from outside it.
+- Each operation of a type no declaration states it for that the unit asks for, by the type and the
+  operation, with the function answering it, or none where the language gives the type no such
+  operation. A body of one is linked within its artifact, since no other unit names it.
 - Each class's relations as MIR stated them -- what it extends, what it introduces into dispatch and
   overrides, the interfaces it names and which behavior answers each behavior of every interface a
   value of it is also a value of -- and the contents of the constant the library reads for it, which
@@ -221,15 +224,24 @@ identity is the suspect, not the analysis.
   (an await, a sensitivity wait) becomes suspend/resume edges with scheduler calls. Every MIR type
   and identity is translated into a LIR-owned one; a type MIR-to-LIR cannot translate is rejected at
   the boundary with a diagnostic, never passed through as a MIR id. MIR-to-LIR reads only a
-  legalized unit, and every body MIR holds is concrete. MIR-to-LIR introduces every fact LIR owns
-  and that MIR does not (CFG structure, logical storage topology, effect ordering,
-  scheduling-protocol edges), and it introduces no source-language interpretation -- a lowering rule
-  that must decide what a MIR node means is reading a defect in MIR, not doing LIR's job.
-- Produces a self-contained LIR program for the layers below. Physical layout and target ABI are a
-  separate derivation: the LIR program, the target data layout, and the runtime ABI profile together
-  yield byte sizes, alignments, field offsets, and parameter-passing classification. LIR-to-LLVM
-  consumes the LIR program and that derivation and is mechanical -- it encodes decided facts as LLVM
-  types, address computations, loads, stores, and calls, and it is also where the place /
+  legalized unit, and every body MIR holds is concrete. A call of an operation of a type no
+  declaration states it for is a function of the unit named on the first ask, and the body comes
+  from outside this pass, which depends on neither the layer building it nor the target asking for
+  it. MIR-to-LIR introduces every fact LIR owns and that MIR does not (CFG structure, logical
+  storage topology, effect ordering, scheduling-protocol edges), and it introduces no
+  source-language interpretation -- a lowering rule that must decide what a MIR node means is
+  reading a defect in MIR, not doing LIR's job.
+- Produces a self-contained LIR program for the layers below, complete: every function a unit
+  declares is defined and every call of one states what it takes and answers, which verifying the
+  unit checks in every build since no machine type below can tell two references apart, and what a
+  target needs of a type's operations was asked for and lowered before the unit left here. Whoever
+  drives a unit alternates lowering bodies and asking the target what the finished ones ask of the
+  library's records, until nothing new is asked, as rustc's collector hands code generation a
+  complete list. Physical layout and target ABI are a separate derivation: the LIR program, the
+  target data layout, and the runtime ABI profile together yield byte sizes, alignments, field
+  offsets, and parameter-passing classification. LIR-to-LLVM consumes the LIR program and that
+  derivation. It preserves the execution semantics LIR decided, while selecting the concrete
+  representation and runtime realization the backend requires, and it is also where the place /
   transient-value form becomes fully SSA. The LLVM path never queries MIR; it is not a second
   semantic lowering.
 

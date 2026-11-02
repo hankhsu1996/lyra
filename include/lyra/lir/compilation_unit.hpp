@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <span>
@@ -31,6 +32,18 @@
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
+
+// An operation of a type no declaration states it for: the type, and which
+// operation.
+struct TypeOperation {
+  TypeId type;
+  support::ValueOperation answers;
+  auto operator<=>(const TypeOperation&) const = default;
+};
+
+// The operations of types something finds a unit uses, each call answering what
+// the unit gained since the last.
+using UsedTypeOperations = std::function<std::vector<TypeOperation>()>;
 
 // A typed member of whatever declares it -- the storage a member place reaches
 // by a member projection. Its position in the declaring list is its member
@@ -246,16 +259,6 @@ struct RecordDecl {
   std::vector<RecordMethod> methods;
 };
 
-// The function of the unit answering the operation `answers` at `type`: what a
-// use in the program calls, and what code compiled before the type existed
-// reaches through the type's table -- an array's operations on a whole value
-// (LRM 7.4.2), an array's element default (LRM 7.4.5, 7.5.1).
-struct TypeOperation {
-  TypeId type;
-  support::ValueOperation answers;
-  FunctionId function;
-};
-
 // Storage this unit defines that no instance owns: one cell for the whole
 // program, reached by its linkage symbol rather than through a receiver.
 // `type` is the storage's own type, which is what tells whoever realizes it
@@ -292,9 +295,11 @@ struct CompilationUnit {
   base::Registry<Closure, ClosureId> closures;
   base::Registry<RecordDecl, RecordId> records;
   base::Registry<Function, FunctionId> functions;
-  // The functions answering the operations the unit states per type, one per
-  // type and operation.
-  std::vector<TypeOperation> type_operations;
+  // Each operation of a type no declaration states it for that the unit needs,
+  // with the function answering it -- an array's operations on a whole value
+  // (LRM 7.4.2), an array's element default (LRM 7.4.5, 7.5.1). None where the
+  // language gives the type no such operation.
+  std::map<TypeOperation, std::optional<FunctionId>> type_operations;
   // The function carrying out each step of a value's life the unit states for
   // a type, by the type and the step: what copying, moving, writing over and
   // ending a value of the type does, built from its parts. A step of a value

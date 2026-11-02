@@ -186,8 +186,12 @@ void UnitLowerer::StateTypeSteps() {
   // body is built, since a body steps the parts of its value as their own types
   // say; building them names no type that needs one of its own: borrowed
   // pointers, machine integers, void.
+  const std::size_t named = out_.types.size();
   std::vector<std::pair<lir::TypeId, lir::ValueStep>> stated;
   for (const lir::TypeId type : out_.types.Ids()) {
+    if (type.value < types_seen_) {
+      continue;
+    }
     for (const lir::ValueStep step : kEveryStep) {
       if (!NeedsStepFunction(type, step)) {
         continue;
@@ -201,6 +205,7 @@ void UnitLowerer::StateTypeSteps() {
         out_.type_steps.at(std::pair{type, step}),
         BuildStepFunction(type, step));
   }
+  types_seen_ = named;
 }
 
 auto UnitLowerer::NeedsStepFunction(lir::TypeId type, lir::ValueStep step) const

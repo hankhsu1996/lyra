@@ -170,7 +170,7 @@ auto BuildRegion(
   const mir::ExprId reached =
       CancellationTarget(process, handler_frame, target);
   const mir::ExprId services =
-      handler_builder.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      handler_builder.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
   const mir::ExprId lands = handler_builder.Add(
       mir::Expr{
           .data =
@@ -304,7 +304,7 @@ auto LowerDisableStmt(
           }},
       d.target);
   const mir::ExprId services =
-      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+      block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
   // One call carries the whole statement (LRM 9.6.2): it invalidates the
   // target, wakes or ends what is inside it, and -- when the disabling
   // execution is itself inside the target -- leaves from here, which is what a

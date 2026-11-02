@@ -1,5 +1,9 @@
 #pragma once
 
+#include <optional>
+
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::mir_transform {
@@ -13,6 +17,14 @@ namespace lyra::mir_transform {
 // first. Each is reached through that pointer. The source language has no word
 // for where a value lives, so the pointer a programmer of a language with one
 // would write is written here, once, for every consumer to translate.
-auto BoundFrames(mir::CompilationUnit unit) -> mir::CompilationUnit;
+auto BoundFramesOnBody(
+    const mir::CompilationUnit& unit, const mir::CodeSource& at,
+    const mir::CallableCode& code) -> std::optional<mir::CallableCode>;
+
+// The same for what a unit declares that no body is: a closure's fields and a
+// class's constants, which come first because a closure is as large as its
+// captures as it holds them, so no body may ask before this.
+auto BoundFramesOfDeclarations(mir::CompilationUnit unit)
+    -> mir::CompilationUnit;
 
 }  // namespace lyra::mir_transform

@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir_transform/pass.hpp"
 
@@ -22,5 +24,13 @@ namespace lyra::mir_transform {
 // rewrite and on reaching each phase as well where `options` asks.
 auto Transform(mir::CompilationUnit unit, const PassOptions& options)
     -> mir::CompilationUnit;
+
+// `code`, a body at `at` built after `unit` left its rewrites, taken through
+// the same pipeline alone, as rustc runs its passes over a shim it builds on
+// demand: what leaves here is a body of the phase `unit` is in, checked at each
+// point `options` asks of a unit.
+auto TransformBody(
+    const mir::CompilationUnit& unit, const mir::CodeSource& at,
+    mir::CallableCode code, const PassOptions& options) -> mir::CallableCode;
 
 }  // namespace lyra::mir_transform

@@ -66,7 +66,7 @@ failing it, the same failure the library's own kinds give.
 
 **D5. What a value of a type is before anything is written to it is MIR's, handed with the type.** A
 holder of storage -- a cell, a net, an array of any kind -- is built from one constant per type
-naming the type and the function MIR states for its default
+naming the type and the function built as MIR for its default
 ([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
 D2), and no type answers its own default. A library container type's own answer was a container with
 no element type, which is not the language's value; a tuple's default exists only where each of its

@@ -78,7 +78,8 @@ auto BuildMatchAnywhereIn(
   const mir::TypeId left_type = block.Get(left).type;
   const mir::LocalId compared = DeclareLocal(frame, left);
   const WalkedArray array = WalkedArrayOf(
-      unit_lowerer, frame, value, DeclaredRangeOf(unit_lowerer, value_type));
+      unit_lowerer.Unit(), frame, value,
+      DeclaredRangeOf(unit_lowerer, value_type));
   const std::optional<hir::TypeId> element_type =
       unit_lowerer.Hir().types.Get(value_type).ContainerElementType();
   if (!element_type.has_value()) {
@@ -93,7 +94,8 @@ auto BuildMatchAnywhereIn(
       steps.Frame(),
       ConvertToType(unit, body, mir::BuildBit1Literal(unit, body, false), bit));
   auto walked = BuildEntryLoopStmt(
-      unit_lowerer, steps.Frame(), array, WalkOrder::kFromFirst, std::nullopt,
+      unit_lowerer.Unit(), steps.Frame(), array, WalkOrder::kFromFirst,
+      std::nullopt,
       [&](const WalkFrame& at,
           const VisitedEntry& entry) -> diag::Result<void> {
         mir::Builder b = at.Builder();

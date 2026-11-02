@@ -359,9 +359,9 @@ void WriteDirectCallee(
           // `a.lyra::value::UnpackedArray<T, 4>::operator==(b)`. A member that
           // is itself generic over what it answers is called at the answer
           // the call states:
-          // `a.UnpackedArray<T, 4>::template ToBitstream<R>()`. The body the
-          // unit states for the operation is for a backend that resolves no
-          // type where the call is written.
+          // `a.UnpackedArray<T, 4>::template ToBitstream<R>()`. A backend that
+          // resolves no type where the call is written is handed a body built
+          // below MIR for the operation.
           [&](const mir::TypeOperationTarget& t) {
             const std::vector<TemplateArgument> answered =
                 OperationTakesATypeArgument(t.answers)

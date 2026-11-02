@@ -233,9 +233,9 @@ auto BuildIndexLoopStmt(
 // The same loop over an index that stands in storage of its own, which the
 // loop reaches through `index` and starts at `first`.
 auto BuildStoredIndexLoopStmt(
-    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& index,
-    mir::ExprId first, mir::BinaryOp goes_on_while, mir::ExprId bound,
-    mir::BinaryOp advance, mir::BlockId body_scope,
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const AccessPath& index, mir::ExprId first, mir::BinaryOp goes_on_while,
+    mir::ExprId bound, mir::BinaryOp advance, mir::BlockId body_scope,
     std::optional<mir::LabelId> break_label) -> mir::Stmt {
   const auto read = [&] { return PathValue(unit, block, index); };
   const auto write = [&](mir::ExprId value) {
@@ -319,7 +319,7 @@ auto BuildPositionWalkStmt(
 }
 
 auto BuildCountingLoopStmt(
-    mir::CompilationUnit& unit, WalkFrame frame, mir::Builder block,
+    const mir::CompilationUnit& unit, WalkFrame frame, mir::Builder block,
     mir::ExprId count, const AccessPath& position, mir::BlockId body_scope,
     std::optional<mir::LabelId> break_label) -> mir::Stmt {
   const mir::ExprId bound = SampledCount(unit, frame, block, count);
@@ -330,9 +330,10 @@ auto BuildCountingLoopStmt(
 }
 
 auto BuildRangeLoopStmt(
-    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& index,
-    std::int64_t left, std::int64_t right, mir::BlockId body_scope,
-    std::optional<mir::LabelId> break_label) -> mir::Stmt {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const AccessPath& index, std::int64_t left, std::int64_t right,
+    mir::BlockId body_scope, std::optional<mir::LabelId> break_label)
+    -> mir::Stmt {
   const bool ascending = left <= right;
   const mir::ExprId first = mir::BuildIntLiteral(unit, block, left);
   const mir::ExprId bound = mir::BuildIntLiteral(unit, block, right);
@@ -379,12 +380,11 @@ auto KeyTraversalOf(WalkOrder order) -> KeyTraversal {
 }  // namespace
 
 auto BuildKeyLoopStmt(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
     const std::function<mir::ExprId(const WalkFrame&)>& array,
     const std::function<AccessPath(const WalkFrame&)>& key,
     mir::TypeId key_type, WalkOrder order, mir::BlockId body_scope,
     std::optional<mir::LabelId> break_label) -> mir::Stmt {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
   const mir::TypeId int_type = unit.builtins.int_type;
   const mir::LocalId more = frame.bindings->DeclareAnonymous(int_type);
@@ -393,8 +393,7 @@ auto BuildKeyLoopStmt(
     BlockBuilder steps(frame);
     const mir::ExprId held = array(steps.Frame());
     return block.Add(BuildAssociativeTraversal(
-        unit_lowerer, steps, method, held, key(steps.Frame()), key_type,
-        int_type));
+        unit, steps, method, held, key(steps.Frame()), key_type, int_type));
   };
   const KeyTraversal methods = KeyTraversalOf(order);
   const mir::ExprId first = traversal(methods.start);

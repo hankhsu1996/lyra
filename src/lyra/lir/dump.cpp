@@ -54,13 +54,15 @@ class LirDumper {
               "{} constant \"{}\" = {}", LinkageName(constant.linkage),
               constant.symbol, FormatConstant(constant.initializer)));
     }
-    for (const TypeOperation& stated : unit_->type_operations) {
-      Line(
-          std::format(
-              R"("{}" of {} = "{}")",
-              support::ValueOperationName(stated.answers),
-              FormatType(stated.type),
-              unit_->functions.Get(stated.function).name));
+    for (const auto& [operation, function] : unit_->type_operations) {
+      if (function.has_value()) {
+        Line(
+            std::format(
+                R"("{}" of {} = "{}")",
+                support::ValueOperationName(operation.answers),
+                FormatType(operation.type),
+                unit_->functions.Get(*function).name));
+      }
     }
     for (const ClassId id : unit_->classes.Ids()) {
       DumpClass(id);

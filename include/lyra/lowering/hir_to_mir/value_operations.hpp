@@ -36,13 +36,13 @@ class UnitLowerer;
 // each is its first member's, read as that member's type holds a value (LRM
 // 7.3.2). What the union itself answers is read off its members.
 [[nodiscard]] auto UnionMethodsOf(
-    UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
+    const mir::CompilationUnit& unit, mir::RecordId record, mir::TypeId overlay,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
 
 // The same for a tagged union, each method that of the member its tag names
 // (LRM 7.3.2); a tagged union has no stream and no net's folds.
 [[nodiscard]] auto TaggedUnionMethodsOf(
-    UnitLowerer& lowerer, mir::RecordId record, mir::TypeId overlay,
+    const mir::CompilationUnit& unit, mir::RecordId record, mir::TypeId overlay,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
 
 // How a body answering an operation of a type takes each value it is asked
@@ -52,18 +52,13 @@ class UnitLowerer;
 [[nodiscard]] auto ReferenceTo(
     const mir::CompilationUnit& unit, mir::TypeId type) -> mir::TypeId;
 
-// A body for every operation on a whole value `type`, a type whose operations
-// each unit naming it states as its own, has: a fixed-size unpacked array's
-// each element's in turn (LRM 7.4.2), and a tuple's each component's in turn,
-// where every component has it.
-[[nodiscard]] auto TypeOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
-    -> std::vector<mir::TypeOperation>;
-
-// The one of those bodies answering `asked`, or nothing where `type` has no
-// such operation.
-[[nodiscard]] auto TypeOperationOf(
-    UnitLowerer& lowerer, mir::TypeId type, support::ValueOperation asked)
-    -> std::optional<mir::TypeOperation>;
+// The body answering `answers` for a value of `type`, a type no declaration
+// states the operations of, or nothing where `type` has no such operation: a
+// fixed-size unpacked array's are each element's in turn (LRM 7.4.2), and a
+// tuple's each component's in turn, where every component has it.
+[[nodiscard]] auto BuildStructuralOperationBody(
+    const mir::CompilationUnit& unit, mir::TypeId type,
+    support::ValueOperation answers) -> std::optional<mir::CallableCode>;
 
 // How many positions a procedural continuous assignment may hold some of in a
 // value of `type` (LRM 10.6.2): an integral value's bits, a product's

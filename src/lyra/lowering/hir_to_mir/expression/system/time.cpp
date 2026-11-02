@@ -21,7 +21,7 @@ auto LowerTimeSystemSubroutineCall(
   const auto& builtins = lowerer.Owner().Unit().builtins;
   mir::Builder body = frame.Builder();
   const mir::ExprId runtime_id =
-      body.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+      body.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner().Unit()));
   const mir::ExprId unit_power_id = mir::BuildMachineIntLiteral(
       lowerer.Owner().Unit(), body,
       static_cast<std::int64_t>(lowerer.Resolution().unit_power));

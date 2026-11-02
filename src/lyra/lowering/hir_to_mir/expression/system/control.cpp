@@ -37,7 +37,7 @@ auto ControlCallAt(
     -> mir::Expr {
   const auto& unit = process.Owner().Unit();
   std::vector<mir::ExprId> arguments = {
-      block.Add(BuildCurrentRuntimeCallExpr(process.Owner())),
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit())),
       BuildStringValueExpr(
           unit, block,
           diag::RuntimeOriginOf(span, process.Owner().SourceManager()))};

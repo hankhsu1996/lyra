@@ -14,8 +14,10 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/movability.hpp"
+#include "lyra/support/value_operation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 
@@ -623,17 +625,51 @@ auto IsDataType(const TypePool& types, TypeId type) -> bool {
           [](const ErasedCallableType&) { return false; }});
 }
 
-auto OperationsStatedPerUnit(const Type& type) -> std::optional<StatedPerUnit> {
-  using Stated = std::optional<StatedPerUnit>;
+auto TypeOperationKindOf(
+    const TypePool& types, TypeId type, support::ValueOperation answers)
+    -> std::optional<TypeOperationKind> {
+  using Kind = std::optional<TypeOperationKind>;
+  const Type& stated = types.Get(type);
+  const auto passage = [&](TypeOperationKind kind) -> Kind {
+    return stated.ContainerElementType().has_value() ? Kind{kind}
+                                                     : std::nullopt;
+  };
+  if (answers == support::ValueOperation{support::BuiltinFn::kToBoundFree}) {
+    return passage(TypeOperationKind::kToBoundFree);
+  }
+  if (answers == support::ValueOperation{support::BuiltinFn::kFromBoundFree}) {
+    return passage(TypeOperationKind::kFromBoundFree);
+  }
+  const bool is_default =
+      answers == support::ValueOperation{support::BuiltinFn::kDeclaredDefault};
+  const std::optional<StructuralOperationsType> structural =
+      StructuralOperationsTypeOf(stated);
+  // An array builds its default as it builds its other operations, element by
+  // element. A tuple's is the sum of its components', as any data type's.
+  if (structural == StructuralOperationsType::kFixedArray ||
+      (structural == StructuralOperationsType::kTuple && !is_default)) {
+    return TypeOperationKind::kStructural;
+  }
+  if (is_default && IsDataType(types, type)) {
+    return TypeOperationKind::kDefault;
+  }
+  return std::nullopt;
+}
+
+auto StructuralOperationsTypeOf(const Type& type)
+    -> std::optional<StructuralOperationsType> {
+  using Stated = std::optional<StructuralOperationsType>;
   const auto by_a_declaration_or_none = [](const auto&) -> Stated {
     return std::nullopt;
   };
   return type.Visit(
       Overloaded{
           [](const UnpackedArrayType&) -> Stated {
-            return StatedPerUnit::kFixedArray;
+            return StructuralOperationsType::kFixedArray;
           },
-          [](const TupleType&) -> Stated { return StatedPerUnit::kTuple; },
+          [](const TupleType&) -> Stated {
+            return StructuralOperationsType::kTuple;
+          },
           [&](const IntegralType& t) { return by_a_declaration_or_none(t); },
           [&](const EnumType& t) { return by_a_declaration_or_none(t); },
           [&](const ErasedValueType& t) { return by_a_declaration_or_none(t); },

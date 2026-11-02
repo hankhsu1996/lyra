@@ -309,38 +309,33 @@ class Simplifier {
 
 }  // namespace
 
-auto InstSimplify(mir::CompilationUnit unit) -> mir::CompilationUnit {
-  return mir::RewriteEachCode(
-      std::move(unit),
-      [](const mir::CompilationUnit& unit, const mir::CodeSource&,
-         const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
-        const Simplifier simplifier(unit);
-        if (!code.body.has_value() || !simplifier.FiresIn(*code.body)) {
-          return std::nullopt;
-        }
-        // Which nodes of each block of this body are taken as the storage
-        // itself, worked out once for a block the rewrite reaches.
-        std::unordered_map<const mir::Block*, std::vector<bool>>
-            taken_as_storage;
-        const auto taken_at = [&](const mir::Block& block, mir::ExprId id) {
-          auto [found, inserted] = taken_as_storage.try_emplace(&block);
-          if (inserted) {
-            found->second = TakenAsStorage(unit, block);
-          }
-          return found->second.at(id.value);
-        };
-        const RebuildRules rules{
-            .stands_for =
-                [&](const mir::Block& block, mir::ExprId id) {
-                  return simplifier.StandsFor(block, id, taken_at(block, id));
-                },
-            .expr =
-                [&](BlockRebuild& rebuild, mir::ExprId id) {
-                  return simplifier.Node(
-                      rebuild, id, taken_at(rebuild.From(), id));
-                }};
-        return RebuildCode(code, rules);
-      });
+auto InstSimplifyOnBody(
+    const mir::CompilationUnit& unit, const mir::CodeSource&,
+    const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
+  const Simplifier simplifier(unit);
+  if (!code.body.has_value() || !simplifier.FiresIn(*code.body)) {
+    return std::nullopt;
+  }
+  // Which nodes of each block of this body are taken as the storage itself,
+  // worked out once for a block the rewrite reaches.
+  std::unordered_map<const mir::Block*, std::vector<bool>> taken_as_storage;
+  const auto taken_at = [&](const mir::Block& block, mir::ExprId id) {
+    auto [found, inserted] = taken_as_storage.try_emplace(&block);
+    if (inserted) {
+      found->second = TakenAsStorage(unit, block);
+    }
+    return found->second.at(id.value);
+  };
+  const RebuildRules rules{
+      .stands_for =
+          [&](const mir::Block& block, mir::ExprId id) {
+            return simplifier.StandsFor(block, id, taken_at(block, id));
+          },
+      .expr =
+          [&](BlockRebuild& rebuild, mir::ExprId id) {
+            return simplifier.Node(rebuild, id, taken_at(rebuild.From(), id));
+          }};
+  return RebuildCode(code, rules);
 }
 
 }  // namespace lyra::mir_transform

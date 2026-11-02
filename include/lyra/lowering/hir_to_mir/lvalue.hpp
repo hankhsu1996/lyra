@@ -200,7 +200,7 @@ void ForEachPlace(const Lvalue& lvalue, Visit visit) {
 // `inout`): every place settled here, and the value they hold going in, joined
 // by kind.
 [[nodiscard]] auto ReadThenWrite(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, Lvalue lvalue)
+    const mir::CompilationUnit& unit, const WalkFrame& frame, Lvalue lvalue)
     -> diag::Result<LvalueReadThenWritten>;
 
 // Whether `expr` in target position names several places -- a join of lvalues

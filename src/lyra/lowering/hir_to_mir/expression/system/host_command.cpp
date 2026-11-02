@@ -35,7 +35,8 @@ auto LowerHostCommandSystemSubroutineCall(
     // Only a form that actually runs a command reaches the engine, and only to
     // publish the design's own pending output before a child process can write
     // over it; the null command runs nothing and observes the host alone.
-    args.push_back(block.Add(BuildCurrentRuntimeCallExpr(process.Owner())));
+    args.push_back(
+        block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit())));
     // A command line written as an unsized literal arrives packed; the runtime
     // signature is on SV `string`, so the operand takes the value-layer
     // conversion the store boundary would give it.

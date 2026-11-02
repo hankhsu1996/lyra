@@ -96,7 +96,7 @@ auto BuildDeferredSubmit(
   }
   const mir::ExprId body_id = scope_builder.Add(body.BuildCallOnce());
   const mir::ExprId runtime_id =
-      scope_builder.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      scope_builder.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
   scope_builder.AppendStmt(
       mir::ExprStmt{
           .expr = scope_builder.Add(
@@ -188,7 +188,7 @@ void AppendRecordCoverage(
     mir::ExprId outcome) {
   const mir::CompilationUnit& unit = process.Owner().Unit();
   const mir::ExprId runtime_id =
-      block.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
   const mir::ExprId site_id = BuildStringValueExpr(
       unit, block,
       diag::RuntimeOriginOf(span, process.Owner().SourceManager()));

@@ -1,21 +1,33 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/phase.hpp"
 
 namespace lyra::mir_transform {
 
 // One rewrite of MIR into MIR, named as its function is, as rustc names a pass
-// by its type.
+// by its type. A pass rewrites one body at a time, as rustc's do, so it runs
+// the same on the bodies a unit holds and on one the unit does not, answering
+// nothing where it leaves the body as it is. `run_on_unit` is what it does
+// first to what is no body, and `run_on_body` is null for a rewrite of what no
+// generated body can be, a process (LRM 9.2).
 struct Pass {
   std::string_view name;
-  auto (*run)(mir::CompilationUnit unit) -> mir::CompilationUnit;
+  auto (*run_on_body)(
+      const mir::CompilationUnit& unit, const mir::CodeSource& at,
+      const mir::CallableCode& code)
+      -> std::optional<mir::CallableCode> = nullptr;
+  auto (*run_on_unit)(mir::CompilationUnit unit)
+      -> mir::CompilationUnit = nullptr;
 };
 
 // The passes that bring a unit from the phase it is in into `into`, which a

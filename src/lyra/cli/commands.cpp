@@ -30,6 +30,7 @@
 
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/link_time_optimization.hpp"
+#include "lyra/backend/llvm/type_operation_collector.hpp"
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -256,7 +257,8 @@ auto RunDumpLir(const CommandContext& ctx) -> int {
     return 1;
   }
   auto lowered = compiler::LowerToExecutable(
-      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes, *ctx.sink,
+      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes,
+      backend::llvm_backend::TypeOperationCollectionOf, *ctx.sink,
       ctx.args->compile_width,
       [](const lir::CompilationUnit& unit) -> diag::Result<std::string> {
         return lir::DumpLir(unit);
@@ -286,7 +288,8 @@ auto RunDumpLlvm(const CommandContext& ctx) -> int {
     return 1;
   }
   auto lowered = compiler::LowerToExecutable(
-      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes, *ctx.sink,
+      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes,
+      backend::llvm_backend::TypeOperationCollectionOf, *ctx.sink,
       ctx.args->compile_width, text, print);
   if (!lowered) {
     return 1;
@@ -703,7 +706,8 @@ auto LlvmProgramRecipe(
       .optimization = ctx.args->optimization,
       .link_time = ctx.args->link_time,
       .sanitizer = ctx.args->sanitizer,
-      .code_generator = ThisCompiler(ctx)};
+      .code_generator = ThisCompiler(ctx),
+      .passes = ctx.args->mir_passes};
   program::ProgramSink sink;
   const status::Phase phase("Compiling");
   auto lowered = compiler::LowerToSemantic(

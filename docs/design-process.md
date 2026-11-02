@@ -245,10 +245,10 @@ layers general; the optimizer is what makes the output small. Those are two jobs
 between them is not a trade -- it is a division.
 
 **This holds whether or not the optimizer is switched on.** Lyra's execution backend optimizes only
-when a build asks for it, and a build that iterates does not, so there a body emitted empty stays
-empty in the module. That is a fact about which build ran, not about where the decision belongs. A
-shape defended by "the optimizer removes it anyway" is defended by a fact that can change; a shape
-defended by "removing it is not this layer's decision" is not.
+when a build asks for it, so in a build that does not, a body emitted empty stays empty in the
+module. That is a fact about which build ran, not about where the decision belongs. A shape defended
+by "the optimizer removes it anyway" is defended by a fact that can change; a shape defended by
+"removing it is not this layer's decision" is not.
 
 The sibling of `north_star.md` invariant 3, which says correctness is independent of optimization.
 This says uniformity is too.

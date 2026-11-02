@@ -31,7 +31,7 @@ namespace lyra::lowering::hir_to_mir {
 // no source writes -- the engine it reaches -- is supplied here, so a call the
 // source wrote and one a lowering makes of its own are stated one way.
 [[nodiscard]] auto BuildBuiltinMethodCall(
-    const UnitLowerer& unit_lowerer, mir::Builder block,
+    const mir::CompilationUnit& unit, mir::Builder block,
     support::BuiltinFn method, std::optional<mir::ExprId> receiver,
     std::vector<mir::ExprId> operands, mir::TypeId result_type) -> mir::Expr;
 
@@ -47,9 +47,9 @@ namespace lyra::lowering::hir_to_mir {
 // canonical `do ... while (m.next(idx))` idiom, the header of a loop over the
 // keys), which is why it is a sequence of steps.
 [[nodiscard]] auto BuildAssociativeTraversal(
-    UnitLowerer& unit_lowerer, BlockBuilder& steps, support::BuiltinFn method,
-    mir::ExprId array, AccessPath index, mir::TypeId key_type,
-    mir::TypeId result_type) -> mir::Expr;
+    const mir::CompilationUnit& unit, BlockBuilder& steps,
+    support::BuiltinFn method, mir::ExprId array, AccessPath index,
+    mir::TypeId key_type, mir::TypeId result_type) -> mir::Expr;
 
 // A call's meaning is independent of the enclosing scope, so one template over
 // the pass class serves both the process body and the structural-scope

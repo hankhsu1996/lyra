@@ -246,7 +246,10 @@ cc_test(
 
 cc_test(
     name = "mir_to_lir_cleanup_test",
-    srcs = ["mir_to_lir/cleanup_test.cpp"],
+    srcs = [
+        "mir_to_lir/cleanup_test.cpp",
+        "mir_to_lir/lowered.hpp",
+    ],
     copts = LYRA_COPTS,
     deps = [
         "//:base",
@@ -260,7 +263,10 @@ cc_test(
 
 cc_test(
     name = "mir_to_lir_move_test",
-    srcs = ["mir_to_lir/move_test.cpp"],
+    srcs = [
+        "mir_to_lir/lowered.hpp",
+        "mir_to_lir/move_test.cpp",
+    ],
     copts = LYRA_COPTS,
     deps = [
         "//:diag",
@@ -273,7 +279,10 @@ cc_test(
 
 cc_test(
     name = "mir_to_lir_source_span_test",
-    srcs = ["mir_to_lir/source_span_test.cpp"],
+    srcs = [
+        "mir_to_lir/lowered.hpp",
+        "mir_to_lir/source_span_test.cpp",
+    ],
     copts = LYRA_COPTS,
     deps = [
         "//:diag",
@@ -367,6 +376,7 @@ cc_test(
     srcs = ["compiler/source_span_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
+        "//:backend_llvm",
         "//:compiler",
         "//:diag",
         "//:frontend",

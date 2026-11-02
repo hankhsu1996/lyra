@@ -81,6 +81,7 @@ auto UnitLowerer::TranslateType(mir::TypeId id) -> lir::TypeId {
   const lir::TypeId lir_id =
       out_.types.Intern(TranslateType(mir_->types.Get(id)));
   type_memo_.emplace(id, lir_id);
+  mir_type_of_.try_emplace(lir_id, id);
   return lir_id;
 }
 

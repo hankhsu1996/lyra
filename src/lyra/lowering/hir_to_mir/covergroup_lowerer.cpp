@@ -437,9 +437,11 @@ class Writer {
     const mir::TypeId type = Block().Get(value).type;
     const mir::LocalId held = DeclareLocal(frame_, value);
     const WalkedArray walked = WalkedArrayOf(
-        *unit_lowerer_, frame_, Block().LocalPlace(held, type), std::nullopt);
+        unit_lowerer_->Unit(), frame_, Block().LocalPlace(held, type),
+        std::nullopt);
     auto loop = BuildEntryLoopStmt(
-        *unit_lowerer_, frame_, walked, WalkOrder::kFromFirst, std::nullopt,
+        unit_lowerer_->Unit(), frame_, walked, WalkOrder::kFromFirst,
+        std::nullopt,
         [&](const WalkFrame& at,
             const VisitedEntry& entry) -> diag::Result<void> {
           const Writer inside = At(at);
@@ -509,7 +511,7 @@ auto NewLibraryObject(
 void HandToRuntime(
     const Writer& e, support::BuiltinFn entry, mir::ExprId closure) {
   const mir::ExprId runtime =
-      e.Block().Add(BuildCurrentRuntimeCallExpr(e.Lowering()));
+      e.Block().Add(BuildCurrentRuntimeCallExpr(e.Lowering().Unit()));
   e.Do(
       mir::Expr{
           .data =

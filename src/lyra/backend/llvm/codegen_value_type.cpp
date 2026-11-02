@@ -30,6 +30,7 @@
 #include "lyra/backend/llvm/integral_planes.hpp"
 #include "lyra/backend/llvm/machine_signature.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
+#include "lyra/backend/llvm/witness_tables.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
@@ -64,7 +65,7 @@ using support::ValueDomain;
 // to be had.
 auto CallStreamEntry(
     CodeGenModule& module, llvm::IRBuilderBase& b, RuntimeOp op,
-    const FnAbi& abi, std::span<llvm::Value* const> operands,
+    const LlvmFnAbi& abi, std::span<llvm::Value* const> operands,
     std::optional<llvm::Value*> out) -> llvm::Value* {
   auto args = module.BuildCallArgs(abi, operands);
   if (!args) {
@@ -78,204 +79,6 @@ auto CallStreamEntry(
   }
   return b.CreateCall(module.RuntimeFunction(RuntimeSymbol(op), abi), *args);
 }
-
-// How an operation's body takes and answers its integral values. The type the
-// library asks through answers an equality as its scalar and a case equality
-// as whether it holds, writes a stream into an integral value it is handed
-// and reads one out of one, and is handed a count's control bits as one too,
-// while a type's own function takes and answers each as a value of
-// the type its own code states -- a stream a run of bits, where the type's is
-// as long as the value makes it.
-struct TakenAsStated {};
-struct AnswerScalar {};
-struct AnswerWhetherItHolds {};
-struct AnswerIntoStream {};
-struct StreamOutOfValue {};
-struct RunIntoStream {};
-struct StreamOutOfRun {};
-struct ControlOutOfValue {};
-using IntegralCrossing = std::variant<
-    TakenAsStated, AnswerScalar, AnswerWhetherItHolds, AnswerIntoStream,
-    StreamOutOfValue, RunIntoStream, StreamOutOfRun, ControlOutOfValue>;
-
-// An operation a type answers with a function of its own, and how that
-// function takes and answers its integral values.
-struct OwnOperationWitness {
-  support::ValueOperation answers;
-  IntegralCrossing crossing = TakenAsStated{};
-};
-
-// A stream a type writes or reads by whichever of two functions of its own it
-// states: one at the width its type fixes, or one whose stream is a run of
-// bits as long as the value makes it (LRM 6.24.3).
-struct EitherStreamForm {
-  OwnOperationWitness fixed;
-  OwnOperationWitness run;
-};
-
-using WitnessFilling =
-    std::variant<lir::ValueStep, OwnOperationWitness, EitherStreamForm>;
-
-// One witness of a table a type is told to the library through: the storage's
-// own lifecycle, the operations the language defines on the whole value (LRM
-// 11.4.5, 20.6.2, 20.9, 6.24.3), how a net folds values of it (LRM 6.6.1,
-// 28.12.1), which a record's declaration states as its methods and a unit
-// states for an array, or one no such type answers. `offset` is where the table
-// lays it out, and a body filling it takes and answers what its declaration
-// does.
-struct Witness {
-  std::string_view name;
-  std::size_t offset;
-  support::MachineSignature stands_in_for;
-  WitnessFilling filled_by;
-};
-
-// What a function of the table takes after the type and what it answers,
-// read off its declaration. One that does not throw is read the same way.
-template <typename Function>
-struct WitnessSignatureOf;
-template <typename R, typename... Params>
-struct WitnessSignatureOf<R (*)(const value::ValueType&, Params...)> {
-  static auto Get() -> support::MachineSignature {
-    return support::MachineSignatureOf<R(Params...)>::Get();
-  }
-};
-template <typename R, typename... Params>
-struct WitnessSignatureOf<R (*)(const value::ValueType&, Params...) noexcept>
-    : WitnessSignatureOf<R (*)(const value::ValueType&, Params...)> {};
-// An operation's function is handed the operations it belongs to first.
-template <typename R, typename... Params>
-struct WitnessSignatureOf<R (*)(const value::ValueOperations&, Params...)> {
-  static auto Get() -> support::MachineSignature {
-    return support::MachineSignatureOf<R(Params...)>::Get();
-  }
-};
-
-// Where a table's declaration lays out its member `member`, read off one
-// table laid out as it is.
-template <typename Table, typename Field>
-auto OffsetInTable(Field Table::* member) -> std::size_t {
-  const Table table{};
-  return static_cast<std::size_t>(
-      std::bit_cast<std::uintptr_t>(&(table.*member)) -
-      std::bit_cast<std::uintptr_t>(&table));
-}
-
-// The witness a table's member `member` holds: where the declaration lays it
-// out, and what a body filling it takes and answers.
-template <typename Table, typename Function>
-auto WitnessOf(
-    std::string_view name, Function Table::* member, WitnessFilling filled_by)
-    -> Witness {
-  return {
-      .name = name,
-      .offset = OffsetInTable(member),
-      .stands_in_for = WitnessSignatureOf<Function>::Get(),
-      .filled_by = filled_by};
-}
-
-// Every witness of the type's table but its parts, which no body fills.
-auto ValueWitnesses() {
-  using support::BuiltinFn;
-  using value::ValueWitnessTable;
-  return std::to_array<Witness>({
-      WitnessOf("copy", &ValueWitnessTable::copy, lir::ValueStep::kCopy),
-      WitnessOf("move", &ValueWitnessTable::move, lir::ValueStep::kMove),
-      WitnessOf("destroy", &ValueWitnessTable::destroy, lir::ValueStep::kEnd),
-      WitnessOf("assign", &ValueWitnessTable::assign, lir::ValueStep::kAssign),
-      WitnessOf(
-          "bit_identical", &ValueWitnessTable::bit_identical,
-          OwnOperationWitness{.answers = BuiltinFn::kBitIdentical}),
-  });
-}
-
-// The table is its witnesses, then its parts, one address each.
-static_assert(
-    sizeof(value::ValueWitnessTable) ==
-    (std::tuple_size_v<decltype(ValueWitnesses())> + 1) * sizeof(void*));
-
-// Every function of the language's operations on a whole value of a type.
-auto OperationWitnesses() {
-  using support::BuiltinFn;
-  using value::OperationFunctions;
-  return std::to_array<Witness>({
-      WitnessOf(
-          "equal", &OperationFunctions::equal,
-          OwnOperationWitness{
-              .answers = support::ValueOperator::kEquality,
-              .crossing = AnswerScalar{}}),
-      WitnessOf(
-          "case_equal", &OperationFunctions::case_equal,
-          OwnOperationWitness{
-              .answers = BuiltinFn::kCaseEqual,
-              .crossing = AnswerWhetherItHolds{}}),
-      WitnessOf(
-          "has_unknown", &OperationFunctions::has_unknown,
-          OwnOperationWitness{.answers = BuiltinFn::kHasUnknown}),
-      WitnessOf(
-          "bitstream_width", &OperationFunctions::bitstream_width,
-          OwnOperationWitness{.answers = BuiltinFn::kBitstreamWidth}),
-      WitnessOf(
-          "count_bits", &OperationFunctions::count_bits,
-          OwnOperationWitness{
-              .answers = BuiltinFn::kCountBits,
-              .crossing = ControlOutOfValue{}}),
-      WitnessOf(
-          "write_to_stream", &OperationFunctions::write_to_stream,
-          EitherStreamForm{
-              .fixed =
-                  OwnOperationWitness{
-                      .answers = BuiltinFn::kToBitstream,
-                      .crossing = AnswerIntoStream{}},
-              .run =
-                  OwnOperationWitness{
-                      .answers = BuiltinFn::kToBitVec,
-                      .crossing = RunIntoStream{}}}),
-      WitnessOf(
-          "read_from_stream", &OperationFunctions::read_from_stream,
-          EitherStreamForm{
-              .fixed =
-                  OwnOperationWitness{
-                      .answers = BuiltinFn::kFromBitstream,
-                      .crossing = StreamOutOfValue{}},
-              .run =
-                  OwnOperationWitness{
-                      .answers = BuiltinFn::kFromBitVec,
-                      .crossing = StreamOutOfRun{}}}),
-  });
-}
-
-static_assert(
-    sizeof(value::OperationFunctions) ==
-    std::tuple_size_v<decltype(OperationWitnesses())> * sizeof(void*));
-
-// Every witness of how a net folds values of a type, each the function of the
-// type's own answering that fold.
-auto NetFoldWitnesses() {
-  using support::BuiltinFn;
-  using value::NetFoldTable;
-  return std::to_array<Witness>({
-      WitnessOf(
-          "resolve_tri_state", &NetFoldTable::tri_state,
-          OwnOperationWitness{.answers = BuiltinFn::kResolveTriState}),
-      WitnessOf(
-          "resolve_wired_and", &NetFoldTable::wired_and,
-          OwnOperationWitness{.answers = BuiltinFn::kResolveWiredAnd}),
-      WitnessOf(
-          "resolve_wired_or", &NetFoldTable::wired_or,
-          OwnOperationWitness{.answers = BuiltinFn::kResolveWiredOr}),
-      WitnessOf(
-          "dominating", &NetFoldTable::dominating,
-          OwnOperationWitness{.answers = BuiltinFn::kDominating}),
-      WitnessOf(
-          "filled_like", &NetFoldTable::filled_like,
-          OwnOperationWitness{.answers = BuiltinFn::kFilledLike}),
-  });
-}
-
-static_assert(
-    sizeof(value::NetFoldTable) ==
-    std::tuple_size_v<decltype(NetFoldWitnesses())> * sizeof(void*));
 
 // At the start of `out`, the numbers every type states, where the library's
 // declaration of a type lays them out: its table, the size and alignment of a
@@ -423,13 +226,15 @@ auto CodeGenValueTypes::ReadOutOfStream(
     llvm::IRBuilderBase& b, llvm::Value* stream, llvm::Value* taken,
     llvm::Value* laid_out, lir::TypeId read) -> llvm::Value* {
   const std::array<StatedOperand, 2> stated{
-      MachineOperand{.type = types_->Ptr()},
-      MachineOperand{.type = b.getInt64Ty()}};
+      MachineOperand{.kind = MachineOperandKind::kAddress},
+      MachineOperand{.kind = MachineOperandKind::kCount}};
   const std::array<llvm::Value*, 2> operands{stream, taken};
   return CallStreamEntry(
       *owner_, b, RuntimeOp::kStreamRead,
-      FnAbiOf(
-          *owner_, RuntimeOp::kStreamRead, stated, std::nullopt, read,
+      AtMachineTypes(
+          *owner_,
+          ArrangeEntryCall(
+              unit_->types, RuntimeOp::kStreamRead, stated, std::nullopt, read),
           ReturnIndirect{.returned = b.getInt64Ty()}),
       operands, laid_out);
 }
@@ -687,35 +492,119 @@ void CodeGenValueTypes::ForHeldMember(
   b.SetInsertPoint(done);
 }
 
-auto CodeGenValueTypes::OwnOperations(lir::TypeId type) const
-    -> std::vector<OwnOperation> {
-  std::vector<OwnOperation> operations;
-  if (const lir::RecordId* record = lir::RecordOf(unit_->types.Get(type))) {
-    for (const lir::RecordMethod& method :
-         unit_->records.Get(*record).methods) {
-      operations.push_back(
-          OwnOperation{.answers = method.answers, .function = method.function});
-    }
-    return operations;
-  }
-  for (const lir::TypeOperation& stated : unit_->type_operations) {
-    if (stated.type == type) {
-      operations.push_back(
-          OwnOperation{.answers = stated.answers, .function = stated.function});
-    }
-  }
-  return operations;
-}
-
 auto CodeGenValueTypes::OwnOperationOf(
     lir::TypeId type, support::ValueOperation operation) const
     -> std::optional<lir::FunctionId> {
-  for (const OwnOperation& own : OwnOperations(type)) {
-    if (own.answers == operation) {
-      return own.function;
+  if (const lir::RecordId* record = lir::RecordOf(unit_->types.Get(type))) {
+    for (const lir::RecordMethod& method :
+         unit_->records.Get(*record).methods) {
+      if (method.answers == operation) {
+        return method.function;
+      }
     }
+    return std::nullopt;
   }
-  return std::nullopt;
+  const auto stated = unit_->type_operations.find(
+      lir::TypeOperation{.type = type, .answers = operation});
+  if (stated == unit_->type_operations.end()) {
+    throw InternalError(
+        std::format(
+            "llvm codegen: a record of type {} of unit '{}' is made with the "
+            "operation \"{}\", which nothing asked for before emission -- "
+            "please report this as a bug",
+            lir::SymbolPartOf(*unit_, type).encoded, unit_->name,
+            support::ValueOperationName(operation)));
+  }
+  return stated->second;
+}
+
+auto CodeGenValueTypes::WitnessFromOperation(
+    lir::TypeId type, const Witness& witness,
+    std::optional<lir::FunctionId> method, const IntegralCrossing& crossing)
+    -> llvm::Constant* {
+  if (!method.has_value()) {
+    return Body(type, witness.name, witness.stands_in_for, nullptr);
+  }
+  const support::MachineSignature& signature = witness.stands_in_for;
+  return std::visit(
+      Overloaded{
+          [&](TakenAsStated) -> llvm::Constant* {
+            return Body(
+                type, witness.name, signature, owner_->UnitFunction(*method));
+          },
+          [&](AnswerScalar) -> llvm::Constant* {
+            return ScalarAnswerBody(
+                type, witness.name, signature, *method,
+                ComparisonAnswered::kAsItsScalar);
+          },
+          [&](AnswerWhetherItHolds) -> llvm::Constant* {
+            return ScalarAnswerBody(
+                type, witness.name, signature, *method,
+                ComparisonAnswered::kAsWhetherItHolds);
+          },
+          [&](AnswerIntoStream) -> llvm::Constant* {
+            return StreamWriteBody(type, witness.name, signature, *method);
+          },
+          [&](StreamOutOfValue) -> llvm::Constant* {
+            return StreamReadBody(type, witness.name, signature, *method);
+          },
+          [&](RunIntoStream) -> llvm::Constant* {
+            return RunWriteBody(type, witness.name, signature, *method);
+          },
+          [&](StreamOutOfRun) -> llvm::Constant* {
+            return RunBuildBody(type, witness.name, signature, *method);
+          },
+          [&](ControlOutOfValue) -> llvm::Constant* {
+            return ControlReadBody(type, witness.name, signature, *method);
+          }},
+      crossing);
+}
+
+auto CodeGenValueTypes::FillWitness(lir::TypeId type, const Witness& witness)
+    -> llvm::Constant* {
+  return std::visit(
+      Overloaded{
+          [&](lir::ValueStep step) -> llvm::Constant* {
+            return Body(
+                type, witness.name, witness.stands_in_for,
+                owner_->UnitFunction(lir::StepFunctionOf(*unit_, type, step)));
+          },
+          [&](const OwnOperationWitness& own) -> llvm::Constant* {
+            return WitnessFromOperation(
+                type, witness, OwnOperationOf(type, own.answers), own.crossing);
+          },
+          [&](const EitherStreamForm& either) -> llvm::Constant* {
+            const std::optional<lir::FunctionId> run =
+                OwnOperationOf(type, either.run.answers);
+            if (run.has_value()) {
+              return WitnessFromOperation(
+                  type, witness, run, either.run.crossing);
+            }
+            return WitnessFromOperation(
+                type, witness, OwnOperationOf(type, either.fixed.answers),
+                either.fixed.crossing);
+          }},
+      witness.filled_by);
+}
+
+auto CodeGenValueTypes::GetAddrOfOperationFunctions(lir::TypeId type)
+    -> llvm::GlobalVariable* {
+  const std::string& key = KeyOf(type);
+  if (const auto found = operation_functions_of_.find(key);
+      found != operation_functions_of_.end()) {
+    return found->second;
+  }
+  ConstantRecord function_record(
+      owner_->Context(), sizeof(value::OperationFunctions));
+  for (const Witness& witness : OperationWitnesses()) {
+    function_record.Place(witness.offset, FillWitness(type, witness));
+  }
+  llvm::GlobalVariable* const functions = owner_->DefineConstant(
+      std::format("lyra.type{}.operation_functions", key),
+      std::move(function_record).Build(), llvm::GlobalValue::InternalLinkage,
+      llvm::Align(alignof(value::OperationFunctions)));
+  operation_functions_of_.emplace(key, functions);
+  return functions;
 }
 
 auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
@@ -753,105 +642,12 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
     return constant;
   }
   constant->setLinkage(*linkage);
-  const std::vector<OwnOperation> operations = OwnOperations(type);
-
-  // The function answering `operation` with the crossing `crossing` names.
-  const auto answered_by =
-      [&](const Witness& witness, support::ValueOperation operation,
-          const IntegralCrossing& crossing) -> llvm::Constant* {
-    const auto method = std::ranges::find_if(
-        operations,
-        [&](const OwnOperation& own) { return own.answers == operation; });
-    if (method == operations.end()) {
-      return Body(type, witness.name, witness.stands_in_for, nullptr);
-    }
-    return std::visit(
-        Overloaded{
-            [&](TakenAsStated) -> llvm::Constant* {
-              return Body(
-                  type, witness.name, witness.stands_in_for,
-                  owner_->UnitFunction(method->function));
-            },
-            [&](AnswerScalar) -> llvm::Constant* {
-              return ScalarAnswerBody(
-                  type, witness.name, witness.stands_in_for, method->function,
-                  ComparisonAnswered::kAsItsScalar);
-            },
-            [&](AnswerWhetherItHolds) -> llvm::Constant* {
-              return ScalarAnswerBody(
-                  type, witness.name, witness.stands_in_for, method->function,
-                  ComparisonAnswered::kAsWhetherItHolds);
-            },
-            [&](AnswerIntoStream) -> llvm::Constant* {
-              return StreamWriteBody(
-                  type, witness.name, witness.stands_in_for, method->function);
-            },
-            [&](StreamOutOfValue) -> llvm::Constant* {
-              return StreamReadBody(
-                  type, witness.name, witness.stands_in_for, method->function);
-            },
-            [&](RunIntoStream) -> llvm::Constant* {
-              return RunWriteBody(
-                  type, witness.name, witness.stands_in_for, method->function);
-            },
-            [&](StreamOutOfRun) -> llvm::Constant* {
-              return RunBuildBody(
-                  type, witness.name, witness.stands_in_for, method->function);
-            },
-            [&](ControlOutOfValue) -> llvm::Constant* {
-              return ControlReadBody(
-                  type, witness.name, witness.stands_in_for, method->function);
-            }},
-        crossing);
-  };
-
-  // The body filling `witness`, each where its record's declaration lays it
-  // out.
-  const auto filled = [&](const Witness& witness) -> llvm::Constant* {
-    return std::visit(
-        Overloaded{
-            [&](lir::ValueStep step) -> llvm::Constant* {
-              return Body(
-                  type, witness.name, witness.stands_in_for,
-                  owner_->UnitFunction(
-                      lir::StepFunctionOf(*unit_, type, step)));
-            },
-            [&](const OwnOperationWitness& own) -> llvm::Constant* {
-              return answered_by(witness, own.answers, own.crossing);
-            },
-            [&](const EitherStreamForm& either) -> llvm::Constant* {
-              const OwnOperationWitness& own =
-                  std::ranges::any_of(
-                      operations,
-                      [&](const OwnOperation& stated) {
-                        return stated.answers == either.run.answers;
-                      })
-                      ? either.run
-                      : either.fixed;
-              return answered_by(witness, own.answers, own.crossing);
-            }},
-        witness.filled_by);
-  };
-  // The functions of the language's operations on a value of the type, which
-  // the type's operations name.
-  ConstantRecord function_record(ctx, sizeof(value::OperationFunctions));
-  for (const Witness& witness : OperationWitnesses()) {
-    function_record.Place(witness.offset, filled(witness));
-  }
-  llvm::Constant* const functions_data = std::move(function_record).Build();
-  llvm::GlobalVariable* const functions = global(
-      std::format("lyra.type{}.operation_functions", key),
-      functions_data->getType());
-  functions->setInitializer(functions_data);
-  functions->setAlignment(llvm::Align(alignof(value::OperationFunctions)));
-  operation_functions_of_.insert_or_assign(key, functions);
-
   // The table, each witness where the library's declaration of it lays it
   // out, and for an array the library's answer for its elements by position,
   // which reads them off the type it is handed.
   ConstantRecord witnesses(ctx, sizeof(value::ValueWitnessTable));
   for (const Witness& witness : ValueWitnesses()) {
-    witnesses.Place(witness.offset, filled(witness));
+    witnesses.Place(witness.offset, FillWitness(type, witness));
   }
   llvm::Constant* parts = llvm::ConstantPointerNull::get(ptr);
   if (array != nullptr) {
@@ -867,6 +663,7 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
   using value::FixedArrayType;
   using value::TupleComponent;
   using value::TupleType;
+  const TypeConstantReferences references = ReferencesOf(*unit_, type);
   return std::visit(
       Overloaded{
           [&](const UnionLayout* overlay) -> llvm::GlobalVariable* {
@@ -878,7 +675,7 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
                 alignof(value::ValueType));
           },
           [&](const ArrayLayout* laid) -> llvm::GlobalVariable* {
-            auto element = GetAddrOfElementType(laid->element);
+            auto element = GetAddrOfElementType(*references.element_type);
             if (!element) {
               throw InternalError(
                   "llvm codegen: an array's element is no value the runtime "
@@ -908,9 +705,10 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
             llvm::Type* const component_ty =
                 component(0, llvm::ConstantPointerNull::get(ptr))->getType();
             std::vector<llvm::Constant*> components;
-            components.reserve(product->components.size());
-            for (std::size_t i = 0; i < product->components.size(); ++i) {
-              auto component_type = GetAddrOfValueType(product->components[i]);
+            components.reserve(references.components.size());
+            for (std::size_t i = 0; i < references.components.size(); ++i) {
+              auto component_type =
+                  GetAddrOfValueType(references.components[i]);
               if (!component_type) {
                 throw InternalError(
                     "llvm codegen: a tuple component is no value the runtime "
@@ -973,13 +771,7 @@ auto CodeGenValueTypes::GetAddrOfNetFolds(lir::TypeId type) -> llvm::Constant* {
   }
   ConstantRecord folds(module.getContext(), sizeof(value::NetFoldTable));
   for (const Witness& witness : NetFoldWitnesses()) {
-    const std::optional<lir::FunctionId> method = OwnOperationOf(
-        type, std::get<OwnOperationWitness>(witness.filled_by).answers);
-    folds.Place(
-        witness.offset,
-        Body(
-            type, witness.name, witness.stands_in_for,
-            method.has_value() ? owner_->UnitFunction(*method) : nullptr));
+    folds.Place(witness.offset, FillWitness(type, witness));
   }
   llvm::GlobalVariable* const defined = owner_->DefineConstant(
       name, std::move(folds).Build(), *linkage,
@@ -1067,7 +859,7 @@ auto CodeGenValueTypes::GetAddrOfOperations(lir::TypeId type)
       }
       element = *of_element;
     }
-    return define(operation_functions_of_.at(key), of, element, *linkage);
+    return define(GetAddrOfOperationFunctions(type), of, element, *linkage);
   }
   if (types_->IntegralShapeOf(type).has_value()) {
     return define(
@@ -1296,8 +1088,10 @@ auto CodeGenValueTypes::GetAddrOfElementType(lir::TypeId element)
       OwnOperationOf(element, support::BuiltinFn::kDeclaredDefault);
   if (!builder.has_value()) {
     throw InternalError(
-        "llvm codegen: a value of a type whose default the unit does not "
-        "state is held -- please report this as a bug");
+        std::format(
+            "llvm codegen: a value of type {} is held, whose default unit "
+            "'{}' does not state -- please report this as a bug",
+            KeyOf(element), unit_->name));
   }
   auto type = GetAddrOfValueType(element);
   if (!type) {

@@ -42,7 +42,8 @@ belongs to whichever layer already held what the property was computed from.
    introduce CFG, storage placement, or scheduling.
 3. MIR-to-LIR introduces CFG, storage placement, and the scheduling protocol. It does not
    reintroduce language-level constructs or re-decide ownership.
-4. LIR-to-LLVM is mechanical translation. Design decisions are not made at this boundary.
+4. LIR-to-LLVM preserves the execution semantics LIR decided, selecting the concrete representation
+   and runtime realization the backend requires. Design decisions are not made at this boundary.
 5. Information decided at an earlier layer is carried forward, not rebuilt. Downstream layers do not
    re-derive upstream decisions from side data.
 6. Lowering does not introduce new semantic identity. The target layer's identity kinds are defined
