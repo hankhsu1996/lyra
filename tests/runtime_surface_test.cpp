@@ -5,8 +5,10 @@
 #include <format>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
 #include <ranges>
 #include <regex>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -91,6 +93,61 @@ module Test;
 endmodule
 )sv";
 
+// A design stating a procedural continuous assignment on each kind of value no
+// design shapes that the language lets one name (a `chandle` it does not, LRM
+// 6.14), through its variable, and through a port standing for what drives it
+// on each kind a port may hold.
+constexpr std::string_view kTakeoverDesignSource = R"sv(
+interface Bus;
+endinterface
+
+class C;
+endclass
+
+module Port (input string s, input real r, input shortreal sr, input C c);
+endmodule
+
+module Test;
+  Bus bus ();
+  virtual Bus v;
+  virtual Bus w;
+  string s = "x";
+  real r = 1.5;
+  shortreal sr = 1.5;
+  C h;
+  C other;
+
+  Port port (s, r, sr, h);
+
+  initial begin
+    w = bus;
+    force v = w;
+    release v;
+    force s = "y";
+    force r = 2.5;
+    force sr = 2.5;
+    force h = other;
+    release s;
+    release r;
+    release sr;
+    release h;
+    assign s = "z";
+    assign r = 3.5;
+    deassign s;
+    deassign r;
+    force port.s = "y";
+    force port.r = 2.5;
+    force port.sr = 2.5;
+    force port.c = other;
+    release port.s;
+    release port.r;
+    release port.sr;
+    release port.c;
+    $finish;
+  end
+endmodule
+)sv";
+
 // Whether a definition an emitted unit holds is one the unit's own design
 // decided. That is so where it names something of a unit's -- its scopes, the
 // lambdas its bodies write -- or where a template of the runtime is
@@ -169,6 +226,54 @@ auto SymbolNames(std::string_view listing) -> std::vector<std::string> {
   return names;
 }
 
+// Emits `source` into `project`.
+void EmitDesign(
+    const std::filesystem::path& lyra_exe, std::string_view source,
+    const std::filesystem::path& project) {
+  std::filesystem::create_directories(project);
+  const auto design = project.parent_path() / "design.sv";
+  {
+    std::ofstream out(design);
+    out << source;
+  }
+  const std::vector<std::string> emit_args = {
+      "emit", "cpp", "--top", "Test", "-o", project.string(), design.string()};
+  auto emit_or = lyra::driver::RunProcessCaptured(lyra_exe, emit_args);
+  ASSERT_TRUE(emit_or) << emit_or.error().Text();
+  ASSERT_EQ(emit_or->exit_code, 0) << emit_or->stderr_text;
+}
+
+// Compiles every unit of `project` with `compiler`, as an unoptimized build of
+// the design does, and adds the object it leaves to `objects`.
+void CompileUnits(
+    const std::filesystem::path& compiler, const std::filesystem::path& project,
+    std::vector<std::filesystem::path>& objects) {
+  std::vector<lyra::driver::ProcessRequest> compiles;
+  for (const auto& entry : std::filesystem::directory_iterator(project)) {
+    if (entry.path().extension() != ".cpp") {
+      continue;
+    }
+    std::filesystem::path object = entry.path();
+    object.replace_extension(".o");
+    std::vector<std::string> args = lyra::driver::DesignCompileFlags(
+        lyra::driver::OptimizationLevel::kO0, lyra::support::Sanitizer::kNone);
+    args.insert(
+        args.end(),
+        {"-I", (project / "runtime" / "include").string(), "-I",
+         project.string(), "-c", entry.path().string(), "-o", object.string()});
+    compiles.push_back(
+        lyra::driver::ProcessRequest{.exe = compiler, .args = std::move(args)});
+    objects.push_back(std::move(object));
+  }
+  ASSERT_FALSE(objects.empty()) << "the design emitted no translation unit";
+  auto compiled_or = lyra::driver::RunProcessesCaptured(compiles, 4);
+  ASSERT_TRUE(compiled_or) << compiled_or.error().Text();
+  for (const auto& compiled : *compiled_or) {
+    ASSERT_EQ(compiled.exit_code, 0) << "an emitted unit did not compile:\n"
+                                     << compiled.stderr_text;
+  }
+}
+
 }  // namespace
 
 // A translation unit pays for what it contains. A unit of an emitted project
@@ -196,44 +301,14 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
   auto dir_or = conformance::framework::MakeScratchDir();
   ASSERT_TRUE(dir_or) << dir_or.error();
 
-  const auto design = *dir_or / "design.sv";
   const auto project = *dir_or / "project";
-  {
-    std::ofstream out(design);
-    out << kDesignSource;
-  }
-  const std::vector<std::string> emit_args = {
-      "emit", "cpp", "--top", "Test", "-o", project.string(), design.string()};
-  auto emit_or = lyra::driver::RunProcessCaptured(lyra_exe, emit_args);
-  ASSERT_TRUE(emit_or) << emit_or.error().Text();
-  ASSERT_EQ(emit_or->exit_code, 0) << emit_or->stderr_text;
-
-  std::vector<lyra::driver::ProcessRequest> compiles;
+  ASSERT_NO_FATAL_FAILURE(EmitDesign(lyra_exe, kDesignSource, project));
   std::vector<std::filesystem::path> objects;
+  ASSERT_NO_FATAL_FAILURE(CompileUnits(clangxx, project, objects));
+
   std::vector<std::string> unit_namespaces;
-  for (const auto& entry : std::filesystem::directory_iterator(project)) {
-    if (entry.path().extension() != ".cpp") {
-      continue;
-    }
-    unit_namespaces.push_back(entry.path().stem().string());
-    std::filesystem::path object = entry.path();
-    object.replace_extension(".o");
-    std::vector<std::string> args = lyra::driver::DesignCompileFlags(
-        lyra::driver::OptimizationLevel::kO0, lyra::support::Sanitizer::kNone);
-    args.insert(
-        args.end(),
-        {"-I", (project / "runtime" / "include").string(), "-I",
-         project.string(), "-c", entry.path().string(), "-o", object.string()});
-    compiles.push_back(
-        lyra::driver::ProcessRequest{.exe = clangxx, .args = std::move(args)});
-    objects.push_back(std::move(object));
-  }
-  ASSERT_FALSE(objects.empty()) << "the design emitted no translation unit";
-  auto compiled_or = lyra::driver::RunProcessesCaptured(compiles, 4);
-  ASSERT_TRUE(compiled_or) << compiled_or.error().Text();
-  for (const auto& compiled : *compiled_or) {
-    ASSERT_EQ(compiled.exit_code, 0) << "an emitted unit did not compile:\n"
-                                     << compiled.stderr_text;
+  for (const auto& object : objects) {
+    unit_namespaces.push_back(object.stem().string());
   }
 
   std::string carried;
@@ -270,6 +345,83 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
       "constructor and destructor defaulted outside the class so that the "
       "statement reaches them too.",
       carried);
+}
+
+// The library is compiled by one compiler and a unit of a design by whichever
+// the user has, so what a unit calls in it is a name the two have to spell
+// alike. Nothing shows it where they do not: a unit compiled by the library's
+// own compiler finds every name, and the headers read the same to both. The
+// names a unit asks for are read off its object, under the compiler the
+// library was not compiled by, without building or linking the program.
+TEST(RuntimeSurface, AUnitOfAnotherCompilerFindsWhatItCallsInTheLibrary) {
+  const auto gcc = lyra::test::ResolveHostGcc();
+  ASSERT_FALSE(gcc.empty());
+  const auto nm = lyra::test::ResolveLlvmNm();
+  ASSERT_FALSE(nm.empty());
+  const auto lyra_exe = lyra::test::ResolveLyra();
+  ASSERT_FALSE(lyra_exe.empty());
+  auto dir_or = conformance::framework::MakeScratchDir();
+  ASSERT_TRUE(dir_or) << dir_or.error();
+  auto runtime_or = lyra::driver::ResolveRuntimeLocation(lyra_exe.string());
+  ASSERT_TRUE(runtime_or) << runtime_or.error().primary.message;
+
+  const auto symbols = [&](std::string_view which,
+                           const std::filesystem::path& file) {
+    const std::vector<std::string> args = {
+        std::string(which), "--format=just-symbols", file.string()};
+    auto listed_or = lyra::driver::RunProcessCaptured(nm, args);
+    if (!listed_or) {
+      ADD_FAILURE() << listed_or.error().Text();
+      return std::vector<std::string>{};
+    }
+    EXPECT_EQ(listed_or->exit_code, 0) << listed_or->stderr_text;
+    return SymbolNames(listed_or->stdout_text);
+  };
+
+  const std::vector<std::string> library =
+      symbols("--defined-only", runtime_or->lib);
+  ASSERT_FALSE(library.empty()) << "the library was listed as defining nothing";
+
+  std::string missing;
+  for (const auto [at, source] : std::views::enumerate(
+           std::array{kDesignSource, kTakeoverDesignSource})) {
+    const auto project = *dir_or / std::format("design{}", at) / "project";
+    ASSERT_NO_FATAL_FAILURE(EmitDesign(lyra_exe, source, project));
+    std::vector<std::filesystem::path> objects;
+    ASSERT_NO_FATAL_FAILURE(CompileUnits(gcc, project, objects));
+
+    // Each design is a program of its own, so what one defines answers nothing
+    // another asks.
+    std::set<std::string> defined(library.begin(), library.end());
+    for (const auto& object : objects) {
+      std::ranges::copy(
+          symbols("--defined-only", object),
+          std::inserter(defined, defined.end()));
+    }
+
+    std::size_t asked = 0;
+    for (const auto& object : objects) {
+      for (const std::string& name : symbols("--undefined-only", object)) {
+        if (!name.contains("4lyra")) {
+          continue;
+        }
+        ++asked;
+        if (!defined.contains(name)) {
+          missing +=
+              std::format("  {}: {}\n", object.filename().string(), name);
+        }
+      }
+    }
+    EXPECT_GT(asked, 0U) << "no unit was listed as asking the library for "
+                            "anything, so this measured nothing";
+  }
+
+  EXPECT_TRUE(missing.empty()) << std::format(
+      "units GCC compiled ask for names the library does not define:\n{}A "
+      "unit calls a member of a family stated as already compiled by the name "
+      "its own compiler gives it, and a constraint on the member is part of "
+      "that name to some compilers and not to others.",
+      missing);
 }
 
 // The runtime writes its descriptors itself and names no standard stream of

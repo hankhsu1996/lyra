@@ -536,7 +536,8 @@ auto WideRefDriveTakeover(
 // type's own function, handed over as an address.
 auto TakePositionsAt(const void* take_positions)
     -> TakePositionsOf<value::LaidOutValue> {
-  return {.take = std::bit_cast<value::TakePositionsWitness>(take_positions)};
+  return TakePositionsOf<value::LaidOutValue>{
+      std::bit_cast<value::TakePositionsWitness>(take_positions)};
 }
 
 // The same through a reference to a value laid out by its type, whose member

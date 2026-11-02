@@ -33,6 +33,11 @@ namespace lyra::runtime {
 // declaration needs in return is the matching definition in this header's own
 // source file -- a family member used but not defined there is a link error
 // rather than a silent copy per unit.
+//
+// A unit calls a member of these by the name its own compiler gives it, and the
+// library's is another compiler's. A constraint on the member is part of that
+// name to some compilers and not to others, so no member a unit calls carries
+// one.
 
 extern template class ValueStorageCore<value::String>;
 extern template class ValueStorageCore<value::Real>;
