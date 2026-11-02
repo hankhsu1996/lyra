@@ -5,6 +5,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -83,32 +84,17 @@ void ObjectRandObjects(GcObject& object, const value::ObjectRef& problem) {
   EnterRandomization(object, &abi::ClassObjectInfo::rand_objects, problem);
 }
 
-// The built-in hooks do nothing to the object (LRM 18.6.2), though a call of
-// one through a handle naming no object is still the design's failure (LRM
-// 8.4).
-void BuiltinPreRandomize(GcObject* object) {
-  if (object == nullptr) {
-    value::RaiseNullObjectHandleAccess();
-  }
+void BuiltinPreRandomize() {
 }
 
-void BuiltinPostRandomize(GcObject* object) {
-  if (object == nullptr) {
-    value::RaiseNullObjectHandleAccess();
-  }
+void BuiltinPostRandomize() {
 }
 
 void ObjectPreRandomize(GcObject* object) {
-  if (object == nullptr) {
-    value::RaiseNullObjectHandleAccess();
-  }
   EnterRandomization(*object, &abi::ClassObjectInfo::pre_randomize);
 }
 
 void ObjectPostRandomize(GcObject* object) {
-  if (object == nullptr) {
-    value::RaiseNullObjectHandleAccess();
-  }
   EnterRandomization(*object, &abi::ClassObjectInfo::post_randomize);
 }
 
@@ -121,9 +107,11 @@ auto ObjectGetRandstate(ClassObject* object) -> value::String {
   return value::String{object->Generator().StateText()};
 }
 
-void ObjectSetRandstate(ClassObject* object, const value::String& state) {
+void ObjectSetRandstate(
+    ClassObject* object, const value::String& state, base::SourceLocation at) {
   const std::optional<DrawRng> restored = DrawRng::FromStateText(state.View());
   if (!restored.has_value()) {
+    const base::SourceLocationScope bound(at);
     throw SimulationError(
         "'set_randstate' was given a state that no 'get_randstate' returned");
   }

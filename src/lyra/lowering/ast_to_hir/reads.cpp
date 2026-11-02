@@ -19,6 +19,9 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
+#include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_span.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -125,13 +128,18 @@ auto AccessesOf(
 }
 
 // A body is compiled whether or not a wait reaches it, so what it cannot state
-// yet is the wait's to refuse when it asks, never the body's.
-auto RefusedWhenAsked(diag::Diagnostic diagnostic) -> hir::Reads {
+// yet is the wait's to refuse when it asks, never the body's. `body` is where
+// the refusal stands where what failed names no place of its own.
+auto RefusedWhenAsked(diag::Diagnostic diagnostic, diag::SourceSpan body)
+    -> hir::Reads {
+  diag::Diagnostic placed = diag::PlacedAt(std::move(diagnostic), body);
   return hir::Reads{
       .cells = {},
       .writes = {},
       .calls = {},
-      .unreportable = std::move(diagnostic.primary.message)};
+      .unreportable = hir::UnreportableReads{
+          .why = std::move(placed.primary.message),
+          .span = std::get<diag::SourceSpan>(placed.primary.span)}};
 }
 
 }  // namespace
@@ -163,11 +171,12 @@ template auto CellsOfWaitedExpression(
 auto ReadsOfFunctionBody(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::SubroutineSymbol& function) -> hir::Reads {
+  const diag::SourceSpan body = frontend::PointSpanOf(function.location);
   auto reads = AccessesOf(
       proc, proc.Owner().Sensitivity().AnalyzeAccesses(function), frame);
-  if (!reads) return RefusedWhenAsked(std::move(reads.error()));
+  if (!reads) return RefusedWhenAsked(std::move(reads.error()), body);
   auto calls = CallsListedIn(proc, frame, function.getBody());
-  if (!calls) return RefusedWhenAsked(std::move(calls.error()));
+  if (!calls) return RefusedWhenAsked(std::move(calls.error()), body);
   reads->calls = *std::move(calls);
   return *std::move(reads);
 }
@@ -176,12 +185,13 @@ auto ReadsOfConstruction(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::ClassType& cls,
     const slang::ast::SubroutineSymbol* constructor,
     const slang::ast::Expression* base_clause) -> hir::Reads {
+  const diag::SourceSpan declared = frontend::PointSpanOf(cls.location);
   hir::Reads reads{
       .cells = {}, .writes = {}, .calls = {}, .unreportable = std::nullopt};
   if (constructor != nullptr) {
     auto body = AccessesOf(
         proc, proc.Owner().Sensitivity().AnalyzeAccesses(*constructor), frame);
-    if (!body) return RefusedWhenAsked(std::move(body.error()));
+    if (!body) return RefusedWhenAsked(std::move(body.error()), declared);
     reads.cells = std::move(body->cells);
   }
   // What the class itself evaluates as an object is built, in the class's own
@@ -203,7 +213,7 @@ auto ReadsOfConstruction(
   for (const slang::ast::Expression* expr : evaluated_by_the_class) {
     auto cells = proc.Owner().SensitivityEntriesOf(
         proc, proc.Owner().Sensitivity().AnalyzeReads(*expr, cls), frame);
-    if (!cells) return RefusedWhenAsked(std::move(cells.error()));
+    if (!cells) return RefusedWhenAsked(std::move(cells.error()), declared);
     reads.cells.insert(
         reads.cells.end(), std::make_move_iterator(cells->begin()),
         std::make_move_iterator(cells->end()));

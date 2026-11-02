@@ -14,6 +14,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
@@ -35,6 +36,7 @@
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/linkage.hpp"
 #include "lyra/mir/record_decl.hpp"
+#include "lyra/mir/source_location_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/value_build.hpp"
@@ -333,6 +335,21 @@ auto UnitLowerer::Finish() && -> lir::CompilationUnit {
   }
   out_.integral_constants = std::move(constants);
 
+  // A location is a record of the library's, with a symbol of this artifact.
+  for (const mir::SourceLocationId id : mir_->source_locations.Ids()) {
+    const diag::SourcePosition& at = mir_->source_locations.Get(id);
+    out_.constants.push_back(
+        lir::GlobalConstant{
+            .symbol = lir::SourceLocationSymbol(id.value),
+            .linkage = support::Linkage::kInternal,
+            .initializer = lir::Constant{lir::ConstantRecord{
+                .decl = support::LibraryDecl::kSourceLocationRecord,
+                .parts = {
+                    lir::Constant{lir::ConstantString{.text = at.file}},
+                    lir::Constant{lir::ConstantInt{.value = at.line}},
+                    lir::Constant{lir::ConstantInt{.value = at.column}}}}}});
+  }
+
   // An enumeration's member table is its base type and its members' names and
   // bits here.
   base::Translation<lir::EnumTableId, lir::EnumTableDecl> tables(
@@ -486,6 +503,16 @@ auto UnitLowerer::EntryConstant(
       .prototype = prototype};
 }
 
+namespace {
+
+// Whether `cls` constructs its objects with a body this unit holds, rather
+// than stating what another unit's construction takes.
+auto DefinesConstructor(const mir::Class& cls) -> bool {
+  return cls.constructor.has_value() && cls.constructor->code.body.has_value();
+}
+
+}  // namespace
+
 auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
     -> ClassIdentities {
   // Only a callable this program defines becomes a function of the unit, so a
@@ -510,7 +537,7 @@ auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
   }
   return ClassIdentities{
       .lir_class = out_.classes.Declare(),
-      .constructor = cls.constructor.has_value()
+      .constructor = DefinesConstructor(cls)
                          ? std::optional{out_.functions.Declare()}
                          : std::nullopt,
       .methods = {cls.callables.size(), std::move(methods)},
@@ -538,7 +565,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   // A class's bodies become functions of the program, and a body's own name is
   // unique only within its class -- so the class qualifies it, being itself
   // unique program-wide.
-  if (cls.constructor.has_value()) {
+  if (DefinesConstructor(cls)) {
     const lir::FunctionId function = ConstructorFunction(owner);
     auto constructor = FunctionLowerer(
                            *this, cls.constructor->code,
@@ -724,6 +751,9 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                     [&](const mir::ClassConstantRef&) {
                       return not_data("a constant read whole");
                     },
+                    [&](const mir::SourceLocationRef&) {
+                      return not_data("a location's record read whole");
+                    },
                     [&](const mir::LocalRef&) { return not_data("a local"); },
                     [&](const mir::DefinitionRef&) {
                       return not_data("a definition read whole");
@@ -795,6 +825,9 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                     },
                     [&](const mir::StaticVariableRef&) {
                       return not_data("the address of a static variable");
+                    },
+                    [&](const mir::SourceLocationRef&) {
+                      return not_data("the address of a location's record");
                     }},
                 named->target);
           },

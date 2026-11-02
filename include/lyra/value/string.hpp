@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral.hpp"
@@ -155,7 +156,8 @@ class String {
 
   // LRM 20.6.2 `$bits`: a string occupies 8 bits per character (LRM 6.16, a
   // string element is a byte).
-  [[nodiscard]] auto BitstreamWidth() const -> Int {
+  [[nodiscard]] auto BitstreamWidth(base::SourceLocation at) const -> Int {
+    const base::SourceLocationScope bound(at);
     return Int::FromInt(static_cast<std::int64_t>(8 * impl_.size()));
   }
 
@@ -202,10 +204,12 @@ class String {
   }
   // The same as a run of bits of its own, and the string exactly that run
   // holds.
-  [[nodiscard]] auto ToBitVec() const -> BitVec {
-    return StreamOf(*this);
+  [[nodiscard]] auto ToBitVec(base::SourceLocation at) const -> BitVec {
+    return StreamOf(*this, BitstreamWidth(at));
   }
-  [[nodiscard]] static auto FromBitVec(const BitVec& run) -> String {
+  [[nodiscard]] static auto FromBitVec(
+      const BitVec& run, base::SourceLocation at) -> String {
+    const base::SourceLocationScope bound(at);
     String out;
     ReadWholeStream(out, run);
     return out;
@@ -213,12 +217,10 @@ class String {
 
   // LRM 20.9 `$countbits`: a string's bit stream is its characters, each an
   // LRM 6.16 byte, so the count over it is the sum of the characters' own.
-  template <IntegralValue Control>
-  [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
-    return CountBits(control_bits.AsWords().View());
-  }
-  [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
+  [[nodiscard]] auto CountBits(
+      const LogicVector<4>& control_bits, base::SourceLocation at) const
       -> Int {
+    const base::SourceLocationScope bound(at);
     std::int64_t total = 0;
     for (const char c : impl_) {
       const std::uint64_t word = static_cast<unsigned char>(c);
@@ -228,7 +230,7 @@ class String {
               .unknown = {},
               .width = 8,
               .signedness = Signedness::kUnsigned},
-          control_bits);
+          control_bits.View());
     }
     return Int::FromInt(total);
   }

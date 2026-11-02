@@ -126,7 +126,7 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // on it are answers to questions asked of it, which no unit states, its
   // phase says where it stands, and its builtin types and the library's
   // structures are the same in every unit, so none of these is counted.
-  const auto& [name, body_name, source_name, types, integral_constants, enum_tables, builtins, library_records, classes, content, callables, named_callables, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, closures, layouts, phase] =
+  const auto& [name, body_name, source_name, types, integral_constants, enum_tables, source_locations, builtins, library_records, classes, content, callables, named_callables, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, closures, layouts, phase] =
       unit;
 
   HeldByClasses in_classes;
@@ -182,6 +182,7 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
       {.kind = "class constants", .held = in_classes.constants},
       {.kind = "integral constants", .held = integral_constants.size()},
       {.kind = "enum tables", .held = enum_tables.size()},
+      {.kind = "source locations", .held = source_locations.size()},
       {.kind = "types", .held = types.size()},
       {.kind = "foreign scope entries", .held = foreign_scope_entries.size()},
       {.kind = "consumed signatures",

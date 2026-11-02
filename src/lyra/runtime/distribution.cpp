@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/integral.hpp"
 
 namespace lyra::runtime {
@@ -207,44 +208,55 @@ auto DistNormal(
   return DrawnWith(RoundDraw(drawn), state);
 }
 
-auto DistExponential(std::int64_t seed, std::int64_t mean) -> DistributionDraw {
+auto DistExponential(
+    std::int64_t seed, std::int64_t mean, base::SourceLocation at)
+    -> DistributionDraw {
   const DistInt shape = IntegerArgument(mean);
+  const base::SourceLocationScope bound(at);
   RequirePositive(shape, "$dist_exponential", "mean");
   DistInt state = IntegerArgument(seed);
   const double drawn = Exponential(state, shape);
   return DrawnWith(RoundDraw(drawn), state);
 }
 
-auto DistPoisson(std::int64_t seed, std::int64_t mean) -> DistributionDraw {
+auto DistPoisson(std::int64_t seed, std::int64_t mean, base::SourceLocation at)
+    -> DistributionDraw {
   const DistInt shape = IntegerArgument(mean);
+  const base::SourceLocationScope bound(at);
   RequirePositive(shape, "$dist_poisson", "mean");
   DistInt state = IntegerArgument(seed);
   const DistInt drawn = Poisson(state, shape);
   return DrawnWith(drawn, state);
 }
 
-auto DistChiSquare(std::int64_t seed, std::int64_t degrees_of_freedom)
+auto DistChiSquare(
+    std::int64_t seed, std::int64_t degrees_of_freedom, base::SourceLocation at)
     -> DistributionDraw {
   const DistInt shape = IntegerArgument(degrees_of_freedom);
+  const base::SourceLocationScope bound(at);
   RequirePositive(shape, "$dist_chi_square", "degree of freedom");
   DistInt state = IntegerArgument(seed);
   const double drawn = ChiSquare(state, shape);
   return DrawnWith(RoundDraw(drawn), state);
 }
 
-auto DistT(std::int64_t seed, std::int64_t degrees_of_freedom)
+auto DistT(
+    std::int64_t seed, std::int64_t degrees_of_freedom, base::SourceLocation at)
     -> DistributionDraw {
   const DistInt shape = IntegerArgument(degrees_of_freedom);
+  const base::SourceLocationScope bound(at);
   RequirePositive(shape, "$dist_t", "degree of freedom");
   DistInt state = IntegerArgument(seed);
   const double drawn = StudentT(state, shape);
   return DrawnWith(RoundDraw(drawn), state);
 }
 
-auto DistErlang(std::int64_t seed, std::int64_t stages, std::int64_t mean)
-    -> DistributionDraw {
+auto DistErlang(
+    std::int64_t seed, std::int64_t stages, std::int64_t mean,
+    base::SourceLocation at) -> DistributionDraw {
   const DistInt stage_count = IntegerArgument(stages);
   const DistInt average = IntegerArgument(mean);
+  const base::SourceLocationScope bound(at);
   RequirePositive(stage_count, "$dist_erlang", "k_stage");
   RequirePositive(average, "$dist_erlang", "mean");
   DistInt state = IntegerArgument(seed);

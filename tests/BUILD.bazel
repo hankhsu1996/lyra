@@ -96,6 +96,22 @@ cc_test(
     ],
 )
 
+cc_library(
+    name = "written_at",
+    hdrs = ["base/written_at.hpp"],
+    deps = ["//:base"],
+)
+
+cc_test(
+    name = "base_source_location_scope_test",
+    srcs = ["base/source_location_scope_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "@googletest//:gtest_main",
+    ],
+)
+
 cc_test(
     name = "base_segmented_vector_test",
     srcs = ["base/segmented_vector_test.cpp"],
@@ -142,6 +158,7 @@ cc_test(
     srcs = ["value/fixed_array_type_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
+        ":written_at",
         "//:base",
         "//:value",
         "@googletest//:gtest_main",
@@ -215,6 +232,16 @@ cc_test(
 cc_test(
     name = "mir_integral_constant_test",
     srcs = ["mir/integral_constant_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:mir",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "mir_source_location_pool_test",
+    srcs = ["mir/source_location_pool_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
         "//:mir",
@@ -497,6 +524,7 @@ cc_test(
     srcs = ["runtime/object_ref_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
+        ":written_at",
         "//:runtime",
         "@googletest//:gtest_main",
     ],
@@ -507,6 +535,18 @@ cc_test(
     srcs = ["runtime/deferred_effects_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
+        "//:base",
+        "//:runtime",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "runtime_diagnostic_test",
+    srcs = ["runtime/diagnostic_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        ":written_at",
         "//:base",
         "//:runtime",
         "@googletest//:gtest_main",
@@ -528,6 +568,7 @@ cc_test(
     srcs = ["runtime/constraint_problem_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
+        ":written_at",
         "//:runtime",
         "@googletest//:gtest_main",
     ],
@@ -581,6 +622,7 @@ cc_test(
     srcs = ["runtime/class_definition_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
+        ":written_at",
         "//:base",
         "//:runtime",
         "//:support",

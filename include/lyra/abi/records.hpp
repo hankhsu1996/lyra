@@ -6,18 +6,21 @@
 #include <optional>
 #include <span>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/support/scope_execution.hpp"
 #include "lyra/value/object_ref.hpp"
 
 // The structures the runtime library reads out of constants a compiled design
 // states: what each class is, what a scope of the design hierarchy is, how each
-// object of the design is constructed, and what a value dump records. Each is
-// declared once, here, and both sides read the declaration: the library to
-// read a constant, and the compiler, which is built against it, to state one
-// -- the type of each member it fills and where the member lies. A record's
-// members are the ones `ForEachField` hands over, in the order the record
-// declares them; a member that is a structure of its own is handed over whole.
+// object of the design is constructed, what a value dump records, and where an
+// operation was written. Each is declared once, here, or for the last in the
+// base layer whose reports read it, and both sides read the declaration: the
+// library to read a constant, and the compiler, which is built against it, to
+// state one -- the type of each member it fills and where the member lies. A
+// record's members are the ones `ForEachField` hands over, in the order the
+// record declares them; a member that is a structure of its own is handed over
+// whole.
 
 namespace lyra::runtime {
 class GcObject;
@@ -392,6 +395,15 @@ constexpr void ForEachField(const DumpBlock& record, const Visit& visit) {
   const auto& [identifier, kind] = record;
   visit(identifier);
   visit(kind);
+}
+
+template <typename Visit>
+constexpr void ForEachField(
+    const base::SourceLocation::Impl& record, const Visit& visit) {
+  const auto& [file, line, column] = record;
+  visit(file);
+  visit(line);
+  visit(column);
 }
 
 // Where `member` stands among the members of `Record`: the one `ForEachField`

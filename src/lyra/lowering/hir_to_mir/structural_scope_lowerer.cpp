@@ -22,7 +22,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_manager.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/scope_instantiations.hpp"
@@ -1232,19 +1232,6 @@ auto StartedBody(
       unit_lowerer, frame, body, unit_lowerer.Unit().builtins.coroutine_void);
 }
 
-// Where the source writes this execution, as "file:line:col". A run prints it
-// when it has to say what was running, as when it is stopped from outside or
-// names the procedures that keep a time step from ever ending. Empty where no
-// source text states one.
-auto WrittenAtText(
-    UnitLowerer& unit_lowerer, mir::Builder block, diag::SourceSpan written_at)
-    -> mir::ExprId {
-  return block.Add(
-      mir::MakeStringLiteral(
-          unit_lowerer.Unit().builtins.machine_c_string,
-          diag::RuntimeOriginOf(written_at, unit_lowerer.SourceManager())));
-}
-
 // Registers a continuous driver, which, alone among static processes, may be
 // created by one instance's text and evaluate another's code: the drive across
 // a child's output port is created by the instantiation and reads the child's
@@ -1263,7 +1250,7 @@ void AppendDriverRegistration(
                   {OwningScope(activate_frame),
                    CreatingInstance(unit_lowerer, activate_frame), runs_as,
                    StartedBody(unit_lowerer, activate_frame, body),
-                   WrittenAtText(unit_lowerer, block, written_at)},
+                   unit_lowerer.BuildSourceLocationAt(block, written_at)},
                   unit_lowerer.Unit().builtins.void_type))});
 }
 
@@ -1301,7 +1288,7 @@ void AppendFinalRegistration(
                   mir::Direct{.target = support::BuiltinFn::kRegisterFinal},
                   {OwningScope(activate_frame),
                    CreatingInstance(unit_lowerer, activate_frame), kept,
-                   WrittenAtText(unit_lowerer, block, written_at)},
+                   unit_lowerer.BuildSourceLocationAt(block, written_at)},
                   unit.builtins.void_type))});
 }
 
@@ -2397,7 +2384,7 @@ auto BuildExecutionStart(
           mir::Direct{.target = start},
           {OwningScope(frame), CreatingInstance(unit_lowerer, frame),
            StartedBody(unit_lowerer, frame, body),
-           WrittenAtText(unit_lowerer, block, written_at)},
+           unit_lowerer.BuildSourceLocationAt(block, written_at)},
           unit_lowerer.Unit().builtins.void_type));
 }
 
@@ -3397,8 +3384,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
         mir_class.callables.Define(
             declared.callable,
             mir::CallableDecl{
-                .code =
-                    ExternFunctionCode(unit_lowerer, class_id_, field, binding),
+                .code = ExternFunctionCode(
+                    unit_lowerer, class_id_, field, binding, src.span),
                 .foreign = std::nullopt,
                 .virtual_dispatch =
                     unit_lowerer.GetClassShape(class_id_)
@@ -3450,7 +3437,15 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
         mir::CallableDecl{
             .code = ExternBindCode(
                 unit_lowerer, class_id_, extern_realizations_[i].field,
-                extern_bindings[i]),
+                extern_bindings[i],
+                hir_scope.structural_subroutines
+                    .Get(hir_scope.published.callables.Get(
+                        hir_scope.published.signature.externs
+                            .Get(
+                                hir::PublishedExternId{
+                                    .value = static_cast<std::uint32_t>(i)})
+                            .callable))
+                    .span),
             .foreign = std::nullopt,
             .virtual_dispatch =
                 unit_lowerer.GetClassShape(class_id_)
@@ -3594,10 +3589,10 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     const mir::CallableId body =
         mir_class.callables.Add(std::move(*sampler_or));
     // A sampler is the tool's own, kept for the sampled value functions that
-    // read its history, and no one place in the source writes it.
+    // read its history, and it stands where what it samples is written.
     AppendProcessRegistration(
         unit_lowerer, activate_frame, body, support::BuiltinFn::kRegisterAlways,
-        diag::SourceSpan{});
+        hir_scope.exprs.Get(hir_scope.sampled_histories.Get(id).subject).span);
   }
 
   // The classes this scope replicates, lowered against it: their bodies reach

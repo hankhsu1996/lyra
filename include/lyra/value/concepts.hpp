@@ -6,6 +6,8 @@
 #include <optional>
 #include <utility>
 
+#include "lyra/base/source_location.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/integral_fwd.hpp"
 #include "lyra/value/integral_words.hpp"
 
@@ -229,39 +231,39 @@ concept Lengthable = requires(const T& t) {
 //
 // The same types answer the LRM 20.9 `$countbits` question, because it counts
 // over the same bit stream: how many of those bits carry one of the given
-// control-bit values. The control bits are an integral value of any type, one
-// control bit per position, and a bit value named by several of them counts
-// once, so the count never exceeds the width. Counting every value is the
-// width, which is why the two queries share a participation set. `Control` is
-// one integral value the type is asked with, standing for all of them: a value
-// of a type the claim states, or the form a value takes where the type holding
-// it was compiled without its type.
-template <typename T, typename Control = Logic>
-concept BitstreamSizable = requires(const T& t, const Control& control) {
-  { t.BitstreamWidth() } -> std::same_as<Int>;
-  { t.CountBits(control) } -> std::same_as<Int>;
+// control-bit values. There are four such values, so the control bits are a
+// four-position four-state value naming each value admitted, and a value named
+// by several positions counts once, so the count never exceeds the width.
+// Counting every value is the width, which is why the two queries share a
+// participation set. Each is handed `at`, where the design wrote the query,
+// since a value in a composite may hold no stream to measure.
+template <typename T>
+concept BitstreamSizable = requires(
+    const T& t, const LogicVector<4>& control, base::SourceLocation at) {
+  { t.BitstreamWidth(at) } -> std::same_as<Int>;
+  { t.CountBits(control, at) } -> std::same_as<Int>;
 };
 
 // Indexable: one element reached by position, for reading and for writing,
 // as rustc's `Index` and `IndexMut` reach one. `Element` answers a read-only
 // reference to the element, or to the element default where the position
 // names none; `ElementMut` answers the element, or storage no read reaches
-// where the position names none (LRM 7.4.6). A position is a value of the
-// position type, which names none where it holds x or z or lies outside the
-// container.
+// where the position names none (LRM 7.4.6), saying which in `formed`. A
+// position is a value of the position type, which names none where it holds x
+// or z or lies outside the container.
 template <typename T>
-concept Indexable = requires(T& t, const Position& pos) {
+concept Indexable = requires(T& t, const Position& pos, Formation& formed) {
   { t.Element(pos) };
-  { t.ElementMut(pos) };
+  { t.ElementMut(pos, formed) };
 };
 
 // AssocIndexable: the same two by key. A read of a key holding no entry
 // answers the array's default and creates nothing; `ElementMut` creates the
 // entry (LRM 7.8.6, 7.8.7).
 template <typename T, typename K>
-concept AssocIndexable = requires(T& t, const K& key) {
+concept AssocIndexable = requires(T& t, const K& key, Formation& formed) {
   { t.Element(key) };
-  { t.ElementMut(key) };
+  { t.ElementMut(key, formed) };
 };
 
 // Sortable: the in-place ordering family (LRM 7.12.2). A sort is handed

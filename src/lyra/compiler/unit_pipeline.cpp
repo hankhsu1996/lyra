@@ -45,27 +45,26 @@ void RecordSemanticForm(const mir::CompilationUnit& unit) {
 }
 
 auto LowerUnitToSemantic(
-    const hir::CompilationUnit& unit, const diag::SourceManager& source_manager,
-    const mir_transform::PassOptions& passes)
-    -> diag::Result<mir::CompilationUnit> {
+    const hir::CompilationUnit& unit, const mir_transform::PassOptions& passes,
+    const diag::SourceManager& sources) -> diag::Result<mir::CompilationUnit> {
   const profiling::TimeTraceScope span(
       "lower to MIR", [&] { return unit.body_name; });
-  lowering::hir_to_mir::UnitLowerer lowerer(unit, source_manager);
+  lowering::hir_to_mir::UnitLowerer lowerer(unit, sources);
   auto semantic = hir::RootsAnObject(unit.role) ? lowerer.RunObjectRoot()
                                                 : lowerer.RunNamespace();
   if (!semantic) {
     return semantic;
   }
   mir::CompilationUnit transformed =
-      mir_transform::Transform(*std::move(semantic), passes);
+      mir_transform::Transform(*std::move(semantic), passes, sources);
   RecordSemanticForm(transformed);
   return transformed;
 }
 
 auto LowerUnitToExecutable(
     const mir::CompilationUnit& unit, const mir_transform::PassOptions& passes,
-    const TypeOperationCollection& collection)
-    -> diag::Result<lir::CompilationUnit> {
+    const TypeOperationCollection& collection,
+    const diag::SourceManager& sources) -> diag::Result<lir::CompilationUnit> {
   const profiling::TimeTraceScope span(
       "lower to LIR", [&] { return unit.body_name; });
   auto lowered = lowering::mir_to_lir::UnitLowerer::LowerUnit(unit);
@@ -83,7 +82,7 @@ auto LowerUnitToExecutable(
     }
     return mir_transform::TransformBody(
         unit, mir::TypeOperationSource{.type = type, .answers = answers},
-        *std::move(built), passes);
+        *std::move(built), passes, sources);
   };
   // What a body uses comes to light once it is LIR, and a body uses others in
   // turn, so the two alternate until a round finds nothing new.

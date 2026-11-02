@@ -96,7 +96,8 @@ class DumpWriter {
 // The writer for the file `path` names, by its extension: `.fst` is the FST
 // format; `.txt` is text a person reads, one line a change naming the thing by
 // its hierarchical name; and any other path is the VCD format the standard
-// defines (LRM 21.7.2).
+// defines (LRM 21.7.2). Each answers nothing where the file cannot be opened:
+// who asked for the dump says whose failure that is.
 auto OpenDumpWriter(const std::string& path) -> std::unique_ptr<DumpWriter>;
 auto OpenVcdWriter(const std::string& path) -> std::unique_ptr<DumpWriter>;
 auto OpenFstWriter(const std::string& path) -> std::unique_ptr<DumpWriter>;

@@ -65,13 +65,13 @@ struct BodyBindingRef {
 };
 
 // The per-body capture policy: how this body views each origin it captures. The
-// receiver, the declaring instance and the construction table are pointers
-// copied into the closure (snapshot), but a receiver that lives while
-// referenced is reached through a share of it, which is owning, as a
-// synthesized activation handle is; an origin in the construction-scope
-// set -- a `fork` branch's own block-item declarations -- is snapshotted; any
-// other enclosing origin aliases the live cell. A non-fork closure leaves the
-// set empty, so every forwarded source binding aliases.
+// receiver, the declaring instance, the construction table and where the body
+// was called are copied into the closure (snapshot), but a receiver that lives
+// while referenced is reached through a share of it, which is owning, as a
+// synthesized activation handle is; an origin in the
+// construction-scope set -- a `fork` branch's own block-item declarations -- is
+// snapshotted; any other enclosing origin aliases the live cell. A non-fork
+// closure leaves the set empty, so every forwarded source binding aliases.
 struct CapturePolicy {
   std::set<BindingOriginId> snapshot_set;
 
@@ -90,6 +90,7 @@ struct CapturePolicy {
             [](const ConstructionTableOrigin&) {
               return CaptureView::kSnapshot;
             },
+            [](const CallerLocationOrigin&) { return CaptureView::kSnapshot; },
             [](const ReceiverShareOrigin&) { return CaptureView::kOwning; },
             [](const SynthesizedOrigin&) { return CaptureView::kOwning; },
             [&](const ProceduralOrigin&) { return as_the_set_says(); },
@@ -181,6 +182,9 @@ class CallableBindings {
       BodyBindingRef ref, mir::Builder block) const -> mir::Expr;
   [[nodiscard]] auto TypeOf(BodyBindingRef ref) const -> mir::TypeId;
 
+  // Whether `origin` has a carrier here or in a body enclosing this one.
+  [[nodiscard]] auto Provides(BindingOriginId origin) const -> bool;
+
   // Freeze the capture set: compute the closure's canonical field order (by
   // binding origin), and return the closure's field initializers keyed by field
   // id. The invoke body is untouched -- it already reads each capture by its
@@ -192,9 +196,6 @@ class CallableBindings {
     BindingOriginId origin;
     mir::ExprId source{};
   };
-
-  // Whether `origin` has a carrier here or in a body enclosing this one.
-  [[nodiscard]] auto Provides(BindingOriginId origin) const -> bool;
 
   // The object this closure's body runs on, where the closure holds a share of
   // it: the closure captures the share alone, and its body takes the object's

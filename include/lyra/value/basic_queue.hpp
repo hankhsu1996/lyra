@@ -56,6 +56,9 @@ struct SliceWindow {
 // none where it holds x or z.
 template <ElementPolicy Elem, QueueBound Bound>
 class BasicQueue {
+  template <ElementPolicy, QueueBound>
+  friend class BasicQueue;
+
  public:
   BasicQueue()
     requires std::default_initializable<Elem> &&
@@ -132,17 +135,17 @@ class BasicQueue {
   // where no read reaches, so the write is discarded, and so does an append a
   // bounded queue cannot keep, which leaves the queue as it was.
   [[nodiscard]] auto ElementMut(
-      std::optional<std::int64_t> at, Formation& formed) -> void* {
-    if (const auto ordinal = ElementOrdinal(at, count_)) {
+      std::optional<std::int64_t> position, Formation& formed) -> void* {
+    if (const auto ordinal = ElementOrdinal(position, count_)) {
       formed = Formation::kExisting;
       return At(*ordinal);
     }
-    if (at && static_cast<std::uint64_t>(*at) == count_) {
+    if (position && static_cast<std::uint64_t>(*position) == count_) {
       InsertCopy(count_, elem_.Default());
       EnforceBound();
-      if (static_cast<std::uint64_t>(*at) < count_) {
+      if (static_cast<std::uint64_t>(*position) < count_) {
         formed = Formation::kMade;
-        return At(static_cast<std::size_t>(*at));
+        return At(static_cast<std::size_t>(*position));
       }
     }
     formed = Formation::kNowhere;
@@ -158,8 +161,8 @@ class BasicQueue {
   // LRM 7.10.1 queue slice: the elements from position `lo` through `hi`. A
   // bound that names no position, or `lo > hi` after clamping, yields the empty
   // queue; `lo` clamps up to 0 and `hi` down to the last index. The slice is a
-  // queue of the type the selection answers, whose bound `into` states and
-  // which need not be this queue's.
+  // queue of the type the selection answers, which declares no bound whatever
+  // this queue's is, so it holds every element it is given.
   template <QueueBound Into>
   [[nodiscard]] auto Slice(
       std::optional<std::int64_t> first, std::optional<std::int64_t> last,
@@ -167,7 +170,7 @@ class BasicQueue {
     BasicQueue<Elem, Into> out(elem_, std::move(into));
     const SliceWindow window = WindowOf(first, last);
     for (std::size_t i = 0; i < window.count; ++i) {
-      out.PushBack(At(window.start + i));
+      out.InsertCopy(i, At(window.start + i));
     }
     return out;
   }
@@ -285,12 +288,12 @@ class BasicQueue {
   // LRM 7.10.2.2: inserts a copy of `item` before `index`, where
   // `index == size` appends. An x or z, negative, or beyond-size index leaves
   // the queue unchanged.
-  void Insert(std::optional<std::int64_t> at, const void* item) {
-    if (!at.has_value() || *at < 0 ||
-        static_cast<std::uint64_t>(*at) > count_) {
+  void Insert(std::optional<std::int64_t> index, const void* item) {
+    if (!index.has_value() || *index < 0 ||
+        static_cast<std::uint64_t>(*index) > count_) {
       return;
     }
-    InsertCopy(static_cast<std::size_t>(*at), item);
+    InsertCopy(static_cast<std::size_t>(*index), item);
     EnforceBound();
   }
 

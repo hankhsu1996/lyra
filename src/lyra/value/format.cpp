@@ -12,6 +12,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/format_parse.hpp"
 #include "lyra/value/integral_format.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -123,9 +124,11 @@ auto Format(const FormatSpec& spec, FormatArg arg, const FormatContext& ctx)
   return arg.format_fn(spec, arg, ctx);
 }
 
-auto Format(std::span<const PrintItem> items, const TimeFormat& time_format)
-    -> String {
-  const FormatContext ctx{.time_format = &time_format};
+auto Format(
+    std::span<const PrintItem> items, const TimeFormat& time_format,
+    base::SourceLocation at) -> String {
+  const base::SourceLocationScope bound(at);
+  const FormatContext ctx{.time_format = time_format};
   std::string out;
   for (const PrintItem& item : items) {
     std::visit(
@@ -145,7 +148,9 @@ auto Format(std::span<const PrintItem> items, const TimeFormat& time_format)
 auto FormatRuntime(
     const String& format, std::span<const FormatArg> args,
     const String& scope_path, const String& library_binding,
-    const TimeFormat& time_format, std::int64_t timeunit_power) -> String {
+    const TimeFormat& time_format, std::int64_t timeunit_power,
+    base::SourceLocation at) -> String {
+  const base::SourceLocationScope bound(at);
   const auto power = static_cast<std::int32_t>(timeunit_power);
   const FormatParseResult parsed = ParseFormatString(format.View());
   switch (parsed.error) {
@@ -162,7 +167,7 @@ auto FormatRuntime(
           "the format string is malformed at offset {}", parsed.error_offset);
   }
 
-  const FormatContext ctx{.time_format = &time_format};
+  const FormatContext ctx{.time_format = time_format};
   const FormatArg path_arg{scope_path};
   const FormatArg binding_arg{library_binding};
   std::string out;
@@ -203,14 +208,14 @@ auto FormatRuntime(
 
 auto FormatIntegralOperand(
     const FormatSpec& spec, const ConstIntegralView& value,
-    const FormatContext& ctx) -> std::string {
+    const TimeFormat* time_format) -> std::string {
   if (spec.kind == FormatKind::kTime) {
-    if (ctx.time_format == nullptr) {
+    if (time_format == nullptr) {
       throw InternalError(
-          "FormatIntegralOperand: %t requires a TimeFormat in the format "
-          "context");
+          "FormatIntegralOperand: %t is handed no TimeFormat -- please report "
+          "this as a bug");
     }
-    return FormatIntegralTime(spec, value, *ctx.time_format);
+    return FormatIntegralTime(spec, value, *time_format);
   }
   // LRM 21.2.1.6: an integral element of an assignment pattern prints "as it
   // would unformatted", and the default $display radix is decimal. It occupies
@@ -228,7 +233,8 @@ auto FormatIntegralOperand(
   return FormatIntegral(spec, value);
 }
 
-auto Formatter<String>::Format(const FormatSpec& spec, const String& value)
+auto Formatter<String>::Format(
+    const FormatSpec& spec, const String& value, const FormatContext&)
     -> std::string {
   if (spec.kind == FormatKind::kTime) {
     // LRM 21.2.1.3.
@@ -261,12 +267,14 @@ auto FormatHandleIdentity(const FormatSpec& spec, const void* identity)
 }  // namespace
 
 auto Formatter<UnmanagedRef>::Format(
-    const FormatSpec& spec, const UnmanagedRef& value) -> std::string {
+    const FormatSpec& spec, const UnmanagedRef& value, const FormatContext&)
+    -> std::string {
   return FormatHandleIdentity(spec, value.Address());
 }
 
 auto Formatter<ObjectRef>::Format(
-    const FormatSpec& spec, const ObjectRef& value) -> std::string {
+    const FormatSpec& spec, const ObjectRef& value, const FormatContext&)
+    -> std::string {
   return FormatHandleIdentity(spec, value.Handle().Share().get());
 }
 
@@ -274,12 +282,7 @@ auto Formatter<double>::Format(
     const FormatSpec& spec, double value, const FormatContext& ctx)
     -> std::string {
   if (spec.kind == FormatKind::kTime) {
-    if (ctx.time_format == nullptr) {
-      throw InternalError(
-          "Formatter<double>::Format: %t requires a TimeFormat in the format "
-          "context");
-    }
-    return FormatRealTime(spec, value, *ctx.time_format);
+    return FormatRealTime(spec, value, ctx.time_format);
   }
   return ApplyFieldWidth(FormatRealBody(spec, value), spec);
 }
@@ -288,12 +291,7 @@ auto Formatter<float>::Format(
     const FormatSpec& spec, float value, const FormatContext& ctx)
     -> std::string {
   if (spec.kind == FormatKind::kTime) {
-    if (ctx.time_format == nullptr) {
-      throw InternalError(
-          "Formatter<float>::Format: %t requires a TimeFormat in the format "
-          "context");
-    }
-    return FormatRealTime(spec, static_cast<double>(value), *ctx.time_format);
+    return FormatRealTime(spec, static_cast<double>(value), ctx.time_format);
   }
   return ApplyFieldWidth(
       FormatRealBody(spec, static_cast<double>(value)), spec);

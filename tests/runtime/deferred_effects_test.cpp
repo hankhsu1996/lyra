@@ -59,7 +59,7 @@ void KeepProgramEffect(
 }
 
 void RunAll(DeferredEffects& effects) {
-  effects.Drain([](const auto& effect) { effect(); });
+  effects.Drain([](const auto&, const auto& effect) { effect(); });
 }
 
 // LRM 4.6: the effects run in the order they were kept, whether the program

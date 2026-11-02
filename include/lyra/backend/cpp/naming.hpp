@@ -26,6 +26,7 @@
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/record_decl.hpp"
+#include "lyra/mir/source_location_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_callback.hpp"
@@ -882,6 +883,14 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
 [[nodiscard]] inline auto CppEnumTableName(mir::EnumTableId table)
     -> MintedName {
   return MintedCppName("enum", table.value);
+}
+
+// The name of a location the unit's program hands the library,
+// `sv_location_<n>`: a position in the unit's list of them, since the source
+// names none.
+[[nodiscard]] inline auto CppSourceLocationName(mir::SourceLocationId location)
+    -> MintedName {
+  return MintedCppName("location", location.value);
 }
 
 // The name of a constant value the unit uses, `sv_const_<n>`: a position in the

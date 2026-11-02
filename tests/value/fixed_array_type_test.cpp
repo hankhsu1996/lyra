@@ -14,6 +14,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/fixed_array_value.hpp"
@@ -26,9 +27,12 @@
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
+#include "tests/base/written_at.hpp"
 
 namespace lyra::value {
 namespace {
+
+using lyra::test::kWrittenAt;
 
 using Element = LogicVector<8>;
 
@@ -462,7 +466,10 @@ TEST(LaidOutValue, IsBuiltFromElementsTextAndBits) {
   const std::array<const void*, 3> too_few{
       values.data(), &values[1], &values[2]};
   EXPECT_THROW(
-      { const LaidOutValue built = ArrayFromElements(type, too_few); },
+      {
+        const lyra::base::SourceLocationScope bound(kWrittenAt);
+        const LaidOutValue built = ArrayFromElements(type, too_few);
+      },
       SimulationError);
 
   // LRM 5.9: the text is left-justified and the elements past its end keep

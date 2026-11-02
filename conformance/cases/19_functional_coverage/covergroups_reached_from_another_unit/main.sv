@@ -5,7 +5,10 @@
 // reached: its `sample` counts what it is given, its options are the ones the
 // instance holds, and its coverage answers the same from every scope. One made
 // in another module with `ref` arguments reads what they name there, and is
-// sampled on its clocking event over one of them (LRM 19.3).
+// sampled on its clocking event over one of them (LRM 19.3). The type's
+// coverage is a static method, called through an instance as well as through
+// the type (LRM 19.8), so a scope may name a covergroup by nothing but that
+// call.
 covergroup unit_cg with function sample(int v);
   coverpoint v { bins b[] = {[0:3]}; }
 endgroup
@@ -28,6 +31,17 @@ package P;
       embedded = new;
     endfunction
   endclass
+
+  bit [3:0] counted;
+  covergroup held_here;
+    coverpoint counted { bins b[] = {[0:3]}; }
+  endgroup
+  held_here held = new;
+
+  function automatic void count(bit [3:0] value);
+    counted = value;
+    held.sample();
+  endfunction
 endpackage
 
 module Leaf;
@@ -38,8 +52,17 @@ module Leaf;
   leaf_cg g = new;
 endmodule
 
+module NamesOnlyTheCall;
+  import P::*;
+
+  function automatic real type_coverage();
+    return held.get_coverage();
+  endfunction
+endmodule
+
 module Top;
   Leaf leaf ();
+  NamesOnlyTheCall names ();
   unit_cg u = new;
   P::package_cg p = new;
   P::Holder h = new;
@@ -54,6 +77,7 @@ module Top;
     u.sample(0);
     u.sample(1);
     p.sample(2);
+    P::count(1);
     h.x = 3;
     h.embedded.sample();
     w.option.weight = 2;
@@ -89,6 +113,9 @@ module Top;
     if (w.option.weight != 2)
       $fatal(1, "the covergroup reading its ref arguments has weight %0d, expected 2",
              w.option.weight);
+    if (names.type_coverage() != 25.0)
+      $fatal(1, "the type reached through a package's instance covered %0f, expected 25",
+             names.type_coverage());
     $display("All checks passed");
   end
 endmodule

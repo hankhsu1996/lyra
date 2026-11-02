@@ -14,6 +14,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/class_object.hpp"
 #include "lyra/runtime/constraint_cycle.hpp"
 #include "lyra/runtime/constraint_problem.hpp"
@@ -68,10 +69,11 @@ auto ModesOf(const ErasedReference& variable) -> RandomizationModes& {
       variable.holder);
 }
 
-auto Begin(ClassObject* object, bool listed, RuntimeEffects& runtime)
-    -> value::ObjectRef {
+auto Begin(
+    ClassObject* object, bool listed, RuntimeEffects& runtime,
+    base::SourceLocation at) -> value::ObjectRef {
   auto made = std::make_unique<ConstraintProblem>(
-      runtime, object->Generator(), SelfHandle(object), listed);
+      runtime, object->Generator(), SelfHandle(object), listed, at);
   ConstraintProblem* problem = made.get();
   value::ObjectRef handle = AdoptObject(made.release());
   // `pre_randomize()` runs on the object and then on every random object it
@@ -86,7 +88,7 @@ auto Begin(ClassObject* object, bool listed, RuntimeEffects& runtime)
   }
   for (std::size_t position = 0; position < problem->Nested().size();
        ++position) {
-    GcObject& nested = problem->Nested()[position].Deref<GcObject>();
+    GcObject& nested = *ObjectRootOf(problem->Nested()[position]);
     ObjectPreRandomize(&nested);
     ObjectRandObjects(nested, handle);
   }
@@ -95,19 +97,22 @@ auto Begin(ClassObject* object, bool listed, RuntimeEffects& runtime)
 
 }  // namespace
 
-auto RandomizeObject(ClassObject* object, RuntimeEffects& runtime)
+auto RandomizeObject(
+    ClassObject* object, RuntimeEffects& runtime, base::SourceLocation at)
     -> value::ObjectRef {
-  return Begin(object, false, runtime);
+  return Begin(object, false, runtime, at);
 }
 
-auto RandomizeObjectListed(ClassObject* object, RuntimeEffects& runtime)
+auto RandomizeObjectListed(
+    ClassObject* object, RuntimeEffects& runtime, base::SourceLocation at)
     -> value::ObjectRef {
-  return Begin(object, true, runtime);
+  return Begin(object, true, runtime, at);
 }
 
-auto RandomizeScope(RuntimeEffects& runtime) -> value::ObjectRef {
+auto RandomizeScope(RuntimeEffects& runtime, base::SourceLocation at)
+    -> value::ObjectRef {
   auto made = std::make_unique<ConstraintProblem>(
-      runtime, *runtime.Running().generator, value::ObjectRef{}, true);
+      runtime, *runtime.Running().generator, value::ObjectRef{}, true, at);
   return AdoptObject(made.release());
 }
 
@@ -122,11 +127,11 @@ void RandomizeConstrain(const value::ObjectRef& problem) {
   // the call reaches (LRM 18.5.8), names the variable that was declared.
   ObjectRandVariables(*object, problem);
   for (const value::ObjectRef& nested : p.Nested()) {
-    ObjectRandVariables(nested.Deref<GcObject>(), problem);
+    ObjectRandVariables(*ObjectRootOf(nested), problem);
   }
   ObjectConstrain(*object, problem);
   for (const value::ObjectRef& nested : p.Nested()) {
-    ObjectConstrain(nested.Deref<GcObject>(), problem);
+    ObjectConstrain(*ObjectRootOf(nested), problem);
   }
 }
 
@@ -227,6 +232,7 @@ void DeclareParts(
     return;
   }
   if (!type.HasParts()) {
+    const base::SourceLocationScope bound(problem.WrittenAt());
     throw SimulationError(
         "randomizing a random variable of this type is not yet supported");
   }
@@ -288,6 +294,7 @@ void RandomizeListErased(
     return;
   }
   if (!type.HasParts()) {
+    const base::SourceLocationScope bound(p.WrittenAt());
     throw SimulationError(
         "randomizing a listed variable of this type is not yet supported");
   }
@@ -550,6 +557,7 @@ void ConstraintUniqueArrayErased(
     return;
   }
   if (!type.HasParts()) {
+    const base::SourceLocationScope bound(problem.WrittenAt());
     throw SimulationError(
         "a uniqueness constraint over values of this type is not yet "
         "supported");

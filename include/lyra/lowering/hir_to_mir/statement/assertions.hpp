@@ -9,7 +9,6 @@
 #include <string>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -26,7 +25,7 @@ namespace lyra::lowering::hir_to_mir {
 // one, and the fail action for a concurrent one.
 void AppendDefaultReport(
     ProcessLowerer& process, mir::Builder block,
-    hir::AssertionDirective directive, diag::SourceSpan span);
+    hir::AssertionDirective directive);
 
 // Whether an action arm carries a statement to run. An omitted pass arm arrives
 // as an empty statement and an omitted fail arm as absent, and either runs
@@ -38,10 +37,10 @@ void AppendDefaultReport(
 
 auto LowerAssertStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::AssertStmt& a, diag::SourceSpan span) -> diag::Result<mir::Stmt>;
+    const hir::AssertStmt& a) -> diag::Result<mir::Stmt>;
 
 auto LowerCoverStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CoverStmt& c, diag::SourceSpan span) -> diag::Result<mir::Stmt>;
+    const hir::CoverStmt& c) -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

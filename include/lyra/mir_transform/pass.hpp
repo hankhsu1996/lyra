@@ -7,12 +7,21 @@
 #include <string_view>
 #include <vector>
 
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/phase.hpp"
 
 namespace lyra::mir_transform {
+
+// What a rewrite of one body reads besides the body: the unit holding it, and
+// the front end's answers about the source the body was lowered from, as rustc
+// hands every MIR pass the `TyCtxt` holding the session's source map.
+struct PassContext {
+  const mir::CompilationUnit* unit;
+  const diag::SourceManager* sources;
+};
 
 // One rewrite of MIR into MIR, named as its function is, as rustc names a pass
 // by its type. A pass rewrites one body at a time, as rustc's do, so it runs
@@ -23,7 +32,7 @@ namespace lyra::mir_transform {
 struct Pass {
   std::string_view name;
   auto (*run_on_body)(
-      const mir::CompilationUnit& unit, const mir::CodeSource& at,
+      const PassContext& context, const mir::CodeSource& at,
       const mir::CallableCode& code)
       -> std::optional<mir::CallableCode> = nullptr;
   auto (*run_on_unit)(mir::CompilationUnit unit)

@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/constraint_cycle.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/runtime.hpp"
@@ -16,8 +17,11 @@
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/value_type.hpp"
+#include "tests/base/written_at.hpp"
 
 namespace {
+
+using lyra::test::kWrittenAt;
 
 using lyra::runtime::ConstraintProblem;
 using lyra::runtime::DrawRng;
@@ -64,7 +68,8 @@ TEST(ConstraintProblemTest, AnAnswerMeetsEveryConstraintAndLands) {
     BitVector<8> x = BitVector<8>::FromInt(0);
     BitVector<8> y = BitVector<8>::FromInt(0);
     BitVector<8> held = BitVector<8>::FromInt(40);
-    ConstraintProblem problem(TheRun(), rng, lyra::value::ObjectRef{}, false);
+    ConstraintProblem problem(
+        TheRun(), rng, lyra::value::ObjectRef{}, false, kWrittenAt);
     const std::int64_t tx = TermOf(problem, x, kRand);
     const std::int64_t ty = TermOf(problem, y, kRand);
     const std::int64_t th =
@@ -85,7 +90,8 @@ TEST(ConstraintProblemTest, AnAnswerMeetsEveryConstraintAndLands) {
 TEST(ConstraintProblemTest, AnInfeasibleProblemChangesNothing) {
   DrawRng rng{RandomSeed{4}};
   BitVector<8> x = BitVector<8>::FromInt(17);
-  ConstraintProblem problem(TheRun(), rng, lyra::value::ObjectRef{}, false);
+  ConstraintProblem problem(
+      TheRun(), rng, lyra::value::ObjectRef{}, false, kWrittenAt);
   const std::int64_t tx = TermOf(problem, x, kRand);
   BitVector<8> five = BitVector<8>::FromInt(5);
   const std::int64_t t5 = problem.Constant(&five, TypeOf<BitVector<8>>());
@@ -105,7 +111,7 @@ TEST(ConstraintProblemTest, ACallAdvancesTheGeneratorTheSameWhateverItDraws) {
     BitVector<8> x = BitVector<8>::FromInt(0);
     BitVector<8> two = BitVector<8>::FromInt(2);
     ConstraintProblem problem(
-        TheRun(), easy_rng, lyra::value::ObjectRef{}, false);
+        TheRun(), easy_rng, lyra::value::ObjectRef{}, false, kWrittenAt);
     const std::int64_t tx = TermOf(problem, x, kRand);
     problem.Require(problem.Less(
         tx, problem.Constant(&two, TypeOf<BitVector<8>>()), false));
@@ -116,7 +122,7 @@ TEST(ConstraintProblemTest, ACallAdvancesTheGeneratorTheSameWhateverItDraws) {
     BitVector<32> b = BitVector<32>::FromInt(0);
     BitVector<32> c = BitVector<32>::FromInt(0);
     ConstraintProblem problem(
-        TheRun(), hard_rng, lyra::value::ObjectRef{}, false);
+        TheRun(), hard_rng, lyra::value::ObjectRef{}, false, kWrittenAt);
     const std::int64_t ta = TermOf(problem, a, kRand);
     const std::int64_t tb = TermOf(problem, b, kRand);
     const std::int64_t tc = TermOf(problem, c, kRand);
@@ -138,7 +144,8 @@ TEST(ConstraintProblemTest, ADrawPastTheBudgetIsReportedOnce) {
   for (int round = 0; round < 3; ++round) {
     BitVector<8> x = BitVector<8>::FromInt(0);
     BitVector<8> y = BitVector<8>::FromInt(0);
-    ConstraintProblem problem(run, rng, lyra::value::ObjectRef{}, false);
+    ConstraintProblem problem(
+        run, rng, lyra::value::ObjectRef{}, false, kWrittenAt);
     const std::int64_t tx = TermOf(problem, x, kRand);
     const std::int64_t ty = TermOf(problem, y, kRand);
     problem.Require(problem.Less(tx, ty, false));
@@ -148,7 +155,8 @@ TEST(ConstraintProblemTest, ADrawPastTheBudgetIsReportedOnce) {
   }
   const std::string printed = testing::internal::GetCapturedStderr();
   const std::string warning =
-      "warning: 'randomize' drew values without a uniform distribution; its "
+      "test.sv:1:1: warning: 'randomize' drew values without a uniform "
+      "distribution; its "
       "constraints have too many solutions to count\n";
   const std::size_t first = printed.find(warning);
   ASSERT_NE(first, std::string::npos) << printed;
@@ -172,7 +180,8 @@ TEST(ConstraintProblemTest, AnOrderingWeighsTheEarlierVariableOnItsOwn) {
       BitVector<1> s = BitVector<1>::FromInt(0);
       BitVector<8> d = BitVector<8>::FromInt(0);
       BitVector<8> zero = BitVector<8>::FromInt(0);
-      ConstraintProblem problem(TheRun(), rng, lyra::value::ObjectRef{}, false);
+      ConstraintProblem problem(
+          TheRun(), rng, lyra::value::ObjectRef{}, false, kWrittenAt);
       const std::int64_t ts = TermOf(problem, s, kRand);
       const std::int64_t td = TermOf(problem, d, kRand);
       const std::int64_t tz = problem.Constant(&zero, TypeOf<BitVector<8>>());
@@ -199,7 +208,8 @@ TEST(ConstraintProblemTest, ALaterSoftConstraintWinsAConflict) {
   BitVector<8> x = BitVector<8>::FromInt(0);
   BitVector<8> three = BitVector<8>::FromInt(3);
   BitVector<8> nine = BitVector<8>::FromInt(9);
-  ConstraintProblem problem(TheRun(), rng, lyra::value::ObjectRef{}, false);
+  ConstraintProblem problem(
+      TheRun(), rng, lyra::value::ObjectRef{}, false, kWrittenAt);
   const std::int64_t tx = TermOf(problem, x, kRand);
   problem.Prefer(
       problem.Equal(tx, problem.Constant(&three, TypeOf<BitVector<8>>())));
@@ -220,7 +230,8 @@ TEST(ConstraintProblemTest, ACyclicVariableTakesEachValueOncePerCycle) {
     std::array<int, 8> seen{};
     for (int call = 0; call < 8; ++call) {
       BitVector<3> y = BitVector<3>::FromInt(0);
-      ConstraintProblem problem(TheRun(), rng, lyra::value::ObjectRef{}, false);
+      ConstraintProblem problem(
+          TheRun(), rng, lyra::value::ObjectRef{}, false, kWrittenAt);
       const std::int64_t term =
           TermOf(problem, y, lyra::runtime::RandomQualifier::kRandc, &cycle);
       ASSERT_GE(term, 0);
@@ -248,7 +259,8 @@ TEST(ConstraintProblemTest, ADistributionDrawsByWeight) {
   for (int i = 0; i < kDraws; ++i) {
     BitVector<4> v = BitVector<4>::FromInt(9);
     BitVector<1> on = BitVector<1>::FromInt(1);
-    ConstraintProblem problem(TheRun(), rng, lyra::value::ObjectRef{}, false);
+    ConstraintProblem problem(
+        TheRun(), rng, lyra::value::ObjectRef{}, false, kWrittenAt);
     const std::int64_t tv = TermOf(problem, v, kRand);
     const std::int64_t guard = problem.Constant(&on, TypeOf<BitVector<1>>());
     const std::int64_t dist = problem.Distribution(tv, guard, false, false);
@@ -279,7 +291,8 @@ TEST(ConstraintProblemTest, AUniqueSetDiffersPairwise) {
     std::array<BitVector<2>, 3> values{};
     BitVector<2> three = BitVector<2>::FromInt(3);
     BitVector<1> on = BitVector<1>::FromInt(1);
-    ConstraintProblem problem(TheRun(), rng, lyra::value::ObjectRef{}, false);
+    ConstraintProblem problem(
+        TheRun(), rng, lyra::value::ObjectRef{}, false, kWrittenAt);
     const std::int64_t set = problem.UniqueSet();
     const std::int64_t limit = problem.Constant(&three, TypeOf<BitVector<2>>());
     for (BitVector<2>& value : values) {
@@ -304,7 +317,8 @@ TEST(ConstraintProblemTest, WhatIsChosenFirstIsHeldThenPutBack) {
   BitVector<8> x = BitVector<8>::FromInt(0);
   BitVector<8> y = BitVector<8>::FromInt(0);
   BitVector<8> seven = BitVector<8>::FromInt(7);
-  ConstraintProblem problem(TheRun(), rng, lyra::value::ObjectRef{}, false);
+  ConstraintProblem problem(
+      TheRun(), rng, lyra::value::ObjectRef{}, false, kWrittenAt);
   const std::int64_t first_y = TermOf(problem, y, kRand);
   const std::int64_t first_x = TermOf(problem, x, kRand);
   problem.Want(first_y);
@@ -331,7 +345,8 @@ TEST(ConstraintProblemTest, ASizeChosenFirstKeepsItsSoftConstraints) {
   int whole = 0;
   BitVector<32> three = BitVector<32>::FromInt(3);
   for (int n = 0; n < 20; ++n) {
-    ConstraintProblem problem(TheRun(), rng, lyra::value::ObjectRef{}, false);
+    ConstraintProblem problem(
+        TheRun(), rng, lyra::value::ObjectRef{}, false, kWrittenAt);
     std::size_t chosen = 0;
     const std::int64_t array = problem.DeclareArray(
         Lent(whole),

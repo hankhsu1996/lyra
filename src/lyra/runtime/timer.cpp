@@ -23,6 +23,7 @@ Timer::~Timer() = default;
 
 void Timer::Bind(OwnedCall fire) {
   fire_ = std::move(fire);
+  bound_by_ = ProcedureMakingEffects();
 }
 
 void Timer::Arm(

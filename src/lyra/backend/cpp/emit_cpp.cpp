@@ -21,6 +21,7 @@
 #include "lyra/mir/consumed_signatures.hpp"
 #include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
+#include "lyra/mir/source_location_id.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 
@@ -69,6 +70,26 @@ void RenderEnumTables(
             .name = CppEnumTableName(id)},
         [&](TargetText& value) {
           Write(value, CppEnumTableLiteral(unit, id));
+        });
+  }
+}
+
+// The locations the unit's text names, one `constexpr` definition per location:
+// each is a record of the library's, which the compiler builds while the
+// program is compiled.
+void RenderSourceLocations(
+    const mir::CompilationUnit& unit, const UnitRenderReport& report,
+    TargetText& out) {
+  for (const mir::SourceLocationId id : report.source_locations_named) {
+    WriteDeclaration(
+        out,
+        VariableDeclaration{
+            .form = VariableForm::kNamespaceScopeDefinition,
+            .constness = Constness::kConstexpr,
+            .type = CppType(unit, unit.builtins.source_location_record),
+            .name = CppSourceLocationName(id)},
+        [&](TargetText& value) {
+          Write(value, CppSourceLocationLiteral(unit, id));
         });
   }
 }
@@ -196,11 +217,14 @@ auto HeaderOf(
 auto RenderUnitFiles(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
     -> CppUnitArtifacts {
-  // Every body is written before the constants and the member tables are,
-  // since the ones the code file defines are the ones those bodies turn out to
-  // name.
+  // Every body is written before the constants, the member tables and the
+  // locations are, since the ones the code file defines are the ones those
+  // bodies turn out to name.
   UnitRenderReport report{
-      .refusals = &refusals, .constants_named = {}, .enum_tables_named = {}};
+      .refusals = &refusals,
+      .constants_named = {},
+      .enum_tables_named = {},
+      .source_locations_named = {}};
   UnitRecords records = RenderUnitRecords(unit, report);
   const UnitCallables callables = RenderUnitCallables(unit, report);
   const UnitText variables = RenderUnitStaticVariables(unit);
@@ -209,8 +233,9 @@ auto RenderUnitFiles(
   const UnitClosures closures = RenderUnitClosures(unit, report);
   TargetText foreign_symbols;
   RenderForeignScopeSymbols(unit, report, foreign_symbols);
-  TargetText enum_tables;
-  RenderEnumTables(unit, report, enum_tables);
+  TargetText constant_tables;
+  RenderEnumTables(unit, report, constant_tables);
+  RenderSourceLocations(unit, report, constant_tables);
   const SourceName unit_namespace = UnitNamespaceOf(unit.name);
   // `text` placed where what only this body states is: in the unit's
   // namespace, inside the body's own where it has one.
@@ -271,14 +296,14 @@ auto RenderUnitFiles(
 
   // What nothing outside this file names -- the classes realizing the unit's
   // scopes, its closures, the functions only its own bodies call, the
-  // constants and member tables its code names -- is in the namespace with no
-  // name, so another body of the unit stating its own under the same names is
-  // no conflict. Their members are still defined in the unit's namespace,
-  // which encloses it.
+  // constants, member tables and locations its code names -- is in the
+  // namespace with no name, so another body of the unit stating its own under
+  // the same names is no conflict. Their members are still defined in the
+  // unit's namespace, which encloses it.
   TargetText own_declarations;
   AppendSection(own_declarations, forwards.code);
   AppendSection(own_declarations, callables.of_artifact.signature);
-  AppendSection(own_declarations, enum_tables);
+  AppendSection(own_declarations, constant_tables);
   {
     const TargetText::Section constants(own_declarations);
     RenderIntegralConstants(unit, report, own_declarations);

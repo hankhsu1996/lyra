@@ -254,6 +254,7 @@ class Writer {
 
   void Interface(const CalleeInterface& callee) {
     Kind(callee.kind);
+    Number(callee.track_caller ? 1 : 0);
     List(callee.params, [&](const CalleeParam& p) {
       Kind(p.direction);
       Type(p.type);

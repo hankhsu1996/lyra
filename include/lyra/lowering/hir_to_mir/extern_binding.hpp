@@ -33,24 +33,29 @@ void InitializeExternStorage(
 // The code of such a function of class `owner`: a call of what the object keeps
 // in its field `storage`, with the function's own formals, answering what that
 // answers. A function cannot be disabled, and only one module defines it, so
-// that is all it does.
+// that is all it does. It is lowered from `declared`, where the function is
+// declared, since it has no body of its own.
 [[nodiscard]] auto ExternFunctionCode(
     UnitLowerer& unit_lowerer, mir::ClassId owner, mir::FieldId storage,
-    const ExternBinding& binding) -> mir::CallableCode;
+    const ExternBinding& binding, diag::SourceSpan declared)
+    -> mir::CallableCode;
 
 // The body of such a task, in `frame`: it runs what the object keeps in its
 // field `storage`, and every definition at once where there may be several
-// (LRM 25.7.4), as a body of the task, so a `disable` of the task ends it.
+// (LRM 25.7.4), as a body of the task, so a `disable` of the task ends it. It
+// is lowered from where `declared` is declared.
 auto WriteExternTaskBody(
     ProcessLowerer& process, const WalkFrame& frame,
     const hir::SubroutineDecl& declared, mir::ClassId owner,
     mir::FieldId storage, const ExternBinding& binding) -> diag::Result<void>;
 
 // The code of the method keeping the definition handed to an object of class
-// `owner` in its field `storage`.
+// `owner` in its field `storage`, lowered from `declared`, where the
+// subroutine it binds is declared.
 [[nodiscard]] auto ExternBindCode(
     UnitLowerer& unit_lowerer, mir::ClassId owner, mir::FieldId storage,
-    const ExternBinding& binding) -> mir::CallableCode;
+    const ExternBinding& binding, diag::SourceSpan declared)
+    -> mir::CallableCode;
 
 // The class of what the class `owner` hands over for its method `definition`:
 // it implements the abstract class `binding` states, holds the object it was

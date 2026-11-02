@@ -115,7 +115,14 @@ for its effects, which go back once it has ended, so what is held follows how ma
 pending at once and never how many times they are due at, as SystemC's kernel keeps its timed events
 on one free list. A pass owns what it runs alone; what is submitted meanwhile goes to the region it
 is due in, never into the pass. A later slot's effects become the current slot's by joining two
-orders, with nothing moved.
+orders, with nothing moved. An effect keeps the procedure whose operation made it, a timer the one
+that owns it, and what is owed at the end of the run the one that asked for it, and whatever runs
+one of these publishes that procedure for the extent of what it runs, so a report made while no
+process runs names the instance a report of that procedure names (LRM 20.10), a process that has
+ended included. Each keeps only what a report reads, since an effect is made on the nonblocking
+path. The scheduler keeps no place in the source: a nonblocking update and a `$strobe` body are
+closures of the program, whose own calls hand theirs, and an effect the library itself defers and
+that can report keeps its place in its own capture and binds it when it runs.
 
 **What an effect is and when it is due are two questions, and only the second decides the shape.**
 The standard writes the second one the same way wherever it appears: a nonblocking assignment and a

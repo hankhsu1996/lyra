@@ -103,6 +103,14 @@ auto ClockingConditionName(std::string_view block, std::size_t entry)
 auto EvaluatesItsOwnDefaults(const slang::ast::SubroutineSymbol& callee)
     -> bool;
 
+// Whether a failure of the design that `callee`'s body reports is placed at the
+// call that reached it, which is so for a body no design wrote: one in a text
+// of Lyra's own, and the one written for a subroutine an interface leaves to a
+// connected module (LRM 25.7), which the source gives no body. Its lines mean
+// nothing to whoever wrote the call, and a call of a task no module defines is
+// the call's error (LRM 25.7.4).
+auto TracksCaller(const slang::ast::SubroutineSymbol& callee) -> bool;
+
 // Whether `call` omitted the argument at `position`, leaving it to the formal's
 // default (LRM 13.5.3). The front end fills an omitted argument in by placing
 // the default's own expression there, so an argument that is that expression

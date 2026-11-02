@@ -310,8 +310,9 @@ class Simplifier {
 }  // namespace
 
 auto InstSimplifyOnBody(
-    const mir::CompilationUnit& unit, const mir::CodeSource&,
+    const PassContext& context, const mir::CodeSource&,
     const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
+  const mir::CompilationUnit& unit = *context.unit;
   const Simplifier simplifier(unit);
   if (!code.body.has_value() || !simplifier.FiresIn(*code.body)) {
     return std::nullopt;

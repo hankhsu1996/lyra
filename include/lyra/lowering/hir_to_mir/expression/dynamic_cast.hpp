@@ -4,7 +4,6 @@
 // where the assignment turns out to be valid.
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -25,6 +24,6 @@ namespace lyra::lowering::hir_to_mir {
 template <ExprLowerer Lowerer>
 auto LowerHirDynamicCastExpr(
     Lowerer& lowerer, const WalkFrame& frame, const hir::DynamicCastExpr& c,
-    mir::TypeId result_type, diag::SourceSpan span) -> diag::Result<mir::Expr>;
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

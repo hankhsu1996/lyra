@@ -110,7 +110,7 @@ class WitnessedOperations {
         .ToInt64();
   }
   [[nodiscard]] auto CountBits(
-      const void* value, const ConstIntegralView& control_bits) const
+      const void* value, const LogicVector<4>& control_bits) const
       -> std::int64_t {
     return TakeBuilt<Int>([&](void* out) {
              Functions().count_bits(*operations_, value, control_bits, out);

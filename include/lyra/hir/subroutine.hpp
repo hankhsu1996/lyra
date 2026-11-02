@@ -51,6 +51,17 @@ struct SubroutineParam {
 // `reads` is what a call of a function can read (LRM 9.4.2), stated in terms of
 // its own formals and the object it runs on so a wait calling it can ask. A
 // task is never called from an expression and states nothing.
+//
+// `track_caller` is whether a failure of the design this body reports is
+// placed at the call that reached it rather than at the body's own lines,
+// which is so for a body no design wrote: one of the tool's own text, and the
+// one the tool writes for a subroutine an interface leaves to a connected
+// module (LRM 25.7). It says of the body what the callee interface says of a
+// call to it.
+//
+// `span` is where the subroutine is declared, which a body the tool writes for
+// a declaration with none of its own -- one an interface leaves to a connected
+// module (LRM 25.7) -- is lowered from.
 struct SubroutineDecl {
   std::string name;
   SubroutineKind kind;
@@ -60,6 +71,8 @@ struct SubroutineDecl {
   ProceduralBody body;
   std::optional<StmtId> root_stmt;
   Reads reads;
+  bool track_caller = false;
+  diag::SourceSpan span;
 
   auto operator==(const SubroutineDecl&) const -> bool = default;
 };

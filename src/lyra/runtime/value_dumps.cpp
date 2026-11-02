@@ -14,6 +14,8 @@
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/dump_writer.hpp"
@@ -35,6 +37,28 @@ constexpr std::string_view kNoneOption = "lyra+dump+none";
 
 // LRM 21.7.1.1: the file a dump is written to where nothing names one.
 constexpr std::string_view kDefaultFile = "dump.vcd";
+
+auto CouldNotOpen(const std::string& file) -> base::DiagMessage {
+  return base::DiagMessage("the dump file '{}' could not be opened", file);
+}
+
+// `writer`, or, where it could not open `file`, the failure of whoever asked
+// for the dump: the design's, raised at what is bound, or the run's own.
+auto Opened(std::unique_ptr<DumpWriter> writer, const std::string& file)
+    -> std::unique_ptr<DumpWriter> {
+  if (writer == nullptr) {
+    throw SimulationError(CouldNotOpen(file));
+  }
+  return writer;
+}
+auto Opened(
+    base::NoSourceLocation no_location, std::unique_ptr<DumpWriter> writer,
+    const std::string& file) -> std::unique_ptr<DumpWriter> {
+  if (writer == nullptr) {
+    throw SimulationError(no_location, CouldNotOpen(file));
+  }
+  return writer;
+}
 
 // A count of a unit (`2200ns`) as a count of the design's precision, none
 // where the text is not one or is finer than the precision can state.
@@ -172,8 +196,9 @@ void ValueDumps::Begin(
             : TicksOf(
                   std::string_view(window).substr(colon + 1), precision_power);
     if (!from.has_value() || !to.has_value() || *to < *from) {
+      // An option of the run's own command line, which no statement wrote.
       runtime.Diagnostic().Report(
-          Severity::kWarning,
+          base::kNoSourceLocation, Severity::kWarning,
           base::DiagMessage(
               "the dump window '{}' is not two times such as '2200ns:2400ns'; "
               "it is ignored",
@@ -205,7 +230,10 @@ void ValueDumps::Begin(
   const SimTime start = windows_.empty() ? 0 : windows_.front().from;
   runtime.Submit(start, Region::kPostponed, [this, start] {
     if (!design_selected_at_.has_value()) {
-      Start(start, OptionSelection());
+      const std::string file = DumpFileName();
+      Start(
+          Opened(base::kNoSourceLocation, OpenDumpWriter(file), file), start,
+          OptionSelection());
     }
   });
 }
@@ -281,7 +309,12 @@ void ValueDumps::OnceStarted(Act act) {
   }
   const SimTime now = runtime_->Now();
   if (design_selected_at_ == now) {
-    runtime_->Submit(now, Region::kPostponed, [this, act] { act(*dump_); });
+    // The file may have failed to open by then.
+    runtime_->Submit(now, Region::kPostponed, [this, act] {
+      if (dump_ != nullptr) {
+        act(*dump_);
+      }
+    });
   }
 }
 
@@ -339,10 +372,13 @@ void ValueDumps::DumpPortsOf(Scope& instance, const value::String& name) {
        .selection = {.instances = {&instance}},
        .limit = std::nullopt,
        .dump = nullptr});
-  runtime_->Submit(now, Region::kPostponed, [this, index, now] {
+  const base::SourceLocation at = base::BoundSourceLocation("$dumpports");
+  runtime_->Submit(now, Region::kPostponed, [this, index, now, at] {
+    const base::SourceLocationScope bound(at);
     PortDump& ports = port_dumps_[index];
     ports.dump = std::make_unique<ValueDump>(
-        OpenExtendedVcdWriter(ports.file), precision_power_);
+        Opened(OpenExtendedVcdWriter(ports.file), ports.file),
+        precision_power_);
     if (ports.limit.has_value()) {
       ports.dump->Limit(*ports.limit);
     }
@@ -364,8 +400,11 @@ void ValueDumps::OnEachPortDump(const value::String& name, Act act) {
     if (ports.dump != nullptr) {
       act(*ports.dump);
     } else {
+      // The file may have failed to open by then.
       runtime_->Submit(now, Region::kPostponed, [this, index, act] {
-        act(*port_dumps_[index].dump);
+        if (port_dumps_[index].dump != nullptr) {
+          act(*port_dumps_[index].dump);
+        }
       });
     }
   }
@@ -427,16 +466,24 @@ void ValueDumps::Select(SimTime now) {
     return;
   }
   design_selected_at_ = now;
-  runtime_->Submit(
-      now, Region::kPostponed, [this, now] { Start(now, design_selection_); });
+  const base::SourceLocation at = base::BoundSourceLocation("$dumpvars");
+  runtime_->Submit(now, Region::kPostponed, [this, now, at] {
+    const base::SourceLocationScope bound(at);
+    const std::string file = DumpFileName();
+    Start(Opened(OpenDumpWriter(file), file), now, design_selection_);
+  });
 }
 
-void ValueDumps::Start(SimTime now, const DumpSelection& selection) {
-  const std::string file =
-      force_ ? option_file_.value_or(std::string(kDefaultFile))
-             : design_file_.value_or(
-                   option_file_.value_or(std::string(kDefaultFile)));
-  dump_ = std::make_unique<ValueDump>(OpenDumpWriter(file), precision_power_);
+auto ValueDumps::DumpFileName() const -> std::string {
+  return force_ ? option_file_.value_or(std::string(kDefaultFile))
+                : design_file_.value_or(
+                      option_file_.value_or(std::string(kDefaultFile)));
+}
+
+void ValueDumps::Start(
+    std::unique_ptr<DumpWriter> writer, SimTime now,
+    const DumpSelection& selection) {
+  dump_ = std::make_unique<ValueDump>(std::move(writer), precision_power_);
   if (limit_.has_value()) {
     dump_->Limit(*limit_);
   }
@@ -495,8 +542,9 @@ auto ValueDumps::OptionSelection() -> DumpSelection {
       selection.variables.push_back(member);
       continue;
     }
+    // An option of the run's own command line, which no statement wrote.
     runtime_->Diagnostic().Report(
-        Severity::kWarning,
+        base::kNoSourceLocation, Severity::kWarning,
         base::DiagMessage(
             "the dump scope '{}' names no instance or variable; it is ignored",
             named.path));
@@ -512,23 +560,34 @@ auto ValueDumps::FindVariable(Scope& instance, std::string_view name) -> const
   return finder.Found();
 }
 
-void DumpFile(RuntimeEffects& runtime, const value::String& name) {
+void DumpFile(
+    RuntimeEffects& runtime, const value::String& name,
+    base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   runtime.Dumps().DumpFile(name);
 }
 
-void DumpVars(RuntimeEffects& runtime) {
+void DumpVars(RuntimeEffects& runtime, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   runtime.Dumps().DumpVars();
 }
 
-void DumpVarsLevels(RuntimeEffects& runtime, std::int64_t levels) {
+void DumpVarsLevels(
+    RuntimeEffects& runtime, std::int64_t levels, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   runtime.Dumps().DumpVarsLevels(levels);
 }
 
-void DumpVarsOf(RuntimeEffects& runtime, std::int64_t levels, Scope* instance) {
+void DumpVarsOf(
+    RuntimeEffects& runtime, std::int64_t levels, Scope* instance,
+    base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   runtime.Dumps().DumpVarsOf(levels, *instance);
 }
 
-void DumpVarsOfVariable(RuntimeEffects& runtime, const void* member) {
+void DumpVarsOfVariable(
+    RuntimeEffects& runtime, const void* member, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   runtime.Dumps().DumpVarsOfVariable(member);
 }
 
@@ -553,7 +612,9 @@ void DumpFlush(RuntimeEffects& runtime) {
 }
 
 void DumpPortsOf(
-    RuntimeEffects& runtime, Scope* instance, const value::String& name) {
+    RuntimeEffects& runtime, Scope* instance, const value::String& name,
+    base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   runtime.Dumps().DumpPortsOf(*instance, name);
 }
 

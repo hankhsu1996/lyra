@@ -136,13 +136,13 @@ struct IntegralConstantRef {
   TypeId type;
 };
 
-// The address of storage the whole program shares, named by its linkage
-// symbol: a variable of a package (LRM 26.2) or of a compilation-unit scope
-// (LRM 3.12.1), which a referrer reaches by a fully resolved name. No local
-// slot and no receiver chain arrives at such storage, so a place over one opens
-// at the symbol and dereferences it. `type` is a pointer to what the symbol
-// names; how the name is resolved -- a link line, an execution session -- is
-// below LIR.
+// The address of storage named by its linkage symbol: a variable the whole
+// program shares -- of a package (LRM 26.2) or of a compilation-unit scope (LRM
+// 3.12.1), which a referrer reaches by a fully resolved name -- or a constant
+// the unit states. No local slot and no receiver chain arrives at such
+// storage, so a place over one opens at the symbol and dereferences it. `type`
+// is a pointer to what the symbol names; how the name is resolved -- a link
+// line, an execution session -- is below LIR.
 struct StaticRef {
   std::string symbol;
   TypeId type;
@@ -558,9 +558,12 @@ struct MemberProjection {
 // sequence of handles is taken out of it by value instead. Which element the
 // step reaches depends on the access: a read of one that is not there reads
 // the default, and a write to one allocates or discards it by the container's
-// own rule, so the access, not the step, says which.
+// own rule, so the access, not the step, says which. A write that can grow what
+// it reaches and drop what it wrote is reported where it was written, which
+// `written_at` holds.
 struct ElementProjection {
   std::vector<Operand> coordinates;
+  std::optional<Operand> written_at = std::nullopt;
 };
 
 // Selects one component of whatever product or union the projection has
@@ -999,8 +1002,8 @@ struct Function {
   support::Linkage linkage = support::Linkage::kExternal;
 };
 
-// The type of an operand: the type of the value a use names, of a constant, or
-// of the reference itself, which is an address.
+// The type of an operand: the type of the value a use names, or the `type` a
+// constant or a reference states.
 auto OperandType(const Function& fn, const Operand& operand) -> TypeId;
 
 }  // namespace lyra::lir

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
@@ -78,7 +79,7 @@ class RuntimeEffects {
   // LRM 16.3: record one evaluation of an immediate cover statement, and
   // whether that evaluation succeeded. `site` is the statement's own source
   // location, which is what separates one coverage goal from another.
-  void RecordCoverage(const value::String& site, bool succeeded);
+  void RecordCoverage(base::SourceLocation site, bool succeeded);
 
   // LRM 4.4: place `activation` in `region` of the time slot at `when`, to be
   // resumed when that region runs. Naming the placement is the whole of what a
@@ -204,9 +205,7 @@ class RuntimeEffects {
   // selects what the tool prints about it (Table 20-1). `task` is the one the
   // design called, which is the whole of what a run nothing can resume has to
   // tell `$stop` and `$finish` apart by.
-  void EndRun(
-      std::string_view task, const value::String& origin,
-      std::int64_t finish_number);
+  void EndRun(std::string_view task, std::int64_t finish_number);
   // Adopts `coroutine` as a spawned child of the executing process's
   // lineage (LRM 9.5), schedules it, and answers the process it now is.
   auto Spawn(Coroutine<void> coroutine) -> std::shared_ptr<RuntimeProcess>;
@@ -240,9 +239,10 @@ class RuntimeEffects {
 
   // What is running: the generator a randomization system call draws from (LRM
   // 18.13, 18.14) and the scope chain a DPI-C foreign call reports through (LRM
-  // 35.5.3). Generated code runs only inside a process or a static
-  // initialization, and each installs one, so a call reaching this without one
-  // is a gap in that bracketing rather than anything the design can express.
+  // 35.5.3). A process and a static initialization each install one. Generated
+  // code also runs under a deferred effect or a timer -- a function a `$strobe`
+  // argument calls -- which installs none, so a call reaching this from there
+  // raises.
   [[nodiscard]] auto Running() -> RunningState&;
   // Nullable form of `Running()`, for a query that can arrive from foreign code
   // while nothing of the design is executing -- `svGetScope` outside an
@@ -252,11 +252,14 @@ class RuntimeEffects {
   // The seed every `$random` called with no seed advances (LRM 20.14.1).
   [[nodiscard]] auto UnseededRandomSeed() -> std::int32_t&;
 
-  // A fatal report Lyra writes for the design, followed by the end of the run
-  // (LRM 20.10). It is the composition a `$fatal` makes, minus the departure --
-  // for a condition found where nothing may leave by unwinding, which is any
-  // frame reached from foreign code.
+  // A fatal report Lyra writes for the design, placed where the operation being
+  // carried out was written, followed by the end of the run (LRM 20.10). It is
+  // the composition a `$fatal` makes, minus the departure -- for a condition
+  // found where nothing may leave by unwinding, which is any frame reached from
+  // foreign code. The second is that of a condition of the run's own.
   void ReportDesignFailure(const base::DiagMessage& message);
+  void ReportDesignFailure(
+      base::NoSourceLocation no_location, const base::DiagMessage& message);
 
   [[nodiscard]] auto Now() const -> SimTime;
   [[nodiscard]] auto GlobalPrecisionPower() const -> std::int8_t;
@@ -299,7 +302,8 @@ void ReportRaisedError(
 // procedure, or a fork of one, and it is the design's error otherwise. Asked
 // where such a statement runs during a function call, which is known where the
 // statement is written; the running thread is what only the run knows.
-void RequireCallerMayScheduleAfterReturn(RuntimeEffects& effects);
+void RequireCallerMayScheduleAfterReturn(
+    RuntimeEffects& effects, base::SourceLocation at);
 
 // The `RuntimeEffects` view of the Runtime attached to this thread. Reached
 // without a receiver, so every body kind -- module process, class method,
@@ -313,6 +317,10 @@ void RequireCallerMayScheduleAfterReturn(RuntimeEffects& effects);
 // so a stray access surfaces as a located error rather than reading a stale
 // handle.
 [[nodiscard]] auto current_runtime() -> RuntimeEffects&;
+
+// The procedure an effect made now is made for: the one running on the runtime
+// attached to this thread, or none with no runtime attached.
+[[nodiscard]] auto ProcedureMakingEffects() -> const ProcedureContext&;
 
 // An object that waits reached through a weak reference has expired (LRM
 // 8.30.1): the waits on `expiry` move to the runtime attached to this thread,

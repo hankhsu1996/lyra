@@ -42,6 +42,14 @@ auto FromBytes(std::string_view bytes, const FixedArrayType& type)
 
 }  // namespace
 
+auto ArrayHolding(
+    const FixedArrayType& type, std::span<const void* const> items)
+    -> LaidOutValue {
+  return BuiltArray(type, [&](std::size_t i, void* out) {
+    type.ElementType().Type().Copy(items[i], out);
+  });
+}
+
 auto ArrayFromElements(
     const FixedArrayType& type, std::span<const void* const> items)
     -> LaidOutValue {
@@ -52,9 +60,7 @@ auto ArrayFromElements(
         "array of {}",
         type.Count(), items.size());
   }
-  return BuiltArray(type, [&](std::size_t i, void* out) {
-    type.ElementType().Type().Copy(items[i], out);
-  });
+  return ArrayHolding(type, items);
 }
 
 auto ArrayFromString(const FixedArrayType& type, const String& text)

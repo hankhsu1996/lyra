@@ -127,6 +127,12 @@ below LIR, at LIR-to-LLVM.
 - Where in the source each instruction and terminator came from, as rustc's MIR statements and
   terminators carry a span: that of the innermost MIR node naming one whose lowering emitted it, so
   what the code generator fails on or refuses is reported there.
+- Where a call that can fail the design was written: the address of the unit's constant for that
+  location, which is data like any other constant of the unit, read as a value of the library's
+  location type, the one word the value is, as the call's last operand, ahead of what the target
+  adds after every operand. A write into an element that can grow what it reaches holds that operand
+  on its element step, which is realized as such a call. A statement's location may also be an
+  ordinary operand, which keys a coverage goal or names a procedure.
 
 ## Does Not Own
 

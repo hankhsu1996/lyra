@@ -84,8 +84,4 @@ auto RequireScopeClass(const abi::ObjectDefinition* definition)
   return definition;
 }
 
-auto ObjectOf(const value::ObjectRef& ref) -> void* {
-  return &ref.Deref<GcObject>();
-}
-
 }  // namespace lyra::runtime

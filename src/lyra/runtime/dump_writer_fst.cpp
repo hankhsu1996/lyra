@@ -242,7 +242,7 @@ class FstWriter final : public DumpWriter {
 auto OpenFstWriter(const std::string& path) -> std::unique_ptr<DumpWriter> {
   fstWriterContext* context = fstWriterCreate(path.c_str(), 1);
   if (context == nullptr) {
-    throw SimulationError("the dump file '{}' could not be opened", path);
+    return nullptr;
   }
   return std::make_unique<FstWriter>(context);
 }

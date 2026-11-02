@@ -113,7 +113,7 @@ class HookBody {
   }
 
   // The object the hook runs on, as the pointer its body holds.
-  [[nodiscard]] auto Self() -> mir::ExprId {
+  [[nodiscard]] auto Self() const -> mir::ExprId {
     return Block().Add(MakeSelfRefExpr(Frame()));
   }
   // The problem, as the reference the hook was handed, and as itself.
@@ -134,8 +134,8 @@ class HookBody {
   }
 
   [[nodiscard]] auto Call(
-      mir::Callee callee, std::vector<mir::ExprId> arguments, mir::TypeId type)
-      -> mir::ExprId {
+      mir::Callee callee, std::vector<mir::ExprId> arguments,
+      mir::TypeId type) const -> mir::ExprId {
     return Block().Add(
         mir::Expr{
             .data =
@@ -144,7 +144,7 @@ class HookBody {
                     .arguments = std::move(arguments)},
             .type = type});
   }
-  void Run(mir::Callee callee, std::vector<mir::ExprId> arguments) {
+  void Run(mir::Callee callee, std::vector<mir::ExprId> arguments) const {
     Block().AppendStmt(
         mir::ExprStmt{
             .expr = Call(
@@ -876,6 +876,9 @@ auto ClassDeclLowerer::PopulateBodies(
   const mir::LocalId report = ctor_bindings.DeclareAnonymous(
       unit_lowerer.Unit().builtins.read_report_ptr);
   ctor_params.push_back(report);
+  DeclareCallerLocation(
+      unit_lowerer.Unit(), ctor.track_caller, ctor_bindings, ctor_code,
+      ctor_params);
   auto reported_or =
       ctor_lowerer.BuildConstructionReport(frame, ctor.reads, report);
   if (!reported_or) return std::unexpected(std::move(reported_or.error()));
@@ -902,12 +905,13 @@ auto ClassDeclLowerer::PopulateBodies(
     // one does.
     base_args.push_back(ctor_block.ReadLocal(
         report, unit_lowerer.Unit().builtins.read_report_ptr));
+    mir::Builder entering_base = ctor_block.At(hir_class.base_call.span);
     const mir::ExprId object = BuildObjectDeref(
-        unit_lowerer.Unit(), ctor_block,
-        ctor_block.Add(MakeSelfRefExpr(frame)));
-    ctor_block.AppendStmt(
+        unit_lowerer.Unit(), entering_base,
+        entering_base.Add(MakeSelfRefExpr(frame)));
+    entering_base.AppendStmt(
         mir::ExprStmt{
-            .expr = ctor_block.Add(
+            .expr = entering_base.Add(
                 mir::MakeCallExpr(
                     mir::Direct{
                         .target =
@@ -937,9 +941,9 @@ auto ClassDeclLowerer::PopulateBodies(
             mir_class.fields.Get(slot).type));
     ctor_block.AppendStmt(
         mir::ExprStmt{
-            .expr = ctor_block.Add(
-                mir::MakeAssignExpr(
-                    unit_lowerer.Unit().builtins, target, value_id))});
+            .expr = ctor_block.Add(BuildStoreExpr(
+                unit_lowerer.Unit(), ctor_block,
+                AccessPath{.owner = target, .descent = {}}, value_id))});
   };
   for (const hir::FieldId property : declared.properties.Ids()) {
     store(

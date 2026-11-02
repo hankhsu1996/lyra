@@ -14,6 +14,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
+#include "lyra/mir/source_location_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::backend::cpp {
@@ -111,6 +112,28 @@ class CppEnumTableLiteral {
 };
 
 void WriteOne(TargetText& out, const CppEnumTableLiteral& literal);
+
+// A constant of the library's location record, written as what it says: the
+// file as `__FILE__ names it there, the line and the column.
+class CppSourceLocationLiteral {
+ public:
+  CppSourceLocationLiteral(
+      const mir::CompilationUnit& unit, mir::SourceLocationId location)
+      : unit_(&unit), location_(location) {
+  }
+  [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
+    return *unit_;
+  }
+  [[nodiscard]] auto Location() const -> mir::SourceLocationId {
+    return location_;
+  }
+
+ private:
+  const mir::CompilationUnit* unit_;
+  mir::SourceLocationId location_;
+};
+
+void WriteOne(TargetText& out, const CppSourceLocationLiteral& literal);
 
 // What a construction call names before its argument list. Usually the type
 // itself, `T(args)`; for a sequence the library function that takes the
@@ -294,12 +317,13 @@ void WriteOne(TargetText& out, const CppInterfaceDispatchCallee& callee);
 // How C++ dereferences a value of this type. A pointer takes the indirection
 // operator built in; a `ref` to a cell (LRM 23.3.3.2) and a write in progress
 // take it through the `operator*` and `operator->` their library types declare.
-// An object reference declares neither, being one type whatever class it
-// refers to, so it is opened as the class the code assumes, which is also
-// where a null reference is caught (LRM 8.4); a reference owning nothing is
-// opened the same way. Any other type reaches nothing to dereference and is
-// refused. A reference is already its referent wherever C++ names it
-// ([expr.type]), so opening one writes nothing.
+// A reference owning nothing declares neither, being one type whatever it
+// refers to, so it is opened as the class the code assumes, what reaches
+// through it having already refused a null one (LRM 25.9). A class handle is
+// never dereferenced: MIR opens it by the library's call, which answers a
+// pointer. Any other type reaches nothing to dereference and is refused. A
+// reference is already its referent wherever C++ names it ([expr.type]), so
+// opening one writes nothing.
 struct DerefByOperator {};
 
 struct DerefAsClass {
@@ -315,9 +339,9 @@ using DerefSpelling =
     const mir::CompilationUnit& unit, mir::TypeId type_id) -> DerefSpelling;
 
 // C++'s indirection over a value of `pointer_type`, `(*p)` ([expr.unary.op]),
-// `r.Deref<T>()` for an object reference, or `r` itself for a
-// reference. `write_pointer`
-// writes the pointer and is told the precedence its position needs.
+// `r.Deref<T>()` for a reference owning nothing, or `r` itself for a
+// reference. `write_pointer` writes the pointer and is told the precedence its
+// position needs.
 template <typename WritePointer>
 void WriteDeref(
     TargetText& out, const mir::CompilationUnit& unit, mir::TypeId pointer_type,
@@ -338,10 +362,9 @@ void WriteDeref(
 }
 
 // A member access through what `pointer_type` designates, up to the member's
-// name: `p->`, which C++ defines as `(*p).` ([expr.ref]), `r.Deref<T>().`
-// for an object reference, or `r.` for a reference.
-// `write_pointer` writes the pointer and is told the precedence its position
-// needs.
+// name: `p->`, which C++ defines as `(*p).` ([expr.ref]), `r.Deref<T>().` for
+// a reference owning nothing, or `r.` for a reference. `write_pointer` writes
+// the pointer and is told the precedence its position needs.
 template <typename WritePointer>
 void WriteArrowAccess(
     TargetText& out, const mir::CompilationUnit& unit, mir::TypeId pointer_type,

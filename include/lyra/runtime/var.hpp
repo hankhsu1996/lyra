@@ -13,6 +13,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observable.hpp"
@@ -424,7 +425,8 @@ class Cell : public VariableCell {
   // none handed, and any other has to be.
   auto BeginTakeover(
       std::int64_t level, std::int64_t first, std::int64_t count,
-      TakePositionsOf<Owned> take_positions = {}) -> std::int64_t;
+      base::SourceLocation at, TakePositionsOf<Owned> take_positions = {})
+      -> std::int64_t;
 
   // States what the takeover at `level` has evaluated to, as a value of the
   // cell's type of which the positions it holds are read. It reaches the cell
@@ -434,13 +436,14 @@ class Cell : public VariableCell {
   // evaluation superseded by a later takeover, or ended by a `deassign` or
   // `release`, learns to stop.
   auto DriveTakeover(
-      std::int64_t level, std::int64_t generation, const Owned& new_val)
-      -> bool;
+      std::int64_t level, std::int64_t generation, const Owned& new_val,
+      base::SourceLocation at) -> bool;
 
   // The same of a value handed as its bytes, laid out as what the cell holds
   // is.
   auto DriveTakeoverBytes(
-      std::int64_t level, std::int64_t generation, const void* bytes) -> bool
+      std::int64_t level, std::int64_t generation, const void* bytes,
+      base::SourceLocation at) -> bool
     requires requires(const HeldAs& held) {
       { held.ToOwned(bytes) } -> std::same_as<Owned>;
     };
@@ -450,7 +453,9 @@ class Cell : public VariableCell {
   // beneath, it is reestablished, and each position released shows what it
   // holds once its reevaluation runs; any other variable is left exactly as it
   // stands, which is what a released variable keeps (LRM 10.6.2).
-  void EndTakeover(std::int64_t level, std::int64_t first, std::int64_t count);
+  void EndTakeover(
+      std::int64_t level, std::int64_t first, std::int64_t count,
+      base::SourceLocation at);
 
   // Whether a procedural continuous assignment holds any position of the cell.
   [[nodiscard]] auto TakenOver() const -> bool;
@@ -479,7 +484,8 @@ class Cell : public VariableCell {
 
   // What the cell held in the Preponed region of the current time slot -- its
   // value before anything in that slot ran (LRM 4.4.2.1, 16.5.1).
-  [[nodiscard]] auto SampledGet() const -> const Owned& {
+  [[nodiscard]] auto SampledGet(base::SourceLocation at) const -> const Owned& {
+    const base::SourceLocationScope bound(at);
     const CellRareState<HeldAs>* rare = ExistingRareState();
     return SampledOf(rare == nullptr ? nullptr : rare->Sampled());
   }
@@ -658,8 +664,9 @@ class TailCell final : public Cell<HeldAs> {
 
   // What the cell held in the Preponed region of the current time slot (LRM
   // 4.4.2.1, 16.5.1), where it lies.
-  [[nodiscard]] auto SampledBytes() const -> const void* {
-    return this->SampledGet().Bytes();
+  [[nodiscard]] auto SampledBytes(base::SourceLocation at) const -> const
+      void* {
+    return this->SampledGet(at).Bytes();
   }
 };
 
@@ -1048,17 +1055,21 @@ class VariableRef {
   // assignment gives it storage of its own to name until it ends.
   [[nodiscard]] auto BeginTakeover(
       std::int64_t level, std::int64_t first, std::int64_t count,
-      TakePositionsOf<T> take_positions = {}) const -> std::int64_t;
+      base::SourceLocation at, TakePositionsOf<T> take_positions = {}) const
+      -> std::int64_t;
   [[nodiscard]] auto DriveTakeover(
-      std::int64_t level, std::int64_t generation, const T& new_val) const
-      -> bool;
+      std::int64_t level, std::int64_t generation, const T& new_val,
+      base::SourceLocation at) const -> bool;
   void EndTakeover(
-      std::int64_t level, std::int64_t first, std::int64_t count) const;
+      std::int64_t level, std::int64_t first, std::int64_t count,
+      base::SourceLocation at) const;
 
   // A reference to an element or a component of what this one names (LRM
   // 13.5.2), which belongs to the same variable.
   template <typename Key>
-  [[nodiscard]] auto ReferElement(const Key& key) const {
+  [[nodiscard]] auto ReferElement(
+      const Key& key, base::SourceLocation at) const {
+    const base::SourceLocationScope bound(at);
     erased_.AdmitStep();
     value::Formation formed{};
     auto& element = Storage().ElementMut(key, formed);
@@ -1069,8 +1080,9 @@ class VariableRef {
   // The same, bound by a call, with a lease on the element the array keeps,
   // which the array cannot then end before the call returns (LRM 13.5.2).
   template <typename Key>
-  [[nodiscard]] auto ReferElementLeased(const Key& key) const
-      -> LeasedReference {
+  [[nodiscard]] auto ReferElementLeased(
+      const Key& key, base::SourceLocation at) const -> LeasedReference {
+    const base::SourceLocationScope bound(at);
     erased_.AdmitStep();
     value::Formation formed{};
     auto& element = Storage().ElementMut(key, formed);
@@ -1129,7 +1141,8 @@ class VariableRef {
       Cell().ArmSampling();
     }
   }
-  [[nodiscard]] auto SampledGet() const -> const T& {
+  [[nodiscard]] auto SampledGet(base::SourceLocation at) const -> const T& {
+    const base::SourceLocationScope bound(at);
     return std::visit(
         Overloaded{
             [&](std::monostate) -> const T& { return Storage(); },
@@ -1139,14 +1152,14 @@ class VariableRef {
                     "a sampled value of part of a variable lent by reference "
                     "is not yet supported");
               }
-              return Cell().SampledGet();
+              return Cell().SampledGet(at);
             },
-            [](GcObject*) -> const T& {
+            [&](GcObject*) -> const T& {
               throw SimulationError(
                   "a sampled value of a class property lent by reference is "
                   "not yet supported");
             },
-            [](HeldByNet) -> const T& {
+            [&](HeldByNet) -> const T& {
               throw SimulationError(
                   "a sampled value of a net lent by reference is not yet "
                   "supported");
@@ -1189,27 +1202,15 @@ struct MemberOf<T C::*> {
 
 // A reference to the property `Property` of an object (LRM 8.4), held by the
 // object so a write through it tells the object as it lands (LRM 9.4.2,
-// 13.5.2), given whatever reaches the object: the running method's own object,
-// or a handle. The property is a step taken on the object, so the object is
-// reached once. Reaching a property through a handle naming no object is the
-// design's own failure.
+// 13.5.2). The property is a step taken on the object, so the object is
+// reached once.
 template <auto Property>
 auto ReferProperty(typename MemberOf<decltype(Property)>::Class* object)
     -> VariableRef<typename MemberOf<decltype(Property)>::Value> {
-  if (object == nullptr) {
-    value::RaiseNullObjectHandleAccess();
-  }
   return VariableRef<typename MemberOf<decltype(Property)>::Value>{
       ErasedReference{
           .holder = static_cast<GcObject*>(object),
           .storage = &(object->*Property)}};
-}
-
-template <auto Property>
-auto ReferProperty(const value::ObjectRef& handle)
-    -> VariableRef<typename MemberOf<decltype(Property)>::Value> {
-  return ReferProperty<Property>(
-      handle.Get<typename MemberOf<decltype(Property)>::Class>());
 }
 
 // `reference`, which names storage an object holds, bound by a call with a
@@ -1302,7 +1303,9 @@ void CellRareState<HeldAs>::WritePart(OwnedCall write) {
 template <class HeldAs>
 auto Cell<HeldAs>::BeginTakeover(
     std::int64_t level, std::int64_t first, std::int64_t count,
-    TakePositionsOf<Owned> take_positions) -> std::int64_t {
+    base::SourceLocation at, TakePositionsOf<Owned> take_positions)
+    -> std::int64_t {
+  const base::SourceLocationScope bound(at);
   return std::int64_t{
       RareState()
           .Takeovers(take_positions)
@@ -1311,17 +1314,21 @@ auto Cell<HeldAs>::BeginTakeover(
 
 template <class HeldAs>
 auto Cell<HeldAs>::DriveTakeover(
-    std::int64_t level, std::int64_t generation, const Owned& new_val) -> bool {
+    std::int64_t level, std::int64_t generation, const Owned& new_val,
+    base::SourceLocation at) -> bool {
+  const base::SourceLocationScope bound(at);
   return RecordTakeover(level, generation, new_val);
 }
 
 template <class HeldAs>
 auto Cell<HeldAs>::DriveTakeoverBytes(
-    std::int64_t level, std::int64_t generation, const void* bytes) -> bool
+    std::int64_t level, std::int64_t generation, const void* bytes,
+    base::SourceLocation at) -> bool
   requires requires(const HeldAs& held) {
     { held.ToOwned(bytes) } -> std::same_as<Owned>;
   }
 {
+  const base::SourceLocationScope bound(at);
   return RecordTakeover(level, generation, storage_.ToOwned(bytes));
 }
 
@@ -1360,7 +1367,9 @@ auto Cell<HeldAs>::RecordTakeover(
 
 template <class HeldAs>
 void Cell<HeldAs>::EndTakeover(
-    std::int64_t level, std::int64_t first, std::int64_t count) {
+    std::int64_t level, std::int64_t first, std::int64_t count,
+    base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   // Ending a level nothing occupies is what a `release` on an untaken variable
   // does, and the language gives it no effect (LRM 10.6.2).
   const CellRareState<HeldAs>* rare = ExistingRareState();
@@ -1599,6 +1608,12 @@ class Designation {
     return Designation<Sink, std::remove_reference_t<decltype(element)>>{
         *write_, element};
   }
+  // The same of a queue, which a write of an element can grow past its bound.
+  template <typename Key>
+  auto DesignateElement(const Key& key, base::SourceLocation at) {
+    const base::SourceLocationScope bound(at);
+    return DesignateElement(key);
+  }
 
   template <std::size_t I>
   auto DesignateComponent() {
@@ -1648,8 +1663,10 @@ class Designation {
   // `hi` (LRM 7.6, 7.10.1), the ones the queue's clamping names; the write
   // learns from the assignment which it wrote, where any moved.
   template <typename Position, typename Value>
-  void AssignSlice(const Position& lo, const Position& hi, const Value& value) {
-    if (const auto written = part_->AssignSlice(lo, hi, value)) {
+  void AssignSlice(
+      const Position& lo, const Position& hi, const Value& value,
+      base::SourceLocation at) {
+    if (const auto written = part_->AssignSlice(lo, hi, value, at)) {
       write_->Moved(
           static_cast<std::int64_t>(written->start),
           static_cast<std::int64_t>(written->count));

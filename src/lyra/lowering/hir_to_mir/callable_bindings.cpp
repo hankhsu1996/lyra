@@ -140,7 +140,7 @@ auto CallableBindings::ReceiverThroughShare() -> BodyBindingRef {
           .pointee = object,
           .ownership = mir::PointerOwnership::kBorrowed,
           .mutability = mir::Mutability::kMutable}});
-  mir::Builder entry(code_->Body(), diag::SourceSpan{});
+  mir::Builder entry(code_->Body(), code_->span);
   const mir::ExprId handle = entry.Add(MakeBindingPlace(share, entry));
   const mir::ExprId object_place = entry.Deref(unit_->types, handle, object);
   const mir::ExprId address =

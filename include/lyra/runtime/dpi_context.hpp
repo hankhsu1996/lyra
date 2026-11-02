@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/value/string.hpp"
 
@@ -22,7 +23,8 @@ class Scope;
 // different processes never share one, and a call made before any process
 // exists -- a variable declaration assignment runs first (LRM 10.5, 26.2) --
 // still has one to enter.
-void EnterDpiScope(RuntimeEffects& effects, Scope* decl_scope);
+void EnterDpiScope(
+    RuntimeEffects& effects, Scope* decl_scope, base::SourceLocation at);
 void LeaveDpiScope(RuntimeEffects& effects);
 
 // The same chain read from the other side of the boundary, where the caller is
@@ -47,6 +49,13 @@ auto ReplaceDpiScope(CurrentDpiHandle handle) -> CurrentDpiHandle;
 // non-context import has no boundary where control coming back is checked, so
 // the statements after its call run until the execution next suspends.
 void RequireAContextImportCall(RuntimeEffects& effects);
+
+// Where the design wrote the context import call foreign code is running under,
+// the nearest statement of its own to what that code does wrong. Asked only
+// once `RequireAContextImportCall` has passed: a plain import states no extent
+// to keep it in (LRM 35.5.3).
+[[nodiscard]] auto ImportCallWrittenAt(RuntimeEffects& effects)
+    -> base::SourceLocation;
 
 // LRM 35.8: the int an exported task's entry hands its foreign caller, and what
 // `svIsDisabledState` answers -- 1 while a disable is active on this
@@ -74,14 +83,16 @@ void AcknowledgeStop(RuntimeEffects& effects);
 // Item b: an imported task that returns while its execution must stop returns
 // 1. Item c: an imported function in that state calls `svAckDisabledState`
 // before returning. Item d: no exported subroutine is called at all once the
-// state is entered, which is checked where such a call arrives. Outside that
-// state the same check holds the call to LRM 35.5.3, which lets an export be
-// called only from inside a `context` import's call; that breach finds the
-// execution told nothing, so it is raised, and the region of the function
-// foreign code called settles it.
+// state is entered, which is checked where such a call arrives. The same check
+// first holds the call to LRM 35.5.3, which lets an export be called only from
+// inside a `context` import's call; that breach has no such call to be placed
+// at, so it is raised as the run's own, and the region of the function foreign
+// code called settles it. Items b and c are reported at the import call `at`,
+// and item d at the call foreign code is running under.
 void CheckImportTaskAcknowledged(
-    RuntimeEffects& effects, std::int32_t returned);
-void CheckImportFunctionAcknowledged(RuntimeEffects& effects);
+    RuntimeEffects& effects, std::int32_t returned, base::SourceLocation at);
+void CheckImportFunctionAcknowledged(
+    RuntimeEffects& effects, base::SourceLocation at);
 void CheckExportReachable(RuntimeEffects& effects);
 
 // Foreign code is about to run (LRM 35): each side hands over the standard

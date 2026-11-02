@@ -6,6 +6,7 @@
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/region.hpp"
+#include "lyra/runtime/running_state.hpp"
 
 namespace lyra::runtime {
 
@@ -43,7 +44,9 @@ class Timer {
   auto operator=(Timer&&) -> Timer& = delete;
   ~Timer();
 
-  // What firing does.
+  // What firing does, bound by the procedure the timer works for: whoever owns
+  // it binds it, where arming it can come from whatever moved what its owner
+  // watches.
   void Bind(OwnedCall fire);
 
   // Schedules the event `ticks` steps from now, where a delay of that many
@@ -59,6 +62,12 @@ class Timer {
   // The event has come: it is no longer pending, and what it does is done.
   void Fire();
 
+  // The procedure that bound it, which what it does reports for, no process
+  // running then (LRM 20.10).
+  [[nodiscard]] auto BoundBy() const -> const ProcedureContext& {
+    return bound_by_;
+  }
+
   [[nodiscard]] auto Place() -> TimerPlace& {
     return place_;
   }
@@ -66,6 +75,7 @@ class Timer {
  private:
   TimerPlace place_;
   OwnedCall fire_;
+  ProcedureContext bound_by_;
 };
 
 }  // namespace lyra::runtime

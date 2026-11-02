@@ -150,15 +150,9 @@ class BasicDynamicArray {
   }
 
   // LRM 7.4.5: the element a position names, or, where it names none, storage
-  // no read reaches, so a write there is discarded.
-  [[nodiscard]] auto ExistingAt(std::optional<std::int64_t> position) -> void* {
-    Formation formed{};
-    return ElementMut(position, formed);
-  }
-
-  // The same, saying whether the position named an element: an array never
-  // grows by being written, so a write either lands in an existing element or
-  // nowhere.
+  // no read reaches, so a write there is discarded. `formed` says which: an
+  // array never grows by being written, so a write either lands in an existing
+  // element or nowhere.
   [[nodiscard]] auto ElementMut(
       std::optional<std::int64_t> position, Formation& formed) -> void* {
     const auto ordinal = ElementOrdinal(position, count_);

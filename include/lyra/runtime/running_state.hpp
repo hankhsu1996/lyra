@@ -1,7 +1,9 @@
 #pragma once
 
+#include <compare>
 #include <cstdint>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/rng.hpp"
@@ -48,30 +50,37 @@ enum class ThreadCreator : std::uint8_t {
   return false;
 }
 
-// What the code an execution is running belongs to. A thread runs one
-// procedure, except the thread the final procedures are called from, which
-// runs each of them in turn and takes on each one's of these as it calls it
-// (LRM 9.2.3).
+// The procedure the code running belongs to, as a report names it. It outlives
+// the execution running it, since what the procedure deferred reports for it
+// after it has ended.
 struct ProcedureContext {
   // The scope a report raised while it runs names -- a run-time warning or
-  // error, and the note on a slot that never settles. Borrowed, and outlives
-  // the execution. Null for a namespace's initializer, which has no scope.
+  // error, and the note on a slot that never settles. Borrowed, and held for
+  // the run. Null for a namespace's initializer, which has no scope.
   Scope* scope = nullptr;
+  // Where the source writes what it runs: a constant of the program's, which
+  // lasts the whole run, and no place where no source text states one. Read
+  // as it is, because the one reader that cannot wait for a safe moment -- the
+  // run being stopped from outside -- may neither allocate nor call anything
+  // that does.
+  base::SourceLocation written_at{};
+
+  auto operator<=>(const ProcedureContext&) const = default;
+};
+
+// What belongs to no procedure: the run's own work, where no scope is reported.
+inline constexpr ProcedureContext kNoProcedure{};
+
+// What an execution runs in, which one it starts carries over, all but where a
+// wake places it: that is chosen where an execution is started. A thread runs
+// one procedure, except the thread the final procedures are called from, which
+// takes on each one's of these as it calls it (LRM 9.2.3).
+struct ExecutionContext {
+  ProcedureContext procedure;
   // The initialization RNG of the module, interface or program instance, or of
   // the package, its declaration belongs to, which seeds whatever nothing that
   // is a thread creates there (LRM 18.14.1). Borrowed, and held for the run.
   InitializationRng* seeds = nullptr;
-  // Where the source writes what it runs, as text that stands for the whole
-  // run; empty where no source text states one. Plain characters, because the
-  // one reader that cannot wait for a safe moment -- the run being stopped from
-  // outside -- may neither allocate nor call anything that does.
-  const char* written_at = "";
-};
-
-// What an execution runs in, which one it starts carries over, all but where a
-// wake places it: that is chosen where an execution is started.
-struct ExecutionContext {
-  ProcedureContext procedure;
   // The region set the execution is placed in, which is the one its thread
   // started in, whatever the code it runs was declared in (LRM 24.3.1, 24.5).
   RegionSet regions = kActiveRegionSet;
@@ -121,7 +130,7 @@ struct ExecutionContext {
   // A generator for an execution nothing that is a thread creates here: the
   // next one of the initialization RNG (LRM 18.14.1).
   [[nodiscard]] auto SplitInitializationRng() const -> DrawRng {
-    return procedure.seeds->Split();
+    return seeds->Split();
   }
 };
 
@@ -160,11 +169,13 @@ struct RunningState {
 // since its state draws from the generator beside it.
 struct DisplacingState {
   DisplacingState(
-      DrawRng initial, const ExecutionContext& context, RunningState* displaced)
+      DrawRng initial, const ExecutionContext& context, RunningState* displaced,
+      const ProcedureContext* displaced_procedure)
       : generator(initial),
         state(generator),
         context(context),
-        displaced(displaced) {
+        displaced(displaced),
+        displaced_procedure(displaced_procedure) {
   }
   DisplacingState(const DisplacingState&) = delete;
   auto operator=(const DisplacingState&) -> DisplacingState& = delete;
@@ -179,6 +190,8 @@ struct DisplacingState {
   ExecutionContext context;
   // Null where nothing was running before this one started.
   RunningState* displaced = nullptr;
+  // The procedure in force before this one started.
+  const ProcedureContext* displaced_procedure;
 };
 
 }  // namespace lyra::runtime

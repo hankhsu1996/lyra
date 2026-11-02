@@ -19,8 +19,11 @@ note: in 'Test' at time 0
 - `error:`, `warning:` or `note:`. A failure of the compiler's own opens with `internal error:`
   after the first word. Nothing else is printed before the message: no tool name, no bracketed
   label, no `fatal:` for a report of Lyra's own.
-- A report made while a design runs is placed where the running procedure is written. Which instance
-  and what time are context, so they are a note of their own.
+- A report made while a design runs is placed at the statement that failed, and one raised inside
+  the tool's own text -- the library classes of LRM 15, the coverage library -- at the design's call
+  that reached it. A report the run makes for no operation of the design says so where it is made,
+  and is placed where the running procedure is written. Which instance and what time are context, so
+  they are a note of their own.
 - The line a design's own severity task prints (`$info`, `$warning`, `$error`, `$fatal`, and an
   assertion's default report) uses the severity that task names (LRM 20.10), since the line is the
   design's.

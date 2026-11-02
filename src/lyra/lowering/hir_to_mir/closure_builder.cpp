@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/builder.hpp"
@@ -87,6 +88,28 @@ auto ClosureBuilder::AddParam(mir::TypeId type) -> mir::LocalId {
 }
 
 auto ClosureBuilder::Finish(mir::TypeId result_type) -> mir::Expr {
+  // A closure built in a body that reports at its caller reports there too: it
+  // captures where that body was called, and every call it makes hands that
+  // on. rustc's `#[track_caller]` closure takes the location of whoever calls
+  // it; here that is the scheduler, which knows no location. It is read ahead
+  // of every statement, the prologue reaching the receiver included: any call
+  // of the body may hand it on, and reading it needs only the closure the body
+  // runs in.
+  if (bindings_.Provides(CallerLocationOrigin{})) {
+    mir::Builder body = Body();
+    const mir::LocalId held =
+        bindings_.DeclareAnonymous(unit_->builtins.source_location);
+    const mir::ExprId captured = body.Add(bindings_.MakeBindingPlace(
+        bindings_.EnsureCarrier(CallerLocationOrigin{}), body));
+    mir::Block& root = closure_decl_.invoke.Body();
+    const mir::StmtId declared = root.stmts.Add(
+        mir::Stmt{
+            .label = std::nullopt,
+            .data = mir::LocalDeclStmt{
+                .target = held, .init = body.Read(captured)}});
+    root.root_stmts.insert(root.root_stmts.begin(), declared);
+    closure_decl_.invoke.caller_location = held;
+  }
   closure_decl_.invoke.result_type = result_type;
   closure_decl_.invoke.params = invocation_params_;
   std::vector<mir::FieldInit> field_inits = bindings_.Finalize();

@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/closure.hpp"
@@ -40,7 +41,6 @@
 #include "lyra/runtime/value_dumps.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/value/format.hpp"
-#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -78,10 +78,17 @@ enum class StartKind : std::uint8_t {
 inline constexpr std::size_t kStartTurnCount =
     static_cast<std::size_t>(StartKind::kTriggeredProcedure) + 1;
 
-// A final procedure bound to the instance it runs for: the call, and the
-// procedure it belongs to, which the thread calling it takes on for the length
-// of the call (LRM 9.2.3).
+// A final procedure bound to the instance it runs for: the call, and what it
+// runs in, which the thread calling it takes on for the length of the call (LRM
+// 9.2.3).
 struct RegisteredFinal {
+  ExecutionContext context;
+  OwnedCall call;
+};
+
+// What is owed because the simulation is over: the call, and the procedure that
+// asked for it, which what the call reports names, no process running then.
+struct OwedAtRunEnd {
   ProcedureContext procedure;
   OwnedCall call;
 };
@@ -124,8 +131,11 @@ class Runtime final : public RuntimeEffects {
   void RequestToolStop();
 
   // A run-time error of the design: the fatal report LRM 20.10 asks a tool to
-  // make for it, and the implicit `$finish` that follows one.
-  void ReportDesignError(const base::DiagMessage& message);
+  // make for it, placed at `at`, where the operation that failed was written,
+  // at the procedure where that is no place, and the implicit `$finish` that
+  // follows one.
+  void ReportDesignError(
+      base::SourceLocation at, const base::DiagMessage& message);
 
   // A failure of the tool itself, which no SystemVerilog construct can express
   // and no severity describes, so it is stated plainly and ends the run
@@ -133,10 +143,8 @@ class Runtime final : public RuntimeEffects {
   void ReportToolFailure(std::string_view message);
 
   // LRM 20.2, Table 20-1: what a simulation control task prints, chosen by its
-  // finish number, where `task` names the one that was called and `origin` is
-  // its source location.
-  void ReportSimulationControl(
-      std::string_view task, std::string_view origin, int finish_number);
+  // finish number, where `task` names the one that was called.
+  void ReportSimulationControl(std::string_view task, int finish_number);
 
   // Keeps `process`, which no process started: a procedure, or the carrier of
   // an update. It is kept for as long as it or anything it started runs.
@@ -178,6 +186,14 @@ class Runtime final : public RuntimeEffects {
   // What the running process or static initialization runs in.
   [[nodiscard]] auto RunningContext() const -> const ExecutionContext&;
 
+  // The procedure what is running belongs to: the running process's or static
+  // initialization's, or that of whatever made the effect or bound the timer a
+  // region is running, no process running then. None where the run's own work
+  // is running. Read by a run stopped from outside, so it reads only what such
+  // a reader may.
+  [[nodiscard]] auto RunningProcedure() const noexcept
+      -> const ProcedureContext&;
+
   // The initialization RNG of the namespace named `name`, whose bring-up has
   // been claimed (LRM 18.14.1). Held for the run, as an instance's is.
   [[nodiscard]] auto NamespaceSeeds(std::string_view name)
@@ -218,20 +234,11 @@ class Runtime final : public RuntimeEffects {
   // How many procedures the report of an unsettled slot names one by one.
   static constexpr std::size_t kMaxNamedProcedures = 8;
 
-  // One procedure an unsettled slot was still running: where it is written and
-  // the scope it runs in.
-  struct NotedProcedure {
-    const char* written_at;
-    const Scope* scope;
-
-    auto operator<=>(const NotedProcedure&) const = default;
-  };
-
   // How many times a slot has entered its regions, and what its last passes
   // ran, which the bound on its passes reports.
   struct SlotPasses {
     std::size_t count = 0;
-    std::vector<NotedProcedure> ran;
+    std::vector<ProcedureContext> ran;
   };
 
   // The slot at `when`. Asked on every wake and every nonblocking update, so
@@ -283,7 +290,7 @@ class Runtime final : public RuntimeEffects {
   void TellExpired();
   // The fatal report of a slot that met the bound on its passes, and what its
   // last passes ran, a procedure once for each time it ran.
-  void ReportUnsettledSlot(std::span<const NotedProcedure> ran);
+  void ReportUnsettledSlot(std::span<const ProcedureContext> ran);
   // The final procedures are not processes of their own but a series of
   // function calls from a single one (LRM 9.2.3), made here once the
   // simulation has ended.
@@ -334,7 +341,7 @@ class Runtime final : public RuntimeEffects {
   std::vector<RegisteredFinal> finals_;
   // What is owed because the simulation is over, held from wherever the run
   // asked for it and run once the final procedures have.
-  std::vector<OwnedCall> at_run_end_;
+  std::vector<OwedAtRunEnd> at_run_end_;
   // What an occurrence woke to run at it, held while the waits it reached are
   // still being asked, and how deep that asking is.
   std::vector<Activation*> woken_at_the_occurrence_;
@@ -364,6 +371,10 @@ class Runtime final : public RuntimeEffects {
   // stopped from outside is asked where it is from a signal handler, which may
   // read nothing else.
   std::atomic<RuntimeProcess*> current_process_ = nullptr;
+  // The procedure in force while no process runs: the static initialization's
+  // running, or that of whoever made the effect or bound the timer a region is
+  // running. Atomic for the same reader.
+  std::atomic<const ProcedureContext*> procedure_in_force_ = &kNoProcedure;
   // What is running, which is what a randomization call draws from (LRM 18.13,
   // 18.14) and what a DPI-C foreign call reports its scope through (LRM
   // 35.5.3). Whichever is running installs one: a process the state it owns,
@@ -415,19 +426,20 @@ class Runtime final : public RuntimeEffects {
 // (LRM 24.3.1), except a continuous driver, which names the instance it runs
 // as: the drive across a child's output port is created by the instantiation
 // and evaluates the child's code (LRM 4.9.6, 24.3.2). `written_at` is where the
-// source writes the procedure, as text that stands for the whole run.
+// source writes the procedure, a constant of the program's that lasts the
+// whole run.
 void RegisterAlwaysProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at);
+    base::SourceLocation written_at);
 void RegisterContinuousDriver(
     Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
-    Coroutine<void> coroutine, const char* written_at);
+    Coroutine<void> coroutine, base::SourceLocation written_at);
 void RegisterInitialProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at);
+    base::SourceLocation written_at);
 void RegisterTriggeredProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at);
+    base::SourceLocation written_at);
 
 // Reached by the generated registration of a final procedure: keeps `call`, a
 // final procedure bound to its instance, to be called at the end of
@@ -435,12 +447,13 @@ void RegisterTriggeredProcess(
 // takes.
 void RegisterFinalProcedure(
     Scope* owning_scope, Scope* unit_instance,
-    OwnedClosure<support::EffectSignature> call, const char* written_at);
+    OwnedClosure<support::EffectSignature> call,
+    base::SourceLocation written_at);
 
 // LRM 24.7 `$exit`: ends the program the running thread originates in, the
 // running thread with it; from any other thread it is ignored, and says so at
-// `origin`, where the call is written.
-void Exit(RuntimeEffects& runtime, const lyra::value::String& origin);
+// `at`, where the call is written.
+void Exit(RuntimeEffects& runtime, base::SourceLocation at);
 
 // Reached by the generated code running a concurrent assertion's pass or fail
 // statement in the Reactive region, or at the end of the run for an attempt
@@ -449,7 +462,7 @@ void Exit(RuntimeEffects& runtime, const lyra::value::String& origin);
 // `disable fork` do not reach it (LRM 9.6.1, 9.6.3).
 void RunAssertionAction(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at);
+    base::SourceLocation written_at);
 
 // A static initializer runs before any procedure starts (LRM 10.5, 26.2), so
 // the generator it draws from cannot be a process's. LRM 18.14.1 names the one

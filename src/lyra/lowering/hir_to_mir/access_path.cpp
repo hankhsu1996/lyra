@@ -321,14 +321,16 @@ auto StepsTakenWithinTheWrite(
 }
 
 // The call `call` takes on `receiver`, answering `type`.
-auto StepCallExpr(StepCall call, mir::ExprId receiver, mir::TypeId type)
-    -> mir::Expr {
+auto StepCallExpr(
+    const mir::CompilationUnit& unit, mir::Builder block, StepCall call,
+    mir::ExprId receiver, mir::TypeId type) -> mir::Expr {
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee =
                   mir::Direct{
-                      .target = call.entry,
+                      .target = mir::EntryOver(
+                          unit, call.entry, block.Get(receiver).type),
                       .receiver = receiver,
                       .part = call.part,
                       .type_arguments = std::move(call.type_arguments)},
@@ -339,10 +341,10 @@ auto StepCallExpr(StepCall call, mir::ExprId receiver, mir::TypeId type)
 // The call a reference step takes on `receiver`, answering a reference to the
 // part, of type `type`, at the step's mutability.
 auto ReferenceStepCall(
-    const mir::CompilationUnit& unit, ReferenceStep step, mir::ExprId receiver,
-    mir::TypeId type) -> mir::Expr {
+    const mir::CompilationUnit& unit, mir::Builder block, ReferenceStep step,
+    mir::ExprId receiver, mir::TypeId type) -> mir::Expr {
   return StepCallExpr(
-      std::move(step.call), receiver,
+      unit, block, std::move(step.call), receiver,
       unit.types.Intern(
           mir::Type{mir::ReferenceType{
               .referent = type, .mutability = step.mutability}}));
@@ -354,7 +356,8 @@ auto ReferencedPart(
     const mir::CompilationUnit& unit, mir::Builder block, ReferenceStep step,
     mir::ExprId receiver, mir::TypeId type) -> mir::Expr {
   return mir::MakeDerefExpr(
-      block.Add(ReferenceStepCall(unit, std::move(step), receiver, type)),
+      block.Add(
+          ReferenceStepCall(unit, block, std::move(step), receiver, type)),
       type);
 }
 
@@ -955,7 +958,8 @@ auto ElementReference(
         "access path: a reference is answered by an element's read form, and "
         "this step reaches no element");
   }
-  return ReferenceStepCall(unit, std::move(*element), receiver, step.part_type);
+  return ReferenceStepCall(
+      unit, block, std::move(*element), receiver, step.part_type);
 }
 
 auto StepRead(

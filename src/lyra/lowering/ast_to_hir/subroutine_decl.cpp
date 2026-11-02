@@ -479,7 +479,9 @@ auto LowerSubroutineDeclImpl(
               .result_var = result_var,
               .body = std::move(body),
               .root_stmt = root_stmt,
-              .reads = std::move(reads)},
+              .reads = std::move(reads),
+              .track_caller = TracksCaller(sym),
+              .span = frontend::PointSpanOf(sym.location)},
       .base_arguments = std::move(base_arguments)};
 }
 
@@ -495,6 +497,11 @@ auto EvaluatesItsOwnDefaults(const slang::ast::SubroutineSymbol& callee)
   }
   const slang::ast::ClassType* cls = DeclaringClassOf(callee);
   return cls == nullptr || !cls->isInterface;
+}
+
+auto TracksCaller(const slang::ast::SubroutineSymbol& callee) -> bool {
+  return DeclaredInLibraryText(callee) ||
+         callee.flags.has(slang::ast::MethodFlags::InterfaceExtern);
 }
 
 auto OmitsArgument(const slang::ast::CallExpression& call, std::size_t position)
@@ -555,7 +562,8 @@ auto LowerEvaluatorDecl(
       .result_var = result_var,
       .body = std::move(body),
       .root_stmt = root_stmt,
-      .reads = std::move(reads)};
+      .reads = std::move(reads),
+      .span = span};
 }
 
 auto BaseCallArguments(const slang::ast::Expression& base_call)
@@ -641,6 +649,8 @@ auto LowerMethodPrototypeDecl(
       .body = std::move(body),
       .root_stmt = std::nullopt,
       .reads = {},
+      .track_caller = DeclaredInLibraryText(proto),
+      .span = frontend::PointSpanOf(proto.location),
   };
 }
 

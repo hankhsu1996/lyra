@@ -93,11 +93,12 @@ struct IntegralOperations {
 
   static void CountBits(
       const ValueOperations& self, const void* value,
-      const ConstIntegralView& control_bits, void* out) {
+      const LogicVector<4>& control_bits, void* out) {
     std::construct_at(
         static_cast<Int*>(out),
         Int::FromInt(
-            lyra::value::CountBits(Load(self, value).View(), control_bits)));
+            lyra::value::CountBits(
+                Load(self, value).View(), control_bits.View())));
   }
 
   static auto WriteToStream(

@@ -1007,8 +1007,8 @@ class UnitLowerer {
       -> diag::Result<hir::DeclaredMethod>;
 
   // Records what each other unit published about every covergroup of its that
-  // a type of this unit names, once the bodies have lowered, and names the
-  // coverage library those covergroups are written over.
+  // this unit names, once the bodies have lowered, and names the coverage
+  // library those covergroups are written over.
   auto ReadSignaturesOfNamedCovergroups() -> diag::Result<void>;
 
   // What this unit publishes about its own covergroup `covergroup`.

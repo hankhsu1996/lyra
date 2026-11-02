@@ -4,7 +4,6 @@
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
@@ -83,8 +82,8 @@ void AppendScheduleAfterReturnRequirement(
 // Materializes compile-time text as a `value::String` operand and interns it:
 // a string literal is a raw C string in the target, so a construction of the
 // SV `string` type wraps it to satisfy a runtime entry's string parameter.
-// Every synthesized operand that crosses as text -- a diagnostic's origin tag,
-// the text of a report the tool writes itself -- is built here.
+// Every synthesized operand that crosses as text -- the text of a report the
+// tool writes itself, among others -- is built here.
 [[nodiscard]] auto BuildStringValueExpr(
     const mir::CompilationUnit& unit, mir::Builder block, std::string text)
     -> mir::ExprId;
@@ -147,26 +146,26 @@ struct DelayRead {
     const mir::CompilationUnit& unit, mir::Builder block) -> mir::Expr;
 
 // The call handing one report to the diagnostic broker at `severity` (LRM
-// 20.10): the origin the dispatcher attributes and rate-limits by, and the text
-// already formatted. Composing that text is where reports differ -- a severity
-// task formats the design's own values, while a report the tool writes on its
-// own behalf has fixed words -- and issuing one is where they do not. Returned
-// detached, because the severity that ends the run has a statement of its own
-// to follow it.
+// 20.10): the text already formatted. Where the report is placed, which the
+// dispatcher attributes and rate-limits by, is where the call is written,
+// which every call of an entry that reports is handed. Composing the text is
+// where reports differ -- a severity task formats the design's own values,
+// while a report the tool writes on its own behalf has fixed words -- and
+// issuing one is where they do not. Returned detached, because the severity
+// that ends the run has a statement of its own to follow it.
 [[nodiscard]] auto BuildReportCallExpr(
     const mir::CompilationUnit& unit, support::BuiltinFn severity,
-    mir::ExprId diagnostic_id, mir::ExprId origin_id, mir::ExprId text_id)
-    -> mir::Expr;
+    mir::ExprId diagnostic_id, mir::ExprId text_id) -> mir::Expr;
 
 // Appends the statement issuing one severity-fixed report whose text the tool
-// composed rather than the design: the origin tag the runtime prints it under,
-// and the words. Every report Lyra writes on its own behalf is this one
-// statement -- an assertion that failed with no action block of its own, an
-// assignment a destination's type did not admit -- because what separates them
-// is the severity and the words and nothing else.
+// composed rather than the design, placed where `block` builds from. Every
+// report Lyra writes on its own behalf is this one statement -- an assertion
+// that failed with no action block of its own, an assignment a destination's
+// type did not admit -- because what separates them is the severity and the
+// words and nothing else.
 void AppendToolReportStmt(
-    const UnitLowerer& unit_lowerer, mir::Builder block,
-    support::BuiltinFn severity, base::DiagMessage text, diag::SourceSpan span);
+    const mir::CompilationUnit& unit, mir::Builder block,
+    support::BuiltinFn severity, base::DiagMessage text);
 
 // Builds the format-text expression `value::Format(items,
 // runtime.TimeFormat())`: a value-layer free call over the print-item array

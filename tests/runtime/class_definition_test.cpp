@@ -9,12 +9,16 @@
 #include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/value/object_ref.hpp"
+#include "tests/base/written_at.hpp"
 
 namespace {
+
+using lyra::test::kWrittenAt;
 
 using lyra::InternalError;
 using lyra::SimulationError;
@@ -24,7 +28,6 @@ using lyra::runtime::AdoptObject;
 using lyra::runtime::EndObjectOf;
 using lyra::runtime::GcObject;
 using lyra::runtime::HierarchySegment;
-using lyra::runtime::ObjectOf;
 using lyra::runtime::OwnedObject;
 using lyra::runtime::RequireScopeClass;
 using lyra::runtime::Scope;
@@ -220,8 +223,9 @@ TEST(ClassDefinitionTest, AnAdoptedObjectIsReachedAndEndedAsItWasBuilt) {
   built->definition = &kOwnObject;
   void* const address = static_cast<GcObject*>(built.get());
   ObjectRef object = AdoptObject(built.release());
-  EXPECT_EQ(ObjectOf(object), address);
-  EXPECT_THROW(std::ignore = ObjectOf(ObjectRef{}), SimulationError);
+  EXPECT_EQ(object.Object<GcObject>(kWrittenAt), address);
+  EXPECT_THROW(
+      std::ignore = ObjectRef{}.Object<GcObject>(kWrittenAt), SimulationError);
   EXPECT_EQ(held.use_count(), 2);
   object = ObjectRef{};
   EXPECT_EQ(held.use_count(), 1);

@@ -321,6 +321,11 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const ErasedCallableType&) -> Element { return std::nullopt; }});
 }
 
+auto Type::IsQueue() const -> bool {
+  const auto* library = As<LibraryType>();
+  return library != nullptr && library->FindBound().has_value();
+}
+
 auto Type::IndexType() const -> std::optional<TypeId> {
   const auto* library = As<LibraryType>();
   if (library == nullptr) {

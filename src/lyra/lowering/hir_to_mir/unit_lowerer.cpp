@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <deque>
 #include <expected>
 #include <format>
@@ -43,7 +42,6 @@
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
@@ -63,7 +61,6 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/dump.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -1291,8 +1288,9 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
   }
   mir::Class declared = IncompleteClass(id, key.unit_name, key.class_path);
   const hir::ClassDeclaration& published = hir_->classes.Declaration(cls);
-  if (const std::optional<DeclaringInstance> instance =
-          StateDeclaredLayout(cls, declared)) {
+  const std::optional<DeclaringInstance> instance =
+      StateDeclaredLayout(cls, declared);
+  if (instance.has_value()) {
     RecordDeclaringInstanceField(id, instance->member);
   }
   for (const hir::StaticPropertyId prop : published.static_properties.Ids()) {
@@ -1305,13 +1303,14 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
                 mir::StaticPropertyDecl{
                     .type = TranslateType(property.type)})});
   }
-  // Every method it published, at the position it published it, with the part
-  // it takes in dispatch.
+  // Every method it published, at the position it published it, with what it
+  // takes and the part it takes in dispatch: the body is the other unit's, and
+  // what a call of it hands over is read off the prototype here.
   for (const hir::MethodId method : published.methods.Ids()) {
     const hir::DeclaredMethod& declared_method = published.methods.Get(method);
     const mir::CallableId callable = declared.callables.Add(
         mir::CallableDecl{
-            .code = {},
+            .code = ClassMethodPrototype(*this, cls, method),
             .foreign = std::nullopt,
             .virtual_dispatch = DispatchRoleOf(
                 hir::ClassMethodTarget{.owner = cls, .method = method}),
@@ -1333,13 +1332,20 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
                  .has_value())) {
       const mir::CallableId body = declared.callables.Add(
           mir::CallableDecl{
-              .code = {},
+              .code = ClassHookPrototype(*this, cls, function),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
               .defining_unit = std::nullopt});
       declared.library_callbacks.push_back(
           mir::LibraryCallbackBody{.callback = function, .body = body});
     }
+    // How its objects are built is the other unit's too; what a construction
+    // hands over is read off the prototype.
+    declared.constructor = mir::ConstructorDecl{
+        .code = ClassBodyConstructorPrototype(
+            *this, cls, instance.transform([](const DeclaringInstance& i) {
+              return i.type;
+            }))};
   }
   unit_.DefineClass(id, std::move(declared));
 }
@@ -1425,7 +1431,8 @@ auto UnitLowerer::DeclarePublishedScopeClass(
   // extends the class, and its own unit makes every object of it, so nothing
   // here needs its size. A published subroutine is a virtual method it
   // introduces and leaves to the classes realizing the scope, in the order the
-  // signature gives them.
+  // signature gives them, stated with what a call of it hands over, as the
+  // unit defining it states it.
   mir::Class declared = IncompleteClass(id, key.unit_name, key.class_path);
   declared.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
   std::vector<mir::FieldId> slots;
@@ -1446,7 +1453,7 @@ auto UnitLowerer::DeclarePublishedScopeClass(
             .name = callable.name,
             .body = declared.callables.Add(
                 mir::CallableDecl{
-                    .code = {},
+                    .code = PrototypeOf(*this, callable, SelfPointerTo(id)),
                     .foreign = std::nullopt,
                     .virtual_dispatch =
                         mir::IntroducesVirtualSlot{.is_pure = true},
@@ -1459,7 +1466,7 @@ auto UnitLowerer::DeclarePublishedScopeClass(
             .name = binding.bind_name,
             .body = declared.callables.Add(
                 mir::CallableDecl{
-                    .code = {},
+                    .code = binding.bind_prototype,
                     .foreign = std::nullopt,
                     .virtual_dispatch =
                         mir::IntroducesVirtualSlot{.is_pure = true},

@@ -33,6 +33,7 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
@@ -265,9 +266,8 @@ struct PublishedScope {
 class UnitLowerer {
  public:
   UnitLowerer(
-      const hir::CompilationUnit& hir,
-      const diag::SourceManager& source_manager)
-      : hir_(&hir), source_manager_(&source_manager) {
+      const hir::CompilationUnit& hir, const diag::SourceManager& sources)
+      : hir_(&hir), sources_(&sources) {
     // The class of each scope of the design hierarchy the unit names -- its
     // own scopes' and those of other units it reaches -- takes its identity
     // first: building the tree of the unit's scopes names its own, and a type
@@ -310,6 +310,14 @@ class UnitLowerer {
     return unit_;
   }
 
+  // The unit's constant for where `span` is in the source, added to `block` as
+  // a value of the library's location type.
+  [[nodiscard]] auto BuildSourceLocationAt(
+      mir::Builder block, diag::SourceSpan span) -> mir::ExprId {
+    return mir::BuildSourceLocation(
+        unit_, mir::PositionOf(*sources_, span), block);
+  }
+
   [[nodiscard]] auto Hir() const -> const hir::CompilationUnit& {
     return *hir_;
   }
@@ -324,19 +332,12 @@ class UnitLowerer {
     return support::UnnamedClass{.disambiguator = next_unnamed_class_++};
   }
 
-  // Where a construct was written, which a diagnostic the lowering emits names
-  // its origin by (LRM 20.10).
-  [[nodiscard]] auto SourceManager() const -> const diag::SourceManager& {
-    return *source_manager_;
-  }
-
   // What the class `published` states of each subroutine its scope leaves to a
   // connected module, in the order the signature gives them.
   [[nodiscard]] auto ExternBindingsOf(mir::ClassId published) const
       -> const std::vector<ExternBinding>& {
     return extern_bindings_.at(published);
   }
-
   // The MIR type an HIR type is, asked only of one MIR has a type for.
   [[nodiscard]] auto TranslateType(hir::TypeId hir_id) const -> mir::TypeId {
     const std::optional<mir::TypeId>& translated =
@@ -762,7 +763,7 @@ class UnitLowerer {
       const hir::Type& source, mir::RecordId id, mir::TypeId type);
 
   const hir::CompilationUnit* hir_;
-  const diag::SourceManager* source_manager_;
+  const diag::SourceManager* sources_;
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, std::optional<mir::TypeId>> type_translations_;
   // The class each class the unit names is, of this unit or another, and the

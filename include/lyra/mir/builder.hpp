@@ -30,6 +30,17 @@ class Builder {
     return {block, span_};
   }
 
+  // This block, building from `span`, or from the piece of source it builds
+  // from now where `span` is no place.
+  [[nodiscard]] auto At(diag::SourceSpan span) const -> Builder {
+    return {*block_, span == diag::SourceSpan{} ? span_ : span};
+  }
+
+  // The piece of source nodes built here are lowered from.
+  [[nodiscard]] auto Span() const -> diag::SourceSpan {
+    return span_;
+  }
+
   [[nodiscard]] auto Body() const -> Block& {
     return *block_;
   }

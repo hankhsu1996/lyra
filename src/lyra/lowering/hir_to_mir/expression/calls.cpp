@@ -57,7 +57,10 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/storage_part.hpp"
+#include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -138,7 +141,7 @@ auto LowerSystemSubroutineCall(
               -> diag::Result<mir::Expr> {
             if constexpr (kProcedural) {
               return LowerTerminationSystemSubroutineCall(
-                  lowerer, frame, call, term, span);
+                  lowerer, frame, call, term);
             } else {
               return RejectStructuralEffect(span);
             }
@@ -147,7 +150,7 @@ auto LowerSystemSubroutineCall(
               -> diag::Result<mir::Expr> {
             if constexpr (kProcedural) {
               return LowerProgramControlSystemSubroutineCall(
-                  lowerer, frame.Builder(), span);
+                  lowerer, frame.Builder());
             } else {
               return RejectStructuralEffect(span);
             }
@@ -156,7 +159,7 @@ auto LowerSystemSubroutineCall(
               -> diag::Result<mir::Expr> {
             if constexpr (kProcedural) {
               return LowerDiagnosticSystemSubroutineCall(
-                  lowerer, frame, call, diag_info, span);
+                  lowerer, frame, call, diag_info);
             } else {
               return RejectStructuralEffect(span);
             }
@@ -364,7 +367,8 @@ auto LowerBuiltinMethodCall(
       // An entry acting on an object it is handed as its first operand is
       // handed the value reaching that object, read where a variable holds
       // it, as an access's receiver is.
-      if (entry.reaches_an_object && !b.receiver.has_value() && args.empty()) {
+      if (entry.acts_on_object_as.has_value() && !b.receiver.has_value() &&
+          args.empty()) {
         lowered = into.AsValue(unit.types, lowered);
       }
       args.push_back(StatedAsRead(
@@ -500,6 +504,19 @@ auto LowerLibraryHookCall(
           }},
       ref.receiver);
   if (!object) return std::unexpected(std::move(object.error()));
+  // The built-in hook does nothing, but calling it is still a method reached
+  // through the handle, so the handle is opened, which fails the design where
+  // it names no object (LRM 8.4); the hook the object's own class runs is
+  // handed the object.
+  if (!runs_objects_hook) {
+    const mir::TypeId root =
+        mir::LibraryTypeOf(unit.types, support::LibraryDecl::kObjectRoot);
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.Add(mir::MakeObjectOfCall(unit, *object, root))});
+    return BuildBuiltinMethodCall(
+        unit_lowerer.Unit(), block, fn, std::nullopt, {}, result_type);
+  }
   return BuildBuiltinMethodCall(
       unit_lowerer.Unit(), block, fn, std::nullopt,
       {StatedAsRead(

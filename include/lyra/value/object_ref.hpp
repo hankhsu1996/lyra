@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/managed_ref.hpp"
@@ -13,8 +14,11 @@ namespace lyra::value {
 // LRM 8.4: reaching a non-static member or a virtual method through a null
 // object handle is illegal, and the result is indeterminate. Which handle a
 // variable holds is a value the design computed, so the access is the design's
-// own failure and answers to the run rather than to the host.
-[[noreturn]] inline void RaiseNullObjectHandleAccess() {
+// own failure and answers to the run rather than to the host. The check is on
+// every access, which a scope on the way to it would be paid by, so only what
+// fails binds.
+[[noreturn]] inline void RaiseNullObjectHandleAccess(base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   throw SimulationError("a member reached through a null object handle");
 }
 
@@ -32,24 +36,22 @@ class ObjectRef {
  public:
   ObjectRef() = default;
 
-  ObjectRef(std::nullptr_t) {  // NOLINT(google-explicit-constructor)
-  }
-
   explicit ObjectRef(ManagedRef handle) : handle_(std::move(handle)) {
   }
 
-  // The object, as the class this program point assumes. A type argument
-  // stands where a reference to a cell needs none, because a cell is the one
-  // thing it holds while this states which object it names and leaves what may
-  // be read through it to the point holding it. Reaching through a reference
-  // that names no object is the design's own failure (LRM 8.4).
+  // Where the object lies, as the class this program point assumes. A type
+  // argument stands where a reference to a cell needs none, because a cell is
+  // the one thing it holds while this states which object it names and leaves
+  // what may be read through it to the point holding it. Reaching through a
+  // reference that names no object is the design's own failure (LRM 8.4),
+  // reported at `at`, where the reaching was written.
   template <typename T>
-  [[nodiscard]] auto Deref() const -> T& {
+  [[nodiscard]] auto Object(base::SourceLocation at) const -> T* {
     T* object = Get<T>();
     if (object == nullptr) {
-      RaiseNullObjectHandleAccess();
+      RaiseNullObjectHandleAccess(at);
     }
-    return *object;
+    return object;
   }
 
   // The same address where nothing is reached through it, which is defined on
@@ -86,13 +88,16 @@ class ObjectRef {
   // LRM 6.24.3 streams a class object as its members, which is not carried out
   // yet; the execution backend answers a handle the same way. A structure with
   // a handle member asks these only where the program measures it.
-  [[noreturn]] static auto BitstreamWidth() -> Int {
+  [[noreturn]] static auto BitstreamWidth(base::SourceLocation at) -> Int {
+    const base::SourceLocationScope bound(at);
     throw SimulationError("'$bits' of a class object is not yet supported");
   }
   // LRM 20.9 counts over the bit stream.
-  template <IntegralValue Control>
-  [[nodiscard]] static auto CountBits(const Control& control_bits) -> Int {
-    return Stream().CountBits(control_bits);
+  [[noreturn]] static auto CountBits(
+      const LogicVector<4>&, base::SourceLocation at) -> Int {
+    const base::SourceLocationScope bound(at);
+    throw SimulationError(
+        "reading a class object as a stream of bits is not yet supported");
   }
 
   explicit operator bool() const {
@@ -100,16 +105,12 @@ class ObjectRef {
   }
 
  private:
-  [[noreturn]] static auto Stream() -> Bit {
-    throw SimulationError(
-        "reading a class object as a stream of bits is not yet supported");
-  }
-
   ManagedRef handle_;
 };
 
 static_assert(LyraValue<ObjectRef>);
 static_assert(CaseEqualComparable<ObjectRef>);
 static_assert(!Ordered<ObjectRef>);
+static_assert(BitstreamSizable<ObjectRef>);
 
 }  // namespace lyra::value

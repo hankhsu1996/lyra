@@ -8,9 +8,11 @@
 #include <vector>
 
 #include "lyra/backend/cpp/naming.hpp"
+#include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -396,6 +398,17 @@ void WriteOne(TargetText& out, const CppIntegralLiteral& literal) {
   out += ")";
 }
 
+void WriteOne(TargetText& out, const CppSourceLocationLiteral& literal) {
+  const diag::SourcePosition& at =
+      literal.Unit().source_locations.Get(literal.Location());
+  Write(
+      out,
+      CppType(literal.Unit(), literal.Unit().builtins.source_location_record),
+      "{");
+  WriteCStringLiteral(at.file, out);
+  Write(out, ", ", at.line, ", ", at.column, "}");
+}
+
 // Every enumeration's table goes by one type name, so each table states how
 // wide its base type is, whether that type has an unknown plane, and how many
 // members it holds, which is what tells the C++ compiler which table type it
@@ -471,8 +484,10 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::ObjectWriteType&) -> DerefSpelling {
             return DerefByOperator{};
           },
-          [&](const mir::ManagedRefType& m) -> DerefSpelling {
-            return DerefAsClass{.pointee = m.pointee};
+          [](const mir::ManagedRefType&) -> DerefSpelling {
+            throw InternalError(
+                "backend::cpp: a class handle is opened by the library's call, "
+                "so no dereference reaches one -- please report this as a bug");
           },
           [&](const mir::UnmanagedRefType& u) -> DerefSpelling {
             return DerefAsClass{.pointee = u.pointee};

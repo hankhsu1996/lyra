@@ -67,11 +67,11 @@ That is what separates it from a machine pointer, which has none of those, and n
 address.
 
 An instance named as a value is the reference taken to the instance: its object's address, converted
-to the reference. An access dereferences the reference to the interface's object directly, as an
-access through a class handle dereferences that. Neither needs an operation of its own, because the
-type carries which unit's object is reached; each backend realizes the dereference of its own
-reference, and a conversion between the reference and the borrowed pointer to the same pointee is
-the one MIR states, both ways.
+to the reference. An access dereferences the reference to the interface's object directly, where an
+access through a class handle is opened by the library's call. It needs no operation of its own,
+because the type carries which unit's object is reached; each backend realizes the dereference of
+its own reference, and a conversion between the reference and the borrowed pointer to the same
+pointee is the one MIR states, both ways.
 
 Revised 2026-10-30. The first version held the value as the chandle, a value of no stated pointee,
 because "a pointer to another unit's object is not a value of the simulation's value system". That

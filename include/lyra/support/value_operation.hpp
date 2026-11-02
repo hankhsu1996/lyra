@@ -25,6 +25,11 @@ using ValueOperation = std::variant<ValueOperator, BuiltinFn>;
 // as its receiver, rather than of a type, which builds one.
 [[nodiscard]] auto ReachesAReceiver(ValueOperation operation) -> bool;
 
+// Whether the body answering the operation is handed where its caller wrote it,
+// as the entry it answers is: what a type's own body does can fail wherever
+// what it holds can.
+[[nodiscard]] auto TakesCallerLocation(ValueOperation operation) -> bool;
+
 // The operation's stable spelling: the operator's token, or the entry's name.
 [[nodiscard]] auto ValueOperationName(ValueOperation operation)
     -> std::string_view;

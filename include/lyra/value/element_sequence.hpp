@@ -9,7 +9,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/element_policy.hpp"
+#include "lyra/value/integral_fwd.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::value {
@@ -105,7 +107,7 @@ template <typename E, typename U>
   if constexpr (std::same_as<E, U>) {
     return value;
   } else {
-    return E::FromBoundFree(value);
+    return E::FromBoundFree(value, base::SourceLocation{});
   }
 }
 
@@ -159,9 +161,9 @@ template <typename Seq, typename Ops>
   }
   return total;
 }
-template <typename Seq, typename Control, typename Ops>
+template <typename Seq, typename Ops>
 [[nodiscard]] auto SequenceCountBits(
-    const Seq& seq, const Control& control_bits, const Ops& ops)
+    const Seq& seq, const LogicVector<4>& control_bits, const Ops& ops)
     -> std::int64_t {
   std::int64_t total = 0;
   for (std::size_t i = 0; i < seq.Count(); ++i) {

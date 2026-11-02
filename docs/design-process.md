@@ -293,7 +293,9 @@ consequence once. Passing it anyway is not only slow: it is the source language 
 which then re-derives on every evaluation what the compiler had already settled. Where the answer is
 yes -- an index the program computes, a queue bound that `$` moves -- it is an operand, and
 translating it is ordinary arithmetic the next layer states, which stops being folded exactly when
-it stops being constant.
+it stops being constant. A fact of the node that only the run can read stays an operand, named as a
+constant of the unit: where a call was written comes out the same at every evaluation of that call,
+and no layer above can consume it, because what reads it is a report made while the program runs.
 
 The question also keeps a node's meaning honest, because the rest of the compiler treats an operand
 as a value with a moment of evaluation. A deferred write freezes its operands at the statement, so

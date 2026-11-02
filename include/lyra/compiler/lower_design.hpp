@@ -14,7 +14,6 @@
 #include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
-#include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/lowering.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
@@ -109,10 +108,9 @@ void LowerToHir(
 // checks a complete one answers would report a stated gap as a bug.
 template <typename Produce, typename Consume>
 auto LowerToSemantic(
-    ElaboratedDesign& design, const diag::SourceManager& sources,
-    const mir_transform::PassOptions& passes, diag::DiagnosticSink& sink,
-    std::size_t width, Produce produce, Consume consume)
-    -> std::optional<SemanticDesign> {
+    ElaboratedDesign& design, const mir_transform::PassOptions& passes,
+    diag::DiagnosticSink& sink, std::size_t width, Produce produce,
+    Consume consume) -> std::optional<SemanticDesign> {
   using Produced = std::invoke_result_t<Produce, mir::CompilationUnit>;
   // What a lowering builds is the one fact of it the design root reads,
   // so it travels with what the consumer made of its body, where it
@@ -132,7 +130,7 @@ auto LowerToSemantic(
             .made = lowering::hir_to_mir::LoweringMade::Of(lowered),
             .produced = std::nullopt};
         if (!lowered.compiles_its_body) return out;
-        auto unit = LowerUnitToSemantic(lowered.body, sources, passes);
+        auto unit = LowerUnitToSemantic(lowered.body, passes, *design.sources);
         if (!unit) {
           return std::unexpected(std::move(unit.error()));
         }
@@ -159,7 +157,7 @@ auto LowerToSemantic(
     const profiling::StageScope stage("design root");
     return SynthesizeDesignRoot(
         design.units.Tops(), design.units.Signatures(),
-        std::move(instantiations), sources, passes);
+        std::move(instantiations), passes, *design.sources);
   }();
   if (!root) {
     sink.Report(std::move(root.error()));
@@ -173,16 +171,16 @@ auto LowerToSemantic(
 // the way.
 template <typename Produce, typename Consume>
 auto LowerToExecutable(
-    ElaboratedDesign& design, const diag::SourceManager& sources,
-    const mir_transform::PassOptions& passes,
+    ElaboratedDesign& design, const mir_transform::PassOptions& passes,
     const TypeOperationCollection& collection, diag::DiagnosticSink& sink,
     std::size_t width, Produce produce, Consume consume)
     -> std::optional<ExecutableDesign> {
   using Produced = std::invoke_result_t<Produce, lir::CompilationUnit>;
   auto semantic = LowerToSemantic(
-      design, sources, passes, sink, width,
+      design, passes, sink, width,
       [&](mir::CompilationUnit unit) -> Produced {
-        auto executable = LowerUnitToExecutable(unit, passes, collection);
+        auto executable =
+            LowerUnitToExecutable(unit, passes, collection, *design.sources);
         if (!executable) {
           return std::unexpected(std::move(executable.error()));
         }
@@ -196,7 +194,8 @@ auto LowerToExecutable(
   const auto in_unit = diag::FailureContext::InUnit(kDesignRootUnitName);
   auto root = [&] {
     const profiling::StageScope stage("lower root to LIR");
-    return LowerUnitToExecutable(semantic->root, passes, collection);
+    return LowerUnitToExecutable(
+        semantic->root, passes, collection, *design.sources);
   }();
   if (!root) {
     sink.Report(std::move(root.error()));

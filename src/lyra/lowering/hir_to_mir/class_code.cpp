@@ -92,14 +92,14 @@ auto ClassOperation(
   return prototype;
 }
 
-}  // namespace
-
-auto ClassConstructorPrototype(UnitLowerer& unit_lowerer, hir::ClassId cls)
-    -> mir::CallableCode {
+// What a construction of `cls` takes after `params`, which open with what
+// reaches the object and the instance it belongs to: the formals the source
+// declared, where to report what it reads, and, for a constructor of the
+// tool's own text, where the construction was written, last.
+auto ConstructionPrototype(
+    UnitLowerer& unit_lowerer, hir::ClassId cls,
+    std::vector<mir::TypeId> params) -> mir::CallableCode {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  std::vector<mir::TypeId> params{
-      unit_lowerer.SelfPointerTo(unit_lowerer.ClassIdentity(cls)),
-      unit.builtins.scope_ptr};
   for (const CalleeFormal& formal : ConstructorFormalsOf(unit_lowerer, cls)) {
     if (const std::optional<mir::TypeId> type =
             ParamTypeOf(unit, formal.type, formal.direction)) {
@@ -107,7 +107,38 @@ auto ClassConstructorPrototype(UnitLowerer& unit_lowerer, hir::ClassId cls)
     }
   }
   params.push_back(unit.builtins.read_report_ptr);
-  return ClassOperation(params, unit.builtins.void_type, true);
+  const bool track_caller =
+      unit_lowerer.Hir().classes.Declaration(cls).constructor->track_caller;
+  if (track_caller) {
+    params.push_back(unit.builtins.source_location);
+  }
+  mir::CallableCode prototype =
+      ClassOperation(params, unit.builtins.void_type, true);
+  if (track_caller) {
+    prototype.caller_location = prototype.params.back();
+  }
+  return prototype;
+}
+
+}  // namespace
+
+auto ClassConstructorPrototype(UnitLowerer& unit_lowerer, hir::ClassId cls)
+    -> mir::CallableCode {
+  return ConstructionPrototype(
+      unit_lowerer, cls,
+      {unit_lowerer.SelfPointerTo(unit_lowerer.ClassIdentity(cls)),
+       unit_lowerer.Unit().builtins.scope_ptr});
+}
+
+auto ClassBodyConstructorPrototype(
+    UnitLowerer& unit_lowerer, hir::ClassId cls,
+    std::optional<mir::TypeId> declaring_instance) -> mir::CallableCode {
+  std::vector<mir::TypeId> leading{
+      unit_lowerer.SelfPointerTo(unit_lowerer.ClassIdentity(cls))};
+  if (declaring_instance.has_value()) {
+    leading.push_back(*declaring_instance);
+  }
+  return ConstructionPrototype(unit_lowerer, cls, std::move(leading));
 }
 
 auto ClassMethodPrototype(
@@ -126,12 +157,25 @@ auto ClassMethodPrototype(
           [](const hir::IntroducesVirtual&) { return true; },
           [](const hir::OverridesVirtual&) { return true; }},
       stated.dispatch);
-  std::vector<mir::TypeId> params{
-      on_object ? object : unit_lowerer.Unit().builtins.scope_ptr};
+  std::vector<mir::TypeId> params;
+  if (on_object) {
+    params.push_back(object);
+  } else if (unit_lowerer.Hir()
+                 .classes.Declaration(cls)
+                 .instance_scope.has_value()) {
+    params.push_back(unit_lowerer.Unit().builtins.scope_ptr);
+  }
   for (const mir::LocalId param : taken.ParamsAfterReceiver()) {
     params.push_back(taken.locals.Get(param).type);
   }
-  return ClassOperation(params, taken.result_type, on_object);
+  mir::CallableCode prototype =
+      ClassOperation(params, taken.result_type, on_object);
+  // The method reports where it was called exactly where its declaration
+  // does, and is handed that location in the same position.
+  if (taken.caller_location.has_value()) {
+    prototype.caller_location = prototype.params.back();
+  }
+  return prototype;
 }
 
 auto ClassHookPrototype(
@@ -172,6 +216,11 @@ auto SlotPrototype(const mir::CallableCode& operation, mir::TypeId self)
   for (const mir::LocalId param : operation.params) {
     prototype.params.push_back(
         prototype.AddLocal(operation.locals.Get(param).type));
+    // The slot reports at its caller exactly where the operation does, and
+    // is handed that location in the same position.
+    if (operation.caller_location == param) {
+      prototype.caller_location = prototype.params.back();
+    }
   }
   prototype.result_type = operation.result_type;
   return prototype;
@@ -189,6 +238,12 @@ auto EntryOf(
   mir::CallableCode entry = mir::CallableCode::Defined(diag::SourceSpan{});
   for (const mir::LocalId param : operation.params) {
     entry.params.push_back(entry.AddLocal(operation.locals.Get(param).type));
+    // An operation reporting at its caller is entered through an entry that
+    // does the same: what the entry was handed is what the operation is
+    // handed, which the call it makes states as its own location.
+    if (operation.caller_location == param) {
+      entry.caller_location = entry.params.back();
+    }
   }
   if (operation.TakesReceiver()) entry.receiver = entry.params.front();
   entry.result_type = operation.result_type;
@@ -215,7 +270,9 @@ auto EntryOf(
   std::vector<mir::ExprId> arguments;
   arguments.reserve(entry.params.size());
   for (const mir::LocalId param : entry.params) {
-    arguments.push_back(read(param));
+    if (entry.caller_location != param) {
+      arguments.push_back(read(param));
+    }
   }
   const mir::ExprId call = block.Add(
       mir::Expr{

@@ -407,6 +407,10 @@ class OperationBodies {
     }
     code.result_type = result;
     const std::vector<mir::LocalId> locals = code.params;
+    if (support::TakesCallerLocation(answers)) {
+      code.caller_location = code.AddLocal(Unit().builtins.source_location);
+      code.params.push_back(*code.caller_location);
+    }
     mir::Builder body(code.Body(), diag::SourceSpan{});
     const mir::ExprId answered = answer(code, body, locals);
     body.AppendStmt(mir::ReturnStmt{.value = answered});

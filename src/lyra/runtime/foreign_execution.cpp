@@ -11,7 +11,10 @@
 #include <utility>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
+#include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/closure.hpp"
+#include "lyra/runtime/dpi_context.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -259,6 +262,8 @@ auto MakeForeignExecution(OwnedCall entry)
 void YieldForeignExecution() {
   if (RunningFiberSlot() == nullptr) {
     // LRM 35.5.3.
+    const base::SourceLocationScope bound(
+        ImportCallWrittenAt(AmbientRunContext::Current().Effects()));
     throw SimulationError(
         "an exported task suspended outside a foreign call, and a task that "
         "consumes simulation time is callable only from a foreign call the "
@@ -286,6 +291,8 @@ void DriveOnForeignStack(Activation& frame) {
 auto CurrentForeignProcess() -> RuntimeProcess& {
   if (ForeignProcessSlot() == nullptr) {
     // LRM 35.5.3.
+    const base::SourceLocationScope bound(
+        ImportCallWrittenAt(AmbientRunContext::Current().Effects()));
     throw SimulationError(
         "a DPI export was reached from outside a foreign call, and an exported "
         "subroutine runs as the process that entered the foreign call, so "

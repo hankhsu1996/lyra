@@ -8,7 +8,6 @@
 #include <span>
 #include <vector>
 
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -54,8 +53,8 @@ enum class QualifiedArmKind { kCondition, kCaseItem };
 auto BuildFallThrough(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
     std::optional<mir::Block> catch_all,
-    std::optional<hir::UniquePriorityCheck> check, QualifiedArmKind arm_kind,
-    diag::SourceSpan span) -> std::optional<mir::Block>;
+    std::optional<hir::UniquePriorityCheck> check, QualifiedArmKind arm_kind)
+    -> std::optional<mir::Block>;
 
 // What a statement asserting uniqueness does before it selects an arm: `held`
 // is every arm's answer, already evaluated in `frame`'s block, and each is kept
@@ -65,7 +64,6 @@ auto BuildFallThrough(
 auto BuildUniquenessCheck(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
     std::span<const mir::ExprId> held, hir::UniquePriorityCheck check,
-    QualifiedArmKind arm_kind, diag::SourceSpan span)
-    -> std::vector<mir::LocalId>;
+    QualifiedArmKind arm_kind) -> std::vector<mir::LocalId>;
 
 }  // namespace lyra::lowering::hir_to_mir

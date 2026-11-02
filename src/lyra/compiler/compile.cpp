@@ -38,7 +38,8 @@ auto RunFrontEnd(slang::driver::Driver& driver) -> FrontEndResult {
 
 auto DeclareUnits(
     std::unique_ptr<slang::ast::Compilation> elaborated, LoweringPolicy policy,
-    diag::DiagnosticSink& sink) -> std::optional<ElaboratedDesign> {
+    diag::DiagnosticSink& sink, const diag::SourceManager& sources)
+    -> std::optional<ElaboratedDesign> {
   // Taking the AST is what hands it to the units, so a run has exactly one of
   // these to make and nothing to fall back on if it is asked for twice.
   if (elaborated == nullptr) {
@@ -51,7 +52,7 @@ auto DeclareUnits(
   if (!units) {
     return std::nullopt;
   }
-  return ElaboratedDesign{.units = *std::move(units)};
+  return ElaboratedDesign{.units = *std::move(units), .sources = &sources};
 }
 
 }  // namespace lyra::compiler

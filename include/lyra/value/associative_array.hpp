@@ -5,6 +5,7 @@
 #include <span>
 #include <utility>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/basic_associative_array.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
@@ -85,8 +86,10 @@ class AssociativeArray {
   // an absent key reads where the source was given one, each built afresh as a
   // `V`.
   template <typename U>
-  [[nodiscard]] static auto FromBoundFree(const AssociativeArray<K, U>& source)
+  [[nodiscard]] static auto FromBoundFree(
+      const AssociativeArray<K, U>& source, base::SourceLocation at)
       -> AssociativeArray {
+    const base::SourceLocationScope bound(at);
     AssociativeArray result;
     source.ForEachEntry([&](const K& key, const U& element) {
       const V converted = detail::ElementAs<V>(element);
@@ -100,8 +103,8 @@ class AssociativeArray {
 
   // This array as a value of `R`, the same array with no queue in it bounded.
   template <typename R>
-  [[nodiscard]] auto ToBoundFree() const -> R {
-    return R::FromBoundFree(*this);
+  [[nodiscard]] auto ToBoundFree(base::SourceLocation at) const -> R {
+    return R::FromBoundFree(*this, at);
   }
 
   // Whether the array was given a value of its own for an absent key, and the
@@ -237,7 +240,8 @@ class AssociativeArray {
   [[nodiscard]] auto HasUnknown() const -> bool {
     return core_.HasUnknown(core_.Element());
   }
-  [[nodiscard]] auto BitstreamWidth() const -> Int {
+  [[nodiscard]] auto BitstreamWidth(base::SourceLocation at) const -> Int {
+    const base::SourceLocationScope bound(at);
     return Int::FromInt(core_.BitstreamWidth(core_.Element()));
   }
   // LRM 6.24.3: the elements written below the `filled` most significant
@@ -247,11 +251,14 @@ class AssociativeArray {
       const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
     return core_.WriteToStream(stream, filled, core_.Element());
   }
-  [[nodiscard]] auto ToBitVec() const -> BitVec {
-    return StreamOf(*this);
+  [[nodiscard]] auto ToBitVec(base::SourceLocation at) const -> BitVec {
+    const base::SourceLocationScope bound(at);
+    return StreamOf(*this, BitstreamWidth(at));
   }
-  template <IntegralValue Control>
-  [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
+  [[nodiscard]] auto CountBits(
+      const LogicVector<4>& control_bits, base::SourceLocation at) const
+      -> Int {
+    const base::SourceLocationScope bound(at);
     return Int::FromInt(core_.CountBits(control_bits, core_.Element()));
   }
 

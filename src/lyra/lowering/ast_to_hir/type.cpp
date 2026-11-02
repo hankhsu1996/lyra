@@ -30,6 +30,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/procedural_body.hpp"
@@ -668,8 +669,8 @@ auto FindOverriddenPureInExtendedInterfaces(
 // afterwards, the same way it is for a user-written constructor -- the property
 // initializers, and the arguments the base's construction is entered with.
 auto SynthesizeDefaultConstructor(
-    hir::TypeId void_type, diag::SourceSpan span, const WalkFrame& class_frame)
-    -> hir::SubroutineDecl {
+    hir::TypeId void_type, diag::SourceSpan span, const WalkFrame& class_frame,
+    bool track_caller) -> hir::SubroutineDecl {
   hir::ProceduralBody body;
   // A default constructor runs nothing of its own; the class's field
   // initializers are composed into it afterwards.
@@ -687,7 +688,9 @@ auto SynthesizeDefaultConstructor(
       .result_var = std::nullopt,
       .body = std::move(body),
       .root_stmt = root_stmt,
-      .reads = {}};
+      .reads = {},
+      .track_caller = track_caller,
+      .span = span};
 }
 
 // The class declaring `member`, a method or a constraint block. A method
@@ -851,7 +854,8 @@ auto LowerConstraintBlockDecl(
       .result_var = std::nullopt,
       .body = std::move(body),
       .root_stmt = root_stmt,
-      .reads = {}};
+      .reads = {},
+      .span = span};
 }
 
 }  // namespace
@@ -950,7 +954,8 @@ auto UnitLowerer::MakeCalleeInterface(
   }
   return hir::CalleeInterface{
       .kind = ToHirSubroutineKind(sym.subroutineKind),
-      .params = std::move(params)};
+      .params = std::move(params),
+      .track_caller = TracksCaller(sym)};
 }
 
 auto UnitLowerer::MakeClassPropertyTarget(
@@ -1249,7 +1254,9 @@ auto UnitLowerer::InternOwnClass(
   // (LRM 8.7).
   if (!cls.isInterface) {
     hir::CalleeInterface entered{
-        .kind = hir::SubroutineKind::kFunction, .params = {}};
+        .kind = hir::SubroutineKind::kFunction,
+        .params = {},
+        .track_caller = DeclaredInLibraryText(cls)};
     if (constructor_sym != nullptr) {
       auto declared = MakeCalleeInterface(*constructor_sym, span);
       if (!declared) return std::unexpected(std::move(declared.error()));
@@ -1612,7 +1619,8 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
       user_constructor.has_value()
           ? *std::move(user_constructor)
           : SynthesizeDefaultConstructor(
-                unit_.builtins.void_type, span, class_frame);
+                unit_.builtins.void_type, span, class_frame,
+                DeclaredInLibraryText(cls));
 
   // A property initializer (LRM 8.7) runs during construction and may read
   // another property through the receiver, so it lowers on the procedural path
@@ -1634,8 +1642,9 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   // third case.
   const slang::ast::Expression* base_clause = nullptr;
   if (const auto* base_type = cls.getBaseClass(); base_type != nullptr) {
+    const slang::ast::Expression* written = cls.getBaseConstructorCall();
     if (!base_arguments.has_value()) {
-      if (const auto* written = cls.getBaseConstructorCall()) {
+      if (written != nullptr) {
         base_clause = written;
         std::vector<hir::ExprId> lowered;
         const auto actuals = BaseCallArguments(*written);
@@ -1673,7 +1682,9 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
       return std::unexpected(std::move(base_instance.error()));
     decl.base_call = hir::BaseCall{
         .declaring_instance = *std::move(base_instance),
-        .arguments = *std::move(base_arguments)};
+        .arguments = *std::move(base_arguments),
+        .span =
+            written != nullptr ? frontend::SpanOf(written->sourceRange) : span};
   }
   // A static property initializer (LRM 8.9 / 10.5) runs once for the cell
   // rather than once per instance constructed, so its expression lands in the

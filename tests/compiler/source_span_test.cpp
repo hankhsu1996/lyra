@@ -103,11 +103,11 @@ TEST(
   lyra::diag::DiagnosticSink sink;
   auto design = lyra::compiler::DeclareUnits(
       std::move(front.elaborated->compilation),
-      lyra::compiler::LoweringPolicy{}, sink);
+      lyra::compiler::LoweringPolicy{}, sink, front.elaborated->diag_sources);
   ASSERT_TRUE(design.has_value());
   std::vector<lyra::lir::CompilationUnit> units;
   const auto executable = lyra::compiler::LowerToExecutable(
-      *design, sources, lyra::mir_transform::PassOptions{},
+      *design, lyra::mir_transform::PassOptions{},
       lyra::backend::llvm_backend::TypeOperationCollectionOf, sink, 1,
       [](lyra::lir::CompilationUnit unit)
           -> lyra::diag::Result<lyra::lir::CompilationUnit> { return unit; },

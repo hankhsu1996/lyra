@@ -214,7 +214,7 @@ auto FoldFormattedText(
           .unknown = constant->state_words,
           .width = shape.width,
           .signedness = shape.signedness},
-      value::FormatContext{});
+      nullptr);
 }
 
 auto FoldIntegral(

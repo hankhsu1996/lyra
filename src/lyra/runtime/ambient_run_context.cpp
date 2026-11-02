@@ -6,6 +6,7 @@
 #include "lyra/abi/records.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/dpi_context.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -48,6 +49,7 @@ auto AmbientRunContext::Current() -> AmbientRunContext& {
   if (CurrentSlot() == nullptr) {
     // LRM 35.5.3.
     throw SimulationError(
+        base::kNoSourceLocation,
         "a DPI export was reached with no simulation running, and an exported "
         "subroutine is callable only from a foreign call the simulation "
         "made");
@@ -56,13 +58,15 @@ auto AmbientRunContext::Current() -> AmbientRunContext& {
 }
 
 auto CurrentExportScope() -> Scope* {
-  RequireAContextImportCall(AmbientRunContext::Current().Effects());
+  RuntimeEffects& effects = AmbientRunContext::Current().Effects();
+  RequireAContextImportCall(effects);
   Scope* scope = std::visit(
       Overloaded{
           [](Scope* current) { return current; },
-          [](const UnissuedHandle&) -> Scope* {
+          [&](const UnissuedHandle&) -> Scope* {
             // Reading the address as a scope would read whatever lies there
             // (LRM Annex H.9.3).
+            const base::SourceLocationScope bound(ImportCallWrittenAt(effects));
             throw SimulationError(
                 "a DPI export was reached under a handle 'svSetScope' was "
                 "given that no DPI function returned; a scope handle is only "
@@ -76,6 +80,7 @@ auto CurrentExportScope() -> Scope* {
     // no scope of its own (LRM 35.5.3), so reaching such an export from one
     // requires svSetScope first -- the foreign side's contract to meet, not an
     // invariant this compiler established.
+    const base::SourceLocationScope bound(ImportCallWrittenAt(effects));
     throw SimulationError(
         "a DPI export was reached without a scope; an export is callable only "
         "from a context import declared in an instantiated scope, or after "
@@ -91,6 +96,8 @@ auto FindExportEntry(Scope* scope, const char* subroutine) -> abi::ErasedEntry {
     return entry;
   }
   // LRM 35.5.3.
+  const base::SourceLocationScope bound(
+      ImportCallWrittenAt(AmbientRunContext::Current().Effects()));
   throw SimulationError(
       "DPI export '{}' was entered under scope '{}', which declares no such "
       "export; an export is callable directly only from an import of its own "

@@ -493,6 +493,13 @@ auto DeclaringNamespaceUnit(const slang::ast::Symbol& decl)
   return &owner;
 }
 
+auto DeclaredInLibraryText(const slang::ast::Symbol& decl) -> bool {
+  const slang::ast::Scope* scope = decl.getParentScope();
+  const slang::ast::CompilationUnitSymbol* unit =
+      scope == nullptr ? nullptr : scope->getCompilationUnit();
+  return unit != nullptr && frontend::LibraryTextOf(*unit) != nullptr;
+}
+
 auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
     -> const slang::ast::Symbol& {
   for (const slang::ast::Scope* scope = decl.getParentScope(); scope != nullptr;

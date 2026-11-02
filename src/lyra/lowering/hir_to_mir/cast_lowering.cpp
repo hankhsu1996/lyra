@@ -10,6 +10,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
@@ -382,19 +383,23 @@ auto BuildToInt64Call(
 }
 
 auto BuildValueConversion(
-    const mir::CompilationUnit& unit, mir::Builder block,
+    const mir::CompilationUnit& unit, mir::Builder outer,
     mir::ExprId operand_id, mir::TypeId dst_type) -> mir::Expr {
-  const mir::Expr& operand_expr = block.Get(operand_id);
+  const mir::Expr& operand_expr = outer.Get(operand_id);
   if (operand_expr.type == dst_type) {
     return operand_expr;
   }
+
+  // Nothing but the operand is written for a conversion the context asks for,
+  // so that is where it stands, and what fails in it fails there.
+  const mir::Builder block = outer.At(operand_expr.span);
 
   // A type no conversion answers a value of: the source language converts
   // nothing into it, or no declaration of the source language names it.
   const auto none = [](const auto&) -> mir::Expr {
     RefuseConversion("the destination's type");
   };
-  return unit.types.Get(dst_type).Visit(
+  mir::Expr converted = unit.types.Get(dst_type).Visit(
       Overloaded{
           [&](const mir::RealType&) {
             return ToReal(unit, block, operand_id, dst_type);
@@ -470,6 +475,10 @@ auto BuildValueConversion(
           [&](const mir::ClosureType& t) { return none(t); },
           [&](const mir::ErasedCallableType& t) { return none(t); },
       });
+  if (converted.span == diag::SourceSpan{}) {
+    converted.span = block.Span();
+  }
+  return converted;
 }
 
 auto BuildPropagatedConversion(

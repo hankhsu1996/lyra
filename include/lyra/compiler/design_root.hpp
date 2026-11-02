@@ -42,8 +42,7 @@ auto SynthesizeDesignRoot(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures,
     lowering::hir_to_mir::DesignInstantiations instantiations,
-    const diag::SourceManager& source_manager,
-    const mir_transform::PassOptions& passes)
-    -> diag::Result<mir::CompilationUnit>;
+    const mir_transform::PassOptions& passes,
+    const diag::SourceManager& sources) -> diag::Result<mir::CompilationUnit>;
 
 }  // namespace lyra::compiler

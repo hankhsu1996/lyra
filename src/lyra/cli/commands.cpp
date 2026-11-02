@@ -177,7 +177,8 @@ auto DesignOf(const CommandContext& ctx)
   const status::Phase phase("Elaborating");
   return compiler::DeclareUnits(
       std::move(ctx.elaborated->compilation),
-      compiler::LoweringPolicy{.assertions = ctx.args->assertions}, *ctx.sink);
+      compiler::LoweringPolicy{.assertions = ctx.args->assertions}, *ctx.sink,
+      ctx.elaborated->diag_sources);
 }
 
 // Writes the design's emitted C++ sources into `dir` and answers with what
@@ -194,8 +195,7 @@ auto WriteCppSources(
   const status::Phase phase("Generating C++");
   driver::CppProjectSink sources(dir, ctx.args->formatting, *ctx.sink);
   auto lowered = compiler::LowerToSemantic(
-      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes, *ctx.sink,
-      ctx.args->compile_width,
+      *design, ctx.args->mir_passes, *ctx.sink, ctx.args->compile_width,
       [&](mir::CompilationUnit unit) { return sources.Write(unit); },
       [&](driver::EmittedUnit unit) { sources.Collect(std::move(unit)); });
   if (!lowered) {
@@ -238,8 +238,7 @@ auto RunDumpMir(const CommandContext& ctx) -> int {
     return 1;
   }
   auto lowered = compiler::LowerToSemantic(
-      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes, *ctx.sink,
-      ctx.args->compile_width,
+      *design, ctx.args->mir_passes, *ctx.sink, ctx.args->compile_width,
       [](mir::CompilationUnit unit) -> diag::Result<std::string> {
         return mir::DumpMir(unit);
       },
@@ -257,7 +256,7 @@ auto RunDumpLir(const CommandContext& ctx) -> int {
     return 1;
   }
   auto lowered = compiler::LowerToExecutable(
-      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes,
+      *design, ctx.args->mir_passes,
       backend::llvm_backend::TypeOperationCollectionOf, *ctx.sink,
       ctx.args->compile_width,
       [](const lir::CompilationUnit& unit) -> diag::Result<std::string> {
@@ -288,7 +287,7 @@ auto RunDumpLlvm(const CommandContext& ctx) -> int {
     return 1;
   }
   auto lowered = compiler::LowerToExecutable(
-      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes,
+      *design, ctx.args->mir_passes,
       backend::llvm_backend::TypeOperationCollectionOf, *ctx.sink,
       ctx.args->compile_width, text, print);
   if (!lowered) {
@@ -707,12 +706,12 @@ auto LlvmProgramRecipe(
       .link_time = ctx.args->link_time,
       .sanitizer = ctx.args->sanitizer,
       .code_generator = ThisCompiler(ctx),
-      .passes = ctx.args->mir_passes};
+      .passes = ctx.args->mir_passes,
+      .sources = &ctx.elaborated->diag_sources};
   program::ProgramSink sink;
   const status::Phase phase("Compiling");
   auto lowered = compiler::LowerToSemantic(
-      *design, ctx.elaborated->diag_sources, ctx.args->mir_passes, *ctx.sink,
-      host.compile_width,
+      *design, ctx.args->mir_passes, *ctx.sink, host.compile_width,
       [&objects, &actions](mir::CompilationUnit unit) {
         return program::BuildUnit(unit, objects, actions);
       },

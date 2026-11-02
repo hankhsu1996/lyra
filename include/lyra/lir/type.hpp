@@ -425,6 +425,9 @@ class Type {
   // named.
   [[nodiscard]] auto ContainerElementType() const -> std::optional<TypeId>;
 
+  // True for a queue (LRM 7.10), the one such container holding to a bound.
+  [[nodiscard]] auto IsQueue() const -> bool;
+
   // The type an associative array is indexed by (LRM 7.8), and nothing for a
   // type whose elements are reached by position.
   [[nodiscard]] auto IndexType() const -> std::optional<TypeId>;

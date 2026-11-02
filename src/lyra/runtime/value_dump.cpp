@@ -87,7 +87,7 @@ DumpProbe::DumpProbe() = default;
 DumpProbe::~DumpProbe() = default;
 
 auto DumpProbe::Referent() const -> value::ObjectRef {
-  return nullptr;
+  return value::ObjectRef{};
 }
 Describer::~Describer() = default;
 

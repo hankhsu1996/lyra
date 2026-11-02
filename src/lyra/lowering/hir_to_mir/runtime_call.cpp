@@ -7,8 +7,6 @@
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/source_manager.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -188,32 +186,27 @@ auto BuildDiagnosticCallExpr(
 
 auto BuildReportCallExpr(
     const mir::CompilationUnit& unit, support::BuiltinFn severity,
-    mir::ExprId diagnostic_id, mir::ExprId origin_id, mir::ExprId text_id)
-    -> mir::Expr {
+    mir::ExprId diagnostic_id, mir::ExprId text_id) -> mir::Expr {
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee =
                   mir::Direct{.target = severity, .receiver = diagnostic_id},
-              .arguments = {origin_id, text_id}},
+              .arguments = {text_id}},
       .type = unit.builtins.void_type};
 }
 
 void AppendToolReportStmt(
-    const UnitLowerer& unit_lowerer, mir::Builder block,
-    support::BuiltinFn severity, base::DiagMessage text,
-    diag::SourceSpan span) {
-  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+    const mir::CompilationUnit& unit, mir::Builder block,
+    support::BuiltinFn severity, base::DiagMessage text) {
   const mir::ExprId diagnostic_id =
       block.Add(BuildDiagnosticCallExpr(unit, block));
-  const mir::ExprId origin_id = BuildStringValueExpr(
-      unit, block, diag::RuntimeOriginOf(span, unit_lowerer.SourceManager()));
   const mir::ExprId text_id =
       BuildStringValueExpr(unit, block, std::move(text).TakeText());
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.Add(BuildReportCallExpr(
-              unit, severity, diagnostic_id, origin_id, text_id))});
+          .expr = block.Add(
+              BuildReportCallExpr(unit, severity, diagnostic_id, text_id))});
 }
 
 auto BuildFormatCallExpr(

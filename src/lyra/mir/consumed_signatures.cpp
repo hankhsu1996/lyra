@@ -197,7 +197,7 @@ class Reads {
                 Add(ConsumedNamespace{.unit_name = *defining});
               }
             },
-            [](const ClassConstantRef&) {},
+            [](const ClassConstantRef&) {}, [](const SourceLocationRef&) {},
             [&](const FunctionRef& function) {
               ReadClass(function.body.owner);
             },

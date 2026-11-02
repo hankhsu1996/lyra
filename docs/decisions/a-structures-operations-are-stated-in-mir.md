@@ -123,7 +123,9 @@ call, and so is every whole-value question a structure's own body asks of a memb
   method asking another of the structure's own questions names that method by the declaration being
   made. A member that is itself a structure is declared first, so its methods are there to call.
 - The set a `$countbits` counts under is always four positions, the first admitted value repeated,
-  so a structure's count takes one type.
+  so a count takes one type: a structure's, the library's containers' and the table a container asks
+  an element through alike. Revised 2026-11-01: this named the structure alone, and the library took
+  the same four positions as a view of any width.
 - A union and a tagged union are identified by their declarations too (LRM 6.22.1), and are
   declarations in MIR the same way (revised 2026-10-16): the declaration states the same methods, an
   untagged union's answered through its first member and a tagged union's through the member its tag

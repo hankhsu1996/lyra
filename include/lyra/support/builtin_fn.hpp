@@ -30,6 +30,7 @@ enum class BuiltinFn : std::uint16_t {
   // the source is read.
   kElement,
   kElementMut,
+  kQueueElementMut,
   // LRM 7.4 / 7.10 / 11.5 several parts in a row of a value, read as a value.
   //
   // They are three operations, each with operands of its own. Bits of an
@@ -432,6 +433,7 @@ enum class BuiltinFn : std::uint16_t {
   // written within the write by the value's own operations taken on its
   // designation.
   kDesignateElement,
+  kQueueDesignateElement,
   kDesignateComponent,
   // A step into a member of a union a write designates. Every member lies at
   // the union's own start (LRM 7.3), so no step of a path stands for one, and
@@ -888,13 +890,13 @@ enum class BuiltinFn : std::uint16_t {
   kDistChiSquare,
   kDistT,
   kDistErlang,
-  // LRM 20.2 simulation control. Takes the runtime handle, the call's origin,
-  // and the finish number that selects what the tool prints about it (Table
-  // 20-1). The call ends the run and never returns: the calling execution
-  // departs, so no statement after it runs, in any body -- a function included
-  // (LRM 13.4). `$stop` suspends the simulation where `$finish` exits it, and a
-  // run nothing can resume tells the two apart only in what it prints, so each
-  // names the entry that prints for it.
+  // LRM 20.2 simulation control. Takes the runtime handle and the finish number
+  // that selects what the tool prints about it (Table 20-1). The call ends the
+  // run and never returns: the calling execution departs, so no statement after
+  // it runs, in any body -- a function included (LRM 13.4). `$stop` suspends
+  // the simulation where `$finish` exits it, and a run nothing can resume tells
+  // the two apart only in what it prints, so each names the entry that prints
+  // for it.
   kFinish,
   kStop,
   // LRM 24.7 `$exit`: ends the program the running thread originates in, the
@@ -941,8 +943,10 @@ enum class BuiltinFn : std::uint16_t {
   // last answer -- so nothing a member holds is ever partly composed, and the
   // count never has to be known before the objects are.
   kExtendSequence,
-  // The object a handle names. A body runs on the object rather than on a
-  // reference to it, and a handle refers to one without being one.
+  // The object a handle names, as the class the call states the handle views
+  // it as. A body runs on the object rather than on a reference to it, and a
+  // handle refers to one without being one; a handle naming none fails the
+  // design (LRM 8.4).
   kObjectOf,
   // The handle its first operand is, where the object it refers to is an
   // object of the class whose definition its second operand points at, and a
@@ -1053,9 +1057,11 @@ enum class BuiltinFn : std::uint16_t {
   kWeakUpgrade,
   kWeakRefersTo,
   kObjectIdentity,
-  // The built-in `pre_randomize()` and `post_randomize()` (LRM 18.6.2), on
-  // the object a call reaches where no class of its lineage writes its own:
-  // the part every object starts with gives them.
+  // The built-in `pre_randomize()` and `post_randomize()` (LRM 18.6.2), which
+  // a call reaches where no class of its lineage writes its own: the part every
+  // object starts with gives them, and they do nothing, so neither is handed
+  // the object. A call of one is still a method reached through the handle it
+  // is made on, which is opened before it (LRM 8.4).
   kBuiltinPreRandomize,
   kBuiltinPostRandomize,
   // The two hooks the object's own class runs, which a call naming them
@@ -1580,8 +1586,8 @@ enum class PartSelection : std::uint8_t {
 enum class OperandReading : std::uint8_t {
   // A value that goes into, or comes out of, something that already knows its
   // layout -- an element of the container the entry acts on, what the holder
-  // it acts on holds, a value the entry hands back unread -- so the value
-  // crosses alone.
+  // it acts on holds, a value the entry hands back unread, a value of the one
+  // type the entry takes it at -- so the value crosses alone.
   kHeld,
   // An integral value the entry reads the planes of, so it is told how wide
   // the value is and whether it can hold x or z.
@@ -1673,6 +1679,18 @@ enum class TypeArgumentNamed : std::uint8_t {
   kTheCallSignature,
 };
 
+// The declarations of the library's types, which name the classes of the
+// runtime's an entry may view an object as.
+enum class LibraryDecl : std::uint8_t;
+
+// The class an entry acting on an object views it as: the class the program
+// reaches it as, where the entry reaches its members, or a class of the
+// runtime's the library declares, where that is all the entry asks of it -- as
+// a C++ function taking a base class takes an object of any class extending
+// it.
+struct TheClassReached {};
+using ObjectView = std::variant<TheClassReached, LibraryDecl>;
+
 // Every property of one runtime entry: what the library calls it, how code
 // reaches it, and what it does with the operands it is given. A consumer
 // asking any of those reads the field for it, never a list of its own, so an
@@ -1702,13 +1720,13 @@ struct RuntimeEntry {
   // What a target resolving types where the call is written names for that
   // type. A target laying values out itself reads what it needs off the type.
   TypeArgumentNamed type_argument_named = TypeArgumentNamed::kTheType;
-  // Whether the entry acts on an object, its first operand being whatever
-  // reaches that object -- a class handle, the running method's own object, or
-  // a write in progress into it -- as an access's receiver is. Reaching the
-  // object from it is each target's, as it is for a member access: the C++
-  // library takes each kind as it is, and below MIR the object is opened from
-  // it the way a member access opens its receiver.
-  bool reaches_an_object = false;
+  // Whether the entry acts on an object, and as which class: its first operand
+  // is whatever reaches that object -- a class handle, the running method's own
+  // object, or a write in progress into it -- as an access's receiver is. A
+  // handle is opened by the library's call before the entry is handed it, as
+  // the class the entry views the object as, and below MIR the object is
+  // opened from the rest the way a member access opens its receiver.
+  std::optional<ObjectView> acts_on_object_as = std::nullopt;
   // Whether the entry's implementation takes the engine handle -- to reach the
   // scheduler, or to identify the process that is running. It is an ordinary
   // operand, riding immediately after the object the entry acts on and first
@@ -1723,6 +1741,14 @@ struct RuntimeEntry {
   // what it reaches in (LRM 9.4.2), null where that evaluation makes none. It
   // rides after the engine handle and ahead of the operands the source wrote.
   bool takes_the_read_report = false;
+  // Whether the entry is handed where the operation calling it was written:
+  // rustc's `track_caller`, as the default. It rides last, after every operand
+  // the source wrote, as a value of the library's location type, and the entry
+  // binds it for the extent of the call. An entry takes none only where nothing
+  // it does reads that binding: it cannot fail the design (LRM 20.10), it only
+  // runs the design's own code, what it reports is the run's own, or it reports
+  // at a location a library object kept.
+  bool takes_the_location = true;
   // How a call to the entry ends. An entry can be unwound out of unless its
   // definition cannot raise: a run-time error it raises is a departure too,
   // and it may run the design's own code, which a `disable` anywhere reaches
@@ -1766,6 +1792,9 @@ struct RuntimeEntry {
   // one kind. A call below the source's own layer names that entry where its
   // first operand is integral, and this one everywhere else.
   std::optional<BuiltinFn> over_integral_values = std::nullopt;
+  // The same over a queue, the one kind whose write of an element can report:
+  // growing one past its bound drops what it wrote (LRM 7.10.5).
+  std::optional<BuiltinFn> over_queues = std::nullopt;
   // What the entry asks of each closure and started body it is handed, how
   // long it keeps each, which bounds how long it can run and so what it may
   // refer to, and the signature it calls each closure at.

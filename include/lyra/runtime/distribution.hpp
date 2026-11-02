@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/tuple.hpp"
 
@@ -30,25 +31,31 @@ auto DistNormal(
 
 // $dist_exponential (LRM 20.14.2): the mean is what the values drawn average
 // towards.
-auto DistExponential(std::int64_t seed, std::int64_t mean) -> DistributionDraw;
+auto DistExponential(
+    std::int64_t seed, std::int64_t mean, base::SourceLocation at)
+    -> DistributionDraw;
 
 // $dist_poisson (LRM 20.14.2). The only one of the family whose generator
 // already answers with a count, so nothing is rounded.
-auto DistPoisson(std::int64_t seed, std::int64_t mean) -> DistributionDraw;
+auto DistPoisson(std::int64_t seed, std::int64_t mean, base::SourceLocation at)
+    -> DistributionDraw;
 
 // $dist_chi_square (LRM 20.14.2): the degree of freedom shapes the density,
 // and a larger one spreads the values wider.
-auto DistChiSquare(std::int64_t seed, std::int64_t degrees_of_freedom)
+auto DistChiSquare(
+    std::int64_t seed, std::int64_t degrees_of_freedom, base::SourceLocation at)
     -> DistributionDraw;
 
 // $dist_t (LRM 20.14.2): the degree of freedom shapes the density, and a
 // larger one spreads the values wider.
-auto DistT(std::int64_t seed, std::int64_t degrees_of_freedom)
+auto DistT(
+    std::int64_t seed, std::int64_t degrees_of_freedom, base::SourceLocation at)
     -> DistributionDraw;
 
 // $dist_erlang (LRM 20.14.2): a k-stage distribution, the mean being what the
 // values drawn average towards.
-auto DistErlang(std::int64_t seed, std::int64_t stages, std::int64_t mean)
-    -> DistributionDraw;
+auto DistErlang(
+    std::int64_t seed, std::int64_t stages, std::int64_t mean,
+    base::SourceLocation at) -> DistributionDraw;
 
 }  // namespace lyra::runtime

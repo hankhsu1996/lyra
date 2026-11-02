@@ -23,11 +23,10 @@ namespace lyra::backend::llvm_backend {
 
 // How an operation's body takes and answers its integral values. The type the
 // library asks through answers an equality as its scalar and a case equality
-// as whether it holds, writes a stream into an integral value it is handed
-// and reads one out of one, and is handed a count's control bits as one too,
-// while a type's own function takes and answers each as a value of
-// the type its own code states -- a stream a run of bits, where the type's is
-// as long as the value makes it.
+// as whether it holds, and writes a stream into an integral value it is handed
+// and reads one out of one, while a type's own function takes and answers each
+// as a value of the type its own code states -- a stream a run of bits, where
+// the type's is as long as the value makes it.
 struct TakenAsStated {};
 struct AnswerScalar {};
 struct AnswerWhetherItHolds {};
@@ -35,10 +34,9 @@ struct AnswerIntoStream {};
 struct StreamOutOfValue {};
 struct RunIntoStream {};
 struct StreamOutOfRun {};
-struct ControlOutOfValue {};
 using IntegralCrossing = std::variant<
     TakenAsStated, AnswerScalar, AnswerWhetherItHolds, AnswerIntoStream,
-    StreamOutOfValue, RunIntoStream, StreamOutOfRun, ControlOutOfValue>;
+    StreamOutOfValue, RunIntoStream, StreamOutOfRun>;
 
 // An operation a type answers with a function of its own, and how that
 // function takes and answers its integral values.
@@ -159,9 +157,7 @@ inline auto OperationWitnesses() {
           OwnOperationWitness{.answers = BuiltinFn::kBitstreamWidth}),
       WitnessOf(
           "count_bits", &OperationFunctions::count_bits,
-          OwnOperationWitness{
-              .answers = BuiltinFn::kCountBits,
-              .crossing = ControlOutOfValue{}}),
+          OwnOperationWitness{.answers = BuiltinFn::kCountBits}),
       WitnessOf(
           "write_to_stream", &OperationFunctions::write_to_stream,
           EitherStreamForm{

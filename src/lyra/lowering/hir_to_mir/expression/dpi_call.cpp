@@ -1027,7 +1027,9 @@ auto MakeForeignSignature(
       .result_type = ForeignBoundaryReturnType(unit, ret_abi, is_task),
       .locals = {},
       .named_locals = {},
-      .body = std::nullopt};
+      .body = std::nullopt,
+      .span = {},
+      .caller_location = std::nullopt};
   CallableBindings bindings(unit, code);
   code.params.reserve(params.size());
   for (const auto& param : params) {
@@ -1205,8 +1207,8 @@ void ReturnTheFallbackAnswer(
   block.AppendStmt(mir::ReturnStmt{.value = zero()});
 }
 
-// Closes an export entry around the boundary `body`: the checks of LRM 35.9
-// item d and of LRM 35.5.3 on where the call came from, then the departure an
+// Closes an export entry around the boundary `body`: the checks of LRM 35.5.3
+// and of LRM 35.9 item d on where the call came from, then the departure an
 // execution that must stop owes before any statement of the body runs -- the
 // foreign side may call in again after a disable or after the run ended, and
 // nothing of the design runs then -- all inside the region that lands whatever

@@ -11,6 +11,7 @@
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -167,6 +168,14 @@ auto SubroutineCallTypeOf(
 auto SubroutineCallTypeOf(
     UnitLowerer& unit_lowerer, const hir::CalleeInterface& interface,
     hir::TypeId result_type) -> mir::TypeId;
+
+// Declares, last of `params`, the parameter a body reporting a failure of the
+// design at its caller is handed where it was called, and states it as the
+// body's caller location, where `reports_at_caller` says the body is one.
+void DeclareCallerLocation(
+    const mir::CompilationUnit& unit, bool reports_at_caller,
+    CallableBindings& bindings, mir::CallableCode& code,
+    std::vector<mir::LocalId>& params);
 
 // `decl` as a method of an object `self` points at that declares it and leaves
 // it to what extends it (LRM 8.21): its receiver, its parameters and what a

@@ -8,6 +8,7 @@
 #include <llvm/Passes/OptimizationLevel.h>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/dpi/abi_header.hpp"
 #include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/project_layout.hpp"
@@ -20,13 +21,15 @@ namespace lyra::program {
 // How this build turns a unit into an object: how hard to compile it, whether
 // for a link that optimizes it with the runtime, what the program checks of
 // itself while it runs, which build of the code generator does, and what is
-// asked of the rewrites of a body built for the module.
+// asked of the rewrites of a body built for the module, which read where the
+// source its calls were written in lies.
 struct ObjectBuild {
   driver::OptimizationLevel optimization;
   driver::LinkTimeOptimization link_time;
   support::Sanitizer sanitizer;
   std::filesystem::path code_generator;
   mir_transform::PassOptions passes;
+  const diag::SourceManager* sources;
 };
 
 // The pipeline level LLVM runs for `optimization`, which is the one clang runs
@@ -42,8 +45,8 @@ struct BuiltUnit {
 };
 
 // Takes one unit to its object, while the unit and every form it passed
-// through are released. It reads the unit alone, so several units may be
-// built at once.
+// through are released. It reads the unit, which does not change, so several
+// units may be built at once.
 //
 // Compiling is an action of `actions` whose inputs are the module, the code
 // generator and what the module is compiled to, and a kept result of that

@@ -31,6 +31,13 @@ struct DeclaringInstanceOrigin {
   auto operator<=>(const DeclaringInstanceOrigin&) const = default;
 };
 
+// Where a body of the tool's own text was called, a role-tagged trailing
+// parameter of a body that reports a failure of the design at its caller; a
+// closure built in such a body captures it, and reports there too.
+struct CallerLocationOrigin {
+  auto operator<=>(const CallerLocationOrigin&) const = default;
+};
+
 // The table a constructor of the design hierarchy is handed, which says how
 // the instance at each of the object's instantiations is made.
 struct ConstructionTableOrigin {
@@ -81,7 +88,7 @@ struct SynthesizedOrigin {
 // as it reaches any other.
 using BindingOriginId = std::variant<
     ReceiverOrigin, ReceiverShareOrigin, DeclaringInstanceOrigin,
-    ConstructionTableOrigin, ProceduralOrigin, IteratorOrigin, PatternOrigin,
-    SynthesizedOrigin>;
+    CallerLocationOrigin, ConstructionTableOrigin, ProceduralOrigin,
+    IteratorOrigin, PatternOrigin, SynthesizedOrigin>;
 
 }  // namespace lyra::lowering::hir_to_mir

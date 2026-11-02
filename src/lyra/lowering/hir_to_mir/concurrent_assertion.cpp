@@ -224,10 +224,10 @@ auto FailArmOf(
 // refused where it is read -- so an outcome starts one of two bodies and never
 // a per-attempt closure.
 auto LowerActionArm(
-    ProcessLowerer& action, const WalkFrame& parent, const ActionArm& arm,
-    diag::SourceSpan span) -> diag::Result<mir::CallableCode> {
+    ProcessLowerer& action, const WalkFrame& parent, const ActionArm& arm)
+    -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = action.Owner().Unit();
-  mir::CallableCode code = mir::CallableCode::Defined(span);
+  mir::CallableCode code = mir::CallableCode::Defined(parent.span);
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id = bindings.Declare(
       ReceiverOrigin{}, parent.current_class.cls->self_pointer_type);
@@ -248,8 +248,7 @@ auto LowerActionArm(
             return {};
           },
           [&](const RunsDefaultReport& report) -> diag::Result<void> {
-            AppendDefaultReport(
-                action, frame.Builder(), report.directive, span);
+            AppendDefaultReport(action, frame.Builder(), report.directive);
             return {};
           },
           [](const RunsNothing&) -> diag::Result<void> { return {}; }},
@@ -1030,12 +1029,12 @@ auto LowerConcurrentAssertion(
       lowerer.Owner(), &lowerer, lowerer.HirScope().time_resolution,
       decl.action, std::nullopt, ctor_frame, scopes, statics);
 
-  auto pass = LowerActionArm(
-      action, ctor_frame, PassArmOf(decl.action, dispositions), decl.span);
+  auto pass =
+      LowerActionArm(action, ctor_frame, PassArmOf(decl.action, dispositions));
   if (!pass) return std::unexpected(std::move(pass.error()));
 
-  auto fail = LowerActionArm(
-      action, ctor_frame, FailArmOf(decl.action, dispositions), decl.span);
+  auto fail =
+      LowerActionArm(action, ctor_frame, FailArmOf(decl.action, dispositions));
   if (!fail) return std::unexpected(std::move(fail.error()));
 
   auto advance = LowerAdvance(
@@ -1266,9 +1265,8 @@ auto LowerExpectStmt(
   diag::Result<mir::Block> fail = mir::Block{};
   if (!expect.fail_stmt.has_value()) {
     AppendToolReportStmt(
-        process.Owner(), inner.Builder().Into(*fail),
-        support::BuiltinFn::kEmitError, base::DiagMessage("expect failed"),
-        span);
+        process.Owner().Unit(), inner.Builder().Into(*fail),
+        support::BuiltinFn::kEmitError, base::DiagMessage("expect failed"));
   } else if (HasRealArm(process.HirBody(), expect.fail_stmt)) {
     fail = LowerStmtIntoChildScope(process, inner, *expect.fail_stmt);
   }

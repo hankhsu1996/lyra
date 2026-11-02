@@ -255,9 +255,8 @@ auto SynthesizeDesignRoot(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures,
     lowering::hir_to_mir::DesignInstantiations instantiations,
-    const diag::SourceManager& source_manager,
-    const mir_transform::PassOptions& passes)
-    -> diag::Result<mir::CompilationUnit> {
+    const mir_transform::PassOptions& passes,
+    const diag::SourceManager& sources) -> diag::Result<mir::CompilationUnit> {
   hir::Lowering root_hir = BuildDesignRootHir(tops, signatures);
   instantiations.by_lowering.emplace(
       root_hir.name, lowering::hir_to_mir::LoweringMade::Of(root_hir));
@@ -267,7 +266,7 @@ auto SynthesizeDesignRoot(
       signatures, instantiations, root_unit.types, root_unit.classes,
       root_unit.covergroups, root_unit.scope_classes);
   ReadTypeDefinitions(root_unit, signatures);
-  lowering::hir_to_mir::UnitLowerer root_lowerer(root_unit, source_manager);
+  lowering::hir_to_mir::UnitLowerer root_lowerer(root_unit, sources);
   auto root_mir = root_lowerer.RunDesignRoot(
       lowering::hir_to_mir::DesignRootInputs{
           .namespaces =
@@ -280,7 +279,7 @@ auto SynthesizeDesignRoot(
     return std::unexpected(std::move(root_mir.error()));
   }
   mir::CompilationUnit transformed =
-      mir_transform::Transform(*std::move(root_mir), passes);
+      mir_transform::Transform(*std::move(root_mir), passes, sources);
   RecordSemanticForm(transformed);
   return transformed;
 }

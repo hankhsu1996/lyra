@@ -38,8 +38,8 @@ auto TaskName(unsigned base, Direction dir) -> std::string_view {
 }
 
 // A file the task could not read or write is the design's to answer for, and
-// the run goes on (LRM 21.4), so the report is an error or a warning made where
-// the calling procedure is written, never a fatal one.
+// the run goes on (LRM 21.4), so the report is an error or a warning made at
+// the call of the task, never a fatal one.
 template <typename... Args>
 void Warn(
     RuntimeEffects& runtime, base::DiagFormatFor<Args...> format,
@@ -238,7 +238,7 @@ auto RenderedMemoryWord(const value::ConstIntegralView& word, unsigned base)
     -> std::string {
   value::FormatSpec spec;
   spec.kind = base == 2U ? value::FormatKind::kBinary : value::FormatKind::kHex;
-  return value::FormatIntegralOperand(spec, word, {});
+  return value::FormatIntegralOperand(spec, word, nullptr);
 }
 
 void ReadMemKeyedCore(

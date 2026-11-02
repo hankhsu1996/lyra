@@ -15,6 +15,8 @@ struct SourcePosition {
   std::string file;
   std::uint32_t line = 0;
   std::uint32_t column = 0;
+
+  auto operator==(const SourcePosition&) const -> bool = default;
 };
 
 // What may be asked about a piece of the source by something that only holds
@@ -30,7 +32,8 @@ class SourceManager {
   auto operator=(SourceManager&&) -> SourceManager& = default;
   virtual ~SourceManager() = default;
 
-  // The file, line and column `span` starts at. Nothing where it is no place.
+  // The file, line and column `span` starts at, the file being what `__FILE__
+  // expands to there (LRM 22.13). Nothing where it is no place.
   [[nodiscard]] virtual auto PositionOf(SourceSpan span) const
       -> std::optional<SourcePosition> = 0;
 
@@ -42,12 +45,5 @@ class SourceManager {
       DiagKind kind, SourceSpan span, std::string_view message,
       bool use_color) const -> std::string = 0;
 };
-
-// The place a running design's report names for `span`, as
-// "basename:line:col": a report names its source file and not the file's
-// absolute path, as the examples of LRM 20.10 do. Empty where the span is no
-// place.
-[[nodiscard]] auto RuntimeOriginOf(
-    SourceSpan span, const SourceManager& sources) -> std::string;
 
 }  // namespace lyra::diag

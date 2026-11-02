@@ -10,6 +10,7 @@
 #include "lyra/value/container_lease.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/integral_fwd.hpp"
 
 namespace lyra::value {
 
@@ -32,8 +33,7 @@ concept KeyPolicy =
 // An associative array (LRM 7.8), written once over what its index and element
 // answer: compiled with their C++ types for the C++ backend, and once in the
 // library, with the element type's table and the index order, for the
-// execution backend. Every element
-// is handed in and out by its address.
+// execution backend. Every element is handed in and out by its address.
 //
 // Each element is storage of its own that never moves while its key is in the
 // array, and the array maps each key, in its index order, to that storage, so
@@ -301,9 +301,10 @@ class BasicAssociativeArray {
     }
     return filled;
   }
-  template <typename Control, typename Ops>
+  template <typename Ops>
   [[nodiscard]] auto CountBits(
-      const Control& control_bits, const Ops& ops) const -> std::int64_t {
+      const LogicVector<4>& control_bits, const Ops& ops) const
+      -> std::int64_t {
     std::int64_t total = 0;
     for (const auto& [key, slot] : map_) {
       total += ops.CountBits(slot, control_bits);

@@ -18,20 +18,30 @@
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/mir_transform/bound_frames.hpp"
+#include "lyra/mir_transform/elaborate_handle_derefs.hpp"
 #include "lyra/mir_transform/evaluation_temporaries.hpp"
 #include "lyra/mir_transform/inst_simplify.hpp"
 #include "lyra/mir_transform/pass.hpp"
 #include "lyra/mir_transform/reaction.hpp"
+#include "lyra/mir_transform/state_caller_locations.hpp"
 #include "lyra/profiling/time_trace.hpp"
 
 namespace lyra::mir_transform {
 
 namespace {
 
-// An evaluation order made explicit, which asks no value's size; then where
-// each value lies, in that order, so that no frame follows a size a design
-// declares.
+// Each class handle opened by the library, which can fail; then where each
+// call was written, handed to every callee that reports there, the openings
+// included; then an evaluation order made explicit, which asks no value's
+// size; then where each value lies, in that order, so that no frame follows a
+// size a design declares.
 constexpr std::array kBuiltToLegalized{
+    Pass{
+        .name = "ElaborateHandleDerefs",
+        .run_on_body = ElaborateHandleDerefsOnBody},
+    Pass{
+        .name = "StateCallerLocations",
+        .run_on_body = StateCallerLocationsOnBody},
     Pass{.name = "OrderEvaluation", .run_on_body = OrderEvaluationOnBody},
     Pass{
         .name = "BoundFrames",
@@ -69,14 +79,21 @@ auto Runs(const Pass& optional, const PassOptions& options) -> bool {
   return true;
 }
 
-auto Timed(const Pass& pass, mir::CompilationUnit unit)
-    -> mir::CompilationUnit {
+auto Timed(
+    const Pass& pass, mir::CompilationUnit unit,
+    const diag::SourceManager& sources) -> mir::CompilationUnit {
   const profiling::TimeTraceScope span(pass.name, [&] { return unit.name; });
   if (pass.run_on_unit != nullptr) {
     unit = pass.run_on_unit(std::move(unit));
   }
   if (pass.run_on_body != nullptr) {
-    unit = mir::RewriteEachCode(std::move(unit), pass.run_on_body);
+    unit = mir::RewriteEachCode(
+        std::move(unit),
+        [&](const mir::CompilationUnit& rewritten, const mir::CodeSource& at,
+            const mir::CallableCode& code) {
+          return pass.run_on_body(
+              PassContext{.unit = &rewritten, .sources = &sources}, at, code);
+        });
   }
   return unit;
 }
@@ -148,7 +165,9 @@ void WalkPipeline(
 
 auto TransformBody(
     const mir::CompilationUnit& unit, const mir::CodeSource& at,
-    mir::CallableCode code, const PassOptions& options) -> mir::CallableCode {
+    mir::CallableCode code, const PassOptions& options,
+    const diag::SourceManager& sources) -> mir::CallableCode {
+  const PassContext context{.unit = &unit, .sources = &sources};
   WalkPipeline(
       options,
       [&](const Pass& pass) {
@@ -156,7 +175,7 @@ auto TransformBody(
           return false;
         }
         if (std::optional<mir::CallableCode> answer =
-                pass.run_on_body(unit, at, code)) {
+                pass.run_on_body(context, at, code)) {
           code = *std::move(answer);
         }
         return true;
@@ -178,14 +197,15 @@ auto OptionalPasses() -> std::vector<std::string> {
   return names;
 }
 
-auto Transform(mir::CompilationUnit unit, const PassOptions& options)
-    -> mir::CompilationUnit {
+auto Transform(
+    mir::CompilationUnit unit, const PassOptions& options,
+    const diag::SourceManager& sources) -> mir::CompilationUnit {
   const profiling::TimeTraceScope span(
       "transform MIR", [&] { return unit.name; });
   WalkPipeline(
       options,
       [&](const Pass& pass) {
-        unit = Timed(pass, std::move(unit));
+        unit = Timed(pass, std::move(unit), sources);
         return true;
       },
       [&](mir::Phase phase) { unit.phase = phase; },

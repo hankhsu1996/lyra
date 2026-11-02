@@ -998,25 +998,34 @@ TEST(IntegralTest, BitQueries) {
   // 8'b0101_xz01: three ones, three zeros, one x, one z.
   const auto counted = FromPlanes<Logic8>(0b0101'1001, 0b0000'1100);
   const auto count = [&](FourStateBit control) {
-    return counted.CountBits(Logic::Filled(control)).ToInt64();
+    return counted.CountBits(LogicVector<4>::Filled(control)).ToInt64();
   };
   EXPECT_EQ(count(FourStateBit::kOne), 3);
   EXPECT_EQ(count(FourStateBit::kZero), 3);
   EXPECT_EQ(count(FourStateBit::kUnknown), 1);
   EXPECT_EQ(count(FourStateBit::kHighImpedance), 1);
-  EXPECT_EQ(counted.CountBits(Bits4::FromInt(0b0010)).ToInt64(), 6);
-  EXPECT_EQ(counted.CountBits(Bits4::FromInt(0b1111)).ToInt64(), 3);
+  EXPECT_EQ(
+      counted.CountBits(FromPlanes<LogicVector<4>>(0b0010, 0)).ToInt64(), 6);
+  EXPECT_EQ(
+      counted.CountBits(FromPlanes<LogicVector<4>>(0b1111, 0)).ToInt64(), 3);
   EXPECT_EQ(
       counted.CountBits(FromPlanes<LogicVector<4>>(0b1010, 0b1100)).ToInt64(),
       8);
   EXPECT_EQ(
       LogicVector<67>{}
-          .CountBits(Logic::Filled(FourStateBit::kUnknown))
+          .CountBits(LogicVector<4>::Filled(FourStateBit::kUnknown))
           .ToInt64(),
       67);
-  EXPECT_EQ(BitVector<67>::FromInt(0).CountBits(Bit::FromInt(0)).ToInt64(), 67);
   EXPECT_EQ(
-      BitVector<67>::FromInt(-1).CountBits(Bit::FromInt(1)).ToInt64(), 67);
+      BitVector<67>::FromInt(0)
+          .CountBits(LogicVector<4>::Filled(FourStateBit::kZero))
+          .ToInt64(),
+      67);
+  EXPECT_EQ(
+      BitVector<67>::FromInt(-1)
+          .CountBits(LogicVector<4>::Filled(FourStateBit::kOne))
+          .ToInt64(),
+      67);
 
   EXPECT_TRUE(counted.HasUnknown());
   EXPECT_FALSE(Logic8::FromInt(3).HasUnknown());
@@ -1107,7 +1116,9 @@ TEST(IntegralTest, AWordIsReadInItsRadix) {
   FromDigits(wide.MutableView(), DigitRadix::kOctal, "7000000000000000000000");
   const auto across = HeldIn<BitVector<100>>(wide);
   EXPECT_EQ(ExtractBits<Bits4>(across, 62).ToInt64(), 0b1110);
-  EXPECT_EQ(across.CountBits(Bit::FromInt(1)).ToInt64(), 3);
+  EXPECT_EQ(
+      across.CountBits(LogicVector<4>::Filled(FourStateBit::kOne)).ToInt64(),
+      3);
 }
 
 // LRM 6.24.3 / 11.4.14.3: a stream holds its first item most significant, and

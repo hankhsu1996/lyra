@@ -9,9 +9,9 @@ namespace lyra::value {
 // two cannot come to say different things about the same event.
 void ReportBoundOverflow();
 
-// Who hears that report. A value knows nothing of where in the design or when
-// it is written, so the run listens for as long as it lasts and says it as one
-// of its own reports; with nobody listening, nothing is said.
+// Who hears that report. A value knows nothing of when it is written, so the
+// run listens for as long as it lasts and says it as one of its own reports;
+// with nobody listening, nothing is said.
 using BoundOverflowListener = void (*)();
 
 // Installs `listener` and answers the one it replaces.

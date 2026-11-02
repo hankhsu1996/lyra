@@ -324,8 +324,7 @@ auto TypeArgsToldAs(
       }
       // A queue is told its whole type, whose bound is part of it (LRM
       // 7.10).
-      if (const auto* library = built.As<lir::LibraryType>();
-          library != nullptr && library->FindBound().has_value()) {
+      if (built.IsQueue()) {
         return {QueueTypeArg{.type = answered}};
       }
       const std::optional<lir::TypeId> element = built.ContainerElementType();

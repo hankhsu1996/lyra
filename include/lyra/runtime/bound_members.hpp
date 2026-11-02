@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/source_follower.hpp"
@@ -162,11 +163,12 @@ void BindReference(VariableRef<T>& member, const VariableRef<T>& bound) {
 template <class C, class Fresh, class Refer>
 auto BeginTakeoverThrough(
     const ErasedReference& reference, std::int64_t level, std::int64_t first,
-    std::int64_t count, TakePositionsOf<typename C::Owned> take_positions,
-    Fresh fresh, Refer refer) -> std::int64_t {
+    std::int64_t count, base::SourceLocation at,
+    TakePositionsOf<typename C::Owned> take_positions, Fresh fresh, Refer refer)
+    -> std::int64_t {
   if (!NamesAMember(reference)) {
     return WholeVariable<C>(reference).BeginTakeover(
-        level, first, count, take_positions);
+        level, first, count, at, take_positions);
   }
   ErasedReference& member = ForcedMember(reference, level);
   BoundMembers& bound = current_runtime().Bound();
@@ -189,7 +191,7 @@ auto BeginTakeoverThrough(
     });
   }
   return WholeVariable<C>(member).BeginTakeover(
-      level, first, count, take_positions);
+      level, first, count, at, take_positions);
 }
 
 // `drive` states the evaluation's value to the variable under the takeover,
@@ -217,9 +219,9 @@ auto DriveTakeoverThrough(
 template <class C>
 void EndTakeoverThrough(
     const ErasedReference& reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
+    std::int64_t count, base::SourceLocation at) {
   if (!NamesAMember(reference)) {
-    WholeVariable<C>(reference).EndTakeover(level, first, count);
+    WholeVariable<C>(reference).EndTakeover(level, first, count, at);
     return;
   }
   ErasedReference& member = ForcedMember(reference, level);
@@ -228,7 +230,7 @@ void EndTakeoverThrough(
     return;
   }
   C& cell = WholeVariable<C>(member);
-  cell.EndTakeover(level, first, count);
+  cell.EndTakeover(level, first, count, at);
   if (cell.TakenOver()) {
     return;
   }
@@ -245,9 +247,10 @@ void EndTakeoverThrough(
 template <value::LyraValue T>
 auto VariableRef<T>::BeginTakeover(
     std::int64_t level, std::int64_t first, std::int64_t count,
-    TakePositionsOf<T> take_positions) const -> std::int64_t {
+    base::SourceLocation at, TakePositionsOf<T> take_positions) const
+    -> std::int64_t {
   return BeginTakeoverThrough<Var<T>>(
-      erased_, level, first, count, take_positions,
+      erased_, level, first, count, at, take_positions,
       [](const Var<T>& showing) {
         auto forced = std::make_shared<Var<T>>();
         forced->Initialize(showing.Get());
@@ -258,17 +261,18 @@ auto VariableRef<T>::BeginTakeover(
 
 template <value::LyraValue T>
 auto VariableRef<T>::DriveTakeover(
-    std::int64_t level, std::int64_t generation, const T& new_val) const
-    -> bool {
+    std::int64_t level, std::int64_t generation, const T& new_val,
+    base::SourceLocation at) const -> bool {
   return DriveTakeoverThrough<Var<T>>(erased_, level, [&](Var<T>& variable) {
-    return variable.DriveTakeover(level, generation, new_val);
+    return variable.DriveTakeover(level, generation, new_val, at);
   });
 }
 
 template <value::LyraValue T>
 void VariableRef<T>::EndTakeover(
-    std::int64_t level, std::int64_t first, std::int64_t count) const {
-  EndTakeoverThrough<Var<T>>(erased_, level, first, count);
+    std::int64_t level, std::int64_t first, std::int64_t count,
+    base::SourceLocation at) const {
+  EndTakeoverThrough<Var<T>>(erased_, level, first, count, at);
 }
 
 }  // namespace lyra::runtime
