@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/expression/view_names.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
@@ -178,43 +179,75 @@ auto SliceCount(const mir::CompilationUnit& unit, mir::TypeId result_type)
 // held the range to the declaration's direction). An indexed select counts `w`
 // from its base; where positions grow opposite to the way the select counts,
 // the slice starts `w - 1` steps below the base.
+//
+// A coordinate is what the source wrote: an expression where a body wrote the
+// select, a number where a signature carries it.
+template <typename Coordinate>
 struct SliceStart {
-  hir::ExprId index;
+  Coordinate index;
   std::int64_t shift = 0;
 };
 
-auto SliceStartOf(
-    const hir::RangeBounds& bounds, const PositionMap& map, std::uint64_t count)
-    -> SliceStart {
+template <typename Coordinate>
+auto ConstantRangeStart(
+    const PositionMap& map, Coordinate left, Coordinate right)
+    -> SliceStart<Coordinate> {
+  return {.index = map.from_right ? right : left, .shift = 0};
+}
+
+template <typename Coordinate>
+auto IndexedRangeStart(
+    const PositionMap& map, std::uint64_t count, Coordinate base, bool up)
+    -> SliceStart<Coordinate> {
   // Back over every position the slice covers beyond the base's own step.
   const std::int64_t below = map.step - static_cast<std::int64_t>(count);
+  return {.index = base, .shift = map.reversed == up ? below : 0};
+}
+
+auto SliceStartOf(
+    const hir::RangeBounds& bounds, const PositionMap& map, std::uint64_t count)
+    -> SliceStart<hir::ExprId> {
   return std::visit(
       Overloaded{
           [&](const hir::RangeConstantBounds& c) {
-            return SliceStart{
-                .index = map.from_right ? c.right_bound : c.left_bound,
-                .shift = 0};
+            return ConstantRangeStart(map, c.left_bound, c.right_bound);
           },
           [&](const hir::RangeIndexedUpBounds& c) {
-            return SliceStart{
-                .index = c.base_index, .shift = map.reversed ? below : 0};
+            return IndexedRangeStart(map, count, c.base_index, true);
           },
           [&](const hir::RangeIndexedDownBounds& c) {
-            return SliceStart{
-                .index = c.base_index, .shift = map.reversed ? 0 : below};
+            return IndexedRangeStart(map, count, c.base_index, false);
           },
       },
       bounds);
 }
 
+auto SliceStartOf(
+    const hir::PublishedRange& range, const PositionMap& map,
+    std::uint64_t count) -> SliceStart<std::int32_t> {
+  return std::visit(
+      Overloaded{
+          [&](const hir::PublishedConstantRange& c) {
+            return ConstantRangeStart(map, c.left, c.right);
+          },
+          [&](const hir::PublishedIndexedUpRange& c) {
+            return IndexedRangeStart(map, count, c.base, true);
+          },
+          [&](const hir::PublishedIndexedDownRange& c) {
+            return IndexedRangeStart(map, count, c.base, false);
+          },
+      },
+      range);
+}
+
 // The step a slice of `count` positions takes from the index `index_id` its
-// start names.
+// start names, `shift` positions below it.
 auto SliceStepAt(
     const mir::CompilationUnit& unit, mir::Builder block,
-    const PositionMap& map, const SliceStart& start, mir::ExprId index_id,
+    const PositionMap& map, std::int64_t shift, mir::ExprId index_id,
     std::uint64_t count, mir::TypeId result_type) -> DescentStep {
   const mir::ExprId position =
-      WrapIndexAsPosition(unit, block, map, index_id, start.shift);
+      WrapIndexAsPosition(unit, block, map, index_id, shift);
   if (unit.types.Get(result_type).IsIntegral()) {
     return BitsStep(position, result_type);
   }
@@ -245,7 +278,7 @@ auto RangeStep(
   auto index = lowerer.LowerExpr(lowerer.HirExprs().Get(start.index), frame);
   if (!index) return std::unexpected(std::move(index.error()));
   return SliceStepAt(
-      unit, block, map, start, block.Add(*std::move(index)), count,
+      unit, block, map, start.shift, block.Add(*std::move(index)), count,
       result_type);
 }
 
@@ -343,6 +376,13 @@ auto StorageFoundBy(Lowerer& lowerer, const hir::Expr& expr) -> StorageFound {
   const auto base_lies = [&](hir::ExprId base) {
     return StorageFoundBy(lowerer, lowerer.HirExprs().Get(base));
   };
+  // A name a view defines is read as what it stands for: storage where that is
+  // one place, and otherwise bits joined or a value computed (LRM 25.5.4).
+  if (const auto view = ViewNameUseOf(lowerer, expr)) {
+    return IsOneViewPlace(lowerer.Owner(), *view)
+               ? StorageFound::kBeyondTheSteps
+               : StorageFound::kNone;
+  }
   return std::visit(
       Overloaded{
           [](const hir::PrimaryExpr&) { return StorageFound::kBeyondTheSteps; },
@@ -421,18 +461,9 @@ auto StorageFoundBy(Lowerer& lowerer, const hir::Expr& expr) -> StorageFound {
       expr.data);
 }
 
-// The value a select is taken from, as evaluated once for it.
-struct SelectedBase {
-  SettledPath path;
-  // Whether the value lies in storage that outlives the block of steps it is
-  // evaluated in, rather than in a local of that block or in an object only
-  // that block holds a handle to.
-  bool outlives_the_steps;
-};
+}  // namespace
 
-// The value a select read as a value is taken from, evaluated here, once,
-// because the select names it more than once (LRM 11.4.1): a queue for the
-// part and for each `$` under the select (LRM 7.10.1). A value lying in storage
+// A value lying in storage
 // is named where it lies -- in an object a function's handle reaches too, which
 // the handle the steps hold keeps alive while they run -- so only what is
 // computed on the way to it is evaluated and the value itself is not copied; a
@@ -477,6 +508,8 @@ auto EvaluateSelectedBase(
               .descent = {}},
       .outlives_the_steps = false};
 }
+
+namespace {
 
 // Whether reading `expr` reaches through a member a tag guards (LRM 11.9), at
 // any of the selects it is written as.
@@ -754,6 +787,33 @@ auto BuildPackedMemberRead(
       base, result_type);
 }
 
+auto PublishedSelectorStep(
+    UnitLowerer& unit_lowerer, mir::Builder block,
+    const hir::PublishedSelector& selector, hir::TypeId receiver_type)
+    -> DescentStep {
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  return std::visit(
+      Overloaded{
+          [&](const hir::PublishedElementSelector& element) {
+            return ElementStep(
+                unit_lowerer, block, receiver_type,
+                mir::BuildIntLiteral(unit, block, element.index),
+                unit_lowerer.TranslateType(element.projected_type));
+          },
+          [&](const hir::PublishedSliceSelector& slice) {
+            const mir::TypeId part_type =
+                unit_lowerer.TranslateType(slice.projected_type);
+            const PositionMap map = PositionMapOf(unit_lowerer, receiver_type);
+            const std::uint64_t count = SliceCount(unit, part_type);
+            const auto start = SliceStartOf(slice.range, map, count);
+            return SliceStepAt(
+                unit, block, map, start.shift,
+                mir::BuildIntLiteral(unit, block, start.index), count,
+                part_type);
+          }},
+      selector);
+}
+
 template <ExprLowerer Lowerer>
 auto LowerHirElementSelectExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
@@ -972,7 +1032,8 @@ auto LowerHirArraySliceWithIndices(
   return NamedMemory{
       .path = DescendInto(
           *std::move(base),
-          SliceStepAt(unit, block, map, start, index_id, count, result_type)),
+          SliceStepAt(
+              unit, block, map, start.shift, index_id, count, result_type)),
       .slice =
           SliceIndices{.left = offset(to_left), .right = offset(to_right)}};
 }
@@ -1063,19 +1124,66 @@ auto LowerHirClassPropertyAccessExprPath(
       result_type);
 }
 
-template <ExprLowerer Lowerer>
-auto LowerHirInterfaceMemberAccessExpr(
-    Lowerer& lowerer, WalkFrame frame,
-    const hir::InterfaceMemberAccessExpr& sel) -> diag::Result<mir::Expr> {
-  auto held = HeldInterfaceMember(lowerer, frame, sel);
-  if (!held) return std::unexpected(std::move(held.error()));
-  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const mir::ExprId storage = ReportedPlace(unit, frame, *held);
+auto HeldMemberPlace(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId object,
+    hir::ScopeClassId scope_class, hir::PublishedMemberId member) -> mir::Expr {
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::ExprId storage = ReportedPlace(
+      unit, frame,
+      ReadPublishedMember(
+          unit_lowerer, frame.Builder(), object, scope_class, member));
   const mir::ExprId pointer = frame.Builder().DerefOperand(unit.types, storage);
   return mir::MakeDerefExpr(
       pointer, unit.types.Get(frame.current_block->exprs.Get(storage).type)
-                   .template Get<mir::PointerType>()
+                   .Get<mir::PointerType>()
                    .pointee);
+}
+
+auto PlaceContents(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Expr place,
+    bool keeps_sampled_value) -> mir::Expr {
+  const mir::Type& type = unit.types.Get(place.type);
+  if (!type.IsCapabilityWrapper()) return place;
+  // What the wrapper holds is the type of the storage it names, which for a
+  // reference to a value of any type is no type a value has, as `*r` of
+  // Rust's `&mut dyn Any` is `dyn Any` (LRM 15.4.9).
+  const mir::TypeId held = type.WrappedValueType();
+  const mir::ExprId cell_id = frame.Builder().Add(std::move(place));
+  // The sampled value of an expression is the expression over the sampled
+  // values of the variables it reads (LRM 16.5.1), so the whole of what
+  // reading one changes is which value each leaf answers with -- here, where
+  // every leaf read is built.
+  if (frame.reads_as_of == ReadsAsOf::kPreponed && keeps_sampled_value) {
+    return frame.Builder().SampledWrapperContents(unit.types, cell_id, held);
+  }
+  // Reading what the wrapper holds names the storage it represents, which is
+  // then read where a value is wanted.
+  return frame.Builder().WrapperContents(unit.types, cell_id, held);
+}
+
+template <ExprLowerer Lowerer>
+auto LowerHirInterfaceMemberAccessExpr(
+    Lowerer& lowerer, WalkFrame frame,
+    const hir::InterfaceMemberAccessExpr& sel, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  return std::visit(
+      Overloaded{
+          [&](hir::PublishedMemberId member) -> diag::Result<mir::Expr> {
+            auto object = HeldInterfaceObject(lowerer, frame, sel.instance);
+            if (!object) return std::unexpected(std::move(object.error()));
+            return HeldMemberPlace(
+                lowerer.Owner(), frame, *object, sel.scope_class, member);
+          },
+          [&](hir::PublishedViewNameId name) -> diag::Result<mir::Expr> {
+            return LowerViewNameValue(
+                lowerer, frame,
+                ViewNameUse{
+                    .reached = &sel.instance,
+                    .scope_class = sel.scope_class,
+                    .name = name},
+                result_type);
+          }},
+      sel.component);
 }
 
 template <ExprLowerer Lowerer>
@@ -1141,6 +1249,12 @@ template auto LowerHirMemberAccessExprPath(
 template auto PropertyPath(
     ProcessLowerer&, const WalkFrame&, mir::ExprId,
     const hir::ClassPropertyTarget&, mir::TypeId) -> AccessPath;
+template auto EvaluateSelectedBase(
+    ProcessLowerer&, const WalkFrame&, const hir::Expr&)
+    -> diag::Result<SelectedBase>;
+template auto EvaluateSelectedBase(
+    const StructuralScopeLowerer&, const WalkFrame&, const hir::Expr&)
+    -> diag::Result<SelectedBase>;
 template auto IsTagCheckedRead(
     ProcessLowerer&, const WalkFrame&, const hir::Expr&) -> bool;
 template auto IsTagCheckedRead(
@@ -1167,11 +1281,12 @@ template auto LowerHirClassPropertyAccessExprPath(
     const hir::ClassPropertyAccessExpr&, mir::TypeId)
     -> diag::Result<AccessPath>;
 template auto LowerHirInterfaceMemberAccessExpr(
-    ProcessLowerer&, WalkFrame, const hir::InterfaceMemberAccessExpr&)
-    -> diag::Result<mir::Expr>;
+    ProcessLowerer&, WalkFrame, const hir::InterfaceMemberAccessExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirInterfaceMemberAccessExpr(
     const StructuralScopeLowerer&, WalkFrame,
-    const hir::InterfaceMemberAccessExpr&) -> diag::Result<mir::Expr>;
+    const hir::InterfaceMemberAccessExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
 template auto LowerHirInterfaceInstanceAccessExpr(
     ProcessLowerer&, WalkFrame, const hir::InterfaceInstanceAccessExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;

@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -121,13 +122,11 @@ auto StateContinuousDriver(
 // LRM 4.8 leaves open when its target sees the update). Any other source is
 // evaluated and given.
 auto CarriedObjectEntry(
-    const hir::StructuralScope& scope, const hir::Expr& source,
-    hir::TypeId written_type) -> std::optional<support::BuiltinFn> {
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&source.data);
-  const auto* named = primary == nullptr
-                          ? nullptr
-                          : std::get_if<hir::RoutedValueRef>(&primary->data);
-  if (named == nullptr || source.type != written_type) return std::nullopt;
+    const UnitLowerer& owner, const hir::StructuralScope& scope,
+    const hir::Expr& source, hir::TypeId written_type)
+    -> std::optional<support::BuiltinFn> {
+  const auto named = WholeRoutedTarget(owner, scope, source);
+  if (!named.has_value() || source.type != written_type) return std::nullopt;
   return std::visit(
       Overloaded{
           [](const hir::VariableStorage&) -> std::optional<support::BuiltinFn> {
@@ -152,11 +151,8 @@ auto CarriedObjectEntry(
 auto IsScalarNet(
     const UnitLowerer& owner, const hir::StructuralScope& scope,
     const hir::Expr& target) -> bool {
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&target.data);
-  const auto* named = primary == nullptr
-                          ? nullptr
-                          : std::get_if<hir::RoutedValueRef>(&primary->data);
-  return named != nullptr &&
+  const auto named = WholeRoutedTarget(owner, scope, target);
+  return named.has_value() &&
          std::holds_alternative<hir::NetStorage>(
              hir::CellOf(scope.routes.values.Get(named->id).leaf).storage) &&
          owner.Hir().types.Get(target.type).Is<hir::ScalarBitType>();
@@ -395,7 +391,8 @@ auto LowerContinuousDrive(
                 !drivers.front().has_value()
             ? std::nullopt
             : CarriedObjectEntry(
-                  lowerer.HirScope(), source, named->source_type);
+                  lowerer.Owner(), lowerer.HirScope(), source,
+                  named->source_type);
     if (carried.has_value()) {
       auto object = lowerer.LowerAccessPath(source, resolve_frame);
       if (!object) return std::unexpected(std::move(object.error()));

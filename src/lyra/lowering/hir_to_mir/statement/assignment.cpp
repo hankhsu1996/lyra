@@ -169,7 +169,7 @@ auto LowerExprStmt(
   const hir::Expr& inner = hir_proc.exprs.Get(e.expr);
   if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
     const hir::Expr& lhs = hir_proc.exprs.Get(assign->lhs);
-    if (IsJoin(lhs)) {
+    if (IsJoin(process, lhs)) {
       BlockBuilder steps(frame);
       auto stored = AssignToJoin(process, steps.Frame(), *assign, lhs);
       if (!stored) return std::unexpected(std::move(stored.error()));

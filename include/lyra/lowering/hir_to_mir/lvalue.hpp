@@ -203,8 +203,9 @@ void ForEachPlace(const Lvalue& lvalue, Visit visit) {
     const mir::CompilationUnit& unit, const WalkFrame& frame, Lvalue lvalue)
     -> diag::Result<LvalueReadThenWritten>;
 
-// Whether `expr` in target position names several places -- a join of lvalues
-// or a stream target -- rather than one.
-[[nodiscard]] auto IsJoin(const hir::Expr& expr) -> bool;
+// Whether `expr` in target position names several places -- a join of lvalues,
+// a name a view joins them under, or a stream target -- rather than one.
+template <ExprLowerer L>
+[[nodiscard]] auto IsJoin(const L& lowerer, const hir::Expr& expr) -> bool;
 
 }  // namespace lyra::lowering::hir_to_mir

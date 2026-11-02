@@ -52,7 +52,8 @@ resolution serves both accessing the target's value and observing its changes.
 
 1. Every reference is a route from a structural origin to an endpoint. The route is an anchor, a
    sequence of steps and a leaf; the endpoint is the canonical access point for every read, write,
-   and observation against the reference.
+   and observation against the reference. A name a view joins several declarations under (LRM
+   25.5.4) stands for several things, so it is one reference over one route to each.
 2. Every step and every leaf is compiled against a declaration the referrer has for its target: a
    class its own artifact owns, or a member the target scope published. Its realization is typed
    navigation, with no string lookup and no runtime call naming the target at simulation or

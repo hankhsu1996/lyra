@@ -104,6 +104,27 @@ auto MemberExpr(
 
 }  // namespace
 
+auto WholeRoutedTarget(
+    const UnitLowerer& owner, const hir::StructuralScope& scope,
+    const hir::Expr& expr) -> std::optional<hir::RoutedValueRef> {
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
+  if (primary == nullptr) return std::nullopt;
+  if (const auto* named = std::get_if<hir::RoutedValueRef>(&primary->data)) {
+    return *named;
+  }
+  const auto* view = std::get_if<hir::RoutedViewPlaceRef>(&primary->data);
+  if (view == nullptr) return std::nullopt;
+  const hir::ViewPlaceRoute& route = scope.routes.view_places.Get(view->id);
+  const hir::ScopeClassSignature& signature =
+      owner.Hir().scope_classes.Get(route.scope_class);
+  const auto& place =
+      std::get<hir::ViewDefinedPlace>(signature.ViewName(route.name));
+  if (!signature.IsOnePlace(place) || !place.parts.front().path.empty()) {
+    return std::nullopt;
+  }
+  return route.parts.front();
+}
+
 auto BindEndpoint(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::RoutedValueRef& reference) -> BoundEndpoint {

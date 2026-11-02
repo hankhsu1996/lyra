@@ -1,5 +1,6 @@
 #pragma once
 
+#include <variant>
 #include <vector>
 
 #include "lyra/hir/expr_id.hpp"
@@ -27,17 +28,20 @@ struct InterfaceInstanceAccessExpr {
   auto operator==(const InterfaceInstanceAccessExpr&) const -> bool = default;
 };
 
-// A member of an instance reached through a virtual interface, at the position
-// the name was counted out of in `scope_class`, this unit's record of the class
-// the descent lands on.
+// A component of an instance reached through a virtual interface, at the
+// position the name was counted out of in `scope_class`, this unit's record of
+// the class the descent lands on: a member, or a name a view of the interface
+// defines (LRM 25.5.4), which the front end holds as a member access as well.
+// What such a name stands for is the translation's to work out, from what the
+// interface published.
 //
-// An expression reads and writes the member through it, and a wait watches the
-// member through the same designation: which instance's variable that is, is
-// known each time the wait evaluates the handle.
+// An expression reads and writes the component through it, and a wait watches
+// it through the same designation: which instance's variable that is, is known
+// each time the wait evaluates the handle.
 struct InterfaceMemberAccessExpr {
   InterfaceInstanceAccessExpr instance;
   ScopeClassId scope_class;
-  PublishedMemberId member;
+  std::variant<PublishedMemberId, PublishedViewNameId> component;
 
   auto operator==(const InterfaceMemberAccessExpr&) const -> bool = default;
 };

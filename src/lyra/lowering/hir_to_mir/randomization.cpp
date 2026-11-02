@@ -34,6 +34,7 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -255,6 +256,14 @@ auto NamesVariable(const ConstraintWriter& w, hir::ExprId id) -> bool {
                     [](const hir::ClassPropertyRef&) { return true; },
                     [](const hir::StaticPropertyRef&) { return true; },
                     [](const hir::RoutedValueRef&) { return true; },
+                    [&](const hir::RoutedViewPlaceRef&) {
+                      return WholeRoutedTarget(
+                                 w.Lowerer().Owner(),
+                                 w.Lowerer().EnclosingScopeLowerer().HirScope(),
+                                 expr)
+                          .has_value();
+                    },
+                    [](const hir::RoutedViewValueRef&) { return false; },
                     [](const hir::RoutedObjectRef&) { return false; },
                     [](const hir::IterationBindingRef&) { return false; },
                     [](const hir::PatternVarRef&) { return false; },

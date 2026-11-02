@@ -422,6 +422,42 @@ auto UnitLowerer::MakeRoutedObjectRef(
   return hir::RoutedObjectRef{.id = id};
 }
 
+auto UnitLowerer::MakeRoutedViewPlaceRef(
+    ScopeFrameId owner_frame, const ScopeRoute& route,
+    hir::ScopeClassId scope_class, hir::PublishedViewNameId name,
+    const hir::ViewDefinedPlace& place) -> hir::RoutedViewPlaceRef {
+  std::vector<hir::RoutedValueRef> parts;
+  parts.reserve(place.parts.size());
+  for (const hir::MemberProjection& part : place.parts) {
+    parts.push_back(RoutedMemberCell(
+        owner_frame,
+        hir::ValueRoute{
+            .base = route.base,
+            .steps = route.steps,
+            .leaf = PublishedMemberLeafOf(scope_class, part.member)}));
+  }
+  return hir::RoutedViewPlaceRef{
+      .id = MapOrGetRoute(
+          RoutesOf(owner_frame).view_places, hir::ViewPlaceRoute{
+                                                 .scope_class = scope_class,
+                                                 .name = name,
+                                                 .parts = std::move(parts)})};
+}
+
+auto UnitLowerer::MakeRoutedViewValueRef(
+    ScopeFrameId owner_frame, const ScopeRoute& route,
+    hir::ScopeClassId scope_class, hir::PublishedViewNameId name)
+    -> hir::RoutedViewValueRef {
+  return hir::RoutedViewValueRef{
+      .id = MapOrGetRoute(
+          RoutesOf(owner_frame).view_values,
+          hir::ViewValueRoute{
+              .scope_class = scope_class,
+              .name = name,
+              .object = MakeRoutedObjectRef(
+                  owner_frame, route, ScopeClassTypeOf(scope_class))})};
+}
+
 namespace {
 
 // The steps of `inst.port.task` past the instance.
@@ -1595,8 +1631,10 @@ auto UnitLowerer::ObservedThroughModport(
   const hir::ScopeClassId scope_class = on->scope_class;
   return WholeMembersAlong(
       frame, route, scope_class,
-      hir::WatchedMembers(PublishedViewNameMeaning(
-          *this, scope_class, view->asSymbol().name, offered.name)));
+      hir::WatchedMembers(
+          unit_.scope_classes.Get(scope_class)
+              .ViewName(PublishedViewNameOf(
+                  *this, scope_class, view->asSymbol().name, offered.name))));
 }
 
 auto UnitLowerer::WholeMembersAlong(

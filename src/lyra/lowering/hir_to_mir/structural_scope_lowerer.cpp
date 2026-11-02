@@ -46,6 +46,7 @@
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
+#include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/extern_binding.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
@@ -1646,13 +1647,10 @@ auto InstallNetJoins(StructuralScopeLowerer& lowerer, WalkFrame resolve_frame)
 // net takes no store, since what it shows is what its drivers determine (LRM
 // 6.5), and any other expression has no storage to stand for.
 auto NamesSharedStorage(
-    const hir::StructuralScope& scope, const hir::Expr& peer,
-    hir::TypeId port_type) -> bool {
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&peer.data);
-  const auto* named = primary == nullptr
-                          ? nullptr
-                          : std::get_if<hir::RoutedValueRef>(&primary->data);
-  if (named == nullptr || peer.type != port_type) return false;
+    const UnitLowerer& owner, const hir::StructuralScope& scope,
+    const hir::Expr& peer, hir::TypeId port_type) -> bool {
+  const auto named = WholeRoutedTarget(owner, scope, peer);
+  if (!named.has_value() || peer.type != port_type) return false;
   const hir::DataCell source =
       hir::CellOf(scope.routes.values.Get(named->id).leaf);
   return std::visit(
@@ -1703,7 +1701,7 @@ auto BindInputPort(
 
   if (data.peer.has_value()) {
     const hir::Expr& peer = hir_scope.exprs.Get(*data.peer);
-    if (NamesSharedStorage(hir_scope, peer, member.type)) {
+    if (NamesSharedStorage(unit_lowerer, hir_scope, peer, member.type)) {
       auto named = lowerer.LowerLhsExpr(peer, resolve_frame);
       if (!named) return std::unexpected(std::move(named.error()));
       return bind_to(*named);

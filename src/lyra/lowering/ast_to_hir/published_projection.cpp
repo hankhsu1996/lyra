@@ -19,15 +19,6 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-namespace {
-
-auto ProjectedTypeOf(const hir::PublishedSelector& step) -> hir::TypeId {
-  return std::visit(
-      [](const auto& selector) { return selector.projected_type; }, step);
-}
-
-}  // namespace
-
 auto ImportPublishedPath(
     UnitLowerer& unit_lowerer, const hir::UnitSignature& signature,
     std::span<const hir::PublishedSelector> path)
@@ -88,7 +79,9 @@ auto ProjectPublishedPath(
             }},
         step);
     reached = hir::Expr{
-        .type = ProjectedTypeOf(step), .data = std::move(data), .span = span};
+        .type = hir::ProjectedTypeOf(step),
+        .data = std::move(data),
+        .span = span};
   }
   return reached;
 }

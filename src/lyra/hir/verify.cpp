@@ -159,6 +159,18 @@ void ReachPropertySpec(const PropertySpec& spec, const auto& reach) {
   reach.ThroughProperty(spec.body);
 }
 
+// What an access through a virtual interface evaluates: the handle, and what
+// selects each loop's block on the way down.
+void ReachInstanceAccess(
+    const InterfaceInstanceAccessExpr& access, const auto& reach) {
+  reach(access.handle, Slot::kOperand);
+  for (const PublishedStep& step : access.steps) {
+    if (const auto* loop = std::get_if<PublishedGenerateLoopRef>(&step.names)) {
+      reach(loop->position, Slot::kOperand);
+    }
+  }
+}
+
 // The expressions a callee holds: the object a call is made on, where the
 // callee names it by an expression, and the expression an array method
 // evaluates at each entry (LRM 7.12).
@@ -194,7 +206,7 @@ void ReachCallee(const SubroutineRef& callee, const auto& reach) {
                 Overloaded{
                     [](const RoutedObjectRef&) {},
                     [&](const InterfaceInstanceAccessExpr& access) {
-                      reach(access.handle, Slot::kOperand);
+                      ReachInstanceAccess(access, reach);
                     }},
                 ref.receiver);
           }},
@@ -288,9 +300,11 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
           [&](const MemberAccessExpr& e) { operand(e.base_value); },
           [&](const ClassPropertyAccessExpr& e) { operand(e.base_value); },
           [&](const InterfaceMemberAccessExpr& e) {
-            operand(e.instance.handle);
+            ReachInstanceAccess(e.instance, reach);
           },
-          [&](const InterfaceInstanceAccessExpr& e) { operand(e.handle); },
+          [&](const InterfaceInstanceAccessExpr& e) {
+            ReachInstanceAccess(e, reach);
+          },
           [&](const ConcatExpr& e) { operands(e.operands); },
           [&](const StreamingConcatExpr& e) {
             for (const StreamOperand& streamed : e.operands) {
@@ -595,6 +609,12 @@ auto KindOf(const Primary& primary) -> std::string_view {
           },
           [](const RoutedValueRef&) -> std::string_view {
             return "a routed value reference";
+          },
+          [](const RoutedViewPlaceRef&) -> std::string_view {
+            return "a routed view place reference";
+          },
+          [](const RoutedViewValueRef&) -> std::string_view {
+            return "a routed view value reference";
           },
           [](const RoutedObjectRef&) -> std::string_view {
             return "a routed object reference";

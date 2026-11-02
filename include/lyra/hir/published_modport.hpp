@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -97,29 +96,7 @@ struct PublishedModport {
   std::string name;
   std::vector<PublishedModportPort> ports;
 
-  // The port identifier published under `name`, or nothing when the view
-  // defined no such name -- which includes every name it offers under the
-  // interface's own spelling, since those are reached as members.
-  [[nodiscard]] auto Find(std::string_view name) const
-      -> const PublishedModportPort* {
-    for (const PublishedModportPort& port : ports) {
-      if (port.name == name) return &port;
-    }
-    return nullptr;
-  }
-
   auto operator==(const PublishedModport&) const -> bool = default;
 };
-
-// The view published under `name`, or nothing when the unit declares no such
-// modport.
-[[nodiscard]] inline auto FindModport(
-    const std::vector<PublishedModport>& modports, std::string_view name)
-    -> const PublishedModport* {
-  for (const PublishedModport& modport : modports) {
-    if (modport.name == name) return &modport;
-  }
-  return nullptr;
-}
 
 }  // namespace lyra::hir

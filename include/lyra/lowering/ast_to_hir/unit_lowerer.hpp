@@ -1527,6 +1527,21 @@ class UnitLowerer {
       ScopeFrameId owner_frame, ScopeRoute route, hir::TypeId object_type)
       -> hir::RoutedObjectRef;
 
+  // The reference to the name `name` a view of the interface class
+  // `scope_class` defines as `place`, on the instance `route` reaches: each
+  // part is reached over a route of its own, sealed as any other is.
+  [[nodiscard]] auto MakeRoutedViewPlaceRef(
+      ScopeFrameId owner_frame, const ScopeRoute& route,
+      hir::ScopeClassId scope_class, hir::PublishedViewNameId name,
+      const hir::ViewDefinedPlace& place) -> hir::RoutedViewPlaceRef;
+
+  // The reference to the name `name` a view of the interface class
+  // `scope_class` offers as a value, on the instance `route` reaches.
+  [[nodiscard]] auto MakeRoutedViewValueRef(
+      ScopeFrameId owner_frame, const ScopeRoute& route,
+      hir::ScopeClassId scope_class, hir::PublishedViewNameId name)
+      -> hir::RoutedViewValueRef;
+
   // What a `disable` naming `target` by `reference` terminates (LRM 9.6.2,
   // 23.6). A target the body's own declaration scope declares is named by its
   // identity there. Any other is reached over a route: where this unit lays
