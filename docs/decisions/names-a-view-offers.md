@@ -23,6 +23,10 @@ through a port takes one route per part, sealed as any route is, since a route e
 for a name that is a value the route to the object; a use through a virtual interface evaluates the
 handle once and reaches each part on the object it holds.
 
+Revised 2026-11-02: a select of a joined name is written, which this entry left out. The name stands
+for a concatenation of places, and selecting it is a select over that concatenation (LRM 25.5.4,
+11.5.1), which [a-write-names-a-place-or-a-join](a-write-names-a-place-or-a-join.md) D1 states.
+
 ## Why this decision matters
 
 A module bound through a modport writes the names the view offers, and that is most of what
@@ -173,7 +177,8 @@ member is a net.
 - Every assignment form the language allows for the storage behind a name a view offers reaches it,
   with no arm per form: blocking, compound, increment, a part-select target, an intra-assignment
   delay, a nonblocking update, a continuous assignment, and a procedural continuous assignment. A
-  part-select of a name joining several declarations is not yet written.
+  select of a name joining several declarations reaches every one of them, at a position the program
+  may compute.
 - The subroutine that assigned to a name, its identity, its body, and the branch that routed an
   assignment into it are all gone. A write through a view is no longer a shape a lowering has to
   recognize.

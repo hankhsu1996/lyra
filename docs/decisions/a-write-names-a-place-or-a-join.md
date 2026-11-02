@@ -2,7 +2,8 @@
 
 Date: 2026-10-09 Status: accepted. D2 is revised 2026-10-22: a share is handed to the write as it is
 cut, so a blocking assignment has stored it before the next is cut. D1 is revised 2026-10-22: a
-stream target is its own form beside a join.
+stream target is its own form beside a join, and 2026-11-02: a select of a join is a form beside
+both.
 
 ## Context
 
@@ -67,9 +68,9 @@ the join "a packed vector of bits", and which slang's `load` covers.
 
 ## Decision
 
-**D1. In the lowering, what a write names is an lvalue: one place, a join of lvalues, or a stream
-target.** A join is recursive, as the grammar is, and has a kind that says how a value is cut among
-its members and how what they hold is joined:
+**D1. In the lowering, what a write names is an lvalue: one place, a join of lvalues, a select of a
+join, or a stream target.** A join is recursive, as the grammar is, and has a kind that says how a
+value is cut among its members and how what they hold is joined:
 
 - _packed_ -- a concatenation, or an assignment pattern of an integral type. The members share the
   bits of one vector, the first member most significant, each as many as it is wide.
@@ -84,6 +85,20 @@ variable, a one-dimensional unpacked array a `with` ranges, or a stream nested i
 read as a stream of bits, the order of its blocks is reversed where the operator says so, and the
 members are filled from the most significant end. Held as a kind of join, it let a `with` range
 stand anywhere a join's member could, and every other form of write refused it by hand.
+
+A select of a join arises only where a modport's name stands for a concatenation (LRM 25.5.4), since
+a concatenation written in place cannot be selected as a target. A select over one place is a step
+of the place; over a join it is a node of its own, the join and the position, as a library type
+standing for scattered storage composes a view over another view. It is written by giving each
+member the whole value at the same bits counted from where the member begins, which the member's own
+slice write keeps the bits it has of (LRM 11.5.1), so the position may be one the program computes;
+read first, it is the join's value and then the select. A position the unit knows is the same node:
+cutting it into exact slices of the members is what an optimizer does with the constant, as a C++
+view's constant position is made exact by inlining, and no reader of the node needs it cut. The view
+lives in the lowering and not in the runtime library because the library is built once, for both
+backends, through a fixed interface: a view generic over how many places a use joins and where they
+lie is generic over the use, which only the compiler, at the use, can spell out, and a write here
+also has a kind per place (D2) that a view below the lowering would carry again.
 
 **D2. Every kind of write asks the lvalue for its shares and makes its own kind of write to each.**
 A share is one place and the value it takes, and it is handed to the write in order, as it is cut.
@@ -111,8 +126,8 @@ nonblocking assignment and the standard says nothing for a blocking one; Go's tw
 evaluator both locate first, and it makes the two forms name the same places.
 
 **D5. MIR carries none of this.** What reaches it is a local holding the value, reads of parts of
-it, and writes to one place each. No peer language has a place that is several places, and a backend
-that met one would have to decide the cut.
+it, and writes to one place each. A place that is several places would have each backend decide the
+cut, and nothing would hold the two cuts alike.
 
 **D6. A write to one place stays the store it was.** An assignment whose left side is one place is
 lowered as before, with no local and no block; only a join becomes a sequence of steps. This is
@@ -120,8 +135,10 @@ rustc's early return for an ordinary left side.
 
 ## Rejected
 
-- **A join as a target in MIR, distributed by each backend.** It fails MIR's purpose, since no
-  language MIR is a peer of has such a place, and it puts the cut in two places that must agree.
+- **A join as a target in MIR, distributed by each backend.** It puts the cut in two places that
+  must agree. (This alternative was first rejected as a place no peer language has; clang's AST does
+  have one, a vector swizzle, and its code generation expands it -- which is the layer that answers
+  here.)
 - **Cloning the left side to read it** (Verilator's `l = l op r`). An expression named twice is
   evaluated twice, which is the defect LRM 11.4.1 rules out and the one this project has met
   repeatedly; settling once and loading is the form that cannot make it.
