@@ -19,6 +19,7 @@
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/linkage.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -149,13 +150,14 @@ class LirDumper {
     Dedent();
   }
 
-  [[nodiscard]] static auto LinkageName(Linkage linkage) -> std::string_view {
+  [[nodiscard]] static auto LinkageName(support::Linkage linkage)
+      -> std::string_view {
     switch (linkage) {
-      case Linkage::kInternal:
+      case support::Linkage::kInternal:
         return "internal";
-      case Linkage::kExternal:
+      case support::Linkage::kExternal:
         return "external";
-      case Linkage::kShared:
+      case support::Linkage::kShared:
         return "shared";
     }
     throw InternalError("lir dump: unknown linkage");

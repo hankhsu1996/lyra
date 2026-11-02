@@ -270,24 +270,25 @@ auto RenderUnitFiles(
   }
 
   // What nothing outside this file names -- the classes realizing the unit's
-  // scopes, its closures, the functions only its own bodies call -- is in the
-  // namespace with no name, so another body of the unit stating its own under
-  // the same names is no conflict. Their members are still defined in the
-  // unit's namespace, which encloses it.
+  // scopes, its closures, the functions only its own bodies call, the
+  // constants and member tables its code names -- is in the namespace with no
+  // name, so another body of the unit stating its own under the same names is
+  // no conflict. Their members are still defined in the unit's namespace,
+  // which encloses it.
   TargetText own_declarations;
   AppendSection(own_declarations, forwards.code);
   AppendSection(own_declarations, callables.of_artifact.signature);
+  AppendSection(own_declarations, enum_tables);
+  {
+    const TargetText::Section constants(own_declarations);
+    RenderIntegralConstants(unit, report, own_declarations);
+  }
   TargetText own_classes;
   AppendSection(own_classes, classes.internal);
   AppendSection(own_classes, closures.declarations);
 
   TargetText realized;
   AppendSectionInUnnamedNamespace(realized, own_declarations);
-  AppendSection(realized, enum_tables);
-  {
-    const TargetText::Section constants(realized);
-    RenderIntegralConstants(unit, report, realized);
-  }
   AppendSection(realized, records.code);
   AppendSectionInUnnamedNamespace(realized, own_classes);
   AppendSection(realized, variables.code);

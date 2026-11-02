@@ -32,6 +32,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/float_width.hpp"
+#include "lyra/support/linkage.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -259,9 +260,24 @@ void RenderReferenceExpr(
             view.NameEnumTable(r.table);
             Write(out, CppEnumTableName(r.table));
           },
+          // A constant is its value, named where only this file defines what
+          // names it, since a named one is built once. A definition another
+          // file may keep instead of this one writes the value itself: C++
+          // asks the names of every copy to denote the same entities, which a
+          // constant of this file's own does only where it is never bound to
+          // a reference ([basic.def.odr]), and these are.
           [&](const mir::IntegralConstantRef& r) {
-            view.NameConstant(r.constant);
-            Write(out, CppIntegralConstantName(r.constant));
+            switch (view.Linkage()) {
+              case support::Linkage::kInternal:
+              case support::Linkage::kExternal:
+                view.NameConstant(r.constant);
+                Write(out, CppIntegralConstantName(r.constant));
+                return;
+              case support::Linkage::kShared:
+                Write(out, CppIntegralLiteral(view.Unit(), r.constant));
+                return;
+            }
+            throw InternalError("backend::cpp: unknown linkage");
           },
           [&](const mir::StaticPropertyRef& r) {
             const mir::Class& owner_cls = view.Unit().GetClass(r.owner);

@@ -25,11 +25,11 @@
 #include "lyra/lir/enum_table_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
-#include "lyra/lir/linkage.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/value_step.hpp"
 #include "lyra/support/declared_member_storage.hpp"
 #include "lyra/support/layout.hpp"
+#include "lyra/support/linkage.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/integral.hpp"
@@ -58,7 +58,7 @@ struct StaticStorage;
 namespace lyra::backend::llvm_backend {
 
 // How a symbol linked as `linkage` says is linked here.
-auto LinkageOf(lir::Linkage linkage) -> llvm::GlobalValue::LinkageTypes;
+auto LinkageOf(support::Linkage linkage) -> llvm::GlobalValue::LinkageTypes;
 
 // Where the storage of one declaration's own members sits in a value of it,
 // laid out after whatever the declaration extends: what each member holds and

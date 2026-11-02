@@ -20,6 +20,10 @@ auto ResolveShippedExamples() -> std::filesystem::path;
 // listing nothing for an object it cannot read and still exiting 0.
 auto ResolveLlvmNm() -> std::filesystem::path;
 
+// The object dumper of the same release, for what the lister does not say: the
+// relocations each section of an object carries.
+auto ResolveLlvmObjdump() -> std::filesystem::path;
+
 // The clang++ of the LLVM release Lyra links, as this run was given it. A test
 // whose answer depends on what clang makes of a program names this one rather
 // than whatever a machine has on PATH, so it gives the same answer wherever it

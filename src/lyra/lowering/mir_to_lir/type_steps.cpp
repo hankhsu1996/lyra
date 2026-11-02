@@ -13,13 +13,13 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
-#include "lyra/lir/linkage.hpp"
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/value_step.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
+#include "lyra/support/linkage.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -39,7 +39,7 @@ class StepBody {
       lir::TypeId result_type, bool answers) {
     fn_.name = std::move(name);
     fn_.result_type = result_type;
-    fn_.linkage = lir::Linkage::kInternal;
+    fn_.linkage = support::Linkage::kInternal;
     for (const lir::TypeId param : params) {
       fn_.params.push_back(fn_.values.Add(
           lir::Local{

@@ -15,6 +15,7 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/linkage.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -31,30 +32,30 @@ struct UnitRenderReport {
   std::set<mir::EnumTableId> enum_tables_named;
 };
 
-// Where the render is in the MIR: the unit, the function, and the current
-// block. It holds what an arm needs to look up a child node, and where to
-// report what writing a node leaves behind; a new one is made for each block
-// entered.
+// Where the render is in the MIR: the unit, the function, the current block,
+// and how what is being written is linked. It holds what an arm needs to look
+// up a child node, and where to report what writing a node leaves behind; a new
+// one is made for each block entered.
 //
 // A constant's value belongs to no function; asking for one is a compiler bug.
 class ScopeView {
  public:
-  // A function's body, whatever owns the function.
+  // A function's body, whatever owns the function, defined under `linkage`.
   static auto ForCode(
       const mir::CompilationUnit& unit, const mir::CallableCode& code,
-      UnitRenderReport& report) -> ScopeView {
-    return ScopeView{unit, &code, code.Body(), report};
+      support::Linkage linkage, UnitRenderReport& report) -> ScopeView {
+    return ScopeView{unit, &code, code.Body(), linkage, report};
   }
 
   // A constant's value: one expression, in no function, so it uses no local.
   static auto ForConstant(
       const mir::CompilationUnit& unit, const mir::Block& block,
-      UnitRenderReport& report) -> ScopeView {
-    return ScopeView{unit, nullptr, block, report};
+      support::Linkage linkage, UnitRenderReport& report) -> ScopeView {
+    return ScopeView{unit, nullptr, block, linkage, report};
   }
 
   [[nodiscard]] auto WithBlock(const mir::Block& child) const -> ScopeView {
-    return ScopeView{*unit_, code_, child, *report_};
+    return ScopeView{*unit_, code_, child, linkage_, *report_};
   }
 
   ScopeView(const ScopeView&) = delete;
@@ -81,6 +82,12 @@ class ScopeView {
 
   [[nodiscard]] auto Expr(mir::ExprId id) const -> const mir::Expr& {
     return block_->exprs.Get(id);
+  }
+
+  // How the definition being written is linked, which decides whether a
+  // constant it reads is named or written as its value.
+  [[nodiscard]] auto Linkage() const -> support::Linkage {
+    return linkage_;
   }
 
   // Reports a node this target has no form for, and goes on: no entry reads
@@ -110,13 +117,19 @@ class ScopeView {
  private:
   ScopeView(
       const mir::CompilationUnit& unit, const mir::CallableCode* code,
-      const mir::Block& block, UnitRenderReport& report)
-      : unit_(&unit), code_(code), block_(&block), report_(&report) {
+      const mir::Block& block, support::Linkage linkage,
+      UnitRenderReport& report)
+      : unit_(&unit),
+        code_(code),
+        block_(&block),
+        linkage_(linkage),
+        report_(&report) {
   }
 
   const mir::CompilationUnit* unit_;
   const mir::CallableCode* code_;
   const mir::Block* block_;
+  support::Linkage linkage_;
   UnitRenderReport* report_;
 };
 

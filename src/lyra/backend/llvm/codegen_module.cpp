@@ -135,13 +135,13 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
 // A definition several artifacts write is one the link keeps one of, which
 // is what every target spells as a weak definition; one this artifact owns is
 // written once and a repeat of it is a program that does not link.
-auto LinkageOf(lir::Linkage linkage) -> llvm::GlobalValue::LinkageTypes {
+auto LinkageOf(support::Linkage linkage) -> llvm::GlobalValue::LinkageTypes {
   switch (linkage) {
-    case lir::Linkage::kInternal:
+    case support::Linkage::kInternal:
       return llvm::GlobalValue::InternalLinkage;
-    case lir::Linkage::kExternal:
+    case support::Linkage::kExternal:
       return llvm::GlobalValue::ExternalLinkage;
-    case lir::Linkage::kShared:
+    case support::Linkage::kShared:
       return llvm::GlobalValue::WeakODRLinkage;
   }
   throw InternalError("llvm codegen: unknown linkage");

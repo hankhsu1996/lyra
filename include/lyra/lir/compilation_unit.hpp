@@ -21,7 +21,6 @@
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
-#include "lyra/lir/linkage.hpp"
 #include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -29,6 +28,7 @@
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/linkage.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -145,7 +145,7 @@ struct Constant {
 // which is stated here and composed nowhere below.
 struct GlobalConstant {
   std::string symbol;
-  Linkage linkage = Linkage::kInternal;
+  support::Linkage linkage = support::Linkage::kInternal;
   Constant initializer;
 };
 
@@ -192,7 +192,7 @@ struct Class {
   support::ClassName identity;
   // How everything this class links under is linked: its definition, how its
   // objects are created and ended, and its bodies.
-  Linkage linkage = Linkage::kExternal;
+  support::Linkage linkage = support::Linkage::kExternal;
   // The type of what this class's members are placed after -- the class it
   // extends, of this unit or another, or a class of the runtime library -- and
   // absent for an interface, which holds no storage and of which no value
@@ -253,7 +253,7 @@ struct RecordDecl {
   support::DefPath path;
   // How everything this record links under is linked: its type and its
   // methods.
-  Linkage linkage = Linkage::kExternal;
+  support::Linkage linkage = support::Linkage::kExternal;
   RecordKind kind;
   std::vector<TypeId> elements;
   std::vector<RecordMethod> methods;
@@ -308,10 +308,10 @@ struct CompilationUnit {
   std::map<std::pair<TypeId, ValueStep>, FunctionId> type_steps;
   std::vector<StaticStorage> static_storage;
   // The read-only data the unit defines. What the runtime library reads of each
-  // class -- its record of the class, under the class's linkage and definition
-  // symbol, and the constants that record points at, under internal linkage --
-  // is here, except the tables of the bodies its objects dispatch through,
-  // which the class states and a target lays out.
+  // class -- its record of the class, under its definition symbol, and the
+  // constants that record points at, all linked as the class is -- is here,
+  // except the tables of the bodies its objects dispatch through, which the
+  // class states and a target lays out.
   std::vector<GlobalConstant> constants;
   // Each enumeration member table the unit holds, which an operand names.
   base::Translation<EnumTableId, EnumTableDecl> enum_tables;

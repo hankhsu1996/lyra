@@ -24,6 +24,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/linkage.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -31,6 +32,7 @@
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir_transform/block_rebuild.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/linkage.hpp"
 
 namespace lyra::mir_transform {
 
@@ -716,8 +718,12 @@ auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
     // A body changes its signature here, which only every caller's unit can
     // keep up with, so a class another unit can name keeps its bodies as they
     // are, as LLVM rewrites only a function of local linkage.
-    if (mir::IsPublished(unit, owner)) {
-      continue;
+    switch (mir::LinkageOf(unit, owner)) {
+      case support::Linkage::kInternal:
+        break;
+      case support::Linkage::kExternal:
+      case support::Linkage::kShared:
+        continue;
     }
     const mir::Class& cls = unit.GetClass(owner);
     for (const mir::CallableId slot : cls.callables.Ids()) {
