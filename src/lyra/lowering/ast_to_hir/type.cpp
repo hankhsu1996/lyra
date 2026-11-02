@@ -955,7 +955,7 @@ auto UnitLowerer::MakeCalleeInterface(
   return hir::CalleeInterface{
       .kind = ToHirSubroutineKind(sym.subroutineKind),
       .params = std::move(params),
-      .track_caller = DeclaredInLibraryText(sym)};
+      .track_caller = TracksCaller(sym)};
 }
 
 auto UnitLowerer::MakeClassPropertyTarget(

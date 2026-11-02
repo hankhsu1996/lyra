@@ -183,7 +183,12 @@ the design's call that reached it, since its own lines mean nothing to whoever w
 a body is handed where it was called as a parameter of its own, last, and every call it makes hands
 that on, as does a closure it builds, exactly as a Rust function marked `#[track_caller]` is handed
 its caller's location and forwards it. A body generated for a type's operation that can report is
-one of these. A body the design wrote hands each call its own place.
+one of these, and so is the body written for a subroutine an interface leaves to a connected module
+(LRM 25.7), which the source gives none: a call of an `extern forkjoin` task no module defines is
+that call's error (LRM 25.7.4). Whether a subroutine reports at its caller is stated on its
+declaration, which a unit's signature carries, so every unit calling it hands the same arguments, as
+rustc carries the mark in a crate's metadata and gives it to every shim standing for the function. A
+body the design wrote hands each call its own place.
 
 The file name a program states is what `` `__FILE__ `` expands to at that place, which the front end
 answers, so a report and the directive never differ. LRM 20.10 requires exactly that of a severity

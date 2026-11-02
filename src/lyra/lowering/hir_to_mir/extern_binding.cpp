@@ -85,16 +85,22 @@ auto BodyOfPrototype(
     params.push_back(code.AddLocal(prototype.locals.Get(param).type));
   }
   code.receiver = params.front();
+  if (prototype.caller_location.has_value()) {
+    code.caller_location = params.back();
+  }
   code.params = std::move(params);
   code.body.emplace();
   return code;
 }
 
-// The formals of `code` past its object, each read as what it holds.
+// The formals of `code` past its object, each read as what it holds. Where the
+// body was called is no formal: the stage that states it hands it to every
+// call taking one, and a definition the design wrote takes none.
 auto FormalsOf(mir::Builder block, const mir::CallableCode& code)
     -> std::vector<mir::ExprId> {
   std::vector<mir::ExprId> formals;
   for (const mir::LocalId param : code.ParamsAfterReceiver()) {
+    if (param == code.caller_location) continue;
     formals.push_back(block.ReadLocal(param, code.locals.Get(param).type));
   }
   return formals;

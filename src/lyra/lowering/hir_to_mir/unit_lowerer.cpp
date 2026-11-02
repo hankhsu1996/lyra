@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <deque>
 #include <expected>
 #include <format>
@@ -43,7 +42,6 @@
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
@@ -63,7 +61,6 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/dump.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -1434,7 +1431,8 @@ auto UnitLowerer::DeclarePublishedScopeClass(
   // extends the class, and its own unit makes every object of it, so nothing
   // here needs its size. A published subroutine is a virtual method it
   // introduces and leaves to the classes realizing the scope, in the order the
-  // signature gives them.
+  // signature gives them, stated with what a call of it hands over, as the
+  // unit defining it states it.
   mir::Class declared = IncompleteClass(id, key.unit_name, key.class_path);
   declared.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
   std::vector<mir::FieldId> slots;
@@ -1455,7 +1453,7 @@ auto UnitLowerer::DeclarePublishedScopeClass(
             .name = callable.name,
             .body = declared.callables.Add(
                 mir::CallableDecl{
-                    .code = {},
+                    .code = PrototypeOf(*this, callable, SelfPointerTo(id)),
                     .foreign = std::nullopt,
                     .virtual_dispatch =
                         mir::IntroducesVirtualSlot{.is_pure = true},
@@ -1468,7 +1466,7 @@ auto UnitLowerer::DeclarePublishedScopeClass(
             .name = binding.bind_name,
             .body = declared.callables.Add(
                 mir::CallableDecl{
-                    .code = {},
+                    .code = binding.bind_prototype,
                     .foreign = std::nullopt,
                     .virtual_dispatch =
                         mir::IntroducesVirtualSlot{.is_pure = true},

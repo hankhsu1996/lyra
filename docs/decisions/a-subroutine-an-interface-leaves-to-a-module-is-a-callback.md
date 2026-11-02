@@ -85,11 +85,12 @@ the body is one branch of a `fork ... join`, and that branch starts one `join_no
 definition, then does `wait fork`. It is a new process, so the definitions are the only children
 `wait fork` waits for, and any process the caller already started is left alone.
 
-No connected module defining the task is a run-time error, and the call returns at once. LRM 25.7.4
-says it returns with no effect, and that holds except for an `output` formal, which the caller
-writes back from the completion as it does for any call, so it receives the formal's default. Not
-writing it needs a call that can complete without a completion, and the program has already reported
-an error.
+No connected module defining the task is a run-time error, reported at the call, and the call
+returns at once. The body is the tool's, so it reports at its caller as any body of the tool's does.
+LRM 25.7.4 says it returns with no effect, and that holds except for an `output` formal, which the
+caller writes back from the completion as it does for any call, so it receives the formal's default.
+Not writing it needs a call that can complete without a completion, and the program has already
+reported an error.
 
 A branch started by `join_none` may run past the frame starting it, so it cannot refer to that
 frame's storage. The formals of such a task have their lifetime extended (LRM 6.21), as a formal

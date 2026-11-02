@@ -480,7 +480,7 @@ auto LowerSubroutineDeclImpl(
               .body = std::move(body),
               .root_stmt = root_stmt,
               .reads = std::move(reads),
-              .track_caller = DeclaredInLibraryText(sym),
+              .track_caller = TracksCaller(sym),
               .span = frontend::PointSpanOf(sym.location)},
       .base_arguments = std::move(base_arguments)};
 }
@@ -497,6 +497,11 @@ auto EvaluatesItsOwnDefaults(const slang::ast::SubroutineSymbol& callee)
   }
   const slang::ast::ClassType* cls = DeclaringClassOf(callee);
   return cls == nullptr || !cls->isInterface;
+}
+
+auto TracksCaller(const slang::ast::SubroutineSymbol& callee) -> bool {
+  return DeclaredInLibraryText(callee) ||
+         callee.flags.has(slang::ast::MethodFlags::InterfaceExtern);
 }
 
 auto OmitsArgument(const slang::ast::CallExpression& call, std::size_t position)

@@ -2013,9 +2013,9 @@ TEST(LyraRun, ACoverStatementIsOneGoalAcrossSpecializations) {
 
 // A task an interface leaves to a connected module has no body of its own, so
 // a failure of what the tool writes for it -- no module defining an `extern
-// forkjoin` task that is called (LRM 25.7.4) -- names the task's declaration,
-// which is where the user supplies a definition.
-TEST(LyraRun, AnExternTaskWithNoDefinitionNamesItsDeclaration) {
+// forkjoin` task that is called (LRM 25.7.4) -- names the call, from another
+// unit than the interface's.
+TEST(LyraRun, AnExternTaskWithNoDefinitionNamesTheCall) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
@@ -2037,7 +2037,7 @@ TEST(LyraRun, AnExternTaskWithNoDefinitionNamesItsDeclaration) {
     EXPECT_THAT(run, ExitedWithCode(0)) << backend << ": " << run.stderr_text;
     EXPECT_EQ(
         run.stderr_text,
-        "extern.sv:2:24: error: no connected module defines the task 'Ping'\n"
+        "extern.sv:6:11: error: no connected module defines the task 'Ping'\n"
         "note: in 'Top' at time 0\n")
         << backend;
   }

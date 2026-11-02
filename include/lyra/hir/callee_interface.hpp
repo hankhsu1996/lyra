@@ -44,9 +44,11 @@ struct CalleeParam {
 //
 // `track_caller` is whether a failure the callee's body reports is placed at
 // the call rather than inside the body, as rustc's attribute of that name says
-// of a function: it is so for a body of the tool's own text, whose lines mean
-// nothing to whoever wrote the call. A call to such a callee hands it where
-// the call was written, and the body hands that on to everything it calls.
+// of a function: it is so for a body no design wrote, whose lines mean nothing
+// to whoever wrote the call -- one of the tool's own text, and the one written
+// for a subroutine an interface leaves to a connected module (LRM 25.7). A
+// call to such a callee hands it where the call was written, and the body
+// hands that on to everything it calls.
 struct CalleeInterface {
   SubroutineKind kind = SubroutineKind::kFunction;
   std::vector<CalleeParam> params;
