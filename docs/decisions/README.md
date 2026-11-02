@@ -1199,11 +1199,13 @@ the detail lives in the entry itself.
 - [a-published-operation-is-compiled-once](a-published-operation-is-compiled-once.md) -- a function
   the runtime publishes is compiled in the runtime's own artifact and a unit emits a call, and a
   family the library parameterizes over the value domains is stated once there; constructing and
-  destroying what the runtime defines is the library's too, and a test reads the objects to hold it.
+  destroying what the runtime defines is the library's too, a member a unit calls carries no
+  constraint since the two compilers spell one differently, and a test reads the objects to hold it.
   Measured: one wait stated in a unit cost 400,064 bytes of object, and a 32-unit design's objects
   went from 26.6 MB to 6.7 MB. Declaring the variant itself already compiled, moving functions
-  without the families, writing family members `inline`, checking headers by shape, and moving the
-  value operations a caller's operands fold are rejected.
+  without the families, writing family members `inline`, checking headers by shape, moving the value
+  operations a caller's operands fold, and compiling the runtime under an older clang ABI are
+  rejected.
 - [a-program-is-kept-by-what-built-it](a-program-is-kept-by-what-built-it.md) -- a built program is
   kept in one store per user under a name computed from what the expensive half of the build reads,
   never from the SystemVerilog sources, so checkouts that differ never share an entry and ones that

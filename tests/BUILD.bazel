@@ -871,8 +871,9 @@ cc_test(
     srcs = ["runtime_surface_test.cpp"],
     copts = LYRA_COPTS,
     # Emits a design, compiles its units against the shipped headers with the
-    # clang of the release Lyra links, and reads what each object defines with
-    # that release's symbol lister.
+    # clang of the release Lyra links and with the executing machine's GCC, and
+    # reads what each object defines and asks for with that release's symbol
+    # lister.
     data = [
         "//:lyra",
         "@llvm//:builtin_resource_dir",

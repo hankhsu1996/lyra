@@ -20,14 +20,14 @@ target that runs a design needs one, and a compiler spawned from inside a test i
 action: it is whatever the executing machine has on its PATH. The remote image has the platform's
 own C++ compiler and no clang, and Lyra takes whichever of the two it finds. A test whose answer is
 about clang is therefore handed the clang of the release Lyra links, as a declared input, and runs
-remotely like any other: `runtime_surface_test` measures the objects that clang produces from an
-emitted unit, `prepared_header_test` asks the same questions of it and of the executing machine's
-GCC side by side, and `values_off_the_stack_cpp_tests` builds its program with it. That clang is the
-compiler and its headers and no more, so a question about what a whole clang installation does --
-its default linker reading bitcode, its sanitizer's headers -- is asked of the clang a machine has
-installed, by a test carrying `no-remote-exec`: `emitted_project_tests`, whose link-time cases
-compile the runtime beside the design. A target kept out of the gate should be kept out for its own
-reason, never for a neighbour's.
+remotely like any other: `runtime_surface_test` measures the objects that clang and the executing
+machine's GCC produce from an emitted unit, `prepared_header_test` asks its questions of the same
+two side by side, and `values_off_the_stack_cpp_tests` builds its program with that clang. That
+clang is the compiler and its headers and no more, so a question about what a whole clang
+installation does -- its default linker reading bitcode, its sanitizer's headers -- is asked of the
+clang a machine has installed, by a test carrying `no-remote-exec`: `emitted_project_tests`, whose
+link-time cases compile the runtime beside the design. A target kept out of the gate should be kept
+out for its own reason, never for a neighbour's.
 
 **What the CLI suite cost was once "a fraction of a minute", and by 2026-09-22 it was 117 s of
 processor time and the longest target in the gate -- about four times the corpus run beside it.**
@@ -401,9 +401,11 @@ analyzed and its error would otherwise read as one more finding.
 
 `host-cxx-nightly.yml` runs the `nightly` target. It **gates its own run**: a corpus case that stops
 passing is a regression, and a red nightly is the thing to act on that day. Its actions run on the
-runner, under the clang installed there, because a developer's own run of the set already answers
-for the remote image's GCC; they keep their results in the shared cache where the key is set, so a
-night compiles what changed rather than the whole of Lyra and LLVM on four cores.
+runner, under the clang installed there, and they keep their results in the shared cache where the
+key is set, so a night compiles what changed rather than the whole of Lyra and LLVM on four cores.
+No scheduled job compiles the corpus's emitted text under GCC; what the gate holds of that is that a
+unit GCC compiles finds in the library every name it calls, which `runtime_surface_test` reads off
+the objects.
 
 `asan-nightly.yml` runs the merge gate's own set under the address sanitizer -- the gate's set and
 not the `nightly` complement, because the compiler it is watching is exercised there rather than in

@@ -1329,18 +1329,12 @@ class ResolvedNet<T> : public Observable {
   // positions of its value, which its type numbers part by part.
   auto BeginTakeover(
       std::int64_t level, std::int64_t first, std::int64_t count,
-      TakePositionsOf<T> take_positions) -> std::int64_t {
+      TakePositionsOf<T> take_positions = {}) -> std::int64_t {
     if (takeovers_ == nullptr) {
-      takeovers_ = std::make_unique<Takeovers<T>>();
+      takeovers_ = std::make_unique<Takeovers<T>>(take_positions);
     }
     return std::int64_t{takeovers_->Begin(
-        TakeoverLevelOf(level), PositionsNamed(first, count), take_positions)};
-  }
-  auto BeginTakeover(std::int64_t level, std::int64_t first, std::int64_t count)
-      -> std::int64_t
-    requires(!value::LaidOutByType<T>)
-  {
-    return BeginTakeover(level, first, count, {});
+        TakeoverLevelOf(level), PositionsNamed(first, count))};
   }
 
   auto DriveTakeover(

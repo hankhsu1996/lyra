@@ -1,6 +1,6 @@
 # A published operation is compiled once
 
-Date: 2026-09-23 Status: accepted
+Date: 2026-09-23 Status: accepted. Extended 2026-11-01: a member a unit calls carries no constraint.
 
 ## What this decides
 
@@ -8,11 +8,13 @@ Date: 2026-09-23 Status: accepted
 it emits a call.** Where the function is a template the library parameterizes over a set it
 enumerates itself, the library states that specialization once and the header says so, which leaves
 the definition where it is written. That covers constructing and destroying what the runtime
-defines, which is where most of a unit's copies turned out to hide.
+defines, which is where most of a unit's copies turned out to hide. A member a unit calls on such a
+family carries no constraint, since the unit and the library may be compiled by different compilers.
 
 **What a unit's object may define of the runtime's is checked on the object, not on the headers.** A
 test emits a design, compiles every unit, and fails naming each runtime definition an object holds
-that no design decision explains.
+that no design decision explains. A second reads what a unit GCC compiled asks for, and fails naming
+each name the library does not define.
 
 ## Why
 
@@ -66,6 +68,19 @@ in its own source file. Emitted code also names two value types no design shapes
 the empty product a body completes with when it produces nothing, so the families over those are
 declared too.
 
+**A member a unit calls on a family stated once carries no constraint.** The library is compiled by
+the pinned clang and a unit by whichever compiler the user has, so what a unit calls there is a name
+two compilers have to spell alike, and the Itanium ABI states no spelling of a constraint: clang
+writes a requires-clause into a member's name, GCC 13 does not, and GCC 14 writes constraints on
+function templates. What differs by type goes in the body, or in a default argument, which is
+instantiated only where a call leaves it out: a takeover is handed how to show what it holds, a type
+the library is compiled with defaults it, and a type laid out at run time has no default, so a call
+that leaves it out does not compile. A function template stated once takes no concept in its head,
+for the same reason. libstdc++ 13 states `basic_string` as already compiled and no member of it
+carries a requires-clause; libc++ marks each member outside its library's ABI with an attribute
+leaving it out of the explicit instantiation, which GCC does not have. A unit of the design's own
+family is free of this, since it compiles those members itself.
+
 **What only the library reaches stays in the header.** The engine asks an event control whether a
 change was an event on every change it reaches; moved into a source file of its own, that question
 became a call from the engine's other sources, and putting it back in the header took 2.3% off
@@ -116,12 +131,17 @@ a packed value compiles to, so the library publishes those definitions deliberat
 an optimized build folds against the widths a design fixed. The line is not a size but who chooses
 the parameter.
 
+**Compiling the runtime with `-fclang-abi-compat` set before clang wrote constraints into names.**
+It matches GCC 13 and parts with any compiler that does write them, so the library would answer one
+compiler's release rather than whichever the user has.
+
 ## What is left
 
 What a unit's object holds of the runtime is what its design decided: families over the value types
 it composed, the templates it instantiated over its own lambdas, and a fork's branch count. Two
 single comparisons the write path asks on every store are written in the header on purpose, and the
-test names them as such.
+test names them as such. A port of a value type the library compiles once is not yet there: a unit
+holding one defines the reference's constructor and the function that binds it itself.
 
 What else a unit holds is its own: its classes, and the value operations it performs, which the
 library publishes so that an optimized build folds them against the widths a design fixed.

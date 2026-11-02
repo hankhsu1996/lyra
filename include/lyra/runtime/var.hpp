@@ -307,9 +307,10 @@ class CellRareState final : public RareWriteState {
     return sampled_.get();
   }
 
-  [[nodiscard]] auto Takeovers() -> runtime::Takeovers<Owned>& {
+  [[nodiscard]] auto Takeovers(TakePositionsOf<Owned> take_positions)
+      -> runtime::Takeovers<Owned>& {
     if (takeovers_ == nullptr) {
-      takeovers_ = std::make_unique<runtime::Takeovers<Owned>>();
+      takeovers_ = std::make_unique<runtime::Takeovers<Owned>>(take_positions);
     }
     return *takeovers_;
   }
@@ -419,18 +420,11 @@ class Cell : public VariableCell {
   // positions from `first` of the cell's value, as its type numbers them,
   // superseding whatever was driving them at that level, and answers with the
   // generation its evaluation carries (LRM 10.6). `take_positions` is how the
-  // takeover shows what it holds.
+  // takeover shows what it holds: a type the library is compiled with needs
+  // none handed, and any other has to be.
   auto BeginTakeover(
       std::int64_t level, std::int64_t first, std::int64_t count,
-      TakePositionsOf<Owned> take_positions) -> std::int64_t;
-  // The same of a value of a type the library is compiled with, which shows
-  // what it holds by its own operations.
-  auto BeginTakeover(std::int64_t level, std::int64_t first, std::int64_t count)
-      -> std::int64_t
-    requires(!value::LaidOutByType<Owned>)
-  {
-    return BeginTakeover(level, first, count, {});
-  }
+      TakePositionsOf<Owned> take_positions = {}) -> std::int64_t;
 
   // States what the takeover at `level` has evaluated to, as a value of the
   // cell's type of which the positions it holds are read. It reaches the cell
@@ -1054,14 +1048,7 @@ class VariableRef {
   // assignment gives it storage of its own to name until it ends.
   [[nodiscard]] auto BeginTakeover(
       std::int64_t level, std::int64_t first, std::int64_t count,
-      TakePositionsOf<T> take_positions) const -> std::int64_t;
-  [[nodiscard]] auto BeginTakeover(
-      std::int64_t level, std::int64_t first, std::int64_t count) const
-      -> std::int64_t
-    requires(!value::LaidOutByType<T>)
-  {
-    return BeginTakeover(level, first, count, {});
-  }
+      TakePositionsOf<T> take_positions = {}) const -> std::int64_t;
   [[nodiscard]] auto DriveTakeover(
       std::int64_t level, std::int64_t generation, const T& new_val) const
       -> bool;
@@ -1316,8 +1303,10 @@ template <class HeldAs>
 auto Cell<HeldAs>::BeginTakeover(
     std::int64_t level, std::int64_t first, std::int64_t count,
     TakePositionsOf<Owned> take_positions) -> std::int64_t {
-  return std::int64_t{RareState().Takeovers().Begin(
-      TakeoverLevelOf(level), PositionsNamed(first, count), take_positions)};
+  return std::int64_t{
+      RareState()
+          .Takeovers(take_positions)
+          .Begin(TakeoverLevelOf(level), PositionsNamed(first, count))};
 }
 
 template <class HeldAs>

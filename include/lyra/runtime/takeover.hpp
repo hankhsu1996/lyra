@@ -64,7 +64,11 @@ struct TakePositionsOf {
 // the takeover is handed where it begins, since nothing else asks for it.
 template <value::LaidOutByType T>
 struct TakePositionsOf<T> {
-  value::TakePositionsWitness take = nullptr;
+  explicit TakePositionsOf(value::TakePositionsWitness witness)
+      : take(witness) {
+  }
+
+  value::TakePositionsWitness take;
 
   [[nodiscard]] auto Taken(
       const T& into, const T& from, std::int64_t first,
@@ -135,14 +139,17 @@ class HeldPositions {
 template <class T>
 class Takeovers {
  public:
+  // `take_positions` is how what a takeover holds is shown, the same of every
+  // takeover of the value.
+  explicit Takeovers(TakePositionsOf<T> take_positions = {})
+      : take_positions_(take_positions) {
+  }
+
   // Begins a takeover at `level` over `positions`, which every other takeover
   // at that level stops holding, and answers with its generation. A value held
-  // whole is always named whole, as its one position. `take_positions` is how
-  // what a takeover holds is shown, the same at every beginning.
-  auto Begin(
-      support::TakeoverLevel level, value::BitPositions positions,
-      TakePositionsOf<T> take_positions) -> std::uint32_t {
-    take_positions_ = take_positions;
+  // whole is always named whole, as its one position.
+  auto Begin(support::TakeoverLevel level, value::BitPositions positions)
+      -> std::uint32_t {
     Remove(level, positions);
     const std::uint32_t generation = ++GenerationOf(level);
     // Built where it is kept, since its value may be larger than a frame keeps.
