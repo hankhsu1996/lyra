@@ -167,10 +167,9 @@ auto TakeoverParts(
     -> diag::Result<std::vector<TakenPart>> {
   auto lvalue = LowerLvalue(process, target, frame);
   if (!lvalue) return std::unexpected(std::move(lvalue.error()));
-  std::vector<AccessPath> named;
-  ForEachPlace(
-      *lvalue, [&](const AccessPath& place) { named.push_back(place); });
   mir::CompilationUnit& unit = process.Owner().Unit();
+  const std::vector<AccessPath> named =
+      PlacesWritten(unit, frame.Builder(), *lvalue);
   std::vector<TakenPart> parts;
   parts.reserve(named.size());
   for (const AccessPath& place : named) {

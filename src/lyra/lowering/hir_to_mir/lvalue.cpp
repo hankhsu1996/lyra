@@ -132,6 +132,25 @@ auto DistributeUnpacked(
   return {};
 }
 
+// `value`, held once as the bits of `type`, written whole to each place the
+// select reaches.
+void DistributeSlice(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    const LvalueSlice& slice, mir::TypeId type, mir::ExprId value,
+    const ShareSink& sink) {
+  mir::Builder block = frame.Builder();
+  const mir::ExprId held = EvaluatedOnce(
+      frame,
+      ConvertToType(unit, block, block.AsValue(unit.types, value), type));
+  for (AccessPath& place : SelectedParts(unit, block, slice, type)) {
+    const mir::TypeId bits = place.descent.back().part_type;
+    sink(
+        Share{
+            .place = std::move(place),
+            .value = ConvertToType(unit, block, held, bits)});
+  }
+}
+
 auto Distribute(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const Lvalue& lvalue,
     mir::ExprId value, const ShareSink& sink) -> diag::Result<void> {
@@ -158,11 +177,71 @@ auto Distribute(
                     }},
                 join.kind);
           },
+          [&](const LvalueSlice& slice) -> diag::Result<void> {
+            DistributeSlice(
+                unit_lowerer.Unit(), frame, slice, lvalue.type, value, sink);
+            return {};
+          },
           [&](const StreamTarget& stream) -> diag::Result<void> {
             return DistributeStreamTarget(
                 unit_lowerer, frame, stream, value, lvalue.span, sink);
           }},
       lvalue.form);
+}
+
+// Whether `expr` names a join a view's name stands for.
+template <ExprLowerer L>
+auto IsViewJoinName(const L& lowerer, const hir::Expr& expr) -> bool {
+  const std::optional<ViewNameUse> view = ViewNameUseOf(lowerer, expr);
+  return view.has_value() && IsViewJoin(lowerer.Owner(), *view);
+}
+
+// The base `expr` selects from, where it is a select.
+auto SelectedBaseOf(const hir::Expr& expr) -> std::optional<hir::ExprId> {
+  if (const auto* range = std::get_if<hir::RangeSelectExpr>(&expr.data)) {
+    return range->base_value;
+  }
+  if (const auto* element = std::get_if<hir::ElementSelectExpr>(&expr.data)) {
+    return element->base_value;
+  }
+  return std::nullopt;
+}
+
+// Whether `expr` selects bits of a join a view's name stands for.
+template <ExprLowerer L>
+auto IsSelectOfViewJoin(const L& lowerer, const hir::Expr& expr) -> bool {
+  const std::optional<hir::ExprId> base = SelectedBaseOf(expr);
+  return base.has_value() &&
+         IsViewJoinName(lowerer, lowerer.HirExprs().Get(*base));
+}
+
+// The select `expr` of a join a view's name stands for, with the handle that
+// reaches the join and the position evaluated here, once.
+template <ExprLowerer L>
+auto LowerSelectOfJoin(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<Lvalue> {
+  UnitLowerer& unit_lowerer = lowerer.Owner();
+  auto base = LowerLvalue(
+      lowerer, lowerer.HirExprs().Get(*SelectedBaseOf(expr)), frame);
+  if (!base) return std::unexpected(std::move(base.error()));
+  const mir::TypeId type = unit_lowerer.TranslateType(expr.type);
+  // `expr` is an element or a range select, which is what makes it a select.
+  const auto* range = std::get_if<hir::RangeSelectExpr>(&expr.data);
+  auto step = range != nullptr
+                  ? LowerSelectStep(lowerer, frame, *range, type)
+                  : LowerSelectStep(
+                        lowerer, frame,
+                        *std::get_if<hir::ElementSelectExpr>(&expr.data), type);
+  if (!step) return std::unexpected(std::move(step.error()));
+  return Lvalue{
+      .form =
+          LvalueSlice{
+              .join = std::get<LvalueJoin>(std::move(base->form)),
+              .start =
+                  EvaluatedOnce(frame, std::get<StepToBits>(step->to).start)},
+      .type = type,
+      .source_type = expr.type,
+      .span = expr.span};
 }
 
 }  // namespace
@@ -209,6 +288,9 @@ auto LowerLvalue(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     }
     return lower_join(pattern->elements, UnpackedJoin{}, type);
   }
+  if (IsSelectOfViewJoin(lowerer, expr)) {
+    return LowerSelectOfJoin(lowerer, expr, frame);
+  }
   if (const std::optional<ViewNameUse> view = ViewNameUseOf(lowerer, expr);
       view.has_value() && IsViewJoin(unit_lowerer, *view)) {
     auto parts = LowerViewNameParts(lowerer, frame, *view);
@@ -251,12 +333,68 @@ auto IsJoin(const L& lowerer, const hir::Expr& expr) -> bool {
       std::holds_alternative<hir::AssignmentPatternExpr>(expr.data)) {
     return true;
   }
-  const std::optional<ViewNameUse> view = ViewNameUseOf(lowerer, expr);
-  return view.has_value() && IsViewJoin(lowerer.Owner(), *view);
+  return IsViewJoinName(lowerer, expr) || IsSelectOfViewJoin(lowerer, expr);
 }
 
 template auto IsJoin(const ProcessLowerer&, const hir::Expr&) -> bool;
 template auto IsJoin(const StructuralScopeLowerer&, const hir::Expr&) -> bool;
+
+auto SelectedParts(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const LvalueSlice& slice, mir::TypeId type) -> std::vector<AccessPath> {
+  const std::uint64_t width = unit.types.Get(type).Integral().bit_width;
+  std::uint64_t below = 0;
+  for (const Lvalue& member : slice.join.members) {
+    below += unit.types.Get(member.type).Integral().bit_width;
+  }
+  std::vector<AccessPath> parts;
+  parts.reserve(slice.join.members.size());
+  for (const Lvalue& member : slice.join.members) {
+    const mir::IntegralType member_type =
+        unit.types.Get(member.type).Integral();
+    below -= member_type.bit_width;
+    parts.push_back(DescendInto(
+        std::get<AccessPath>(member.form),
+        DescentStep{
+            .to =
+                StepToBits{
+                    .start = BuildPositionSum(
+                        unit, block, slice.start,
+                        BuildConstantPosition(
+                            unit, block, -static_cast<std::int64_t>(below)))},
+            .part_type = mir::PackedVectorOf(
+                unit.types, width, member_type.state_kind)}));
+  }
+  return parts;
+}
+
+auto PlacesWritten(
+    const mir::CompilationUnit& unit, mir::Builder block, const Lvalue& lvalue)
+    -> std::vector<AccessPath> {
+  return std::visit(
+      Overloaded{
+          [](const AccessPath& place) { return std::vector{place}; },
+          [&](const LvalueJoin& join) {
+            std::vector<AccessPath> places;
+            for (const Lvalue& member : join.members) {
+              std::ranges::move(
+                  PlacesWritten(unit, block, member),
+                  std::back_inserter(places));
+            }
+            return places;
+          },
+          [&](const LvalueSlice& slice) {
+            return SelectedParts(unit, block, slice, lvalue.type);
+          },
+          [](const StreamTarget& stream) {
+            std::vector<AccessPath> places;
+            ForEachPlace(stream, [&](const AccessPath& place) {
+              places.push_back(place);
+            });
+            return places;
+          }},
+      lvalue.form);
+}
 
 auto Shares(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const Lvalue& lvalue,
@@ -284,9 +422,8 @@ auto AppendStores(
   if (std::holds_alternative<AccessPath>(lvalue.form)) {
     return Distribute(unit_lowerer, frame, lvalue, value, store);
   }
-  // What a join or a stream target distributes is held in a local of its own
-  // before any place is
-  // located, so a member written first changes nothing a later one is taken
+  // What several places take is held in a local of its own before any place
+  // is located, so a member written first changes nothing a later one is taken
   // from, even where the value was read out of a member's own storage (LRM
   // 10.9, 11.4.12).
   const mir::LocalId local = DeclareLocal(frame, value);
@@ -302,17 +439,24 @@ auto ReadThenWrite(
     const mir::CompilationUnit& unit, const WalkFrame& frame, Lvalue lvalue)
     -> diag::Result<LvalueReadThenWritten> {
   mir::Builder block = frame.Builder();
-  // What the members of a join hold together is the value the join stands
-  // for: their bits end to end, or the aggregate they are the members of.
-  const auto read_join = [&](LvalueJoin& join) -> diag::Result<mir::ExprId> {
+  const auto read_members = [&](std::vector<Lvalue>& members)
+      -> diag::Result<std::vector<mir::ExprId>> {
     std::vector<mir::ExprId> incoming;
-    incoming.reserve(join.members.size());
-    for (Lvalue& member : join.members) {
+    incoming.reserve(members.size());
+    for (Lvalue& member : members) {
       auto settled = ReadThenWrite(unit, frame, std::move(member));
       if (!settled) return std::unexpected(std::move(settled.error()));
       member = std::move(settled->lvalue);
       incoming.push_back(settled->incoming);
     }
+    return incoming;
+  };
+  // What the members of a join hold together is the value the join stands
+  // for: their bits end to end, or the aggregate they are the members of.
+  const auto read_join = [&](LvalueJoin& join) -> diag::Result<mir::ExprId> {
+    auto read = read_members(join.members);
+    if (!read) return std::unexpected(std::move(read.error()));
+    std::vector<mir::ExprId> incoming = *std::move(read);
     return std::visit(
         Overloaded{
             [&](const PackedJoin&) -> mir::ExprId {
@@ -344,6 +488,16 @@ auto ReadThenWrite(
           },
           [&](LvalueJoin& join) -> diag::Result<mir::ExprId> {
             return read_join(join);
+          },
+          [&](LvalueSlice& slice) -> diag::Result<mir::ExprId> {
+            auto read = read_members(slice.join.members);
+            if (!read) return std::unexpected(std::move(read.error()));
+            return block.Add(StepRead(
+                unit, block,
+                DescentStep{
+                    .to = StepToBits{.start = slice.start},
+                    .part_type = lvalue.type},
+                BuildBitsJoin(unit, frame, *read)));
           },
           [](StreamTarget&) -> diag::Result<mir::ExprId> {
             throw InternalError(

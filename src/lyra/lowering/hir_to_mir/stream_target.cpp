@@ -17,7 +17,6 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
-#include "lyra/lowering/hir_to_mir/expression/view_names.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -34,9 +33,9 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// What a member's bits are handed to once they are cut: a variable, given
-// them read back at its type, or a stream nested in the target that re-orders
-// its bits, which cuts them among its own members in turn.
+// What a member's bits are handed to once they are cut: an lvalue, given them
+// read back at its type, or a stream nested in the target that re-orders its
+// bits, which cuts them among its own members in turn.
 struct Recipient {
   std::variant<const StreamVariable*, const StreamTarget*> form;
   diag::SourceSpan span;
@@ -152,11 +151,11 @@ auto SegmentOf(
           [&](const StreamVariable& variable) -> Segment {
             const Recipient recipient{.form = &variable, .span = member.span};
             if (const std::optional<StreamShape> fixed =
-                    FixedStreamShapeOf(unit, variable.type)) {
+                    FixedStreamShapeOf(unit, variable.target.type)) {
               return FixedSegment{.shape = *fixed, .recipient = recipient};
             }
             return RestSegment{
-                .fill = StreamFillOf(unit, variable.type),
+                .fill = StreamFillOf(unit, variable.target.type),
                 .recipient = recipient};
           },
           [&](const WindowedPlace& windowed) -> Segment {
@@ -181,14 +180,16 @@ auto Deliver(
   return std::visit(
       Overloaded{
           [&](const StreamVariable* variable) -> diag::Result<void> {
+            const mir::TypeId type = variable->target.type;
             const mir::ExprId value =
                 block.Get(bits).type == unit.builtins.bit_vec
-                    ? BuildFromBitVec(unit, block, bits, variable->type)
-                    : BuildFromBitstream(unit, block, bits, variable->type);
-            sink(
-                Share{
-                    .place = variable->place,
-                    .value = block.AsValue(unit.types, value)});
+                    ? BuildFromBitVec(unit, block, bits, type)
+                    : BuildFromBitstream(unit, block, bits, type);
+            auto shares = Shares(
+                unit_lowerer, frame, variable->target,
+                block.AsValue(unit.types, value));
+            if (!shares) return std::unexpected(std::move(shares.error()));
+            for (Share& share : *shares) sink(std::move(share));
             return {};
           },
           [&](const StreamTarget* nested) -> diag::Result<void> {
@@ -435,41 +436,25 @@ auto DistributeRun(
   return {};
 }
 
-// One member of a stream target: a variable, an array a `with` ranges, whose
-// range is asked when its turn comes, a stream nested in it, or a join. The
-// front end holds the rest -- a pattern, a `with` on anything but one unpacked
-// array -- out of a stream target (LRM 11.4.14.3, 11.4.14.4).
+// One member of a stream target: a variable, a name a view joins declarations
+// under or a select of one, an array a `with` ranges, whose range is asked when
+// its turn comes, a stream nested in it, or a concatenation. The front end
+// holds the rest -- a pattern, a `with` on anything but one unpacked array --
+// out of a stream target (LRM 11.4.14.3, 11.4.14.4).
 template <ExprLowerer L>
 auto LowerStreamMember(
     L& lowerer, const hir::StreamOperand& operand, WalkFrame frame)
     -> diag::Result<StreamTargetMember> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   const hir::Expr& expr = lowerer.HirExprs().Get(operand.value);
-  // A concatenation is its operands in the order written, and so is a name a
-  // view joins declarations under, which a stream unpacks as it does a stream
-  // of them with no blocks of its own to reorder (LRM 11.4.14.3).
+  // A concatenation is its operands in the order written, which a stream
+  // unpacks as it does a stream of them with no blocks of its own to reorder
+  // (LRM 11.4.14.3).
   const auto joined_of = [&](std::vector<StreamTargetMember> members) {
     StreamTarget joined;
     joined.members = std::move(members);
     return StreamTargetMember{.form = std::move(joined), .span = expr.span};
   };
-  if (const std::optional<ViewNameUse> view = ViewNameUseOf(lowerer, expr);
-      view.has_value() && IsViewJoin(unit_lowerer, *view)) {
-    auto parts = LowerViewNameParts(lowerer, frame, *view);
-    if (!parts) return std::unexpected(std::move(parts.error()));
-    std::vector<StreamTargetMember> members;
-    members.reserve(parts->size());
-    for (ViewPart& part : *parts) {
-      members.push_back(
-          StreamTargetMember{
-              .form =
-                  StreamVariable{
-                      .place = std::move(part.place),
-                      .type = unit_lowerer.TranslateType(part.type)},
-              .span = expr.span});
-    }
-    return joined_of(std::move(members));
-  }
   if (const auto* concat = std::get_if<hir::ConcatExpr>(&expr.data);
       concat != nullptr && !operand.with.has_value()) {
     std::vector<StreamTargetMember> members;
@@ -484,8 +469,8 @@ auto LowerStreamMember(
     return joined_of(std::move(members));
   }
   const auto* nested = std::get_if<hir::StreamingConcatExpr>(&expr.data);
-  if (IsJoin(lowerer, expr) &&
-      (nested == nullptr || operand.with.has_value())) {
+  if (std::holds_alternative<hir::AssignmentPatternExpr>(expr.data) ||
+      (IsJoin(lowerer, expr) && operand.with.has_value())) {
     throw InternalError(
         "lvalue: a stream target holds a pattern, or a `with` on a join or a "
         "stream, which the front end refuses (LRM 11.4.14.3, 11.4.14.4)");
@@ -495,14 +480,16 @@ auto LowerStreamMember(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return StreamTargetMember{.form = *std::move(lowered), .span = expr.span};
   }
+  if (!operand.with.has_value()) {
+    auto target = LowerLvalue(lowerer, expr, frame);
+    if (!target) return std::unexpected(std::move(target.error()));
+    return StreamTargetMember{
+        .form = StreamVariable{.target = *std::move(target)},
+        .span = expr.span};
+  }
   auto place = lowerer.LowerLhsExpr(expr, frame);
   if (!place) return std::unexpected(std::move(place.error()));
   const mir::TypeId type = unit_lowerer.TranslateType(expr.type);
-  if (!operand.with.has_value()) {
-    return StreamTargetMember{
-        .form = StreamVariable{.place = *std::move(place), .type = type},
-        .span = expr.span};
-  }
   const hir::TypeId array_type = expr.type;
   const hir::StreamRange range = *operand.with;
   const bool queue =

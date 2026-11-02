@@ -961,41 +961,57 @@ auto LowerHirClassPropertyAccessExpr(
 }
 
 template <ExprLowerer Lowerer>
-auto LowerHirElementSelectExprPath(
+auto LowerSelectStep(
     Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
-    mir::TypeId result_type) -> diag::Result<AccessPath> {
-  UnitLowerer& unit_lowerer = lowerer.Owner();
+    mir::TypeId result_type) -> diag::Result<DescentStep> {
   mir::Builder block = frame.Builder();
-  const hir::Expr& base_expr = lowerer.HirExprs().Get(sel.base_value);
-  auto base = lowerer.LowerAccessPath(base_expr, frame);
-  if (!base) return std::unexpected(std::move(base.error()));
-  const std::optional<SettledPath> queue =
-      SettleSelectedQueue(unit_lowerer, frame, base_expr, *base);
-  const hir::Expr& index_expr = lowerer.HirExprs().Get(sel.index);
-  const WalkFrame index_frame =
-      queue.has_value() ? frame.WithSelectedQueue(&*queue) : frame;
-  auto idx_or = lowerer.LowerExpr(index_expr, index_frame);
-  if (!idx_or) return std::unexpected(std::move(idx_or.error()));
-  const mir::ExprId idx_id = block.Add(*std::move(idx_or));
-  return DescendInto(
-      *std::move(base),
-      ElementStep(unit_lowerer, block, base_expr.type, idx_id, result_type));
+  auto index = lowerer.LowerExpr(lowerer.HirExprs().Get(sel.index), frame);
+  if (!index) return std::unexpected(std::move(index.error()));
+  return ElementStep(
+      lowerer.Owner(), block, lowerer.HirExprs().Get(sel.base_value).type,
+      block.Add(*std::move(index)), result_type);
 }
 
 template <ExprLowerer Lowerer>
-auto LowerHirRangeSelectExprPath(
+auto LowerSelectStep(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<DescentStep> {
+  return RangeStep(
+      lowerer, frame, sel.bounds, lowerer.HirExprs().Get(sel.base_value).type,
+      result_type);
+}
+
+// The part `sel` names, on the path its base names. A queue's index may be
+// counted from the queue's own last index (LRM 7.10.1), so the queue is settled
+// before the select's own operands are lowered.
+template <ExprLowerer Lowerer, typename Select>
+auto LowerSelectExprPath(
+    Lowerer& lowerer, WalkFrame frame, const Select& sel,
     mir::TypeId result_type) -> diag::Result<AccessPath> {
   const hir::Expr& base_expr = lowerer.HirExprs().Get(sel.base_value);
   auto base = lowerer.LowerAccessPath(base_expr, frame);
   if (!base) return std::unexpected(std::move(base.error()));
   const std::optional<SettledPath> queue =
       SettleSelectedQueue(lowerer.Owner(), frame, base_expr, *base);
-  auto step = RangeStep(
+  auto step = LowerSelectStep(
       lowerer, queue.has_value() ? frame.WithSelectedQueue(&*queue) : frame,
-      sel.bounds, base_expr.type, result_type);
+      sel, result_type);
   if (!step) return std::unexpected(std::move(step.error()));
   return DescendInto(*std::move(base), *std::move(step));
+}
+
+template <ExprLowerer Lowerer>
+auto LowerHirElementSelectExprPath(
+    Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<AccessPath> {
+  return LowerSelectExprPath(lowerer, frame, sel, result_type);
+}
+
+template <ExprLowerer Lowerer>
+auto LowerHirRangeSelectExprPath(
+    Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<AccessPath> {
+  return LowerSelectExprPath(lowerer, frame, sel, result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -1225,6 +1241,18 @@ template auto LowerHirClassPropertyAccessExpr(
     const StructuralScopeLowerer&, WalkFrame,
     const hir::ClassPropertyAccessExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
+template auto LowerSelectStep(
+    ProcessLowerer&, WalkFrame, const hir::ElementSelectExpr&, mir::TypeId)
+    -> diag::Result<DescentStep>;
+template auto LowerSelectStep(
+    const StructuralScopeLowerer&, WalkFrame, const hir::ElementSelectExpr&,
+    mir::TypeId) -> diag::Result<DescentStep>;
+template auto LowerSelectStep(
+    ProcessLowerer&, WalkFrame, const hir::RangeSelectExpr&, mir::TypeId)
+    -> diag::Result<DescentStep>;
+template auto LowerSelectStep(
+    const StructuralScopeLowerer&, WalkFrame, const hir::RangeSelectExpr&,
+    mir::TypeId) -> diag::Result<DescentStep>;
 template auto LowerHirElementSelectExprPath(
     ProcessLowerer&, WalkFrame, const hir::ElementSelectExpr&, mir::TypeId)
     -> diag::Result<AccessPath>;

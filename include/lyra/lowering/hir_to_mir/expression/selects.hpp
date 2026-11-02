@@ -38,6 +38,19 @@ namespace lyra::lowering::hir_to_mir {
     UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId receiver_type,
     mir::ExprId idx_id, mir::TypeId part_type) -> DescentStep;
 
+// The step `sel` takes from its base, landing on a part of `result_type`, with
+// what it computes evaluated where `frame` stands and the base left to the
+// caller.
+template <ExprLowerer Lowerer>
+[[nodiscard]] auto LowerSelectStep(
+    Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<DescentStep>;
+
+template <ExprLowerer Lowerer>
+[[nodiscard]] auto LowerSelectStep(
+    Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
+    mir::TypeId result_type) -> diag::Result<DescentStep>;
+
 // The step one selector of a published path takes in a value of `receiver_type`
 // (LRM 23.2.2.2, 25.5.4). A signature carries the coordinates the declaring
 // unit wrote, and they resolve against the value they descend into as a select

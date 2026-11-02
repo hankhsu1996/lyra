@@ -81,8 +81,8 @@ template <ExprLowerer L>
 auto LowerViewNameParts(L& lowerer, WalkFrame frame, const ViewNameUse& use)
     -> diag::Result<std::vector<ViewPart>>;
 
-// The one place `use` names. A join is several, and the front end lets a select
-// of one be written, which is not yet carried out; a value is none.
+// The one place `use` names. A join is several and a value is none, so a
+// construct asking one place of either is not yet carried out.
 template <ExprLowerer L>
 auto LowerViewNamePlace(L& lowerer, WalkFrame frame, const ViewNameUse& use)
     -> diag::Result<AccessPath>;
