@@ -38,12 +38,11 @@ template <typename BaseOf>
       of);
 }
 
-// The lifetime of the object a borrowed pointer to `pointee` reaches: an
-// object of a class the program declares, or one of a class of the runtime's,
-// whose declaration states it. MIR's borrowed pointer states no lifetime of its
-// own, so this is read off what the pointer reaches rather than off the
-// pointer. Absent where `pointee` is no object, whose storage lives as long as
-// whatever holds it.
+// The lifetime of the object `pointee`, which a pointer or a reference reaches:
+// an object of a class the program declares, or one of a class of the
+// runtime's, whose declaration states it. Neither states a lifetime of its own,
+// so this is read off what it reaches. Absent where `pointee` is no object,
+// whose storage lives as long as whatever holds it.
 [[nodiscard]] auto ObjectLifetimeOf(const CompilationUnit& unit, TypeId pointee)
     -> std::optional<support::ObjectLifetime>;
 

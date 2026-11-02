@@ -10,7 +10,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
@@ -36,108 +35,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-// Whether a deferred update may hold a reference to what this target names
-// until the update region runs (LRM 10.4.2). The storage a place descends from
-// decides it: a member of an object, a type-associated cell, and another
-// unit's namespace variable all outlive the stretch that submits the update,
-// while a procedural local's does not. Every descent step is transparent -- it
-// reaches part of the same storage -- so the answer is the root's.
-//
-// Every form a target can take answers for itself. A form that is not a place
-// cannot be one, so reaching the fallback means the target lowering produced
-// something that is not an assignment target at all.
-auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
-    -> bool {
-  const auto& expr = block.exprs.Get(expr_id);
-  const auto not_a_target = []() -> bool {
-    throw InternalError(
-        "TargetOutlivesDeferredUpdate: the assignment target is not a place; "
-        "the target lowering should have produced one -- please report this "
-        "as a bug");
-  };
-  return std::visit(
-      Overloaded{
-          // A field is storage of its own, reached through a pointer, so it
-          // outlives the update whatever holds that pointer.
-          [](const mir::FieldAccessExpr&) { return true; },
-          // A name reaches storage of one of two durations: a body's own
-          // binding, which goes away when the stretch that holds it returns,
-          // and everything a compilation unit declares once -- a
-          // type-associated cell, a namespace variable, a constant -- which
-          // the whole program shares and so outlives any stretch.
-          [](const mir::ReferenceExpr& r) {
-            return std::visit(
-                Overloaded{
-                    [](const mir::LocalRef&) { return false; },
-                    [](const mir::DefinitionRef&) { return true; },
-                    [](const mir::StaticPropertyRef&) { return true; },
-                    [](const mir::EnumTableRef&) { return true; },
-                    [](const mir::IntegralConstantRef&) { return true; },
-                    [](const mir::StaticVariableRef&) { return true; },
-                    [](const mir::ClassConstantRef&) { return true; },
-                    [](const mir::FunctionRef&) { return true; },
-                    [](const mir::DispatchEntryRef&) { return true; },
-                    [](const mir::DestructorRef&) { return true; },
-                    [](const mir::DispatchTableRef&) { return true; },
-                    [](const mir::InterfaceTableRef&) { return true; },
-                    [](const mir::ExternalObjectEntryRef&) { return true; },
-                },
-                r.target);
-          },
-          // A cell reached through a pointer -- one a route stored, or a port
-          // bound to another object's cell -- is structural when that pointer
-          // is, so recurse through it; a `ref` formal, whose pointer roots at
-          // a local, stays non-structural.
-          [&](const mir::DerefExpr& d) {
-            return TargetOutlivesDeferredUpdate(block, d.pointer);
-          },
-          // A reference refers to where its operand lies.
-          [&](const mir::BorrowExpr& b) {
-            return TargetOutlivesDeferredUpdate(block, b.operand);
-          },
-          // A pointer read out of a place leads where that place's does.
-          [&](const mir::CopyExpr& c) {
-            return TargetOutlivesDeferredUpdate(block, c.place);
-          },
-          // Storage a new-expression allocates belongs to what holds the
-          // pointer it yields, never to the stretch that allocated it.
-          [](const mir::NewExpr&) { return true; },
-          // A call in target position names a place through the object it
-          // dispatches on.
-          [&](const mir::CallExpr& c) {
-            const std::optional<mir::ExprId> receiver =
-                mir::CalleeReceiver(c.callee);
-            return receiver.has_value() &&
-                   TargetOutlivesDeferredUpdate(block, *receiver);
-          },
-          // A form that names no storage: a value composed, read, converted,
-          // chosen, awaited, or written somewhere else. The target lowering
-          // answers a left-hand side with a place, so meeting one of these
-          // means it produced something that is not an assignment target.
-          [&](const mir::StringLiteral&) { return not_a_target(); },
-          [&](const mir::NullLiteral&) { return not_a_target(); },
-          [&](const mir::MachineBoolLiteral&) { return not_a_target(); },
-          [&](const mir::MachineIntLiteral&) { return not_a_target(); },
-          [&](const mir::FloatingLiteral&) { return not_a_target(); },
-          [&](const mir::UnaryExpr&) { return not_a_target(); },
-          [&](const mir::BinaryExpr&) { return not_a_target(); },
-          [&](const mir::CastExpr&) { return not_a_target(); },
-          [&](const mir::ConditionalExpr&) { return not_a_target(); },
-          [&](const mir::BlockExpr&) { return not_a_target(); },
-          [&](const mir::AssignExpr&) { return not_a_target(); },
-          [&](const mir::AddressOfExpr&) { return not_a_target(); },
-          [&](const mir::MoveExpr&) { return not_a_target(); },
-          [&](const mir::ClosureExpr&) { return not_a_target(); },
-          [&](const mir::CompositeExpr&) { return not_a_target(); },
-          [&](const mir::UnionExpr&) { return not_a_target(); },
-          [&](const mir::AwaitExpr&) { return not_a_target(); },
-          [&](const mir::WaitExpr&) { return not_a_target(); },
-          [&](const mir::VectorGetExpr&) { return not_a_target(); },
-          [&](const mir::DiscriminantExpr&) { return not_a_target(); },
-      },
-      expr.data);
-}
 
 // The owner of a target as the body reaches it, evaluated once at submit time
 // and captured (LRM 10.4.2). A place is captured as a reference to it. A
@@ -203,48 +100,15 @@ auto FreezeShareInto(
       .value = value};
 }
 
-// The update runs after the stretch that reached the statement returns, and it
-// holds a reference to the target's storage until then, so that storage has to
-// outlive the stretch. LRM 10.4.2 makes the case that fails this illegal -- "It
-// shall be illegal to make nonblocking assignments to automatic variables" --
-// and the front end rejects it, so this stands behind that rather than in front
-// of it: reaching it means a target was lowered to storage the source did not
-// name.
-auto CheckTargetOutlivesUpdate(
-    const mir::Block& block, const PathOwner& target_in_outer,
-    diag::SourceSpan span) -> diag::Result<void> {
-  // A property is storage its object holds, which outlives the update whatever
-  // reaches the object, as a field reached through a pointer does.
-  const bool outlives = std::visit(
-      Overloaded{
-          [&](mir::ExprId place) {
-            return TargetOutlivesDeferredUpdate(block, place);
-          },
-          [](const ObjectProperty&) { return true; }},
-      target_in_outer);
-  if (!outlives) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedAssignmentTarget,
-        "a nonblocking assignment names storage that does not outlive the "
-        "statement that reached it");
-  }
-  return {};
-}
-
 // The stores one nonblocking assignment makes, as one update due later. The
 // source wrote one statement, so however many places it writes they are frozen
 // together and due at one placement, which is what makes a control on the
 // assignment read once and land every share in the same slot (LRM 9.4.5,
 // 10.4.2).
 auto BuildDeferredStores(
-    ProcessLowerer& process, WalkFrame frame, diag::SourceSpan span,
+    ProcessLowerer& process, WalkFrame frame,
     const std::optional<hir::DelayOrEventControl>& control,
     std::span<const Share> shares) -> diag::Result<mir::Expr> {
-  for (const Share& share : shares) {
-    auto outlives = CheckTargetOutlivesUpdate(
-        frame.Builder().Body(), share.place.owner, span);
-    if (!outlives) return std::unexpected(std::move(outlives.error()));
-  }
   return BuildDeferredEffect(
       process, frame, control,
       [&](ClosureBuilder& closure) -> diag::Result<std::vector<Share>> {
@@ -364,7 +228,7 @@ auto StepJoin(
 template <ExprLowerer Lowerer>
 auto AssignToJoin(
     Lowerer& lowerer, const WalkFrame& frame, const hir::AssignExpr& assign,
-    const hir::Expr& lhs, diag::SourceSpan span) -> diag::Result<mir::ExprId> {
+    const hir::Expr& lhs) -> diag::Result<mir::ExprId> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
@@ -404,7 +268,7 @@ auto AssignToJoin(
   if (!shares) return std::unexpected(std::move(shares.error()));
   if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
     auto update =
-        BuildDeferredStores(lowerer, frame, span, deferred->control, *shares);
+        BuildDeferredStores(lowerer, frame, deferred->control, *shares);
     if (!update) return std::unexpected(std::move(update.error()));
     block.AppendStmt(mir::ExprStmt{.expr = block.Add(*std::move(update))});
     return value;
@@ -417,8 +281,8 @@ auto AssignToJoin(
 
 template <ExprLowerer Lowerer>
 auto LowerHirAssignWrite(
-    Lowerer& lowerer, WalkFrame frame, const hir::AssignExpr& a,
-    diag::SourceSpan span) -> diag::Result<mir::Expr> {
+    Lowerer& lowerer, WalkFrame frame, const hir::AssignExpr& a)
+    -> diag::Result<mir::Expr> {
   if (a.compound.has_value() &&
       std::holds_alternative<hir::NonBlockingEffect>(a.timing)) {
     throw InternalError(
@@ -430,7 +294,7 @@ auto LowerHirAssignWrite(
   // steps, so it is a sequence of them standing where the expression does.
   if (IsJoin(lhs)) {
     BlockBuilder steps(frame);
-    auto value = AssignToJoin(lowerer, steps.Frame(), a, lhs, span);
+    auto value = AssignToJoin(lowerer, steps.Frame(), a, lhs);
     if (!value) return std::unexpected(std::move(value.error()));
     return steps.Build(*value);
   }
@@ -454,8 +318,7 @@ auto LowerHirAssignWrite(
     if (const auto* deferred = std::get_if<hir::NonBlockingEffect>(&a.timing)) {
       const std::array shares{
           Share{.place = std::move(target), .value = stored}};
-      return BuildDeferredStores(
-          lowerer, frame, span, deferred->control, shares);
+      return BuildDeferredStores(lowerer, frame, deferred->control, shares);
     }
   }
   return BuildStoreExpr(unit, block, target, stored);
@@ -464,7 +327,7 @@ auto LowerHirAssignWrite(
 template <ExprLowerer Lowerer>
 auto LowerHirAssignExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignExpr& a,
-    diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
   if (!std::holds_alternative<hir::ImmediateEffect>(a.timing)) {
     throw InternalError(
         "LowerHirAssignExpr: a nonblocking assignment is a statement and has "
@@ -475,7 +338,7 @@ auto LowerHirAssignExpr(
   mir::Builder body = steps.Body();
   const hir::Expr& lhs = lowerer.HirExprs().Get(a.lhs);
   if (IsJoin(lhs)) {
-    auto value = AssignToJoin(lowerer, steps.Frame(), a, lhs, span);
+    auto value = AssignToJoin(lowerer, steps.Frame(), a, lhs);
     if (!value) return std::unexpected(std::move(value.error()));
     return steps.Build(ConvertToType(unit, body, *value, result_type));
   }
@@ -568,23 +431,23 @@ auto LowerHirIncDecExpr(
 }
 
 template auto AssignToJoin(
-    ProcessLowerer&, const WalkFrame&, const hir::AssignExpr&, const hir::Expr&,
-    diag::SourceSpan) -> diag::Result<mir::ExprId>;
+    ProcessLowerer&, const WalkFrame&, const hir::AssignExpr&, const hir::Expr&)
+    -> diag::Result<mir::ExprId>;
 template auto AssignToJoin(
     const StructuralScopeLowerer&, const WalkFrame&, const hir::AssignExpr&,
-    const hir::Expr&, diag::SourceSpan) -> diag::Result<mir::ExprId>;
+    const hir::Expr&) -> diag::Result<mir::ExprId>;
 template auto LowerHirAssignWrite(
-    ProcessLowerer&, WalkFrame, const hir::AssignExpr&, diag::SourceSpan)
+    ProcessLowerer&, WalkFrame, const hir::AssignExpr&)
     -> diag::Result<mir::Expr>;
 template auto LowerHirAssignWrite(
-    const StructuralScopeLowerer&, WalkFrame, const hir::AssignExpr&,
-    diag::SourceSpan) -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, WalkFrame, const hir::AssignExpr&)
+    -> diag::Result<mir::Expr>;
 template auto LowerHirAssignExpr(
-    ProcessLowerer&, WalkFrame, const hir::AssignExpr&, diag::SourceSpan,
+    ProcessLowerer&, WalkFrame, const hir::AssignExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirAssignExpr(
+    const StructuralScopeLowerer&, WalkFrame, const hir::AssignExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
-template auto LowerHirAssignExpr(
-    const StructuralScopeLowerer&, WalkFrame, const hir::AssignExpr&,
-    diag::SourceSpan, mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirIncDecWrite(
     ProcessLowerer&, WalkFrame, const hir::IncDecExpr&)
     -> diag::Result<mir::Expr>;

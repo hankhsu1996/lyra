@@ -12,7 +12,10 @@ resolved a member by name at every access, and that was never required. Revised 
 value is a reference typed by the interface's object, so the operation that read an untyped address
 back out as that object is gone. Revised 2026-11-01: D1 states that the unit is found from the
 interface and its parameters alone, since a type written inside the interface, or in one it names,
-had named a unit of its own once that reference was typed.
+had named a unit of its own once that reference was typed. Revised 2026-11-01: a nonblocking write
+through a handle is among what runs; it had been refused by a lifetime check of the lowering's own,
+which judged a rule the front end enforces (LRM 10.4.2) and the verifier states once for every
+closure the runtime keeps.
 
 ## Why this decision matters
 
@@ -120,9 +123,11 @@ expression bodies, so the front end elaborates nothing it would not have.
 ## Consequences
 
 - Class-based transactors run on both backends: assignment from an instance named directly, through
-  a port or as an array element; comparison; member reads and writes; subroutine calls; a modport's
-  own names; an interface the instance instantiates, reached into, called on, or held as a value
-  itself; and waits.
+  a port or as an array element; comparison; member reads and writes, a nonblocking write landing on
+  the instance the handle held where the statement ran (LRM 10.4.2); subroutine calls; a modport's
+  own names, where one writable name joining several parts is not yet carried out through a handle,
+  since each part would evaluate the handle; an interface the instance instantiates, reached into,
+  called on, or held as a value itself; and waits.
 - A wait follows the handle: its expression is evaluated again when the handle's variable is
   written, or, for a handle held in a class property, when that object is, which is the object event
   source `object-is-an-event-source.md` defines.

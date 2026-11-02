@@ -171,8 +171,7 @@ auto LowerExprStmt(
     const hir::Expr& lhs = hir_proc.exprs.Get(assign->lhs);
     if (IsJoin(lhs)) {
       BlockBuilder steps(frame);
-      auto stored =
-          AssignToJoin(process, steps.Frame(), *assign, lhs, inner.span);
+      auto stored = AssignToJoin(process, steps.Frame(), *assign, lhs);
       if (!stored) return std::unexpected(std::move(stored.error()));
       mir::Stmt stmt = steps.BuildStatement();
       stmt.label = std::move(label);

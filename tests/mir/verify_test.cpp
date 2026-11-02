@@ -1913,96 +1913,155 @@ TEST(MirVerifyTest, APlacementMakesItsValueInStorageItDoesNotOwn) {
 // A keeper runs the effect committed to it once the frame that made the effect
 // has gone on, so an effect made in a keeper's storage holds no reference to
 // storage of that frame, where a copy of the same value is what it may hold.
+// A body committing to a keeper an effect that captures one field, of the type
+// `captured_type` answers, built by `capture` in the body.
+template <typename CapturedType, typename Capture>
+auto UnitCommittingAnEffect(
+    const CapturedType& captured_type, const Capture& capture)
+    -> CompilationUnit {
+  return UnitWithCode([&](CompilationUnit& u, CallableCode& code) {
+    const TypeId captured = captured_type(u);
+    const ClosureId id = u.DeclareClosure();
+    const TypeId effect_type =
+        u.types.Intern(Type{ClosureType{.closure_id = id}});
+    ClosureDecl effect;
+    const FieldId field = effect.fields.Add(FieldDecl{.type = captured});
+    effect.field_order = {field};
+    effect.invoke.receiver = effect.invoke.AddLocal(u.types.Intern(
+        Type{PointerType{
+            .pointee = effect_type,
+            .ownership = PointerOwnership::kUnique,
+            .mutability = Mutability::kMutable}}));
+    effect.invoke.result_type = u.builtins.void_type;
+    Builder(effect.invoke.Body(), diag::SourceSpan{})
+        .AppendStmt(ReturnStmt{.value = std::nullopt});
+    u.DefineClosure(id, std::move(effect));
+
+    Builder body(code.Body(), diag::SourceSpan{});
+    const TypeId keeper_pointer = u.builtins.deferred_effects_ptr;
+    const LocalId keeper = code.AddLocal(keeper_pointer);
+    body.AppendStmt(
+        LocalDeclStmt{
+            .target = keeper,
+            .init =
+                body.Add(Expr{.data = NullLiteral{}, .type = keeper_pointer})});
+    const ExprId value = capture(u, code, body, captured);
+    const ExprId made = body.Add(MakePlacementNewExpr(
+        body.Add(
+            Expr{
+                .data =
+                    ClosureExpr{
+                        .closure = id,
+                        .field_inits = {{.target = field, .value = value}}},
+                .type = effect_type}),
+        PlacementAllocation{
+            .allocate = support::BuiltinFn::kDeferredEffectsAllocate,
+            .arguments = {body.ReadLocal(keeper, keeper_pointer)}},
+        u.types.Intern(
+            Type{PointerType{
+                .pointee = effect_type,
+                .ownership = PointerOwnership::kBorrowed,
+                .mutability = Mutability::kMutable}})));
+    body.AppendStmt(
+        ExprStmt{
+            .expr = body.Add(
+                Expr{
+                    .data =
+                        CallExpr{
+                            .callee =
+                                Direct{
+                                    .target = support::BuiltinFn::
+                                        kDeferredEffectsCommit,
+                                    .receiver = body.Deref(
+                                        u.types,
+                                        body.LocalPlace(keeper, keeper_pointer),
+                                        u.types.Get(keeper_pointer)
+                                            .Get<PointerType>()
+                                            .pointee)},
+                            .arguments = {made}},
+                    .type = u.builtins.void_type})});
+  });
+}
+
+auto ReadOnlyReferenceTo(CompilationUnit& u, TypeId referent) -> TypeId {
+  return u.types.Intern(
+      Type{ReferenceType{
+          .referent = referent, .mutability = Mutability::kReadOnly}});
+}
+
+auto DeclaredNull(CallableCode& code, Builder body, TypeId type) -> LocalId {
+  const LocalId local = code.AddLocal(type);
+  body.AppendStmt(
+      LocalDeclStmt{
+          .target = local,
+          .init = body.Add(Expr{.data = NullLiteral{}, .type = type})});
+  return local;
+}
+
 TEST(MirVerifyTest, AnEffectMadeInAKeeperRefersToNothingItsFrameEnds) {
-  const auto committing = [](bool captures_a_reference) {
-    return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
-      const TypeId value_type = u.builtins.int_type;
-      const TypeId captured =
-          captures_a_reference ? u.types.Intern(
-                                     Type{ReferenceType{
-                                         .referent = value_type,
-                                         .mutability = Mutability::kReadOnly}})
-                               : value_type;
-      const ClosureId id = u.DeclareClosure();
-      const TypeId effect_type =
-          u.types.Intern(Type{ClosureType{.closure_id = id}});
-      ClosureDecl effect;
-      const FieldId field = effect.fields.Add(FieldDecl{.type = captured});
-      effect.field_order = {field};
-      effect.invoke.receiver = effect.invoke.AddLocal(u.types.Intern(
-          Type{PointerType{
-              .pointee = effect_type,
-              .ownership = PointerOwnership::kUnique,
-              .mutability = Mutability::kMutable}}));
-      effect.invoke.result_type = u.builtins.void_type;
-      Builder(effect.invoke.Body(), diag::SourceSpan{})
-          .AppendStmt(ReturnStmt{.value = std::nullopt});
-      u.DefineClosure(id, std::move(effect));
-
-      Builder body(code.Body(), diag::SourceSpan{});
-      const LocalId value = code.AddLocal(value_type);
-      body.AppendStmt(
-          LocalDeclStmt{
-              .target = value,
-              .init =
-                  body.Add(Expr{.data = NullLiteral{}, .type = value_type})});
-      const TypeId keeper_pointer = u.builtins.deferred_effects_ptr;
-      const LocalId keeper = code.AddLocal(keeper_pointer);
-      body.AppendStmt(
-          LocalDeclStmt{
-              .target = keeper,
-              .init = body.Add(
-                  Expr{.data = NullLiteral{}, .type = keeper_pointer})});
-      const ExprId capture =
-          captures_a_reference
-              ? body.Add(
-                    Expr{
-                        .data =
-                            BorrowExpr{
-                                .operand = body.LocalPlace(value, value_type)},
-                        .type = captured})
-              : body.ReadLocal(value, value_type);
-      const ExprId made = body.Add(MakePlacementNewExpr(
-          body.Add(
-              Expr{
-                  .data =
-                      ClosureExpr{
-                          .closure = id,
-                          .field_inits = {{.target = field, .value = capture}}},
-                  .type = effect_type}),
-          PlacementAllocation{
-              .allocate = support::BuiltinFn::kDeferredEffectsAllocate,
-              .arguments = {body.ReadLocal(keeper, keeper_pointer)}},
-          u.types.Intern(
-              Type{PointerType{
-                  .pointee = effect_type,
-                  .ownership = PointerOwnership::kBorrowed,
-                  .mutability = Mutability::kMutable}})));
-      body.AppendStmt(
-          ExprStmt{
-              .expr = body.Add(
-                  Expr{
-                      .data =
-                          CallExpr{
-                              .callee =
-                                  Direct{
-                                      .target = support::BuiltinFn::
-                                          kDeferredEffectsCommit,
-                                      .receiver = body.Deref(
-                                          u.types,
-                                          body.LocalPlace(
-                                              keeper, keeper_pointer),
-                                          u.types.Get(keeper_pointer)
-                                              .Get<PointerType>()
-                                              .pointee)},
-                              .arguments = {made}},
-                      .type = u.builtins.void_type})});
-    });
-  };
-
-  EXPECT_NO_THROW(Verify(committing(false)));
+  const auto a_value = [](CompilationUnit& u) { return u.builtins.int_type; };
+  EXPECT_NO_THROW(Verify(UnitCommittingAnEffect(
+      a_value,
+      [](CompilationUnit&, CallableCode& code, Builder body, TypeId type) {
+        return body.ReadLocal(DeclaredNull(code, body, type), type);
+      })));
   ExpectRefused(
-      committing(true),
+      UnitCommittingAnEffect(
+          [&](CompilationUnit& u) {
+            return ReadOnlyReferenceTo(u, a_value(u));
+          },
+          [&](CompilationUnit& u, CallableCode& code, Builder body,
+              TypeId type) {
+            const TypeId value = a_value(u);
+            return body.Add(
+                Expr{
+                    .data =
+                        BorrowExpr{
+                            .operand = body.LocalPlace(
+                                DeclaredNull(code, body, value), value)},
+                    .type = type});
+          }),
+      "is kept past its maker's end yet captures in field 0 a reference to "
+      "storage of the frame that made it");
+}
+
+// A reference an object lives through says how long what it reaches lives, and
+// nothing about the variable holding it: a local holding one is the frame's,
+// and the object reached by dereferencing it outlives the frame.
+TEST(MirVerifyTest, AnEffectMayReachAnObjectThroughALocalAndNotTheLocal) {
+  const auto scope = [](CompilationUnit& u) {
+    return u.types.Get(u.builtins.scope_ptr).Get<PointerType>().pointee;
+  };
+  const auto handle = [&](CompilationUnit& u) {
+    return u.types.Intern(Type{UnmanagedRefType{.pointee = scope(u)}});
+  };
+  EXPECT_NO_THROW(Verify(UnitCommittingAnEffect(
+      [&](CompilationUnit& u) { return ReadOnlyReferenceTo(u, scope(u)); },
+      [&](CompilationUnit& u, CallableCode& code, Builder body, TypeId type) {
+        const TypeId held = handle(u);
+        const LocalId local = DeclaredNull(code, body, held);
+        return body.Add(
+            Expr{
+                .data =
+                    BorrowExpr{
+                        .operand = body.Deref(
+                            u.types, body.LocalPlace(local, held), scope(u))},
+                .type = type});
+      })));
+  ExpectRefused(
+      UnitCommittingAnEffect(
+          [&](CompilationUnit& u) { return ReadOnlyReferenceTo(u, handle(u)); },
+          [&](CompilationUnit& u, CallableCode& code, Builder body,
+              TypeId type) {
+            const TypeId held = handle(u);
+            return body.Add(
+                Expr{
+                    .data =
+                        BorrowExpr{
+                            .operand = body.LocalPlace(
+                                DeclaredNull(code, body, held), held)},
+                    .type = type});
+          }),
       "is kept past its maker's end yet captures in field 0 a reference to "
       "storage of the frame that made it");
 }

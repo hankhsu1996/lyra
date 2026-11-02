@@ -52,11 +52,6 @@ constexpr std::array kEntries{
             .kind = DiagKind::kUnsupported,
             .name = "unsupported_non_variable_named_reference"}},
     std::pair{
-        DiagCode::kUnsupportedAssignmentTarget,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "unsupported_assignment_target"}},
-    std::pair{
         DiagCode::kUnsupportedTimingControlKind,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,
