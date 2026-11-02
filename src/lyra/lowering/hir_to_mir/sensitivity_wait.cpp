@@ -538,12 +538,12 @@ auto DeclareObservation(
                            unit.builtins.observation)));
 }
 
-auto WaitStorageBlock(
+auto WaitReuseBlock(
     const WalkFrame& frame, mir::Builder stop_block,
     std::span<const hir::SensitivityEntry> cells,
     const base::Arena<hir::Expr, hir::ExprId>& exprs,
     std::span<const hir::ExprId> evaluated, bool evaluates_where_reached)
-    -> mir::Builder {
+    -> std::optional<mir::Builder> {
   const bool watches_a_body_variable =
       std::ranges::any_of(cells, [](const hir::SensitivityEntry& cell) {
         return std::visit(
@@ -556,10 +556,17 @@ auto WaitStorageBlock(
       !std::ranges::all_of(evaluated, [&](hir::ExprId expr) {
         return hir::ReadsElaboratedStorageOnly(exprs, expr);
       });
-  return watches_a_body_variable || evaluates_a_body_variable ||
-                 evaluates_where_reached
-             ? stop_block
-             : mir::Builder(frame.bindings->RootBlock(), frame.span);
+  if (watches_a_body_variable || evaluates_a_body_variable ||
+      evaluates_where_reached) {
+    return std::nullopt;
+  }
+  if (frame.loop_preheader != nullptr) {
+    return stop_block.Into(*frame.loop_preheader);
+  }
+  if (frame.in_source_statements) {
+    return std::nullopt;
+  }
+  return stop_block.Into(frame.bindings->RootBlock());
 }
 
 template <typename Lowerer>
@@ -631,11 +638,14 @@ auto BuildValueChangeWaitStmt(
     mir::Builder stop_block, const WalkFrame& frame, Lowerer& lowerer,
     std::span<const hir::SensitivityEntry> sensitivity_list)
     -> diag::Result<mir::Stmt> {
-  mir::Builder storage_block = WaitStorageBlock(
-      frame, stop_block, sensitivity_list, lowerer.HirExprs(), {}, false);
-  const std::vector<ObservedLeaf> leaves = BuildValueChangeLeaves(
-      lowerer.Owner().Unit(), frame, storage_block, sensitivity_list);
-  return BuildWaitOnStmt(storage_block, stop_block, frame, lowerer, leaves);
+  return BuildStopAtWait(
+      frame, stop_block, sensitivity_list, lowerer.HirExprs(), {}, false,
+      [&](mir::Builder storage, mir::Builder stop) {
+        const std::vector<ObservedLeaf> leaves = BuildValueChangeLeaves(
+            lowerer.Owner().Unit(), frame.WithBlock(&storage.Body()), storage,
+            sensitivity_list);
+        return BuildWaitOnStmt(storage, stop, frame, lowerer, leaves);
+      });
 }
 
 auto HoldImplicitList(

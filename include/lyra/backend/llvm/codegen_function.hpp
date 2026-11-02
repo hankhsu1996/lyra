@@ -175,6 +175,7 @@ class CodeGenFunction {
       -> diag::Result<llvm::Value*>;
   auto LowerEndStorage(const lir::EndStorageInstr& ended)
       -> diag::Result<llvm::Value*>;
+  void LowerStorage(const lir::StorageInstr& storage);
   auto LowerSetObjectClass(const lir::SetObjectClassInstr& set)
       -> diag::Result<llvm::Value*>;
 

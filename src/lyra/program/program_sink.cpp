@@ -84,6 +84,7 @@ void BindEngineEntries(const auto& add) {
       &lyra_rt_enter_reaction_running_first);
   add("lyra_rt_enter_reaction_stopping_first",
       &lyra_rt_enter_reaction_stopping_first);
+  add("lyra_rt_enter_run_to_completion", &lyra_rt_enter_run_to_completion);
   add("lyra_rt_await_coroutine", &lyra_rt_await_coroutine);
   add("lyra_rt_release_coroutine", &lyra_rt_release_coroutine);
   add("lyra_rt_register_always", &lyra_rt_register_always);

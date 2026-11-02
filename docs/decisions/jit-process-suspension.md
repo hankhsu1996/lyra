@@ -44,9 +44,9 @@ Each suspending construct builds its wait through one runtime call named for the
 delay, an event control, a level wait -- not for the engine verb it happens to reach. A delay is a
 single call even though a zero delay resumes in the inactive region while a positive one resumes at
 a future time; which construct-neutral verb the engine ends up running is the runtime's business,
-not a distinction the boundary exposes. The wait is held in a local of the body where what it waits
-for stops changing, and stopping at it is one construct-neutral call every stop shares, taking that
-local (`a-wait-is-storage-of-its-activation.md`); the construct lives only in the first.
+not a distinction the boundary exposes. The wait is held in a local of the body, so a stop reached
+again stops at the same wait, and stopping at it is one construct-neutral call every stop shares,
+taking that local (`a-wait-is-storage-of-its-activation.md`); the construct lives only in the first.
 
 The stop acts on the process the runtime currently has running, so no activation token appears in
 LIR or in generated code. The runtime invariant is that the running-process context identifies this

@@ -71,7 +71,7 @@ auto BuildPositionLoopStmt(
   mir::Block body;
   mir::Builder body_builder = block.Into(body);
   BreakTarget walk(*frame.bindings);
-  const WalkFrame at = frame.WithBlock(&body).WithBreakLeaving(walk);
+  const WalkFrame at = frame.WithBreakLeaving(walk).WithBlock(&body);
   const mir::LocalId index = IndexLocal(at, index_origin, int_type);
   body_builder.AppendStmt(
       mir::LocalDeclStmt{
@@ -114,7 +114,7 @@ auto BuildKeyedLoopStmt(
 
   mir::Block body;
   BreakTarget walk(*frame.bindings);
-  const WalkFrame at = frame.WithBlock(&body).WithBreakLeaving(walk);
+  const WalkFrame at = frame.WithBreakLeaving(walk).WithBlock(&body);
   mir::Builder body_builder = at.Builder();
   const EntryPlace place{
       .index = key, .index_type = key_type, .position = std::nullopt};

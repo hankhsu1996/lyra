@@ -42,6 +42,10 @@ named_blocks: 256
 packed_value_width: 4194304
 port_connections: 256
 procedures: 256
+process_locals_across_stops: 64
+process_statements: 64
+process_stops_in_one_loop: 64
+process_straight_stops: 64
 record_members: 160
 record_members_owning_storage: 160
 scan_outputs: 512

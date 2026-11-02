@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <span>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -130,7 +131,8 @@ auto ReportReads(
 // one wait holding one trigger per leaf -- `@*` (LRM 9.4.2.2), `@(...)` (LRM
 // 9.4.2), `@e` (LRM 15.5.2), an implicit list (LRM 9.2.2.2.1), and a
 // continuous assignment -- differing only in what decides that reaching a leaf
-// is an event for them, and built where everything it names stops changing.
+// is an event for them, and built so a stop reached again stops at the same
+// wait.
 //
 // Lowering picks the observable-pointer expression per leaf so a backend
 // forwards one stored expression rather than re-deriving the shape from the
@@ -138,20 +140,50 @@ auto ReportReads(
 // borrowed-pointer slot (a cross-unit reference sealed in the resolve phase, or
 // another sealed pointer) is the bare `FieldAccess`.
 
-// The block a wait whose stop is in `stop_block` is built in, where `cells` are
-// what it watches, `evaluated` the expressions of `exprs` its observations
-// evaluate where a change happens, and `evaluates_where_reached` whether it
-// evaluates anything once, where it is reached: the outermost block of the
-// body, which lasts for the body's whole run, or `stop_block` where anything it
-// watches or evaluates at a change names something the body declares, which
-// exists only from its declaration on (LRM 6.21), and where it evaluates
-// anything where it is reached, which it does each time it is.
-[[nodiscard]] auto WaitStorageBlock(
+// The block a wait is built in to be reused, where `cells` are what it watches,
+// `evaluated` the expressions of `exprs` its observations evaluate where a
+// change happens, and `evaluates_where_reached` whether it evaluates anything
+// once, where it is reached: the block holding the innermost loop around its
+// stop, so each pass stops at the one wait, or the top of a body the lowering
+// wrote, which is its own loop. None where a statement the source wrote stops
+// outside any loop, since a wait stopped at once costs the same wherever it is
+// built and stands only while it is used; where anything it watches or
+// evaluates at a change names something the body declares, which exists only
+// from its declaration on (LRM 6.21); and where it evaluates anything where it
+// is reached, which it does each time it is.
+[[nodiscard]] auto WaitReuseBlock(
     const WalkFrame& frame, mir::Builder stop_block,
     std::span<const hir::SensitivityEntry> cells,
     const base::Arena<hir::Expr, hir::ExprId>& exprs,
     std::span<const hir::ExprId> evaluated, bool evaluates_where_reached)
-    -> mir::Builder;
+    -> std::optional<mir::Builder>;
+
+// A wait and the stop at it, `build` being handed the block the wait is built
+// in and the block the stop stands in. Where the wait is not reused both are a
+// block of their own in `stop_block`, which ends the wait where the stop ends.
+template <typename BuildStop>
+auto BuildStopAtWait(
+    const WalkFrame& frame, mir::Builder stop_block,
+    std::span<const hir::SensitivityEntry> cells,
+    const base::Arena<hir::Expr, hir::ExprId>& exprs,
+    std::span<const hir::ExprId> evaluated, bool evaluates_where_reached,
+    BuildStop build) -> diag::Result<mir::Stmt> {
+  if (const std::optional<mir::Builder> reuse = WaitReuseBlock(
+          frame, stop_block, cells, exprs, evaluated,
+          evaluates_where_reached)) {
+    return build(*reuse, stop_block);
+  }
+  mir::Block own;
+  mir::Builder inside = stop_block.Into(own);
+  diag::Result<mir::Stmt> stop = build(inside, inside);
+  if (!stop) {
+    return stop;
+  }
+  inside.AppendStmt(*std::move(stop));
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data = mir::BlockStmt{.scope = stop_block.AddScope(std::move(own))}};
+}
 
 // One trigger per leaf, as the machine array a wait is built on, built in
 // `target_block`. A leaf watching part of its cell names the part by the

@@ -64,4 +64,12 @@ auto EnterReactionStoppingFirst(
   return RunReaction(receiver, setup, pass, SetupAnswers::kWhetherToStop);
 }
 
+auto EnterRunToCompletion(void* receiver, CompletingBody body)
+    -> Coroutine<void> {
+  ActivationValueStore values;
+  const GeneratedCallScope scope(values, nullptr);
+  body(receiver);
+  co_return;
+}
+
 }  // namespace lyra::runtime

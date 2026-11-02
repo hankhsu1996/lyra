@@ -807,8 +807,8 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 9.4.2 / 9.4.2.2 value-change wait -- an `@(...)`, an `@*`, an
   // implicit list, a continuous assignment. The wait is built on one trigger
   // per watched leaf, or on the implicit list a report settled (LRM
-  // 9.2.2.2.1), where what it watches stops changing, and held across the
-  // body's stops there. Each answers the wait.
+  // 9.2.2.2.1), so a stop reached again stops at the same wait. Each answers
+  // the wait.
   kWaitOn,
   kWaitOnImplicitList,
   // LRM 9.4 every stop: it takes the runtime handle and the wait the body holds
@@ -1173,6 +1173,7 @@ enum class BuiltinFn : std::uint16_t {
   // up to its first pass, and one stopping first is set up to that stop.
   kEnterReactionRunningFirst,
   kEnterReactionStoppingFirst,
+  kEnterRunToCompletion,
   // The extent a static initializer draws inside (LRM 18.14.1): entered before
   // the initializers a body runs and left on every way out of them, so a
   // randomization call made before any procedure starts has the generator the

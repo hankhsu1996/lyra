@@ -1505,18 +1505,23 @@ the detail lives in the entry itself.
   an activation's queue place -- and merely linked by the target; leaving is a detach rather than a
   search, and the two-authoritative-copies shape is rejected.
 - [a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md) -- every timing
-  control is a wait the body's frame holds, built where what it waits for stops changing (once for
-  the body's run on fixed storage, at the stop for a delay or a join); its memberships stand for its
-  life, each stop only parks on it and answers how the execution carries on, and a join waits on its
-  branches' termination. Every process stays one coroutine; the two-kinds-of-process split was
-  built, measured and rejected. Revises waiting-is-an-operation D4 and disable-scope-invalidation
-  D2.
+  control is a wait the body's frame holds, built so a stop reached again stops at the same wait
+  (outside the innermost loop on fixed storage, at the stop for a delay or a join); its memberships
+  stand for its life, each stop only parks on it and answers how the execution carries on, and a
+  join waits on its branches' termination. Every process stays one coroutine; the
+  two-kinds-of-process split was built, measured and rejected. Revises waiting-is-an-operation D4
+  and disable-scope-invalidation D2.
+- [a-coroutines-storage-states-its-lifetime](a-coroutines-storage-states-its-lifetime.md) -- a
+  coroutine's slots realize LIR's storage statements as lifetime markers, as clang's do at every
+  level, so LLVM's split reads the lifetime LIR states rather than checking every pair of a slot's
+  uses. Splitting coroutines in the execution backend is rejected.
 - [a-process-stopping-only-at-its-loop-head-is-called](a-process-stopping-only-at-its-loop-head-is-called.md)
   -- a stage rewrites MIR into MIR before any consumer reads it, and its first rewrite splits a
   process that stops only at the head of its loop into a setup and a pass that the runtime's one
-  coroutine calls, so HIR and MIR as lowered keep one process shape and both backends compile no
-  coroutine for it. Splitting in one backend, two process kinds upstream, kept locals, one entry
-  answering three ways, and predicting a node's position are rejected.
+  coroutine calls, and a body that never stops into an ordinary function, so HIR and MIR as lowered
+  keep one process shape and both backends compile no coroutine for it. Splitting in one backend,
+  two process kinds upstream, kept locals, one entry answering three ways, and predicting a node's
+  position are rejected.
 - [a-rewrite-of-mir-says-whether-a-program-needs-it](a-rewrite-of-mir-says-whether-a-program-needs-it.md)
   -- the stage's rewrites are one ordered list, in which the conversion from the built phase into
   the legalized one is required and every other rewrite is optional and runs in every build unless a

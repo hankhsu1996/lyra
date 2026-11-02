@@ -47,6 +47,12 @@ coroutine runs.**
   the statements and then that stop. Every call that started the process enters the runtime instead,
   on the object's address and the two methods' addresses, through one of two entries named by that
   order.
+- **A body that never stops** is an ordinary function too: one entered on its object alone becomes a
+  method taking the object, erased, and answering nothing, which one more runtime entry calls once.
+  In SystemVerilog a process is an execution whatever it does, so that it is a coroutine is this
+  compiler's representation and not the language's, as it is in C++, which is why this is a rewrite.
+- **Only a body nothing outside the unit names.** Both forms change a body's signature, so a class
+  another unit can name keeps its bodies, as LLVM rewrites a signature only under local linkage.
 - **What the runtime does.** One coroutine runs any split process: it holds the wait, as an
   activation holds every wait it stops at, calls the setup and then a pass each time the wait ends,
   and gives up control only between them. A departure out of either part unwinds it as it would the
@@ -102,3 +108,4 @@ which code is compiled as one.
 - `a-wait-is-storage-of-its-activation.md` -- the wait is storage of the activation, which here is
   the runtime's coroutine.
 - `waiting-is-an-operation.md` -- a stop is a wait on a call's answer, which a pass returns instead.
+- `a-coroutines-storage-states-its-lifetime.md` -- what a body that stays a coroutine hands LLVM.

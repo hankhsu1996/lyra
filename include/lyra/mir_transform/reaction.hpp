@@ -14,8 +14,10 @@ namespace lyra::mir_transform {
 // such a process now enters the runtime's coroutine on its object and the two
 // parts.
 //
-// A body the rule does not fit stays a coroutine, which is the same program
-// at a higher cost to compile.
+// A body that never stops becomes an ordinary function the runtime calls once.
+// Any other body the rule does not fit stays a coroutine, which is the same
+// program at a higher cost to compile. A class another unit can name keeps its
+// bodies as they are.
 auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit;
 
 }  // namespace lyra::mir_transform

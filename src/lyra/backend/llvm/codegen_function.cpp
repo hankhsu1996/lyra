@@ -23,6 +23,7 @@
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/codegen_value_type.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
@@ -355,6 +356,27 @@ auto CodeGenFunction::Variables() -> diag::Result<const PlacedMembers*> {
   return &variables_.emplace(*std::move(placed));
 }
 
+// A coroutine's slots state their lifetimes whatever the optimization level, as
+// clang's do: splitting the body asks of every slot whether it is in use across
+// a suspension, and without a lifetime it answers from every pair of the slot's
+// uses. A value a transient holds in frame bytes has the few uses of the
+// statement making it, so that answer costs it nothing.
+void CodeGenFunction::LowerStorage(const lir::StorageInstr& storage) {
+  if (!IsCoroutine() || !fn_->values.Get(storage.of).NamesStorage()) {
+    return;
+  }
+  llvm::Value* const slot = values_.at(storage.of);
+  switch (storage.op) {
+    case lir::StorageInstr::Op::kLive:
+      builder_.CreateLifetimeStart(slot);
+      return;
+    case lir::StorageInstr::Op::kDead:
+      builder_.CreateLifetimeEnd(slot);
+      return;
+  }
+  throw InternalError("llvm codegen: unknown storage statement");
+}
+
 auto CodeGenFunction::LowerVariableStorage() -> diag::Result<llvm::Value*> {
   auto placed = Variables();
   if (!placed) {
@@ -365,6 +387,10 @@ auto CodeGenFunction::LowerVariableStorage() -> diag::Result<llvm::Value*> {
       llvm::ArrayType::get(at.getInt8Ty(), (*placed)->layout.size), nullptr,
       "variables");
   storage->setAlignment(llvm::Align((*placed)->layout.align));
+  // The variables' storage lasts the whole body, so nothing ends it.
+  if (IsCoroutine()) {
+    builder_.CreateLifetimeStart(storage);
+  }
   return storage;
 }
 

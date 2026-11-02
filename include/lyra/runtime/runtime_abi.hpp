@@ -208,6 +208,8 @@ auto lyra_rt_enter_coroutine(void* frame, void* out) noexcept -> void*;
 auto lyra_rt_enter_reaction_running_first(
     void* receiver, bool (*setup)(void*, void*), bool (*pass)(void*, void*),
     void* out) noexcept -> void*;
+auto lyra_rt_enter_run_to_completion(
+    void* receiver, void (*body)(void*), void* out) noexcept -> void*;
 auto lyra_rt_enter_reaction_stopping_first(
     void* receiver, bool (*setup)(void*, void*), bool (*pass)(void*, void*),
     void* out) noexcept -> void*;

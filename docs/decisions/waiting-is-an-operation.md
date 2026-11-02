@@ -104,10 +104,11 @@ spelling is named.
 **D4. An execution names what it is waiting for, for as long as it waits.** The wait answers two
 things: how the execution stopping at it carries on, and the same again after the process was
 stopped. Stopping the process takes the execution off the wait and keeps the wait; starting the
-process asks the wait again. The wait itself is held by the body's frame, built where what it waits
-for stops changing: once for the body's whole run where that is storage that stays the same, and at
-the stop for what only the stop knows -- a delay's amount, a fork's branches, an evaluation's
-reports ([a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md)).
+process asks the wait again. The wait itself is held by the body's frame, built so a stop reached
+again stops at the same wait: outside the innermost loop around its stop where it watches storage
+that stays the same, and at the stop for what only the stop knows -- a delay's amount, a fork's
+branches, an evaluation's reports
+([a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md)).
 
 **D5. Making a wait and making it again are separate questions, because the standard answers them
 separately.** For most constructs the second is the first asked afresh. For a `wait (cond)` it is

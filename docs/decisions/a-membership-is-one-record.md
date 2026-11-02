@@ -132,10 +132,10 @@ D8. There is no membership-target interface. Because the detach in D3 is pointer
   the duplication, not of the relation.
 
 - **Every membership owned by the activation.** What this entry first said, when the activation was
-  the only thing a membership could serve. A wait that stands for a body's whole run outlives every
-  stop the activation makes at it, and a process is inside a disable target across many activations,
-  so tying each to the activation either builds and tears them down at every stop or gives the
-  activation records of lives that are not its own.
+  the only thing a membership could serve. A wait that stands across a loop outlives every stop the
+  activation makes at it, and a process is inside a disable target across many activations, so tying
+  each to the activation either builds and tears them down at every stop or gives the activation
+  records of lives that are not its own.
 
 - **A `WakeSource` / `RegistrationTarget` interface implemented by each target.** The abstraction is
   drawn from what the implementations happened to share (they all hold a token), not from what the

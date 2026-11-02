@@ -26,8 +26,8 @@ value-change wait was still a node.
 
 ## Decision
 
-A value-change wait is ordinary runtime calls: one that builds the wait over its trigger set, where
-what it watches stops changing, and the stop at it that every timing control shares:
+A value-change wait is ordinary runtime calls: one that builds the wait over its trigger set, so a
+stop reached again stops at the same wait, and the stop at it that every timing control shares:
 
 ```text
 wait = wait_on([trigger(leaf) for leaf in leaves])
@@ -78,7 +78,7 @@ handed a frame.
 - The execution backend runs every value-change construct: `@(...)` with edges and event lists,
   `@*`, `always_comb` / `always_latch`, `wait (cond)`, and continuous assignment. An `always` stops
   at its wait again through its forever loop with no scheduler involvement, the wait itself built
-  once where what it watches stops changing
+  once outside that loop
   ([a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md)).
 - The C++ backend's bespoke renderer for the wait is gone; the wait renders through the same generic
   call, construct, and array-literal paths as every other runtime effect. The generated text is more
