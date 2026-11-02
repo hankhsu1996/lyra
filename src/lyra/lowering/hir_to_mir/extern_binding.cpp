@@ -231,7 +231,7 @@ auto RunEveryDefinition(
       unit, start,
       start.Add(BuildBuiltinMethodCall(
           unit, start, support::BuiltinFn::kSize, start.LocalPlace(left, queue),
-          {}, builtins.integer)));
+          {}, builtins.int_type)));
 
   mir::Block loop;
   const WalkFrame each = starter.WithBlock(&loop);
@@ -361,7 +361,7 @@ auto WriteExternTaskBody(
               block.Add(BuildBuiltinMethodCall(
                   unit, block, support::BuiltinFn::kSize,
                   ExternStoragePlace(unit, frame, owner, storage, queue), {},
-                  unit.builtins.integer))));
+                  unit.builtins.int_type))));
       mir::Block report;
       AppendToolReportStmt(
           process.Owner().Unit(), mir::Builder(report, frame.span),
