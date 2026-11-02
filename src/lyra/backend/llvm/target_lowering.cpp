@@ -269,9 +269,10 @@ auto TargetLowering::ElementStepOf(
     return std::unexpected(std::move(domain.error()));
   }
   // A container indexed by a type is reached by a key, which crosses with the
-  // type it was written in (LRM 7.8).
-  const ElementEntries entries = stated.IndexType().has_value()
-                                     ? KeyedElementEntries()
+  // type it was written in (LRM 7.8), and only a queue's write can report.
+  const ElementEntries entries =
+      stated.IndexType().has_value() ? KeyedElementEntries()
+      : stated.IsQueue()             ? QueueElementEntries()
                                      : PositionedElementEntries(*domain);
   StepEntry entry = [&] {
     switch (access) {

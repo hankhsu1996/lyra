@@ -569,8 +569,11 @@ class LirDumper {
                     m.member.slot.value);
               },
               [&](const ElementProjection& e) {
-                out +=
-                    std::format(".element({})", FormatOperands(e.coordinates));
+                out += std::format(
+                    ".element({}{})", FormatOperands(e.coordinates),
+                    e.written_at.has_value()
+                        ? std::format(" at {}", FormatOperand(*e.written_at))
+                        : "");
               },
               [&](const ComponentProjection& c) {
                 out += std::format(".component({})", c.index.value);

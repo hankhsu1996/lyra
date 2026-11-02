@@ -8,10 +8,10 @@
 #include <string_view>
 #include <unistd.h>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/base/write_all.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/runtime.hpp"
-#include "lyra/runtime/runtime_process.hpp"
 
 namespace lyra::runtime {
 
@@ -85,13 +85,13 @@ void InterruptReport::SayWhereTheRunWas(int signal) {
     Write("note: interrupted at time ");
     WriteDecimal(run->now_.load());
     Write("\n");
-    const RuntimeProcess* running =
-        run->current_process_.load(std::memory_order_relaxed);
-    const std::string_view written_at =
-        running == nullptr ? std::string_view{}
-                           : running->Context().procedure.written_at;
-    if (!written_at.empty()) {
-      Write(written_at);
+    const base::SourceLocation written_at = run->RunningProcedure().written_at;
+    if (written_at.IsValid()) {
+      Write(written_at.File());
+      Write(":");
+      WriteDecimal(written_at.Line());
+      Write(":");
+      WriteDecimal(written_at.Column());
       Write(": note: this procedure was running\n");
     }
   }

@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/value_dump.hpp"
 #include "lyra/value/string.hpp"
@@ -130,7 +131,12 @@ class ValueDumps {
   // once it starts at the end of the step.
   template <typename Act>
   void OnceStarted(Act act);
-  void Start(SimTime now, const DumpSelection& selection);
+  // The file the dump is written to: what the options force, or what the
+  // design names, or what the options name, or the default.
+  [[nodiscard]] auto DumpFileName() const -> std::string;
+  void Start(
+      std::unique_ptr<DumpWriter> writer, SimTime now,
+      const DumpSelection& selection);
   [[nodiscard]] auto OptionSelection() -> DumpSelection;
   // The member of `instance` that is the variable it declares under `name`,
   // none where it declares none.
@@ -175,18 +181,25 @@ class ValueDumps {
 // The entries generated code calls, each acting on the run's value dump (LRM
 // 21.7.1). A `$dumpvars` naming an instance hands that instance, and one
 // naming a variable the member it is of the instance declaring it.
-void DumpFile(RuntimeEffects& runtime, const value::String& name);
-void DumpVars(RuntimeEffects& runtime);
-void DumpVarsLevels(RuntimeEffects& runtime, std::int64_t levels);
-void DumpVarsOf(RuntimeEffects& runtime, std::int64_t levels, Scope* instance);
-void DumpVarsOfVariable(RuntimeEffects& runtime, const void* member);
+void DumpFile(
+    RuntimeEffects& runtime, const value::String& name,
+    base::SourceLocation at);
+void DumpVars(RuntimeEffects& runtime, base::SourceLocation at);
+void DumpVarsLevels(
+    RuntimeEffects& runtime, std::int64_t levels, base::SourceLocation at);
+void DumpVarsOf(
+    RuntimeEffects& runtime, std::int64_t levels, Scope* instance,
+    base::SourceLocation at);
+void DumpVarsOfVariable(
+    RuntimeEffects& runtime, const void* member, base::SourceLocation at);
 void DumpOff(RuntimeEffects& runtime);
 void DumpOn(RuntimeEffects& runtime);
 void DumpAll(RuntimeEffects& runtime);
 void DumpLimit(RuntimeEffects& runtime, std::int64_t bytes);
 void DumpFlush(RuntimeEffects& runtime);
 void DumpPortsOf(
-    RuntimeEffects& runtime, Scope* instance, const value::String& name);
+    RuntimeEffects& runtime, Scope* instance, const value::String& name,
+    base::SourceLocation at);
 void DumpPortsOff(RuntimeEffects& runtime, const value::String& name);
 void DumpPortsOn(RuntimeEffects& runtime, const value::String& name);
 void DumpPortsAll(RuntimeEffects& runtime, const value::String& name);

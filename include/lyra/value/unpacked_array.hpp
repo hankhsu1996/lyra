@@ -13,6 +13,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/clear_above_widths.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
@@ -189,16 +190,18 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // elements whose elements differ from `T` only in their queues' bounds, each
   // element built afresh as a `T`.
   template <typename U>
-  [[nodiscard]] static auto FromBoundFree(const UnpackedArray<U, N>& source)
+  [[nodiscard]] static auto FromBoundFree(
+      const UnpackedArray<U, N>& source, base::SourceLocation at)
       -> UnpackedArray {
+    const base::SourceLocationScope bound(at);
     const std::vector<T> elements = detail::ElementsAs<T>(source);
     return Gathered([&](std::size_t i) -> const T& { return elements[i]; });
   }
 
   // This array as a value of `R`, the same array with no queue in it bounded.
   template <typename R>
-  [[nodiscard]] auto ToBoundFree() const -> R {
-    return R::FromBoundFree(*this);
+  [[nodiscard]] auto ToBoundFree(base::SourceLocation at) const -> R {
+    return R::FromBoundFree(*this, at);
   }
 
   // LRM 7.6: a fixed-size unpacked array assigned an array of another unpacked
@@ -207,8 +210,10 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // anything the source decides -- so a source of another size is a run-time
   // error and the assignment does not happen.
   template <OrdinalElements C>
-  [[nodiscard]] static auto FromArray(const C& source) -> UnpackedArray {
+  [[nodiscard]] static auto FromArray(const C& source, base::SourceLocation at)
+      -> UnpackedArray {
     if (source.RawSize() != N) {
+      const base::SourceLocationScope bound(at);
       throw SimulationError(
           "a fixed-size unpacked array of {} elements cannot be assigned an "
           "array of {}",
@@ -312,18 +317,21 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // those elements taking `values`, where a range reaching outside the array
   // is an error.
   [[nodiscard]] auto WindowToBitVec(
-      const Position& start, std::int64_t count) const -> BitVec {
+      const Position& start, std::int64_t count, base::SourceLocation at) const
+      -> BitVec {
+    const base::SourceLocationScope bound(at);
     return detail::StreamOfElements(
         StaticElem<T>{}, detail::SequenceSliceElements(
                              Run(), ReadPosition(start), WindowCount(count)));
   }
   template <OrdinalElements C>
   [[nodiscard]] auto WithWindow(
-      const Position& start, std::int64_t count, const C& values) const
-      -> UnpackedArray {
+      const Position& start, std::int64_t count, const C& values,
+      base::SourceLocation at) const -> UnpackedArray {
     const std::optional<std::int64_t> first = ReadPosition(start);
     if (count > 0 && (!first.has_value() || *first < 0 ||
                       *first + count > static_cast<std::int64_t>(N))) {
+      const base::SourceLocationScope bound(at);
       throw SimulationError(
           "the range a 'with' names reaches outside the array it is unpacked "
           "into");
@@ -415,7 +423,8 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // The bits the array streams as, held as a value of `R`, which is exactly as
   // wide (LRM 6.24.3).
   template <IntegralValue R>
-  [[nodiscard]] auto ToBitstream() const -> R {
+  [[nodiscard]] auto ToBitstream(base::SourceLocation at) const -> R {
+    const base::SourceLocationScope bound(at);
     return R::Built([&](R& out) {
       const std::uint64_t filled =
           WriteToStream(out.AsMutableWords().MutableView(), 0);
@@ -467,15 +476,18 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // LRM 20.6.2 `$bits`: the current bit count is the sum of the elements' own
   // bit counts. A fixed-size unpacked array folds at elaboration; this path
   // serves the case where an element is itself dynamically sized.
-  [[nodiscard]] auto BitstreamWidth() const -> Int {
+  [[nodiscard]] auto BitstreamWidth(base::SourceLocation at) const -> Int {
+    const base::SourceLocationScope bound(at);
     return Int::FromInt(detail::SequenceBitstreamWidth(Run(), StaticElem<T>{}));
   }
 
   // LRM 20.9 `$countbits`: the bit stream this value contributes is its
   // elements' streams laid end to end, so the count over it is the sum of the
   // elements' own counts under the same control bits.
-  template <IntegralValue Control>
-  [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
+  [[nodiscard]] auto CountBits(
+      const LogicVector<4>& control_bits, base::SourceLocation at) const
+      -> Int {
+    const base::SourceLocationScope bound(at);
     return Int::FromInt(
         detail::SequenceCountBits(Run(), control_bits, StaticElem<T>{}));
   }
@@ -513,7 +525,9 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
 
   // The array a stream of exactly its bits holds (LRM 11.4.14.3).
   template <IntegralValue Bits>
-  [[nodiscard]] static auto FromBitstream(const Bits& bits) -> UnpackedArray {
+  [[nodiscard]] static auto FromBitstream(
+      const Bits& bits, base::SourceLocation at) -> UnpackedArray {
+    const base::SourceLocationScope bound(at);
     return Built([&](UnpackedArray& out) {
       out.ReadFromStream(bits.AsWords().View(), 0, Bits::kWidth);
     });
@@ -521,10 +535,13 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
 
   // The same where an element's width is the running program's: the stream as
   // a run of bits of its own, and the array exactly such a run holds.
-  [[nodiscard]] auto ToBitVec() const -> BitVec {
-    return StreamOf(*this);
+  [[nodiscard]] auto ToBitVec(base::SourceLocation at) const -> BitVec {
+    const base::SourceLocationScope bound(at);
+    return StreamOf(*this, BitstreamWidth(at));
   }
-  [[nodiscard]] static auto FromBitVec(const BitVec& run) -> UnpackedArray {
+  [[nodiscard]] static auto FromBitVec(
+      const BitVec& run, base::SourceLocation at) -> UnpackedArray {
+    const base::SourceLocationScope bound(at);
     return Built([&](UnpackedArray& out) {
       if (out.ReadFromStream(run.View(), 0, run.View().width) !=
           run.View().width) {

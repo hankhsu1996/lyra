@@ -311,7 +311,8 @@ struct CompilationUnit {
   // class -- its record of the class, under its definition symbol, and the
   // constants that record points at, all linked as the class is -- is here,
   // except the tables of the bodies its objects dispatch through, which the
-  // class states and a target lays out.
+  // class states and a target lays out. So is the record of each location the
+  // unit's program states.
   std::vector<GlobalConstant> constants;
   // Each enumeration member table the unit holds, which an operand names.
   base::Translation<EnumTableId, EnumTableDecl> enum_tables;

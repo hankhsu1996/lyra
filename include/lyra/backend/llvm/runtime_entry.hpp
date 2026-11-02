@@ -32,12 +32,14 @@ struct StepEntry {
 // with the element as it is, and the one answering with the storage a write
 // lands in. An associative array is reached by a key, which is an entry of its
 // own serving every one, and every other container by a position, realized per
-// value domain it is held in (LRM 7.8, 7.4.5).
+// value domain it is held in (LRM 7.8, 7.4.5). A queue's write has an entry of
+// its own too, the one that can report (LRM 7.10.5).
 struct ElementEntries {
   StepEntry read;
   StepEntry write;
 };
 auto KeyedElementEntries() -> ElementEntries;
+auto QueueElementEntries() -> ElementEntries;
 auto PositionedElementEntries(support::ValueDomain domain) -> ElementEntries;
 
 // How this target realizes an instruction or a construction the layer above it
@@ -79,11 +81,10 @@ enum class RuntimeOp : std::uint8_t {
   kSettleDeparture,
   // What stands between a type's own operations and the type the library asks
   // them through: the stream a type's function answers written into the stream
-  // the type was handed, a stream's bits laid out as an integral value, and a
-  // value built by its type's function out of such a stream; and the same two
-  // for a type whose stream is a run of bits as long as the value makes it.
+  // the type was handed, and a value built by its type's function out of such
+  // a stream; and the same two for a type whose stream is a run of bits as long
+  // as the value makes it.
   kStreamWrite,
-  kStreamRead,
   kStreamBuild,
   kRunWrite,
   kRunBuild,

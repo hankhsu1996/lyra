@@ -79,13 +79,13 @@ class DiagramStore {
     const std::size_t bytes =
         (key.condition.words.size() * sizeof(std::uint32_t)) +
         (diagram != nullptr ? diagram->HeldBytes() : 0);
-    const auto at =
+    const auto kept =
         entries_
             .emplace(
                 key, Entry{.diagram = diagram, .bytes = bytes, .recency = {}})
             .first;
-    recency_.push_front(&at->first);
-    at->second.recency = recency_.begin();
+    recency_.push_front(&kept->first);
+    kept->second.recency = recency_.begin();
     kept_ += bytes;
     while (kept_ > kKeptBytes && recency_.size() > 1) {
       const auto oldest = entries_.find(*recency_.back());

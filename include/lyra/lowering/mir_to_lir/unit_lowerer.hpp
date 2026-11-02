@@ -198,10 +198,9 @@ class UnitLowerer {
       const mir::CallableTarget& method, lir::TypeId prototype)
       -> lir::TableBody;
 
-  // The LIR function a class's constructor lowers to. Every class an object is
-  // built of defines its own construction, so every one of them has this
-  // function, and it is named before any body is lowered -- which is what lets
-  // a derived class enter its base's whichever order the two are lowered in.
+  // The LIR function the constructor of a class this unit defines lowers to,
+  // named before any body is lowered -- which is what lets a derived class
+  // enter its base's whichever order the two are lowered in.
   [[nodiscard]] auto ConstructorFunction(mir::ClassId cls) const
       -> lir::FunctionId;
 
@@ -239,7 +238,7 @@ class UnitLowerer {
       -> lir::RecordId;
 
   // What is settled about one MIR class before any body of it is lowered: its
-  // own LIR identity, its constructor's function where it has a constructor,
+  // own LIR identity, its constructor's function where it defines one,
   // one function identity per callable that has a body here, and which of the
   // class's introductions each callable is, counted in the order it introduces
   // them. A callable with no body here is no function of this unit and holds

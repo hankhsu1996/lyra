@@ -125,9 +125,11 @@ struct ArgAbi {
 // What crosses a call, the role of rustc's `FnAbi`, which holds no machine type
 // either: what the callee takes ahead of the arguments, one `ArgAbi` per
 // argument the call states with the part the callee names among them, and what
-// the callee is told of types, which follows them all. It reads LIR alone, so
-// it holds as soon as the call does. The machine types a call crosses at follow
-// from this and from how the answer comes back.
+// the callee is told of types, which follows them all. Where its call was
+// written is the last operand a call states, to a library entry and to a body
+// of the program alike. It reads LIR alone, so it holds as soon as the call
+// does. The machine types a call crosses at follow from this and from how the
+// answer comes back.
 struct FnAbi {
   ImplicitArg implicit_arg;
   std::optional<NamedPartArg> named_part;

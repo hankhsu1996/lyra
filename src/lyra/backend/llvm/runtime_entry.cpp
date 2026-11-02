@@ -72,8 +72,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "settle_departure";
     case RuntimeOp::kStreamWrite:
       return "stream_write";
-    case RuntimeOp::kStreamRead:
-      return "stream_read";
     case RuntimeOp::kStreamBuild:
       return "stream_build";
     case RuntimeOp::kRunWrite:
@@ -138,6 +136,17 @@ auto KeyedElementEntries() -> ElementEntries {
       .write = {
           .entry = support::BuiltinFn::kAssocElementMut,
           .symbol = RuntimeSymbol(support::BuiltinFn::kAssocElementMut)}};
+}
+
+auto QueueElementEntries() -> ElementEntries {
+  return {
+      .read =
+          {.entry = support::BuiltinFn::kElement,
+           .symbol = RuntimeSymbol(
+               support::ValueDomain::kQueue, support::BuiltinFn::kElement)},
+      .write = {
+          .entry = support::BuiltinFn::kQueueElementMut,
+          .symbol = RuntimeSymbol(support::BuiltinFn::kQueueElementMut)}};
 }
 
 auto PositionedElementEntries(support::ValueDomain domain) -> ElementEntries {
@@ -341,7 +350,6 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kToBool:
     case RuntimeOp::kDefault:
     case RuntimeOp::kSettleDeparture:
-    case RuntimeOp::kStreamRead:
     case RuntimeOp::kStreamBuild:
     case RuntimeOp::kRunBuild:
     case RuntimeOp::kFromElements:
@@ -361,7 +369,6 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
   switch (op) {
     // The integral value a stream is read into is laid out at a width and
     // with the states no operand fixes (LRM 6.24.3).
-    case RuntimeOp::kStreamRead:
     case RuntimeOp::kStreamBuild:
       return support::AnswerTold::kIntegralExtent;
     // A position naming no element is answered for out of the element type,
@@ -416,18 +423,17 @@ auto OperandReadingsOf(lir::ValueCellTarget::Op op)
 
 auto OperandReadingsOf(lir::OpenWriteTarget::Op op)
     -> support::OperandReadings {
-  using enum support::OperandReading;
-  // Each acts on what a designation names. A write of a run of elements takes
-  // where they start, how many there are, and the elements, a fixed-size
-  // unpacked array crossing with its type; a write of a queue's slice takes
-  // its two bounds in place of the start and the count.
   switch (op) {
     case lir::OpenWriteTarget::Op::kLand:
       return {};
+    // A run of elements written within a write takes what the container's own
+    // slice write takes, the designation standing for the container.
     case lir::OpenWriteTarget::Op::kAssignElementSlice:
-      return {kMachine, kPosition, kMachine, kTyped};
+      return support::RuntimeEntryOf(support::BuiltinFn::kAssignElementSlice)
+          .operands;
     case lir::OpenWriteTarget::Op::kAssignQueueSlice:
-      return {kMachine, kPosition, kPosition, kTyped};
+      return support::RuntimeEntryOf(support::BuiltinFn::kAssignQueueSlice)
+          .operands;
   }
   throw InternalError("llvm codegen: unknown open-write operation");
 }

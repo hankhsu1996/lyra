@@ -1,6 +1,7 @@
 #include "lyra/runtime/runtime.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
@@ -19,6 +20,8 @@
 #include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/design.hpp"
@@ -47,6 +50,30 @@ auto ProcessorSeconds() -> double {
 auto Times(std::size_t count) -> std::string {
   return count == 1 ? "once" : std::format("{} times", count);
 }
+
+// A procedure no process is running in force for as long as what it asked for
+// runs, however that is left. What runs reports for that procedure.
+class RunningAnEffect {
+ public:
+  RunningAnEffect(
+      std::atomic<const ProcedureContext*>& in_force,
+      const ProcedureContext& made_by)
+      : in_force_(&in_force), outer_(in_force.load(std::memory_order_relaxed)) {
+    in_force.store(&made_by, std::memory_order_relaxed);
+  }
+  ~RunningAnEffect() {
+    in_force_->store(outer_, std::memory_order_relaxed);
+  }
+
+  RunningAnEffect(const RunningAnEffect&) = delete;
+  auto operator=(const RunningAnEffect&) -> RunningAnEffect& = delete;
+  RunningAnEffect(RunningAnEffect&&) = delete;
+  auto operator=(RunningAnEffect&&) -> RunningAnEffect& = delete;
+
+ private:
+  std::atomic<const ProcedureContext*>* in_force_;
+  const ProcedureContext* outer_;
+};
 
 }  // namespace
 
@@ -166,8 +193,9 @@ void Runtime::RunSimulation() {
       ExecuteFinalProcedures();
       // What the design asked to have done once it is over -- writing the
       // coverage database (LRM 19.9) -- reads the same state the finals do.
-      for (OwnedCall& effect : at_run_end_) {
-        RunAsLanding(*this, effect);
+      for (OwedAtRunEnd& owed : at_run_end_) {
+        const RunningAnEffect running(procedure_in_force_, owed.procedure);
+        RunAsLanding(*this, owed.call);
       }
     }
   } catch (const std::exception&) {
@@ -193,8 +221,9 @@ void Runtime::RequestToolStop() {
   state_ = ToolStopped{};
 }
 
-void Runtime::ReportDesignError(const base::DiagMessage& message) {
-  diagnostic_.Report(Severity::kFatal, message);
+void Runtime::ReportDesignError(
+    base::SourceLocation at, const base::DiagMessage& message) {
+  diagnostic_.ReportAt(at, Severity::kFatal, message);
   RequestSimulationEnd();
 }
 
@@ -205,7 +234,7 @@ void Runtime::ReportToolFailure(std::string_view message) {
 }
 
 void Runtime::ReportSimulationControl(
-    std::string_view task, std::string_view origin, int finish_number) {
+    std::string_view task, int finish_number) {
   // A finish number other than 0, 1 or 2 has no meaning in the standard, and
   // the front end accepts one (LRM 20.2). It prints what an omitted one prints.
   const int selected =
@@ -213,12 +242,9 @@ void Runtime::ReportSimulationControl(
   if (selected == 0) {
     return;
   }
-  std::string line;
-  if (!origin.empty()) {
-    line += origin;
-    line += ": ";
-  }
-  line += std::format("note: '{}' at time {}", task, now_.load());
+  std::string line = std::format(
+      "{}: note: '{}' at time {}",
+      SourceLocationText(base::BoundSourceLocation(task)), task, now_.load());
   if (selected == 2) {
     line += std::format(", {:.3f}s of processor time", ProcessorSeconds());
   }
@@ -226,33 +252,33 @@ void Runtime::ReportSimulationControl(
 }
 
 auto Runtime::ReportContext() const -> DiagnosticDispatcher::Context {
-  const RuntimeProcess* const process = current_process_;
-  const Scope* scope =
-      process == nullptr ? nullptr : process->Context().procedure.scope;
-  if (scope == nullptr) {
-    return {.where = std::format("at time {}", now_.load()), .procedure = {}};
-  }
+  const ProcedureContext& procedure = RunningProcedure();
   return {
-      .where = std::format(
-          "in '{}' at time {}",
-          std::string_view{scope->HierarchicalPath().View()}, now_.load()),
-      .procedure = process->Context().procedure.written_at};
+      .where = procedure.scope == nullptr
+                   ? std::format("at time {}", now_.load())
+                   : std::format(
+                         "in '{}' at time {}",
+                         std::string_view{
+                             procedure.scope->HierarchicalPath().View()},
+                         now_.load()),
+      .written_at = procedure.written_at};
 }
 
-void Runtime::ReportUnsettledSlot(std::span<const NotedProcedure> ran) {
-  ReportDesignError(
+void Runtime::ReportUnsettledSlot(std::span<const ProcedureContext> ran) {
+  ReportDesignFailure(
+      base::kNoSourceLocation,
       base::DiagMessage(
           "the design keeps scheduling work and time never advances"));
 
   // Each procedure once, in the order they first ran, with how many times it
   // ran.
   struct Counted {
-    NotedProcedure procedure;
+    ProcedureContext procedure;
     std::size_t runs;
   };
   std::vector<Counted> counted;
-  std::map<NotedProcedure, std::size_t> index_of;
-  for (const NotedProcedure& procedure : ran) {
+  std::map<ProcedureContext, std::size_t> index_of;
+  for (const ProcedureContext& procedure : ran) {
     const auto [at, first] = index_of.try_emplace(procedure, counted.size());
     if (first) {
       counted.push_back(Counted{.procedure = procedure, .runs = 0});
@@ -265,7 +291,7 @@ void Runtime::ReportUnsettledSlot(std::span<const NotedProcedure> ran) {
 
   const std::size_t named = std::min(counted.size(), kMaxNamedProcedures);
   for (const Counted& one : std::span{counted}.first(named)) {
-    const std::string_view written_at = one.procedure.written_at;
+    const std::string written_at = SourceLocationText(one.procedure.written_at);
     // A namespace's initializer runs in no scope, and an action it started
     // keeps that.
     const std::string where =
@@ -418,8 +444,12 @@ auto Runtime::NamespaceSeeds(std::string_view name) -> InitializationRng& {
 }
 
 void Runtime::EnterStaticInit(const ExecutionContext& context) {
-  displacing_.emplace_back(context.SplitInitializationRng(), context, running_);
+  displacing_.emplace_back(
+      context.SplitInitializationRng(), context, running_,
+      procedure_in_force_.load(std::memory_order_relaxed));
   running_ = &displacing_.back().state;
+  procedure_in_force_.store(
+      &displacing_.back().context.procedure, std::memory_order_relaxed);
 }
 
 auto Runtime::RunningContext() const -> const ExecutionContext& {
@@ -434,8 +464,18 @@ auto Runtime::RunningContext() const -> const ExecutionContext& {
   return displacing_.back().context;
 }
 
+auto Runtime::RunningProcedure() const noexcept -> const ProcedureContext& {
+  const RuntimeProcess* const process =
+      current_process_.load(std::memory_order_relaxed);
+  return process == nullptr
+             ? *procedure_in_force_.load(std::memory_order_relaxed)
+             : process->Context().procedure;
+}
+
 void Runtime::LeaveStaticInit() {
   running_ = displacing_.back().displaced;
+  procedure_in_force_.store(
+      displacing_.back().displaced_procedure, std::memory_order_relaxed);
   displacing_.pop_back();
 }
 
@@ -478,7 +518,8 @@ void Runtime::ExecuteTimeSlot() {
   RunRegion(Region::kPostponed);
   if (std::holds_alternative<Running>(state_) && !current_slot_.Empty()) {
     // LRM 4.4.2.9.
-    ReportDesignError(
+    ReportDesignFailure(
+        base::kNoSourceLocation,
         base::DiagMessage(
             "the postponed region scheduled work back into the time slot that "
             "ends with it"));
@@ -499,14 +540,10 @@ auto Runtime::DrainRegions(Region first, Region last, SlotPasses& passes)
       // What a pass runs is what its region holds as the pass begins, and a
       // procedure is noted from there because its run may be the one that ends
       // it.
-      current_slot_[*region].activations.ForEach(
-          [&passes](const QueuePlace& queued) {
-            const RuntimeProcess& process = queued.activation->Process();
-            passes.ran.push_back(
-                NotedProcedure{
-                    .written_at = process.Context().procedure.written_at,
-                    .scope = process.Context().procedure.scope});
-          });
+      current_slot_[*region].activations.ForEach([&passes](
+                                                     const QueuePlace& queued) {
+        passes.ran.push_back(queued.activation->Process().Context().procedure);
+      });
     }
     RunRegion(*region);
   }
@@ -525,16 +562,24 @@ void Runtime::RunRegion(Region region) {
   // assertion's action -- runs with no activation holding it, so each runs as
   // a landing of its own: a run-time error it raises is reported and the
   // region goes on to the effects after it.
-  draining_.effects.Drain([this](const auto& effect) {
-    RunAsLanding(*this, effect);
-    TellExpired();
-  });
+  draining_.effects.Drain(
+      [this](const ProcedureContext& made_by, const auto& effect) {
+        {
+          const RunningAnEffect running(procedure_in_force_, made_by);
+          RunAsLanding(*this, effect);
+        }
+        TellExpired();
+      });
   // A timer comes off its queue as it fires, so arming it again from what the
   // firing wakes queues a new event rather than moving this one. What it does
   // runs with no activation holding it, as a deferred effect does, so it is a
   // landing of its own too.
   while (TimerPlace* fired = draining_.timers.PopFront()) {
-    RunAsLanding(*this, [fired] { fired->timer->Fire(); });
+    {
+      const RunningAnEffect running(
+          procedure_in_force_, fired->timer->BoundBy());
+      RunAsLanding(*this, [fired] { fired->timer->Fire(); });
+    }
     TellExpired();
   }
   while (QueuePlace* queued = draining_.activations.PopFront()) {
@@ -563,8 +608,8 @@ namespace {
 // long as the call lasts, whichever way it is left.
 class InFinalProcedure {
  public:
-  InFinalProcedure(RuntimeProcess& thread, const ProcedureContext& procedure)
-      : thread_(&thread), left_(thread.EnterProcedure(procedure)) {
+  InFinalProcedure(RuntimeProcess& thread, const ExecutionContext& context)
+      : thread_(&thread), left_(thread.EnterProcedure(context)) {
   }
   ~InFinalProcedure() {
     thread_->LeaveProcedure(left_);
@@ -577,7 +622,7 @@ class InFinalProcedure {
 
  private:
   RuntimeProcess* thread_;
-  ProcedureContext left_;
+  ExecutionContext left_;
 };
 
 }  // namespace
@@ -590,7 +635,8 @@ void Runtime::ExecuteFinalProcedures() {
   Scope& root = design_->Root();
   auto thread = RuntimeProcess::Create(
       ExecutionContext{
-          .procedure = {.seeds = &root.InitializationSeeds()},
+          .procedure = kNoProcedure,
+          .seeds = &root.InitializationSeeds(),
           .creator = ThreadCreator::kAnotherConstruct},
       CallingFinalProcedures(), root.InitializationSeeds().Split());
   Activation* const top = thread->TopActivation();
@@ -606,7 +652,7 @@ auto Runtime::CallingFinalProcedures() -> Coroutine<void> {
       // Each call is a landing: whatever leaves the procedure -- a `$finish`,
       // or a run-time error, reported in the procedure's own scope -- stops
       // there.
-      const InFinalProcedure in_it(thread, registered.procedure);
+      const InFinalProcedure in_it(thread, registered.context);
       RunAsLanding(*this, registered.call);
     }
     // LRM 9.2.3: a `$finish` reached inside a final procedure ends the
@@ -645,26 +691,18 @@ auto RegionsOf(support::ScopeExecution execution) -> RegionSet {
   throw InternalError("RegionsOf: an instance run no way");
 }
 
-// What a procedure belongs to: the scope its reports name and the seeds of the
-// instance whose text holds it (LRM 18.14.1).
-auto ProcedureIn(
-    Scope* owning_scope, Scope* unit_instance, const char* written_at)
-    -> ProcedureContext {
-  return ProcedureContext{
-      .scope = owning_scope,
-      .seeds = &unit_instance->InitializationSeeds(),
-      .written_at = written_at};
-}
-
-// What an execution runs in: the procedure it runs, the region set the class
-// of the instance whose code it evaluates states (LRM 24.3.1), and what
-// created its thread. It belongs to no program; an initial procedure of one is
-// made a member where it registers.
+// What an execution runs in: the procedure it runs, the seeds of the instance
+// whose text holds it (LRM 18.14.1), the region set the class of the instance
+// whose code it evaluates states (LRM 24.3.1), and what created its thread. It
+// belongs to no program; an initial procedure of one is made a member where it
+// registers.
 auto ContextIn(
     Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
-    const char* written_at, ThreadCreator creator) -> ExecutionContext {
+    base::SourceLocation written_at, ThreadCreator creator)
+    -> ExecutionContext {
   return ExecutionContext{
-      .procedure = ProcedureIn(owning_scope, unit_instance, written_at),
+      .procedure = {.scope = owning_scope, .written_at = written_at},
+      .seeds = &unit_instance->InitializationSeeds(),
       .regions = RegionsOf(runs_as->Info().metadata.Execution()),
       .creator = creator};
 }
@@ -692,7 +730,7 @@ auto StartingProcess(const ExecutionContext& context, Coroutine<void> coroutine)
 
 void RegisterStartingProcess(
     StartKind kind, Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
-    Coroutine<void> coroutine, const char* written_at) {
+    Coroutine<void> coroutine, base::SourceLocation written_at) {
   Runtime& rt = AsRuntime(current_runtime());
   auto process = StartingProcess(
       ContextIn(
@@ -706,7 +744,7 @@ void RegisterStartingProcess(
 
 void RegisterAlwaysProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at) {
+    base::SourceLocation written_at) {
   RegisterStartingProcess(
       StartKind::kAlwaysProcedure, owning_scope, unit_instance, unit_instance,
       std::move(coroutine), written_at);
@@ -714,7 +752,7 @@ void RegisterAlwaysProcess(
 
 void RegisterContinuousDriver(
     Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
-    Coroutine<void> coroutine, const char* written_at) {
+    Coroutine<void> coroutine, base::SourceLocation written_at) {
   RegisterStartingProcess(
       StartKind::kContinuousDriver, owning_scope, unit_instance, runs_as,
       std::move(coroutine), written_at);
@@ -724,7 +762,7 @@ void RegisterContinuousDriver(
 // and every thread it starts is one of the program's (LRM 24.3, 24.7).
 void RegisterInitialProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at) {
+    base::SourceLocation written_at) {
   switch (unit_instance->Info().metadata.Execution()) {
     case support::ScopeExecution::kDesign:
       RegisterStartingProcess(
@@ -748,13 +786,16 @@ void RegisterInitialProcess(
   throw InternalError("RegisterInitialProcess: an instance run no way");
 }
 
-void Exit(RuntimeEffects& runtime, const value::String& origin) {
+void Exit(RuntimeEffects& runtime, base::SourceLocation at) {
   ProgramThreads* const program = AsRuntime(runtime).RunningContext().program;
   if (program == nullptr) {
-    runtime.Diagnostic().EmitWarning(
-        origin, value::String(
-                    "$exit ignored, since this thread does not originate in "
-                    "an initial procedure of a program (LRM 24.7)"));
+    // LRM 24.7.
+    const base::SourceLocationScope bound(at);
+    runtime.Diagnostic().Report(
+        Severity::kWarning,
+        base::DiagMessage(
+            "'$exit' is ignored, since this thread does not originate in an "
+            "initial procedure of a program"));
     return;
   }
   program->Exit(runtime);
@@ -762,7 +803,7 @@ void Exit(RuntimeEffects& runtime, const value::String& origin) {
 
 void RegisterTriggeredProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at) {
+    base::SourceLocation written_at) {
   RegisterStartingProcess(
       StartKind::kTriggeredProcedure, owning_scope, unit_instance,
       unit_instance, std::move(coroutine), written_at);
@@ -770,17 +811,20 @@ void RegisterTriggeredProcess(
 
 void RegisterFinalProcedure(
     Scope* owning_scope, Scope* unit_instance,
-    OwnedClosure<support::EffectSignature> call, const char* written_at) {
+    OwnedClosure<support::EffectSignature> call,
+    base::SourceLocation written_at) {
   AsRuntime(current_runtime())
       .RegisterFinal(
           RegisteredFinal{
-              .procedure = ProcedureIn(owning_scope, unit_instance, written_at),
+              .context = ContextIn(
+                  owning_scope, unit_instance, unit_instance, written_at,
+                  ThreadCreator::kAnotherConstruct),
               .call = std::move(call)});
 }
 
 void RunAssertionAction(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at) {
+    base::SourceLocation written_at) {
   const ExecutionContext context = ContextIn(
       owning_scope, unit_instance, unit_instance, written_at,
       ThreadCreator::kAnotherConstruct);
@@ -792,7 +836,8 @@ void RunAssertionAction(
 void EnterScopeStaticInit(RuntimeEffects& runtime, Scope* unit_instance) {
   AsRuntime(runtime).EnterStaticInit(
       ExecutionContext{
-          .procedure = ProcedureIn(unit_instance, unit_instance, ""),
+          .procedure = {.scope = unit_instance},
+          .seeds = &unit_instance->InitializationSeeds(),
           .creator = ThreadCreator::kAnotherConstruct});
 }
 
@@ -800,7 +845,8 @@ void EnterNamespaceStaticInit(RuntimeEffects& runtime, const char* name) {
   Runtime& rt = AsRuntime(runtime);
   rt.EnterStaticInit(
       ExecutionContext{
-          .procedure = {.seeds = &rt.NamespaceSeeds(name)},
+          .procedure = kNoProcedure,
+          .seeds = &rt.NamespaceSeeds(name),
           .creator = ThreadCreator::kAnotherConstruct});
 }
 

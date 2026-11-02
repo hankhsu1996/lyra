@@ -8,6 +8,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
@@ -61,6 +62,7 @@ auto ConversionBody(
     code.receiver = param;
   }
   code.result_type = to;
+  DeclareCallerLocation(unit, true, bindings, code, code.params);
 
   // The body reads its one parameter and calls the library and the bodies of
   // its elements' types, so the frame it is built against carries a binding

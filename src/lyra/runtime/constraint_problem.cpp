@@ -17,6 +17,7 @@
 #include "lyra/base/hash.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/constraint_bdd.hpp"
 #include "lyra/runtime/constraint_circuit.hpp"
 #include "lyra/runtime/constraint_sampler.hpp"
@@ -167,9 +168,10 @@ const abi::ObjectDefinition ConstraintProblem::kDefinition =
 
 ConstraintProblem::ConstraintProblem(
     RuntimeEffects& runtime, DrawRng& generator, value::ObjectRef object,
-    bool listed)
+    bool listed, base::SourceLocation at)
     : GcObject(kDefinition),
       runtime_(&runtime),
+      written_at_(at),
       generator_(&generator),
       object_(std::move(object)) {
   if (listed) {
@@ -208,12 +210,12 @@ auto ConstraintProblem::Truth(std::int64_t term) -> CircuitLiteral {
 }
 
 auto ConstraintProblem::Chosen(
-    RandomQualifier declared, bool enabled, const void* at) const -> bool {
-  if (settled_.contains(at)) {
+    RandomQualifier declared, bool enabled, const void* storage) const -> bool {
+  if (settled_.contains(storage)) {
     return false;
   }
   if (listed_.has_value()) {
-    return listed_->contains(at);
+    return listed_->contains(storage);
   }
   switch (declared) {
     case RandomQualifier::kNone:
@@ -573,8 +575,11 @@ auto ConstraintProblem::SettleFirst() -> bool {
   for (const std::size_t v : wanted_) {
     values.emplace_back(v, value_of(variables_[v]));
   }
-  for (const auto& [a, count] : sizes) {
-    undo_.push_back(arrays_[a].resize(count));
+  {
+    const base::SourceLocationScope bound(written_at_);
+    for (const auto& [a, count] : sizes) {
+      undo_.push_back(arrays_[a].resize(count));
+    }
   }
   for (const auto& [v, bits] : values) {
     const Variable& variable = variables_[v];
@@ -806,6 +811,7 @@ auto ConstraintProblem::HeldBits(std::int64_t term) const -> std::vector<bool> {
   out.reserve(bits.size());
   for (const CircuitLiteral bit : bits) {
     if (!bit.IsConstant()) {
+      const base::SourceLocationScope bound(written_at_);
       throw SimulationError(
           "a distribution whose weight or range a random variable decides is "
           "not yet supported");
@@ -1120,6 +1126,7 @@ void ConstraintProblem::AddNested(const value::ObjectRef& nested) {
 }
 
 auto ConstraintProblem::Solve() -> bool {
+  const base::SourceLocationScope bound(written_at_);
   answer_.assign(circuit_.InputCount(), false);
   cycled_.clear();
   CircuitLiteral everything = kTrueLiteral;

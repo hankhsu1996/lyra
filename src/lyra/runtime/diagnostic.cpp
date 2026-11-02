@@ -11,6 +11,8 @@
 #include <utility>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/value/string.hpp"
 
@@ -74,37 +76,45 @@ void DiagnosticDispatcher::SetContextSource(ContextSource context) {
 }
 
 void DiagnosticDispatcher::EmitInfo(
-    const lyra::value::String& origin, const lyra::value::String& text) {
-  Emit(
-      Severity::kInfo, SeverityText(Severity::kInfo), origin.View(),
-      text.View());
+    const lyra::value::String& text, base::SourceLocation at) {
+  Emit(Severity::kInfo, SeverityText(Severity::kInfo), at, text.View());
 }
 
 void DiagnosticDispatcher::EmitWarning(
-    const lyra::value::String& origin, const lyra::value::String& text) {
-  Emit(
-      Severity::kWarning, SeverityText(Severity::kWarning), origin.View(),
-      text.View());
+    const lyra::value::String& text, base::SourceLocation at) {
+  Emit(Severity::kWarning, SeverityText(Severity::kWarning), at, text.View());
 }
 
 void DiagnosticDispatcher::EmitError(
-    const lyra::value::String& origin, const lyra::value::String& text) {
-  Emit(
-      Severity::kError, SeverityText(Severity::kError), origin.View(),
-      text.View());
+    const lyra::value::String& text, base::SourceLocation at) {
+  Emit(Severity::kError, SeverityText(Severity::kError), at, text.View());
 }
 
 void DiagnosticDispatcher::EmitFatal(
-    const lyra::value::String& origin, const lyra::value::String& text) {
-  Emit(
-      Severity::kFatal, SeverityText(Severity::kFatal), origin.View(),
-      text.View());
+    const lyra::value::String& text, base::SourceLocation at) {
+  Emit(Severity::kFatal, SeverityText(Severity::kFatal), at, text.View());
 }
 
 void DiagnosticDispatcher::Report(
     Severity severity, const base::DiagMessage& message,
     std::span<const base::DiagMessage> notes) {
-  Emit(severity, ToolSeverityText(severity), {}, message.Text(), notes);
+  Emit(
+      severity, ToolSeverityText(severity),
+      base::BoundSourceLocation(message.Text()), message.Text(), notes);
+}
+
+void DiagnosticDispatcher::Report(
+    base::NoSourceLocation, Severity severity, const base::DiagMessage& message,
+    std::span<const base::DiagMessage> notes) {
+  Emit(
+      severity, ToolSeverityText(severity), base::SourceLocation{},
+      message.Text(), notes);
+}
+
+void DiagnosticDispatcher::ReportAt(
+    base::SourceLocation at, Severity severity,
+    const base::DiagMessage& message) {
+  Emit(severity, ToolSeverityText(severity), at, message.Text());
 }
 
 void DiagnosticDispatcher::Line(std::string_view line) {
@@ -116,21 +126,22 @@ auto DiagnosticDispatcher::ReportedFatal() const -> bool {
 }
 
 void DiagnosticDispatcher::Emit(
-    Severity severity, std::string_view word, std::string_view origin,
+    Severity severity, std::string_view word, base::SourceLocation at,
     std::string_view body, std::span<const base::DiagMessage> notes) {
   if (severity == Severity::kFatal) {
     reported_fatal_ = true;
   }
-  // A report with no call site of its own is placed where the procedure it is
-  // made under is written; which instance and what time are context, so they
-  // are a note of their own. The place is also what a repeated report is
-  // counted by.
+  // A report is placed where the operation it is about was written. One about
+  // no place -- the tool failed the design under no statement of its own -- is
+  // placed where the procedure it is made under is written; which instance
+  // and what time are context, so they are a note of their own. The place is
+  // also what a repeated report is counted by.
   const std::optional<Context> context =
       context_ ? std::optional{context_()} : std::nullopt;
-  const std::string_view place =
-      !origin.empty() || !context ? origin : context->procedure;
+  const std::string place =
+      SourceLocationText(at.IsValid() || !context ? at : context->written_at);
   if (rate_limit_ > 0) {
-    const CountKey key{.place = std::string{place}, .severity = severity};
+    const CountKey key{.place = place, .severity = severity};
     auto& count = emit_counts_[key];
     if (count >= rate_limit_) {
       if (count == rate_limit_) {
@@ -160,6 +171,13 @@ void DiagnosticDispatcher::Emit(
     text += std::format("note: {}\n", note.Text());
   }
   Write(text);
+}
+
+auto SourceLocationText(base::SourceLocation at) -> std::string {
+  if (!at.IsValid()) {
+    return {};
+  }
+  return std::format("{}:{}:{}", at.File(), at.Line(), at.Column());
 }
 
 }  // namespace lyra::runtime

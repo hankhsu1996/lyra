@@ -85,7 +85,8 @@ auto Emit(
   lyra::diag::DiagnosticSink sink;
   auto design = lyra::compiler::DeclareUnits(
       std::move(compilation.front.elaborated->compilation),
-      lyra::compiler::LoweringPolicy{}, sink);
+      lyra::compiler::LoweringPolicy{}, sink,
+      compilation.front.elaborated->diag_sources);
   if (!design.has_value()) {
     return {};
   }
@@ -94,8 +95,7 @@ auto Emit(
   lyra::driver::CppProjectSink project(
       dir, lyra::driver::SourceFormatting::kOff, sink);
   auto semantic = lyra::compiler::LowerToSemantic(
-      *design, compilation.front.elaborated->diag_sources,
-      lyra::mir_transform::PassOptions{}, sink, width,
+      *design, lyra::mir_transform::PassOptions{}, sink, width,
       [&project](lyra::mir::CompilationUnit unit) {
         return project.Write(unit);
       },

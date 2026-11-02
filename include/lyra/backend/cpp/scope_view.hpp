@@ -14,15 +14,16 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
+#include "lyra/mir/source_location_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/linkage.hpp"
 
 namespace lyra::backend::cpp {
 
 // What writing a unit's bodies leaves behind beside their text: each node this
-// target has no form for, and each constant and each enumeration member table
-// of the unit the text names. A name needs a definition in the file that uses
-// it, so the named ones are the ones the unit's code file defines.
+// target has no form for, and each constant, enumeration member table and
+// location of the unit the text names. A name needs a definition in the file
+// that uses it, so the named ones are the ones the unit's code file defines.
 struct UnitRenderReport {
   diag::DiagnosticSink* refusals;
   // The piece of source the innermost node being written was lowered from,
@@ -30,6 +31,7 @@ struct UnitRenderReport {
   diag::SourceSpan span{};
   std::set<mir::IntegralConstantId> constants_named;
   std::set<mir::EnumTableId> enum_tables_named;
+  std::set<mir::SourceLocationId> source_locations_named;
 };
 
 // Where the render is in the MIR: the unit, the function, the current block,
@@ -112,6 +114,11 @@ class ScopeView {
   // Reports that the text being written names `table`.
   void NameEnumTable(mir::EnumTableId table) const {
     report_->enum_tables_named.insert(table);
+  }
+
+  // Reports that the text being written names `location`.
+  void NameSourceLocation(mir::SourceLocationId location) const {
+    report_->source_locations_named.insert(location);
   }
 
  private:

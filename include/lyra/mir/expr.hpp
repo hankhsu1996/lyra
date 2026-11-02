@@ -25,6 +25,7 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local_ref.hpp"
+#include "lyra/mir/source_location_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -446,7 +447,9 @@ struct NewExpr {
 // The bare operand keeps naming the pointer or the wrapper itself, so rebinding
 // one is a store carrying no dereference. `Expr::type` is the referent's type.
 // Taking the address of a dereferenced managed handle is how a borrowed pointer
-// to a managed object is obtained.
+// to a managed object is obtained. A unit as built dereferences a handle
+// itself; a legalized unit dereferences only what the library's opening of it
+// answers, so no target dereferences a managed handle.
 struct DerefExpr {
   ExprId pointer;
 };
@@ -639,6 +642,14 @@ struct StaticVariableRef {
   StaticVariableId variable;
 };
 
+// The unit's constant holding what a location says, a record of the library's,
+// whose address is what a value of the library's location type holds.
+struct SourceLocationRef {
+  SourceLocationId location;
+
+  auto operator==(const SourceLocationRef&) const -> bool = default;
+};
+
 // A constant a class of this unit holds, by the position it sits at in that
 // class's arena. `Expr::type` is the constant's own type.
 struct ClassConstantRef {
@@ -711,9 +722,9 @@ struct InterfaceTableRef {
 // that exists whether or not this expression names it.
 using ReferenceTarget = std::variant<
     LocalRef, DefinitionRef, EnumTableRef, IntegralConstantRef,
-    StaticPropertyRef, StaticVariableRef, ClassConstantRef, FunctionRef,
-    DispatchEntryRef, DestructorRef, DispatchTableRef, InterfaceTableRef,
-    ExternalObjectEntryRef>;
+    StaticPropertyRef, StaticVariableRef, ClassConstantRef, SourceLocationRef,
+    FunctionRef, DispatchEntryRef, DestructorRef, DispatchTableRef,
+    InterfaceTableRef, ExternalObjectEntryRef>;
 
 // Names a declared thing. Reading it loads what the name reaches, assigning to
 // it stores there, and taking its address yields a pointer to it -- one node

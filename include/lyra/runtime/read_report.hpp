@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/part_path.hpp"
 #include "lyra/runtime/trigger.hpp"
@@ -72,10 +73,8 @@ class ReadReport {
 
   // An object a property is read on, which one event source covers whole (LRM
   // 9.4.2). One nothing owns yet is being constructed by this evaluation,
-  // which a later one constructs afresh, so it is not watched. Reaching it
-  // through a handle naming no object is the design's own failure (LRM 8.4).
+  // which a later one constructs afresh, so it is not watched.
   void AddObject(GcObject* object);
-  void AddObject(const value::ObjectRef& object);
 
   // An object a weak reference answered (LRM 8.30.3), whose expiry changes
   // what the reference answers: `expiry` is where the object tells it, and
@@ -166,6 +165,6 @@ class ReadReport {
 // A body handed a report reads something no wait can watch yet. The body
 // compiled whether or not a wait reaches it, so the design's request fails
 // here, where one does (LRM 9.4.2).
-[[noreturn]] void RefuseReport(std::string_view why);
+[[noreturn]] void RefuseReport(std::string_view why, base::SourceLocation at);
 
 }  // namespace lyra::runtime

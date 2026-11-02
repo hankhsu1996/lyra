@@ -678,6 +678,12 @@ class MirDumper {
                   "StaticVariableRef variable=StaticVariable[{}]",
                   r.variable.value);
             },
+            [&](const SourceLocationRef& r) -> std::string {
+              const diag::SourcePosition& at =
+                  unit_->source_locations.Get(r.location);
+              return std::format(
+                  "SourceLocationRef {}:{}:{}", at.file, at.line, at.column);
+            },
             [](const ClassConstantRef& r) -> std::string {
               return std::format(
                   "ClassConstantRef owner=Class[{}] constant=Constant[{}]",
@@ -983,13 +989,20 @@ class MirDumper {
 
     if (s.constructor.has_value()) {
       const ConstructorDecl& ctor = *s.constructor;
-      Line("Constructor:");
-      Indent();
-      Line("Body:");
-      Indent();
-      DumpCallableBody(ctor.code);
-      Dedent();
-      Dedent();
+      if (!ctor.code.body.has_value()) {
+        Line("Constructor declaration:");
+        Indent();
+        DumpCallerLocation(ctor.code);
+        Dedent();
+      } else {
+        Line("Constructor:");
+        Indent();
+        Line("Body:");
+        Indent();
+        DumpCallableBody(ctor.code);
+        Dedent();
+        Dedent();
+      }
     }
 
     Dedent();
@@ -1032,6 +1045,8 @@ class MirDumper {
     DumpParams(d.code);
     if (d.code.body.has_value()) {
       DumpCallableBody(d.code);
+    } else {
+      DumpCallerLocation(d.code);
     }
     Dedent();
   }
@@ -1122,8 +1137,17 @@ class MirDumper {
       }
       Dedent();
     }
+    DumpCallerLocation(code);
     DumpBlock(code.Body());
     code_ = saved;
+  }
+
+  void DumpCallerLocation(const CallableCode& code) {
+    if (code.caller_location.has_value()) {
+      Line(
+          std::format(
+              "CallerLocation: Local[{}]", code.caller_location->value));
+    }
   }
 
   void DumpBlock(const Block& scope) {

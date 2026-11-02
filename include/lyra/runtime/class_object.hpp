@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/rng.hpp"
@@ -53,19 +54,12 @@ void ObjectRandVariables(GcObject& object, const value::ObjectRef& problem);
 void ObjectConstrain(GcObject& object, const value::ObjectRef& problem);
 void ObjectRandObjects(GcObject& object, const value::ObjectRef& problem);
 
-// The built-in `pre_randomize()` and `post_randomize()` (LRM 18.6.2) on the
-// object reached, where no class of its lineage writes its own: the part every
-// object starts with gives them, and a call naming them reaches that part's
-// own rather than dispatching, as a call naming any method a class inherits
-// does.
-void BuiltinPreRandomize(GcObject* object);
-void BuiltinPostRandomize(GcObject* object);
-inline void BuiltinPreRandomize(const value::ObjectRef& handle) {
-  BuiltinPreRandomize(ObjectRootOf(handle));
-}
-inline void BuiltinPostRandomize(const value::ObjectRef& handle) {
-  BuiltinPostRandomize(ObjectRootOf(handle));
-}
+// The built-in `pre_randomize()` and `post_randomize()` (LRM 18.6.2), where no
+// class of the object's lineage writes its own: the part every object starts
+// with gives them, they do nothing, and a call naming them reaches them rather
+// than dispatching, as a call naming any method a class inherits does.
+void BuiltinPreRandomize();
+void BuiltinPostRandomize();
 
 // The hooks the object's own class runs, as `randomize()` runs them. A call
 // naming one through an interface class's handle runs these: LRM 8.26.9 calls
@@ -74,40 +68,21 @@ inline void BuiltinPostRandomize(const value::ObjectRef& handle) {
 // hook of each kind it has whatever handle reaches it.
 void ObjectPreRandomize(GcObject* object);
 void ObjectPostRandomize(GcObject* object);
-inline void ObjectPreRandomize(const value::ObjectRef& handle) {
-  ObjectPreRandomize(ObjectRootOf(handle));
-}
-inline void ObjectPostRandomize(const value::ObjectRef& handle) {
-  ObjectPostRandomize(ObjectRootOf(handle));
-}
 
-// LRM 18.13.3 -- 18.13.5, on the generator of the object reached: through a
-// handle, or as the running method's own object. Reaching one through a
-// handle naming no object is the design's own failure (LRM 8.4).
+// LRM 18.13.3 -- 18.13.5, on the generator of the object reached.
 void ObjectSrandom(ClassObject* object, const value::ConstIntegralView& seed);
 
 template <value::IntegralValue T>
 void ObjectSrandom(ClassObject* object, const T& seed) {
   ObjectSrandom(object, seed.AsWords().View());
 }
-template <value::IntegralValue T>
-void ObjectSrandom(const value::ObjectRef& handle, const T& seed) {
-  ObjectSrandom(&handle.Deref<ClassObject>(), seed.AsWords().View());
-}
 
 [[nodiscard]] auto ObjectGetRandstate(ClassObject* object) -> value::String;
-[[nodiscard]] inline auto ObjectGetRandstate(const value::ObjectRef& handle)
-    -> value::String {
-  return ObjectGetRandstate(&handle.Deref<ClassObject>());
-}
 
 // A state no `get_randstate` answered is undefined (LRM 18.13.5), and it is a
 // value the design computed, so setting one is the design's error and leaves
 // the generator as it was.
-void ObjectSetRandstate(ClassObject* object, const value::String& state);
-inline void ObjectSetRandstate(
-    const value::ObjectRef& handle, const value::String& state) {
-  ObjectSetRandstate(&handle.Deref<ClassObject>(), state);
-}
+void ObjectSetRandstate(
+    ClassObject* object, const value::String& state, base::SourceLocation at);
 
 }  // namespace lyra::runtime

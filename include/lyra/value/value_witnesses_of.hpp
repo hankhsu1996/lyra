@@ -6,6 +6,7 @@
 #include <memory>
 #include <utility>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/integral.hpp"
@@ -40,16 +41,18 @@ concept HoldsParts = requires(const T& c, T& m, std::size_t position) {
 // A value of `T` written into a stream of bits, the stream being an integral
 // value (LRM 6.24.3).
 template <typename T>
-concept WritesBitStream =
-    requires(const T& value, const IntegralView& written, std::uint64_t at) {
-      { value.WriteToStream(written, at) } -> std::same_as<std::uint64_t>;
-    };
+concept WritesBitStream = requires(
+    const T& value, const IntegralView& written, std::uint64_t filled) {
+  { value.WriteToStream(written, filled) } -> std::same_as<std::uint64_t>;
+};
 
 // A value of `T` read out of a stream of bits, in place of the one there.
 template <typename T>
 concept ReadsBitStream =
-    requires(T& value, const ConstIntegralView& read, std::uint64_t at) {
-      { value.ReadFromStream(read, at, at) } -> std::same_as<std::uint64_t>;
+    requires(T& value, const ConstIntegralView& read, std::uint64_t taken) {
+      {
+        value.ReadFromStream(read, taken, taken)
+      } -> std::same_as<std::uint64_t>;
     };
 
 // A question about a value's stream of bits the language defines for a kind
@@ -140,22 +143,21 @@ struct OperationsOf {
 
   static constexpr auto BitstreamWidth = [](const ValueOperations&,
                                             const void* value, void* out) {
-    if constexpr (requires { Of(value).BitstreamWidth(); }) {
-      std::construct_at(static_cast<Int*>(out), Of(value).BitstreamWidth());
-    } else if constexpr (kIsBitStreamType<T>) {
-      StreamNotYetSupported();
+    if constexpr (kIsBitStreamType<T>) {
+      std::construct_at(
+          static_cast<Int*>(out),
+          Of(value).BitstreamWidth(base::SourceLocation{}));
     } else {
       LacksOperation();
     }
   };
   static constexpr auto CountBits =
       [](const ValueOperations&, const void* value,
-         const ConstIntegralView& control_bits, void* out) {
-        if constexpr (requires { Of(value).CountBits(control_bits); }) {
+         const LogicVector<4>& control_bits, void* out) {
+        if constexpr (kIsBitStreamType<T>) {
           std::construct_at(
-              static_cast<Int*>(out), Of(value).CountBits(control_bits));
-        } else if constexpr (kIsBitStreamType<T>) {
-          StreamNotYetSupported();
+              static_cast<Int*>(out),
+              Of(value).CountBits(control_bits, base::SourceLocation{}));
         } else {
           LacksOperation();
         }

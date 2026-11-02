@@ -4,7 +4,7 @@
 // once counts as though it had been named once. $countones, $onehot and
 // $onehot0 are defined in terms of it, counting only bits whose value is 1, so
 // an x bit is not a one. The list of control bits has no stated length (LRM
-// 20.9).
+// 20.9). A string held in a container of any kind counts as the string does.
 `define X4(a) a, a, a, a
 `define X16(a) `X4(a), `X4(a), `X4(a), `X4(a)
 `define X64(a) `X16(a), `X16(a), `X16(a), `X16(a)
@@ -22,6 +22,10 @@ module Top;
   pair_t pair;
   logic [3:0] words[2];
   string text;
+  string text_queue[$];
+  string text_dynamic[];
+  string text_fixed[1];
+  string text_keyed[int];
 
   int ones;
   int zeros;
@@ -43,6 +47,10 @@ module Top;
   int array_ones;
   int text_ones;
   int text_zeros;
+  int text_queue_ones;
+  int text_dynamic_ones;
+  int text_fixed_ones;
+  int text_keyed_ones;
 
   bit onehot_single;
   bit onehot_none;
@@ -87,6 +95,16 @@ module Top;
     text_ones = $countones(text);
     text_zeros = $countbits(text, 1'b0);
 
+    text_queue.push_back("a");
+    text_queue_ones = $countbits(text_queue, 1'b1);
+    text_dynamic = new[1];
+    text_dynamic[0] = "a";
+    text_dynamic_ones = $countbits(text_dynamic, 1'b1);
+    text_fixed[0] = "a";
+    text_fixed_ones = $countbits(text_fixed, 1'b1);
+    text_keyed[5] = "a";
+    text_keyed_ones = $countbits(text_keyed, 1'b1);
+
     onehot_single = $onehot(8'b0010_0000);
     onehot_none = $onehot(8'b0000_0000);
     onehot_many = $onehot(8'b1010_0000);
@@ -129,6 +147,14 @@ module Top;
       $fatal(1, "text_ones was %0d, expected 2", text_ones);
     if (text_zeros !== 6)
       $fatal(1, "text_zeros was %0d, expected 6", text_zeros);
+    if (text_queue_ones !== 3)
+      $fatal(1, "text_queue_ones was %0d, expected 3", text_queue_ones);
+    if (text_dynamic_ones !== 3)
+      $fatal(1, "text_dynamic_ones was %0d, expected 3", text_dynamic_ones);
+    if (text_fixed_ones !== 3)
+      $fatal(1, "text_fixed_ones was %0d, expected 3", text_fixed_ones);
+    if (text_keyed_ones !== 3)
+      $fatal(1, "text_keyed_ones was %0d, expected 3", text_keyed_ones);
 
     if (onehot_single !== 1'b1)
       $fatal(1, "onehot_single was %b, expected 1", onehot_single);

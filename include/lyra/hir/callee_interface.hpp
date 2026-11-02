@@ -41,9 +41,16 @@ struct CalleeParam {
 // formals' directions and types. The result component of that completion is the
 // call's own result type -- the enclosing expression's -- so it is not recorded
 // here.
+//
+// `track_caller` is whether a failure the callee's body reports is placed at
+// the call rather than inside the body, as rustc's attribute of that name says
+// of a function: it is so for a body of the tool's own text, whose lines mean
+// nothing to whoever wrote the call. A call to such a callee hands it where
+// the call was written, and the body hands that on to everything it calls.
 struct CalleeInterface {
   SubroutineKind kind = SubroutineKind::kFunction;
   std::vector<CalleeParam> params;
+  bool track_caller = false;
 
   auto operator==(const CalleeInterface&) const -> bool = default;
 };

@@ -21,6 +21,12 @@ template <typename Build>
   }));
 }
 
+// An array of `type` holding copies of what `items` names, in order, which are
+// as many as it has elements.
+[[nodiscard]] auto ArrayHolding(
+    const FixedArrayType& type, std::span<const void* const> items)
+    -> LaidOutValue;
+
 // LRM 7.6: an array of `type` holding copies of what `items` names, in order.
 // How many elements a fixed-size array has is a declared property of the
 // variable being written, so a source of another size is a run-time error and

@@ -525,8 +525,8 @@ auto CodeGenFunction::ResolvePlaceAddress(
 
   for (; step != place.chain.end(); ++step) {
     // What the chain holds where this step applies, which decides how a
-    // dereference reaches what it names: crossing a class handle is an
-    // operation rather than a load.
+    // dereference reaches what it names: crossing a wrapper or a counted hold
+    // is an operation rather than a load.
     const lir::TypeId reached = lir::PlaceTypeBefore(
         module_->Unit(), *fn_, place, std::distance(place.chain.begin(), step));
     auto reached_storage = std::visit(
@@ -574,6 +574,23 @@ auto CodeGenFunction::ResolvePlaceAddress(
                             args);
                         if (!filled) {
                           return std::unexpected(std::move(filled.error()));
+                        }
+                        if (support::RuntimeEntryOf(entry.entry.entry)
+                                .takes_the_location) {
+                          if (!element.written_at.has_value()) {
+                            throw InternalError(
+                                "llvm codegen: a write that reports where it "
+                                "was written reaches an element by a step "
+                                "stating no location -- please report this "
+                                "as a bug");
+                          }
+                          auto written_at = LowerOperand(*element.written_at);
+                          if (!written_at) {
+                            return std::unexpected(
+                                std::move(written_at.error()));
+                          }
+                          arranged.push_back(Addresses(1).front());
+                          args.push_back(*written_at);
                         }
                         return CallEntry(
                             entry.entry.symbol, module_->Types().Ptr(),
@@ -689,36 +706,39 @@ auto CodeGenFunction::MemberStorage(
 }
 
 // The address of what `reference` refers to, given the type it is. Most
-// references are the address already and opening one is nothing. Two are not:
-// a class handle and a counted hold on a value each carry what they name as a
-// fact they hold rather than are, so the runtime answers which storage is
-// meant -- and for the handle that is also where one referring to no object is
-// caught (LRM 8.3).
+// references are the address already and opening one is nothing. A counted
+// hold on a value carries what it names as a fact it holds rather than is, so
+// the runtime answers which storage is meant. A class handle is never opened
+// here: one naming no object fails the design (LRM 8.4), so the layer above
+// states the opening as a call that can be unwound out of.
 auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
     -> llvm::Value* {
   const lir::Type& referring = module_->Unit().types.Get(type);
-  std::optional<std::string> opening;
   if (referring.Is<lir::UnmanagedRefType>()) {
     return HeldAddress(reference);
   }
   if (referring.Is<lir::ManagedRefType>()) {
-    opening = RuntimeSymbol(support::BuiltinFn::kObjectOf);
-  } else if (const auto* pointer = referring.As<lir::PointerType>()) {
-    switch (pointer->ownership) {
-      case lir::PointerOwnership::kUnique:
-      case lir::PointerOwnership::kBorrowed:
-        break;
-      case lir::PointerOwnership::kShared:
-        opening = RuntimeSymbol(RuntimeOp::kSharedPointerDeref);
-        break;
-    }
+    throw InternalError(
+        "llvm codegen: a class handle is dereferenced by a step, where the "
+        "layer above states a call that opens it -- please report this as a "
+        "bug");
   }
-  if (!opening) {
+  const auto* pointer = referring.As<lir::PointerType>();
+  if (pointer == nullptr) {
     return reference;
   }
-  const std::array<llvm::Value*, 1> args{reference};
+  switch (pointer->ownership) {
+    case lir::PointerOwnership::kUnique:
+    case lir::PointerOwnership::kBorrowed:
+      return reference;
+    case lir::PointerOwnership::kShared:
+      break;
+  }
   llvm::Type* const result = module_->Types().Ptr();
-  return CallEntry(*opening, result, Addresses(1), args);
+  const std::array<llvm::Value*, 1> args{reference};
+  return CallEntry(
+      RuntimeSymbol(RuntimeOp::kSharedPointerDeref), result, Addresses(1),
+      args);
 }
 
 auto CodeGenFunction::AccessGranted(lir::TypeId address_type) const
@@ -2106,9 +2126,10 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
           [&](const lir::IntegralConstantRef& c) -> diag::Result<llvm::Value*> {
             return module_->GetAddrOfIntegralConstant(c.constant);
           },
-          // The symbol is the storage itself, which the unit declaring it
-          // defines and builds before the program starts, so a reference of
-          // any unit names the same address.
+          // The symbol is the storage itself: a shared variable, which the
+          // unit declaring it defines and builds before the program starts, so
+          // a reference of any unit names the same address, or a constant of
+          // this unit's own.
           [&](const lir::StaticRef& s) -> diag::Result<llvm::Value*> {
             return module_->SharedStorage(s.symbol);
           },

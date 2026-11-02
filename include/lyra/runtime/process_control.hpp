@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/integral.hpp"
@@ -34,7 +35,8 @@ auto ProcessSelf(RuntimeEffects& runtime) -> value::ObjectRef;
 // handle after its body terminates. A terminated process reports FINISHED or
 // KILLED by how it terminated -- the completion slot is gone by then, so the
 // distinction is read from the node's persistent terminal cause.
-auto ProcessStatus(const value::ObjectRef& self) -> value::Int;
+auto ProcessStatus(const value::ObjectRef& self, base::SourceLocation at)
+    -> value::Int;
 
 // LRM 9.7 `process::kill()`: forcibly terminate the process and all its
 // descendant subprocesses. Each terminated node is marked KILLED and its frame
@@ -49,7 +51,9 @@ auto ProcessStatus(const value::ObjectRef& self) -> value::Int;
 // wake it, cause recorded) and its body is unwound to the engine's resume
 // boundary, where the terminal state is published and the retained chain
 // released.
-void ProcessKill(const value::ObjectRef& self, RuntimeEffects& runtime);
+void ProcessKill(
+    const value::ObjectRef& self, RuntimeEffects& runtime,
+    base::SourceLocation at);
 
 // LRM 9.7 `process::await`: wait for another process to terminate, normally or
 // forcibly. Termination is monotonic -- the target terminates once -- so
@@ -57,19 +61,24 @@ void ProcessKill(const value::ObjectRef& self, RuntimeEffects& runtime);
 // and a target that has already terminated leaves nothing to wait for. It is an
 // error to await the calling process, which cannot wait for its own
 // termination.
-auto ProcessAwait(const value::ObjectRef& self, RuntimeEffects& runtime)
-    -> Wait;
+auto ProcessAwait(
+    const value::ObjectRef& self, RuntimeEffects& runtime,
+    base::SourceLocation at) -> Wait;
 
 // LRM 9.7 `process::suspend()`: pause a process. It is an error to suspend the
 // calling process (a function cannot suspend its own execution). Suspending a
 // process that is already suspended or terminated has no effect.
-void ProcessSuspend(const value::ObjectRef& self, RuntimeEffects& runtime);
+void ProcessSuspend(
+    const value::ObjectRef& self, RuntimeEffects& runtime,
+    base::SourceLocation at);
 
 // LRM 9.7 `process::resume()`: restart a suspended process. A process that is
 // not suspended is unaffected. Otherwise it waits again for the same thing it
 // was waiting for, and runs in the current time step where that has already
 // happened -- which is the whole of the clause, because a process that was
 // runnable when it was stopped is one whose wait was already satisfied.
-void ProcessResume(const value::ObjectRef& self, RuntimeEffects& runtime);
+void ProcessResume(
+    const value::ObjectRef& self, RuntimeEffects& runtime,
+    base::SourceLocation at);
 
 }  // namespace lyra::runtime

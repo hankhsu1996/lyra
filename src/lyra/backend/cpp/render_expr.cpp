@@ -299,6 +299,33 @@ void RenderReferenceExpr(
                 "::",
                 CppStaticVariableName(unit.named_static_variables, r.variable));
           },
+          // A location is a constant record whose address is handed on, named
+          // where only this file defines what names it. A definition another
+          // file may keep instead of this one holds the record itself, as a
+          // static of its own: the address of a constant of this file's own
+          // would be another entity in every copy ([basic.def.odr]), while a
+          // static of an inline definition is one object in all of them
+          // ([dcl.inline]).
+          [&](const mir::SourceLocationRef& r) {
+            switch (view.Linkage()) {
+              case support::Linkage::kInternal:
+              case support::Linkage::kExternal:
+                view.NameSourceLocation(r.location);
+                Write(out, CppSourceLocationName(r.location));
+                return;
+              case support::Linkage::kShared: {
+                const auto record = CppType(
+                    view.Unit(), view.Unit().builtins.source_location_record);
+                Write(
+                    out, "[]() -> const ", record, "& { static constexpr ",
+                    record, " held = ",
+                    CppSourceLocationLiteral(view.Unit(), r.location),
+                    "; return held; }()");
+                return;
+              }
+            }
+            throw InternalError("backend::cpp: unknown linkage");
+          },
           [&](const mir::ClassConstantRef& r) {
             Write(
                 out, CppClassPath(view.Unit(), r.owner),

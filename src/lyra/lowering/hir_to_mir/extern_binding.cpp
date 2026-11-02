@@ -359,11 +359,10 @@ auto WriteExternTaskBody(
                   unit.builtins.integer))));
       mir::Block report;
       AppendToolReportStmt(
-          process.Owner(), mir::Builder(report, frame.span),
+          process.Owner().Unit(), mir::Builder(report, frame.span),
           support::BuiltinFn::kEmitError,
           base::DiagMessage(
-              "no connected module defines the task '{}'", declared.name),
-          frame.span);
+              "no connected module defines the task '{}'", declared.name));
       block.AppendIfThen(none, std::move(report));
       return RunEveryDefinition(
           process, frame, declared, owner, storage, binding);

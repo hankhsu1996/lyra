@@ -34,6 +34,14 @@ auto ReachesAReceiver(ValueOperation operation) -> bool {
       operation);
 }
 
+auto TakesCallerLocation(ValueOperation operation) -> bool {
+  return std::visit(
+      Overloaded{
+          [](ValueOperator) { return false; },
+          [](BuiltinFn fn) { return RuntimeEntryOf(fn).takes_the_location; }},
+      operation);
+}
+
 auto ValueOperationName(ValueOperation operation) -> std::string_view {
   return std::visit(
       Overloaded{

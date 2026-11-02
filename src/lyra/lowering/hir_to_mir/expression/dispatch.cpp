@@ -228,8 +228,7 @@ auto LowerAsPlaceAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                 lowerer, frame, t, expr.type, result_type);
           },
           [&](const hir::DynamicCastExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirDynamicCastExpr(
-                lowerer, frame, c, result_type, expr.span);
+            return LowerHirDynamicCastExpr(lowerer, frame, c, result_type);
           },
           [&](const hir::CovergroupNewExpr& n) -> diag::Result<mir::Expr> {
             return LowerCovergroupNewExpr(lowerer, frame, n, result_type);

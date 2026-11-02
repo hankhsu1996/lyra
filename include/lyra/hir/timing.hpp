@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/support/event_edge.hpp"
@@ -49,6 +50,15 @@ struct SensitivityEntry {
   auto operator==(const SensitivityEntry&) const -> bool = default;
 };
 
+// Why what a body reads cannot be stated, and the part of it that cannot, which
+// is where the refusal is made.
+struct UnreportableReads {
+  std::string why;
+  diag::SourceSpan span;
+
+  auto operator==(const UnreportableReads&) const -> bool = default;
+};
+
 // The cells a body's text reads and writes, which are the same however it
 // runs, and so are stated where it is entered.
 //
@@ -69,7 +79,7 @@ struct Reads {
   std::vector<SensitivityEntry> cells;
   std::vector<SensitivityEntry> writes;
   std::vector<ExprId> calls;
-  std::optional<std::string> unreportable;
+  std::optional<UnreportableReads> unreportable;
 
   auto operator==(const Reads&) const -> bool = default;
 };

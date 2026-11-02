@@ -2045,12 +2045,25 @@ auto FunctionLowerer::PartStep(
   }
   switch (*selects) {
     case support::PartSelection::kElement: {
-      auto coordinates = LowerEachExpr(block, part.arguments);
+      // A call handed where it was written hands it last, which is no
+      // coordinate of the element.
+      const bool located = support::RuntimeEntryOf(*mir::DirectBuiltinFn(part))
+                               .takes_the_location;
+      const std::span<const mir::ExprId> arguments(part.arguments);
+      auto coordinates = LowerEachExpr(
+          block, located ? arguments.first(arguments.size() - 1) : arguments);
       if (!coordinates) {
         return std::unexpected(std::move(coordinates.error()));
       }
-      return lir::Projection{
-          lir::ElementProjection{.coordinates = *std::move(coordinates)}};
+      lir::ElementProjection element{.coordinates = *std::move(coordinates)};
+      if (located) {
+        auto written_at = LowerExpr(block, arguments.back());
+        if (!written_at) {
+          return std::unexpected(std::move(written_at.error()));
+        }
+        element.written_at = *std::move(written_at);
+      }
+      return lir::Projection{std::move(element)};
     }
     case support::PartSelection::kComponent:
     case support::PartSelection::kSlice:
@@ -2207,6 +2220,11 @@ auto FunctionLowerer::ReferenceValue(
                 "mir_to_lir: a body reads a class's constant -- please report "
                 "this as a bug");
           },
+          [&](const mir::SourceLocationRef&) -> diag::Result<lir::Operand> {
+            throw InternalError(
+                "mir_to_lir: a body reads a location's record -- please report "
+                "this as a bug");
+          },
           // Read as a value, a body is its address.
           [&](const mir::FunctionRef& ref) -> diag::Result<lir::Operand> {
             return lir::Operand{lir::FunctionRef{
@@ -2258,6 +2276,15 @@ auto FunctionLowerer::SymbolPlace(std::string symbol, mir::TypeId type)
 auto FunctionLowerer::ReferencePlace(
     const mir::ReferenceTarget& target, mir::TypeId type)
     -> diag::Result<lir::Place> {
+  // A constant is data a unit emits, so a place over one opens at its address,
+  // through which it is only read.
+  const auto read_only_address = [&]() -> lir::TypeId {
+    return unit_->Types().Intern(
+        lir::Type{lir::PointerType{
+            .pointee = unit_->TranslateType(type),
+            .ownership = lir::PointerOwnership::kBorrowed,
+            .mutability = lir::Mutability::kReadOnly}});
+  };
   return std::visit(
       Overloaded{
           [&](const mir::LocalRef& ref) -> diag::Result<lir::Place> {
@@ -2296,33 +2323,24 @@ auto FunctionLowerer::ReferencePlace(
           [&](const mir::StaticPropertyRef& ref) -> diag::Result<lir::Place> {
             return SymbolPlace(unit_->StaticPropertySymbolOf(ref), type);
           },
-          // A class's definition is a constant the declaring unit emits, so
-          // the place opens at its address.
+          // A class's definition is a constant the declaring unit emits.
           [&](const mir::DefinitionRef& r) -> diag::Result<lir::Place> {
-            return lir::Place{
-                .base =
-                    lir::DefinitionRef{
-                        .defined = unit_->ClassValueType(r.of),
-                        .type = unit_->Types().Intern(
-                            lir::Type{lir::PointerType{
-                                .pointee = unit_->TranslateType(type),
-                                .ownership = lir::PointerOwnership::kBorrowed,
-                                .mutability = lir::Mutability::kReadOnly}})},
-                .chain = {lir::Projection{lir::DerefProjection{}}}};
+            return StorageAt(
+                lir::DefinitionRef{
+                    .defined = unit_->ClassValueType(r.of),
+                    .type = read_only_address()});
           },
-          // A class's constant is data its unit emits under a symbol, so the
-          // place opens at its address, through which it is only read.
+          [&](const mir::SourceLocationRef& r) -> diag::Result<lir::Place> {
+            return StorageAt(
+                lir::StaticRef{
+                    .symbol = lir::SourceLocationSymbol(r.location.value),
+                    .type = read_only_address()});
+          },
           [&](const mir::ClassConstantRef& r) -> diag::Result<lir::Place> {
-            return lir::Place{
-                .base =
-                    lir::StaticRef{
-                        .symbol = unit_->ClassConstantSymbolOf(r),
-                        .type = unit_->Types().Intern(
-                            lir::Type{lir::PointerType{
-                                .pointee = unit_->TranslateType(type),
-                                .ownership = lir::PointerOwnership::kBorrowed,
-                                .mutability = lir::Mutability::kReadOnly}})},
-                .chain = {lir::Projection{lir::DerefProjection{}}}};
+            return StorageAt(
+                lir::StaticRef{
+                    .symbol = unit_->ClassConstantSymbolOf(r),
+                    .type = read_only_address()});
           },
           // A member table, a constant value and a function are values the
           // unit holds, not storage anything writes through.
@@ -2552,7 +2570,8 @@ auto FunctionLowerer::LowerCallOperands(
   // object itself, so that operand is opened the way an access's receiver is.
   std::span<const mir::ExprId> rest = call.arguments;
   if (const auto fn = mir::DirectBuiltinFn(call);
-      fn.has_value() && support::RuntimeEntryOf(*fn).reaches_an_object) {
+      fn.has_value() &&
+      support::RuntimeEntryOf(*fn).acts_on_object_as.has_value()) {
     auto object = ObjectAddress(block, rest.front());
     if (!object) {
       return std::unexpected(std::move(object.error()));

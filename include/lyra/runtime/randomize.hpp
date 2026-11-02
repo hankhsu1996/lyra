@@ -7,6 +7,7 @@
 #include <optional>
 #include <type_traits>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/class_object.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
@@ -47,22 +48,18 @@ template <value::LyraValue T>
 // A class's `randomize()` draws from the object's own generator (LRM 18.14.3);
 // `std::randomize()` from the running thread's (LRM 18.14.2) and always names
 // the variables it chooses.
-[[nodiscard]] auto RandomizeObject(ClassObject* object, RuntimeEffects& runtime)
+//
+// `at` is where the design wrote the call. The problem keeps it, because a
+// description is stated and solved over several entries of the library, and
+// what fails under one of them binds that.
+[[nodiscard]] auto RandomizeObject(
+    ClassObject* object, RuntimeEffects& runtime, base::SourceLocation at)
     -> value::ObjectRef;
 [[nodiscard]] auto RandomizeObjectListed(
-    ClassObject* object, RuntimeEffects& runtime) -> value::ObjectRef;
-[[nodiscard]] auto RandomizeScope(RuntimeEffects& runtime) -> value::ObjectRef;
-
-[[nodiscard]] inline auto RandomizeObject(
-    const value::ObjectRef& handle, RuntimeEffects& runtime)
-    -> value::ObjectRef {
-  return RandomizeObject(&handle.Deref<ClassObject>(), runtime);
-}
-[[nodiscard]] inline auto RandomizeObjectListed(
-    const value::ObjectRef& handle, RuntimeEffects& runtime)
-    -> value::ObjectRef {
-  return RandomizeObjectListed(&handle.Deref<ClassObject>(), runtime);
-}
+    ClassObject* object, RuntimeEffects& runtime, base::SourceLocation at)
+    -> value::ObjectRef;
+[[nodiscard]] auto RandomizeScope(
+    RuntimeEffects& runtime, base::SourceLocation at) -> value::ObjectRef;
 
 // Each variable a call lists crosses as a reference to it, and as the value it
 // holds now, which carries its type. A variable that is an array is each of
@@ -171,11 +168,14 @@ template <value::LyraValue T>
     const T& current = *static_cast<const T*>(whole.storage);
     auto before = std::make_shared<T>(current);
     T resized = current;
-    if constexpr (requires { T::NewCopy(std::int64_t{}, current); }) {
-      resized = T::NewCopy(static_cast<std::int64_t>(count), current);
+    if constexpr (requires {
+                    T::NewCopy(std::int64_t{}, current, base::SourceLocation{});
+                  }) {
+      resized = T::NewCopy(
+          static_cast<std::int64_t>(count), current, base::SourceLocation{});
     } else {
       while (resized.RawSize() < count) {
-        resized.PushBack(typename T::ElementType{});
+        resized.PushBack(typename T::ElementType{}, base::SourceLocation{});
       }
       while (resized.RawSize() > count) {
         resized.DeleteIndex(
@@ -354,10 +354,6 @@ void RandomizeNested(
 // introduced it.
 [[nodiscard]] auto ConstraintBlockEnabled(
     GcObject* self, const value::String& name) -> bool;
-[[nodiscard]] inline auto ConstraintBlockEnabled(
-    const value::ObjectRef& handle, const value::String& name) -> bool {
-  return ConstraintBlockEnabled(&handle.Deref<GcObject>(), name);
-}
 [[nodiscard]] auto StaticConstraintBlockEnabled(const value::String& key)
     -> bool;
 
@@ -536,9 +532,6 @@ template <value::LyraValue T, value::LyraValue Part>
       declared.Erased(), PathOf(declared.Erased(), value, part.Erased()));
 }
 void ObjectRandModeSet(GcObject* object, bool on);
-inline void ObjectRandModeSet(const value::ObjectRef& handle, bool on) {
-  ObjectRandModeSet(&handle.Deref<GcObject>(), on);
-}
 
 // LRM 18.9: a block's mode, by its name on the object, and every block of an
 // object at once; a static block's by its key.
@@ -546,17 +539,6 @@ void ConstraintModeSet(GcObject* object, const value::String& name, bool on);
 [[nodiscard]] auto ConstraintModeGet(
     GcObject* object, const value::String& name) -> value::Int;
 void ObjectConstraintModeSet(GcObject* object, bool on);
-inline void ConstraintModeSet(
-    const value::ObjectRef& handle, const value::String& name, bool on) {
-  ConstraintModeSet(&handle.Deref<GcObject>(), name, on);
-}
-[[nodiscard]] inline auto ConstraintModeGet(
-    const value::ObjectRef& handle, const value::String& name) -> value::Int {
-  return ConstraintModeGet(&handle.Deref<GcObject>(), name);
-}
-inline void ObjectConstraintModeSet(const value::ObjectRef& handle, bool on) {
-  ObjectConstraintModeSet(&handle.Deref<GcObject>(), on);
-}
 void StaticConstraintModeSet(const value::String& key, bool on);
 [[nodiscard]] auto StaticConstraintModeGet(const value::String& key)
     -> value::Int;

@@ -158,7 +158,8 @@ class BodyBoxing {
         .locals = BoxedLocals(),
         .named_locals = code_->named_locals,
         .body = RewrittenBody(),
-        .span = code_->span};
+        .span = code_->span,
+        .caller_location = code_->caller_location};
   }
 
   // Whether the rewrite changes the body at all.
@@ -318,8 +319,9 @@ auto BoxedBuild(const mir::CompilationUnit& unit, const mir::ValueBuild& build)
 }  // namespace
 
 auto BoundFramesOnBody(
-    const mir::CompilationUnit& unit, const mir::CodeSource& at,
+    const PassContext& context, const mir::CodeSource& at,
     const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
+  const mir::CompilationUnit& unit = *context.unit;
   // A foreign body is entered by the convention its declaration states, which
   // nothing here changes.
   if (mir::IsEnteredForeign(unit, at)) {

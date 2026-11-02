@@ -1,7 +1,6 @@
 #pragma once
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -14,19 +13,16 @@
 namespace lyra::lowering::hir_to_mir {
 
 // Lower a simulation control task ($finish, $stop, LRM 20.2) into a
-// generic `mir::CallExpr` on the runtime handle carrying the call's origin and
-// its finish number.
+// generic `mir::CallExpr` on the runtime handle carrying its finish number.
 auto LowerTerminationSystemSubroutineCall(
     ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call,
-    const support::TerminationSystemSubroutineInfo& info, diag::SourceSpan span)
+    const support::TerminationSystemSubroutineInfo& info)
     -> diag::Result<mir::Expr>;
 
 // Lower the program control task `$exit` (LRM 24.7) into a call on the runtime
-// handle carrying where the call was written, which a call it ignores reports;
-// the program it ends is the one the running thread originates in.
+// handle; the program it ends is the one the running thread originates in.
 auto LowerProgramControlSystemSubroutineCall(
-    const ProcessLowerer& process, mir::Builder block, diag::SourceSpan span)
-    -> mir::Expr;
+    const ProcessLowerer& process, mir::Builder block) -> mir::Expr;
 
 // The finish number of a call to `$finish`, `$stop` or `$fatal`, which selects
 // what is printed about the run ending (LRM 20.2, Table 20-1; 20.10 names it
@@ -40,10 +36,10 @@ auto BuildFinishNumber(
     -> diag::Result<mir::ExprId>;
 
 // The call to `entry` that ends the run (LRM 20.2), carrying the runtime
-// handle, where the call was written, and the finish number. It departs from
-// the calling execution rather than returning, so it answers nothing.
+// handle and the finish number. It departs from the calling execution rather
+// than returning, so it answers nothing.
 auto BuildEndRunCall(
     const ProcessLowerer& process, mir::Builder block, support::BuiltinFn entry,
-    mir::ExprId finish_number, diag::SourceSpan span) -> mir::Expr;
+    mir::ExprId finish_number) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

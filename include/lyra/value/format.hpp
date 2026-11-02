@@ -7,6 +7,7 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/integral.hpp"
 
 namespace lyra::value {
@@ -91,13 +92,11 @@ struct TimeUnitSpelling {
 [[nodiscard]] auto TimeUnitText(std::int8_t power) -> std::string;
 
 // Per-call context routed alongside the spec into every Formatter::Format.
-// Holds the design-wide bits that a formatter sometimes needs but the spec
-// itself cannot carry (the spec is closed and shared across call sites).
-// `%t` is the only consumer today. `time_format == nullptr` means the
-// calling context has no time-format vocabulary; a formatter that needs one
-// throws.
+// Holds what a formatter sometimes needs but the spec itself cannot carry (the
+// spec is closed and shared across call sites): the design-wide bits `%t`
+// reads.
 struct FormatContext {
-  const TimeFormat* time_format = nullptr;
+  const TimeFormat& time_format;
 };
 
 // Per-type formatter trait. Mirrors `std::formatter<T>` -- each SV type owns
@@ -181,17 +180,7 @@ template <typename T>
       &value,
       [](const FormatSpec& spec, const FormatArg& arg,
          const FormatContext& ctx) -> std::string {
-        const T& v = *static_cast<const T*>(arg.ptr);
-        // Per-formatter signature lookup: those that consult design-wide
-        // context (`%t` needing `TimeFormat`) declare `Format(spec, value,
-        // ctx)`; a string, which reaches no context-bound kind, declares just
-        // `Format(spec, value)`. The lambda absorbs both shapes so the
-        // `FormatArg.format_fn` signature stays uniform.
-        if constexpr (requires { Formatter<T>::Format(spec, v, ctx); }) {
-          return Formatter<T>::Format(spec, v, ctx);
-        } else {
-          return Formatter<T>::Format(spec, v);
-        }
+        return Formatter<T>::Format(spec, *static_cast<const T*>(arg.ptr), ctx);
       }};
 }
 
@@ -226,14 +215,14 @@ FormatArg::FormatArg(const RealValue<Host>& value)
 // Drive the type-erased dispatch. The runtime print loop calls this once
 // per `PrintValueItem`. Equivalent to `std::format` for a single arg slot.
 [[nodiscard]] auto Format(
-    const FormatSpec& spec, FormatArg arg, const FormatContext& ctx = {})
+    const FormatSpec& spec, FormatArg arg, const FormatContext& ctx)
     -> std::string;
 
 // An integral operand's text under `spec`, by code compiled once for every
-// integral type.
+// integral type. `time_format` is read by `%t` alone.
 [[nodiscard]] auto FormatIntegralOperand(
     const FormatSpec& spec, const ConstIntegralView& value,
-    const FormatContext& ctx) -> std::string;
+    const TimeFormat* time_format) -> std::string;
 
 // Specializations for the closed leaf set. Each is declared here so a caller
 // building a format_fn for `T` has the declaration at instantiation time,
@@ -244,13 +233,15 @@ struct Formatter<Integral<kWidth, kSignedness, kDomain>> {
       const FormatSpec& spec,
       const Integral<kWidth, kSignedness, kDomain>& value,
       const FormatContext& ctx) -> std::string {
-    return FormatIntegralOperand(spec, value.AsWords().View(), ctx);
+    return FormatIntegralOperand(
+        spec, value.AsWords().View(), &ctx.time_format);
   }
 };
 
 template <>
 struct Formatter<String> {
-  static auto Format(const FormatSpec& spec, const String& value)
+  static auto Format(
+      const FormatSpec& spec, const String& value, const FormatContext& ctx)
       -> std::string;
 };
 
@@ -264,13 +255,15 @@ struct Formatter<String> {
 // objects share a text.
 template <>
 struct Formatter<UnmanagedRef> {
-  static auto Format(const FormatSpec& spec, const UnmanagedRef& value)
-      -> std::string;
+  static auto Format(
+      const FormatSpec& spec, const UnmanagedRef& value,
+      const FormatContext& ctx) -> std::string;
 };
 
 template <>
 struct Formatter<ObjectRef> {
-  static auto Format(const FormatSpec& spec, const ObjectRef& value)
+  static auto Format(
+      const FormatSpec& spec, const ObjectRef& value, const FormatContext& ctx)
       -> std::string;
 };
 
@@ -359,7 +352,8 @@ class PrintItem {
 // reads (LRM 20.4.3 / 21.2.1); the caller threads it from the engine, so this
 // step holds no engine state.
 [[nodiscard]] auto Format(
-    std::span<const PrintItem> items, const TimeFormat& time_format) -> String;
+    std::span<const PrintItem> items, const TimeFormat& time_format,
+    base::SourceLocation at) -> String;
 
 // Formats against a format string whose value is known only at simulation time
 // (LRM 21.3.3 permits a non-constant format_string). The directives are parsed
@@ -376,6 +370,7 @@ class PrintItem {
 [[nodiscard]] auto FormatRuntime(
     const String& format, std::span<const FormatArg> args,
     const String& scope_path, const String& library_binding,
-    const TimeFormat& time_format, std::int64_t timeunit_power) -> String;
+    const TimeFormat& time_format, std::int64_t timeunit_power,
+    base::SourceLocation at) -> String;
 
 }  // namespace lyra::value

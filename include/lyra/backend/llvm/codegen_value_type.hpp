@@ -184,12 +184,11 @@ class CodeGenValueTypes {
   // The body filling `witness` of `type`, where its table's declaration lays it
   // out.
   auto FillWitness(lir::TypeId type, const Witness& witness) -> llvm::Constant*;
-  // The body doing what `method` does for `witness` of `type`, with the
-  // crossing `crossing` names, or the library's failing where there is no such
-  // function.
+  // The body doing for `witness` of `type` what the type's own function
+  // answering `own` does, with the crossing `own` names, or the library's
+  // failing where there is no such function.
   auto WitnessFromOperation(
-      lir::TypeId type, const Witness& witness,
-      std::optional<lir::FunctionId> method, const IntegralCrossing& crossing)
+      lir::TypeId type, const Witness& witness, const OwnOperationWitness& own)
       -> llvm::Constant*;
   // A body doing what a type's own function does where the two differ in how
   // one integral value crosses, opened and left for its caller to fill: it
@@ -213,8 +212,7 @@ class CodeGenValueTypes {
   };
   // The body of a witness whose method answers a comparison; of the one whose
   // method answers the value's stream of bits, and of the one whose method
-  // takes a stream, each at a width the type fixes or as a run of bits; and of
-  // the one whose method takes a count's control bits.
+  // takes a stream, each at a width the type fixes or as a run of bits.
   auto ScalarAnswerBody(
       lir::TypeId type, std::string_view witness,
       const support::MachineSignature& stands_in_for, lir::FunctionId method,
@@ -235,7 +233,8 @@ class CodeGenValueTypes {
       lir::TypeId type, std::string_view witness,
       const support::MachineSignature& stands_in_for, lir::FunctionId method)
       -> llvm::Constant*;
-  auto ControlReadBody(
+  // The body of a witness whose method takes where its caller wrote it.
+  auto NoLocationBody(
       lir::TypeId type, std::string_view witness,
       const support::MachineSignature& stands_in_for, lir::FunctionId method)
       -> llvm::Constant*;
@@ -248,12 +247,6 @@ class CodeGenValueTypes {
   void ForEachElement(
       llvm::IRBuilderBase& b, lir::TypeId array, llvm::Value* value,
       const std::function<void(llvm::IRBuilderBase&, llvm::Value*)>& each);
-  // The integral value of type `read` that the stream `stream` holds below
-  // its `taken` most significant positions, laid out at `laid_out`, answering
-  // how many positions are taken after it.
-  auto ReadOutOfStream(
-      llvm::IRBuilderBase& b, llvm::Value* stream, llvm::Value* taken,
-      llvm::Value* laid_out, lir::TypeId read) -> llvm::Value*;
   // A call of the library entry `op` with `args` as they stand, answering a
   // value of `answers`.
   auto ForwardToEntry(

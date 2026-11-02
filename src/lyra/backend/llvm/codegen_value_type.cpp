@@ -58,28 +58,6 @@ namespace {
 
 using support::ValueDomain;
 
-// The call on `op`, an entry standing between a type's own operations
-// and the type the library asks them through, arranged as `abi`: `operands`
-// crossing as it says, then `out` where the entry lays its answer out there.
-// Such an entry is told only numbers of a type, so its arguments are always
-// to be had.
-auto CallStreamEntry(
-    CodeGenModule& module, llvm::IRBuilderBase& b, RuntimeOp op,
-    const LlvmFnAbi& abi, std::span<llvm::Value* const> operands,
-    std::optional<llvm::Value*> out) -> llvm::Value* {
-  auto args = module.BuildCallArgs(abi, operands);
-  if (!args) {
-    throw InternalError(
-        "llvm codegen: an entry reading or writing a stream of bits is told "
-        "of a type the library does not realize -- please report this as a "
-        "bug");
-  }
-  if (out.has_value()) {
-    args->push_back(*out);
-  }
-  return b.CreateCall(module.RuntimeFunction(RuntimeSymbol(op), abi), *args);
-}
-
 // At the start of `out`, the numbers every type states, where the library's
 // declaration of a type lays them out: its table, the size and alignment of a
 // value of it, and which record the type opens.
@@ -222,23 +200,6 @@ auto CodeGenValueTypes::OpenThunkBody(
       .shape = *shape};
 }
 
-auto CodeGenValueTypes::ReadOutOfStream(
-    llvm::IRBuilderBase& b, llvm::Value* stream, llvm::Value* taken,
-    llvm::Value* laid_out, lir::TypeId read) -> llvm::Value* {
-  const std::array<StatedOperand, 2> stated{
-      MachineOperand{.kind = MachineOperandKind::kAddress},
-      MachineOperand{.kind = MachineOperandKind::kCount}};
-  const std::array<llvm::Value*, 2> operands{stream, taken};
-  return CallStreamEntry(
-      *owner_, b, RuntimeOp::kStreamRead,
-      AtMachineTypes(
-          *owner_,
-          ArrangeEntryCall(
-              unit_->types, RuntimeOp::kStreamRead, stated, std::nullopt, read),
-          ReturnIndirect{.returned = b.getInt64Ty()}),
-      operands, laid_out);
-}
-
 // The type of the value a type's own function takes its parameter `index` as
 // a reference to, which is how it takes every value it is asked about.
 auto CodeGenValueTypes::ParamReferent(
@@ -360,22 +321,26 @@ auto CodeGenValueTypes::ForwardToEntry(
       args);
 }
 
-// The function takes a count's control bits as a value of the type its own
-// code states, which the value the type was handed is read into first.
-auto CodeGenValueTypes::ControlReadBody(
+// The function takes what the witness does and, ahead of the storage of its
+// answer, where its caller wrote it, which is no location: a table's function
+// is reached under the one the operation asking it bound.
+auto CodeGenValueTypes::NoLocationBody(
     lir::TypeId type, std::string_view witness,
     const support::MachineSignature& stands_in_for, lir::FunctionId method)
     -> llvm::Constant* {
-  const ThunkBody thunk =
-      OpenThunkBody(type, witness, stands_in_for, ParamReferent(method, 1));
-  llvm::IRBuilder<> b(&thunk.function->getEntryBlock());
-  ReadOutOfStream(
-      b, thunk.args[1], b.getInt64(0), thunk.storage, thunk.value_type);
-  b.CreateCall(
-      owner_->UnitFunction(method),
-      {thunk.args[0], thunk.storage, thunk.args[2]});
+  llvm::Function* const body = DeclareBody(type, witness, stands_in_for);
+  llvm::IRBuilder<> b(
+      llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
+  std::vector<llvm::Value*> args;
+  args.reserve(body->arg_size());
+  for (std::size_t i = 1; i + 1 < body->arg_size(); ++i) {
+    args.push_back(body->getArg(static_cast<unsigned>(i)));
+  }
+  args.push_back(llvm::ConstantPointerNull::get(types_->Ptr()));
+  args.push_back(body->getArg(static_cast<unsigned>(body->arg_size() - 1)));
+  b.CreateCall(owner_->UnitFunction(method), args);
   b.CreateRetVoid();
-  return thunk.function;
+  return body;
 }
 
 void CodeGenValueTypes::EmitClearAboveWidths(
@@ -519,16 +484,24 @@ auto CodeGenValueTypes::OwnOperationOf(
 }
 
 auto CodeGenValueTypes::WitnessFromOperation(
-    lir::TypeId type, const Witness& witness,
-    std::optional<lir::FunctionId> method, const IntegralCrossing& crossing)
+    lir::TypeId type, const Witness& witness, const OwnOperationWitness& own)
     -> llvm::Constant* {
+  const std::optional<lir::FunctionId> method =
+      OwnOperationOf(type, own.answers);
   if (!method.has_value()) {
     return Body(type, witness.name, witness.stands_in_for, nullptr);
   }
   const support::MachineSignature& signature = witness.stands_in_for;
   return std::visit(
       Overloaded{
+          // A function of the type's own that can report takes where its
+          // caller wrote it, which a table's function is not handed: it is
+          // handed no location, so the one bound where the table was reached
+          // stands.
           [&](TakenAsStated) -> llvm::Constant* {
+            if (support::TakesCallerLocation(own.answers)) {
+              return NoLocationBody(type, witness.name, signature, *method);
+            }
             return Body(
                 type, witness.name, signature, owner_->UnitFunction(*method));
           },
@@ -553,11 +526,8 @@ auto CodeGenValueTypes::WitnessFromOperation(
           },
           [&](StreamOutOfRun) -> llvm::Constant* {
             return RunBuildBody(type, witness.name, signature, *method);
-          },
-          [&](ControlOutOfValue) -> llvm::Constant* {
-            return ControlReadBody(type, witness.name, signature, *method);
           }},
-      crossing);
+      own.crossing);
 }
 
 auto CodeGenValueTypes::FillWitness(lir::TypeId type, const Witness& witness)
@@ -570,19 +540,14 @@ auto CodeGenValueTypes::FillWitness(lir::TypeId type, const Witness& witness)
                 owner_->UnitFunction(lir::StepFunctionOf(*unit_, type, step)));
           },
           [&](const OwnOperationWitness& own) -> llvm::Constant* {
-            return WitnessFromOperation(
-                type, witness, OwnOperationOf(type, own.answers), own.crossing);
+            return WitnessFromOperation(type, witness, own);
           },
           [&](const EitherStreamForm& either) -> llvm::Constant* {
-            const std::optional<lir::FunctionId> run =
-                OwnOperationOf(type, either.run.answers);
-            if (run.has_value()) {
-              return WitnessFromOperation(
-                  type, witness, run, either.run.crossing);
-            }
             return WitnessFromOperation(
-                type, witness, OwnOperationOf(type, either.fixed.answers),
-                either.fixed.crossing);
+                type, witness,
+                OwnOperationOf(type, either.run.answers).has_value()
+                    ? either.run
+                    : either.fixed);
           }},
       witness.filled_by);
 }

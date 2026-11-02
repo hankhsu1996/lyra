@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/file.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/scan.hpp"
@@ -181,7 +182,7 @@ class FileTable {
   template <typename... Targets>
   auto Scan(
       std::int64_t fd, const value::String& format,
-      value::Tuple<Targets...> prototypes)
+      value::Tuple<Targets...> prototypes, base::SourceLocation at)
       -> value::Tuple<value::Integer, Targets...>;
 
   // LRM 21.3.4.4 $fread into a packed destination. Reads (width+7)/8 bytes
@@ -331,10 +332,10 @@ void ReadBigEndian(
 template <typename... Targets>
 auto FileTable::Scan(
     std::int64_t fd, const value::String& format,
-    value::Tuple<Targets...> prototypes)
+    value::Tuple<Targets...> prototypes, base::SourceLocation at)
     -> value::Tuple<value::Integer, Targets...> {
   FileScanInput input = ScanInputOf(fd);
-  return value::Scan(input, format, std::move(prototypes));
+  return value::Scan(input, format, std::move(prototypes), at);
 }
 
 template <value::IntegralValue T>
@@ -359,9 +360,7 @@ auto FileTable::ReadMemory(
       *this, fd, T::kWidth, declared, sv_start, count,
       [&memory, &declared](std::int64_t sv_index, std::span<const char> bytes) {
         ReadBigEndian(
-            memory
-                .ElementMut(
-                    value::Position::FromInt(declared.ToOrdinal(sv_index)))
+            memory.RawAt(static_cast<std::size_t>(declared.ToOrdinal(sv_index)))
                 .AsMutableWords()
                 .MutableView(),
             bytes);

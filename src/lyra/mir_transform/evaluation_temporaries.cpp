@@ -892,8 +892,9 @@ class BodyTemporaries {
 }  // namespace
 
 auto OrderEvaluationOnBody(
-    const mir::CompilationUnit& unit, const mir::CodeSource& at,
+    const PassContext& context, const mir::CodeSource& at,
     const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
+  const mir::CompilationUnit& unit = *context.unit;
   // A foreign body is entered by the convention its declaration states, which
   // nothing here changes.
   if (mir::IsEnteredForeign(unit, at) || !code.body.has_value()) {

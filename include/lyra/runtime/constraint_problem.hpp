@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/constraint_circuit.hpp"
 #include "lyra/runtime/constraint_cycle.hpp"
 #include "lyra/runtime/natural.hpp"
@@ -53,10 +54,10 @@ class ConstraintProblem final : public GcObject {
   // A problem of a call made in `runtime` drawing from `generator`, for a call
   // of `randomize()` on `object`, or of `std::randomize()` where it holds none.
   // Where `listed` is set, the variables the call lists are the ones chosen,
-  // and nothing else is.
+  // and nothing else is. `at` is where the design wrote the call.
   ConstraintProblem(
       RuntimeEffects& runtime, DrawRng& generator, value::ObjectRef object,
-      bool listed);
+      bool listed, base::SourceLocation at);
   ConstraintProblem(const ConstraintProblem&) = delete;
   auto operator=(const ConstraintProblem&) -> ConstraintProblem& = delete;
   ConstraintProblem(ConstraintProblem&&) = delete;
@@ -65,6 +66,14 @@ class ConstraintProblem final : public GcObject {
 
   // The definition every object of this class is created with.
   static const abi::ObjectDefinition kDefinition;
+
+  // Where the design wrote the call, which is where whatever goes wrong while
+  // it is stated and solved is reported. A call is several entries of the
+  // library, so the problem keeps it past the entry that made it, and what goes
+  // on to fail binds it.
+  [[nodiscard]] auto WrittenAt() const -> base::SourceLocation {
+    return written_at_;
+  }
 
   // The variable `lent` names is of an enumerated type, or is an array of
   // one, declaring `members`: what it takes where the call chooses it, and
@@ -278,7 +287,8 @@ class ConstraintProblem final : public GcObject {
   [[nodiscard]] auto ChooseDistributions(CircuitLiteral& condition) -> bool;
 
   [[nodiscard]] auto Chosen(
-      RandomQualifier declared, bool enabled, const void* at) const -> bool;
+      RandomQualifier declared, bool enabled, const void* storage) const
+      -> bool;
   // A new variable, answering its term.
   auto AddVariable(
       const ErasedReference& lent, const void* value,
@@ -311,6 +321,7 @@ class ConstraintProblem final : public GcObject {
   // The run the call is made in, whose command line bounds how far a call
   // counts solutions and to which a draw past that is reported.
   RuntimeEffects* runtime_;
+  base::SourceLocation written_at_;
   DrawRng* generator_;
   // What the call draws from: a generator split from `generator_` at the
   // first draw, after `pre_randomize` has run and may have seeded it (LRM

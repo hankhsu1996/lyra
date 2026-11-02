@@ -2,10 +2,8 @@
 
 #include <cstdint>
 #include <functional>
-#include <string>
 #include <vector>
 
-#include "lyra/value/format.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/string.hpp"
@@ -140,16 +138,6 @@ struct AssocKeyTraits<UnmanagedRef> {
 template <>
 struct AssocKeyTraits<ObjectRef> {
   using Less = ObjectRefKeyLess;
-};
-
-// A wildcard key formats as its underlying integral value (LRM 21.2.1.6 prints
-// associative entries in key order; the key prints in the element format).
-template <>
-struct Formatter<WildcardKey> {
-  static auto Format(const FormatSpec& spec, const WildcardKey& key)
-      -> std::string {
-    return FormatIntegralOperand(spec, key.View(), FormatContext{});
-  }
 };
 
 }  // namespace lyra::value

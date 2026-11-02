@@ -15,6 +15,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/value/format.hpp"
@@ -111,12 +112,8 @@ auto PortCheckpointKeyword(DumpCheckpoint checkpoint) -> std::string_view {
 // large piece at a time, and its size is what is held and what is written.
 class DumpTextFile {
  public:
-  explicit DumpTextFile(const std::string& path)
-      : file_(path, std::ios::out | std::ios::trunc | std::ios::binary),
-        path_(path) {
-    if (!file_.is_open()) {
-      throw SimulationError("the dump file '{}' could not be opened", path);
-    }
+  DumpTextFile(std::ofstream file, std::string path)
+      : file_(std::move(file)), path_(std::move(path)) {
   }
 
   void Put(std::string_view text) {
@@ -161,7 +158,11 @@ class DumpTextFile {
     }
     file_.write(pending_.data(), static_cast<std::streamsize>(pending_.size()));
     if (!file_.good()) {
-      throw SimulationError("the dump file '{}' could not be written", path_);
+      // This runs on the thread writing the dump, where nothing is bound, and
+      // whatever is being recorded when the buffer fills is not what failed.
+      throw SimulationError(
+          base::kNoSourceLocation, "the dump file '{}' could not be written",
+          path_);
     }
     written_ += pending_.size();
     pending_.clear();
@@ -179,7 +180,8 @@ class DumpTextFile {
 // section's end and a comment -- and the file they are written to.
 class VcdCommandWriter : public DumpWriter {
  public:
-  explicit VcdCommandWriter(const std::string& path) : file_(path) {
+  VcdCommandWriter(std::ofstream file, std::string path)
+      : file_(std::move(file), std::move(path)) {
     file_.Put("$version\n   Lyra\n$end\n");
   }
 
@@ -470,7 +472,8 @@ class ExtendedVcdWriter final : public VcdCommandWriter {
 // A thing several names stand for is named by all of them.
 class TextWriter final : public DumpWriter {
  public:
-  explicit TextWriter(const std::string& path) : file_(path) {
+  TextWriter(std::ofstream file, std::string path)
+      : file_(std::move(file), std::move(path)) {
   }
 
   void Timescale(std::int8_t precision_power) override {
@@ -580,6 +583,15 @@ class TextWriter final : public DumpWriter {
   SimTime time_ = 0;
 };
 
+template <typename Writer>
+auto WriterOf(const std::string& path) -> std::unique_ptr<DumpWriter> {
+  std::ofstream file(path, std::ios::out | std::ios::trunc | std::ios::binary);
+  if (!file.is_open()) {
+    return nullptr;
+  }
+  return std::make_unique<Writer>(std::move(file), path);
+}
+
 }  // namespace
 
 auto OpenDumpWriter(const std::string& path) -> std::unique_ptr<DumpWriter> {
@@ -593,16 +605,16 @@ auto OpenDumpWriter(const std::string& path) -> std::unique_ptr<DumpWriter> {
 }
 
 auto OpenTextWriter(const std::string& path) -> std::unique_ptr<DumpWriter> {
-  return std::make_unique<TextWriter>(path);
+  return WriterOf<TextWriter>(path);
 }
 
 auto OpenVcdWriter(const std::string& path) -> std::unique_ptr<DumpWriter> {
-  return std::make_unique<VcdWriter>(path);
+  return WriterOf<VcdWriter>(path);
 }
 
 auto OpenExtendedVcdWriter(const std::string& path)
     -> std::unique_ptr<DumpWriter> {
-  return std::make_unique<ExtendedVcdWriter>(path);
+  return WriterOf<ExtendedVcdWriter>(path);
 }
 
 }  // namespace lyra::runtime

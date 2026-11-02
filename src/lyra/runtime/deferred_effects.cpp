@@ -10,6 +10,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/effect_storage.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 
 namespace lyra::runtime {
 
@@ -73,7 +74,8 @@ auto DeferredEffects::Allocate(std::size_t size, std::size_t alignment)
                          .next = nullptr,
                          .start = start,
                          .bytes = bytes,
-                         .alignment = aligned});
+                         .alignment = aligned,
+                         .made_by = ProcedureMakingEffects()});
   return made;
 }
 

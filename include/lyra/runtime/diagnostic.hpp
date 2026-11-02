@@ -9,6 +9,7 @@
 #include <unordered_map>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -23,17 +24,15 @@ enum class Severity : std::uint8_t {
 };
 
 // LRM 20.10 severity emit surface. The four EmitX methods are the
-// generated-code entry points: each takes the pre-formatted origin string
-// ("file:line:col", produced at lowering from the call's source span) and a
-// pre-formatted body string (from `runtime.Format(items)`), and writes at its
-// fixed severity. The origin serves both as the message prefix and as the
-// rate-limit dedup key, so distinct call sites get distinct counters.
+// generated-code entry points: each takes a pre-formatted body string (from
+// `runtime.Format(items)`) and where the call is written, which the program
+// hands over last as every operation that can fail is handed it, and writes
+// at its fixed severity. The place serves both as the message prefix and as
+// the rate-limit dedup key, so distinct call sites get distinct counters.
 //
 // LRM 20.10 also requires every report to say where in the design and when it
 // was made. Those are facts of the moment rather than of the call, so they are
-// asked of the run as each report is written rather than carried in an operand
-// -- which is also what lets a report the tool writes for the design carry
-// them, having no call site of its own to name.
+// asked of the run as each report is written rather than carried in an operand.
 class DiagnosticDispatcher {
  public:
   // Where in the design and when a report is being made, as the run answers it.
@@ -41,9 +40,9 @@ class DiagnosticDispatcher {
     // The instance the report is made in and the simulation time, as the
     // phrase a note says them in.
     std::string where;
-    // Where the procedure the report is made under is written; empty where
+    // Where the procedure the report is made under is written; no place where
     // none is running or no source text states it.
-    std::string_view procedure;
+    base::SourceLocation written_at{};
   };
   using ContextSource = std::function<Context()>;
 
@@ -61,22 +60,30 @@ class DiagnosticDispatcher {
   // installed rather than taken at construction.
   void SetContextSource(ContextSource context);
 
-  void EmitInfo(
-      const lyra::value::String& origin, const lyra::value::String& text);
-  void EmitWarning(
-      const lyra::value::String& origin, const lyra::value::String& text);
-  void EmitError(
-      const lyra::value::String& origin, const lyra::value::String& text);
-  void EmitFatal(
-      const lyra::value::String& origin, const lyra::value::String& text);
+  void EmitInfo(const lyra::value::String& text, base::SourceLocation at);
+  void EmitWarning(const lyra::value::String& text, base::SourceLocation at);
+  void EmitError(const lyra::value::String& text, base::SourceLocation at);
+  void EmitFatal(const lyra::value::String& text, base::SourceLocation at);
 
-  // A report the tool writes for the design, which reaches no severity task and
-  // so names no source location of its own. What it can name is the procedure
-  // it is made under, and it does. `notes` follow it, each a line of its own,
-  // after the one saying where and when.
+  // A report the tool writes for the design: placed where the operation being
+  // carried out was written, which is what is bound. `notes` follow it, each a
+  // line of its own, after the one saying where and when.
   void Report(
       Severity severity, const base::DiagMessage& message,
       std::span<const base::DiagMessage> notes = {});
+
+  // A report the run makes for no operation of the design, placed at the
+  // procedure it is made under.
+  void Report(
+      base::NoSourceLocation no_location, Severity severity,
+      const base::DiagMessage& message,
+      std::span<const base::DiagMessage> notes = {});
+
+  // A report of a failure already raised, placed where the raise kept: past the
+  // raise nothing is bound, and no place there is a raise of the run's own.
+  void ReportAt(
+      base::SourceLocation at, Severity severity,
+      const base::DiagMessage& message);
 
   // A whole line about the run rather than about the design, opening with its
   // own word: what a simulation control task did (LRM 20.2, Table 20-1), what
@@ -90,7 +97,7 @@ class DiagnosticDispatcher {
 
  private:
   void Emit(
-      Severity severity, std::string_view word, std::string_view origin,
+      Severity severity, std::string_view word, base::SourceLocation at,
       std::string_view body, std::span<const base::DiagMessage> notes = {});
   void Write(std::string_view text);
 
@@ -111,5 +118,9 @@ class DiagnosticDispatcher {
   bool reported_fatal_ = false;
   std::unordered_map<CountKey, std::uint32_t, CountKeyHash> emit_counts_;
 };
+
+// The place a report names for `at`, as "file:line:col" (LRM 20.10); empty
+// where `at` is no place.
+[[nodiscard]] auto SourceLocationText(base::SourceLocation at) -> std::string;
 
 }  // namespace lyra::runtime

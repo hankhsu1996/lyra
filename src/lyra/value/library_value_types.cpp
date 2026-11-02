@@ -63,7 +63,7 @@ struct ContainerOperations {
   }
   static void CountBits(
       const ValueOperations& self, const void* value,
-      const ConstIntegralView& control_bits, void* out) {
+      const LogicVector<4>& control_bits, void* out) {
     std::construct_at(
         static_cast<Int*>(out),
         Of(value).CountBits(control_bits, *self.element));

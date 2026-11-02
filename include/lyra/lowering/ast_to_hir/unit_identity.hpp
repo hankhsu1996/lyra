@@ -269,6 +269,14 @@ auto CovergroupNameOf(const slang::ast::CovergroupType& covergroup)
 auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
     -> const slang::ast::Symbol&;
 
+// Whether `decl` is written in a text of Lyra's own -- the built-in classes
+// the language supplies (LRM 9.7, 15.3, 15.4), the coverage library -- rather
+// than in the design. A body of such a text reports a failure of the design
+// at the call that reached it, since its own lines mean nothing to whoever
+// wrote the call.
+[[nodiscard]] auto DeclaredInLibraryText(const slang::ast::Symbol& decl)
+    -> bool;
+
 // The structural scope whose instances each have their own copy of `decl`, a
 // declaration or a type (LRM 6.22): a type declared inside an instance is a
 // type of that instance. A specialization of a generic class is a type of its

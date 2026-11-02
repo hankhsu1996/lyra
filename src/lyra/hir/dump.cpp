@@ -270,8 +270,6 @@ auto CovergroupMethodLabel(CovergroupMethod method) -> std::string_view {
   throw InternalError("CovergroupMethodLabel: unknown covergroup method");
 }
 
-// Where a covergroup member is reached: through an instance, or through the
-// type where no instance is named, and on one of its items where one is.
 auto FormatClassPropertyTarget(const ClassPropertyTarget& target)
     -> std::string {
   return std::format("Class[{}].{}", target.owner.value, target.field.value);
@@ -864,7 +862,7 @@ class HirDumper {
     }
     out += "]";
     if (reads.unreportable.has_value()) {
-      out += std::format(" unreportable=\"{}\"", *reads.unreportable);
+      out += std::format(" unreportable=\"{}\"", reads.unreportable->why);
     }
     return out;
   }
@@ -2145,6 +2143,8 @@ class HirDumper {
         *reach);
   }
 
+  // Where a covergroup member is reached: through an instance, or through the
+  // type where no instance is named, and on one of its items where one is.
   static auto FormatCovergroupReach(
       const CovergroupReceiver& receiver,
       const std::optional<std::string>& item) -> std::string {
@@ -2580,6 +2580,7 @@ class HirDumper {
       std::string_view dispatch) {
     std::string flags{dispatch};
     if (!d.root_stmt.has_value()) flags += " prototype";
+    if (d.track_caller) flags += " track_caller";
     Line(
         std::format(
             "{}[{}] {} \"{}\" : Type[{}]{}", label, index,

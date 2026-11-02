@@ -294,7 +294,8 @@ auto RebuildCode(const mir::CallableCode& code, const RebuildRules& rules)
       .locals = code.locals,
       .named_locals = code.named_locals,
       .body = std::move(body),
-      .span = code.span};
+      .span = code.span,
+      .caller_location = code.caller_location};
 }
 
 }  // namespace lyra::mir_transform

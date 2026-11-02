@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/basic_dynamic_array.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
@@ -32,26 +33,29 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
 
   // LRM 7.5.1 `new[N]`: `n` elements, each the element type's default. `n` is
   // a longint per LRM 7.5.1; the negative-N case throws at construction.
-  explicit DynamicArray(std::int64_t n)
-      : core_(StaticElem<T>{}, CountOf(n), nullptr) {
+  DynamicArray(std::int64_t n, base::SourceLocation at)
+      : core_(StaticElem<T>{}, CountOf(n, at), nullptr) {
   }
 
   // LRM 7.5.1 `new[N](other)`: the first `N` of `other`'s elements, padded with
   // the element type's default where `other` has fewer.
-  DynamicArray(std::int64_t n, const DynamicArray& src)
-      : core_(StaticElem<T>{}, CountOf(n), &src.core_) {
+  DynamicArray(std::int64_t n, const DynamicArray& src, base::SourceLocation at)
+      : core_(StaticElem<T>{}, CountOf(n, at), &src.core_) {
   }
 
   // LRM 10.9.1 assignment-pattern construction: the elements of the pattern's
   // list, in order.
-  explicit DynamicArray(std::span<const T> init) {
+  DynamicArray(std::span<const T> init, base::SourceLocation at) {
+    const base::SourceLocationScope bound(at);
     core_ = core_.Extended(detail::ReplicatedAddresses(init, 1));
   }
 
   // LRM 10.9.1 `'{count{...}}` pattern: `count` replications of `unit`.
   // Taking the repeat unit and the count separately keeps the value O(unit)
   // to build rather than O(unit * count).
-  DynamicArray(std::span<const T> unit, std::size_t count) {
+  DynamicArray(
+      std::span<const T> unit, std::size_t count, base::SourceLocation at) {
+    const base::SourceLocationScope bound(at);
     core_ = core_.Extended(detail::ReplicatedAddresses(unit, count));
   }
 
@@ -60,13 +64,15 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
   // argument list, so a target with no overload resolution of its own has a
   // name to call. The assignment pattern stays the constructor, since a
   // container has one way to be built from an element list.
-  [[nodiscard]] static auto New(std::int64_t n) -> DynamicArray {
-    return DynamicArray(n);
+  [[nodiscard]] static auto New(std::int64_t n, base::SourceLocation at)
+      -> DynamicArray {
+    return DynamicArray(n, at);
   }
 
-  [[nodiscard]] static auto NewCopy(std::int64_t n, const DynamicArray& src)
+  [[nodiscard]] static auto NewCopy(
+      std::int64_t n, const DynamicArray& src, base::SourceLocation at)
       -> DynamicArray {
-    return DynamicArray(n, src);
+    return DynamicArray(n, src, at);
   }
 
   // LRM 7.6: a dynamic array assigned an array of any of the three unpacked
@@ -87,8 +93,9 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
   // elements differ from `T` only in their queues' bounds, each element built
   // afresh as a `T`.
   template <typename U>
-  [[nodiscard]] static auto FromBoundFree(const DynamicArray<U>& source)
-      -> DynamicArray {
+  [[nodiscard]] static auto FromBoundFree(
+      const DynamicArray<U>& source, base::SourceLocation at) -> DynamicArray {
+    const base::SourceLocationScope bound(at);
     const std::vector<T> elements = detail::ElementsAs<T>(source);
     DynamicArray result;
     result.core_ = result.core_.Extended(
@@ -98,8 +105,8 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
 
   // This array as a value of `R`, the same array with no queue in it bounded.
   template <typename R>
-  [[nodiscard]] auto ToBoundFree() const -> R {
-    return R::FromBoundFree(*this);
+  [[nodiscard]] auto ToBoundFree(base::SourceLocation at) const -> R {
+    return R::FromBoundFree(*this, at);
   }
 
   DynamicArray(const DynamicArray&) = default;
@@ -131,7 +138,8 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
     return *static_cast<T*>(core_.ElementMut(ReadPosition(position), formed));
   }
   [[nodiscard]] auto ElementMut(const Position& position) -> T& {
-    return *static_cast<T*>(core_.ExistingAt(ReadPosition(position)));
+    Formation formed{};
+    return ElementMut(position, formed);
   }
 
   // A lease a call takes on `element`, one this array holds, which it then
@@ -170,14 +178,17 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
   // outside the array streaming as the element default; and this array with
   // those elements taking `values`, grown first to hold them.
   [[nodiscard]] auto WindowToBitVec(
-      const Position& lo, std::int64_t count) const -> BitVec {
+      const Position& lo, std::int64_t count, base::SourceLocation at) const
+      -> BitVec {
+    const base::SourceLocationScope bound(at);
     return core_.WindowToBitVec(
         ReadPosition(lo), WindowCount(count), core_.Element());
   }
   template <OrdinalElements C>
   [[nodiscard]] auto WithWindow(
-      const Position& lo, std::int64_t count, const C& values) const
-      -> DynamicArray {
+      const Position& lo, std::int64_t count, const C& values,
+      base::SourceLocation at) const -> DynamicArray {
+    const base::SourceLocationScope bound(at);
     DynamicArray out;
     out.core_ = core_.WithWindow(
         ReadPosition(lo), WindowCount(count), detail::OrdinalAddresses(values));
@@ -202,7 +213,8 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
   [[nodiscard]] auto HasUnknown() const -> bool {
     return detail::SequenceHasUnknown(core_, core_.Element());
   }
-  [[nodiscard]] auto BitstreamWidth() const -> Int {
+  [[nodiscard]] auto BitstreamWidth(base::SourceLocation at) const -> Int {
+    const base::SourceLocationScope bound(at);
     return Int::FromInt(detail::SequenceBitstreamWidth(core_, core_.Element()));
   }
   // LRM 6.24.3: the elements' own streams laid end to end below the `filled`
@@ -218,16 +230,21 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
     return core_.ReadFromStream(stream, taken, until, core_.Element());
   }
   // The same as a run of bits of its own, and the array exactly that run holds.
-  [[nodiscard]] auto ToBitVec() const -> BitVec {
-    return StreamOf(*this);
+  [[nodiscard]] auto ToBitVec(base::SourceLocation at) const -> BitVec {
+    const base::SourceLocationScope bound(at);
+    return StreamOf(*this, BitstreamWidth(at));
   }
-  [[nodiscard]] static auto FromBitVec(const BitVec& run) -> DynamicArray {
+  [[nodiscard]] static auto FromBitVec(
+      const BitVec& run, base::SourceLocation at) -> DynamicArray {
+    const base::SourceLocationScope bound(at);
     DynamicArray out;
     ReadWholeStream(out, run);
     return out;
   }
-  template <IntegralValue Control>
-  [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
+  [[nodiscard]] auto CountBits(
+      const LogicVector<4>& control_bits, base::SourceLocation at) const
+      -> Int {
+    const base::SourceLocationScope bound(at);
     return Int::FromInt(
         detail::SequenceCountBits(core_, control_bits, core_.Element()));
   }
@@ -247,8 +264,10 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>> {
   friend class OrdinalArrayMethods<DynamicArray<T>>;
 
   // A run-time element count (LRM 7.5.1), which a negative one has none of.
-  [[nodiscard]] static auto CountOf(std::int64_t count) -> std::size_t {
+  [[nodiscard]] static auto CountOf(std::int64_t count, base::SourceLocation at)
+      -> std::size_t {
     if (count < 0) {
+      const base::SourceLocationScope bound(at);
       throw SimulationError(
           "the size given to a dynamic array's new[] is negative");
     }

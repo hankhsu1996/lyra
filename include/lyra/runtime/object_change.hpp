@@ -15,12 +15,8 @@ class Observable;
 [[nodiscard]] auto ObjectRootOf(const value::ObjectRef& ref) -> GcObject*;
 
 // The event source of an object, which a wait reaching the object enrols on
-// (LRM 9.4.2), given whatever reaches it: a handle, or the running method's
-// own object. Reaching a member through a handle naming no object is the
-// design's own failure (LRM 8.4).
+// (LRM 9.4.2).
 [[nodiscard]] auto EventSourceOf(GcObject* object) -> Observable*;
-
-[[nodiscard]] auto EventSourceOf(const value::ObjectRef& ref) -> Observable*;
 
 // A write in progress into a property of an object (LRM 8.4), held by whoever
 // writes for as long as the write lasts. Ending it tells the object that one of
@@ -30,9 +26,8 @@ class Observable;
 //
 // It is opened on the object alone, and the writer reaches the property through
 // it, so the write lasts as long as the full-expression that writes there does
-// and ends after the value has landed. Reaching a property through a handle
-// naming no object is the design's own failure (LRM 8.4), so opening one there
-// fails.
+// and ends after the value has landed. It is opened on an object that exists:
+// a handle naming none has already failed the design where it was opened.
 class ErasedObjectWrite {
  public:
   explicit ErasedObjectWrite(GcObject* object);
@@ -48,18 +43,13 @@ class ErasedObjectWrite {
   GcObject* object_;
 };
 
-// The same write, opened on whatever reaches the object -- a handle, or the
-// running method's own object -- and dereferenced as the class `C` the writer
-// reaches the property through, the way a guard is dereferenced to what it
-// guards. Which class that is, is the writer's to know; the write needs only
-// the object, so what the library compiles once is the write above.
+// The same write, dereferenced as the class `C` the writer reaches the
+// property through, the way a guard is dereferenced to what it guards. Which
+// class that is, is the writer's to know; the write needs only the object, so
+// what the library compiles once is the write above.
 template <class C>
 class ObjectWrite : public ErasedObjectWrite {
  public:
-  explicit ObjectWrite(const value::ObjectRef& handle)
-      : ErasedObjectWrite(ObjectRootOf(handle)), object_(handle.Get<C>()) {
-  }
-
   explicit ObjectWrite(C* object) : ErasedObjectWrite(object), object_(object) {
   }
 

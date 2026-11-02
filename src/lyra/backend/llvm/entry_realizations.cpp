@@ -159,6 +159,8 @@ constexpr std::array kForArraysOfFixedExtent{
     RealizedFor{.domains = {Domain::kDynArray, Domain::kLaidOut}}};
 constexpr std::array kForSequences{RealizedFor{.domains = kSequences}};
 constexpr std::array kForContainers{RealizedFor{.domains = kContainers}};
+constexpr std::array kForDynamicArrays{
+    RealizedFor{.domains = {Domain::kDynArray}}};
 constexpr std::array kForQueues{RealizedFor{.domains = {Domain::kQueue}}};
 constexpr std::array kForReal{RealizedFor{.domains = {Domain::kReal}}};
 constexpr std::array kForReals{RealizedFor{.domains = kReals}};
@@ -370,9 +372,12 @@ constexpr std::array kForLandings{
     RealizedFor{
         .domains = kWideIntegral, .told = ToldWidthMetadata{.after = 0}}};
 // A step into an element and a write of a run of elements each act on the
-// sequence a designation or a reference names where it lies.
+// sequence a designation or a reference names where it lies; a designation's
+// step into a queue's element is an entry of its own, the one that can report.
 constexpr std::array kForSequencesSteppedInto{
     RealizedFor{.domains = kSequences}};
+constexpr std::array kForArraysDesignatedInto{
+    RealizedFor{.domains = {Domain::kDynArray, Domain::kLaidOut}}};
 constexpr std::array kForElementSlicesAssigned{
     RealizedFor{.domains = DomainSet{Domain::kDynArray} | kLaidOutByType}};
 constexpr std::array kForQueueSlicesAssigned{
@@ -641,7 +646,6 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kSettleDeparture:
     case RuntimeOp::kStreamWrite:
     case RuntimeOp::kStreamBuild:
-    case RuntimeOp::kStreamRead:
     case RuntimeOp::kRunWrite:
     case RuntimeOp::kRunBuild:
     case RuntimeOp::kInsertBits:
@@ -782,8 +786,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // array's address says, so no entry is asked for one, to read it or to
     // write it.
     case support::BuiltinFn::kElement:
-    case support::BuiltinFn::kElementMut:
       return NamedByValue{.realized = kForDynamicArraysAndQueues};
+    case support::BuiltinFn::kElementMut:
+      return NamedByValue{.realized = kForDynamicArrays};
 
     case support::BuiltinFn::kSize:
       return NamedByValue{.realized = kForContainers};
@@ -982,6 +987,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // on a reference; each is named by the representation of the value
     // designated or referred to there.
     case support::BuiltinFn::kDesignateElement:
+      return NamedByStorageDomain{.realized = kForArraysDesignatedInto};
     case support::BuiltinFn::kReferElement:
       return NamedByStorageDomain{.realized = kForSequencesSteppedInto};
     // A call's binding leases what it steps into only where the program can
@@ -1391,8 +1397,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // An operation whose own name says the one kind of value it is over or
     // builds: a queue's slice, read or written (LRM 7.10.1, 7.6), a string
     // repeated or built out of bits (LRM 11.4.12.1, 6.16), an unpacked array of
-    // byte built out of text or of bits (LRM 5.9); an access into an
-    // associative array by its key (LRM 7.8).
+    // byte built out of text or of bits (LRM 5.9); a write of a queue's
+    // element (LRM 7.10.5); an access into an associative array by its key
+    // (LRM 7.8).
+    case support::BuiltinFn::kQueueElementMut:
+    case support::BuiltinFn::kQueueDesignateElement:
     case support::BuiltinFn::kAssocElement:
     case support::BuiltinFn::kAssocElementMut:
     case support::BuiltinFn::kAssocDesignateElement:

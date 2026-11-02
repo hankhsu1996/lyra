@@ -1,7 +1,6 @@
 #pragma once
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -16,7 +15,7 @@ namespace lyra::lowering::hir_to_mir {
 // expression; for the others it is the report.
 auto LowerDiagnosticSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    const support::DiagnosticSystemSubroutineInfo& info, diag::SourceSpan span)
+    const support::DiagnosticSystemSubroutineInfo& info)
     -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

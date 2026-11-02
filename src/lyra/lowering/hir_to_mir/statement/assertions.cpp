@@ -10,7 +10,6 @@
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/source_manager.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
@@ -19,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
@@ -52,10 +52,10 @@ auto LowerArmIntoScope(
 }
 
 auto BuildDefaultReportScope(
-    ProcessLowerer& process, hir::AssertionDirective directive,
-    diag::SourceSpan span) -> mir::Block {
+    ProcessLowerer& process, mir::Builder block,
+    hir::AssertionDirective directive) -> mir::Block {
   mir::Block report;
-  AppendDefaultReport(process, mir::Builder(report, span), directive, span);
+  AppendDefaultReport(process, block.Into(report), directive);
   return report;
 }
 
@@ -164,13 +164,13 @@ auto BuildDeferredCallSubmit(
 // source wrote, nothing where that statement is null, and the tool's own report
 // where the source wrote no else clause (LRM 16.4.1).
 auto BuildDeferredFailArm(
-    ProcessLowerer& process, WalkFrame frame, const hir::AssertStmt& a,
-    diag::SourceSpan span) -> diag::Result<mir::Block> {
+    ProcessLowerer& process, WalkFrame frame, const hir::AssertStmt& a)
+    -> diag::Result<mir::Block> {
   if (!a.fail_stmt.has_value()) {
     return BuildDeferredSubmit(
         process, frame, a.timing,
         [&](ClosureBuilder& body, const WalkFrame&) -> diag::Result<void> {
-          AppendDefaultReport(process, body.Body(), a.directive, span);
+          AppendDefaultReport(process, body.Body(), a.directive);
           return {};
         });
   }
@@ -184,14 +184,12 @@ auto BuildDeferredFailArm(
 // recorded against the statement's own place, which is what separates one
 // coverage goal from another.
 void AppendRecordCoverage(
-    ProcessLowerer& process, mir::Builder block, diag::SourceSpan span,
-    mir::ExprId outcome) {
+    ProcessLowerer& process, mir::Builder block, mir::ExprId outcome) {
   const mir::CompilationUnit& unit = process.Owner().Unit();
   const mir::ExprId runtime_id =
       block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
-  const mir::ExprId site_id = BuildStringValueExpr(
-      unit, block,
-      diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
+  const mir::ExprId site_id =
+      process.Owner().BuildSourceLocationAt(block, block.Span());
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.Add(
@@ -210,10 +208,10 @@ void AppendRecordCoverage(
 
 void AppendDefaultReport(
     ProcessLowerer& process, mir::Builder block,
-    hir::AssertionDirective directive, diag::SourceSpan span) {
+    hir::AssertionDirective directive) {
   AppendToolReportStmt(
-      process.Owner(), block, support::BuiltinFn::kEmitError,
-      FailureText(directive), span);
+      process.Owner().Unit(), block, support::BuiltinFn::kEmitError,
+      FailureText(directive));
 }
 
 auto HasRealArm(const hir::ProceduralBody& body, std::optional<hir::StmtId> arm)
@@ -224,8 +222,7 @@ auto HasRealArm(const hir::ProceduralBody& body, std::optional<hir::StmtId> arm)
 
 auto LowerAssertStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::AssertStmt& a, diag::SourceSpan span)
-    -> diag::Result<mir::Stmt> {
+    const hir::AssertStmt& a) -> diag::Result<mir::Stmt> {
   const mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Builder block = frame.Builder();
 
@@ -243,7 +240,7 @@ auto LowerAssertStmt(
             ? BuildDeferredCallSubmit(process, frame, a.timing, *a.pass_stmt)
             : diag::Result<mir::Block>{mir::Block{}};
     if (!pass_or) return std::unexpected(std::move(pass_or.error()));
-    auto fail_or = BuildDeferredFailArm(process, frame, a, span);
+    auto fail_or = BuildDeferredFailArm(process, frame, a);
     if (!fail_or) return std::unexpected(std::move(fail_or.error()));
     return mir::Stmt{
         .label = std::move(label),
@@ -262,7 +259,7 @@ auto LowerAssertStmt(
     if (!fail_or) return std::unexpected(std::move(fail_or.error()));
     fail_scope = *std::move(fail_or);
   } else {
-    fail_scope = BuildDefaultReportScope(process, a.directive, span);
+    fail_scope = BuildDefaultReportScope(process, block, a.directive);
   }
 
   return mir::Stmt{
@@ -275,7 +272,7 @@ auto LowerAssertStmt(
 
 auto LowerCoverStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CoverStmt& c, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
+    const hir::CoverStmt& c) -> diag::Result<mir::Stmt> {
   const mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Builder block = frame.Builder();
   const mir::TypeId bool_type = unit.builtins.machine_bool;
@@ -304,8 +301,7 @@ auto LowerCoverStmt(
         [&](ClosureBuilder& body,
             const WalkFrame& statement) -> diag::Result<void> {
           AppendRecordCoverage(
-              process, body.Body(), span,
-              BuildMachineBool(unit, body.Body(), true));
+              process, body.Body(), BuildMachineBool(unit, body.Body(), true));
           if (!HasRealArm(process.HirBody(), c.pass_stmt)) return {};
           return LowerDeferredCallInto(process, body, statement, *c.pass_stmt);
         });
@@ -314,8 +310,7 @@ auto LowerCoverStmt(
         process, frame, c.timing,
         [&](ClosureBuilder& body, const WalkFrame&) -> diag::Result<void> {
           AppendRecordCoverage(
-              process, body.Body(), span,
-              BuildMachineBool(unit, body.Body(), false));
+              process, body.Body(), BuildMachineBool(unit, body.Body(), false));
           return {};
         });
     if (!missed_or) return std::unexpected(std::move(missed_or.error()));
@@ -327,8 +322,7 @@ auto LowerCoverStmt(
             .else_scope = block.AddScope(*std::move(missed_or))}};
   }
 
-  AppendRecordCoverage(
-      process, block, span, block.ReadLocal(succeeded, bool_type));
+  AppendRecordCoverage(process, block, block.ReadLocal(succeeded, bool_type));
   auto pass_or = LowerArmIntoScope(process, frame, c.pass_stmt);
   if (!pass_or) return std::unexpected(std::move(pass_or.error()));
   return mir::Stmt{

@@ -16,6 +16,7 @@
 
 #include "lyra/base/fixed_array.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/frame_bound.hpp"
@@ -789,8 +790,8 @@ class Integral {
   // LRM 20.8.1 `$clog2`, answered as an `integer`; LRM 20.9 `$countbits`,
   // answered as an `int`; and LRM 20.9 `$isunknown`.
   [[nodiscard]] constexpr auto Clog2() const -> Integer;
-  template <IntegralValue Control>
-  [[nodiscard]] constexpr auto CountBits(const Control& control) const -> Int;
+  [[nodiscard]] constexpr auto CountBits(const LogicVector<4>& control) const
+      -> Int;
 
   // LRM 6.24.3: how many bits the value is as a stream, and those bits, which
   // a stream holds unsigned.
@@ -800,6 +801,16 @@ class Integral {
     using Stream = Integral<kWidth, Signedness::kUnsigned, kDomain>;
     return Stream::Built(
         [&](Stream& out) { lyra::value::Convert(out.MutableView(), View()); });
+  }
+  // The count and the width as a container asks them of an element.
+  [[nodiscard]] auto CountBits(
+      const LogicVector<4>& control, base::SourceLocation at) const -> Int {
+    const base::SourceLocationScope bound(at);
+    return CountBits(control);
+  }
+  [[nodiscard]] static auto BitstreamWidth(base::SourceLocation at) -> Int {
+    const base::SourceLocationScope bound(at);
+    return BitstreamWidth();
   }
 
   // LRM 11.4.14.2: the value's blocks of `block_bits` bits in reversed order,
@@ -907,9 +918,8 @@ constexpr auto Integral<kWidthArg, kSignednessArg, kDomainArg>::Clog2() const
 
 template <
     std::uint64_t kWidthArg, Signedness kSignednessArg, StateDomain kDomainArg>
-template <IntegralValue Control>
 constexpr auto Integral<kWidthArg, kSignednessArg, kDomainArg>::CountBits(
-    const Control& control) const -> Int {
+    const LogicVector<4>& control) const -> Int {
   return Int::FromInt(lyra::value::CountBits(View(), control.View()));
 }
 

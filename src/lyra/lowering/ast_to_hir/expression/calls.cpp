@@ -448,7 +448,7 @@ auto BuiltinCall(
     -> hir::CallExpr {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(method);
   if (std::holds_alternative<support::StaticFactory>(entry.declaration) ||
-      entry.reaches_an_object) {
+      entry.acts_on_object_as.has_value()) {
     return hir::CallExpr{
         .callee =
             hir::BuiltinMethodRef{.method = method, .receiver = std::nullopt},
@@ -976,9 +976,9 @@ auto LowerBuiltinClassMethodCall(
   if (hook.has_value()) {
     switch (*hook) {
       case hir::RandomizationHook::kPreRandomize:
-        return on_object(support::BuiltinFn::kBuiltinPreRandomize);
+        return on_object(support::BuiltinFn::kObjectPreRandomize);
       case hir::RandomizationHook::kPostRandomize:
-        return on_object(support::BuiltinFn::kBuiltinPostRandomize);
+        return on_object(support::BuiltinFn::kObjectPostRandomize);
     }
     throw InternalError("AST->HIR: unknown randomization hook");
   }

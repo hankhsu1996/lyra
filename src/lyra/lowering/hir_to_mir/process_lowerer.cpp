@@ -76,19 +76,19 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
             return LowerForkStmt(*this, frame, stmt.label, f);
           },
           [&](const hir::IfStmt& i) {
-            return LowerIfStmt(*this, frame, stmt.label, i, stmt.span);
+            return LowerIfStmt(*this, frame, stmt.label, i);
           },
           [&](const hir::CaseStmt& c) {
-            return LowerCaseStmt(*this, frame, stmt.label, c, stmt.span);
+            return LowerCaseStmt(*this, frame, stmt.label, c);
           },
           [&](const hir::PatternCaseStmt& c) {
-            return LowerPatternCaseStmt(*this, frame, stmt.label, c, stmt.span);
+            return LowerPatternCaseStmt(*this, frame, stmt.label, c);
           },
           [&](const hir::AssertStmt& a) {
-            return LowerAssertStmt(*this, frame, stmt.label, a, stmt.span);
+            return LowerAssertStmt(*this, frame, stmt.label, a);
           },
           [&](const hir::CoverStmt& c) {
-            return LowerCoverStmt(*this, frame, stmt.label, c, stmt.span);
+            return LowerCoverStmt(*this, frame, stmt.label, c);
           },
           [&](const hir::ConcurrentAssertStmt&) -> diag::Result<mir::Stmt> {
             return std::unexpected(
@@ -190,7 +190,8 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
   // normal way out.
   const ScopeBlockEvents& events =
       process.Scopes().Get(body.root_scope).block_events;
-  AppendBlockEventTriggers(process, frame, events.at_begin);
+  const WalkFrame around_root = frame.WithSpan(root.span);
+  AppendBlockEventTriggers(process, around_root, events.at_begin);
   const NormalCleanup end{
       .emit =
           [&](const WalkFrame& at) {
@@ -201,7 +202,7 @@ auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
       root, events.at_end.empty() ? frame : frame.WithNormalCleanup(end));
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   frame.Builder().AppendStmt(*std::move(lowered));
-  end.emit(frame);
+  end.emit(around_root);
   return {};
 }
 
@@ -502,6 +503,9 @@ auto ProcessLowerer::LowerSubroutine(
   auto after = after_formals(code, bindings, body_frame, params);
   if (!after) return std::unexpected(std::move(after.error()));
 
+  DeclareCallerLocation(
+      owner_->Unit(), src.track_caller, bindings, code, params);
+
   // A task carries a name, so any task can be a `disable` target (LRM 9.6.2)
   // and every task is therefore a region that consumes the effect naming it:
   // each activation leaves through its own body end and completes normally
@@ -682,9 +686,9 @@ auto ProcessLowerer::LowerConstructorBodyInto(const WalkFrame& frame)
 
 namespace {
 
-// The design asked a wait to watch what `why` says cannot be watched yet. The
-// body compiled whether or not a wait reached it, so the request fails here,
-// at the wait that asked (LRM 9.4.2).
+// The design asked a wait to watch what `why` says cannot be watched yet (LRM
+// 9.4.2). The body compiled whether or not a wait reached it, so the request
+// fails here, placed at what cannot be watched.
 void AppendRefuseReport(
     const mir::CompilationUnit& unit, mir::Builder block,
     const std::string& why) {
@@ -704,7 +708,9 @@ auto ProcessLowerer::ReportCellsRead(
     const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
     -> diag::Result<void> {
   if (reads.unreportable.has_value()) {
-    AppendRefuseReport(owner_->Unit(), frame.Builder(), *reads.unreportable);
+    AppendRefuseReport(
+        owner_->Unit(), frame.WithSpan(reads.unreportable->span).Builder(),
+        reads.unreportable->why);
     return {};
   }
   return ReportCells(*this, frame, report, reads.cells);

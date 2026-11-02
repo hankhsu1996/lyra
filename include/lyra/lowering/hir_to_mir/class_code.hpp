@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <span>
 
 #include "lyra/hir/class_id.hpp"
@@ -22,18 +23,26 @@ namespace lyra::lowering::hir_to_mir {
     std::span<const mir::TypeId> params, mir::TypeId result)
     -> mir::CallableCode;
 
-// What the code of each operation of the class `cls`, which belongs to an
-// instance (LRM 6.22), takes and answers, read off the class's declaration
-// alone: the code is compiled only by a body whose construction built the
-// scope declaring the class, and what it takes is the same to every body of
-// the unit. One run on an object takes it as its receiver. The construction
-// (LRM 8.7) takes the object, the instance and its formals; a method, or the
-// form a waited evaluation calls of a function (LRM 9.4.2), what its
-// prototype states after its object, or the instance for a static one (LRM
-// 8.10); what `randomize()` asks of the class (LRM 18.6), the object and, where
-// constraints are stated to it, the problem.
+// What the code of each operation of the class `cls` takes and answers, read
+// off the class's declaration alone, so it is the same to every body of the
+// unit and to a unit that only reaches the class. One run on an object takes it
+// as its receiver. The construction (LRM 8.7) of a class that belongs to an
+// instance (LRM 6.22) takes the object, the instance and its formals; a method,
+// or the form a waited evaluation calls of a function (LRM 9.4.2), what its
+// prototype states after its object, or for a static one (LRM 8.10) after the
+// instance, where its class belongs to one; what `randomize()` asks of the
+// class (LRM 18.6), the object and, where constraints are stated to it, the
+// problem.
 [[nodiscard]] auto ClassConstructorPrototype(
     UnitLowerer& unit_lowerer, hir::ClassId cls) -> mir::CallableCode;
+// The constructor of `cls` itself, as a construction of an object of it
+// enters it -- where the operation above is what a scope's published class
+// introduces for every body realizing the scope to answer, this is the
+// class's own: the object, the instance the class belongs to where it belongs
+// to one, then what every construction takes.
+[[nodiscard]] auto ClassBodyConstructorPrototype(
+    UnitLowerer& unit_lowerer, hir::ClassId cls,
+    std::optional<mir::TypeId> declaring_instance) -> mir::CallableCode;
 [[nodiscard]] auto ClassMethodPrototype(
     UnitLowerer& unit_lowerer, hir::ClassId cls, hir::MethodId method)
     -> mir::CallableCode;

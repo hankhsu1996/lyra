@@ -16,20 +16,10 @@ auto ObjectRootOf(const value::ObjectRef& ref) -> GcObject* {
 }
 
 auto EventSourceOf(GcObject* object) -> Observable* {
-  if (object == nullptr) {
-    value::RaiseNullObjectHandleAccess();
-  }
   return &object->EventSource();
 }
 
-auto EventSourceOf(const value::ObjectRef& ref) -> Observable* {
-  return EventSourceOf(ObjectRootOf(ref));
-}
-
 ErasedObjectWrite::ErasedObjectWrite(GcObject* object) : object_(object) {
-  if (object_ == nullptr) {
-    value::RaiseNullObjectHandleAccess();
-  }
 }
 
 ErasedObjectWrite::~ErasedObjectWrite() {

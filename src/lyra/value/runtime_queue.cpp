@@ -196,7 +196,7 @@ auto RuntimeQueue::BitstreamWidth(const ValueOperations& element) const -> Int {
 }
 
 auto RuntimeQueue::CountBits(
-    const ConstIntegralView& control_bits, const ValueOperations& element) const
+    const LogicVector<4>& control_bits, const ValueOperations& element) const
     -> Int {
   return Int::FromInt(
       core_.has_value()
@@ -221,13 +221,13 @@ auto RuntimeQueue::ReadFromStream(
 }
 
 auto RuntimeQueue::ToBitVec(const ValueOperations& element) const -> BitVec {
-  return StreamOf(*this, element);
+  return StreamOf(*this, BitstreamWidth(element), element);
 }
 
 auto RuntimeQueue::FromBitVec(
     const QueueType& type, const BitVec& run, const ValueOperations& element)
     -> RuntimeQueue {
-  RuntimeQueue out = FromElements(type, {});
+  RuntimeQueue out(type);
   ReadWholeStream(out, run, element);
   return out;
 }

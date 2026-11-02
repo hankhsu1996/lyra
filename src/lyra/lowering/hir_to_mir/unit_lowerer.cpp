@@ -1291,8 +1291,9 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
   }
   mir::Class declared = IncompleteClass(id, key.unit_name, key.class_path);
   const hir::ClassDeclaration& published = hir_->classes.Declaration(cls);
-  if (const std::optional<DeclaringInstance> instance =
-          StateDeclaredLayout(cls, declared)) {
+  const std::optional<DeclaringInstance> instance =
+      StateDeclaredLayout(cls, declared);
+  if (instance.has_value()) {
     RecordDeclaringInstanceField(id, instance->member);
   }
   for (const hir::StaticPropertyId prop : published.static_properties.Ids()) {
@@ -1305,13 +1306,14 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
                 mir::StaticPropertyDecl{
                     .type = TranslateType(property.type)})});
   }
-  // Every method it published, at the position it published it, with the part
-  // it takes in dispatch.
+  // Every method it published, at the position it published it, with what it
+  // takes and the part it takes in dispatch: the body is the other unit's, and
+  // what a call of it hands over is read off the prototype here.
   for (const hir::MethodId method : published.methods.Ids()) {
     const hir::DeclaredMethod& declared_method = published.methods.Get(method);
     const mir::CallableId callable = declared.callables.Add(
         mir::CallableDecl{
-            .code = {},
+            .code = ClassMethodPrototype(*this, cls, method),
             .foreign = std::nullopt,
             .virtual_dispatch = DispatchRoleOf(
                 hir::ClassMethodTarget{.owner = cls, .method = method}),
@@ -1333,13 +1335,20 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
                  .has_value())) {
       const mir::CallableId body = declared.callables.Add(
           mir::CallableDecl{
-              .code = {},
+              .code = ClassHookPrototype(*this, cls, function),
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt,
               .defining_unit = std::nullopt});
       declared.library_callbacks.push_back(
           mir::LibraryCallbackBody{.callback = function, .body = body});
     }
+    // How its objects are built is the other unit's too; what a construction
+    // hands over is read off the prototype.
+    declared.constructor = mir::ConstructorDecl{
+        .code = ClassBodyConstructorPrototype(
+            *this, cls, instance.transform([](const DeclaringInstance& i) {
+              return i.type;
+            }))};
   }
   unit_.DefineClass(id, std::move(declared));
 }

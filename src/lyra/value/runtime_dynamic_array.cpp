@@ -184,7 +184,7 @@ auto RuntimeDynamicArray::BitstreamWidth(const ValueOperations& element) const
 }
 
 auto RuntimeDynamicArray::CountBits(
-    const ConstIntegralView& control_bits, const ValueOperations& element) const
+    const LogicVector<4>& control_bits, const ValueOperations& element) const
     -> Int {
   return Int::FromInt(
       core_.has_value()
@@ -210,7 +210,7 @@ auto RuntimeDynamicArray::ReadFromStream(
 
 auto RuntimeDynamicArray::ToBitVec(const ValueOperations& element) const
     -> BitVec {
-  return StreamOf(*this, element);
+  return StreamOf(*this, BitstreamWidth(element), element);
 }
 
 auto RuntimeDynamicArray::FromBitVec(

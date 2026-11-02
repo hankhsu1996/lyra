@@ -224,8 +224,8 @@ struct PrototypeFormal {
 // where a call of `kind` reports what it reads, and yielding `call_type`.
 auto BuildPrototype(
     UnitLowerer& unit_lowerer, mir::TypeId self, hir::SubroutineKind kind,
-    std::span<const PrototypeFormal> formals, mir::TypeId call_type)
-    -> mir::CallableCode {
+    std::span<const PrototypeFormal> formals, mir::TypeId call_type,
+    bool track_caller) -> mir::CallableCode {
   mir::CallableCode code;
   CallableBindings bindings(unit_lowerer.Unit(), code);
   std::vector<mir::LocalId> params{bindings.Declare(ReceiverOrigin{}, self)};
@@ -250,12 +250,26 @@ auto BuildPrototype(
           ConstraintProblemParamTypeOf(unit_lowerer.Unit(), kind)) {
     params.push_back(bindings.DeclareAnonymous(*problem));
   }
+  DeclareCallerLocation(
+      unit_lowerer.Unit(), track_caller, bindings, code, params);
   code.params = std::move(params);
   code.result_type = call_type;
   return code;
 }
 
 }  // namespace
+
+void DeclareCallerLocation(
+    const mir::CompilationUnit& unit, bool reports_at_caller,
+    CallableBindings& bindings, mir::CallableCode& code,
+    std::vector<mir::LocalId>& params) {
+  if (!reports_at_caller) {
+    return;
+  }
+  code.caller_location =
+      bindings.Declare(CallerLocationOrigin{}, unit.builtins.source_location);
+  params.push_back(*code.caller_location);
+}
 
 auto PrototypeOf(
     UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl,
@@ -273,7 +287,7 @@ auto PrototypeOf(
   }
   return BuildPrototype(
       unit_lowerer, self, decl.kind, formals,
-      SubroutineCallTypeOf(unit_lowerer, decl));
+      SubroutineCallTypeOf(unit_lowerer, decl), decl.track_caller);
 }
 
 auto PrototypeOf(
@@ -291,7 +305,8 @@ auto PrototypeOf(
   return BuildPrototype(
       unit_lowerer, self, published.interface.kind, formals,
       SubroutineCallTypeOf(
-          unit_lowerer, published.interface, published.result_type));
+          unit_lowerer, published.interface, published.result_type),
+      published.interface.track_caller);
 }
 
 auto ProjectCompletionComponent(

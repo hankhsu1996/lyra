@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observation.hpp"
@@ -82,16 +83,10 @@ void ReadReport::Add(
       place, Observation::OnReaching(), steps, lsb_bit_offset, bit_width);
 }
 
-void ReadReport::AddObject(const value::ObjectRef& object) {
-  AddObject(ObjectRootOf(object));
-}
-
 void ReadReport::AddObject(GcObject* object) {
-  if (object != nullptr) {
-    std::shared_ptr<GcObject> owned = object->weak_from_this().lock();
-    if (owned == nullptr) return;
-    held_.push_back(std::move(owned));
-  }
+  std::shared_ptr<GcObject> owned = object->weak_from_this().lock();
+  if (owned == nullptr) return;
+  held_.push_back(std::move(owned));
   reached_.emplace_back(
       WatchedPlace{EventSourceOf(object)}, Observation::OnReaching(),
       std::span<const std::int64_t>{}, 0, 0);
@@ -292,7 +287,8 @@ auto EvaluationInProgress(RuntimeEffects& effects) -> ReadReport* {
   return running == nullptr ? nullptr : running->evaluation_report;
 }
 
-void RefuseReport(std::string_view why) {
+void RefuseReport(std::string_view why, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   throw SimulationError(
       "waiting on an expression that calls this function is not yet "
       "supported, because {}",

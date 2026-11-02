@@ -57,6 +57,15 @@ struct CallableCode {
   // every way out -- stands at, as rustc's MIR body carries a span of its own;
   // no place where it was lowered from none.
   diag::SourceSpan span{};
+  // Where the body was called, for a body that reports a failure of the
+  // design at its caller rather than at its own lines -- rustc's
+  // `track_caller` -- which is a body of the tool's own text, or one generated
+  // for a type's operation that can report: the parameter its caller hands it,
+  // last among the parameters, or, for a closure built in such a body, a local
+  // holding what the closure captured of it. Every call the body makes to
+  // something that reports there hands this on. Absent for a body that reports
+  // at its own lines.
+  std::optional<LocalId> caller_location;
 
   // A code skeleton for a callable this program defines, lowered from
   // `lowered_from`: the body starts present and empty, ready for a builder to

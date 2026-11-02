@@ -67,8 +67,13 @@ struct ValueOperations;
 // x as a scalar, and a case equality, which is never unknown (LRM 11.4.5),
 // whether it holds; whoever knows the type the comparison has holds either as
 // a value of it. A stream of bits is an integral value, which a value writes
-// its own bits into and is read back out of (LRM 6.24.3), and the control bits
-// a count is told of are one too.
+// its own bits into and is read back out of (LRM 6.24.3). The control bits a
+// count is told of are a value of the one type they have.
+//
+// What streams a value can fail, or drop what a queue in it cannot hold. No
+// function here is handed where the design wrote that: each is reached under
+// the place the operation asking it bound, so a report made inside one reads
+// that.
 struct OperationFunctions {
   FourStateBit (*equal)(
       const ValueOperations& self, const void* lhs, const void* rhs);
@@ -80,7 +85,7 @@ struct OperationFunctions {
       const ValueOperations& self, const void* value, void* out);
   void (*count_bits)(
       const ValueOperations& self, const void* value,
-      const ConstIntegralView& control_bits, void* out);
+      const LogicVector<4>& control_bits, void* out);
   // The value's bits written into a stream below its `filled` most
   // significant positions, and the value of this type the stream holds below
   // its `taken` most significant ones, read into the value of the type `out`

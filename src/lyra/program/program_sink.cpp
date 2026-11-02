@@ -1146,7 +1146,6 @@ void BindValueEntries(const auto& add) {
 void BindMemberOperationEntries(const auto& add) {
   add("lyra_rt_wildcard_index_make", &lyra_rt_wildcard_index_make);
   add("lyra_rt_stream_write", &lyra_rt_stream_write);
-  add("lyra_rt_stream_read", &lyra_rt_stream_read);
   add("lyra_rt_stream_build", &lyra_rt_stream_build);
   add("lyra_rt_run_write", &lyra_rt_run_write);
   add("lyra_rt_run_build", &lyra_rt_run_build);
@@ -2022,11 +2021,11 @@ struct UnitModule {
   backend::llvm_backend::EmittedModule module;
 };
 
-auto EmitUnitModule(
-    const mir::CompilationUnit& unit, const mir_transform::PassOptions& passes)
+auto EmitUnitModule(const mir::CompilationUnit& unit, const ObjectBuild& build)
     -> diag::Result<UnitModule> {
   auto lowered = compiler::LowerUnitToExecutable(
-      unit, passes, backend::llvm_backend::TypeOperationCollectionOf);
+      unit, build.passes, backend::llvm_backend::TypeOperationCollectionOf,
+      *build.sources);
   if (!lowered) {
     return std::unexpected(std::move(lowered.error()));
   }
@@ -2105,7 +2104,7 @@ auto ArtifactOf(const driver::ActionResult& object)
 auto BuildUnit(
     const mir::CompilationUnit& unit, const ObjectBuild& build,
     driver::ActionCache& actions) -> diag::Result<BuiltUnit> {
-  auto emitted = EmitUnitModule(unit, build.passes);
+  auto emitted = EmitUnitModule(unit, build);
   if (!emitted) {
     return std::unexpected(std::move(emitted.error()));
   }
@@ -2139,7 +2138,7 @@ void ProgramSink::Collect(BuiltUnit unit) {
 auto ProgramSink::Finish(
     const mir::CompilationUnit& root, const ObjectBuild& build,
     driver::ActionCache& actions) && -> diag::Result<ProgramObjects> {
-  auto emitted = EmitUnitModule(root, build.passes);
+  auto emitted = EmitUnitModule(root, build);
   if (!emitted) {
     return std::unexpected(std::move(emitted.error()));
   }

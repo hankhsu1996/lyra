@@ -247,7 +247,7 @@ auto RuntimeAssociativeArray::BitstreamWidth(
 }
 
 auto RuntimeAssociativeArray::CountBits(
-    const ConstIntegralView& control_bits, const ValueOperations& element) const
+    const LogicVector<4>& control_bits, const ValueOperations& element) const
     -> Int {
   return Int::FromInt(
       core_.has_value()
@@ -265,7 +265,7 @@ auto RuntimeAssociativeArray::WriteToStream(
 
 auto RuntimeAssociativeArray::ToBitVec(const ValueOperations& element) const
     -> BitVec {
-  return StreamOf(*this, element);
+  return StreamOf(*this, BitstreamWidth(element), element);
 }
 
 }  // namespace lyra::value

@@ -6,6 +6,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/object_ref.hpp"
@@ -23,7 +24,7 @@ namespace {
 // to and leaves what may be read through it to the program point holding it;
 // every point here assumes the same class, so it is named once.
 auto ProcessNodeOf(const value::ObjectRef& self) -> RuntimeProcess& {
-  return self.Deref<RuntimeProcess>();
+  return *self.Object<RuntimeProcess>(base::SourceLocation{});
 }
 
 // The process node a reference names, where `method` may act on it: LRM 9.7
@@ -49,7 +50,7 @@ class ProcessTerminationAwaiter final : public StateAwaiter {
  public:
   explicit ProcessTerminationAwaiter(value::ObjectRef target)
       : StateAwaiter(1), target_(std::move(target)) {
-    EnrolOn(ProcessNodeOf(target_).Termination());
+    EnrolOn(target_.Get<RuntimeProcess>()->Termination());
   }
 
   // Awaiting another process (LRM 9.7) is a method call, not an event control
@@ -61,7 +62,7 @@ class ProcessTerminationAwaiter final : public StateAwaiter {
 
  private:
   [[nodiscard]] auto Holds() const -> bool override {
-    return ProcessNodeOf(target_).ExecutionState() ==
+    return target_.Get<RuntimeProcess>()->ExecutionState() ==
            ProcessExecutionState::kTerminated;
   }
 
@@ -75,12 +76,14 @@ class ProcessTerminationAwaiter final : public StateAwaiter {
 auto ProcessSelf(RuntimeEffects& runtime) -> value::ObjectRef {
   RuntimeProcess* const running = runtime.TryCurrentProcess();
   if (running == nullptr) {
-    return nullptr;
+    return value::ObjectRef{};
   }
   return SelfHandle(running);
 }
 
-auto ProcessStatus(const value::ObjectRef& self) -> value::Int {
+auto ProcessStatus(const value::ObjectRef& self, base::SourceLocation at)
+    -> value::Int {
+  const base::SourceLocationScope bound(at);
   const RuntimeProcess& node = ProcessNodeOf(self);
   const ProcessStatusCode code = [&] {
     switch (node.ExecutionState()) {
@@ -101,14 +104,19 @@ auto ProcessStatus(const value::ObjectRef& self) -> value::Int {
   return value::Int::FromInt(static_cast<std::int32_t>(code));
 }
 
-void ProcessKill(const value::ObjectRef& self, RuntimeEffects& runtime) {
+void ProcessKill(
+    const value::ObjectRef& self, RuntimeEffects& runtime,
+    base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   // `self` holds the target for the whole call.
   RuntimeProcess::Kill(ControlledProcessOf(self, "kill"), runtime);
   TakeDepartureIfDue(runtime.CurrentProcess());
 }
 
-auto ProcessAwait(const value::ObjectRef& self, RuntimeEffects& runtime)
-    -> Wait {
+auto ProcessAwait(
+    const value::ObjectRef& self, RuntimeEffects& runtime,
+    base::SourceLocation at) -> Wait {
+  const base::SourceLocationScope bound(at);
   // The checks are here at the call, symmetric with `suspend`, so the wait
   // itself is pure readiness.
   if (&ControlledProcessOf(self, "await") == &runtime.CurrentProcess()) {
@@ -119,7 +127,10 @@ auto ProcessAwait(const value::ObjectRef& self, RuntimeEffects& runtime)
   return MakeWait<ProcessTerminationAwaiter>(self);
 }
 
-void ProcessSuspend(const value::ObjectRef& self, RuntimeEffects& runtime) {
+void ProcessSuspend(
+    const value::ObjectRef& self, RuntimeEffects& runtime,
+    base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   // The activation layer does the state transition and the detach; nothing
   // here schedules.
   RuntimeProcess& target = ControlledProcessOf(self, "suspend");
@@ -131,7 +142,10 @@ void ProcessSuspend(const value::ObjectRef& self, RuntimeEffects& runtime) {
   target.Suspend();
 }
 
-void ProcessResume(const value::ObjectRef& self, RuntimeEffects& runtime) {
+void ProcessResume(
+    const value::ObjectRef& self, RuntimeEffects& runtime,
+    base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   ControlledProcessOf(self, "resume").Resume(runtime);
 }
 

@@ -8,6 +8,7 @@
 
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/effect_storage.hpp"
+#include "lyra/runtime/running_state.hpp"
 #include "lyra/support/callable_bounds.hpp"
 
 namespace lyra::runtime {
@@ -49,6 +50,10 @@ struct EffectPlace {
   void* start;
   std::size_t bytes;
   std::size_t alignment;
+  // The procedure whose operation made the effect, which can have ended by the
+  // time the effect runs, so it is held by value. A report the effect makes
+  // names it, since no process is running to (LRM 20.10).
+  ProcedureContext made_by;
 };
 
 }  // namespace detail
@@ -133,13 +138,14 @@ class DeferredEffects {
   void Append(DeferredEffects& other);
 
   // Runs every effect in the order it was kept, each through `run`, which is
-  // handed the effect to call, and ends each and gives its bytes back as it
-  // leaves it, whether or not `run` raised.
+  // handed the procedure that made it, good for as long as `run` lasts, and the
+  // effect to call, and ends each and gives its bytes back as it leaves it,
+  // whether or not `run` raised.
   template <typename Run>
   void Drain(const Run& run) {
     while (detail::EffectPlace* place = PopFront()) {
       const OwnedEffect held(place, *storage_);
-      run([&held] { held.Call(); });
+      run(place->made_by, [&held] { held.Call(); });
     }
   }
 

@@ -84,8 +84,10 @@ struct NamedStaticProperty {
 // the compiler records for the object, the base's construction, each
 // property's start value and initializer, then the source's body.
 struct ConstructorDecl {
-  // A class that states a construction defines it, so this code is always a
-  // definition; an empty body is a class that constructs nothing.
+  // A class this unit defines defines its construction, and an empty body is a
+  // class that constructs nothing. A class another unit defines states only
+  // what its construction takes, as it states each method's prototype, so a
+  // construction here is checked and hands over what the body is handed.
   CallableCode code = CallableCode::Defined(diag::SourceSpan{});
 };
 
@@ -139,9 +141,9 @@ struct Class {
   // The unit that defines the class, where it is another unit's. Such a class
   // is declared here and defined there, as an imported declaration is: its
   // fields are its storage as that unit published it, the named ones first and
-  // the rest by type alone; its callables state each method's name and
-  // dispatch and nothing of its code; and it has no constructor, constant or
-  // record value here, which are that unit's to emit.
+  // the rest by type alone; its callables and its constructor state what each
+  // takes and, for a method, its name and dispatch, and no body; and it has no
+  // constant or record value here, which are that unit's to emit.
   std::optional<std::string> defining_unit;
   // The path another unit reaches this class by, for a class the source
   // declared (LRM 8.3) and for what a scope of the design hierarchy published,

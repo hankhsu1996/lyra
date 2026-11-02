@@ -278,6 +278,9 @@ auto Renderer::BuildCode(hir::TypeId type) -> mir::CallableCode {
   CallableBindings bindings(Unit(), code);
   const mir::LocalId value = code.AddLocal(Owner().TranslateType(type));
   code.params = {value};
+  // Nothing in the source is written for a type's text, so what fails while
+  // one is made fails at the print asking for it.
+  DeclareCallerLocation(Unit(), true, bindings, code, code.params);
   code.result_type = StringType();
 
   // The body reads its one parameter and calls the runtime and the texts of

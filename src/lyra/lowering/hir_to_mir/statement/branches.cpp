@@ -13,7 +13,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -66,8 +65,8 @@ auto BuildWrappedBranching(
     ProcessLowerer& process, const WalkFrame& frame, mir::Builder wrapper,
     std::optional<std::string> label,
     std::optional<hir::UniquePriorityCheck> check, QualifiedArmKind arm_kind,
-    std::vector<SearchedArm> arms, std::optional<hir::StmtId> catch_all,
-    diag::SourceSpan span) -> diag::Result<mir::Stmt> {
+    std::vector<SearchedArm> arms, std::optional<hir::StmtId> catch_all)
+    -> diag::Result<mir::Stmt> {
   UnitLowerer& owner = process.Owner();
   const mir::CompilationUnit& unit = owner.Unit();
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper.Body());
@@ -77,7 +76,7 @@ auto BuildWrappedBranching(
   const bool asserts_uniqueness =
       AssertionsOf(check, catch_all_or->has_value()).uniqueness;
   std::optional<mir::Block> fall_through = BuildFallThrough(
-      owner, wrapper_frame, std::move(*catch_all_or), check, arm_kind, span);
+      owner, wrapper_frame, std::move(*catch_all_or), check, arm_kind);
 
   if (asserts_uniqueness) {
     std::vector<mir::ExprId> held;
@@ -92,8 +91,8 @@ auto BuildWrappedBranching(
       }
       held.push_back(wrapper.ReadLocal(any, unit.builtins.machine_bool));
     }
-    const std::vector<mir::LocalId> kept = BuildUniquenessCheck(
-        owner, wrapper_frame, held, *check, arm_kind, span);
+    const std::vector<mir::LocalId> kept =
+        BuildUniquenessCheck(owner, wrapper_frame, held, *check, arm_kind);
     for (std::size_t arm = 0; arm < arms.size(); ++arm) {
       arms[arm].conditions = {
           [local = kept[arm], bit = unit.builtins.bit1](
@@ -190,7 +189,7 @@ auto TakenByValue(
 auto LowerComparedCase(
     ProcessLowerer& process, const WalkFrame& frame, mir::Builder wrapper,
     std::optional<std::string> label, const hir::CaseStmt& c,
-    hir::CaseKeyword keyword, const CaseSubject& subject, diag::SourceSpan span)
+    hir::CaseKeyword keyword, const CaseSubject& subject)
     -> diag::Result<mir::Stmt> {
   const mir::CompilationUnit& unit = process.Owner().Unit();
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper.Body());
@@ -249,7 +248,7 @@ auto LowerComparedCase(
     }
     return BuildWrappedBranching(
         process, frame, wrapper, std::move(label), c.check,
-        QualifiedArmKind::kCaseItem, std::move(items), c.default_stmt, span);
+        QualifiedArmKind::kCaseItem, std::move(items), c.default_stmt);
   }
 
   std::vector<ValueArm> cases;
@@ -279,7 +278,7 @@ auto LowerComparedCase(
 // series stands in.
 auto LowerIfStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::IfStmt& i, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
+    const hir::IfStmt& i) -> diag::Result<mir::Stmt> {
   const IfSeries series = SeriesOf(process.HirBody(), i);
 
   if (AssertionsOf(i.check, series.else_arm.has_value()).uniqueness) {
@@ -301,7 +300,7 @@ auto LowerIfStmt(
     }
     return BuildWrappedBranching(
         process, frame, declared_in.Builder(), std::move(label), i.check,
-        QualifiedArmKind::kCondition, std::move(arms), series.else_arm, span);
+        QualifiedArmKind::kCondition, std::move(arms), series.else_arm);
   }
 
   // Otherwise the series is built as the source nested it, each arm the
@@ -334,7 +333,7 @@ auto LowerIfStmt(
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   std::optional<mir::Block> rest = BuildFallThrough(
       process.Owner(), frame, std::move(*else_or), i.check,
-      QualifiedArmKind::kCondition, span);
+      QualifiedArmKind::kCondition);
   for (std::size_t arm = series.arms.size(); arm-- > 1;) {
     mir::Block level;
     mir::Builder level_builder = frame.Builder().Into(level);
@@ -355,7 +354,7 @@ auto LowerIfStmt(
 // membership instead, which is the whole difference between the forms.
 auto LowerCaseStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::CaseStmt& c, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
+    const hir::CaseStmt& c) -> diag::Result<mir::Stmt> {
   mir::Block wrapper;
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
   auto subject_or = SnapshotCaseSubject(process, wrapper_frame, c.condition);
@@ -367,7 +366,7 @@ auto LowerCaseStmt(
           [&](hir::CaseKeyword keyword) -> diag::Result<mir::Stmt> {
             return LowerComparedCase(
                 process, frame, wrapper_frame.Builder(), std::move(label), c,
-                keyword, subject, span);
+                keyword, subject);
           },
           [&](hir::CaseInside) -> diag::Result<mir::Stmt> {
             const mir::CompilationUnit& unit = process.Owner().Unit();
@@ -395,7 +394,7 @@ auto LowerCaseStmt(
             return BuildWrappedBranching(
                 process, frame, wrapper_frame.Builder(), std::move(label),
                 c.check, QualifiedArmKind::kCaseItem, std::move(items),
-                c.default_stmt, span);
+                c.default_stmt);
           }},
       c.label_test);
 }
@@ -408,8 +407,7 @@ auto LowerCaseStmt(
 // case statement.
 auto LowerPatternCaseStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::PatternCaseStmt& c, diag::SourceSpan span)
-    -> diag::Result<mir::Stmt> {
+    const hir::PatternCaseStmt& c) -> diag::Result<mir::Stmt> {
   const mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Block wrapper;
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
@@ -439,7 +437,7 @@ auto LowerPatternCaseStmt(
 
   return BuildWrappedBranching(
       process, frame, wrapper_frame.Builder(), std::move(label), c.check,
-      QualifiedArmKind::kCaseItem, std::move(items), c.default_stmt, span);
+      QualifiedArmKind::kCaseItem, std::move(items), c.default_stmt);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

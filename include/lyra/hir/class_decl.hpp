@@ -6,6 +6,7 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/field_id.hpp"
@@ -62,9 +63,13 @@ struct StaticPropertyInit {
 // reaches the base's, and a name in the base's bodies is searched outward from
 // there (LRM 23.9) whichever class extends it. Present exactly where the base
 // takes that instance, which is the base's own declaration to say.
+//
+// `span` is where the source enters the base: the call it wrote, or the class
+// where it wrote none.
 struct BaseCall {
   std::optional<DeclaringInstanceReach> declaring_instance;
   std::vector<ExprId> arguments;
+  diag::SourceSpan span;
 
   auto operator==(const BaseCall&) const -> bool = default;
 };

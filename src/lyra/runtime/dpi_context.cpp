@@ -6,6 +6,7 @@
 #include "lyra/abi/records.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/dpi_scope_handles.hpp"
 #include "lyra/runtime/file_table.hpp"
@@ -17,8 +18,9 @@
 
 namespace lyra::runtime {
 
-void EnterDpiScope(RuntimeEffects& effects, Scope* decl_scope) {
-  effects.Running().import_calls.Enter(decl_scope);
+void EnterDpiScope(
+    RuntimeEffects& effects, Scope* decl_scope, base::SourceLocation at) {
+  effects.Running().import_calls.Enter(decl_scope, at);
 }
 
 void LeaveDpiScope(RuntimeEffects& effects) {
@@ -75,18 +77,20 @@ void AcknowledgeStop(RuntimeEffects& effects) {
 }
 
 void CheckImportTaskAcknowledged(
-    RuntimeEffects& effects, std::int32_t returned) {
+    RuntimeEffects& effects, std::int32_t returned, base::SourceLocation at) {
   if (!IsDisabled(effects) || returned == 1) {
     return;
   }
   // LRM 35.9 item b.
+  const base::SourceLocationScope bound(at);
   effects.ReportDesignFailure(
       base::DiagMessage(
           "an imported task returned while its execution thread was in the "
           "disabled state without returning 1"));
 }
 
-void CheckImportFunctionAcknowledged(RuntimeEffects& effects) {
+void CheckImportFunctionAcknowledged(
+    RuntimeEffects& effects, base::SourceLocation at) {
   if (!IsDisabled(effects)) {
     return;
   }
@@ -95,6 +99,7 @@ void CheckImportFunctionAcknowledged(RuntimeEffects& effects) {
     return;
   }
   // LRM 35.9 item c.
+  const base::SourceLocationScope bound(at);
   effects.ReportDesignFailure(
       base::DiagMessage(
           "an imported function returned while its execution thread was in "
@@ -102,11 +107,12 @@ void CheckImportFunctionAcknowledged(RuntimeEffects& effects) {
 }
 
 void CheckExportReachable(RuntimeEffects& effects) {
+  RequireAContextImportCall(effects);
   if (!IsDisabled(effects)) {
-    RequireAContextImportCall(effects);
     return;
   }
   // LRM 35.9 item d.
+  const base::SourceLocationScope bound(ImportCallWrittenAt(effects));
   effects.ReportDesignFailure(
       base::DiagMessage(
           "foreign code called an exported subroutine after its execution "
@@ -117,12 +123,17 @@ void BeforeForeignCodeRuns(RuntimeEffects& effects) {
   effects.Files().BeforeForeignCodeRuns();
 }
 
+auto ImportCallWrittenAt(RuntimeEffects& effects) -> base::SourceLocation {
+  return effects.Running().import_calls.WrittenAt();
+}
+
 void RequireAContextImportCall(RuntimeEffects& effects) {
   if (const RunningState* running = effects.TryRunning();
       running != nullptr && running->import_calls.InsideACall()) {
     return;
   }
   throw SimulationError(
+      base::kNoSourceLocation,
       "foreign code called an exported subroutine from an imported "
       "subroutine that is not declared 'context'");
 }
@@ -185,9 +196,10 @@ auto ResolveTimeScope(void* scope, const lyra::runtime::Scope** resolved)
   return true;
 }
 
+// As Annex H answers them, a C `int` each.
 struct TimePowers {
-  std::int8_t unit;
-  std::int8_t precision;
+  std::int32_t unit;
+  std::int32_t precision;
 };
 
 // The powers of ten a time query answers in. A scope carrying no timescale of
@@ -196,7 +208,7 @@ struct TimePowers {
 // answer, which is the simulation's own precision.
 auto EffectiveTimePowers(
     const lyra::runtime::Scope* scope, std::int8_t global_power) -> TimePowers {
-  const auto effective = [global_power](std::int8_t declared) {
+  const auto effective = [global_power](std::int8_t declared) -> std::int32_t {
     return declared == lyra::abi::kUnspecifiedTimePower ? global_power
                                                         : declared;
   };
@@ -286,12 +298,8 @@ auto svGetTimeUnit(void* scope, void* time_unit) -> int {
   if (!ResolveTimeScope(scope, &resolved)) {
     return -1;
   }
-  const std::int8_t unit_power =
+  *static_cast<std::int32_t*>(time_unit) =
       EffectiveTimePowers(resolved, Effects().GlobalPrecisionPower()).unit;
-  // A time power is a small signed number (LRM 3.14): -9 is ns, so widening it
-  // with sign extension is the meaning, not the byte read this check looks for.
-  // NOLINTNEXTLINE(bugprone-signed-char-misuse)
-  *static_cast<std::int32_t*>(time_unit) = unit_power;
   return 0;
 }
 
@@ -303,12 +311,8 @@ auto svGetTimePrecision(void* scope, void* time_precision) -> int {
   if (!ResolveTimeScope(scope, &resolved)) {
     return -1;
   }
-  const std::int8_t precision =
+  *static_cast<std::int32_t*>(time_precision) =
       EffectiveTimePowers(resolved, Effects().GlobalPrecisionPower()).precision;
-  // A time power is a small signed number (LRM 3.14): -9 is ns, so widening it
-  // with sign extension is the meaning, not the byte read this check looks for.
-  // NOLINTNEXTLINE(bugprone-signed-char-misuse)
-  *static_cast<std::int32_t*>(time_precision) = precision;
   return 0;
 }
 

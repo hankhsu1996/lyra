@@ -1627,11 +1627,13 @@ the detail lives in the entry itself.
 ### Diagnostics
 
 - [a-place-in-the-source-is-the-front-ends](a-place-in-the-source-is-the-front-ends.md) -- a place
-  is held past the front end as the front end gave it and never resolved until it is shown; every
-  message about the source is shown by the front end, as its own are, so a refusal names the macro
-  and the include behind the text; a message opens with `error:`, `warning:` or `note:` and says its
-  kind itself. A second account of the source with a converter, a printer of the compiler's own, and
-  a label of the compiler's own are rejected.
+  is held past the front end as the front end gave it and resolved only to be shown or to be stated
+  to a running program; every message about the source is shown by the front end, as its own are, so
+  a refusal names the macro and the include behind the text; a message opens with `error:`,
+  `warning:` or `note:` and says its kind itself; a running design's failure is placed where the
+  design wrote the operation, bound at the library's door for the call's extent and kept as a value
+  by what runs later. A second account of the source with a converter, a printer of the compiler's
+  own, a label of the compiler's own, and the place as a parameter through the library are rejected.
 - [diagnostic-construction](diagnostic-construction.md) -- a diagnostic's kind is derived from its
   code at construction; construction is infallible; the `UnsupportedCategory` axis is removed.
 - [qualified-statement-violation-check](qualified-statement-violation-check.md) -- `unique` /

@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -101,6 +102,36 @@ template <std::ranges::sized_range Ranges>
     const CompilationUnit& unit, TypeId type, const IntegralConstant& value)
     -> Expr;
 
+// What the front end answers for `span`, which a program reads. A span naming
+// no place is a producer that lost one, since an operation the design wrote has
+// one.
+[[nodiscard]] auto PositionOf(
+    const diag::SourceManager& sources, diag::SourceSpan span)
+    -> diag::SourcePosition;
+
+// The unit's constant for `position`, as the value of the library's location
+// type that names it, each step added to `into`, a builder or a rebuild.
+template <typename Into>
+[[nodiscard]] auto BuildSourceLocation(
+    const CompilationUnit& unit, const diag::SourcePosition& position,
+    Into& into) -> ExprId {
+  const ExprId record = into.Add(
+      Expr{
+          .data =
+              ReferenceExpr{
+                  .target =
+                      SourceLocationRef{
+                          .location = unit.source_locations.Intern(position)}},
+          .type = unit.builtins.source_location_record});
+  return into.Add(
+      Expr{
+          .data =
+              CastExpr{
+                  .operand = into.Add(MakeAddressOfExpr(
+                      record, unit.builtins.source_location_record_ptr))},
+          .type = unit.builtins.source_location});
+}
+
 // A value of `type` whose bits are `value`, added to `block`: that constant,
 // or, where the type is too large for a frame and the value is one scalar
 // above a few bits, the extension of the constant those bits are.
@@ -108,9 +139,15 @@ template <std::ranges::sized_range Ranges>
     const CompilationUnit& unit, Builder block, TypeId type,
     const IntegralConstant& value) -> ExprId;
 
+// The library's opening of the class handle `handle`, answering a pointer to
+// the object it names as `viewed_as`.
+[[nodiscard]] auto MakeObjectOfCall(
+    const CompilationUnit& unit, ExprId handle, TypeId viewed_as) -> Expr;
+
 // The entry that carries `entry` out over a value of type `over`. An entry the
 // source states over values of several kinds names the one over integral
-// values alone where `over` is integral, and every other entry is itself.
+// values alone where `over` is integral, or the one over queues alone where it
+// is a queue, and every other entry is itself.
 [[nodiscard]] auto EntryOver(
     const CompilationUnit& unit, support::BuiltinFn entry, TypeId over)
     -> support::BuiltinFn;

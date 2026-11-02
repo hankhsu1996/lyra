@@ -2,15 +2,12 @@
 
 #include <optional>
 #include <span>
-#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/source_manager.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -65,12 +62,13 @@ auto KeywordOf(hir::UniquePriorityCheck check) -> std::string_view {
 }
 
 // Formats the report text already staged in `block` and hands it to the
-// diagnostic broker at warning severity (LRM 20.10). `origin` is the qualified
-// statement's own location, so the dispatcher attributes and rate-limits by
-// where the statement is written rather than by where the report matured.
+// diagnostic broker at warning severity (LRM 20.10), placed where `block`
+// builds from -- the qualified statement -- so the dispatcher attributes and
+// rate-limits by where the statement is written rather than by where the
+// report matured.
 void AppendReportEmit(
     mir::CompilationUnit& unit, mir::Builder block,
-    std::vector<RuntimePrintItem> items, std::string origin) {
+    std::vector<RuntimePrintItem> items) {
   // The text is fixed-format decimal, so no %t directive is possible and the
   // time-unit power is unread.
   const mir::ExprId items_array =
@@ -79,12 +77,10 @@ void AppendReportEmit(
       block.Add(BuildFormatCallExpr(unit, block, items_array));
   const mir::ExprId diagnostic_id =
       block.Add(BuildDiagnosticCallExpr(unit, block));
-  const mir::ExprId origin_id =
-      BuildStringValueExpr(unit, block, std::move(origin));
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.Add(BuildReportCallExpr(
-              unit, support::BuiltinFn::kEmitWarning, diagnostic_id, origin_id,
+              unit, support::BuiltinFn::kEmitWarning, diagnostic_id,
               text_id))});
 }
 
@@ -118,7 +114,7 @@ struct HeldArm {
 auto BuildUniquenessReportBody(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
     hir::UniquePriorityCheck check, QualifiedArmKind arm_kind,
-    std::span<const HeldArm> arms, std::string origin) -> mir::Expr {
+    std::span<const HeldArm> arms) -> mir::Expr {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::TypeId int_type = unit.builtins.int_type;
   ClosureBuilder closure(unit, frame, support::ClosureKind::kFn);
@@ -162,8 +158,7 @@ auto BuildUniquenessReportBody(
                       "'{}' violation; more than one of the {} {} matched",
                       KeywordOf(check), arms.size(), NounFor(arm_kind).many)
                       .TakeText()});
-  AppendReportEmit(
-      unit, body.Into(report), std::move(items), std::move(origin));
+  AppendReportEmit(unit, body.Into(report), std::move(items));
 
   const mir::ExprId lhs = body.ReadLocal(count, int_type);
   const mir::ExprId rhs = mir::BuildIntLiteral(unit, body, 1);
@@ -183,8 +178,7 @@ auto BuildUniquenessReportBody(
 // body it submits reads nothing the statement computed.
 auto BuildTotalityReportScope(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    hir::UniquePriorityCheck check, QualifiedArmKind arm_kind,
-    diag::SourceSpan span) -> mir::Block {
+    hir::UniquePriorityCheck check, QualifiedArmKind arm_kind) -> mir::Block {
   mir::Block scope;
   ClosureBuilder closure(
       unit_lowerer.Unit(), frame.WithBlock(&scope), support::ClosureKind::kFn);
@@ -195,9 +189,7 @@ auto BuildTotalityReportScope(
                       "'{}' violation; no {} matched", KeywordOf(check),
                       NounFor(arm_kind).one)
                       .TakeText()});
-  AppendReportEmit(
-      unit_lowerer.Unit(), closure.Body(), std::move(items),
-      diag::RuntimeOriginOf(span, unit_lowerer.SourceManager()));
+  AppendReportEmit(unit_lowerer.Unit(), closure.Body(), std::move(items));
   const WalkFrame scope_frame = frame.WithBlock(&scope);
   KeepInObservedRegion(unit_lowerer, scope_frame, closure.BuildVoid());
   return scope;
@@ -225,11 +217,10 @@ auto AssertionsOf(
 auto BuildFallThrough(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
     std::optional<mir::Block> catch_all,
-    std::optional<hir::UniquePriorityCheck> check, QualifiedArmKind arm_kind,
-    diag::SourceSpan span) -> std::optional<mir::Block> {
+    std::optional<hir::UniquePriorityCheck> check, QualifiedArmKind arm_kind)
+    -> std::optional<mir::Block> {
   if (AssertionsOf(check, catch_all.has_value()).totality) {
-    return BuildTotalityReportScope(
-        unit_lowerer, frame, *check, arm_kind, span);
+    return BuildTotalityReportScope(unit_lowerer, frame, *check, arm_kind);
   }
   return catch_all;
 }
@@ -237,8 +228,7 @@ auto BuildFallThrough(
 auto BuildUniquenessCheck(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
     std::span<const mir::ExprId> held, hir::UniquePriorityCheck check,
-    QualifiedArmKind arm_kind, diag::SourceSpan span)
-    -> std::vector<mir::LocalId> {
+    QualifiedArmKind arm_kind) -> std::vector<mir::LocalId> {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
 
@@ -257,9 +247,7 @@ auto BuildUniquenessCheck(
   }
   KeepInObservedRegion(
       unit_lowerer, frame,
-      BuildUniquenessReportBody(
-          unit_lowerer, frame, check, arm_kind, arms,
-          diag::RuntimeOriginOf(span, unit_lowerer.SourceManager())));
+      BuildUniquenessReportBody(unit_lowerer, frame, check, arm_kind, arms));
   return locals;
 }
 

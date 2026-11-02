@@ -15,6 +15,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/owned_call.hpp"
@@ -568,10 +569,10 @@ class NetName {
   // here.
   auto ReachAt(std::uint32_t position, std::uint32_t within) -> std::size_t;
 
-  // Cuts a physical net in two, `at` positions from its start, and gives every
+  // Cuts a physical net in two, `cut` positions from its start, and gives every
   // name reaching it the two reaches that replace the one.
   static void CutPhysical(
-      std::shared_ptr<PhysicalNet> physical, std::uint32_t at);
+      std::shared_ptr<PhysicalNet> physical, std::uint32_t cut);
 
   // Makes one physical net of two that cover the same positions, leaving every
   // name of the second reaching the first.
@@ -653,13 +654,13 @@ class PhysicalNet {
   // saying this, which is what an alias repeated in two statements states.
   void Admit(const NetPlacement& placement);
 
-  // These positions cut in two at `at`, which keeps the low part and hands back
-  // the high one. Every name here covers the whole of these positions, so each
-  // is placed in both halves, the high one at that name's own offset advanced
-  // by the cut. A cut is what a connection reaching part of these positions
-  // asks for: the part it reaches goes on to resolve with whatever it is
-  // coupled to, and the rest of these positions is a resolution of its own.
-  [[nodiscard]] auto Split(std::uint32_t at) -> std::shared_ptr<PhysicalNet>;
+  // These positions cut in two at `cut`, which keeps the low part and hands
+  // back the high one. Every name here covers the whole of these positions, so
+  // each is placed in both halves, the high one at that name's own offset
+  // advanced by the cut. A cut is what a connection reaching part of these
+  // positions asks for: the part it reaches goes on to resolve with whatever it
+  // is coupled to, and the rest of these positions is a resolution of its own.
+  [[nodiscard]] auto Split(std::uint32_t cut) -> std::shared_ptr<PhysicalNet>;
 
   DriveContribution<NetPositions> own_;
   // The scalar the net type contributes at every position (LRM 6.6.5, 6.6.6),
@@ -802,7 +803,8 @@ class ResolvedNet<T> : public ConnectableNet {
         [&] { return FilledOver<T>(count_, value::FourStateBit::kUnknown); },
         Trigger(WatchedPlace::Through(Member()), Observation{}, {}, 0, 0));
   }
-  [[nodiscard]] auto SampledGet() const -> const T& {
+  [[nodiscard]] auto SampledGet(base::SourceLocation at) const -> const T& {
+    const base::SourceLocationScope bound(at);
     return SampledOf(sampled_.get());
   }
   // Assigns what the net shows to `out`, as its sampled value takes it.
@@ -822,27 +824,36 @@ class ResolvedNet<T> : public ConnectableNet {
   //
   // What is forced is the physical net, so the value shows under every name
   // reaching those positions.
-  auto BeginTakeover(std::int64_t level, std::int64_t first, std::int64_t count)
-      -> std::int64_t {
+  auto BeginTakeover(
+      std::int64_t level, std::int64_t first, std::int64_t count,
+      base::SourceLocation at) -> std::int64_t {
+    const base::SourceLocationScope bound(at);
     return std::int64_t{WholePhysicalNet().BeginTakeover(
         TakeoverLevelOf(level), PositionsNamed(first, count))};
   }
 
   auto DriveTakeover(
-      std::int64_t level, std::int64_t generation, const T& value) -> bool {
+      std::int64_t level, std::int64_t generation, const T& value,
+      base::SourceLocation at) -> bool {
+    const base::SourceLocationScope bound(at);
     return DriveTakeoverFromView(level, generation, value.AsWords().View());
   }
 
   // The same of a value handed as its bytes, as wide as what the net holds.
   auto DriveTakeoverBytes(
-      std::int64_t level, std::int64_t generation, const void* bytes) -> bool
+      std::int64_t level, std::int64_t generation, const void* bytes,
+      base::SourceLocation at) -> bool
     requires value::TakesBytesInPlace<T>
   {
+    const base::SourceLocationScope bound(at);
     return DriveTakeoverFromView(
         level, generation, value::WideViewAt(bytes, count_, T::kDomain));
   }
 
-  void EndTakeover(std::int64_t level, std::int64_t first, std::int64_t count) {
+  void EndTakeover(
+      std::int64_t level, std::int64_t first, std::int64_t count,
+      base::SourceLocation at) {
+    const base::SourceLocationScope bound(at);
     PhysicalNet& physical = WholePhysicalNet();
     if (!physical.EndTakeover(
             TakeoverLevelOf(level), PositionsNamed(first, count))) {
@@ -896,7 +907,8 @@ class ResolvedNet<T> : public ConnectableNet {
   // which carry no type.
   void Join(
       ConnectableNet* other, std::int64_t here, std::int64_t there,
-      std::int64_t count) {
+      std::int64_t count, base::SourceLocation at) {
+    const base::SourceLocationScope bound(at);
     name_.Join(
         other->Name(), static_cast<std::uint32_t>(here),
         static_cast<std::uint32_t>(there), static_cast<std::uint32_t>(count));
@@ -1301,7 +1313,8 @@ class ResolvedNet<T> : public Observable {
         },
         Trigger(WatchedPlace::Through(Member()), Observation{}, {}, 0, 0));
   }
-  [[nodiscard]] auto SampledGet() const -> const T& {
+  [[nodiscard]] auto SampledGet(base::SourceLocation at) const -> const T& {
+    const base::SourceLocationScope bound(at);
     return SampledOf(sampled_.get());
   }
   // Assigns what the net shows to `out`, as its sampled value takes it.
@@ -1329,7 +1342,9 @@ class ResolvedNet<T> : public Observable {
   // positions of its value, which its type numbers part by part.
   auto BeginTakeover(
       std::int64_t level, std::int64_t first, std::int64_t count,
-      TakePositionsOf<T> take_positions = {}) -> std::int64_t {
+      base::SourceLocation at, TakePositionsOf<T> take_positions = {})
+      -> std::int64_t {
+    const base::SourceLocationScope bound(at);
     if (takeovers_ == nullptr) {
       takeovers_ = std::make_unique<Takeovers<T>>(take_positions);
     }
@@ -1338,18 +1353,25 @@ class ResolvedNet<T> : public Observable {
   }
 
   auto DriveTakeover(
-      std::int64_t level, std::int64_t generation, const T& value) -> bool {
+      std::int64_t level, std::int64_t generation, const T& value,
+      base::SourceLocation at) -> bool {
+    const base::SourceLocationScope bound(at);
     return RecordTakeover(level, generation, value);
   }
 
   // The same of a value handed as its bytes, laid out by the net's type.
   auto DriveTakeoverBytes(
-      std::int64_t level, std::int64_t generation, const void* bytes) -> bool
+      std::int64_t level, std::int64_t generation, const void* bytes,
+      base::SourceLocation at) -> bool
     requires value::LaidOutByType<T>
   {
+    const base::SourceLocationScope bound(at);
     return RecordTakeover(level, generation, held_.ToOwned(bytes));
   }
-  void EndTakeover(std::int64_t level, std::int64_t first, std::int64_t count) {
+  void EndTakeover(
+      std::int64_t level, std::int64_t first, std::int64_t count,
+      base::SourceLocation at) {
+    const base::SourceLocationScope bound(at);
     if (takeovers_ == nullptr) {
       return;
     }

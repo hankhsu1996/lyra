@@ -3,10 +3,10 @@
 #include <cstdint>
 #include <string_view>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -18,9 +18,10 @@ namespace {
 // stop, which is what carries the departure on past a foreign frame it does
 // not cross (LRM 35.9).
 [[noreturn]] void EndRunFrom(
-    RuntimeEffects& runtime, std::string_view task,
-    const lyra::value::String& origin, std::int64_t finish_number) {
-  runtime.EndRun(task, origin, finish_number);
+    RuntimeEffects& runtime, std::string_view task, std::int64_t finish_number,
+    base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
+  runtime.EndRun(task, finish_number);
   if (RuntimeProcess* process = runtime.TryCurrentProcess();
       process != nullptr) {
     process->RequestTermination(ProcessTerminationCause::kKilled);
@@ -31,15 +32,15 @@ namespace {
 }  // namespace
 
 void Finish(
-    RuntimeEffects& runtime, const lyra::value::String& origin,
-    std::int64_t finish_number) {
-  EndRunFrom(runtime, "$finish", origin, finish_number);
+    RuntimeEffects& runtime, std::int64_t finish_number,
+    base::SourceLocation at) {
+  EndRunFrom(runtime, "$finish", finish_number, at);
 }
 
 void Stop(
-    RuntimeEffects& runtime, const lyra::value::String& origin,
-    std::int64_t finish_number) {
-  EndRunFrom(runtime, "$stop", origin, finish_number);
+    RuntimeEffects& runtime, std::int64_t finish_number,
+    base::SourceLocation at) {
+  EndRunFrom(runtime, "$stop", finish_number, at);
 }
 
 }  // namespace lyra::runtime

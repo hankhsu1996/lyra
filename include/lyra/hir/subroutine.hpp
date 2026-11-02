@@ -51,6 +51,11 @@ struct SubroutineParam {
 // `reads` is what a call of a function can read (LRM 9.4.2), stated in terms of
 // its own formals and the object it runs on so a wait calling it can ask. A
 // task is never called from an expression and states nothing.
+//
+// `track_caller` is whether a failure of the design this body reports is
+// placed at the call that reached it rather than at the body's own lines,
+// which is so for a body of the tool's own text; it says of the body what the
+// callee interface says of a call to it.
 struct SubroutineDecl {
   std::string name;
   SubroutineKind kind;
@@ -60,6 +65,7 @@ struct SubroutineDecl {
   ProceduralBody body;
   std::optional<StmtId> root_stmt;
   Reads reads;
+  bool track_caller = false;
 
   auto operator==(const SubroutineDecl&) const -> bool = default;
 };

@@ -6,9 +6,13 @@
 #include <tuple>
 
 #include "lyra/abi/records.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/class_definition.hpp"
+#include "tests/base/written_at.hpp"
 
 namespace {
+
+using lyra::test::kWrittenAt;
 
 using lyra::abi::ConstantSpan;
 using lyra::abi::InterfaceRow;
@@ -85,7 +89,7 @@ TEST_F(ObjectRefTest, LastReferenceDropReleasesObject) {
 // backend reads it, whichever bases the library gives the root.
 TEST_F(ObjectRefTest, AnObjectStartsWithItsDefinition) {
   const auto a = Create<Counted>(kCounted);
-  const GcObject& object = a.Deref<GcObject>();
+  const GcObject& object = *a.Object<GcObject>(kWrittenAt);
   EXPECT_EQ(
       static_cast<const void*>(&object.definition),
       static_cast<const void*>(&object));
@@ -107,9 +111,9 @@ TEST_F(ObjectRefTest, ConstructorHandsOutAReferenceToItself) {
   {
     auto a = Create<Registers>(kRegisters);
     EXPECT_EQ(a, Registers::last);
-    a = nullptr;
+    a = ObjectRef{};
     EXPECT_EQ(Counted::alive, 1);
-    Registers::last = nullptr;
+    Registers::last = ObjectRef{};
   }
   EXPECT_EQ(Counted::alive, 0);
 }
@@ -146,14 +150,15 @@ TEST_F(ObjectRefTest, NullReferenceEquality) {
   EXPECT_EQ(a, b);
   auto c = Create<Counted>(kCounted);
   EXPECT_NE(a, c);
-  c = nullptr;
+  c = ObjectRef{};
   EXPECT_EQ(c, a);
   EXPECT_EQ(Counted::alive, 0);
 }
 
-TEST_F(ObjectRefTest, DerefOnANullReferenceIsTheDesignsFailure) {
+TEST_F(ObjectRefTest, OpeningANullReferenceIsTheDesignsFailure) {
   ObjectRef a;
-  EXPECT_THROW(std::ignore = a.Deref<Counted>(), lyra::SimulationError);
+  EXPECT_THROW(
+      std::ignore = a.Object<Counted>(kWrittenAt), lyra::SimulationError);
 }
 
 // Is a Counted so that reclaiming a node is observable; a node holding only a
@@ -168,16 +173,17 @@ const ObjectDefinition kNode = DefinitionOf<Node>(&kCounted);
 TEST_F(ObjectRefTest, SelfReferentialAcyclicChainReclaims) {
   auto head = Create<Node>(kNode);
   auto tail = Create<Node>(kNode);
-  head.Deref<Node>().value = 1;
-  tail.Deref<Node>().value = 2;
-  head.Deref<Node>().next = tail;
-  EXPECT_EQ(head.Deref<Node>().next.Deref<Node>().value, 2);
+  head.Object<Node>(kWrittenAt)->value = 1;
+  tail.Object<Node>(kWrittenAt)->value = 2;
+  head.Object<Node>(kWrittenAt)->next = tail;
+  EXPECT_EQ(
+      head.Object<Node>(kWrittenAt)->next.Object<Node>(kWrittenAt)->value, 2);
   EXPECT_EQ(Counted::alive, 2);
   // Dropping the head releases the reference it holds, which is the only thing
   // keeping the tail alive besides the local one.
-  head = nullptr;
+  head = ObjectRef{};
   EXPECT_EQ(Counted::alive, 1);
-  tail = nullptr;
+  tail = ObjectRef{};
   EXPECT_EQ(Counted::alive, 0);
 }
 
@@ -292,11 +298,17 @@ TEST_F(ObjectRefTest, ADispatchRunsTheBodyOfTheObjectsClass) {
   const ObjectRef heir = Create<Heir>(kHeir);
   const ObjectRef base = Create<Base>(kBase);
   EXPECT_EQ(
-      (Dispatch<BaseTable, &BaseTable::level>(heir.Deref<GcObject>(), 1)), 21);
+      (Dispatch<BaseTable, &BaseTable::level>(
+          *heir.Object<GcObject>(kWrittenAt), 1)),
+      21);
   EXPECT_EQ(
-      (Dispatch<BaseTable, &BaseTable::level>(base.Deref<GcObject>(), 1)), 11);
+      (Dispatch<BaseTable, &BaseTable::level>(
+          *base.Object<GcObject>(kWrittenAt), 1)),
+      11);
   EXPECT_EQ(
-      (Dispatch<HeirTable, &HeirTable::depth>(heir.Deref<GcObject>())), 2);
+      (Dispatch<HeirTable, &HeirTable::depth>(
+          *heir.Object<GcObject>(kWrittenAt))),
+      2);
 }
 
 // A call through an interface class's handle reads the table the object's
@@ -306,11 +318,11 @@ TEST_F(ObjectRefTest, AnInterfaceCallRunsTheTableTheObjectsClassGives) {
   const ObjectRef heir = Create<Heir>(kHeir);
   EXPECT_EQ(
       (InterfaceDispatch<NamedTable, &NamedTable::name, &kNamed>(
-          heir.Deref<GcObject>())),
+          *heir.Object<GcObject>(kWrittenAt))),
       100);
   EXPECT_EQ(
       (InterfaceDispatch<RankedTable, &RankedTable::rank, &kRanked>(
-          heir.Deref<GcObject>())),
+          *heir.Object<GcObject>(kWrittenAt))),
       300);
 }
 
@@ -318,8 +330,8 @@ TEST_F(ObjectRefTest, AnInterfaceCallRunsTheTableTheObjectsClassGives) {
 // it names, whichever class of its lineage the body is of (LRM 8.11).
 TEST_F(ObjectRefTest, SelfHandleNamesTheObjectItsBodyRunsOn) {
   const ObjectRef heir = Create<Heir>(kHeir);
-  EXPECT_EQ(heir.Deref<Heir>().Myself(), heir);
-  EXPECT_EQ(heir.Deref<Base>().Myself(), heir);
+  EXPECT_EQ(heir.Object<Heir>(kWrittenAt)->Myself(), heir);
+  EXPECT_EQ(heir.Object<Base>(kWrittenAt)->Myself(), heir);
 }
 
 }  // namespace

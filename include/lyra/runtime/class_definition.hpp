@@ -49,9 +49,4 @@ void EndObject(GcObject* object) noexcept;
 [[nodiscard]] auto RequireScopeClass(const abi::ObjectDefinition* definition)
     -> const abi::ObjectDefinition*;
 
-// The object a handle names, which is where a member is reached whichever class
-// the handle is of. A handle naming no object is the design's own failure (LRM
-// 8.4).
-[[nodiscard]] auto ObjectOf(const value::ObjectRef& ref) -> void*;
-
 }  // namespace lyra::runtime

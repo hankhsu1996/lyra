@@ -7,10 +7,13 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/associative_array.hpp"
 #include "lyra/value/dynamic_array.hpp"
 #include "lyra/value/enumeration.hpp"
@@ -57,6 +60,9 @@ class RuntimeEffects;
 // what its caller hands it. Which numbers a word takes is its type's (LRM
 // 21.4.2), so a load into a memory of an enumerated type is handed the
 // enumeration's members as its own constant.
+//
+// A file the task cannot read or write, or a word it cannot take, is reported
+// and the run goes on (LRM 21.4).
 
 // What a load completes with: the memory it filled.
 template <typename Memory>
@@ -250,8 +256,7 @@ void ReadMemZeroBased(
       runtime, filename, base, 0, static_cast<std::int64_t>(dest.RawSize()) - 1,
       1, start, finish, values,
       [&dest, base](std::int64_t address, std::size_t, std::string_view token) {
-        StoreParsed(
-            dest.ElementMut(value::Position::FromInt(address)), token, base);
+        StoreParsed(dest.RawAt(static_cast<std::size_t>(address)), token, base);
       });
 }
 
@@ -437,60 +442,100 @@ void DumpMemory(
 // The loads and dumps a call names: either addressing request (above), and for
 // a load a memory of any type or of an enumerated one, which names the members
 // its words are read as after the memory. Each reaches the load or the dump of
-// the memory's own kind.
-template <typename Memory, typename... Addressing>
-auto ReadMem(
-    RuntimeEffects& runtime, const Memory& memory,
-    const value::String& filename, const Addressing&... addressing) {
-  return LoadMemory(
-      runtime, memory, WordValues{AnyNumber{}}, filename, addressing...,
-      std::nullopt);
+// the memory's own kind. A call hands over where it was written after the
+// addressing, so `operation` is handed that place apart from the addressing.
+template <typename Operation, typename... Request>
+auto CallWithLastOperandFirst(Operation operation, const Request&... request) {
+  constexpr std::size_t kAddressing = sizeof...(Request) - 1;
+  const std::tuple<const Request&...> written(request...);
+  return [&]<std::size_t... I>(std::index_sequence<I...>) {
+    return operation(std::get<kAddressing>(written), std::get<I>(written)...);
+  }(std::make_index_sequence<kAddressing>{});
 }
 
-template <typename Memory, typename... Addressing>
+template <typename Memory, typename... Request>
+auto ReadMem(
+    RuntimeEffects& runtime, const Memory& memory,
+    const value::String& filename, const Request&... request) {
+  return CallWithLastOperandFirst(
+      [&](base::SourceLocation at, const auto&... addressing) {
+        const base::SourceLocationScope bound(at);
+        return LoadMemory(
+            runtime, memory, WordValues{AnyNumber{}}, filename, addressing...,
+            std::nullopt);
+      },
+      request...);
+}
+
+template <typename Memory, typename... Request>
 auto ReadMemWithin(
     RuntimeEffects& runtime, const Memory& memory,
-    const value::String& filename, const Addressing&... addressing) {
-  return LoadMemory(
-      runtime, memory, WordValues{AnyNumber{}}, filename, addressing...);
+    const value::String& filename, const Request&... request) {
+  return CallWithLastOperandFirst(
+      [&](base::SourceLocation at, const auto&... addressing) {
+        const base::SourceLocationScope bound(at);
+        return LoadMemory(
+            runtime, memory, WordValues{AnyNumber{}}, filename, addressing...);
+      },
+      request...);
 }
 
 template <
     typename Memory, std::uint64_t kWidth, bool kFourState,
-    std::size_t kMembers, typename... Addressing>
+    std::size_t kMembers, typename... Request>
 auto ReadMem(
     RuntimeEffects& runtime, const Memory& memory,
     const value::EnumerationMembers<kWidth, kFourState, kMembers>& members,
-    const value::String& filename, const Addressing&... addressing) {
-  return LoadMemory(
-      runtime, memory, WordValues{MemberValues{members.Read()}}, filename,
-      addressing..., std::nullopt);
+    const value::String& filename, const Request&... request) {
+  return CallWithLastOperandFirst(
+      [&](base::SourceLocation at, const auto&... addressing) {
+        const base::SourceLocationScope bound(at);
+        return LoadMemory(
+            runtime, memory, WordValues{MemberValues{members.Read()}}, filename,
+            addressing..., std::nullopt);
+      },
+      request...);
 }
 
 template <
     typename Memory, std::uint64_t kWidth, bool kFourState,
-    std::size_t kMembers, typename... Addressing>
+    std::size_t kMembers, typename... Request>
 auto ReadMemWithin(
     RuntimeEffects& runtime, const Memory& memory,
     const value::EnumerationMembers<kWidth, kFourState, kMembers>& members,
-    const value::String& filename, const Addressing&... addressing) {
-  return LoadMemory(
-      runtime, memory, WordValues{MemberValues{members.Read()}}, filename,
-      addressing...);
+    const value::String& filename, const Request&... request) {
+  return CallWithLastOperandFirst(
+      [&](base::SourceLocation at, const auto&... addressing) {
+        const base::SourceLocationScope bound(at);
+        return LoadMemory(
+            runtime, memory, WordValues{MemberValues{members.Read()}}, filename,
+            addressing...);
+      },
+      request...);
 }
 
-template <typename Memory, typename... Addressing>
+template <typename Memory, typename... Request>
 void WriteMem(
     RuntimeEffects& runtime, const Memory& memory,
-    const value::String& filename, const Addressing&... addressing) {
-  DumpMemory(runtime, memory, filename, addressing..., std::nullopt);
+    const value::String& filename, const Request&... request) {
+  CallWithLastOperandFirst(
+      [&](base::SourceLocation at, const auto&... addressing) {
+        const base::SourceLocationScope bound(at);
+        DumpMemory(runtime, memory, filename, addressing..., std::nullopt);
+      },
+      request...);
 }
 
-template <typename Memory, typename... Addressing>
+template <typename Memory, typename... Request>
 void WriteMemWithin(
     RuntimeEffects& runtime, const Memory& memory,
-    const value::String& filename, const Addressing&... addressing) {
-  DumpMemory(runtime, memory, filename, addressing...);
+    const value::String& filename, const Request&... request) {
+  CallWithLastOperandFirst(
+      [&](base::SourceLocation at, const auto&... addressing) {
+        const base::SourceLocationScope bound(at);
+        DumpMemory(runtime, memory, filename, addressing...);
+      },
+      request...);
 }
 
 }  // namespace lyra::runtime

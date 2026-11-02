@@ -12,6 +12,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/frame_size.hpp"
@@ -74,6 +75,17 @@ auto MakeIntegralLiteral(
       .data =
           ReferenceExpr{.target = IntegralConstantRef{.constant = constant}},
       .type = type};
+}
+
+auto PositionOf(const diag::SourceManager& sources, diag::SourceSpan span)
+    -> diag::SourcePosition {
+  std::optional<diag::SourcePosition> position = sources.PositionOf(span);
+  if (!position.has_value()) {
+    throw InternalError(
+        "mir: an operation a program reports at names no place in the source "
+        "-- please report this as a bug");
+  }
+  return *std::move(position);
 }
 
 namespace {
@@ -234,13 +246,36 @@ auto MakeUnary(
       unit, block, IntegralOpOf(op), std::array{operand}, std::move(unary));
 }
 
+auto MakeObjectOfCall(
+    const CompilationUnit& unit, ExprId handle, TypeId viewed_as) -> Expr {
+  return MakeCallExpr(
+      Direct{
+          .target = support::BuiltinFn::kObjectOf,
+          .receiver = handle,
+          .type_arguments = {viewed_as}},
+      {},
+      unit.types.Intern(
+          Type{PointerType{
+              .pointee = viewed_as,
+              .ownership = PointerOwnership::kBorrowed,
+              .mutability = Mutability::kMutable}}));
+}
+
 auto EntryOver(
     const CompilationUnit& unit, support::BuiltinFn entry, TypeId over)
     -> support::BuiltinFn {
-  const std::optional<support::BuiltinFn> over_integral_values =
-      support::RuntimeEntryOf(entry).over_integral_values;
-  if (over_integral_values.has_value() && unit.types.Get(over).IsIntegral()) {
-    return *over_integral_values;
+  const support::RuntimeEntry declared = support::RuntimeEntryOf(entry);
+  const Type& type = unit.types.Get(over);
+  if (declared.over_integral_values.has_value() && type.IsIntegral()) {
+    return *declared.over_integral_values;
+  }
+  // A step within a write is over the value its designation names.
+  const auto* designation = type.As<DesignationType>();
+  const Type& value =
+      designation == nullptr ? type : unit.types.Get(designation->value);
+  if (declared.over_queues.has_value() &&
+      value.IsDeclaredBy(support::LibraryDecl::kQueue)) {
+    return *declared.over_queues;
   }
   return entry;
 }

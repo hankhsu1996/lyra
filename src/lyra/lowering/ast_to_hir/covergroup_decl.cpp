@@ -820,25 +820,20 @@ auto UnitLowerer::CovergroupDeclarationOf(hir::CovergroupId covergroup)
 }
 
 auto UnitLowerer::ReadSignaturesOfNamedCovergroups() -> diag::Result<void> {
-  // Every covergroup another unit declares that a type of this unit names,
-  // whichever way the type arrived: written here, or taken in with another
-  // unit's signature. Reading one can take in more types, so the walk runs
-  // until it meets none it has not read. A unit naming one is laid out over
-  // the coverage library as the declaring unit is, however the name arrived.
-  for (std::size_t read = 0; read != unit_.types.size();) {
-    const std::size_t reached = unit_.types.size();
-    for (const hir::TypeId id : unit_.types.Ids()) {
-      if (id.value < read) continue;
-      const auto* handle = unit_.types.Get(id).As<hir::CovergroupHandleType>();
-      if (handle == nullptr) continue;
-      // A type another unit's signature states may name a covergroup of this
-      // unit, which is this unit's own and no signature to read.
-      if (!unit_.covergroups.IsOwn(handle->covergroup)) {
-        if (auto named = NameCoverageLibrary(diag::SourceSpan{}); !named) {
-          return std::unexpected(std::move(named.error()));
-        }
-        CovergroupDeclarationOf(handle->covergroup);
+  // Every covergroup another unit declares that this unit names, whichever way
+  // the name arrived: a type written here or taken in with another unit's
+  // signature, or a call of a method of its type, which evaluates no instance
+  // of it and so states no type (LRM 19.8). Reading one can take in more, so
+  // the walk runs until it meets none it has not read. A unit naming one is
+  // laid out over the coverage library as the declaring unit is.
+  for (std::size_t read = 0; read != unit_.covergroups.size();) {
+    const std::size_t reached = unit_.covergroups.size();
+    for (const hir::CovergroupId id : unit_.covergroups.Ids()) {
+      if (id.value < read || unit_.covergroups.IsOwn(id)) continue;
+      if (auto named = NameCoverageLibrary(diag::SourceSpan{}); !named) {
+        return std::unexpected(std::move(named.error()));
       }
+      CovergroupDeclarationOf(id);
     }
     read = reached;
   }

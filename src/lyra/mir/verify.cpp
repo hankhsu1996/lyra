@@ -21,6 +21,7 @@
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/caller_location.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -32,6 +33,7 @@
 #include "lyra/mir/dump.hpp"
 #include "lyra/mir/evaluation_order.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/frame_size.hpp"
@@ -40,6 +42,7 @@
 #include "lyra/mir/linkage.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/object_lifetime.hpp"
+#include "lyra/mir/object_operand.hpp"
 #include "lyra/mir/operand_use.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -1051,10 +1054,11 @@ auto ReachesReadOnly(const Type& pointer) -> bool {
 
 // A call on a library entry is held to the entry's one declaration, so no
 // consumer of the call has to ask what it was applied to: an entry the source
-// states over values of several kinds is named only where its first operand is
-// not integral, the operation over integral values being an entry of its own;
-// an argument the entry reads as a machine value is no integral value, which
-// would cross with nothing telling the entry how to read its bits; and an
+// states over values of several kinds is named only where no other is stated
+// for its first operand, as the operation over integral values or over queues
+// is an entry of its own; an argument the entry reads as a machine value is no
+// integral value,
+// which would cross with nothing telling the entry how to read its bits; and an
 // entry reaching by a key is called on a container reached by keys, one
 // reaching by a position on something that numbers its parts; an entry
 // answering a reference is typed as that reference; and no call names an
@@ -1092,12 +1096,12 @@ void VerifyEntryDeclarations(
     }
     const std::optional<ExprId> receiver = CalleeReceiver(call->callee);
     const std::optional<ExprId> first = FirstOperand(*call);
-    if (declared.over_integral_values.has_value() && first.has_value() &&
-        type_of(*first).IsIntegral()) {
+    if (first.has_value() &&
+        EntryOver(unit, *entry, block.exprs.Get(*first).type) != *entry) {
       refuse(
           id,
-          "names an entry over values of several kinds where its first "
-          "operand is integral");
+          "names an entry over values of several kinds where another is "
+          "stated for its first operand");
     }
     // An entry answering a reference -- into its receiver, or to what the
     // wrapper it is taken on holds -- is typed as that reference, at the
@@ -1306,13 +1310,21 @@ auto HoldsAs(const UnmanagedRefType& reference, const PointerType& pointer)
 // instance it names (LRM 25.9); a real as the machine float of its width and
 // back, which is the IEEE value it is (LRM 6.12) -- how a real crosses to a
 // foreign call (LRM 35.5.6); a reference at the same referent made read-only,
-// as clang states a qualification conversion (LRM 13.5.2); and a reference
+// as clang states a qualification conversion (LRM 13.5.2); a reference
 // held as a member read as the reference it holds, at the same referent and
-// never more writable. A value moved between representations, and a handle
-// asked whether its object is of a class, is a call.
+// never more writable; and a pointer to the library's record of a location as
+// the location, the one word holding its address. A value moved between
+// representations, and a handle asked whether its object is of a class, is a
+// call.
 auto CastReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
   const Type& source = types.Get(from);
   const Type& destination = types.Get(to);
+  if (destination.IsDeclaredBy(support::LibraryDecl::kSourceLocation)) {
+    const auto* record = source.As<PointerType>();
+    return record != nullptr &&
+           types.Get(record->pointee)
+               .IsDeclaredBy(support::LibraryDecl::kSourceLocationRecord);
+  }
   const auto is_machine_integer = [](const Type& type) {
     return type.Is<MachineIntType>() || type.Is<MachineBoolType>();
   };
@@ -1363,8 +1375,9 @@ auto CastReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
           from_member->mutability == Mutability::kMutable);
 }
 
-// The constructor of a class of this unit, which a construction of its object
-// enters with the call's arguments as one naming it does.
+// The constructor of a class, which a construction of its object enters with
+// the call's arguments as one naming it does. A class another unit defines
+// states what its construction takes.
 auto ConstructorCode(const CompilationUnit& unit, ClassId cls)
     -> const CallableCode* {
   const std::optional<ConstructorDecl>& constructor =
@@ -1382,8 +1395,9 @@ auto ClassBodyCode(const CompilationUnit& unit, const CallableTarget& target)
              : &owner.callables.Get(target.slot).code;
 }
 
-// The code of this unit a direct call enters, or none where another unit or
-// the library holds it.
+// The code a direct call enters, where the unit states what the call meets: a
+// body it holds, or the prototype of another unit's constructor. None where
+// another unit or the library holds it.
 auto CodeEntered(const CompilationUnit& unit, const Direct& direct)
     -> const CallableCode* {
   return std::visit(
@@ -1468,7 +1482,8 @@ auto CodeNamed(
           [&](const IntegralConstantRef& r) { return none(r); },
           [&](const StaticPropertyRef& r) { return none(r); },
           [&](const StaticVariableRef& r) { return none(r); },
-          [&](const ClassConstantRef& r) { return none(r); }},
+          [&](const ClassConstantRef& r) { return none(r); },
+          [&](const SourceLocationRef& r) { return none(r); }},
       target);
 }
 
@@ -1665,10 +1680,15 @@ void VerifyExprsMeetTheirTypes(
     }
     // What the call's arguments meet: the parameters of a body this unit
     // holds, or, for code reached through an address, what its type states.
+    // Where the callee reports at its caller, the location it is handed is
+    // stated by the conversion into the legalized phase, so a unit as built
+    // hands every argument but that one.
     std::vector<TypeId> parameters;
     if (callee != nullptr) {
       for (const LocalId param : callee->params) {
-        if (param != callee->receiver) {
+        const bool stated_later =
+            unit.phase == Phase::kBuilt && param == callee->caller_location;
+        if (param != callee->receiver && !stated_later) {
           parameters.push_back(callee->locals.Get(param).type);
         }
       }
@@ -1685,9 +1705,10 @@ void VerifyExprsMeetTheirTypes(
       throw InternalError(
           std::format(
               "mir verify: {} calls a callable with {} arguments where it "
-              "takes "
-              "{} -- please report this as a bug",
-              describe(), call->arguments.size(), parameters.size()));
+              "takes {} ({}, expression {} of its block) -- please report "
+              "this as a bug",
+              describe(), call->arguments.size(), parameters.size(),
+              Describe(expr.data), id.value));
     }
     for (std::size_t i = 0; i < parameters.size(); ++i) {
       if (TypeOf(block, call->arguments[i]) != parameters[i]) {
@@ -2454,6 +2475,74 @@ void VerifyMovesAreLastUses(
   }
 }
 
+// A class handle is opened by the library's call, which answers a pointer, so
+// once a unit is legalized nothing reaches an object through a handle itself
+// -- neither a dereference nor an entry acting on the object: opening one can
+// fail the design, and only a call is handed where it was written.
+void VerifyHandlesOpenedByTheLibrary(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    if (HandleReached(unit.types, block, block.exprs.Get(id)).has_value()) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} reaches an object through a class handle itself "
+              "(expression {} of its block) -- please report this as a bug",
+              describe(), id.value));
+    }
+  }
+  for (const Block& child : block.child_scopes) {
+    VerifyHandlesOpenedByTheLibrary(unit, child, describe);
+  }
+}
+
+// Every call of something that reports at its caller is handed, last, a value
+// of the library's location type, and a body handed one names no location of
+// its own, so what it hands on is what it was handed.
+void VerifyCallerLocationsStated(
+    const CompilationUnit& unit, const CallableCode& code, const Block& block,
+    const auto& describe) {
+  const auto refuse = [&](std::string_view what, ExprId id) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} {} (expression {} of its block) -- please report "
+            "this as a bug",
+            describe(), what, id.value));
+  };
+  const auto names_a_location = [](const Expr& expr) {
+    const auto* named = std::get_if<ReferenceExpr>(&expr.data);
+    return named != nullptr &&
+           std::holds_alternative<SourceLocationRef>(named->target);
+  };
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    if (names_a_location(expr) && code.caller_location.has_value()) {
+      refuse(
+          "states a location of its own, though it reports where it was "
+          "called",
+          id);
+    }
+    const auto* call = std::get_if<CallExpr>(&expr.data);
+    if (call == nullptr || !TakesCallerLocation(unit, *call, expr.type)) {
+      continue;
+    }
+    const bool states_a_location =
+        !call->arguments.empty() &&
+        block.exprs.Get(call->arguments.back()).type ==
+            unit.builtins.source_location;
+    if (!states_a_location) {
+      refuse(
+          std::format(
+              "holds {}, which reports where it was called and is not handed "
+              "where that is",
+              Describe(expr.data)),
+          id);
+    }
+  }
+  for (const Block& child : block.child_scopes) {
+    VerifyCallerLocationsStated(unit, code, child, describe);
+  }
+}
+
 // `describe` names the body, and is asked only once there is something to
 // report: the check runs over every body of every unit, and composing a name
 // for each one costs more than the check itself.
@@ -2466,6 +2555,8 @@ void VerifyCode(
     case Phase::kLegalized:
       VerifyFramesHoldNoLargeValue(unit, code, describe);
       if (code.body.has_value()) {
+        VerifyHandlesOpenedByTheLibrary(unit, *code.body, describe);
+        VerifyCallerLocationsStated(unit, code, *code.body, describe);
         EvaluationOrder order(unit.types, *code.body);
         VerifyOrderIsExplicit(*code.body, order, describe);
       }
@@ -3010,6 +3101,9 @@ class HandedClosures {
             [](const ClassConstantRef&) -> Reached {
               return LivesForTheWholeRun{};
             },
+            [](const SourceLocationRef&) -> Reached {
+              return LivesForTheWholeRun{};
+            },
             [](const FunctionRef&) -> Reached { return LivesForTheWholeRun{}; },
             [](const DispatchEntryRef&) -> Reached {
               return LivesForTheWholeRun{};
@@ -3149,9 +3243,10 @@ void VerifyLibraryTypes(const CompilationUnit& unit, std::string_view when) {
 // one this unit defines is never declared as another unit's, and one another
 // unit defines is declared once, by the unit and the name it published it
 // under. Such an entry is a declaration only -- a class states its methods'
-// names and dispatch, a subroutine its signature, a record and a variable
-// their type -- and holds nothing this unit would emit, so no walk emitting
-// definitions can emit a second one of a symbol its unit already defines.
+// names, dispatch and prototypes and what its construction takes, a subroutine
+// its signature, a record and a variable their type -- and holds nothing this
+// unit would emit, so no walk emitting definitions can emit a second one of a
+// symbol its unit already defines.
 void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
   const auto refuse = [&](const support::DefPath& class_path,
                           std::string_view what) {
@@ -3181,12 +3276,16 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
       }
     }
     declared.emplace_back(*cls.defining_unit, class_path);
+    // What it states of the class is prototypes: a body of a method or of the
+    // construction is the defining unit's.
     const bool holds_code =
-        std::ranges::any_of(cls.callables.Ids(), [&](CallableId callable) {
-          return cls.callables.Get(callable).code.body.has_value();
-        });
-    if (holds_code || cls.constructor.has_value() || !cls.contained.empty() ||
-        !cls.constants.empty() ||
+        std::ranges::any_of(
+            cls.callables.Ids(),
+            [&](CallableId callable) {
+              return cls.callables.Get(callable).code.body.has_value();
+            }) ||
+        (cls.constructor.has_value() && cls.constructor->code.body.has_value());
+    if (holds_code || !cls.contained.empty() || !cls.constants.empty() ||
         !cls.object_definition_initializer.body.exprs.empty()) {
       refuse(*class_path, "holds code or data of its own for the class");
     }
@@ -3313,6 +3412,7 @@ auto InternalNamedBy(const CompilationUnit& unit, const ExprData& data)
             [&](const StaticPropertyRef& r) { return of_class(r.owner); },
             [](const StaticVariableRef&) -> Named { return std::nullopt; },
             [&](const ClassConstantRef& r) { return of_class(r.owner); },
+            [](const SourceLocationRef&) -> Named { return std::nullopt; },
             [&](const FunctionRef& r) { return of_class(r.body.owner); },
             [&](const DispatchEntryRef& r) { return of_class(r.body.owner); },
             [&](const DestructorRef& r) { return of_class(r.of); },

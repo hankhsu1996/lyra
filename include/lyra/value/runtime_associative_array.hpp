@@ -192,8 +192,8 @@ class RuntimeAssociativeArray {
       const ValueOperations& element) const -> std::uint64_t;
   [[nodiscard]] auto ToBitVec(const ValueOperations& element) const -> BitVec;
   [[nodiscard]] auto CountBits(
-      const ConstIntegralView& control_bits,
-      const ValueOperations& element) const -> Int;
+      const LogicVector<4>& control_bits, const ValueOperations& element) const
+      -> Int;
 
  private:
   using Core = BasicAssociativeArray<WitnessedKey, WitnessedElem>;

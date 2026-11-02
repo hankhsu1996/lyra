@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/array_ordering.hpp"
 #include "lyra/value/basic_queue.hpp"
 #include "lyra/value/bit_vec.hpp"
@@ -76,8 +77,9 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   Queue() = default;
 
   // LRM 10.9.1 assignment-pattern construction: the elements of the pattern's
-  // list, in order.
-  explicit Queue(std::span<const T> init) {
+  // list, in order, held to the bound.
+  Queue(std::span<const T> init, base::SourceLocation at) {
+    const base::SourceLocationScope bound(at);
     core_.Assign(detail::ReplicatedAddresses(init, 1));
   }
 
@@ -85,7 +87,8 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   // `count` replications of `unit`, held to the bound. Taking the repeat unit
   // and the count separately keeps the value O(unit) to build rather than
   // O(unit * count).
-  Queue(std::span<const T> unit, std::size_t count) {
+  Queue(std::span<const T> unit, std::size_t count, base::SourceLocation at) {
+    const base::SourceLocationScope bound(at);
     core_.Assign(detail::ReplicatedAddresses(unit, count));
   }
 
@@ -96,10 +99,10 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   // so the source's element type is `T`. Named because the argument list
   // cannot tell it from building over an element list.
   template <OrdinalElements C>
-  [[nodiscard]] static auto FromArray(const C& source) -> Queue {
-    Queue result;
-    result.core_.Assign(detail::OrdinalAddresses(source));
-    return result;
+  [[nodiscard]] static auto FromArray(const C& source, base::SourceLocation at)
+      -> Queue {
+    const base::SourceLocationScope bound(at);
+    return Holding(detail::OrdinalAddresses(source));
   }
 
   // LRM 7.6, 7.10.5: a queue of this type built out of a queue whose elements
@@ -107,20 +110,18 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   // the source as it stands first, so what it discards is never built, and
   // each element kept is then built afresh as a `T`.
   template <typename U, std::int64_t kFrom>
-  [[nodiscard]] static auto FromBoundFree(const Queue<U, kFrom>& source)
-      -> Queue {
-    const std::vector<T> kept =
-        detail::ElementsAs<T>(Queue<U, kBound>::FromArray(source));
-    Queue result;
-    result.core_.Assign(
-        detail::ReplicatedAddresses(std::span<const T>(kept), 1));
-    return result;
+  [[nodiscard]] static auto FromBoundFree(
+      const Queue<U, kFrom>& source, base::SourceLocation at) -> Queue {
+    const base::SourceLocationScope bound(at);
+    const std::vector<T> kept = detail::ElementsAs<T>(
+        Queue<U, kBound>::Holding(detail::OrdinalAddresses(source)));
+    return Holding(detail::ReplicatedAddresses(std::span<const T>(kept), 1));
   }
 
   // This queue as a value of `R`, the same queue with no bound anywhere in it.
   template <typename R>
-  [[nodiscard]] auto ToBoundFree() const -> R {
-    return R::FromBoundFree(*this);
+  [[nodiscard]] auto ToBoundFree(base::SourceLocation at) const -> R {
+    return R::FromBoundFree(*this, at);
   }
 
   Queue(const Queue&) = default;
@@ -163,7 +164,8 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   [[nodiscard]] auto HasUnknown() const -> bool {
     return detail::SequenceHasUnknown(core_, core_.Element());
   }
-  [[nodiscard]] auto BitstreamWidth() const -> Int {
+  [[nodiscard]] auto BitstreamWidth(base::SourceLocation at) const -> Int {
+    const base::SourceLocationScope bound(at);
     return Int::FromInt(detail::SequenceBitstreamWidth(core_, core_.Element()));
   }
   // LRM 6.24.3: the elements' own streams laid end to end below the `filled`
@@ -179,16 +181,21 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
     return core_.ReadFromStream(stream, taken, until, core_.Element());
   }
   // The same as a run of bits of its own, and the queue exactly that run holds.
-  [[nodiscard]] auto ToBitVec() const -> BitVec {
-    return StreamOf(*this);
+  [[nodiscard]] auto ToBitVec(base::SourceLocation at) const -> BitVec {
+    const base::SourceLocationScope bound(at);
+    return StreamOf(*this, BitstreamWidth(at));
   }
-  [[nodiscard]] static auto FromBitVec(const BitVec& run) -> Queue {
+  [[nodiscard]] static auto FromBitVec(
+      const BitVec& run, base::SourceLocation at) -> Queue {
+    const base::SourceLocationScope bound(at);
     Queue out;
     ReadWholeStream(out, run);
     return out;
   }
-  template <IntegralValue Control>
-  [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
+  [[nodiscard]] auto CountBits(
+      const LogicVector<4>& control_bits, base::SourceLocation at) const
+      -> Int {
+    const base::SourceLocationScope bound(at);
     return Int::FromInt(
         detail::SequenceCountBits(core_, control_bits, core_.Element()));
   }
@@ -210,7 +217,9 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
       -> T& {
     return *static_cast<T*>(core_.ElementMut(ReadPosition(position), formed));
   }
-  [[nodiscard]] auto ElementMut(const Position& position) -> T& {
+  [[nodiscard]] auto ElementMut(
+      const Position& position, base::SourceLocation at) -> T& {
+    const base::SourceLocationScope bound(at);
     Formation formed{};
     return ElementMut(position, formed);
   }
@@ -233,8 +242,10 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   // element, an array of another count being a run-time error. Answers the
   // elements written where any of them took a different value (LRM 4.3).
   template <OrdinalElements C>
-  auto AssignSlice(const Position& lo, const Position& hi, const C& value)
-      -> std::optional<SliceWindow> {
+  auto AssignSlice(
+      const Position& lo, const Position& hi, const C& value,
+      base::SourceLocation at) -> std::optional<SliceWindow> {
+    const base::SourceLocationScope bound(at);
     return core_.AssignSlice(
         ReadPosition(lo), ReadPosition(hi), detail::OrdinalAddresses(value));
   }
@@ -243,23 +254,30 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   // outside the queue streaming as the element default; and this queue with
   // those elements taking `values`, grown first to hold them.
   [[nodiscard]] auto WindowToBitVec(
-      const Position& lo, std::int64_t count) const -> BitVec {
+      const Position& lo, std::int64_t count, base::SourceLocation at) const
+      -> BitVec {
+    const base::SourceLocationScope bound(at);
     return core_.WindowToBitVec(
         ReadPosition(lo), WindowCount(count), core_.Element());
   }
   template <OrdinalElements C>
   [[nodiscard]] auto WithWindow(
-      const Position& lo, std::int64_t count, const C& values) const -> Queue {
+      const Position& lo, std::int64_t count, const C& values,
+      base::SourceLocation at) const -> Queue {
+    const base::SourceLocationScope bound(at);
     return Queue(core_.WithWindow(
         ReadPosition(lo), WindowCount(count),
         detail::OrdinalAddresses(values)));
   }
 
-  // LRM 7.10.2.7 / 7.10.2.6: append / prepend a single element.
-  auto PushBack(const T& item) -> void {
+  // LRM 7.10.2.7 / 7.10.2.6: append / prepend a single element. What grows past
+  // a bound is reported at `at` (LRM 7.10.5).
+  auto PushBack(const T& item, base::SourceLocation at) -> void {
+    const base::SourceLocationScope bound(at);
     core_.PushBack(&item);
   }
-  auto PushFront(const T& item) -> void {
+  auto PushFront(const T& item, base::SourceLocation at) -> void {
+    const base::SourceLocationScope bound(at);
     core_.PushFront(&item);
   }
 
@@ -273,7 +291,9 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   }
 
   // LRM 7.10.2.2 / 7.10.2.3.
-  auto Insert(const Position& position, const T& item) -> void {
+  auto Insert(const Position& position, const T& item, base::SourceLocation at)
+      -> void {
+    const base::SourceLocationScope bound(at);
     core_.Insert(ReadPosition(position), &item);
   }
   auto Delete() -> void {
@@ -291,6 +311,14 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>> {
   using Core = BasicQueue<StaticElem<T>, StaticBound<kBound>>;
 
   explicit Queue(Core core) : core_(std::move(core)) {
+  }
+
+  // The queue the elements `items` names make, held to the bound.
+  [[nodiscard]] static auto Holding(std::span<const void* const> items)
+      -> Queue {
+    Queue result;
+    result.core_.Assign(items);
+    return result;
   }
 
   // Puts the value that was at `order[k]` at position `k` (LRM 7.12.2).

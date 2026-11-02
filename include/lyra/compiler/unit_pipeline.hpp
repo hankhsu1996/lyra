@@ -18,9 +18,8 @@ namespace lyra::compiler {
 // one that names only declarations composes a namespace of callables. The
 // model is rewritten as `passes` asks before anything reads it.
 auto LowerUnitToSemantic(
-    const hir::CompilationUnit& unit, const diag::SourceManager& source_manager,
-    const mir_transform::PassOptions& passes)
-    -> diag::Result<mir::CompilationUnit>;
+    const hir::CompilationUnit& unit, const mir_transform::PassOptions& passes,
+    const diag::SourceManager& sources) -> diag::Result<mir::CompilationUnit>;
 
 // Tells a run that records itself what `unit` holds as a semantic model. A
 // unit modelled from its HIR is told of where it is modelled; the one composed
@@ -45,7 +44,7 @@ using TypeOperationCollection =
 // `collection` finds, which is why it stands above the lowerings.
 auto LowerUnitToExecutable(
     const mir::CompilationUnit& unit, const mir_transform::PassOptions& passes,
-    const TypeOperationCollection& collection)
-    -> diag::Result<lir::CompilationUnit>;
+    const TypeOperationCollection& collection,
+    const diag::SourceManager& sources) -> diag::Result<lir::CompilationUnit>;
 
 }  // namespace lyra::compiler

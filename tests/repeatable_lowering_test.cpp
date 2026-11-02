@@ -54,7 +54,7 @@ auto Lower(Compilation& compilation, std::size_t width)
       std::move(compilation.front.elaborated->compilation),
       lyra::compiler::LoweringPolicy{
           .assertions = lyra::support::AssertionPolicy::kCheck},
-      sink);
+      sink, compilation.front.elaborated->diag_sources);
   if (!design.has_value()) {
     return std::nullopt;
   }

@@ -146,8 +146,9 @@ enum class LibraryDecl : std::uint8_t {
 
   // What every object of one class carries, the parts a class's definition is
   // made of, what a constructor of the design hierarchy is handed and how
-  // each of its objects is made, and what a value dump may record (LRM
-  // 21.7.1.2): the structures a unit states constants of, which the library
+  // each of its objects is made, what a value dump may record (LRM 21.7.1.2),
+  // and where in the source an operation that can fail the design was written
+  // (LRM 20.10): the structures a unit states constants of, which the library
   // reads.
   kObjectDefinition,
   kScopeInfo,
@@ -160,6 +161,8 @@ enum class LibraryDecl : std::uint8_t {
   kGeneratePlaces,
   kDumpEntry,
   kDumpBlock,
+  kSourceLocation,
+  kSourceLocationRecord,
 
   // The facilities the runtime holds for the whole run, each reached as a
   // live reference: the effects a body runs under, the open files, and the
@@ -944,6 +947,24 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       static constexpr LibraryDeclData kDumpBlock =
           kNamedByAddress("dump block", "lyra::abi::DumpBlock");
       return &kDumpBlock;
+    }
+    // One word, the address of the constant a unit states for the location,
+    // which a copy holds whole and a member holds as that word.
+    case LibraryDecl::kSourceLocation: {
+      static constexpr LibraryDeclData kSourceLocation = [] {
+        LibraryDeclData declaration = kNamedByAddress(
+            "source location", "lyra::base::SourceLocation", BorrowedMember{});
+        declaration.movability = Movability::kCopyable;
+        return declaration;
+      }();
+      return &kSourceLocation;
+    }
+    // What such a value names: the file, the line and the column, which a unit
+    // states as a constant of its own.
+    case LibraryDecl::kSourceLocationRecord: {
+      static constexpr LibraryDeclData kSourceLocationRecord = kNamedByAddress(
+          "source location record", "lyra::base::SourceLocation::Impl");
+      return &kSourceLocationRecord;
     }
 
     case LibraryDecl::kRuntimeEffects: {

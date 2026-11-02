@@ -21,6 +21,7 @@
 #include "lyra/base/function_ref.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/any.hpp"
 #include "lyra/runtime/cancellation.hpp"
@@ -310,51 +311,54 @@ void RefArmSampling(void* reference) {
 }
 
 template <value::LyraValue T>
-auto RefSampledGet(void* reference) -> const void* {
-  return HandleTo(LentAt<T>(reference).SampledGet());
+auto RefSampledGet(void* reference, base::SourceLocation at) -> const void* {
+  return HandleTo(LentAt<T>(reference).SampledGet(at));
 }
 
 // A procedural continuous assignment on a variable, or on part of it (LRM
 // 10.6), reached through its cell or through storage a caller lent.
 template <value::LyraValue T>
 auto CellBeginTakeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return VariableAt<T>(cell).BeginTakeover(level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    base::SourceLocation at) -> std::int64_t {
+  return VariableAt<T>(cell).BeginTakeover(level, first, count, at);
 }
 
 template <value::LyraValue T>
 auto CellDriveTakeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return VariableAt<T>(cell).DriveTakeover(level, generation, Read<T>(value));
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    base::SourceLocation at) -> bool {
+  return VariableAt<T>(cell).DriveTakeover(
+      level, generation, Read<T>(value), at);
 }
 
 template <value::LyraValue T>
 void CellEndTakeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  VariableAt<T>(cell).EndTakeover(level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    base::SourceLocation at) {
+  VariableAt<T>(cell).EndTakeover(level, first, count, at);
 }
 
 template <value::LyraValue T>
 auto RefBeginTakeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return LentAt<T>(reference).BeginTakeover(level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    base::SourceLocation at) -> std::int64_t {
+  return LentAt<T>(reference).BeginTakeover(level, first, count, at);
 }
 
 template <value::LyraValue T>
 auto RefDriveTakeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return LentAt<T>(reference).DriveTakeover(level, generation, Read<T>(value));
+    const void* value, base::SourceLocation at) -> bool {
+  return LentAt<T>(reference).DriveTakeover(
+      level, generation, Read<T>(value), at);
 }
 
 template <value::LyraValue T>
 void RefEndTakeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  LentAt<T>(reference).EndTakeover(level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    base::SourceLocation at) {
+  LentAt<T>(reference).EndTakeover(level, first, count, at);
 }
 
 // Only a reference to the whole of a variable has a variable of its own type
@@ -373,7 +377,9 @@ void ArmWholeVariable(void* reference) {
 // storage nothing watches changes only where the reference is, so its sampled
 // value is its current one.
 template <class T>
-auto TailRefSampledGet(void* reference) -> const void* {
+auto TailRefSampledGet(void* reference, base::SourceLocation at) -> const
+    void* {
+  const base::SourceLocationScope bound(at);
   const ErasedReference& lent = ErasedAt(reference);
   return std::visit(
       Overloaded{
@@ -385,9 +391,9 @@ auto TailRefSampledGet(void* reference) -> const void* {
                   "is not yet supported");
             }
             return WholeVariable<typename VariableOf<T>::Type>(lent)
-                .SampledBytes();
+                .SampledBytes(at);
           },
-          [](GcObject*) -> const void* {
+          [&](GcObject*) -> const void* {
             throw SimulationError(
                 "a sampled value of a class property lent by reference is not "
                 "yet supported");
@@ -506,11 +512,11 @@ auto PositionNamedAt(const void* position) -> std::optional<std::int64_t> {
 // storage that is named the same way (LRM 10.6.2).
 template <value::HeldAsWords T>
 auto WideRefBeginTakeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    base::SourceLocation at) -> std::int64_t {
   using Words = typename VariableOf<T>::Type;
   return BeginTakeoverThrough<Words>(
-      ErasedAt(reference), level, first, count, {},
+      ErasedAt(reference), level, first, count, at, {},
       [](const Words& showing) {
         std::shared_ptr<Words> forced =
             MakeTailCell<typename StorageFor<T>::Type>(
@@ -524,11 +530,11 @@ auto WideRefBeginTakeover(
 template <value::HeldAsWords T>
 auto WideRefDriveTakeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
+    const void* value, base::SourceLocation at) -> bool {
   using Words = typename VariableOf<T>::Type;
   return DriveTakeoverThrough<Words>(
       ErasedAt(reference), level, [&](Words& variable) {
-        return variable.DriveTakeoverBytes(level, generation, value);
+        return variable.DriveTakeoverBytes(level, generation, value, at);
       });
 }
 
@@ -544,10 +550,10 @@ auto TakePositionsAt(const void* take_positions)
 // is given a cell laid out by the type of the cell it showed.
 auto LaidOutRefBeginTakeover(
     void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* value_take_positions) -> std::int64_t {
+    base::SourceLocation at, const void* value_take_positions) -> std::int64_t {
   using LaidOut = VariableOf<value::LaidOutValue>::Type;
   return BeginTakeoverThrough<LaidOut>(
-      ErasedAt(reference), level, first, count,
+      ErasedAt(reference), level, first, count, at,
       TakePositionsAt(value_take_positions),
       [](const LaidOut& showing) {
         std::shared_ptr<LaidOut> forced =
@@ -560,11 +566,11 @@ auto LaidOutRefBeginTakeover(
 
 auto LaidOutRefDriveTakeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
+    const void* value, base::SourceLocation at) -> bool {
   using LaidOut = VariableOf<value::LaidOutValue>::Type;
   return DriveTakeoverThrough<LaidOut>(
       ErasedAt(reference), level, [&](LaidOut& variable) {
-        return variable.DriveTakeoverBytes(level, generation, value);
+        return variable.DriveTakeoverBytes(level, generation, value, at);
       });
 }
 
@@ -1102,12 +1108,8 @@ auto ReferToStorage(void* storage, void* out) -> void* {
 }
 
 // A reference to a property of an object, held by the object so a write
-// through it tells the object. Reaching a property through a handle naming no
-// object is the design's own failure (LRM 8.4).
+// through it tells the object.
 auto ReferToProperty(void* object, void* storage, void* out) -> void* {
-  if (object == nullptr) {
-    value::RaiseNullObjectHandleAccess();
-  }
   return BuildReference(
       out, ErasedReference{
                .holder = static_cast<GcObject*>(object), .storage = storage});
@@ -1126,8 +1128,10 @@ struct SteppedElement {
 // value the reference names; they do what a reference's own methods do where
 // the value's type is known.
 template <typename Container, typename Index>
-auto StepIntoElement(const ErasedReference& from, const Index& index)
+auto StepIntoElement(
+    const ErasedReference& from, const Index& index, base::SourceLocation at)
     -> SteppedElement {
+  const base::SourceLocationScope bound(at);
   from.AdmitStep();
   value::Formation formed{};
   void* element =
@@ -1139,20 +1143,22 @@ auto StepIntoElement(const ErasedReference& from, const Index& index)
 }
 
 template <typename Container, typename Index>
-auto ReferElement(const void* reference, const Index& index, void* out)
-    -> void* {
+auto ReferElement(
+    const void* reference, const Index& index, base::SourceLocation at,
+    void* out) -> void* {
   return BuildReference(
-      out, StepIntoElement<Container>(ErasedAt(reference), index).part);
+      out, StepIntoElement<Container>(ErasedAt(reference), index, at).part);
 }
 
 // The same, bound by a call, with a lease on the element the container keeps,
 // which the container cannot then end before the call returns (LRM 13.5.2).
 // An index naming no element names nothing to lease.
 template <typename Container, typename Index>
-auto ReferElementLeased(const void* reference, const Index& index, void* out)
-    -> void* {
+auto ReferElementLeased(
+    const void* reference, const Index& index, base::SourceLocation at,
+    void* out) -> void* {
   const ErasedReference& from = ErasedAt(reference);
-  const SteppedElement stepped = StepIntoElement<Container>(from, index);
+  const SteppedElement stepped = StepIntoElement<Container>(from, index, at);
   auto* leased = static_cast<LeasedReference*>(out);
   if (stepped.formed == value::Formation::kNowhere) {
     return std::construct_at(leased, StorageLease{}, stepped.part);
@@ -1168,7 +1174,9 @@ auto ReferElementLeased(const void* reference, const Index& index, void* out)
 // its elements where they lie, told the array's type.
 auto ReferArrayElement(
     const void* reference, const value::FixedArrayType& type,
-    std::optional<std::int64_t> position, void* out) -> void* {
+    std::optional<std::int64_t> position, base::SourceLocation at, void* out)
+    -> void* {
+  const base::SourceLocationScope bound(at);
   const ErasedReference& from = ErasedAt(reference);
   from.AdmitStep();
   value::Formation formed{};
@@ -1211,8 +1219,9 @@ void StoreLiteralEntries(
 
 // The element count `new[N]` asks for (LRM 7.5.1), which the design computes,
 // so a negative one is its own failure.
-auto NewCount(std::int64_t count) -> std::size_t {
+auto NewCount(std::int64_t count, base::SourceLocation at) -> std::size_t {
   if (count < 0) {
+    const base::SourceLocationScope bound(at);
     throw SimulationError(
         "the size given to a dynamic array's new[] is negative");
   }
@@ -1296,7 +1305,7 @@ auto IntegralFormatArg(const void* value, value::IntegralShape shape)
                      const value::FormatContext& ctx) -> std::string {
     const value::LoadedWords words =
         value::LoadedWords::Load(operand.ptr, operand.read_as);
-    return value::FormatIntegralOperand(spec, words.View(), ctx);
+    return value::FormatIntegralOperand(spec, words.View(), &ctx.time_format);
   };
   return arg;
 }
@@ -1371,7 +1380,8 @@ constexpr std::size_t kScanFirstValue = 1;
 auto EmplaceScan(
     void* out, const value::TupleType& type, value::ScanInput& input,
     const value::String& format, const void* prototypes,
-    const value::TupleType& prototypes_type) -> void* {
+    const value::TupleType& prototypes_type, base::SourceLocation at) -> void* {
+  const base::SourceLocationScope bound(at);
   const std::span<const value::TupleComponent> stated =
       prototypes_type.Components();
   std::vector<value::AnyValue> components;
@@ -1518,7 +1528,8 @@ auto ReadUnpackedMemory(
     RuntimeEffects& runtime, value::LaidOutValue loaded,
     const value::String& filename, std::span<const value::UnpackedRange> dims,
     std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish,
-    const WordValues& values) -> value::LaidOutValue {
+    const WordValues& values, base::SourceLocation at) -> value::LaidOutValue {
+  const base::SourceLocationScope bound(at);
   const auto radix = static_cast<unsigned>(base);
   ReadMemGridCore(
       runtime, filename, radix, dims[0].Low(), dims[0].High(),
@@ -1533,7 +1544,9 @@ auto ReadUnpackedMemory(
 void WriteUnpackedMemory(
     RuntimeEffects& runtime, const value::FixedArrayView& src,
     const value::String& filename, std::span<const value::UnpackedRange> dims,
-    std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish) {
+    std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish,
+    base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   const auto radix = static_cast<unsigned>(base);
   WriteMemGridCore(
       runtime, filename, radix, dims[0].Low(), dims[0].High(),
@@ -1549,7 +1562,9 @@ template <typename Container>
 auto ReadFlatMemory(
     RuntimeEffects& runtime, const Container& dest,
     const value::String& filename, std::int64_t base, std::int64_t start,
-    std::optional<std::int64_t> finish, const WordValues& values) -> Container {
+    std::optional<std::int64_t> finish, const WordValues& values,
+    base::SourceLocation at) -> Container {
+  const base::SourceLocationScope bound(at);
   Container loaded = dest;
   const auto radix = static_cast<unsigned>(base);
   ReadMemGridCore(
@@ -1569,7 +1584,8 @@ template <typename Container>
 void WriteFlatMemory(
     RuntimeEffects& runtime, const Container& src,
     const value::String& filename, std::int64_t base, std::int64_t start,
-    std::optional<std::int64_t> finish) {
+    std::optional<std::int64_t> finish, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   const auto radix = static_cast<unsigned>(base);
   WriteMemGridCore(
       runtime, filename, radix, 0, static_cast<std::int64_t>(src.Count()) - 1,
@@ -1589,7 +1605,9 @@ auto ReadKeyedMemory(
     RuntimeEffects& runtime, const value::RuntimeAssociativeArray& dest,
     const value::String& filename, std::int64_t base, std::int64_t start,
     std::optional<std::int64_t> finish, const void* key_type,
-    const WordValues& values) -> value::RuntimeAssociativeArray {
+    const WordValues& values, base::SourceLocation at)
+    -> value::RuntimeAssociativeArray {
+  const base::SourceLocationScope bound(at);
   value::RuntimeAssociativeArray loaded = dest;
   const auto radix = static_cast<unsigned>(base);
   const value::IntegralValueType& index_type = IntegralTypeAt(key_type);
@@ -1615,7 +1633,8 @@ auto ReadKeyedMemory(
 void WriteKeyedMemory(
     RuntimeEffects& runtime, const value::RuntimeAssociativeArray& src,
     const value::String& filename, std::int64_t base, std::int64_t start,
-    std::optional<std::int64_t> finish) {
+    std::optional<std::int64_t> finish, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
   const auto radix = static_cast<unsigned>(base);
   std::vector<RenderedMemoryEntry> entries;
   for (const auto& [index, word] : src.Entries()) {
@@ -1797,8 +1816,9 @@ auto WideOf(std::int64_t width, const void* value) -> T {
 template <BitAddressed T>
 void JoinNets(
     void* net, void* other, std::int64_t here, std::int64_t there,
-    std::int64_t width) {
-  NetOf<T>(net).Join(static_cast<ConnectableNet*>(other), here, there, width);
+    std::int64_t width, base::SourceLocation at) {
+  NetOf<T>(net).Join(
+      static_cast<ConnectableNet*>(other), here, there, width, at);
 }
 
 // Where bits a write is handed land in a value: the position their start names
@@ -1941,6 +1961,14 @@ void InsertBitsAt(
 template <value::ComparisonAnswer R>
 auto Compared(const R& answer) -> std::uint8_t {
   return std::to_underlying(value::AnswerScalar(answer));
+}
+
+// A place the program hands over -- where the operation calling an entry was
+// written, or where a procedure it registers is -- which crosses as the one
+// word it is.
+auto SourceLocationAt(const void* location) -> base::SourceLocation {
+  return base::SourceLocation(
+      static_cast<const base::SourceLocation::Impl*>(location));
 }
 
 }  // namespace
@@ -2115,6 +2143,7 @@ using lyra::runtime::Scope;
 using lyra::runtime::SharedPointer;
 using lyra::runtime::ShowSource;
 using lyra::runtime::SimTimeInUnit;
+using lyra::runtime::SourceLocationAt;
 using lyra::runtime::SpawnAll;
 using lyra::runtime::STimeInUnit;
 using lyra::runtime::TailRefSampledGet;
@@ -2215,13 +2244,14 @@ auto lyra_rt_file_gets(
 
 auto lyra_rt_file_scan(
     void* files, std::int64_t fd, const void* format, const void* prototypes,
-    const void* prototypes_type, const void* answer_type, void* out) -> void* {
+    const void* prototypes_type, const void* location, const void* answer_type,
+    void* out) -> void* {
   lyra::runtime::FileScanInput source =
       static_cast<FileTable*>(files)->ScanInputOf(fd);
   return lyra::runtime::EmplaceScan(
       out, lyra::runtime::TupleTypeAt(answer_type), source,
       Read<String>(format), prototypes,
-      lyra::runtime::TupleTypeAt(prototypes_type));
+      lyra::runtime::TupleTypeAt(prototypes_type), SourceLocationAt(location));
 }
 
 auto lyra_rt_file_error(
@@ -2322,7 +2352,8 @@ auto lyra_rt_text_print_item_make(const void* text, void* out) -> void* {
   return Emplace(out, PrintItem::Text(Read<String>(text)));
 }
 
-auto lyra_rt_format(LyraSpan items, const void* time_format, void* out)
+auto lyra_rt_format(
+    LyraSpan items, const void* time_format, const void* location, void* out)
     -> void* {
   std::span<PrintItem*> handles(
       static_cast<PrintItem**>(items.data), items.count);
@@ -2332,7 +2363,9 @@ auto lyra_rt_format(LyraSpan items, const void* time_format, void* out)
     collected.push_back(*handle);
   }
   return Emplace(
-      out, Format(collected, *static_cast<const TimeFormat*>(time_format)));
+      out, Format(
+               collected, *static_cast<const TimeFormat*>(time_format),
+               SourceLocationAt(location)));
 }
 
 void lyra_rt_writeln(void* files, std::int64_t descriptor, void* text) {
@@ -2349,32 +2382,33 @@ auto lyra_rt_diagnostic(void* runtime) -> void* {
   return &static_cast<RuntimeEffects*>(runtime)->Diagnostic();
 }
 
-void lyra_rt_emit_info(void* dispatcher, const void* origin, const void* text) {
+void lyra_rt_emit_info(
+    void* dispatcher, const void* text, const void* location) {
   static_cast<DiagnosticDispatcher*>(dispatcher)
-      ->EmitInfo(Read<String>(origin), Read<String>(text));
+      ->EmitInfo(Read<String>(text), SourceLocationAt(location));
 }
 
 void lyra_rt_emit_warning(
-    void* dispatcher, const void* origin, const void* text) {
+    void* dispatcher, const void* text, const void* location) {
   static_cast<DiagnosticDispatcher*>(dispatcher)
-      ->EmitWarning(Read<String>(origin), Read<String>(text));
+      ->EmitWarning(Read<String>(text), SourceLocationAt(location));
 }
 
 void lyra_rt_emit_error(
-    void* dispatcher, const void* origin, const void* text) {
+    void* dispatcher, const void* text, const void* location) {
   static_cast<DiagnosticDispatcher*>(dispatcher)
-      ->EmitError(Read<String>(origin), Read<String>(text));
+      ->EmitError(Read<String>(text), SourceLocationAt(location));
 }
 
 void lyra_rt_emit_fatal(
-    void* dispatcher, const void* origin, const void* text) {
+    void* dispatcher, const void* text, const void* location) {
   static_cast<DiagnosticDispatcher*>(dispatcher)
-      ->EmitFatal(Read<String>(origin), Read<String>(text));
+      ->EmitFatal(Read<String>(text), SourceLocationAt(location));
 }
 
 void lyra_rt_record_coverage(void* runtime, const void* site, bool succeeded) {
   static_cast<RuntimeEffects*>(runtime)->RecordCoverage(
-      Read<String>(site), succeeded);
+      SourceLocationAt(site), succeeded);
 }
 
 auto lyra_rt_enter_coroutine(void* frame, void* out) noexcept -> void* {
@@ -2465,36 +2499,49 @@ void lyra_rt_disable_fork(void* runtime) {
   lyra::runtime::DisableFork(*static_cast<RuntimeEffects*>(runtime));
 }
 
-void lyra_rt_require_caller_may_schedule_after_return(void* runtime) {
+void lyra_rt_require_caller_may_schedule_after_return(
+    void* runtime, const void* location) {
   lyra::runtime::RequireCallerMayScheduleAfterReturn(
-      *static_cast<RuntimeEffects*>(runtime));
+      *static_cast<RuntimeEffects*>(runtime), SourceLocationAt(location));
 }
 
 auto lyra_rt_process_self(void* runtime, void* out) -> void* {
   return Emplace(out, ProcessSelf(*static_cast<RuntimeEffects*>(runtime)));
 }
 
-auto lyra_rt_process_status(const void* self, void* out) -> void* {
-  return Emplace(out, ProcessStatus(Read<ObjectRef>(self)));
-}
-
-void lyra_rt_process_kill(const void* self, void* runtime) {
-  ProcessKill(Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime));
-}
-
-auto lyra_rt_process_await(const void* self, void* runtime, void* out)
+auto lyra_rt_process_status(const void* self, const void* location, void* out)
     -> void* {
   return Emplace(
+      out, ProcessStatus(Read<ObjectRef>(self), SourceLocationAt(location)));
+}
+
+void lyra_rt_process_kill(
+    const void* self, void* runtime, const void* location) {
+  ProcessKill(
+      Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime),
+      SourceLocationAt(location));
+}
+
+auto lyra_rt_process_await(
+    const void* self, void* runtime, const void* location, void* out) -> void* {
+  return Emplace(
       out, ProcessAwait(
-               Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime)));
+               Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime),
+               SourceLocationAt(location)));
 }
 
-void lyra_rt_process_suspend(const void* self, void* runtime) {
-  ProcessSuspend(Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime));
+void lyra_rt_process_suspend(
+    const void* self, void* runtime, const void* location) {
+  ProcessSuspend(
+      Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime),
+      SourceLocationAt(location));
 }
 
-void lyra_rt_process_resume(const void* self, void* runtime) {
-  ProcessResume(Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime));
+void lyra_rt_process_resume(
+    const void* self, void* runtime, const void* location) {
+  ProcessResume(
+      Read<ObjectRef>(self), *static_cast<RuntimeEffects*>(runtime),
+      SourceLocationAt(location));
 }
 
 void lyra_rt_object_srandom(
@@ -2511,17 +2558,19 @@ auto lyra_rt_object_get_randstate(void* object, void* out) -> void* {
       lyra::runtime::ObjectGetRandstate(static_cast<ClassObject*>(object)));
 }
 
-void lyra_rt_object_set_randstate(void* object, const void* state) {
+void lyra_rt_object_set_randstate(
+    void* object, const void* state, const void* location) {
   lyra::runtime::ObjectSetRandstate(
-      static_cast<ClassObject*>(object), Read<String>(state));
+      static_cast<ClassObject*>(object), Read<String>(state),
+      SourceLocationAt(location));
 }
 
-void lyra_rt_builtin_pre_randomize(void* object) {
-  lyra::runtime::BuiltinPreRandomize(static_cast<GcObject*>(object));
+void lyra_rt_builtin_pre_randomize() {
+  lyra::runtime::BuiltinPreRandomize();
 }
 
-void lyra_rt_builtin_post_randomize(void* object) {
-  lyra::runtime::BuiltinPostRandomize(static_cast<GcObject*>(object));
+void lyra_rt_builtin_post_randomize() {
+  lyra::runtime::BuiltinPostRandomize();
 }
 
 void lyra_rt_object_pre_randomize(void* object) {
@@ -2553,25 +2602,30 @@ auto lyra_rt_object_identity(const void* object, void* out) -> void* {
   return Emplace(out, lyra::runtime::ObjectIdentity(Read<ObjectRef>(object)));
 }
 
-auto lyra_rt_randomize_object(void* object, void* runtime, void* out) -> void* {
-  return Emplace(
-      out, lyra::runtime::RandomizeObject(
-               static_cast<ClassObject*>(object),
-               *static_cast<RuntimeEffects*>(runtime)));
-}
-
-auto lyra_rt_randomize_object_listed(void* object, void* runtime, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::runtime::RandomizeObjectListed(
-               static_cast<ClassObject*>(object),
-               *static_cast<RuntimeEffects*>(runtime)));
-}
-
-auto lyra_rt_randomize_scope(void* runtime, void* out) -> void* {
+auto lyra_rt_randomize_object(
+    void* object, void* runtime, const void* location, void* out) -> void* {
   return Emplace(
       out,
-      lyra::runtime::RandomizeScope(*static_cast<RuntimeEffects*>(runtime)));
+      lyra::runtime::RandomizeObject(
+          static_cast<ClassObject*>(object),
+          *static_cast<RuntimeEffects*>(runtime), SourceLocationAt(location)));
+}
+
+auto lyra_rt_randomize_object_listed(
+    void* object, void* runtime, const void* location, void* out) -> void* {
+  return Emplace(
+      out,
+      lyra::runtime::RandomizeObjectListed(
+          static_cast<ClassObject*>(object),
+          *static_cast<RuntimeEffects*>(runtime), SourceLocationAt(location)));
+}
+
+auto lyra_rt_randomize_scope(void* runtime, const void* location, void* out)
+    -> void* {
+  return Emplace(
+      out,
+      lyra::runtime::RandomizeScope(
+          *static_cast<RuntimeEffects*>(runtime), SourceLocationAt(location)));
 }
 
 void lyra_rt_randomize_list(
@@ -3259,8 +3313,8 @@ auto lyra_rt_evaluation_in_progress(void* runtime) -> void* {
       *static_cast<RuntimeEffects*>(runtime));
 }
 
-void lyra_rt_refuse_report(const void* why) {
-  RefuseReport(static_cast<const char*>(why));
+void lyra_rt_refuse_report(const void* why, const void* location) {
+  RefuseReport(static_cast<const char*>(why), SourceLocationAt(location));
 }
 
 auto lyra_rt_resume_in_nba_region(void* out) -> void* {
@@ -3371,21 +3425,21 @@ auto lyra_rt_realtime(void* runtime, std::int64_t unit_power, void* out)
 }
 
 void lyra_rt_finish(
-    void* runtime, const void* origin, std::int64_t finish_number) {
+    void* runtime, std::int64_t finish_number, const void* location) {
   Finish(
-      *static_cast<RuntimeEffects*>(runtime), Read<String>(origin),
-      finish_number);
+      *static_cast<RuntimeEffects*>(runtime), finish_number,
+      SourceLocationAt(location));
 }
 
 void lyra_rt_stop(
-    void* runtime, const void* origin, std::int64_t finish_number) {
+    void* runtime, std::int64_t finish_number, const void* location) {
   Stop(
-      *static_cast<RuntimeEffects*>(runtime), Read<String>(origin),
-      finish_number);
+      *static_cast<RuntimeEffects*>(runtime), finish_number,
+      SourceLocationAt(location));
 }
 
-void lyra_rt_exit(void* runtime, const void* origin) {
-  Exit(*static_cast<RuntimeEffects*>(runtime), Read<String>(origin));
+void lyra_rt_exit(void* runtime, const void* location) {
+  Exit(*static_cast<RuntimeEffects*>(runtime), SourceLocationAt(location));
 }
 
 auto lyra_rt_run_host_command(void* runtime, const void* command, void* out)
@@ -3399,22 +3453,31 @@ auto lyra_rt_run_null_host_command(void* out) -> void* {
   return Emplace(out, RunNullHostCommand());
 }
 
-void lyra_rt_dump_file(void* runtime, const void* name) {
-  DumpFile(*static_cast<RuntimeEffects*>(runtime), Read<String>(name));
+void lyra_rt_dump_file(void* runtime, const void* name, const void* location) {
+  DumpFile(
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(name),
+      SourceLocationAt(location));
 }
-void lyra_rt_dump_vars(void* runtime) {
-  DumpVars(*static_cast<RuntimeEffects*>(runtime));
+void lyra_rt_dump_vars(void* runtime, const void* location) {
+  DumpVars(*static_cast<RuntimeEffects*>(runtime), SourceLocationAt(location));
 }
-void lyra_rt_dump_vars_levels(void* runtime, std::int64_t levels) {
-  DumpVarsLevels(*static_cast<RuntimeEffects*>(runtime), levels);
+void lyra_rt_dump_vars_levels(
+    void* runtime, std::int64_t levels, const void* location) {
+  DumpVarsLevels(
+      *static_cast<RuntimeEffects*>(runtime), levels,
+      SourceLocationAt(location));
 }
-void lyra_rt_dump_vars_of(void* runtime, std::int64_t levels, void* instance) {
+void lyra_rt_dump_vars_of(
+    void* runtime, std::int64_t levels, void* instance, const void* location) {
   DumpVarsOf(
       *static_cast<RuntimeEffects*>(runtime), levels,
-      static_cast<Scope*>(instance));
+      static_cast<Scope*>(instance), SourceLocationAt(location));
 }
-void lyra_rt_dump_vars_of_variable(void* runtime, const void* member) {
-  DumpVarsOfVariable(*static_cast<RuntimeEffects*>(runtime), member);
+void lyra_rt_dump_vars_of_variable(
+    void* runtime, const void* member, const void* location) {
+  DumpVarsOfVariable(
+      *static_cast<RuntimeEffects*>(runtime), member,
+      SourceLocationAt(location));
 }
 void lyra_rt_dump_off(void* runtime) {
   DumpOff(*static_cast<RuntimeEffects*>(runtime));
@@ -3431,10 +3494,11 @@ void lyra_rt_dump_limit(void* runtime, std::int64_t bytes) {
 void lyra_rt_dump_flush(void* runtime) {
   DumpFlush(*static_cast<RuntimeEffects*>(runtime));
 }
-void lyra_rt_dump_ports_of(void* runtime, void* instance, const void* name) {
+void lyra_rt_dump_ports_of(
+    void* runtime, void* instance, const void* name, const void* location) {
   DumpPortsOf(
       *static_cast<RuntimeEffects*>(runtime), static_cast<Scope*>(instance),
-      Read<String>(name));
+      Read<String>(name), SourceLocationAt(location));
 }
 void lyra_rt_dump_ports_off(void* runtime, const void* name) {
   DumpPortsOff(*static_cast<RuntimeEffects*>(runtime), Read<String>(name));
@@ -3710,87 +3774,96 @@ auto lyra_rt_dist_normal(
 }
 
 auto lyra_rt_dist_exponential(
-    std::int64_t seed, std::int64_t mean, const void* answer_type, void* out)
-    -> void* {
+    std::int64_t seed, std::int64_t mean, const void* location,
+    const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceBoth(
       out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::DistExponential(seed, mean));
+      lyra::runtime::DistExponential(seed, mean, SourceLocationAt(location)));
 }
 
 auto lyra_rt_dist_poisson(
-    std::int64_t seed, std::int64_t mean, const void* answer_type, void* out)
-    -> void* {
+    std::int64_t seed, std::int64_t mean, const void* location,
+    const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceBoth(
       out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::DistPoisson(seed, mean));
+      lyra::runtime::DistPoisson(seed, mean, SourceLocationAt(location)));
 }
 
 auto lyra_rt_dist_chi_square(
-    std::int64_t seed, std::int64_t degrees_of_freedom, const void* answer_type,
-    void* out) -> void* {
+    std::int64_t seed, std::int64_t degrees_of_freedom, const void* location,
+    const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceBoth(
       out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::DistChiSquare(seed, degrees_of_freedom));
+      lyra::runtime::DistChiSquare(
+          seed, degrees_of_freedom, SourceLocationAt(location)));
 }
 
 auto lyra_rt_dist_t(
-    std::int64_t seed, std::int64_t degrees_of_freedom, const void* answer_type,
-    void* out) -> void* {
+    std::int64_t seed, std::int64_t degrees_of_freedom, const void* location,
+    const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceBoth(
       out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::DistT(seed, degrees_of_freedom));
+      lyra::runtime::DistT(
+          seed, degrees_of_freedom, SourceLocationAt(location)));
 }
 
 auto lyra_rt_dist_erlang(
     std::int64_t seed, std::int64_t stages, std::int64_t mean,
-    const void* answer_type, void* out) -> void* {
+    const void* location, const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceBoth(
       out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::DistErlang(seed, stages, mean));
+      lyra::runtime::DistErlang(
+          seed, stages, mean, SourceLocationAt(location)));
 }
 
 void lyra_rt_register_initial(
-    void* self, void* unit_instance, void* coroutine, const char* written_at) {
+    void* self, void* unit_instance, void* coroutine, const void* written_at) {
   RegisterInitialProcess(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
+      std::move(*static_cast<Coroutine<void>*>(coroutine)),
+      SourceLocationAt(written_at));
 }
 
 void lyra_rt_register_always(
-    void* self, void* unit_instance, void* coroutine, const char* written_at) {
+    void* self, void* unit_instance, void* coroutine, const void* written_at) {
   RegisterAlwaysProcess(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
+      std::move(*static_cast<Coroutine<void>*>(coroutine)),
+      SourceLocationAt(written_at));
 }
 
 void lyra_rt_register_continuous_driver(
     void* self, void* unit_instance, void* runs_as, void* coroutine,
-    const char* written_at) {
+    const void* written_at) {
   RegisterContinuousDriver(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
       static_cast<Scope*>(runs_as),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
+      std::move(*static_cast<Coroutine<void>*>(coroutine)),
+      SourceLocationAt(written_at));
 }
 
 void lyra_rt_register_triggered(
-    void* self, void* unit_instance, void* coroutine, const char* written_at) {
+    void* self, void* unit_instance, void* coroutine, const void* written_at) {
   RegisterTriggeredProcess(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
+      std::move(*static_cast<Coroutine<void>*>(coroutine)),
+      SourceLocationAt(written_at));
 }
 
 void lyra_rt_register_final(
-    void* self, void* unit_instance, void* closure, const char* written_at) {
+    void* self, void* unit_instance, void* closure, const void* written_at) {
   RegisterFinalProcedure(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      AdoptClosure<lyra::support::EffectSignature>(closure), written_at);
+      AdoptClosure<lyra::support::EffectSignature>(closure),
+      SourceLocationAt(written_at));
 }
 
 void lyra_rt_run_assertion_action(
-    void* self, void* unit_instance, void* coroutine, const char* written_at) {
+    void* self, void* unit_instance, void* coroutine, const void* written_at) {
   RunAssertionAction(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
+      std::move(*static_cast<Coroutine<void>*>(coroutine)),
+      SourceLocationAt(written_at));
 }
 
 void lyra_rt_enter_scope_static_init(void* runtime, void* unit_instance) {
@@ -3807,9 +3880,11 @@ void lyra_rt_leave_static_init(void* runtime) noexcept {
   LeaveStaticInit(*static_cast<RuntimeEffects*>(runtime));
 }
 
-void lyra_rt_enter_dpi_scope(void* runtime, void* decl_scope) {
+void lyra_rt_enter_dpi_scope(
+    void* runtime, void* decl_scope, const void* location) {
   EnterDpiScope(
-      *static_cast<RuntimeEffects*>(runtime), static_cast<Scope*>(decl_scope));
+      *static_cast<RuntimeEffects*>(runtime), static_cast<Scope*>(decl_scope),
+      SourceLocationAt(location));
 }
 
 void lyra_rt_leave_dpi_scope(void* runtime) noexcept {
@@ -3821,12 +3896,16 @@ auto lyra_rt_disable_is_active(void* runtime) -> std::int32_t {
 }
 
 void lyra_rt_check_import_task_acknowledged(
-    void* runtime, std::int32_t returned) {
-  CheckImportTaskAcknowledged(*static_cast<RuntimeEffects*>(runtime), returned);
+    void* runtime, std::int32_t returned, const void* location) {
+  CheckImportTaskAcknowledged(
+      *static_cast<RuntimeEffects*>(runtime), returned,
+      SourceLocationAt(location));
 }
 
-void lyra_rt_check_import_function_acknowledged(void* runtime) {
-  CheckImportFunctionAcknowledged(*static_cast<RuntimeEffects*>(runtime));
+void lyra_rt_check_import_function_acknowledged(
+    void* runtime, const void* location) {
+  CheckImportFunctionAcknowledged(
+      *static_cast<RuntimeEffects*>(runtime), SourceLocationAt(location));
 }
 
 void lyra_rt_check_export_reachable(void* runtime) {
@@ -3955,8 +4034,9 @@ auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
   return handles[position];
 }
 
-auto lyra_rt_object_of(const void* handle) -> void* {
-  return lyra::runtime::ObjectOf(Read<ObjectRef>(handle));
+auto lyra_rt_object_of(const void* handle, const void* location) -> void* {
+  return Read<ObjectRef>(handle).Object<lyra::runtime::GcObject>(
+      SourceLocationAt(location));
 }
 
 auto lyra_rt_self_handle(void* self, void* out) -> void* {
@@ -4144,41 +4224,49 @@ auto lyra_rt_assocarray_cell_refer(void* cell, void* out) -> void* {
 }
 
 auto lyra_rt_dynarray_refer_element(
-    const void* reference, const void* position, void* out) -> void* {
+    const void* reference, const void* position, const void* location,
+    void* out) -> void* {
   return ReferElement<RuntimeDynamicArray>(
-      reference, PositionNamedAt(position), out);
+      reference, PositionNamedAt(position), SourceLocationAt(location), out);
 }
 auto lyra_rt_laidout_refer_element(
-    const void* reference, const void* position, const void* array_type,
-    void* out) -> void* {
+    const void* reference, const void* position, const void* location,
+    const void* array_type, void* out) -> void* {
   return ReferArrayElement(
-      reference, ArrayTypeAt(array_type), PositionNamedAt(position), out);
+      reference, ArrayTypeAt(array_type), PositionNamedAt(position),
+      SourceLocationAt(location), out);
 }
 auto lyra_rt_queue_refer_element(
-    const void* reference, const void* position, void* out) -> void* {
-  return ReferElement<RuntimeQueue>(reference, PositionNamedAt(position), out);
+    const void* reference, const void* position, const void* location,
+    void* out) -> void* {
+  return ReferElement<RuntimeQueue>(
+      reference, PositionNamedAt(position), SourceLocationAt(location), out);
 }
 auto lyra_rt_assocarray_refer_element(
-    const void* reference, const void* index, const void* index_type, void* out)
-    -> void* {
+    const void* reference, const void* index, const void* index_type,
+    const void* location, void* out) -> void* {
   return ReferElement<RuntimeAssociativeArray>(
-      reference, lyra::runtime::IndexAt(index, index_type), out);
+      reference, lyra::runtime::IndexAt(index, index_type),
+      SourceLocationAt(location), out);
 }
 auto lyra_rt_dynarray_refer_element_leased(
-    const void* reference, const void* position, void* out) -> void* {
+    const void* reference, const void* position, const void* location,
+    void* out) -> void* {
   return ReferElementLeased<RuntimeDynamicArray>(
-      reference, PositionNamedAt(position), out);
+      reference, PositionNamedAt(position), SourceLocationAt(location), out);
 }
 auto lyra_rt_queue_refer_element_leased(
-    const void* reference, const void* position, void* out) -> void* {
+    const void* reference, const void* position, const void* location,
+    void* out) -> void* {
   return ReferElementLeased<RuntimeQueue>(
-      reference, PositionNamedAt(position), out);
+      reference, PositionNamedAt(position), SourceLocationAt(location), out);
 }
 auto lyra_rt_assocarray_refer_element_leased(
-    const void* reference, const void* index, const void* index_type, void* out)
-    -> void* {
+    const void* reference, const void* index, const void* index_type,
+    const void* location, void* out) -> void* {
   return ReferElementLeased<RuntimeAssociativeArray>(
-      reference, lyra::runtime::IndexAt(index, index_type), out);
+      reference, lyra::runtime::IndexAt(index, index_type),
+      SourceLocationAt(location), out);
 }
 auto lyra_rt_laidout_refer_component(
     const void* reference, std::int64_t index, const void* tuple_type,
@@ -4205,8 +4293,9 @@ void lyra_rt_string_ref_arm_sampling(void* reference) {
   RefArmSampling<String>(reference);
 }
 
-auto lyra_rt_string_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<String>(reference);
+auto lyra_rt_string_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<String>(reference, SourceLocationAt(location));
 }
 
 auto lyra_rt_real_ref_get(void* reference) -> const void* {
@@ -4221,8 +4310,9 @@ void lyra_rt_real_ref_arm_sampling(void* reference) {
   RefArmSampling<Real>(reference);
 }
 
-auto lyra_rt_real_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<Real>(reference);
+auto lyra_rt_real_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<Real>(reference, SourceLocationAt(location));
 }
 
 auto lyra_rt_shortreal_ref_get(void* reference) -> const void* {
@@ -4237,8 +4327,9 @@ void lyra_rt_shortreal_ref_arm_sampling(void* reference) {
   RefArmSampling<ShortReal>(reference);
 }
 
-auto lyra_rt_shortreal_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<ShortReal>(reference);
+auto lyra_rt_shortreal_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<ShortReal>(reference, SourceLocationAt(location));
 }
 
 auto lyra_rt_unmanagedref_ref_get(void* reference) -> const void* {
@@ -4253,8 +4344,9 @@ void lyra_rt_unmanagedref_ref_arm_sampling(void* reference) {
   RefArmSampling<UnmanagedRef>(reference);
 }
 
-auto lyra_rt_unmanagedref_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<UnmanagedRef>(reference);
+auto lyra_rt_unmanagedref_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<UnmanagedRef>(reference, SourceLocationAt(location));
 }
 
 auto lyra_rt_managedref_ref_get(void* reference) -> const void* {
@@ -4269,8 +4361,9 @@ void lyra_rt_managedref_ref_arm_sampling(void* reference) {
   RefArmSampling<ObjectRef>(reference);
 }
 
-auto lyra_rt_managedref_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<ObjectRef>(reference);
+auto lyra_rt_managedref_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<ObjectRef>(reference, SourceLocationAt(location));
 }
 
 auto lyra_rt_laidout_ref_get(void* reference) -> const void* {
@@ -4286,8 +4379,9 @@ void lyra_rt_laidout_ref_arm_sampling(void* reference) {
   ArmWholeVariable<VariableOf<LaidOutValue>::Type>(reference);
 }
 
-auto lyra_rt_laidout_ref_sampled_get(void* reference) -> const void* {
-  return TailRefSampledGet<LaidOutValue>(reference);
+auto lyra_rt_laidout_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return TailRefSampledGet<LaidOutValue>(reference, SourceLocationAt(location));
 }
 
 auto lyra_rt_dynarray_ref_get(void* reference) -> const void* {
@@ -4302,8 +4396,10 @@ void lyra_rt_dynarray_ref_arm_sampling(void* reference) {
   RefArmSampling<RuntimeDynamicArray>(reference);
 }
 
-auto lyra_rt_dynarray_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<RuntimeDynamicArray>(reference);
+auto lyra_rt_dynarray_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<RuntimeDynamicArray>(
+      reference, SourceLocationAt(location));
 }
 
 auto lyra_rt_queue_ref_get(void* reference) -> const void* {
@@ -4318,8 +4414,9 @@ void lyra_rt_queue_ref_arm_sampling(void* reference) {
   RefArmSampling<RuntimeQueue>(reference);
 }
 
-auto lyra_rt_queue_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<RuntimeQueue>(reference);
+auto lyra_rt_queue_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<RuntimeQueue>(reference, SourceLocationAt(location));
 }
 
 auto lyra_rt_assocarray_ref_get(void* reference) -> const void* {
@@ -4334,8 +4431,10 @@ void lyra_rt_assocarray_ref_arm_sampling(void* reference) {
   RefArmSampling<RuntimeAssociativeArray>(reference);
 }
 
-auto lyra_rt_assocarray_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<RuntimeAssociativeArray>(reference);
+auto lyra_rt_assocarray_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<RuntimeAssociativeArray>(
+      reference, SourceLocationAt(location));
 }
 
 auto lyra_rt_string_cell_get(void* cell) -> const void* {
@@ -4355,8 +4454,9 @@ void lyra_rt_string_cell_arm_sampling(void* cell) {
   VariableAt<String>(cell).ArmSampling();
 }
 
-auto lyra_rt_string_cell_sampled_get(void* cell) -> const void* {
-  return &VariableAt<String>(cell).SampledGet();
+auto lyra_rt_string_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return &VariableAt<String>(cell).SampledGet(SourceLocationAt(location));
 }
 
 auto lyra_rt_bitvec_cell_get(void* cell) -> const void* {
@@ -4388,8 +4488,9 @@ void lyra_rt_real_cell_arm_sampling(void* cell) {
   VariableAt<Real>(cell).ArmSampling();
 }
 
-auto lyra_rt_real_cell_sampled_get(void* cell) -> const void* {
-  return &VariableAt<Real>(cell).SampledGet();
+auto lyra_rt_real_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return &VariableAt<Real>(cell).SampledGet(SourceLocationAt(location));
 }
 
 auto lyra_rt_shortreal_cell_get(void* cell) -> const void* {
@@ -4409,113 +4510,134 @@ void lyra_rt_shortreal_cell_arm_sampling(void* cell) {
   VariableAt<ShortReal>(cell).ArmSampling();
 }
 
-auto lyra_rt_shortreal_cell_sampled_get(void* cell) -> const void* {
-  return &VariableAt<ShortReal>(cell).SampledGet();
+auto lyra_rt_shortreal_cell_sampled_get(void* cell, const void* location)
+    -> const void* {
+  return &VariableAt<ShortReal>(cell).SampledGet(SourceLocationAt(location));
 }
 
 auto lyra_rt_string_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<String>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<String>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_string_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<String>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<String>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 
 void lyra_rt_string_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<String>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<String>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_string_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<String>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<String>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_string_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<String>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<String>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 
 void lyra_rt_string_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<String>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<String>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_real_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<Real>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<Real>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_real_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<Real>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<Real>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 
 void lyra_rt_real_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<Real>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<Real>(cell, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_real_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<Real>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<Real>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_real_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<Real>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<Real>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 
 void lyra_rt_real_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<Real>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<Real>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_shortreal_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<ShortReal>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<ShortReal>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_shortreal_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<ShortReal>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<ShortReal>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 
 void lyra_rt_shortreal_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<ShortReal>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<ShortReal>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_shortreal_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<ShortReal>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<ShortReal>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_shortreal_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<ShortReal>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<ShortReal>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 
 void lyra_rt_shortreal_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<ShortReal>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<ShortReal>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 
 void lyra_rt_string_sampled_history_install(
@@ -4771,8 +4893,8 @@ auto lyra_rt_string_value_cell_load(void* cell) noexcept -> void* {
   return &ValueCellAt<String>(cell).Storage();
 }
 
-void lyra_rt_assert(bool holds, const char* message) {
-  lyra::value::Assert(holds, message);
+void lyra_rt_assert(bool holds, const char* message, const void* location) {
+  lyra::value::Assert(holds, message, SourceLocationAt(location));
 }
 
 auto lyra_rt_string_from_bits(
@@ -4910,12 +5032,13 @@ void lyra_rt_string_realtoa(void* value, const void* number) {
 
 auto lyra_rt_string_scan_string(
     const void* input, const void* format, const void* prototypes,
-    const void* prototypes_type, const void* answer_type, void* out) -> void* {
+    const void* prototypes_type, const void* location, const void* answer_type,
+    void* out) -> void* {
   lyra::value::StringScanInput source(Read<String>(input).View());
   return lyra::runtime::EmplaceScan(
       out, lyra::runtime::TupleTypeAt(answer_type), source,
       Read<String>(format), prototypes,
-      lyra::runtime::TupleTypeAt(prototypes_type));
+      lyra::runtime::TupleTypeAt(prototypes_type), SourceLocationAt(location));
 }
 
 auto lyra_rt_string_add(const void* lhs, const void* rhs, void* out) -> void* {
@@ -5223,8 +5346,9 @@ void lyra_rt_unmanagedref_cell_arm_sampling(void* cell) {
   VariableAt<UnmanagedRef>(cell).ArmSampling();
 }
 
-auto lyra_rt_unmanagedref_cell_sampled_get(void* cell) -> const void* {
-  return &VariableAt<UnmanagedRef>(cell).SampledGet();
+auto lyra_rt_unmanagedref_cell_sampled_get(void* cell, const void* location)
+    -> const void* {
+  return &VariableAt<UnmanagedRef>(cell).SampledGet(SourceLocationAt(location));
 }
 
 // A handle referring to nothing (LRM 8.4), a value of the domain like any
@@ -5295,43 +5419,51 @@ void lyra_rt_managedref_cell_arm_sampling(void* cell) {
   VariableAt<ObjectRef>(cell).ArmSampling();
 }
 
-auto lyra_rt_managedref_cell_sampled_get(void* cell) -> const void* {
-  return &VariableAt<ObjectRef>(cell).SampledGet();
+auto lyra_rt_managedref_cell_sampled_get(void* cell, const void* location)
+    -> const void* {
+  return &VariableAt<ObjectRef>(cell).SampledGet(SourceLocationAt(location));
 }
 
 auto lyra_rt_managedref_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<ObjectRef>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<ObjectRef>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_managedref_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<ObjectRef>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<ObjectRef>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 
 void lyra_rt_managedref_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<ObjectRef>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<ObjectRef>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_managedref_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<ObjectRef>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<ObjectRef>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_managedref_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<ObjectRef>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<ObjectRef>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 
 void lyra_rt_managedref_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<ObjectRef>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<ObjectRef>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 
 void lyra_rt_laidout_cell_initialize(
@@ -5349,48 +5481,54 @@ void lyra_rt_laidout_cell_arm_sampling(void* cell) {
 
 auto lyra_rt_laidout_cell_begin_takeover(
     void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* value_take_positions) -> std::int64_t {
+    const void* location, const void* value_take_positions) -> std::int64_t {
   return VariableAt<LaidOutValue>(cell).BeginTakeover(
-      level, first, count,
+      level, first, count, SourceLocationAt(location),
       lyra::runtime::TakePositionsAt(value_take_positions));
 }
 
 auto lyra_rt_laidout_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
   return VariableAt<LaidOutValue>(cell).DriveTakeoverBytes(
-      level, generation, value);
+      level, generation, value, SourceLocationAt(location));
 }
 
 void lyra_rt_laidout_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  VariableAt<LaidOutValue>(cell).EndTakeover(level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  VariableAt<LaidOutValue>(cell).EndTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 
 auto lyra_rt_laidout_ref_begin_takeover(
     void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* value_take_positions) -> std::int64_t {
+    const void* location, const void* value_take_positions) -> std::int64_t {
   return lyra::runtime::LaidOutRefBeginTakeover(
-      reference, level, first, count, value_take_positions);
+      reference, level, first, count, SourceLocationAt(location),
+      value_take_positions);
 }
 
 auto lyra_rt_laidout_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
+    const void* value, const void* location) -> bool {
   return lyra::runtime::LaidOutRefDriveTakeover(
-      reference, level, generation, value);
+      reference, level, generation, value, SourceLocationAt(location));
 }
 
 void lyra_rt_laidout_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
   lyra::runtime::EndTakeoverThrough<
       lyra::runtime::VariableOf<LaidOutValue>::Type>(
-      lyra::runtime::ErasedAt(reference), level, first, count);
+      lyra::runtime::ErasedAt(reference), level, first, count,
+      SourceLocationAt(location));
 }
 
-auto lyra_rt_laidout_cell_sampled_get(void* cell) -> const void* {
-  return VariableAt<LaidOutValue>(cell).SampledBytes();
+auto lyra_rt_laidout_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return VariableAt<LaidOutValue>(cell).SampledBytes(
+      SourceLocationAt(location));
 }
 
 auto lyra_rt_laidout_value_cell_alloc(const void* held_type) noexcept -> void* {
@@ -5399,20 +5537,23 @@ auto lyra_rt_laidout_value_cell_alloc(const void* held_type) noexcept -> void* {
 }
 
 auto lyra_rt_dynamic_array_new(
-    std::int64_t size, const void* answer_element_type, void* out) -> void* {
+    std::int64_t size, const void* location, const void* answer_element_type,
+    void* out) -> void* {
   return Emplace(
-      out, RuntimeDynamicArray(
-               lyra::runtime::ElementTypeAt(answer_element_type),
-               lyra::runtime::NewCount(size), nullptr));
+      out,
+      RuntimeDynamicArray(
+          lyra::runtime::ElementTypeAt(answer_element_type),
+          lyra::runtime::NewCount(size, SourceLocationAt(location)), nullptr));
 }
 
 auto lyra_rt_dynamic_array_new_copy(
-    std::int64_t size, const void* src, const void* answer_element_type,
-    void* out) -> void* {
+    std::int64_t size, const void* src, const void* location,
+    const void* answer_element_type, void* out) -> void* {
   return Emplace(
       out, RuntimeDynamicArray(
                lyra::runtime::ElementTypeAt(answer_element_type),
-               lyra::runtime::NewCount(size), &Read<RuntimeDynamicArray>(src)));
+               lyra::runtime::NewCount(size, SourceLocationAt(location)),
+               &Read<RuntimeDynamicArray>(src)));
 }
 
 auto lyra_rt_dynarray_default(const void* answer_element_type, void* out)
@@ -5423,8 +5564,9 @@ auto lyra_rt_dynarray_default(const void* answer_element_type, void* out)
 }
 
 auto lyra_rt_dynarray_from_list(
-    LyraSpan unit, std::int64_t count, const void* answer_element_type,
-    void* out) -> void* {
+    LyraSpan unit, std::int64_t count, const void* location,
+    const void* answer_element_type, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, RuntimeDynamicArray::FromElements(
                lyra::runtime::ElementTypeAt(answer_element_type),
@@ -5471,7 +5613,7 @@ auto lyra_rt_dynarray_element_slice(
     const void* answer_type, void* out) -> void* {
   const auto& source = Read<RuntimeDynamicArray>(array);
   return Emplace(
-      out, ArrayFromElements(
+      out, ArrayHolding(
                ArrayTypeAt(answer_type),
                source.SliceElements(PositionNamedAt(start), count)));
 }
@@ -5543,8 +5685,10 @@ void lyra_rt_dynarray_cell_arm_sampling(void* cell) {
   VariableAt<RuntimeDynamicArray>(cell).ArmSampling();
 }
 
-auto lyra_rt_dynarray_cell_sampled_get(void* cell) -> const void* {
-  return &VariableAt<RuntimeDynamicArray>(cell).SampledGet();
+auto lyra_rt_dynarray_cell_sampled_get(void* cell, const void* location)
+    -> const void* {
+  return &VariableAt<RuntimeDynamicArray>(cell).SampledGet(
+      SourceLocationAt(location));
 }
 
 auto lyra_rt_dynarray_value_cell_alloc() noexcept -> void* {
@@ -5583,7 +5727,9 @@ auto lyra_rt_laidout_from_elements(
 }
 
 auto lyra_rt_dynarray_unpacked_array_from_array(
-    const void* source, const void* answer_type, void* out) -> void* {
+    const void* source, const void* location, const void* answer_type,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out,
       ArrayFromElements(
@@ -5592,7 +5738,9 @@ auto lyra_rt_dynarray_unpacked_array_from_array(
 }
 
 auto lyra_rt_queue_unpacked_array_from_array(
-    const void* source, const void* answer_type, void* out) -> void* {
+    const void* source, const void* location, const void* answer_type,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, ArrayFromElements(
                ArrayTypeAt(answer_type),
@@ -5632,31 +5780,34 @@ auto lyra_rt_byte_array_from_bits(
 }
 
 auto lyra_rt_dynarray_count_bits(
-    const void* value, const void* control_bits, std::int64_t control_width,
-    bool control_is_four_state, const void* value_operations, void* out)
-    -> void* {
-  const lyra::value::LoadedWords control =
-      BitsAt(control_bits, control_width, control_is_four_state);
+    const void* value, const void* control_bits, const void* location,
+    const void* value_operations, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeDynamicArray>(value).CountBits(
-               control.View(),
+               Read<lyra::value::LogicVector<4>>(control_bits),
                lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_string_count_bits(
-    const void* value, const void* control_bits, std::int64_t control_width,
-    bool control_is_four_state, void* out) -> void* {
-  const lyra::value::LoadedWords control =
-      BitsAt(control_bits, control_width, control_is_four_state);
-  return Emplace(out, Read<String>(value).CountBits(control.View()));
+    const void* value, const void* control_bits, const void* location,
+    void* out) -> void* {
+  return Emplace(
+      out, Read<String>(value).CountBits(
+               Read<lyra::value::LogicVector<4>>(control_bits),
+               SourceLocationAt(location)));
 }
 
-auto lyra_rt_string_bitstream_width(const void* value, void* out) -> void* {
-  return Emplace(out, Read<String>(value).BitstreamWidth());
+auto lyra_rt_string_bitstream_width(
+    const void* value, const void* location, void* out) -> void* {
+  return Emplace(
+      out, Read<String>(value).BitstreamWidth(SourceLocationAt(location)));
 }
 
 auto lyra_rt_dynarray_bitstream_width(
-    const void* value, const void* value_operations, void* out) -> void* {
+    const void* value, const void* location, const void* value_operations,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeDynamicArray>(value).BitstreamWidth(
                lyra::runtime::ElementOperationsAt(value_operations)));
@@ -5664,8 +5815,9 @@ auto lyra_rt_dynarray_bitstream_width(
 
 auto lyra_rt_from_bitstream(
     const void* bits, std::int64_t bits_width, bool bits_are_four_state,
-    const void* answer_type, const void* answer_operations, void* out)
-    -> void* {
+    const void* location, const void* answer_type,
+    const void* answer_operations, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   const lyra::value::LoadedWords stream =
       BitsAt(bits, bits_width, bits_are_four_state);
   const lyra::value::ValueOperations& operations =
@@ -5683,7 +5835,7 @@ auto lyra_rt_stream_write(
     -> std::uint64_t {
   lyra::runtime::StorageForBits made(
       lyra::runtime::BitsShape(bits_width, bits_are_four_state));
-  stream_of(value, made.Bytes());
+  stream_of(value, nullptr, made.Bytes());
   const lyra::value::LoadedWords written =
       BitsAt(made.Bytes(), bits_width, bits_are_four_state);
   const auto& into = *static_cast<const lyra::value::IntegralView*>(stream);
@@ -5698,19 +5850,26 @@ auto lyra_rt_stream_build(
     LyraBuiltFromStream built_from, const void* stream, std::uint64_t taken,
     std::int64_t bits_width, bool bits_are_four_state, void* out)
     -> std::uint64_t {
-  lyra::runtime::StorageForBits read(
-      lyra::runtime::BitsShape(bits_width, bits_are_four_state));
-  const std::uint64_t after = lyra_rt_stream_read(
-      stream, taken, bits_width, bits_are_four_state, read.Bytes());
-  built_from(read.Bytes(), out);
-  return after;
+  const lyra::value::IntegralShape shape =
+      lyra::runtime::BitsShape(bits_width, bits_are_four_state);
+  lyra::value::WrittenWords read(shape);
+  const auto& from =
+      *static_cast<const lyra::value::ConstIntegralView*>(stream);
+  const auto width = static_cast<std::uint64_t>(bits_width);
+  lyra::value::Extract(
+      read.MutableView(), from,
+      static_cast<std::int64_t>(from.width - taken - width));
+  lyra::runtime::StorageForBits held(shape);
+  read.StoreTo(held.Bytes());
+  built_from(held.Bytes(), nullptr, out);
+  return taken + width;
 }
 
 auto lyra_rt_run_write(
     LyraRunOf run_of, const void* value, const void* stream,
     std::uint64_t filled) -> std::uint64_t {
   const auto run = lyra::value::TakeBuilt<BitVec>(
-      [&](void* storage) { run_of(value, storage); });
+      [&](void* storage) { run_of(value, nullptr, storage); });
   const auto& into = *static_cast<const lyra::value::IntegralView*>(stream);
   lyra::value::Insert(
       into, run.View(),
@@ -5724,23 +5883,8 @@ auto lyra_rt_run_build(
   const auto& from =
       *static_cast<const lyra::value::ConstIntegralView*>(stream);
   const BitVec run = BitVec::Of(from, taken, until);
-  built_from(&run, out);
+  built_from(&run, nullptr, out);
   return until;
-}
-
-auto lyra_rt_stream_read(
-    const void* stream, std::uint64_t taken, std::int64_t out_width,
-    bool out_is_four_state, void* out) -> std::uint64_t {
-  lyra::value::WrittenWords read(
-      lyra::runtime::BitsShape(out_width, out_is_four_state));
-  const auto& from =
-      *static_cast<const lyra::value::ConstIntegralView*>(stream);
-  const auto width = static_cast<std::uint64_t>(out_width);
-  lyra::value::Extract(
-      read.MutableView(), from,
-      static_cast<std::int64_t>(from.width - taken - width));
-  read.StoreTo(out);
-  return taken + width;
 }
 
 void lyra_rt_type_lacks_operation() {
@@ -5854,8 +5998,10 @@ void lyra_rt_any_cell_set(void* cell, const void* value) {
 void lyra_rt_any_cell_arm_sampling(void* cell) {
   lyra::runtime::VariableAt<AnyValueOfAnyType>(cell).ArmSampling();
 }
-auto lyra_rt_any_cell_sampled_get(void* cell) -> const void* {
-  return &lyra::runtime::VariableAt<AnyValueOfAnyType>(cell).SampledGet();
+auto lyra_rt_any_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return &lyra::runtime::VariableAt<AnyValueOfAnyType>(cell).SampledGet(
+      SourceLocationAt(location));
 }
 auto lyra_rt_any_cell_open_for_write(void* cell, void* out) -> void* {
   return lyra::runtime::OpenCellWrite<AnyValueOfAnyType>(cell, out);
@@ -5875,8 +6021,10 @@ void lyra_rt_any_ref_set(void* reference, const void* value) {
 void lyra_rt_any_ref_arm_sampling(void* reference) {
   lyra::runtime::RefArmSampling<AnyValueOfAnyType>(reference);
 }
-auto lyra_rt_any_ref_sampled_get(void* reference) -> const void* {
-  return lyra::runtime::RefSampledGet<AnyValueOfAnyType>(reference);
+auto lyra_rt_any_ref_sampled_get(void* reference, const void* location) -> const
+    void* {
+  return lyra::runtime::RefSampledGet<AnyValueOfAnyType>(
+      reference, SourceLocationAt(location));
 }
 auto lyra_rt_any_ref_open_for_write(void* reference, void* out) -> void* {
   return lyra::runtime::OpenRefWrite<AnyValueOfAnyType>(reference, out);
@@ -5969,7 +6117,9 @@ auto lyra_rt_managedref_has_unknown(const void* value) -> bool {
 
 // A class handle carries no bit stream of its own, which its operations
 // answer once, so these ask them rather than decide again.
-auto lyra_rt_managedref_bitstream_width(const void* value, void* out) -> void* {
+auto lyra_rt_managedref_bitstream_width(
+    const void* value, const void* location, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   const lyra::value::ValueOperations& operations =
       lyra::value::lyra_rt_managedref_value_operations;
   operations.functions->bitstream_width(operations, value, out);
@@ -5977,41 +6127,49 @@ auto lyra_rt_managedref_bitstream_width(const void* value, void* out) -> void* {
 }
 
 auto lyra_rt_managedref_count_bits(
-    const void* value, const void* control_bits, std::int64_t control_width,
-    bool control_is_four_state, void* out) -> void* {
+    const void* value, const void* control_bits, const void* location,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   const lyra::value::ValueOperations& operations =
       lyra::value::lyra_rt_managedref_value_operations;
   operations.functions->count_bits(
-      operations, value,
-      BitsAt(control_bits, control_width, control_is_four_state).View(), out);
+      operations, value, Read<lyra::value::LogicVector<4>>(control_bits), out);
   return out;
 }
 
-auto lyra_rt_string_to_bitvec(const void* value, void* out) -> void* {
-  return Emplace(out, Read<String>(value).ToBitVec());
+auto lyra_rt_string_to_bitvec(
+    const void* value, const void* location, void* out) -> void* {
+  return Emplace(out, Read<String>(value).ToBitVec(SourceLocationAt(location)));
 }
 auto lyra_rt_dynarray_to_bitvec(
-    const void* value, const void* value_operations, void* out) -> void* {
+    const void* value, const void* location, const void* value_operations,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeDynamicArray>(value).ToBitVec(
                lyra::runtime::ElementOperationsAt(value_operations)));
 }
 auto lyra_rt_queue_to_bitvec(
-    const void* value, const void* value_operations, void* out) -> void* {
+    const void* value, const void* location, const void* value_operations,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeQueue>(value).ToBitVec(
                lyra::runtime::ElementOperationsAt(value_operations)));
 }
 auto lyra_rt_assocarray_to_bitvec(
-    const void* value, const void* value_operations, void* out) -> void* {
+    const void* value, const void* location, const void* value_operations,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeAssociativeArray>(value).ToBitVec(
                lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_dynarray_from_bitvec(
-    const void* run, const void* value_operations,
+    const void* run, const void* location, const void* value_operations,
     const void* answer_element_type, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out,
       RuntimeDynamicArray::FromBitVec(
@@ -6019,15 +6177,18 @@ auto lyra_rt_dynarray_from_bitvec(
           lyra::runtime::ElementOperationsAt(value_operations)));
 }
 auto lyra_rt_queue_from_bitvec(
-    const void* run, const void* value_operations, const void* answer_type,
-    void* out) -> void* {
+    const void* run, const void* location, const void* value_operations,
+    const void* answer_type, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, RuntimeQueue::FromBitVec(
                lyra::runtime::QueueTypeAt(answer_type), Read<BitVec>(run),
                lyra::runtime::ElementOperationsAt(value_operations)));
 }
-auto lyra_rt_string_from_bitvec(const void* run, void* out) -> void* {
-  return Emplace(out, String::FromBitVec(Read<BitVec>(run)));
+auto lyra_rt_string_from_bitvec(
+    const void* run, const void* location, void* out) -> void* {
+  return Emplace(
+      out, String::FromBitVec(Read<BitVec>(run), SourceLocationAt(location)));
 }
 
 auto lyra_rt_bitvec_default(void* out) -> void* {
@@ -6079,7 +6240,8 @@ auto lyra_rt_bitvec_padded_to(const void* run, std::int64_t length, void* out)
 
 auto lyra_rt_dynarray_window_to_bitvec(
     const void* array, const void* start, std::int64_t count,
-    const void* value_operations, void* out) -> void* {
+    const void* location, const void* value_operations, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeDynamicArray>(array).WindowToBitVec(
                PositionNamedAt(start), lyra::value::WindowCount(count),
@@ -6087,7 +6249,8 @@ auto lyra_rt_dynarray_window_to_bitvec(
 }
 auto lyra_rt_queue_window_to_bitvec(
     const void* queue, const void* start, std::int64_t count,
-    const void* value_operations, void* out) -> void* {
+    const void* location, const void* value_operations, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeQueue>(queue).WindowToBitVec(
                PositionNamedAt(start), lyra::value::WindowCount(count),
@@ -6095,7 +6258,8 @@ auto lyra_rt_queue_window_to_bitvec(
 }
 auto lyra_rt_laidout_window_to_bitvec(
     const void* array, const void* start, std::int64_t count,
-    const void* array_operations, void* out) -> void* {
+    const void* location, const void* array_operations, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   const lyra::value::ValueOperations& operations =
       lyra::runtime::OperationsAt(array_operations);
   const lyra::value::FixedArrayType& type = *operations.type->AsFixedArray();
@@ -6108,7 +6272,9 @@ auto lyra_rt_laidout_window_to_bitvec(
 }
 auto lyra_rt_dynarray_with_window(
     const void* array, const void* start, std::int64_t count,
-    const void* values, const void* values_type, void* out) -> void* {
+    const void* values, const void* values_type, const void* location,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeDynamicArray>(array).WithWindow(
                PositionNamedAt(start), lyra::value::WindowCount(count),
@@ -6116,7 +6282,9 @@ auto lyra_rt_dynarray_with_window(
 }
 auto lyra_rt_queue_with_window(
     const void* queue, const void* start, std::int64_t count,
-    const void* values, const void* values_type, void* out) -> void* {
+    const void* values, const void* values_type, const void* location,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeQueue>(queue).WithWindow(
                PositionNamedAt(start), lyra::value::WindowCount(count),
@@ -6124,12 +6292,13 @@ auto lyra_rt_queue_with_window(
 }
 auto lyra_rt_laidout_with_window(
     const void* array, const void* start, std::int64_t count,
-    const void* values, const void* values_type, const void* array_type,
-    void* out) -> void* {
+    const void* values, const void* values_type, const void* location,
+    const void* array_type, void* out) -> void* {
   const lyra::value::FixedArrayType& type = ArrayTypeAt(array_type);
   const std::optional<std::int64_t> first = PositionNamedAt(start);
   if (count > 0 && (!first.has_value() || *first < 0 ||
                     *first + count > static_cast<std::int64_t>(type.Count()))) {
+    const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
     throw lyra::SimulationError(
         "the range a 'with' names reaches outside the array it is unpacked "
         "into");
@@ -6155,7 +6324,7 @@ auto lyra_rt_laidout_element_slice(
       ArrayTypeAt(array_type)
           .SliceElements(
               array, PositionNamedAt(start), lyra::value::SliceCount(count));
-  return Emplace(out, ArrayFromElements(ArrayTypeAt(answer_type), items));
+  return Emplace(out, ArrayHolding(ArrayTypeAt(answer_type), items));
 }
 
 void lyra_rt_laidout_assign_element_slice(
@@ -6197,29 +6366,34 @@ void lyra_rt_laidout_aggregate_net_initialize_retaining(
 
 auto lyra_rt_laidout_net_begin_takeover(
     void* net, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* value_take_positions) -> std::int64_t {
+    const void* location, const void* value_take_positions) -> std::int64_t {
   return NetOf<LaidOutValue>(net).BeginTakeover(
-      level, first, count,
+      level, first, count, SourceLocationAt(location),
       lyra::runtime::TakePositionsAt(value_take_positions));
 }
 
 auto lyra_rt_laidout_net_drive_takeover(
-    void* net, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return NetOf<LaidOutValue>(net).DriveTakeoverBytes(level, generation, value);
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return NetOf<LaidOutValue>(net).DriveTakeoverBytes(
+      level, generation, value, SourceLocationAt(location));
 }
 
 void lyra_rt_laidout_net_end_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count) {
-  NetOf<LaidOutValue>(net).EndTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<LaidOutValue>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 
 void lyra_rt_laidout_net_arm_sampling(void* net) {
   NetOf<LaidOutValue>(net).ArmSampling();
 }
 
-auto lyra_rt_laidout_net_sampled_get(void* net) -> const void* {
-  return HandleTo(NetOf<LaidOutValue>(net).SampledGet());
+auto lyra_rt_laidout_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return HandleTo(
+      NetOf<LaidOutValue>(net).SampledGet(SourceLocationAt(location)));
 }
 
 auto lyra_rt_laidout_attach_driver(void* net, std::int64_t strength) -> void* {
@@ -6235,12 +6409,13 @@ void lyra_rt_laidout_driver_set(void* driver, const void* value) {
 }
 
 auto lyra_rt_queue_default(const void* answer_type, void* out) -> void* {
-  return Emplace(out, RuntimeQueue::FromElements(QueueTypeAt(answer_type), {}));
+  return Emplace(out, RuntimeQueue(QueueTypeAt(answer_type)));
 }
 
 auto lyra_rt_queue_from_list(
-    LyraSpan unit, std::int64_t count, const void* answer_type, void* out)
-    -> void* {
+    LyraSpan unit, std::int64_t count, const void* location,
+    const void* answer_type, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, RuntimeQueue::FromElements(
                QueueTypeAt(answer_type),
@@ -6248,7 +6423,9 @@ auto lyra_rt_queue_from_list(
 }
 
 auto lyra_rt_queue_queue_from_array(
-    const void* source, const void* answer_type, void* out) -> void* {
+    const void* source, const void* location, const void* answer_type,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, RuntimeQueue::FromElements(
                QueueTypeAt(answer_type),
@@ -6256,8 +6433,9 @@ auto lyra_rt_queue_queue_from_array(
 }
 
 auto lyra_rt_laidout_queue_from_array(
-    const void* source, const void* source_type, const void* answer_type,
-    void* out) -> void* {
+    const void* source, const void* location, const void* source_type,
+    const void* answer_type, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, RuntimeQueue::FromElements(
                QueueTypeAt(answer_type),
@@ -6265,7 +6443,9 @@ auto lyra_rt_laidout_queue_from_array(
 }
 
 auto lyra_rt_dynarray_queue_from_array(
-    const void* source, const void* answer_type, void* out) -> void* {
+    const void* source, const void* location, const void* answer_type,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out,
       RuntimeQueue::FromElements(
@@ -6278,7 +6458,9 @@ auto lyra_rt_queue_element(const void* queue, const void* position) -> const
   return Read<RuntimeQueue>(queue).Element(PositionNamedAt(position));
 }
 
-auto lyra_rt_queue_element_mut(void* queue, const void* position) -> void* {
+auto lyra_rt_queue_element_mut(
+    void* queue, const void* position, const void* location) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   lyra::value::Formation formed{};
   return static_cast<RuntimeQueue*>(queue)->ElementMut(
       PositionNamedAt(position), formed);
@@ -6295,7 +6477,8 @@ auto lyra_rt_queue_slice(
 
 void lyra_rt_queue_assign_element_slice(
     void* queue, const void* lo, const void* hi, const void* replacement,
-    const void* replacement_type) {
+    const void* replacement_type, const void* location) {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   static_cast<RuntimeQueue*>(queue)->AssignSlice(
       PositionNamedAt(lo), PositionNamedAt(hi),
       lyra::runtime::ElementHandles(replacement, replacement_type));
@@ -6305,15 +6488,21 @@ auto lyra_rt_queue_size(const void* queue, void* out) -> void* {
   return Emplace(out, Read<RuntimeQueue>(queue).Size());
 }
 
-void lyra_rt_queue_push_back(void* queue, const void* item) {
+void lyra_rt_queue_push_back(
+    void* queue, const void* item, const void* location) {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   static_cast<RuntimeQueue*>(queue)->PushBack(item);
 }
 
-void lyra_rt_queue_push_front(void* queue, const void* item) {
+void lyra_rt_queue_push_front(
+    void* queue, const void* item, const void* location) {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   static_cast<RuntimeQueue*>(queue)->PushFront(item);
 }
 
-void lyra_rt_queue_insert(void* queue, const void* position, const void* item) {
+void lyra_rt_queue_insert(
+    void* queue, const void* position, const void* item, const void* location) {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   static_cast<RuntimeQueue*>(queue)->Insert(PositionNamedAt(position), item);
 }
 
@@ -6373,21 +6562,21 @@ auto lyra_rt_queue_merge_conditional(
 }
 
 auto lyra_rt_queue_bitstream_width(
-    const void* queue, const void* value_operations, void* out) -> void* {
+    const void* queue, const void* location, const void* value_operations,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeQueue>(queue).BitstreamWidth(
                lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_queue_count_bits(
-    const void* queue, const void* control_bits, std::int64_t control_width,
-    bool control_is_four_state, const void* value_operations, void* out)
-    -> void* {
-  const lyra::value::LoadedWords control =
-      BitsAt(control_bits, control_width, control_is_four_state);
+    const void* queue, const void* control_bits, const void* location,
+    const void* value_operations, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeQueue>(queue).CountBits(
-               control.View(),
+               Read<lyra::value::LogicVector<4>>(control_bits),
                lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
@@ -6407,8 +6596,9 @@ void lyra_rt_queue_cell_arm_sampling(void* cell) {
   VariableAt<RuntimeQueue>(cell).ArmSampling();
 }
 
-auto lyra_rt_queue_cell_sampled_get(void* cell) -> const void* {
-  return &VariableAt<RuntimeQueue>(cell).SampledGet();
+auto lyra_rt_queue_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return &VariableAt<RuntimeQueue>(cell).SampledGet(SourceLocationAt(location));
 }
 
 auto lyra_rt_queue_value_cell_alloc() noexcept -> void* {
@@ -6529,7 +6719,9 @@ auto lyra_rt_assocarray_case_equal(
 }
 
 auto lyra_rt_assocarray_bitstream_width(
-    const void* array, const void* value_operations, void* out) -> void* {
+    const void* array, const void* location, const void* value_operations,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeAssociativeArray>(array).BitstreamWidth(
                lyra::runtime::ElementOperationsAt(value_operations)));
@@ -6584,14 +6776,12 @@ auto lyra_rt_assocarray_assoc_prev(
 }
 
 auto lyra_rt_assocarray_count_bits(
-    const void* array, const void* control_bits, std::int64_t control_width,
-    bool control_is_four_state, const void* value_operations, void* out)
-    -> void* {
-  const lyra::value::LoadedWords control =
-      BitsAt(control_bits, control_width, control_is_four_state);
+    const void* array, const void* control_bits, const void* location,
+    const void* value_operations, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, Read<RuntimeAssociativeArray>(array).CountBits(
-               control.View(),
+               Read<lyra::value::LogicVector<4>>(control_bits),
                lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
@@ -6614,8 +6804,10 @@ void lyra_rt_assocarray_cell_arm_sampling(void* cell) {
   VariableAt<RuntimeAssociativeArray>(cell).ArmSampling();
 }
 
-auto lyra_rt_assocarray_cell_sampled_get(void* cell) -> const void* {
-  return &VariableAt<RuntimeAssociativeArray>(cell).SampledGet();
+auto lyra_rt_assocarray_cell_sampled_get(void* cell, const void* location)
+    -> const void* {
+  return &VariableAt<RuntimeAssociativeArray>(cell).SampledGet(
+      SourceLocationAt(location));
 }
 
 auto lyra_rt_assocarray_value_cell_alloc() noexcept -> void* {
@@ -6666,8 +6858,8 @@ void lyra_rt_queue_reverse(void* receiver) {
 
 auto lyra_rt_laidout_read_mem(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
-    std::int64_t base, std::int64_t start, const void* memory_type,
-    const void* answer_type, void* out) -> void* {
+    std::int64_t base, std::int64_t start, const void* location,
+    const void* memory_type, const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
       lyra::runtime::Single(
@@ -6676,44 +6868,14 @@ auto lyra_rt_laidout_read_mem(
               OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
               lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
               base, start, std::nullopt,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
+              SourceLocationAt(location))));
 }
 
 auto lyra_rt_laidout_read_mem_within(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
     std::int64_t base, std::int64_t start, std::int64_t finish,
-    const void* memory_type, const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadUnpackedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
-              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
-              base, start, finish,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
-}
-
-auto lyra_rt_laidout_read_enumerated_mem(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
-    const void* memory_type, const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadUnpackedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
-              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
-              base, start, std::nullopt,
-              lyra::runtime::WordValues{lyra::runtime::MemberValues{
-                  Read<Enumeration>(enumeration)}})));
-}
-
-auto lyra_rt_laidout_read_enumerated_mem_within(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
-    std::int64_t finish, const void* memory_type, const void* answer_type,
+    const void* location, const void* memory_type, const void* answer_type,
     void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
@@ -6723,34 +6885,72 @@ auto lyra_rt_laidout_read_enumerated_mem_within(
               OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
               lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
               base, start, finish,
-              lyra::runtime::WordValues{lyra::runtime::MemberValues{
-                  Read<Enumeration>(enumeration)}})));
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
+              SourceLocationAt(location))));
+}
+
+auto lyra_rt_laidout_read_enumerated_mem(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
+    const void* location, const void* memory_type, const void* answer_type,
+    void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadUnpackedMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
+              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
+              base, start, std::nullopt,
+              lyra::runtime::WordValues{
+                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
+              SourceLocationAt(location))));
+}
+
+auto lyra_rt_laidout_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
+    std::int64_t finish, const void* location, const void* memory_type,
+    const void* answer_type, void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadUnpackedMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
+              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
+              base, start, finish,
+              lyra::runtime::WordValues{
+                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
+              SourceLocationAt(location))));
 }
 
 void lyra_rt_laidout_write_mem(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
-    std::int64_t base, std::int64_t start, const void* memory_type) {
-  lyra::runtime::WriteUnpackedMemory(
-      *static_cast<RuntimeEffects*>(runtime), ArrayAt(memory, memory_type),
-      Read<String>(name),
-      lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)), base,
-      start, std::nullopt);
-}
-
-void lyra_rt_laidout_write_mem_within(
-    void* runtime, const void* memory, const void* name, LyraSpan dims,
-    std::int64_t base, std::int64_t start, std::int64_t finish,
+    std::int64_t base, std::int64_t start, const void* location,
     const void* memory_type) {
   lyra::runtime::WriteUnpackedMemory(
       *static_cast<RuntimeEffects*>(runtime), ArrayAt(memory, memory_type),
       Read<String>(name),
       lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)), base,
-      start, finish);
+      start, std::nullopt, SourceLocationAt(location));
+}
+
+void lyra_rt_laidout_write_mem_within(
+    void* runtime, const void* memory, const void* name, LyraSpan dims,
+    std::int64_t base, std::int64_t start, std::int64_t finish,
+    const void* location, const void* memory_type) {
+  lyra::runtime::WriteUnpackedMemory(
+      *static_cast<RuntimeEffects*>(runtime), ArrayAt(memory, memory_type),
+      Read<String>(name),
+      lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)), base,
+      start, finish, SourceLocationAt(location));
 }
 
 auto lyra_rt_dynarray_read_mem(
     void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, const void* answer_type, void* out) -> void* {
+    std::int64_t start, const void* location, const void* answer_type,
+    void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
       lyra::runtime::Single(
@@ -6758,13 +6958,14 @@ auto lyra_rt_dynarray_read_mem(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
               start, std::nullopt,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
+              SourceLocationAt(location))));
 }
 
 auto lyra_rt_dynarray_read_mem_within(
     void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish, const void* answer_type, void* out)
-    -> void* {
+    std::int64_t start, std::int64_t finish, const void* location,
+    const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
       lyra::runtime::Single(
@@ -6772,13 +6973,14 @@ auto lyra_rt_dynarray_read_mem_within(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
               start, finish,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
+              SourceLocationAt(location))));
 }
 
 auto lyra_rt_dynarray_read_enumerated_mem(
     void* runtime, const void* memory, const void* enumeration,
     const void* name, std::int64_t base, std::int64_t start,
-    const void* answer_type, void* out) -> void* {
+    const void* location, const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
       lyra::runtime::Single(
@@ -6786,14 +6988,16 @@ auto lyra_rt_dynarray_read_enumerated_mem(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
               start, std::nullopt,
-              lyra::runtime::WordValues{lyra::runtime::MemberValues{
-                  Read<Enumeration>(enumeration)}})));
+              lyra::runtime::WordValues{
+                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
+              SourceLocationAt(location))));
 }
 
 auto lyra_rt_dynarray_read_enumerated_mem_within(
     void* runtime, const void* memory, const void* enumeration,
     const void* name, std::int64_t base, std::int64_t start,
-    std::int64_t finish, const void* answer_type, void* out) -> void* {
+    std::int64_t finish, const void* location, const void* answer_type,
+    void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
       lyra::runtime::Single(
@@ -6801,29 +7005,32 @@ auto lyra_rt_dynarray_read_enumerated_mem_within(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
               start, finish,
-              lyra::runtime::WordValues{lyra::runtime::MemberValues{
-                  Read<Enumeration>(enumeration)}})));
+              lyra::runtime::WordValues{
+                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
+              SourceLocationAt(location))));
 }
 
 void lyra_rt_dynarray_write_mem(
     void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start) {
+    std::int64_t start, const void* location) {
   lyra::runtime::WriteFlatMemory(
       *static_cast<RuntimeEffects*>(runtime), Read<RuntimeDynamicArray>(memory),
-      Read<String>(name), base, start, std::nullopt);
+      Read<String>(name), base, start, std::nullopt,
+      SourceLocationAt(location));
 }
 
 void lyra_rt_dynarray_write_mem_within(
     void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish) {
+    std::int64_t start, std::int64_t finish, const void* location) {
   lyra::runtime::WriteFlatMemory(
       *static_cast<RuntimeEffects*>(runtime), Read<RuntimeDynamicArray>(memory),
-      Read<String>(name), base, start, finish);
+      Read<String>(name), base, start, finish, SourceLocationAt(location));
 }
 
 auto lyra_rt_queue_read_mem(
     void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, const void* answer_type, void* out) -> void* {
+    std::int64_t start, const void* location, const void* answer_type,
+    void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
       lyra::runtime::Single(
@@ -6831,25 +7038,13 @@ auto lyra_rt_queue_read_mem(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeQueue>(memory), Read<String>(name), base, start,
               std::nullopt,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
+              SourceLocationAt(location))));
 }
 
 auto lyra_rt_queue_read_mem_within(
     void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadFlatMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeQueue>(memory), Read<String>(name), base, start,
-              finish, lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
-}
-
-auto lyra_rt_queue_read_enumerated_mem(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, std::int64_t base, std::int64_t start,
+    std::int64_t start, std::int64_t finish, const void* location,
     const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
@@ -6857,15 +7052,31 @@ auto lyra_rt_queue_read_enumerated_mem(
           lyra::runtime::ReadFlatMemory(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeQueue>(memory), Read<String>(name), base, start,
+              finish, lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
+              SourceLocationAt(location))));
+}
+
+auto lyra_rt_queue_read_enumerated_mem(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, std::int64_t base, std::int64_t start,
+    const void* location, const void* answer_type, void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadFlatMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              Read<RuntimeQueue>(memory), Read<String>(name), base, start,
               std::nullopt,
-              lyra::runtime::WordValues{lyra::runtime::MemberValues{
-                  Read<Enumeration>(enumeration)}})));
+              lyra::runtime::WordValues{
+                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
+              SourceLocationAt(location))));
 }
 
 auto lyra_rt_queue_read_enumerated_mem_within(
     void* runtime, const void* memory, const void* enumeration,
     const void* name, std::int64_t base, std::int64_t start,
-    std::int64_t finish, const void* answer_type, void* out) -> void* {
+    std::int64_t finish, const void* location, const void* answer_type,
+    void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
       lyra::runtime::Single(
@@ -6873,30 +7084,32 @@ auto lyra_rt_queue_read_enumerated_mem_within(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeQueue>(memory), Read<String>(name), base, start,
               finish,
-              lyra::runtime::WordValues{lyra::runtime::MemberValues{
-                  Read<Enumeration>(enumeration)}})));
+              lyra::runtime::WordValues{
+                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
+              SourceLocationAt(location))));
 }
 
 void lyra_rt_queue_write_mem(
     void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start) {
+    std::int64_t start, const void* location) {
   lyra::runtime::WriteFlatMemory(
       *static_cast<RuntimeEffects*>(runtime), Read<RuntimeQueue>(memory),
-      Read<String>(name), base, start, std::nullopt);
+      Read<String>(name), base, start, std::nullopt,
+      SourceLocationAt(location));
 }
 
 void lyra_rt_queue_write_mem_within(
     void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish) {
+    std::int64_t start, std::int64_t finish, const void* location) {
   lyra::runtime::WriteFlatMemory(
       *static_cast<RuntimeEffects*>(runtime), Read<RuntimeQueue>(memory),
-      Read<String>(name), base, start, finish);
+      Read<String>(name), base, start, finish, SourceLocationAt(location));
 }
 
 auto lyra_rt_assocarray_read_mem(
     void* runtime, const void* memory, const void* key_type, const void* name,
-    std::int64_t base, std::int64_t start, const void* answer_type, void* out)
-    -> void* {
+    std::int64_t base, std::int64_t start, const void* location,
+    const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
       lyra::runtime::Single(
@@ -6904,12 +7117,46 @@ auto lyra_rt_assocarray_read_mem(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
               start, std::nullopt, key_type,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
+              SourceLocationAt(location))));
 }
 
 auto lyra_rt_assocarray_read_mem_within(
     void* runtime, const void* memory, const void* key_type, const void* name,
     std::int64_t base, std::int64_t start, std::int64_t finish,
+    const void* location, const void* answer_type, void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadKeyedMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
+              start, finish, key_type,
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
+              SourceLocationAt(location))));
+}
+
+auto lyra_rt_assocarray_read_enumerated_mem(
+    void* runtime, const void* memory, const void* key_type,
+    const void* enumeration, const void* name, std::int64_t base,
+    std::int64_t start, const void* location, const void* answer_type,
+    void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadKeyedMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
+              start, std::nullopt, key_type,
+              lyra::runtime::WordValues{
+                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
+              SourceLocationAt(location))));
+}
+
+auto lyra_rt_assocarray_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* key_type,
+    const void* enumeration, const void* name, std::int64_t base,
+    std::int64_t start, std::int64_t finish, const void* location,
     const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
@@ -6918,62 +7165,33 @@ auto lyra_rt_assocarray_read_mem_within(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
               start, finish, key_type,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}})));
-}
-
-auto lyra_rt_assocarray_read_enumerated_mem(
-    void* runtime, const void* memory, const void* key_type,
-    const void* enumeration, const void* name, std::int64_t base,
-    std::int64_t start, const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadKeyedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
-              start, std::nullopt, key_type,
-              lyra::runtime::WordValues{lyra::runtime::MemberValues{
-                  Read<Enumeration>(enumeration)}})));
-}
-
-auto lyra_rt_assocarray_read_enumerated_mem_within(
-    void* runtime, const void* memory, const void* key_type,
-    const void* enumeration, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish, const void* answer_type, void* out)
-    -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadKeyedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
-              start, finish, key_type,
-              lyra::runtime::WordValues{lyra::runtime::MemberValues{
-                  Read<Enumeration>(enumeration)}})));
+              lyra::runtime::WordValues{
+                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
+              SourceLocationAt(location))));
 }
 
 void lyra_rt_assocarray_write_mem(
     void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start) {
+    std::int64_t start, const void* location) {
   lyra::runtime::WriteKeyedMemory(
       *static_cast<RuntimeEffects*>(runtime),
       Read<RuntimeAssociativeArray>(memory), Read<String>(name), base, start,
-      std::nullopt);
+      std::nullopt, SourceLocationAt(location));
 }
 
 void lyra_rt_assocarray_write_mem_within(
     void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish) {
+    std::int64_t start, std::int64_t finish, const void* location) {
   lyra::runtime::WriteKeyedMemory(
       *static_cast<RuntimeEffects*>(runtime),
       Read<RuntimeAssociativeArray>(memory), Read<String>(name), base, start,
-      finish);
+      finish, SourceLocationAt(location));
 }
 
 auto lyra_rt_format_runtime(
     const void* format, LyraSpan args, const void* scope_path,
     const void* library_binding, const void* time_format,
-    std::int64_t timeunit_power, void* out) -> void* {
+    std::int64_t timeunit_power, const void* location, void* out) -> void* {
   const std::span<const void* const> handles{
       static_cast<const void* const*>(args.data), args.count};
   std::vector<FormatArg> arguments(handles.size());
@@ -6984,7 +7202,7 @@ auto lyra_rt_format_runtime(
       out, lyra::value::FormatRuntime(
                Read<String>(format), arguments, Read<String>(scope_path),
                Read<String>(library_binding), Read<TimeFormat>(time_format),
-               timeunit_power));
+               timeunit_power, SourceLocationAt(location)));
 }
 
 auto lyra_rt_integral_format_arg_make(
@@ -7296,7 +7514,9 @@ auto lyra_rt_laidout_designate_element(
 }
 
 auto lyra_rt_queue_designate_element(
-    const void* designation, const void* position, void* out) -> void* {
+    const void* designation, const void* position, const void* location,
+    void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return DesignateElement<RuntimeQueue>(
       designation, PositionNamedAt(position), out);
 }
@@ -7353,7 +7573,9 @@ void lyra_rt_laidout_assign_slice(
 
 void lyra_rt_queue_assign_slice(
     const void* designation, const void* lo, const void* hi,
-    const void* replacement, const void* replacement_type) {
+    const void* replacement, const void* replacement_type,
+    const void* location) {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   const ErasedDesignation& within = DesignationAt(designation);
   if (const auto written = static_cast<RuntimeQueue*>(within.part)
                                ->AssignSlice(
@@ -7888,37 +8110,45 @@ void lyra_rt_bit8_cell_set(void* cell, const void* value) {
 void lyra_rt_bit8_cell_arm_sampling(void* cell) {
   VariableAt<Bit8>(cell).ArmSampling();
 }
-auto lyra_rt_bit8_cell_sampled_get(void* cell) -> const void* {
-  return HandleTo(VariableAt<Bit8>(cell).SampledGet());
+auto lyra_rt_bit8_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return HandleTo(
+      VariableAt<Bit8>(cell).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_bit8_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<Bit8>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<Bit8>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit8_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<Bit8>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<Bit8>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_bit8_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<Bit8>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<Bit8>(cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit8_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<Bit8>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<Bit8>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit8_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<Bit8>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<Bit8>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_bit8_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<Bit8>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<Bit8>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit8_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit8>(cell, out);
@@ -7938,8 +8168,9 @@ void lyra_rt_bit8_ref_set(void* reference, const void* value) {
 void lyra_rt_bit8_ref_arm_sampling(void* reference) {
   RefArmSampling<Bit8>(reference);
 }
-auto lyra_rt_bit8_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<Bit8>(reference);
+auto lyra_rt_bit8_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<Bit8>(reference, SourceLocationAt(location));
 }
 auto lyra_rt_bit8_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Bit8>(reference, out);
@@ -7995,37 +8226,45 @@ void lyra_rt_bit16_cell_set(void* cell, const void* value) {
 void lyra_rt_bit16_cell_arm_sampling(void* cell) {
   VariableAt<Bit16>(cell).ArmSampling();
 }
-auto lyra_rt_bit16_cell_sampled_get(void* cell) -> const void* {
-  return HandleTo(VariableAt<Bit16>(cell).SampledGet());
+auto lyra_rt_bit16_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return HandleTo(
+      VariableAt<Bit16>(cell).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_bit16_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<Bit16>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<Bit16>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit16_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<Bit16>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<Bit16>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_bit16_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<Bit16>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<Bit16>(cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit16_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<Bit16>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<Bit16>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit16_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<Bit16>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<Bit16>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_bit16_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<Bit16>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<Bit16>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit16_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit16>(cell, out);
@@ -8045,8 +8284,9 @@ void lyra_rt_bit16_ref_set(void* reference, const void* value) {
 void lyra_rt_bit16_ref_arm_sampling(void* reference) {
   RefArmSampling<Bit16>(reference);
 }
-auto lyra_rt_bit16_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<Bit16>(reference);
+auto lyra_rt_bit16_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<Bit16>(reference, SourceLocationAt(location));
 }
 auto lyra_rt_bit16_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Bit16>(reference, out);
@@ -8102,37 +8342,45 @@ void lyra_rt_bit32_cell_set(void* cell, const void* value) {
 void lyra_rt_bit32_cell_arm_sampling(void* cell) {
   VariableAt<Bit32>(cell).ArmSampling();
 }
-auto lyra_rt_bit32_cell_sampled_get(void* cell) -> const void* {
-  return HandleTo(VariableAt<Bit32>(cell).SampledGet());
+auto lyra_rt_bit32_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return HandleTo(
+      VariableAt<Bit32>(cell).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_bit32_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<Bit32>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<Bit32>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit32_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<Bit32>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<Bit32>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_bit32_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<Bit32>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<Bit32>(cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit32_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<Bit32>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<Bit32>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit32_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<Bit32>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<Bit32>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_bit32_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<Bit32>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<Bit32>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit32_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit32>(cell, out);
@@ -8152,8 +8400,9 @@ void lyra_rt_bit32_ref_set(void* reference, const void* value) {
 void lyra_rt_bit32_ref_arm_sampling(void* reference) {
   RefArmSampling<Bit32>(reference);
 }
-auto lyra_rt_bit32_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<Bit32>(reference);
+auto lyra_rt_bit32_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<Bit32>(reference, SourceLocationAt(location));
 }
 auto lyra_rt_bit32_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Bit32>(reference, out);
@@ -8209,37 +8458,45 @@ void lyra_rt_bit64_cell_set(void* cell, const void* value) {
 void lyra_rt_bit64_cell_arm_sampling(void* cell) {
   VariableAt<Bit64>(cell).ArmSampling();
 }
-auto lyra_rt_bit64_cell_sampled_get(void* cell) -> const void* {
-  return HandleTo(VariableAt<Bit64>(cell).SampledGet());
+auto lyra_rt_bit64_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return HandleTo(
+      VariableAt<Bit64>(cell).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_bit64_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<Bit64>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<Bit64>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit64_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<Bit64>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<Bit64>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_bit64_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<Bit64>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<Bit64>(cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit64_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<Bit64>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<Bit64>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit64_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<Bit64>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<Bit64>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_bit64_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<Bit64>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<Bit64>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit64_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit64>(cell, out);
@@ -8259,8 +8516,9 @@ void lyra_rt_bit64_ref_set(void* reference, const void* value) {
 void lyra_rt_bit64_ref_arm_sampling(void* reference) {
   RefArmSampling<Bit64>(reference);
 }
-auto lyra_rt_bit64_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<Bit64>(reference);
+auto lyra_rt_bit64_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<Bit64>(reference, SourceLocationAt(location));
 }
 auto lyra_rt_bit64_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Bit64>(reference, out);
@@ -8317,37 +8575,46 @@ void lyra_rt_logic8_cell_set(void* cell, const void* value) {
 void lyra_rt_logic8_cell_arm_sampling(void* cell) {
   VariableAt<Logic8>(cell).ArmSampling();
 }
-auto lyra_rt_logic8_cell_sampled_get(void* cell) -> const void* {
-  return HandleTo(VariableAt<Logic8>(cell).SampledGet());
+auto lyra_rt_logic8_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return HandleTo(
+      VariableAt<Logic8>(cell).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_logic8_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<Logic8>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<Logic8>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic8_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<Logic8>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<Logic8>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_logic8_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<Logic8>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<Logic8>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic8_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<Logic8>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<Logic8>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic8_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<Logic8>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<Logic8>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_logic8_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<Logic8>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<Logic8>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic8_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic8>(cell, out);
@@ -8367,8 +8634,9 @@ void lyra_rt_logic8_ref_set(void* reference, const void* value) {
 void lyra_rt_logic8_ref_arm_sampling(void* reference) {
   RefArmSampling<Logic8>(reference);
 }
-auto lyra_rt_logic8_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<Logic8>(reference);
+auto lyra_rt_logic8_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<Logic8>(reference, SourceLocationAt(location));
 }
 auto lyra_rt_logic8_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Logic8>(reference, out);
@@ -8431,33 +8699,37 @@ void lyra_rt_logic8_net_initialize_retaining(
   NetOf<Logic8>(net).InitializeRetaining(fill, strength);
 }
 auto lyra_rt_logic8_net_begin_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return NetOf<Logic8>(net).BeginTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<Logic8>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic8_net_drive_takeover(
-    void* net, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
   return NetOf<Logic8>(net).DriveTakeover(
-      level, generation, Read<Logic8>(value));
+      level, generation, Read<Logic8>(value), SourceLocationAt(location));
 }
 void lyra_rt_logic8_net_end_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count) {
-  NetOf<Logic8>(net).EndTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<Logic8>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 void lyra_rt_logic8_net_arm_sampling(void* net) {
   NetOf<Logic8>(net).ArmSampling();
 }
-auto lyra_rt_logic8_net_sampled_get(void* net) -> const void* {
-  return HandleTo(NetOf<Logic8>(net).SampledGet());
+auto lyra_rt_logic8_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return HandleTo(NetOf<Logic8>(net).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_logic8_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic8>(net).AttachDriver(strength);
 }
 void lyra_rt_logic8_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
-    std::int64_t count) {
-  JoinNets<Logic8>(net, other, here, there, count);
+    std::int64_t count, const void* location) {
+  JoinNets<Logic8>(net, other, here, there, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic8_driver_get(void* driver) -> const void* {
   return &DriverOf<Logic8>(driver).Get();
@@ -8485,37 +8757,46 @@ void lyra_rt_logic16_cell_set(void* cell, const void* value) {
 void lyra_rt_logic16_cell_arm_sampling(void* cell) {
   VariableAt<Logic16>(cell).ArmSampling();
 }
-auto lyra_rt_logic16_cell_sampled_get(void* cell) -> const void* {
-  return HandleTo(VariableAt<Logic16>(cell).SampledGet());
+auto lyra_rt_logic16_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return HandleTo(
+      VariableAt<Logic16>(cell).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_logic16_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<Logic16>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<Logic16>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic16_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<Logic16>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<Logic16>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_logic16_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<Logic16>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<Logic16>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic16_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<Logic16>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<Logic16>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic16_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<Logic16>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<Logic16>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_logic16_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<Logic16>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<Logic16>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic16_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic16>(cell, out);
@@ -8535,8 +8816,9 @@ void lyra_rt_logic16_ref_set(void* reference, const void* value) {
 void lyra_rt_logic16_ref_arm_sampling(void* reference) {
   RefArmSampling<Logic16>(reference);
 }
-auto lyra_rt_logic16_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<Logic16>(reference);
+auto lyra_rt_logic16_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<Logic16>(reference, SourceLocationAt(location));
 }
 auto lyra_rt_logic16_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Logic16>(reference, out);
@@ -8600,33 +8882,37 @@ void lyra_rt_logic16_net_initialize_retaining(
   NetOf<Logic16>(net).InitializeRetaining(fill, strength);
 }
 auto lyra_rt_logic16_net_begin_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return NetOf<Logic16>(net).BeginTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<Logic16>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic16_net_drive_takeover(
-    void* net, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
   return NetOf<Logic16>(net).DriveTakeover(
-      level, generation, Read<Logic16>(value));
+      level, generation, Read<Logic16>(value), SourceLocationAt(location));
 }
 void lyra_rt_logic16_net_end_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count) {
-  NetOf<Logic16>(net).EndTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<Logic16>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 void lyra_rt_logic16_net_arm_sampling(void* net) {
   NetOf<Logic16>(net).ArmSampling();
 }
-auto lyra_rt_logic16_net_sampled_get(void* net) -> const void* {
-  return HandleTo(NetOf<Logic16>(net).SampledGet());
+auto lyra_rt_logic16_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return HandleTo(NetOf<Logic16>(net).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_logic16_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic16>(net).AttachDriver(strength);
 }
 void lyra_rt_logic16_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
-    std::int64_t count) {
-  JoinNets<Logic16>(net, other, here, there, count);
+    std::int64_t count, const void* location) {
+  JoinNets<Logic16>(net, other, here, there, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic16_driver_get(void* driver) -> const void* {
   return &DriverOf<Logic16>(driver).Get();
@@ -8654,37 +8940,46 @@ void lyra_rt_logic32_cell_set(void* cell, const void* value) {
 void lyra_rt_logic32_cell_arm_sampling(void* cell) {
   VariableAt<Logic32>(cell).ArmSampling();
 }
-auto lyra_rt_logic32_cell_sampled_get(void* cell) -> const void* {
-  return HandleTo(VariableAt<Logic32>(cell).SampledGet());
+auto lyra_rt_logic32_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return HandleTo(
+      VariableAt<Logic32>(cell).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_logic32_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<Logic32>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<Logic32>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic32_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<Logic32>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<Logic32>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_logic32_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<Logic32>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<Logic32>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic32_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<Logic32>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<Logic32>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic32_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<Logic32>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<Logic32>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_logic32_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<Logic32>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<Logic32>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic32_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic32>(cell, out);
@@ -8704,8 +8999,9 @@ void lyra_rt_logic32_ref_set(void* reference, const void* value) {
 void lyra_rt_logic32_ref_arm_sampling(void* reference) {
   RefArmSampling<Logic32>(reference);
 }
-auto lyra_rt_logic32_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<Logic32>(reference);
+auto lyra_rt_logic32_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<Logic32>(reference, SourceLocationAt(location));
 }
 auto lyra_rt_logic32_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Logic32>(reference, out);
@@ -8769,33 +9065,37 @@ void lyra_rt_logic32_net_initialize_retaining(
   NetOf<Logic32>(net).InitializeRetaining(fill, strength);
 }
 auto lyra_rt_logic32_net_begin_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return NetOf<Logic32>(net).BeginTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<Logic32>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic32_net_drive_takeover(
-    void* net, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
   return NetOf<Logic32>(net).DriveTakeover(
-      level, generation, Read<Logic32>(value));
+      level, generation, Read<Logic32>(value), SourceLocationAt(location));
 }
 void lyra_rt_logic32_net_end_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count) {
-  NetOf<Logic32>(net).EndTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<Logic32>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 void lyra_rt_logic32_net_arm_sampling(void* net) {
   NetOf<Logic32>(net).ArmSampling();
 }
-auto lyra_rt_logic32_net_sampled_get(void* net) -> const void* {
-  return HandleTo(NetOf<Logic32>(net).SampledGet());
+auto lyra_rt_logic32_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return HandleTo(NetOf<Logic32>(net).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_logic32_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic32>(net).AttachDriver(strength);
 }
 void lyra_rt_logic32_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
-    std::int64_t count) {
-  JoinNets<Logic32>(net, other, here, there, count);
+    std::int64_t count, const void* location) {
+  JoinNets<Logic32>(net, other, here, there, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic32_driver_get(void* driver) -> const void* {
   return &DriverOf<Logic32>(driver).Get();
@@ -8823,37 +9123,46 @@ void lyra_rt_logic64_cell_set(void* cell, const void* value) {
 void lyra_rt_logic64_cell_arm_sampling(void* cell) {
   VariableAt<Logic64>(cell).ArmSampling();
 }
-auto lyra_rt_logic64_cell_sampled_get(void* cell) -> const void* {
-  return HandleTo(VariableAt<Logic64>(cell).SampledGet());
+auto lyra_rt_logic64_cell_sampled_get(void* cell, const void* location) -> const
+    void* {
+  return HandleTo(
+      VariableAt<Logic64>(cell).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_logic64_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return CellBeginTakeover<Logic64>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return CellBeginTakeover<Logic64>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic64_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return CellDriveTakeover<Logic64>(cell, level, generation, value);
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return CellDriveTakeover<Logic64>(
+      cell, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_logic64_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  CellEndTakeover<Logic64>(cell, level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  CellEndTakeover<Logic64>(
+      cell, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic64_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return RefBeginTakeover<Logic64>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return RefBeginTakeover<Logic64>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic64_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
-  return RefDriveTakeover<Logic64>(reference, level, generation, value);
+    const void* value, const void* location) -> bool {
+  return RefDriveTakeover<Logic64>(
+      reference, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_logic64_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
-  RefEndTakeover<Logic64>(reference, level, first, count);
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  RefEndTakeover<Logic64>(
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic64_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic64>(cell, out);
@@ -8873,8 +9182,9 @@ void lyra_rt_logic64_ref_set(void* reference, const void* value) {
 void lyra_rt_logic64_ref_arm_sampling(void* reference) {
   RefArmSampling<Logic64>(reference);
 }
-auto lyra_rt_logic64_ref_sampled_get(void* reference) -> const void* {
-  return RefSampledGet<Logic64>(reference);
+auto lyra_rt_logic64_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return RefSampledGet<Logic64>(reference, SourceLocationAt(location));
 }
 auto lyra_rt_logic64_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Logic64>(reference, out);
@@ -8938,33 +9248,37 @@ void lyra_rt_logic64_net_initialize_retaining(
   NetOf<Logic64>(net).InitializeRetaining(fill, strength);
 }
 auto lyra_rt_logic64_net_begin_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return NetOf<Logic64>(net).BeginTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<Logic64>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic64_net_drive_takeover(
-    void* net, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
   return NetOf<Logic64>(net).DriveTakeover(
-      level, generation, Read<Logic64>(value));
+      level, generation, Read<Logic64>(value), SourceLocationAt(location));
 }
 void lyra_rt_logic64_net_end_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count) {
-  NetOf<Logic64>(net).EndTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<Logic64>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 void lyra_rt_logic64_net_arm_sampling(void* net) {
   NetOf<Logic64>(net).ArmSampling();
 }
-auto lyra_rt_logic64_net_sampled_get(void* net) -> const void* {
-  return HandleTo(NetOf<Logic64>(net).SampledGet());
+auto lyra_rt_logic64_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return HandleTo(NetOf<Logic64>(net).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_logic64_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic64>(net).AttachDriver(strength);
 }
 void lyra_rt_logic64_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
-    std::int64_t count) {
-  JoinNets<Logic64>(net, other, here, there, count);
+    std::int64_t count, const void* location) {
+  JoinNets<Logic64>(net, other, here, there, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic64_driver_get(void* driver) -> const void* {
   return &DriverOf<Logic64>(driver).Get();
@@ -8993,42 +9307,47 @@ void lyra_rt_bit_wide_cell_set(void* cell, const void* value) {
 void lyra_rt_bit_wide_cell_arm_sampling(void* cell) {
   lyra::runtime::VariableAt<BitWide>(cell).ArmSampling();
 }
-auto lyra_rt_bit_wide_cell_sampled_get(void* cell) -> const void* {
-  return lyra::runtime::VariableAt<BitWide>(cell).SampledBytes();
+auto lyra_rt_bit_wide_cell_sampled_get(void* cell, const void* location)
+    -> const void* {
+  return lyra::runtime::VariableAt<BitWide>(cell).SampledBytes(
+      SourceLocationAt(location));
 }
 auto lyra_rt_bit_wide_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
   return lyra::runtime::VariableAt<BitWide>(cell).BeginTakeover(
-      level, first, count);
+      level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit_wide_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
   return lyra::runtime::VariableAt<BitWide>(cell).DriveTakeoverBytes(
-      level, generation, value);
+      level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_bit_wide_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  lyra::runtime::VariableAt<BitWide>(cell).EndTakeover(level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  lyra::runtime::VariableAt<BitWide>(cell).EndTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit_wide_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
   return lyra::runtime::WideRefBeginTakeover<BitWide>(
-      reference, level, first, count);
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_bit_wide_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
+    const void* value, const void* location) -> bool {
   return lyra::runtime::WideRefDriveTakeover<BitWide>(
-      reference, level, generation, value);
+      reference, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_bit_wide_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
   lyra::runtime::EndTakeoverThrough<lyra::runtime::VariableOf<BitWide>::Type>(
-      lyra::runtime::ErasedAt(reference), level, first, count);
+      lyra::runtime::ErasedAt(reference), level, first, count,
+      SourceLocationAt(location));
 }
 auto lyra_rt_bit_wide_cell_refer(void* cell, void* out) -> void* {
   return lyra::runtime::ReferToCell<BitWide>(cell, out);
@@ -9049,8 +9368,9 @@ void lyra_rt_bit_wide_ref_set(
 void lyra_rt_bit_wide_ref_arm_sampling(void* reference) {
   ArmWholeVariable<lyra::runtime::VariableOf<BitWide>::Type>(reference);
 }
-auto lyra_rt_bit_wide_ref_sampled_get(void* reference) -> const void* {
-  return TailRefSampledGet<BitWide>(reference);
+auto lyra_rt_bit_wide_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return TailRefSampledGet<BitWide>(reference, SourceLocationAt(location));
 }
 auto lyra_rt_bit_wide_ref_open_for_write(
     void* reference, std::int64_t width, void* out) -> void* {
@@ -9118,42 +9438,47 @@ void lyra_rt_logic_wide_cell_set(void* cell, const void* value) {
 void lyra_rt_logic_wide_cell_arm_sampling(void* cell) {
   lyra::runtime::VariableAt<LogicWide>(cell).ArmSampling();
 }
-auto lyra_rt_logic_wide_cell_sampled_get(void* cell) -> const void* {
-  return lyra::runtime::VariableAt<LogicWide>(cell).SampledBytes();
+auto lyra_rt_logic_wide_cell_sampled_get(void* cell, const void* location)
+    -> const void* {
+  return lyra::runtime::VariableAt<LogicWide>(cell).SampledBytes(
+      SourceLocationAt(location));
 }
 auto lyra_rt_logic_wide_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
   return lyra::runtime::VariableAt<LogicWide>(cell).BeginTakeover(
-      level, first, count);
+      level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic_wide_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
   return lyra::runtime::VariableAt<LogicWide>(cell).DriveTakeoverBytes(
-      level, generation, value);
+      level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_logic_wide_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count) {
-  lyra::runtime::VariableAt<LogicWide>(cell).EndTakeover(level, first, count);
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  lyra::runtime::VariableAt<LogicWide>(cell).EndTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic_wide_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
   return lyra::runtime::WideRefBeginTakeover<LogicWide>(
-      reference, level, first, count);
+      reference, level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic_wide_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
-    const void* value) -> bool {
+    const void* value, const void* location) -> bool {
   return lyra::runtime::WideRefDriveTakeover<LogicWide>(
-      reference, level, generation, value);
+      reference, level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_logic_wide_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first,
-    std::int64_t count) {
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
   lyra::runtime::EndTakeoverThrough<lyra::runtime::VariableOf<LogicWide>::Type>(
-      lyra::runtime::ErasedAt(reference), level, first, count);
+      lyra::runtime::ErasedAt(reference), level, first, count,
+      SourceLocationAt(location));
 }
 auto lyra_rt_logic_wide_cell_refer(void* cell, void* out) -> void* {
   return lyra::runtime::ReferToCell<LogicWide>(cell, out);
@@ -9175,8 +9500,9 @@ void lyra_rt_logic_wide_ref_set(
 void lyra_rt_logic_wide_ref_arm_sampling(void* reference) {
   ArmWholeVariable<lyra::runtime::VariableOf<LogicWide>::Type>(reference);
 }
-auto lyra_rt_logic_wide_ref_sampled_get(void* reference) -> const void* {
-  return TailRefSampledGet<LogicWide>(reference);
+auto lyra_rt_logic_wide_ref_sampled_get(void* reference, const void* location)
+    -> const void* {
+  return TailRefSampledGet<LogicWide>(reference, SourceLocationAt(location));
 }
 auto lyra_rt_logic_wide_ref_open_for_write(
     void* reference, std::int64_t width, void* out) -> void* {
@@ -9250,24 +9576,29 @@ void lyra_rt_logic_wide_net_initialize_retaining(
   NetOf<LogicWide>(net).InitializeRetaining(fill, strength);
 }
 auto lyra_rt_logic_wide_net_begin_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count)
-    -> std::int64_t {
-  return NetOf<LogicWide>(net).BeginTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<LogicWide>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic_wide_net_drive_takeover(
-    void* net, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return NetOf<LogicWide>(net).DriveTakeoverBytes(level, generation, value);
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return NetOf<LogicWide>(net).DriveTakeoverBytes(
+      level, generation, value, SourceLocationAt(location));
 }
 void lyra_rt_logic_wide_net_end_takeover(
-    void* net, std::int64_t level, std::int64_t first, std::int64_t count) {
-  NetOf<LogicWide>(net).EndTakeover(level, first, count);
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<LogicWide>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
 }
 void lyra_rt_logic_wide_net_arm_sampling(void* net) {
   NetOf<LogicWide>(net).ArmSampling();
 }
-auto lyra_rt_logic_wide_net_sampled_get(void* net) -> const void* {
-  return HandleTo(NetOf<LogicWide>(net).SampledGet());
+auto lyra_rt_logic_wide_net_sampled_get(void* net, const void* location)
+    -> const void* {
+  return HandleTo(NetOf<LogicWide>(net).SampledGet(SourceLocationAt(location)));
 }
 auto lyra_rt_logic_wide_attach_driver(void* net, std::int64_t strength)
     -> void* {
@@ -9275,8 +9606,9 @@ auto lyra_rt_logic_wide_attach_driver(void* net, std::int64_t strength)
 }
 void lyra_rt_logic_wide_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
-    std::int64_t count) {
-  JoinNets<LogicWide>(net, other, here, there, count);
+    std::int64_t count, const void* location) {
+  JoinNets<LogicWide>(
+      net, other, here, there, count, SourceLocationAt(location));
 }
 auto lyra_rt_logic_wide_driver_get(void* driver) -> const void* {
   return DriverOf<LogicWide>(driver).Bytes();

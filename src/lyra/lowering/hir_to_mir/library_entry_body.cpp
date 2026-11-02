@@ -41,6 +41,12 @@ auto EntryBody(
   }
   code.result_type = prototype.result;
   const mir::LocalId handed = code.params.front();
+  // A callable reporting at its caller is entered through an entry that does
+  // the same: what the entry was handed is what the callable is handed, which
+  // the call it makes states as its own location.
+  if (cls.callables.Get(callable).code.caller_location.has_value()) {
+    code.caller_location = code.params.back();
+  }
 
   mir::Builder body(code.Body(), diag::SourceSpan{});
   const mir::ExprId self = body.Add(
@@ -52,7 +58,9 @@ auto EntryBody(
           .type = cls.self_pointer_type});
   std::vector<mir::ExprId> args;
   for (const mir::LocalId param : std::span{code.params}.subspan(1)) {
-    args.push_back(body.ReadLocal(param, code.locals.Get(param).type));
+    if (code.caller_location != param) {
+      args.push_back(body.ReadLocal(param, code.locals.Get(param).type));
+    }
   }
   const mir::ExprId call = body.Add(
       mir::Expr{

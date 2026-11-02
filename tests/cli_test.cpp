@@ -1489,6 +1489,550 @@ TEST(LyraManifest, ReportsNoInputAndWhyThereIsNone) {
       << declared.stderr_text;
 }
 
+// A report a running design makes is placed at the statement that failed (LRM
+// 20.10 asks this of a severity task, and a run-time error of the design is
+// reported the same way): a null handle reached inside a constructor or after
+// a wait, and a severity task, each name their own line, and a report raised
+// inside the tool's own text -- the library classes of LRM 15 -- names the
+// design's call that reached it, since the library's lines mean nothing to
+// whoever wrote the call. Both backends place every report alike.
+TEST(LyraRun, AReportIsPlacedAtTheStatementThatMadeIt) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  // Each report placed at the statement that made it, however deep in the
+  // library it is raised -- a growth of a bounded queue, a load that cannot
+  // open its file -- or however late, as a `unique` violation reported where
+  // the time step's checks mature (LRM 12.4.2.1).
+  WriteFile(
+      *tmp_or / "placed.sv",
+      "class D;\n"
+      "  int v;\n"
+      "  virtual function int vf();\n"
+      "    return v;\n"
+      "  endfunction\n"
+      "endclass\n"
+      "module Test;\n"
+      "  typedef enum {A, B} e_t;\n"
+      "  semaphore s = new(1);\n"
+      "  int q[$:1];\n"
+      "  int m[2];\n"
+      "  int x = 2;\n"
+      "  e_t e;\n"
+      "  D d;\n"
+      "  initial begin\n"
+      "    $info(\"first\");\n"
+      "    $warning(\"second\");\n"
+      "    s.get(-1);\n"
+      "    q.push_back(1);\n"
+      "    q.push_back(2);\n"
+      "    q.push_back(3);\n"
+      "    $readmemh(\"no_such_file.mem\", m);\n"
+      "    unique case (x)\n"
+      "      0: ;\n"
+      "      1: ;\n"
+      "    endcase\n"
+      "    assert (x == 0);\n"
+      "    $cast(e, 5);\n"
+      "    #1;\n"
+      "    $display(\"%0d\", d.vf());\n"
+      "  end\n"
+      "endmodule\n");
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Test placed.sv", backend));
+    EXPECT_THAT(run, ExitedWithCode(Ne(0)))
+        << backend << ": " << run.stderr_text;
+    for (const std::string_view placed :
+         {"placed.sv:16:5: info: first\nnote: in 'Test' at time 0",
+          "placed.sv:17:5: warning: second\nnote: in 'Test' at time 0",
+          "placed.sv:18:5: error: a 'semaphore' cannot be asked for a negative "
+          "number of keys\nnote: in 'Test' at time 0",
+          "placed.sv:21:5: warning: a bounded queue grew past its declared "
+          "bound, and the elements past it were dropped\nnote: in 'Test' at "
+          "time 0",
+          "placed.sv:22:5: error: '$readmemh' cannot open the file "
+          "'no_such_file.mem'\nnote: in 'Test' at time 0",
+          "placed.sv:23:5: warning: 'unique' violation; no case item "
+          "matched\nnote: in 'Test' at time 0",
+          "placed.sv:27:5: error: assertion failed\nnote: in 'Test' at time 0",
+          "placed.sv:28:5: error: the '$cast' assignment is invalid, so the "
+          "destination is left unchanged\nnote: in 'Test' at time 0",
+          "placed.sv:30:21: error: a member reached through a null object "
+          "handle\nnote: in 'Test' at time 1"}) {
+      EXPECT_NE(run.stderr_text.find(placed), std::string::npos)
+          << backend << ": no '" << placed << "' in: " << run.stderr_text;
+    }
+  }
+
+  // A null handle reached inside a constructor names the constructor's line.
+  WriteFile(
+      *tmp_or / "constructed.sv",
+      "class D; int v; endclass\n"
+      "class C;\n"
+      "  D d;\n"
+      "  function new();\n"
+      "    d.v = 1;\n"
+      "  endfunction\n"
+      "endclass\n"
+      "module Test;\n"
+      "  C c;\n"
+      "  initial begin\n"
+      "    #2;\n"
+      "    c = new;\n"
+      "  end\n"
+      "endmodule\n");
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Test constructed.sv", backend));
+    EXPECT_THAT(run, ExitedWithCode(Ne(0)))
+        << backend << ": " << run.stderr_text;
+    EXPECT_NE(
+        run.stderr_text.find(
+            "constructed.sv:5:5: error: a member reached through a null "
+            "object handle\nnote: in 'Test' at time 2"),
+        std::string::npos)
+        << backend << ": " << run.stderr_text;
+  }
+}
+
+// A dump file that cannot be opened fails the task that asked for it, at the
+// end of its time step, and what else that time step asked of the dump finds
+// none (LRM 21.7.1.2, 21.7.3.1).
+TEST(LyraRun, ADumpThatCannotBeOpenedFailsTheTaskThatAskedForIt) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "dump_refused.sv",
+      "module Test;\n"
+      "  initial begin\n"
+      "    $dumpfile(\"no_such_dir/x.vcd\");\n"
+      "    $dumpvars;\n"
+      "    $dumpoff;\n"
+      "    $dumpports(Test, \"no_such_dir/x.evcd\");\n"
+      "    $dumpportsoff(\"no_such_dir/x.evcd\");\n"
+      "  end\n"
+      "endmodule\n");
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Test dump_refused.sv", backend));
+    EXPECT_THAT(run, ExitedWithCode(1)) << backend << ": " << run.stderr_text;
+    for (const std::string_view placed :
+         {"dump_refused.sv:4:5: error: the dump file 'no_such_dir/x.vcd' could "
+          "not be opened",
+          "dump_refused.sv:6:5: error: the dump file 'no_such_dir/x.evcd' "
+          "could not be opened"}) {
+      EXPECT_NE(run.stderr_text.find(placed), std::string::npos)
+          << backend << ": no '" << placed << "' in: " << run.stderr_text;
+    }
+  }
+}
+
+// Work a process deferred runs while no process does, often after that
+// process has ended, and its report names the instance of the procedure that
+// made it all the same (LRM 20.10): a nonblocking update, one a fork made, a
+// `$strobe` argument, a dump starting at the end of the time step (LRM 21.7),
+// a tick of the property an `expect` waits for (LRM 16.17), whichever
+// instance's process the tick's clock moved under, and a continuous
+// assignment's delayed propagation (LRM 10.3.3). The coverage database,
+// written once the run is over (LRM 19.9), is reported at the covergroup whose
+// data it could not keep, in that covergroup's instance.
+TEST(LyraRun, DeferredWorkReportsAtTheStatementThatDeferredIt) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto in_an_instance = [](std::string_view body) {
+    return std::format(
+        "class C;\n"
+        "  int v;\n"
+        "endclass\n"
+        "module Sub;\n"
+        "  C nul;\n"
+        "  int q[$:1];\n"
+        "  int big[$] = {{1, 2, 3}};\n"
+        "  int d[];\n"
+        "{}"
+        "endmodule\n"
+        "module Test;\n"
+        "  bit clk;\n"
+        "  Sub s();\n"
+        "  initial #1 clk = 1;\n"
+        "endmodule\n",
+        body);
+  };
+  const std::string grew =
+      "warning: a bounded queue grew past its declared bound, and the elements "
+      "past it were dropped\nnote: in 'Test.s' at time 0";
+  const std::string null_handle =
+      "error: a member reached through a null object handle\nnote: in 'Test.s' "
+      "at time 0";
+  struct DeferredWork {
+    std::string_view file;
+    std::string_view body;
+    std::string report;
+  };
+  const std::array<DeferredWork, 10> deferred_work{{
+      {.file = "update.sv",
+       .body = "  initial q <= big;\n",
+       .report = "update.sv:9:11: " + grew},
+      {.file = "null_update.sv",
+       .body = "  initial nul.v <= 1;\n",
+       .report = "null_update.sv:9:11: " + null_handle},
+      {.file = "fork_update.sv",
+       .body = "  initial begin\n"
+               "    fork\n"
+               "      q <= big;\n"
+               "    join_none\n"
+               "  end\n",
+       .report = "fork_update.sv:11:7: " + grew},
+      {.file = "fork_null_update.sv",
+       .body = "  initial begin\n"
+               "    fork\n"
+               "      nul.v <= 1;\n"
+               "    join_none\n"
+               "  end\n",
+       .report = "fork_null_update.sv:11:7: " + null_handle},
+      {.file = "strobe.sv",
+       .body = "  initial begin\n"
+               "    d = new[3];\n"
+               "    $strobe(\"%0d\", int'({<<{d}}));\n"
+               "  end\n",
+       .report = "strobe.sv:11:20: error: a bit-stream cast's operand does not "
+                 "hold as many bits as its type\nnote: in 'Test.s' at time 0"},
+      {.file = "dumpvars.sv",
+       .body = "  initial begin\n"
+               "    $dumpfile(\"/no/such/dir/x.vcd\");\n"
+               "    $dumpvars;\n"
+               "  end\n",
+       .report = "dumpvars.sv:11:5: error: the dump file '/no/such/dir/x.vcd' "
+                 "could not be opened\nnote: in 'Test.s' at time 0"},
+      {.file = "dumpports.sv",
+       .body = "  initial $dumpports(Test.s, \"/no/such/dir/x.evcd\");\n",
+       .report = "dumpports.sv:9:11: error: the dump file "
+                 "'/no/such/dir/x.evcd' could not be opened\nnote: in 'Test.s' "
+                 "at time 0"},
+      {.file = "delayed_assign.sv",
+       .body = "  assign #1 q = big;\n",
+       .report = "delayed_assign.sv:9:13: warning: a bounded queue grew past "
+                 "its declared bound, and the elements past it were dropped\n"
+                 "note: in 'Test.s' at time 1"},
+      {.file = "coverage_database.sv",
+       .body = "  bit on;\n"
+               "  covergroup cg;\n"
+               "    coverpoint on;\n"
+               "  endgroup\n"
+               "  cg g = new;\n"
+               "  initial $set_coverage_db_name(\"/no/such/dir/x.db\");\n",
+       .report = "coverage_database.sv:10:14: warning: cannot write the "
+                 "coverage database '/no/such/dir/x.db'\nnote: in 'Test.s' at "
+                 "time 1"},
+      {.file = "expect.sv",
+       .body = "  initial begin\n"
+               "    d = new[3];\n"
+               "    expect (@(posedge Test.clk) int'({<<{d}}) == 1);\n"
+               "  end\n",
+       .report = "expect.sv:11:33: error: a bit-stream cast's operand does not "
+                 "hold as many bits as its type\nnote: in 'Test.s' at time 1"},
+  }};
+  for (const DeferredWork& work : deferred_work) {
+    WriteFile(*tmp_or / work.file, in_an_instance(work.body));
+    for (const std::string_view backend : {"llvm", "cpp"}) {
+      const auto run = RunLyraFrom(
+          lyra, *tmp_or,
+          std::format("run --backend {} --top Test {}", backend, work.file));
+      EXPECT_NE(run.stderr_text.find(work.report), std::string::npos)
+          << backend << ": no '" << work.report << "' in: " << run.stderr_text;
+    }
+  }
+}
+
+// Every way a design writes to a bounded queue (LRM 7.10.5), each dropping
+// elements and each said once, at the statement that wrote: a conversion the
+// source never spells included, reached through a type's own operations or
+// not, a declaration's initial value, which no process runs, and a
+// property's, which a constructor runs.
+TEST(LyraRun, AWriteToABoundedQueueIsReportedOnceWhereItWasWritten) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "bounded.sv",
+      "typedef struct { int q[$:1]; } S;\n"
+      "typedef int Bounded[$:1];\n"
+      "function automatic Bounded made(int source[$]);\n"
+      "  return source;\n"
+      "endfunction\n"
+      "function automatic void taken(input Bounded b);\n"
+      "endfunction\n"
+      "module Test;\n"
+      "  int declared[$:1] = {1, 2, 3};\n"
+      "  int big[$] = {1, 2, 3};\n"
+      "  int inner[$:1];\n"
+      "  int nested[$][$:1];\n"
+      "  int free_nested[$][$];\n"
+      "  S s;\n"
+      "  Bounded each[2];\n"
+      "  initial begin\n"
+      "    inner = big;\n"
+      "    inner = '{1, 2, 3};\n"
+      "    inner = {big, 4};\n"
+      "    s.q = big;\n"
+      "    each[1] = big;\n"
+      "    inner = {1, 2};\n"
+      "    inner.insert(0, 5);\n"
+      "    inner = {1, 2};\n"
+      "    inner[2] = 5;\n"
+      "    inner = big[0:2];\n"
+      "    inner = made(big);\n"
+      "    taken(big);\n"
+      "    free_nested = '{'{1, 2, 3}};\n"
+      "    nested = free_nested;\n"
+      "    inner = {1, 2};\n"
+      "    inner.push_front(5);\n"
+      "    {>>{inner}} = 96'h0;\n"
+      "    inner = {1, 2};\n"
+      "    {>>{inner with [0:4]}} = 160'h0;\n"
+      "    inner = {1, 2};\n"
+      "    touched(inner[2]);\n"
+      "  end\n"
+      "  class Held;\n"
+      "    static int source[$:5] = {1, 2, 3, 4};\n"
+      "    int kept[$:1] = source;\n"
+      "  endclass\n"
+      "  Held held;\n"
+      "  initial held = new;\n"
+      "  function automatic void touched(ref int element);\n"
+      "    element = 1;\n"
+      "  endfunction\n"
+      "endmodule\n");
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Test bounded.sv", backend));
+    EXPECT_THAT(run, ExitedWithCode(0)) << backend << ": " << run.stderr_text;
+    const std::string dropped =
+        ": warning: a bounded queue grew past its declared bound, and the "
+        "elements past it were dropped\n";
+    EXPECT_EQ(
+        run.stderr_text,
+        std::format("bounded.sv:9:23{0}note: in 'Test' at time 0\n", dropped) +
+            std::format(
+                "bounded.sv:17:13{0}note: in 'Test' at time 0\n"
+                "bounded.sv:18:13{0}note: in 'Test' at time 0\n"
+                "bounded.sv:19:13{0}note: in 'Test' at time 0\n"
+                "bounded.sv:20:11{0}note: in 'Test' at time 0\n"
+                "bounded.sv:21:15{0}note: in 'Test' at time 0\n"
+                "bounded.sv:23:5{0}note: in 'Test' at time 0\n"
+                "bounded.sv:25:5{0}note: in 'Test' at time 0\n"
+                "bounded.sv:26:13{0}note: in 'Test' at time 0\n"
+                "bounded.sv:4:10{0}note: in 'Test' at time 0\n"
+                "bounded.sv:28:11{0}note: in 'Test' at time 0\n"
+                "bounded.sv:30:14{0}note: in 'Test' at time 0\n"
+                "bounded.sv:32:5{0}note: in 'Test' at time 0\n"
+                "bounded.sv:33:5{0}note: in 'Test' at time 0\n"
+                "bounded.sv:35:5{0}note: in 'Test' at time 0\n"
+                "bounded.sv:37:5{0}note: in 'Test' at time 0\n"
+                "bounded.sv:41:21{0}note: in 'Test' at time 0\n",
+                dropped))
+        << backend;
+  }
+}
+
+// A failure found under a type's table names the statement all the same: a
+// stream read into a queue of structures, whose elements the library builds
+// through the table, drops what a queue in one cannot hold (LRM 7.10.5), and
+// a count over a queue of structures reaches a handle it cannot read as bits.
+// The table's functions are handed no place, on either backend.
+TEST(LyraRun, AFailureUnderATypesTableNamesTheStatement) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "under_a_table.sv",
+      "typedef struct { int q[$:1]; } S;\n"
+      "class C;\n"
+      "endclass\n"
+      "typedef struct { C c; } H;\n"
+      "module Test;\n"
+      "  S list[$];\n"
+      "  H held[$];\n"
+      "  int bits[$] = {1, 2, 3};\n"
+      "  initial begin\n"
+      "    automatic int n;\n"
+      "    list = {<<{bits}};\n"
+      "    held.push_back('{c: null});\n"
+      "    n = $countbits(held, '1);\n"
+      "  end\n"
+      "endmodule\n");
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Test under_a_table.sv", backend));
+    EXPECT_THAT(run, ExitedWithCode(Ne(0)))
+        << backend << ": " << run.stderr_text;
+    EXPECT_EQ(
+        run.stderr_text,
+        "under_a_table.sv:11:12: warning: a bounded queue grew past its "
+        "declared bound, and the elements past it were dropped\n"
+        "note: in 'Test' at time 0\n"
+        "under_a_table.sv:13:9: error: reading a class object as a stream of "
+        "bits is not yet supported\n"
+        "note: in 'Test' at time 0\n")
+        << backend;
+  }
+}
+
+// A write to a queue's slice of another count than the array written fails
+// the design there, at the statement a process wrote and at one a function
+// wrote alike (LRM 7.6, 7.10.1).
+TEST(LyraRun, AQueueSliceOfAnotherCountFailsWhereItWasWritten) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "slice_in_process.sv",
+      "module Test;\n"
+      "  int q[$] = {1, 2, 3};\n"
+      "  int big[$] = {1, 2, 3};\n"
+      "  initial q[0:1] = big;\n"
+      "endmodule\n");
+  WriteFile(
+      *tmp_or / "slice_in_function.sv",
+      "module Test;\n"
+      "  int q[$] = {1, 2, 3};\n"
+      "  int big[$] = {1, 2, 3};\n"
+      "  function automatic void write();\n"
+      "    q[0:1] = big;\n"
+      "  endfunction\n"
+      "  initial write();\n"
+      "endmodule\n");
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    for (const auto& [file, placed] :
+         {std::pair{"slice_in_process.sv", "slice_in_process.sv:4:11"},
+          std::pair{"slice_in_function.sv", "slice_in_function.sv:5:5"}}) {
+      const auto run = RunLyraFrom(
+          lyra, *tmp_or,
+          std::format("run --backend {} --top Test {}", backend, file));
+      EXPECT_THAT(run, ExitedWithCode(Ne(0)))
+          << backend << ": " << run.stderr_text;
+      EXPECT_NE(
+          run.stderr_text.find(
+              std::format(
+                  "{}: error: a slice of a queue holding 2 elements cannot be "
+                  "assigned an array of 3",
+                  placed)),
+          std::string::npos)
+          << backend << ": " << run.stderr_text;
+    }
+  }
+}
+
+// A report names the file `__FILE__ names at that place (LRM 20.10, 22.13),
+// a path where the design was named by one, and what a `line directive states
+// once one has.
+TEST(LyraRun, AReportNamesTheFileItsPlaceExpandsTo) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  std::filesystem::create_directories(*tmp_or / "rtl");
+  WriteFile(
+      *tmp_or / "rtl" / "named.sv",
+      "module Test;\n"
+      "  initial begin\n"
+      "    $display(\"%s\", `__FILE__);\n"
+      "    $info(\"here\");\n"
+      "`line 40 \"elsewhere.sv\" 0\n"
+      "    $display(\"%s\", `__FILE__);\n"
+      "    $info(\"there\");\n"
+      "  end\n"
+      "endmodule\n");
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Test rtl/named.sv", backend));
+    EXPECT_THAT(run, ExitedWithCode(0)) << backend << ": " << run.stderr_text;
+    EXPECT_NE(
+        run.stdout_text.find("rtl/named.sv\nelsewhere.sv\n"), std::string::npos)
+        << backend << ": " << run.stdout_text;
+    EXPECT_NE(
+        run.stderr_text.find("rtl/named.sv:4:5: info: here"), std::string::npos)
+        << backend << ": " << run.stderr_text;
+    EXPECT_NE(
+        run.stderr_text.find("elsewhere.sv:41:5: info: there"),
+        std::string::npos)
+        << backend << ": " << run.stderr_text;
+  }
+}
+
+// A cover statement is one goal however many specializations of its module
+// reach it (LRM 16.3), though each states the place as a constant of its own.
+TEST(LyraRun, ACoverStatementIsOneGoalAcrossSpecializations) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "cover.sv",
+      "module M #(parameter int W = 1);\n"
+      "  logic [W-1:0] x = '0;\n"
+      "  initial cover ($bits(x) == 1);\n"
+      "endmodule\n"
+      "module Test;\n"
+      "  M #(.W(1)) a();\n"
+      "  M #(.W(9)) b();\n"
+      "endmodule\n");
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Test cover.sv", backend));
+    EXPECT_THAT(run, ExitedWithCode(0)) << backend << ": " << run.stderr_text;
+    EXPECT_EQ(
+        run.stdout_text, "cover.sv:3:11: cover evaluated 2, succeeded 1\n")
+        << backend;
+  }
+}
+
+// A unit states another unit's class by its declaration, which has no body to
+// show: the class's constructor among its members.
+TEST(LyraDump, AUnitStatingAnotherUnitsClassCanBeDumped) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "declared.sv",
+      "class C;\n"
+      "  int x;\n"
+      "endclass\n"
+      "module Test;\n"
+      "  C c;\n"
+      "  initial c.x = 1;\n"
+      "endmodule\n");
+  const auto run =
+      RunLyraFrom(lyra, *tmp_or, "dump mir --top Test declared.sv");
+  EXPECT_THAT(run, ExitedWithCode(0)) << run.stderr_text;
+}
+
 // A run-time error of the design ends the simulation the way $fatal does (LRM
 // 20.10), so the run reaches the end of simulation time and its final
 // procedures execute there (LRM 9.2.3). The corpus cannot state this: a case
@@ -1530,10 +2074,10 @@ TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
       run.stderr_text.find("a dynamic array's new[] is negative"),
       std::string::npos)
       << run.stderr_text;
-  // The error has no call site to name, so it is placed at the procedure it
-  // was raised under: the `initial` that called the task.
+  // The error is placed at the `new[]` that failed, inside the task, and not
+  // at the procedure that called it.
   EXPECT_NE(
-      run.stderr_text.find("test.sv:7:3: error: the size given"),
+      run.stderr_text.find("test.sv:5:11: error: the size given"),
       std::string::npos)
       << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("reached the end"), std::string::npos)
@@ -1991,6 +2535,45 @@ TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
   }
 }
 
+// Work a process deferred runs while no process does, and a run stopped inside
+// it was running the procedure that deferred it.
+TEST(LyraRun, ARunStoppedInDeferredWorkSaysWhichProcedureDeferredIt) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  bit gate, toggled;\n"
+                     << "  function automatic int spin();\n"
+                     << "    while (!gate) toggled = ~toggled;\n"
+                     << "    return 0;\n"
+                     << "  endfunction\n"
+                     << "  initial $strobe(\"%0d\", spin());\n"
+                     << "endmodule\n";
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto program = *tmp_or / std::format("program_{}", backend);
+    const auto built = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "build --backend {} --top Test -o '{}' test.sv", backend,
+            program.string()));
+    ASSERT_THAT(built, ExitedWithCode(0))
+        << backend << ": " << built.stderr_text;
+
+    const auto run =
+        RunChildProcess(program, {}, std::chrono::seconds{2}, *tmp_or);
+    EXPECT_TRUE(std::holds_alternative<TimedOut>(run.end))
+        << backend << ": " << Describe(run.end) << "\n"
+        << run.stderr_text;
+    EXPECT_NE(
+        run.stderr_text.find("test.sv:7:3: note: this procedure was running"),
+        std::string::npos)
+        << backend << ": " << run.stderr_text;
+  }
+}
+
 // Foreign code writes the process's standard output through the C library
 // (LRM 35), and the design writes it through the runtime, so what the two
 // print comes out in the order it was printed only if each hands what it holds
@@ -2036,6 +2619,98 @@ TEST(LyraRun, TheDesignsOutputAndForeignOutputKeepTheirOrder) {
         "1 the design\n2 foreign code\n3 the design, called back\n"
         "4 foreign code again\n5 the design again\n")
         << backend << ": " << run.stdout_text;
+  }
+}
+
+// What foreign code does wrong under a `context` import is placed at the
+// design's call of that import, the nearest statement the design wrote (LRM
+// Annex H.9.3).
+TEST(LyraRun, AFailureOfForeignCodeIsPlacedAtTheImportCall) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  struct Failure {
+    std::string_view design;
+    std::string_view scope_set;
+    std::string_view report;
+  };
+  constexpr std::string_view kInAModule =
+      "module Sub;\n"
+      "endmodule\n"
+      "module Test;\n"
+      "  import \"DPI-C\" context function void talk();\n"
+      "  export \"DPI-C\" function speak;\n"
+      "  function void speak();\n"
+      "  endfunction\n"
+      "  Sub u();\n"
+      "  initial begin\n"
+      "    #1;\n"
+      "    talk();\n"
+      "  end\n"
+      "endmodule\n";
+  constexpr std::string_view kATaskFromAFunction =
+      "module Test;\n"
+      "  import \"DPI-C\" context function void talk();\n"
+      "  export \"DPI-C\" task speak;\n"
+      "  task speak();\n"
+      "    #1;\n"
+      "  endtask\n"
+      "  initial begin\n"
+      "    #1;\n"
+      "    talk();\n"
+      "  end\n"
+      "endmodule\n";
+  constexpr std::string_view kInAPackage =
+      "package P;\n"
+      "  import \"DPI-C\" context function void talk();\n"
+      "endpackage\n"
+      "module Test;\n"
+      "  export \"DPI-C\" function speak;\n"
+      "  function void speak();\n"
+      "  endfunction\n"
+      "  initial begin\n"
+      "    #1;\n"
+      "    P::talk();\n"
+      "  end\n"
+      "endmodule\n";
+  for (const Failure& failure :
+       {Failure{
+            kInAModule, "svSetScope((svScope)0x10);\n",
+            "test.sv:11:5: error: a DPI export was reached under a handle "
+            "'svSetScope' was given that no DPI function returned"},
+        Failure{
+            kInAModule, "svSetScope(svGetScopeFromName(\"Test.u\"));\n",
+            "test.sv:11:5: error: DPI export 'speak' was entered under scope "
+            "'Test.u', which declares no such export"},
+        Failure{
+            kInAPackage, "",
+            "test.sv:10:5: error: a DPI export was reached without a scope"},
+        Failure{
+            kATaskFromAFunction, "",
+            "test.sv:9:5: error: a DPI export was reached from outside a "
+            "foreign call"}}) {
+    SCOPED_TRACE(failure.report);
+    const auto src = *tmp_or / "test.sv";
+    std::ofstream(src) << failure.design;
+    const auto foreign = *tmp_or / "foreign.c";
+    std::ofstream(foreign) << "#include \"dpi.h\"\n"
+                           << "#include <svdpi.h>\n"
+                           << "void talk(void) {\n"
+                           << "  " << failure.scope_set << "  speak();\n"
+                           << "}\n";
+
+    for (const std::string_view backend : {"llvm", "cpp"}) {
+      const std::vector<std::string> args = {
+          "run",  "--backend",  std::string(backend), "--top",
+          "Test", "--dpi-link", foreign.string(),     src.string()};
+      const auto run = RunChildProcess(lyra, args);
+      EXPECT_THAT(run, ExitedWithCode(1))
+          << backend << ": " << run.stdout_text << run.stderr_text;
+      EXPECT_NE(run.stderr_text.find(failure.report), std::string::npos)
+          << backend << ": " << run.stderr_text;
+    }
   }
 }
 
@@ -2142,33 +2817,14 @@ TEST(LyraRun, ReachingThroughANullObjectHandleIsReported) {
       << "stdout: " << through_process.stdout_text;
 }
 
-// The largest line number `program` names in `file`, read off the text a report
-// would print: every `file:line:` the program holds.
-auto LargestLineNamed(std::string_view program, std::string_view file)
-    -> std::uint64_t {
-  const std::string prefix = std::format("{}:", file);
-  std::uint64_t largest = 0;
-  for (std::size_t at = program.find(prefix); at != std::string_view::npos;
-       at = program.find(prefix, at + 1)) {
-    std::uint64_t line = 0;
-    for (std::size_t digit = at + prefix.size();
-         digit < program.size() && program[digit] >= '0' &&
-         program[digit] <= '9';
-         ++digit) {
-      line = (line * 10) + static_cast<std::uint64_t>(program[digit] - '0');
-    }
-    largest = std::max(largest, line);
-  }
-  return largest;
-}
-
 // Lowering several units at once asks where text is written from several
 // threads together, and a line worked out wrongly then is a line a run goes on
 // to name in its reports. A design of many small units, each holding one
-// procedure, has several asking from the first moment, where a design of a
-// handful meets it by chance. A build can still miss, so the design is built
-// several times and none may name a line the file does not have.
-TEST(LyraBuild, UnitsLoweredAtOnceNameLinesTheFileHas) {
+// procedure that reports, has several asking from the first moment, where a
+// design of a handful meets it by chance. A build can still miss, so the
+// design is built and run several times, and every report has to name the
+// line its own unit's procedure is written on.
+TEST(LyraBuild, UnitsLoweredAtOnceNameTheirOwnLines) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
@@ -2176,38 +2832,37 @@ TEST(LyraBuild, UnitsLoweredAtOnceNameLinesTheFileHas) {
 
   constexpr int kUnits = 400;
   constexpr int kBuilds = 4;
-  std::uint64_t lines = 0;
+  // Each unit is four lines, and its procedure is the third.
+  constexpr std::uint64_t kLinesPerUnit = 4;
+  constexpr std::uint64_t kProcedureLine = 3;
   {
     std::ofstream out(*tmp_or / "many_units.sv");
     for (int i = 0; i < kUnits; ++i) {
       out << "module M" << i << ";\n"
           << "  logic [7:0] held;\n"
-          << "  initial held = 8'd" << (i % 200) << ";\n"
+          << "  initial $info(\"held\");\n"
           << "endmodule\n";
-      lines += 4;
     }
     out << "module Top;\n";
     for (int i = 0; i < kUnits; ++i) {
       out << "  M" << i << " m" << i << " ();\n";
     }
     out << "endmodule\n";
-    lines += kUnits + 2;
   }
 
-  const auto program = *tmp_or / "program";
   for (int build = 0; build < kBuilds; ++build) {
-    const auto built = RunLyraFrom(
+    const auto run = RunLyraFrom(
         lyra, *tmp_or,
-        std::format(
-            "build --rebuild --backend llvm -j 4 --cache-dir cache --top Top "
-            "-o '{}' many_units.sv",
-            program.string()));
-    ASSERT_THAT(built, ExitedWithCode(0)) << built.stderr_text;
-    const std::string text = ReadWholeFile(program);
-    const std::uint64_t largest = LargestLineNamed(text, "many_units.sv");
-    ASSERT_GT(largest, 0U) << "the program names no line of its source";
-    EXPECT_LE(largest, lines) << "build " << build << " names line " << largest
-                              << " of a file of " << lines;
+        "run --rebuild --backend llvm -j 4 --cache-dir cache --top Top "
+        "many_units.sv");
+    ASSERT_THAT(run, ExitedWithCode(0)) << run.stderr_text;
+    for (int i = 0; i < kUnits; ++i) {
+      const std::string report = std::format(
+          "many_units.sv:{}:11: info: held\nnote: in 'Top.m{}' at time 0\n",
+          (i * kLinesPerUnit) + kProcedureLine, i);
+      EXPECT_NE(run.stderr_text.find(report), std::string::npos)
+          << "build " << build << ": no '" << report << "'";
+    }
   }
 }
 

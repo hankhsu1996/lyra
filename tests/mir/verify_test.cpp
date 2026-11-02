@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -25,6 +26,7 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -930,14 +932,27 @@ TEST(MirVerifyTest, AnEntryIsCalledOnTheKindOfContainerItReaches) {
       "reaches by a key into something that is no associative array");
 }
 
-// An entry the source states over values of several kinds is not named over
-// an integral value, which the entry over integral values alone carries out;
-// and an entry reading an operand as a machine value is handed no integral
-// one.
+// An entry the source states over values of several kinds is not named where
+// another is stated for its first operand -- an integral value, or a queue,
+// whose element write can grow it past its bound; an entry that can report is
+// handed where it was written; and an entry reading an operand as a machine
+// value is handed no integral one.
 TEST(MirVerifyTest, ACallIsHeldToItsEntrysOneDeclaration) {
   const auto integral = [](CompilationUnit& u) { return u.builtins.int_type; };
   const auto string = [](CompilationUnit& u) { return u.builtins.string; };
   const auto bit = [](CompilationUnit& u) { return u.builtins.bit1; };
+  const auto queue = [](CompilationUnit& u) {
+    return QueueOf(u.types, u.builtins.int_type, support::UnboundedQueue{});
+  };
+  const auto position = [](CompilationUnit& u) {
+    return PositionType(u.types);
+  };
+  const auto write = [](CompilationUnit& u) {
+    return u.types.Intern(
+        Type{ReferenceType{
+            .referent = u.builtins.int_type,
+            .mutability = Mutability::kMutable}});
+  };
 
   EXPECT_NO_THROW(
       Verify(UnitCalling(support::BuiltinFn::kCaseEqual, string, string, bit)));
@@ -945,7 +960,14 @@ TEST(MirVerifyTest, ACallIsHeldToItsEntrysOneDeclaration) {
       support::BuiltinFn::kIntegralCaseEqual, integral, integral, bit)));
   ExpectRefused(
       UnitCalling(support::BuiltinFn::kCaseEqual, integral, integral, bit),
-      "where its first operand is integral");
+      "where another is stated for its first operand");
+
+  ExpectRefused(
+      UnitCalling(support::BuiltinFn::kElementMut, queue, position, write),
+      "where another is stated for its first operand");
+  ExpectRefused(
+      UnitCalling(support::BuiltinFn::kQueueElementMut, queue, position, write),
+      "is not handed where that is");
 
   EXPECT_NO_THROW(
       Verify(UnitCalling(support::BuiltinFn::kCompare, string, string, bit)));
@@ -2281,6 +2303,89 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
   ExpectRefused(
       unit_declaring({.own_subroutine_without_body = true}),
       "leaves with no body its own subroutine");
+}
+
+// A call of something that reports a failure of the design at its caller -- a
+// runtime entry whose declaration says it is handed where it was called -- is
+// handed that location as its last argument once the unit is legalized: the
+// unit's constant for where the call starts, or, in a body that reports at its
+// own caller, the location that body was handed, which then states none of its
+// own.
+TEST(MirVerifyTest, ACallReportingAtItsCallerIsHandedWhereThatIs) {
+  const auto place_of_its_own = [](const CompilationUnit& u, Builder body) {
+    return BuildSourceLocation(
+        u, diag::SourcePosition{.file = "test.sv", .line = 1, .column = 2},
+        body);
+  };
+  const auto finish = [](const CompilationUnit& u, Builder body,
+                         std::optional<ExprId> place) {
+    std::vector<ExprId> arguments{
+        AddCall(u, body), BuildMachineIntLiteral(u, body, 1)};
+    if (place.has_value()) {
+      arguments.push_back(*place);
+    }
+    body.AppendStmt(
+        ExprStmt{
+            .expr = body.Add(MakeCallExpr(
+                Direct{.target = support::BuiltinFn::kFinish},
+                std::move(arguments), u.builtins.void_type))});
+  };
+  // A body handed where it was called, whose call to `$finish` hands on that
+  // place, and which may state a place of its own beside it.
+  const auto reporting_at_its_caller = [&](bool states_its_own) {
+    return UnitWithCode([&](CompilationUnit& u, CallableCode& code) {
+      const LocalId handed =
+          code.locals.Add(LocalDecl{.type = u.builtins.source_location});
+      code.params.push_back(handed);
+      code.caller_location = handed;
+      Builder body(code.Body(), diag::SourceSpan{});
+      finish(
+          u, body,
+          body.Add(MakeCopyExpr(
+              body.Add(MakeLocalRefExpr(handed, u.builtins.source_location)),
+              u.builtins.source_location)));
+      if (states_its_own) {
+        body.AppendStmt(ExprStmt{.expr = place_of_its_own(u, body)});
+      }
+    });
+  };
+
+  EXPECT_NO_THROW(
+      Verify(UnitWithBody([&](const CompilationUnit& u, Builder body) {
+        finish(u, body, place_of_its_own(u, body));
+      })));
+  const auto handed_nothing =
+      UnitWithBody([&](const CompilationUnit& u, Builder body) {
+        finish(u, body, std::nullopt);
+      });
+  ExpectRefused(handed_nothing, "is not handed where that is");
+  EXPECT_NO_THROW(VerifyIn(Phase::kBuilt, handed_nothing));
+  EXPECT_NO_THROW(Verify(reporting_at_its_caller(false)));
+  ExpectRefused(
+      reporting_at_its_caller(true),
+      "states a location of its own, though it reports where it was called");
+}
+
+// Once a unit is legalized a class handle is opened by the library's call,
+// which answers a pointer the dereference then reads through, so nothing
+// reaches an object through a handle itself.
+TEST(MirVerifyTest, AHandleIsOpenedByTheLibrary) {
+  const auto dereferenced = UnitWithBody([](const CompilationUnit& u,
+                                            Builder body) {
+    const TypeId object =
+        LibraryTypeOf(u.types, support::LibraryDecl::kObjectRoot);
+    const ExprId handle = body.Add(
+        Expr{
+            .data = NullLiteral{},
+            .type = u.types.Intern(Type{ManagedRefType{.pointee = object}})});
+    body.AppendStmt(
+        ExprStmt{
+            .expr = body.Add(
+                Expr{.data = DerefExpr{.pointer = handle}, .type = object})});
+  });
+  ExpectRefused(
+      dereferenced, "reaches an object through a class handle itself");
+  EXPECT_NO_THROW(VerifyIn(Phase::kBuilt, dereferenced));
 }
 
 }  // namespace

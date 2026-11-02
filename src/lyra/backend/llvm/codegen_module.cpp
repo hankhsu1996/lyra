@@ -47,6 +47,7 @@
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/enumeration.hpp"

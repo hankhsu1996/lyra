@@ -5,6 +5,7 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir_transform/pass.hpp"
 
 namespace lyra::mir_transform {
 
@@ -18,7 +19,7 @@ namespace lyra::mir_transform {
 // for where a value lives, so the pointer a programmer of a language with one
 // would write is written here, once, for every consumer to translate.
 auto BoundFramesOnBody(
-    const mir::CompilationUnit& unit, const mir::CodeSource& at,
+    const PassContext& context, const mir::CodeSource& at,
     const mir::CallableCode& code) -> std::optional<mir::CallableCode>;
 
 // The same for what a unit declares that no body is: a closure's fields and a

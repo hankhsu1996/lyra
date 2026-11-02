@@ -32,7 +32,7 @@ namespace lyra::lowering::hir_to_mir {
 template <ExprLowerer Lowerer>
 auto LowerHirDynamicCastExpr(
     Lowerer& lowerer, const WalkFrame& frame, const hir::DynamicCastExpr& c,
-    mir::TypeId result_type, diag::SourceSpan span) -> diag::Result<mir::Expr> {
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
   UnitLowerer& owner = lowerer.Owner();
   mir::CompilationUnit& unit = owner.Unit();
 
@@ -53,11 +53,10 @@ auto LowerHirDynamicCastExpr(
   // holding what it held, which is a state the run goes on from.
   const auto report_invalid = [&](mir::Builder into) {
     AppendToolReportStmt(
-        owner, into, support::BuiltinFn::kEmitError,
+        unit, into, support::BuiltinFn::kEmitError,
         base::DiagMessage(
             "the '$cast' assignment is invalid, so the destination is left "
-            "unchanged"),
-        span);
+            "unchanged"));
   };
 
   // Where the two declared types allow no assignment between them, none is
@@ -230,8 +229,7 @@ auto LowerHirDynamicCastExpr(
   std::optional<mir::BlockId> invalid_scope;
   if (c.on_invalid == hir::InvalidAssignmentHandling::kReported) {
     mir::Block invalid;
-    mir::Builder invalid_builder(invalid, taken_frame.span);
-    report_invalid(invalid_builder);
+    report_invalid(body.Into(invalid));
     invalid_scope = body.AddScope(std::move(invalid));
   }
 
@@ -245,11 +243,10 @@ auto LowerHirDynamicCastExpr(
 }
 
 template auto LowerHirDynamicCastExpr(
-    ProcessLowerer&, const WalkFrame&, const hir::DynamicCastExpr&, mir::TypeId,
-    diag::SourceSpan) -> diag::Result<mir::Expr>;
+    ProcessLowerer&, const WalkFrame&, const hir::DynamicCastExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
 template auto LowerHirDynamicCastExpr(
     const StructuralScopeLowerer&, const WalkFrame&,
-    const hir::DynamicCastExpr&, mir::TypeId, diag::SourceSpan)
-    -> diag::Result<mir::Expr>;
+    const hir::DynamicCastExpr&, mir::TypeId) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

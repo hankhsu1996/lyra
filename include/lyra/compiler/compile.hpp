@@ -8,6 +8,7 @@
 #include <slang/driver/Driver.h>
 
 #include "lyra/diag/sink.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/lowering/ast_to_hir/declared_design.hpp"
 #include "lyra/support/assertion_policy.hpp"
@@ -16,9 +17,11 @@ namespace lyra::compiler {
 
 // The design once every unit has declared itself: which units the design
 // begins at, and what each unit declared and published, together with the
-// elaborated AST their bodies are lowered from.
+// elaborated AST their bodies are lowered from and the front end's answers
+// about the source, which the lowering asks for whatever a program reads of it.
 struct ElaboratedDesign {
   lowering::ast_to_hir::DeclaredDesign units;
+  const diag::SourceManager* sources;
 };
 
 // What the front end answered with, and its own account of answering. The
@@ -63,6 +66,7 @@ auto RunFrontEnd(slang::driver::Driver& driver) -> FrontEndResult;
 // back here.
 auto DeclareUnits(
     std::unique_ptr<slang::ast::Compilation> elaborated, LoweringPolicy policy,
-    diag::DiagnosticSink& sink) -> std::optional<ElaboratedDesign>;
+    diag::DiagnosticSink& sink, const diag::SourceManager& sources)
+    -> std::optional<ElaboratedDesign>;
 
 }  // namespace lyra::compiler

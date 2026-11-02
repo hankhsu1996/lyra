@@ -222,8 +222,8 @@ auto PhysicalNet::EndTakeover(
   return true;
 }
 
-auto PhysicalNet::Split(std::uint32_t at) -> std::shared_ptr<PhysicalNet> {
-  if (at == 0 || at >= Count()) {
+auto PhysicalNet::Split(std::uint32_t cut) -> std::shared_ptr<PhysicalNet> {
+  if (cut == 0 || cut >= Count()) {
     throw InternalError(
         "PhysicalNet: a cut falls inside these positions, since a cut at "
         "either end asks for the positions that are already here");
@@ -237,15 +237,15 @@ auto PhysicalNet::Split(std::uint32_t at) -> std::shared_ptr<PhysicalNet> {
   }
   auto high = std::make_shared<PhysicalNet>(
       DriveContribution<NetPositions>{
-          .value = own_.value.Part(at, Count() - at),
+          .value = own_.value.Part(cut, Count() - cut),
           .strength = own_.strength},
       own_fill_, fold_, own_kind_);
   for (const NetPlacement& placement : placements_) {
     high->placements_.push_back(
         NetPlacement{
-            .net = placement.net, .net_offset = placement.net_offset + at});
+            .net = placement.net, .net_offset = placement.net_offset + cut});
   }
-  own_.value = own_.value.Part(0, at);
+  own_.value = own_.value.Part(0, cut);
   return high;
 }
 
@@ -268,8 +268,8 @@ auto NetName::Declare(
 void NetName::Join(
     NetName& other, std::uint32_t here, std::uint32_t there,
     std::uint32_t count) {
-  std::uint32_t at_here = here;
-  std::uint32_t at_there = there;
+  std::uint32_t position_here = here;
+  std::uint32_t position_there = there;
   std::uint32_t remaining = count;
   // The two sides reach physical nets whose reaches fall wherever earlier
   // connections left them, so the coupling is taken in the pieces both sides
@@ -280,23 +280,23 @@ void NetName::Join(
     // again after the second has answered is what settles the piece: a cut for
     // one side reaches every name in the physical net it cut, the other side
     // among them.
-    std::uint32_t piece = reaches_[ReachAt(at_here, remaining)].count;
-    piece = other.reaches_[other.ReachAt(at_there, piece)].count;
+    std::uint32_t piece = reaches_[ReachAt(position_here, remaining)].count;
+    piece = other.reaches_[other.ReachAt(position_there, piece)].count;
     const std::shared_ptr<PhysicalNet> mine =
-        reaches_[ReachAt(at_here, piece)].physical;
+        reaches_[ReachAt(position_here, piece)].physical;
     const std::shared_ptr<PhysicalNet> theirs =
-        other.reaches_[other.ReachAt(at_there, piece)].physical;
+        other.reaches_[other.ReachAt(position_there, piece)].physical;
     MergePhysical(mine, theirs);
-    at_here += piece;
-    at_there += piece;
+    position_here += piece;
+    position_there += piece;
     remaining -= piece;
   }
 }
 
 auto NetName::ReachAt(std::uint32_t position, std::uint32_t within)
     -> std::size_t {
-  for (std::size_t at = 0; at < reaches_.size(); ++at) {
-    const NetReach& reach = reaches_[at];
+  for (std::size_t index = 0; index < reaches_.size(); ++index) {
+    const NetReach& reach = reaches_[index];
     if (position < reach.net_offset ||
         position - reach.net_offset >= reach.count) {
       continue;
@@ -309,7 +309,7 @@ auto NetName::ReachAt(std::uint32_t position, std::uint32_t within)
       CutPhysical(reach.physical, within);
       return ReachAt(position, within);
     }
-    return at;
+    return index;
   }
   throw InternalError(
       "ResolvedNet: a net's own reaches cover every position it has, so a "
@@ -317,8 +317,8 @@ auto NetName::ReachAt(std::uint32_t position, std::uint32_t within)
 }
 
 void NetName::CutPhysical(
-    std::shared_ptr<PhysicalNet> physical, std::uint32_t at) {
-  const std::shared_ptr<PhysicalNet> above = physical->Split(at);
+    std::shared_ptr<PhysicalNet> physical, std::uint32_t cut) {
+  const std::shared_ptr<PhysicalNet> above = physical->Split(cut);
   for (const NetPlacement& placement : above->placements_) {
     std::vector<NetReach>& reaches = placement.net->reaches_;
     for (std::size_t i = 0; i < reaches.size(); ++i) {
@@ -327,9 +327,9 @@ void NetName::CutPhysical(
       }
       const NetReach tail{
           .physical = above,
-          .net_offset = reaches[i].net_offset + at,
-          .count = reaches[i].count - at};
-      reaches[i].count = at;
+          .net_offset = reaches[i].net_offset + cut,
+          .count = reaches[i].count - cut};
+      reaches[i].count = cut;
       reaches.insert(
           reaches.begin() + static_cast<std::ptrdiff_t>(i) + 1, tail);
       break;

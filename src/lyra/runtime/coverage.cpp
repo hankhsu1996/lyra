@@ -3,18 +3,21 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
+#include <map>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "lyra/base/source_location.hpp"
+#include "lyra/runtime/diagnostic.hpp"
+
 namespace lyra::runtime {
 
-void CoverageLog::Record(std::string_view site, bool succeeded) {
+void CoverageLog::Record(base::SourceLocation site, bool succeeded) {
   auto entry =
       sites_
           .try_emplace(
-              std::string(site),
+              site.Identity(),
               SiteCounts{
                   .evaluated = 0, .succeeded = 0, .arrival = sites_.size()})
           .first;
@@ -25,12 +28,24 @@ void CoverageLog::Record(std::string_view site, bool succeeded) {
 }
 
 auto CoverageLog::Report() const -> std::vector<std::string> {
-  std::vector<std::pair<std::size_t, std::string>> ordered;
-  ordered.reserve(sites_.size());
+  // Two units each state a constant of their own for one statement, so sites
+  // naming one place are one goal, reached when the first of them was.
+  std::map<std::string, SiteCounts> goals;
   for (const auto& [site, counts] : sites_) {
+    const auto [goal, is_new] = goals.try_emplace(
+        SourceLocationText(base::SourceLocation(site)), counts);
+    if (!is_new) {
+      goal->second.evaluated += counts.evaluated;
+      goal->second.succeeded += counts.succeeded;
+      goal->second.arrival = std::min(goal->second.arrival, counts.arrival);
+    }
+  }
+  std::vector<std::pair<std::size_t, std::string>> ordered;
+  ordered.reserve(goals.size());
+  for (const auto& [place, counts] : goals) {
     ordered.emplace_back(
         counts.arrival, std::format(
-                            "{}: cover evaluated {}, succeeded {}", site,
+                            "{}: cover evaluated {}, succeeded {}", place,
                             counts.evaluated, counts.succeeded));
   }
   std::ranges::sort(ordered);

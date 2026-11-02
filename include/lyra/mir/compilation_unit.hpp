@@ -32,6 +32,7 @@
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
+#include "lyra/mir/source_location_pool.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -241,6 +242,12 @@ struct BuiltinMirTypes {
   // What a function is handed where a call of it is to report what it reads
   // (LRM 9.4.2), and null where it only runs.
   TypeId read_report_ptr;
+  // The library's value naming where an operation was written, which a call
+  // hands a callee that reports a failure of the design where the call was
+  // written, and the record that value holds the address of.
+  TypeId source_location;
+  TypeId source_location_record;
+  TypeId source_location_record_ptr;
   TypeId wait;
   // What each stop at a wait is handed.
   TypeId wait_ptr;
@@ -275,10 +282,12 @@ struct CompilationUnit {
   TypePool types;
   // The values this unit settles before the program runs, each held once and
   // named by every occurrence: the constant integral values its bodies were
-  // built with, and the member tables of the enumerations they ask about. Both
-  // fill as bodies are lowered.
+  // built with, the member tables of the enumerations they ask about, and the
+  // locations they hand the library, where an operation that can fail was
+  // written. Each fills as bodies are lowered.
   IntegralConstantPool integral_constants;
   EnumTablePool enum_tables;
+  SourceLocationPool source_locations;
   BuiltinMirTypes builtins;
   // Every structure of the runtime library a constant may be stated as, with
   // the type of each member, read off the library's own declarations when the
@@ -436,6 +445,11 @@ struct CompilationUnit {
             .observation = LibraryTypeOf(types, support::LibraryDecl::kObservation),
             .read_report = LibraryTypeOf(types, support::LibraryDecl::kReadReport),
             .read_report_ptr = TypeId{},
+            .source_location =
+                LibraryTypeOf(types, support::LibraryDecl::kSourceLocation),
+            .source_location_record = LibraryTypeOf(
+                types, support::LibraryDecl::kSourceLocationRecord),
+            .source_location_record_ptr = TypeId{},
             .wait = LibraryTypeOf(types, support::LibraryDecl::kWait),
             .wait_ptr = TypeId{},
             .deferred_effects_ptr = types.Intern(
@@ -464,6 +478,11 @@ struct CompilationUnit {
         mir::Type{mir::PointerType{
             .pointee = builtins.read_report,
             .ownership = mir::PointerOwnership::kBorrowed}});
+    builtins.source_location_record_ptr = types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = builtins.source_location_record,
+            .ownership = mir::PointerOwnership::kBorrowed,
+            .mutability = mir::Mutability::kReadOnly}});
     builtins.wait_ptr = types.Intern(
         mir::Type{mir::PointerType{
             .pointee = builtins.wait,

@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -30,10 +31,12 @@ using CurrentDpiHandle = std::variant<Scope*, UnissuedHandle>;
 // one imported subroutine.
 //
 // An entry carries the handle the call has current, which an export the foreign
-// side calls back resolves against, and whether the foreign frame has
-// acknowledged that this execution must stop (LRM 35.9 item c). Both are facts
-// of the call rather than of the execution: a call reached from inside another
-// has its own of each.
+// side calls back resolves against, whether the foreign frame has acknowledged
+// that this execution must stop (LRM 35.9 item c), and where the design wrote
+// the call, which is where what foreign code does wrong under it is reported.
+// Each is a fact of the call rather than of the execution: a call reached from
+// inside another has its own. The call's location is kept rather than bound,
+// since an imported task can suspend inside its foreign call.
 //
 // The chain also keeps every string an export hands to the foreign code that
 // called it (LRM Annex H.8.10): the address has to be good when it arrives, and
@@ -46,8 +49,12 @@ using CurrentDpiHandle = std::variant<Scope*, UnissuedHandle>;
 // 35.5.3).
 class ImportCallChain {
  public:
-  void Enter(Scope* scope) {
-    calls_.push_back(ImportCall{.current = scope, .kept_from = kept_.size()});
+  void Enter(Scope* scope, base::SourceLocation written_at) {
+    calls_.push_back(
+        ImportCall{
+            .current = scope,
+            .kept_from = kept_.size(),
+            .written_at = written_at});
   }
 
   void Leave() {
@@ -59,6 +66,12 @@ class ImportCallChain {
   // foreign code may call an exported subroutine from (LRM 35.5.3).
   [[nodiscard]] auto InsideACall() const -> bool {
     return !calls_.empty();
+  }
+
+  // Where the design wrote the innermost call, which only a caller that knows
+  // it is inside one asks.
+  [[nodiscard]] auto WrittenAt() const -> base::SourceLocation {
+    return calls_.back().written_at;
   }
 
   // `svGetScope`, which reports no scope where no foreign call is running
@@ -111,6 +124,7 @@ class ImportCallChain {
     // How many strings were kept when the call was entered, which is how many
     // are left once it is left.
     std::size_t kept_from;
+    base::SourceLocation written_at;
   };
 
   std::vector<ImportCall> calls_;

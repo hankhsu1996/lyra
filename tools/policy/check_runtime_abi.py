@@ -68,6 +68,16 @@ Rules:
         says so, and its ABI prototype takes the report as a parameter named
         `evaluation`. Scoped like R004.
 
+  R011  Whether an entry is handed where the operation calling it was written
+        is stated once, the same way as R004: its runtime entry declaration
+        says so, and its ABI prototype takes the location as a parameter
+        named `location`, after every operand, since a call states it last of
+        its operands. Only what the module adds after every operand follows
+        it: what the entry is told of a type, and the storage of its answer. A
+        disagreement compiles and links, and then the runtime places a report
+        of the design's failure at whatever lies at that address. Scoped like
+        R004.
+
 Usage:
   python3 tools/policy/check_runtime_abi.py
 """
@@ -118,6 +128,15 @@ HANDLE_PARAMETER = "runtime"
 HANDLE_PROPERTY = ".takes_the_runtime_handle = true"
 REPORT_PARAMETER = "evaluation"
 REPORT_PROPERTY = ".takes_the_read_report = true"
+LOCATION_PARAMETER = "location"
+NO_LOCATION_PROPERTY = ".takes_the_location = false"
+# What the module hands after every operand: what an entry is told of a type,
+# and the storage of its answer. An operand can end in the same word, so these
+# are named rather than matched.
+AFTER_EVERY_OPERAND = frozenset({
+    "answer_type", "answer_element_type", "answer_operations", "array_type",
+    "array_operations", "memory_type", "source_type", "value_operations",
+    "value_take_positions", "out"})
 RETURN_PROPERTY = ".ending = CallEnding::kReturns"
 
 VIOLATION_HINT = (
@@ -152,10 +171,13 @@ class Abi(NamedTuple):
     bound: list[Binding]
     handle_takers: set[str] = set()
     report_takers: set[str] = set()
+    location_takers: set[str] = set()
     non_raisers: set[str] = set()
     handle_rows: dict[str, bool] = {}
     report_rows: dict[str, bool] = {}
+    location_rows: dict[str, bool] = {}
     return_rows: dict[str, bool] = {}
+    misplaced_locations: list[Entry] = []
     spilled_spans: list[Entry] = []
     table_named: list[str] = []
     table_defined: list[str] = []
@@ -229,6 +251,26 @@ def takers_of(text: str, parameter_name: str) -> set[str]:
     }
 
 
+def misplaced_locations_of(text: str) -> list[Entry]:
+    """The declared entries taking the location ahead of an operand.
+
+    A parameter following it is what the entry is told of a type or the storage
+    of its answer, and that storage never precedes it.
+    """
+    misplaced = []
+    for prototype in prototypes_of(text):
+        names = [re.findall(r"\w+", parameter)[-1]
+                 for parameter in prototype.parameters]
+        if LOCATION_PARAMETER not in names:
+            continue
+        at = names.index(LOCATION_PARAMETER)
+        if (any(name in AFTER_EVERY_OPERAND for name in names[:at])
+                or any(name not in AFTER_EVERY_OPERAND
+                       for name in names[at + 1:])):
+            misplaced.append(Entry(prototype.name, prototype.line))
+    return misplaced
+
+
 def handle_takers_of(text: str) -> set[str]:
     """The declared entries whose prototype takes the engine handle."""
     return takers_of(text, HANDLE_PARAMETER)
@@ -273,6 +315,15 @@ def rows_of(text: str, states: str) -> dict[str, bool]:
         if name is not None:
             rows[name.group(1)] = states in body
     return rows
+
+
+def location_rows_of(text: str) -> dict[str, bool]:
+    """Each runtime entry, against whether it takes a location: every entry
+    does unless its row states that it takes none."""
+    return {
+        name: not free
+        for name, free in rows_of(text, NO_LOCATION_PROPERTY).items()
+    }
 
 
 def check_r001(abi: Abi) -> list[str]:
@@ -373,6 +424,18 @@ def check_r010(abi: Abi) -> list[str]:
         "is handed the evaluation's report", "takes")
 
 
+def check_r011(abi: Abi) -> list[str]:
+    return check_agreement(
+        abi, "R011", abi.location_rows, abi.location_takers,
+        "is handed where the operation calling it was written", "takes") + [
+            f"  {HEADER}:{entry.line}: R011 '{entry.name}' takes the location "
+            f"after the storage of its answer or ahead of an operand, where "
+            f"the generated module hands it after every operand and ahead of "
+            f"that storage"
+            for entry in by_name(abi.misplaced_locations)
+        ]
+
+
 def check_r008(abi: Abi) -> list[str]:
     return check_agreement(
         abi, "R008", abi.return_rows, abi.non_raisers, "cannot raise",
@@ -409,9 +472,12 @@ def load(root: Path) -> Abi:
         bound=bindings_of((root / BINDINGS).read_text()),
         handle_takers=handle_takers_of(header),
         report_takers=takers_of(header, REPORT_PARAMETER),
+        location_takers=takers_of(header, LOCATION_PARAMETER),
+        misplaced_locations=misplaced_locations_of(header),
         non_raisers=non_raisers_of(header),
         handle_rows=rows_of(entries, HANDLE_PROPERTY),
         report_rows=rows_of(entries, REPORT_PROPERTY),
+        location_rows=location_rows_of(entries),
         return_rows=rows_of(entries, RETURN_PROPERTY),
         spilled_spans=spilled_spans_of(header))
 
@@ -430,9 +496,12 @@ def run_self_tests() -> bool:
             bound=bindings_of(bindings),
             handle_takers=handle_takers_of(header),
             report_takers=takers_of(header, REPORT_PARAMETER),
+            location_takers=takers_of(header, LOCATION_PARAMETER),
+            misplaced_locations=misplaced_locations_of(header),
             non_raisers=non_raisers_of(header),
             handle_rows=rows_of(entries, HANDLE_PROPERTY),
             report_rows=rows_of(entries, REPORT_PROPERTY),
+            location_rows=location_rows_of(entries),
             return_rows=rows_of(entries, RETURN_PROPERTY))
 
     ok = True
@@ -526,6 +595,55 @@ def run_self_tests() -> bool:
         not check_r010(abi(header=reports, entries=states_report)),
         "R010 is silent when the two sides agree")
 
+    located = "auto lyra_rt_a(const void* p, const void* location) -> void*;"
+    no_location = row.format(", .takes_the_location = false")
+    takes_location = states_none
+    ok &= expect(
+        len(check_r011(abi(header=takes_none, entries=takes_location))) == 1,
+        "R011 reports a row not stating it takes none whose prototype "
+        "takes no location")
+    ok &= expect(
+        len(check_r011(abi(header=located, entries=no_location))) == 1,
+        "R011 reports a prototype taking a location the row says it does not")
+    ok &= expect(
+        not check_r011(abi(header=located, entries=takes_location)),
+        "R011 is silent when an entry that can report takes a location")
+    ok &= expect(
+        not check_r011(abi(header=takes_none, entries=no_location)),
+        "R011 is silent when an entry stating it takes none takes none")
+    answered = (
+        "auto lyra_rt_a(const void* p, const void* location, void* out)"
+        " -> void*;")
+    told = (
+        "auto lyra_rt_a(const void* p, const void* location, "
+        "const void* answer_type, void* out) -> void*;")
+    past_the_answer = (
+        "auto lyra_rt_a(const void* p, void* out, const void* location)"
+        " -> void*;")
+    ahead_of_an_operand = (
+        "auto lyra_rt_a(const void* location, const void* p) -> void*;")
+    ok &= expect(
+        not misplaced_locations_of(answered)
+        and not misplaced_locations_of(told),
+        "only what an entry is told and the storage of its answer follow the "
+        "location")
+    ok &= expect(
+        len(misplaced_locations_of(past_the_answer)) == 1,
+        "a location past the storage of the answer is misplaced")
+    ok &= expect(
+        len(misplaced_locations_of(ahead_of_an_operand)) == 1,
+        "a location ahead of an operand is misplaced")
+    ok &= expect(
+        len(misplaced_locations_of(
+            "auto lyra_rt_a(const void* location, const void* values_type)"
+            " -> void*;")) == 1,
+        "an operand ending as what an entry is told is still an operand")
+    ok &= expect(
+        len(check_r011(abi(header=past_the_answer, entries=takes_location)))
+        == 1,
+        "R011 reports a prototype taking the location past the storage of its "
+        "answer")
+
     raises_none = "void lyra_rt_a(void* p) noexcept;"
     raises = "void lyra_rt_a(void* p);"
     says_returns = row.format(", .ending = CallEnding::kReturns")
@@ -614,7 +732,7 @@ def main() -> int:
     failures = (
         check_r001(abi) + check_r002(abi) + check_r003(abi) + check_r004(abi)
         + check_r007(abi) + check_r008(abi) + check_r009(abi)
-        + check_r010(abi))
+        + check_r010(abi) + check_r011(abi))
 
     if failures:
         print("Runtime ABI check failed:")

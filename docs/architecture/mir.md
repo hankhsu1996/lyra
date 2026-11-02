@@ -252,6 +252,25 @@ what the construct means.
   piece of source, and a rewrite gives what it builds the span of the node it answers, so a node
   moved by a rewrite keeps it. It changes nothing a node means; each consumer says it to what fails
   while that node is translated, and only the front end opens it.
+- Where a call that can fail the design was written, handed to the callee as its last argument: a
+  value of the library's location type, one word, either the address of the unit's constant for
+  where the call starts, read as that type -- the unit holds one constant per distinct file, line
+  and column, each a record of the library's stated with what it says, as clang's AST context keeps
+  one per location -- or, inside a body that reports at its caller, the one that body was handed,
+  which a closure built there captures. Which callees take one is the callee's own fact -- a runtime
+  entry takes one unless its declaration says it takes none, and a body of the tool's own text, or
+  one generated for a type's operation that can report, states the parameter it is handed it in --
+  and a rewrite of the stage states the argument for every such call, so no site composing a call
+  knows which callees take it, and the verifier holds every call to it. How the library carries a
+  location past its door is the library's, and MIR says nothing of it. The semantic kept is what LRM
+  20.10 asks of a report and rustc's `track_caller` gives a callee: where a failure is reported is
+  the design's statement, never the library's or the tool's own line.
+- Opening a class handle, as a call of the library's entry that answers a pointer to the object the
+  handle names, which the dereference then reads through, as rustc's `ElaborateBoxDerefs` states a
+  `Box`'s dereference through the pointer inside it. A handle naming no object fails the design
+  there (LRM 8.4), so it is a call like any other that can fail, handed its location. A unit is
+  built with the dereference of the handle and a rewrite of the stage opens it, or, where opening it
+  is all a call does, with the opening itself, so no target dereferences a handle itself.
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
   not executable, and nothing asserts on its wording. It prints no source span, which only the front
   end can read.
@@ -434,19 +453,20 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
 - Rewritten into MIR before anything reads it below. Between HIR-to-MIR and every consumer, a unit
   passes through rewrites, each of which keeps what the program does and says what it changes in
   MIR's own vocabulary. The unit is in one of two phases, which it records: built, as HIR-to-MIR
-  states it, and legalized, with no node leaving two of its operands a target could run in the other
-  order to another answer and no frame holding a value too large for one or more than a frame keeps
-  together, which is the only phase a consumer takes. A body built after the unit left its rewrites
-  goes through the same rewrites alone before anything reads it, as rustc runs its passes over a
-  shim built on demand, so a consumer reads no body that is not of the unit's phase. A conversion --
-  the rewrites that bring the unit from one phase into the next -- is what a correct program needs,
-  so no build skips one; every other rewrite runs inside a phase, leaves the same program at another
-  cost, and a build may skip it. The conversions are this layer's rather than each consumer's
-  because one consumer writes MIR out as C++, whose own rules would otherwise decide the order
-  operands run in and where a value lies; rustc keeps its required conversions at the layer below,
-  which has no such consumer. The verification asks of a unit what its phase requires; it is
-  verified once, as it leaves the rewrites, since that is the form every consumer reads, and on
-  reaching each phase and after each optional rewrite where a build asks; a dump, which a person
+  states it, and legalized, with every class handle opened by the library's call, every callee that
+  reports at its caller handed its location, no node leaving two of its operands a target could run
+  in the other order to another answer and no frame holding a value too large for one or more than a
+  frame keeps together, which is the only phase a consumer takes. A body built after the unit left
+  its rewrites goes through the same rewrites alone before anything reads it, as rustc runs its
+  passes over a shim built on demand, so a consumer reads no body that is not of the unit's phase. A
+  conversion -- the rewrites that bring the unit from one phase into the next -- is what a correct
+  program needs, so no build skips one; every other rewrite runs inside a phase, leaves the same
+  program at another cost, and a build may skip it. The conversions are this layer's rather than
+  each consumer's because one consumer writes MIR out as C++, whose own rules would otherwise decide
+  the order operands run in and where a value lies; rustc keeps its required conversions at the
+  layer below, which has no such consumer. The verification asks of a unit what its phase requires;
+  it is verified once, as it leaves the rewrites, since that is the form every consumer reads, and
+  on reaching each phase and after each optional rewrite where a build asks; a dump, which a person
   reads rather than a consumer, shows it unchecked. A rewrite builds a node through the same
   builders as the lowering, folding included. A consumer cannot tell a node a rewrite built from one
   the lowering built, so a cost the program's meaning does not decide -- how a process that stops
@@ -591,7 +611,8 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   of array that needs none handed would have to be told apart from the kinds that do. A value a
   program wrote for one array -- the `default:` of an associative array literal (LRM 7.9.11) -- is
   that array's and not its type's, and is an operand. (A fact of a type is stated with the type; an
-  operand is what can differ between two evaluations.)
+  operand is what can differ between two evaluations, or a fact of the call that only the run can
+  read, which it names as a constant of the unit.)
 - An expression node whose meaning depends on which callable encloses it. A node that resolves to
   "the current receiver, whatever that is" carries an implicit context the consumer must walk
   surroundings to discover. Receiver semantics live on `locals[0]` as the `self` binding, reached as

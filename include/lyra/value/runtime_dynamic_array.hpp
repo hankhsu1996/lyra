@@ -113,8 +113,8 @@ class RuntimeDynamicArray {
   [[nodiscard]] auto BitstreamWidth(const ValueOperations& element) const
       -> Int;
   [[nodiscard]] auto CountBits(
-      const ConstIntegralView& control_bits,
-      const ValueOperations& element) const -> Int;
+      const LogicVector<4>& control_bits, const ValueOperations& element) const
+      -> Int;
   // LRM 6.24.3: the elements' own streams laid end to end below the `filled`
   // most significant positions of `stream`, the one at position 0 first, and
   // the inverse, as many elements as fill the stream up to `until`; and the

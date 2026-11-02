@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -22,8 +23,9 @@ namespace lyra::mir_transform {
 // `options` skips it. The unit is checked as it leaves the last rewrite, since
 // that is the form every consumer reads -- and as lowered, after each optional
 // rewrite and on reaching each phase as well where `options` asks.
-auto Transform(mir::CompilationUnit unit, const PassOptions& options)
-    -> mir::CompilationUnit;
+auto Transform(
+    mir::CompilationUnit unit, const PassOptions& options,
+    const diag::SourceManager& sources) -> mir::CompilationUnit;
 
 // `code`, a body at `at` built after `unit` left its rewrites, taken through
 // the same pipeline alone, as rustc runs its passes over a shim it builds on
@@ -31,6 +33,7 @@ auto Transform(mir::CompilationUnit unit, const PassOptions& options)
 // point `options` asks of a unit.
 auto TransformBody(
     const mir::CompilationUnit& unit, const mir::CodeSource& at,
-    mir::CallableCode code, const PassOptions& options) -> mir::CallableCode;
+    mir::CallableCode code, const PassOptions& options,
+    const diag::SourceManager& sources) -> mir::CallableCode;
 
 }  // namespace lyra::mir_transform

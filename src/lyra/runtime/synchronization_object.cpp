@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/part_path.hpp"
@@ -43,7 +44,7 @@ namespace {
 
 void StateReached(const value::ObjectRef& event, ReadReport* report) {
   if (report != nullptr && event) {
-    report->AddObject(event);
+    report->AddObject(ObjectRootOf(event));
   }
 }
 

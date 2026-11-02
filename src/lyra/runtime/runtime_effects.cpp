@@ -11,6 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
@@ -96,6 +97,12 @@ auto current_runtime() -> RuntimeEffects& {
   return *handle;
 }
 
+auto ProcedureMakingEffects() -> const ProcedureContext& {
+  const RuntimeEffects* attached = CurrentRuntimeSlot();
+  return attached == nullptr ? kNoProcedure
+                             : AsRuntime(*attached).RunningProcedure();
+}
+
 void HandOverExpiry(IntrusiveList<WaitMembership>& expiry) noexcept {
   RuntimeEffects* attached = CurrentRuntimeSlot();
   if (attached == nullptr) return;
@@ -148,8 +155,8 @@ auto RuntimeEffects::PlusArgs() -> PlusArgsSource& {
   return AsRuntime(*this).plusargs_;
 }
 
-void RuntimeEffects::RecordCoverage(const value::String& site, bool succeeded) {
-  AsRuntime(*this).coverage_.Record(site.View(), succeeded);
+void RuntimeEffects::RecordCoverage(base::SourceLocation site, bool succeeded) {
+  AsRuntime(*this).coverage_.Record(site, succeeded);
 }
 
 void RuntimeEffects::Schedule(
@@ -231,10 +238,10 @@ void ViolationReportKeeper::Commit(void* made) {
   DeferredEffects& observed = *effects_->ObservedEffects();
   RuntimeProcess* process = effects_->TryCurrentProcess();
   if (process == nullptr) {
-    // A check that fires before any procedure runs -- a static variable's
-    // initializer (LRM 6.8) -- belongs to no process, so there is no deferred
-    // report queue for a flush point to clear and it always matures (LRM
-    // 12.4.2.1).
+    // A check that fires with no process running -- in a static variable's
+    // initializer (LRM 6.8), or in a function a deferred effect calls, as a
+    // `$strobe` argument does -- belongs to no deferred report queue, so no
+    // flush point clears it and it is kept on no condition (LRM 12.4.2.1).
     observed.Commit(made);
     return;
   }
@@ -257,7 +264,7 @@ void RuntimeEffects::SubmitDeferredObserved(Coroutine<void> body) {
   if (process == nullptr) {
     // A deferred assertion outside any process (a static variable's
     // initializer, LRM 6.8) belongs to no deferred report queue, so no flush
-    // point can clear it and it always matures.
+    // point can clear it and it is submitted on no condition.
     Submit(Now(), Region::kReactive, std::move(action));
     return;
   }
@@ -381,12 +388,9 @@ auto RuntimeEffects::DrivenContinuously(const VariableCell& variable) const
   return AsRuntime(*this).driven_continuously_.contains(&variable);
 }
 
-void RuntimeEffects::EndRun(
-    std::string_view task, const value::String& origin,
-    std::int64_t finish_number) {
+void RuntimeEffects::EndRun(std::string_view task, std::int64_t finish_number) {
   Runtime& rt = AsRuntime(*this);
-  rt.ReportSimulationControl(
-      task, origin.View(), static_cast<int>(finish_number));
+  rt.ReportSimulationControl(task, static_cast<int>(finish_number));
   rt.RequestSimulationEnd();
 }
 
@@ -401,7 +405,7 @@ void ReportRaisedError(
   try {
     std::rethrow_exception(raised);
   } catch (const SimulationError& error) {
-    rt.ReportDesignError(base::DiagMessage("{}", error.what()));
+    rt.ReportDesignError(error.At(), base::DiagMessage("{}", error.what()));
   } catch (const InternalError& error) {
     rt.ReportToolFailure(std::format("internal error: {}", error.what()));
   } catch (const std::exception& error) {
@@ -412,8 +416,10 @@ void ReportRaisedError(
   }
 }
 
-void RequireCallerMayScheduleAfterReturn(RuntimeEffects& effects) {
+void RequireCallerMayScheduleAfterReturn(
+    RuntimeEffects& effects, base::SourceLocation at) {
   if (!CreatedByInitialOrAlways(AsRuntime(effects).RunningContext().creator)) {
+    const base::SourceLocationScope bound(at);
     throw SimulationError(
         "a function cannot schedule what takes effect after it returns "
         "unless the thread calling it was created by an initial or always "
@@ -490,7 +496,10 @@ void RuntimeEffects::StartDetached(
 
 void RuntimeEffects::SubmitAtRunEnd(
     OwnedClosure<support::EffectSignature> closure) {
-  AsRuntime(*this).at_run_end_.emplace_back(std::move(closure));
+  Runtime& rt = AsRuntime(*this);
+  rt.at_run_end_.push_back(
+      OwedAtRunEnd{
+          .procedure = rt.RunningProcedure(), .call = std::move(closure)});
 }
 
 auto RuntimeEffects::CurrentProcess() -> RuntimeProcess& {
@@ -530,7 +539,13 @@ auto RuntimeEffects::UnseededRandomSeed() -> std::int32_t& {
 }
 
 void RuntimeEffects::ReportDesignFailure(const base::DiagMessage& message) {
-  AsRuntime(*this).ReportDesignError(message);
+  AsRuntime(*this).ReportDesignError(
+      base::BoundSourceLocation(message.Text()), message);
+}
+
+void RuntimeEffects::ReportDesignFailure(
+    base::NoSourceLocation, const base::DiagMessage& message) {
+  AsRuntime(*this).ReportDesignError(base::SourceLocation{}, message);
 }
 
 auto RuntimeEffects::Now() const -> SimTime {

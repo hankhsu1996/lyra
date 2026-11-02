@@ -8,6 +8,7 @@
 #include <utility>
 #include <variant>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
@@ -71,7 +72,8 @@ class StringScanInput final : public ScanInput {
 namespace detail {
 
 // How many conversions matched, or -1 where the input ended before the first
-// one (LRM 21.3.4.3).
+// one (LRM 21.3.4.3). A format the running program computed can ask for what no
+// conversion does.
 [[nodiscard]] auto ScanImpl(
     ScanInput& input, const String& format, std::span<const ScanTarget> targets)
     -> std::int64_t;
@@ -124,8 +126,10 @@ class ScanSlot<String> {
 // is what its conversion answers with where the scan stopped before reaching
 // it.
 template <typename... Targets>
-auto Scan(ScanInput& input, const String& format, Tuple<Targets...> prototypes)
-    -> Tuple<Integer, Targets...> {
+auto Scan(
+    ScanInput& input, const String& format, Tuple<Targets...> prototypes,
+    base::SourceLocation at) -> Tuple<Integer, Targets...> {
+  const base::SourceLocationScope bound(at);
   return [&]<std::size_t... I>(std::index_sequence<I...>) {
     Tuple<detail::ScanSlot<Targets>...> slots{detail::ScanSlot<Targets>(
         std::move(prototypes).template Component<I>())...};
@@ -140,10 +144,10 @@ auto Scan(ScanInput& input, const String& format, Tuple<Targets...> prototypes)
 // LRM 21.3.4.3 `$sscanf`, a scan of a string.
 template <typename... Targets>
 auto ScanString(
-    const String& input, const String& format, Tuple<Targets...> prototypes)
-    -> Tuple<Integer, Targets...> {
+    const String& input, const String& format, Tuple<Targets...> prototypes,
+    base::SourceLocation at) -> Tuple<Integer, Targets...> {
   StringScanInput source(input.View());
-  return Scan(source, format, std::move(prototypes));
+  return Scan(source, format, std::move(prototypes), at);
 }
 
 }  // namespace lyra::value

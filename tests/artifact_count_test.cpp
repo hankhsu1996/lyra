@@ -55,8 +55,7 @@ namespace {
 using LoweredUnits = std::vector<lyra::hir::Lowering>;
 
 // The design `source` states, its units declared through the same entries the
-// command line uses, handed to `use` with the source text its spans resolve
-// through and the sink a lowering reports to.
+// command line uses, handed to `use` with the sink a lowering reports to.
 template <typename Use>
 auto WithDeclaredDesign(std::string_view source, const Use& use) -> bool {
   lyra::diag::DiagnosticSink sink;
@@ -84,11 +83,11 @@ auto WithDeclaredDesign(std::string_view source, const Use& use) -> bool {
 
   auto design = lyra::compiler::DeclareUnits(
       std::move(front.elaborated->compilation),
-      lyra::compiler::LoweringPolicy{}, sink);
+      lyra::compiler::LoweringPolicy{}, sink, front.elaborated->diag_sources);
   EXPECT_TRUE(design.has_value()) << "the probe design did not declare";
   if (!design.has_value()) return false;
 
-  use(*design, front.elaborated->diag_sources, sink);
+  use(*design, sink);
   EXPECT_FALSE(sink.HasErrors()) << "the probe design did not lower";
   return !sink.HasErrors();
 }
@@ -99,9 +98,8 @@ auto LowerDesign(std::string_view source) -> std::optional<LoweredUnits> {
   // What is compiled is each implementation, once.
   LoweredUnits units;
   const bool lowered = WithDeclaredDesign(
-      source,
-      [&](lyra::compiler::ElaboratedDesign& design,
-          const lyra::diag::SourceManager&, lyra::diag::DiagnosticSink& sink) {
+      source, [&](lyra::compiler::ElaboratedDesign& design,
+                  lyra::diag::DiagnosticSink& sink) {
         lyra::compiler::LowerToHir(
             design, sink, 1,
             [](lyra::hir::Lowering lowered)
@@ -1496,10 +1494,9 @@ auto LowerBodiesToMir(std::string_view source)
   std::vector<lyra::mir::CompilationUnit> bodies;
   WithDeclaredDesign(
       source, [&](lyra::compiler::ElaboratedDesign& design,
-                  const lyra::diag::SourceManager& sources,
                   lyra::diag::DiagnosticSink& sink) {
         const auto semantic = lyra::compiler::LowerToSemantic(
-            design, sources, lyra::mir_transform::PassOptions{}, sink, 1,
+            design, lyra::mir_transform::PassOptions{}, sink, 1,
             [](lyra::mir::CompilationUnit unit)
                 -> lyra::diag::Result<lyra::mir::CompilationUnit> {
               return unit;

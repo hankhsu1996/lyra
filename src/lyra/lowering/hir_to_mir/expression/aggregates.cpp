@@ -86,25 +86,23 @@ auto BuildBitsReplication(
 //   { q = {}; q.push_back(a); foreach (e in b) q.push_back(e); ...; q }
 //
 // The steps stand beside each other however many parts the source lists, and
-// each element is appended once. The queue is the destination itself where
-// that is a queue, so its bound holds as each element lands; a dynamic or a
-// fixed-size array takes what was appended as an assignment between array kinds
-// does, which a fixed-size one refuses where the counts differ (LRM 7.6,
-// 10.10). The empty `{}` is the queue with nothing appended.
+// each element is appended once. The queue holds no bound, so it is the
+// destination itself only where that holds none either; any other destination
+// takes what was appended as an assignment between array kinds does, once,
+// which a bounded queue holds to its bound and a fixed-size array refuses where
+// the counts differ (LRM 7.6, 7.10.5, 10.10). The empty `{}` is the queue with
+// nothing appended.
 template <ExprLowerer Lowerer>
 auto BuildUnpackedConcatSteps(
     Lowerer& lowerer, const WalkFrame& frame,
     std::span<const hir::ExprId> parts, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   UnitLowerer& owner = lowerer.Owner();
-  const mir::CompilationUnit& unit = owner.Unit();
-  const mir::Type& result = unit.types.Get(result_type);
+  mir::CompilationUnit& unit = owner.Unit();
   const mir::TypeId element_type =
       RequiredContainerElementType(unit, result_type);
   const mir::TypeId queue_type =
-      result.IsDeclaredBy(support::LibraryDecl::kQueue)
-          ? result_type
-          : mir::QueueOf(unit.types, element_type, support::UnboundedQueue{});
+      mir::QueueOf(unit.types, element_type, support::UnboundedQueue{});
   BlockBuilder steps(frame);
   mir::Builder body = steps.Body();
   const mir::LocalId appended = steps.DeclareLocal(

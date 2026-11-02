@@ -9,6 +9,7 @@
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir_transform/pass.hpp"
 
 namespace lyra::mir_transform {
 
@@ -31,7 +32,7 @@ namespace lyra::mir_transform {
 // what is there by the time it runs (LRM 8.29 reclaims only an object "no
 // longer being used").
 auto OrderEvaluationOnBody(
-    const mir::CompilationUnit& unit, const mir::CodeSource& at,
+    const PassContext& context, const mir::CodeSource& at,
     const mir::CallableCode& code) -> std::optional<mir::CallableCode>;
 
 // Which values of one body its frame keeps apart, each held through a box:

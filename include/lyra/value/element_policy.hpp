@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/container_lease.hpp"
@@ -35,7 +36,9 @@ namespace lyra::value {
 //
 // Comparing two elements and streaming one (LRM 11.4.5, 6.24.3) are not the
 // policy's: an algorithm doing either is handed them by whoever asks, since a
-// container holds its element type only for what its storage needs.
+// container holds its element type only for what its storage needs. A value's
+// own operation asked here is handed no place: this code is under the place the
+// operation reaching it bound, as a table's function is.
 //
 // A policy also round-trips through an opaque address, as LLVM's
 // `PointerIntPair` does through `getOpaqueValue`, so storage a container
@@ -172,12 +175,11 @@ class StaticElem {
 
   // LRM 20.6.2 `$bits` / 20.9 `$countbits` of one element.
   [[nodiscard]] static auto BitstreamWidth(const void* value) -> std::int64_t {
-    return Of(value).BitstreamWidth().ToInt64();
+    return Of(value).BitstreamWidth(base::SourceLocation{}).ToInt64();
   }
-  template <IntegralValue Control>
   [[nodiscard]] static auto CountBits(
-      const void* value, const Control& control_bits) -> std::int64_t {
-    return Of(value).CountBits(control_bits).ToInt64();
+      const void* value, const LogicVector<4>& control_bits) -> std::int64_t {
+    return Of(value).CountBits(control_bits, base::SourceLocation{}).ToInt64();
   }
 
   // The element written into a stream below its `filled` most significant
@@ -193,15 +195,17 @@ class StaticElem {
                            Of(value).WriteToStream(stream, filled);
                          }) {
       return Of(value).WriteToStream(stream, filled);
-    } else if constexpr (requires { Of(value).ToBitVec(); }) {
-      const BitVec run = Of(value).ToBitVec();
+    } else if constexpr (requires {
+                           Of(value).ToBitVec(base::SourceLocation{});
+                         }) {
+      const BitVec run = Of(value).ToBitVec(base::SourceLocation{});
       Insert(
           stream, run.View(),
           static_cast<std::int64_t>(stream.width - filled - run.View().width));
       return filled + run.View().width;
     } else {
       return lyra::value::WriteToStream(
-          Of(value).ToBitstream(), stream, filled);
+          Of(value).ToBitstream(base::SourceLocation{}), stream, filled);
     }
   }
 
@@ -220,20 +224,31 @@ class StaticElem {
                            element.ReadFromStream(stream, taken, until);
                          }) {
       return element.ReadFromStream(stream, taken, until);
-    } else if constexpr (requires(const BitVec& run) { T::FromBitVec(run); }) {
-      const BitVec run = BitVec::Of(stream, taken, until);
-      RebuildFrom(element, [&] { return T::FromBitVec(run); });
+    } else if constexpr (requires(const BitVec& run) {
+                           T::FromBitVec(run, base::SourceLocation{});
+                         }) {
+      // Built before the element ends, since a stream of the wrong length can
+      // fail to make one and the element then stays as it is; and off the frame
+      // where it is too large for one, as the structure below is.
+      SmallBox<T> read = SmallBox<T>::BuiltBy([&] {
+        return T::FromBitVec(
+            BitVec::Of(stream, taken, until), base::SourceLocation{});
+      });
+      RebuildFrom(element, [&] { return std::move(*read); });
       return until;
     } else {
       // A structure's stream is as wide as the structure, so its bits are kept
       // as a frame keeps a value aside, and the structure they make is built
       // where the element lies. Nothing on the way can fail: storage that
       // cannot be had ends the run.
-      using Bits = decltype(std::declval<const T&>().ToBitstream());
+      using Bits = decltype(std::declval<const T&>().ToBitstream(
+          base::SourceLocation{}));
       SmallBox<Bits> bits;
       const std::uint64_t after =
           lyra::value::ReadFromStream(stream, taken, *bits);
-      RebuildFrom(element, [&] { return T::FromBitstream(*bits); });
+      RebuildFrom(element, [&] {
+        return T::FromBitstream(*bits, base::SourceLocation{});
+      });
       return after;
     }
   }
