@@ -173,6 +173,7 @@ namespace {
 
 auto LowerStraightLineBodyInto(ProcessLowerer& process, WalkFrame frame)
     -> diag::Result<void> {
+  frame = frame.WithSourceStatements();
   const hir::ProceduralBody& body = process.HirBody();
   const hir::Stmt& root = body.stmts.Get(process.HirRootStmt());
   // A body whose root statement is the block of its own scope begins and ends
@@ -258,7 +259,8 @@ auto LowerForeverProcess(ProcessLowerer& process, Ahead ahead)
   if (!after_body) return std::unexpected(std::move(after_body.error()));
   mir::Block body_block;
   {
-    const WalkFrame body_frame = entry_frame.WithBlock(&body_block);
+    const WalkFrame body_frame =
+        entry_frame.WithLoopPreheader(&code.Body()).WithBlock(&body_block);
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     (*after_body)(body_frame.Builder());

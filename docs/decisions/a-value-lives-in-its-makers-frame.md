@@ -64,11 +64,11 @@ out the way clang carries it out.**
 - **When a frame's bytes for a value are in use is stated below MIR, apart from the value's end.**
   The two differ. A value handed to a slot or returned leaves behind the bytes it was made in while
   it goes on existing, and a slot's bytes hold one value after another. A slot's bytes come into use
-  where its first value is stored and a made value's with the instruction that makes it, and either
-  goes out of use where the lowering says, on every way out of the extent it was introduced in. That
-  is all the statement says, and the bytes are always the frame's, since a value too large for one
-  is never a frame's value. This is the pair rustc's MIR states as `StorageLive` and `StorageDead`
-  and LLVM IR as a lifetime's start and end, each distinct from destroying the value
+  where the slot is made and a made value's with the instruction that makes it, and either goes out
+  of use where the lowering says, on every way out of the extent it was introduced in. That is all
+  the statement says, and the bytes are always the frame's, since a value too large for one is never
+  a frame's value. This is the pair rustc's MIR states as `StorageLive` and `StorageDead` and LLVM
+  IR as a lifetime's start and end, each distinct from destroying the value
   (`rustc_middle/src/mir/syntax.rs`, read in rustc's tree).
 
 ## Rejected

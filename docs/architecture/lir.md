@@ -63,8 +63,8 @@ below LIR, at LIR-to-LLVM.
   store that names the place and the bits. A string's character is no step either; the string's own
   operations read and write it. There is no slice step, because a window is several elements rather
   than one storage, and storage behind an indirection is reached by a dereference step.
-- When the bytes a frame keeps for a value are in use: from where a slot's first value is stored or
-  a value is made, to a point stated on every way out of the extent it belongs to.
+- When the bytes a frame keeps for a value are in use: from where a slot or a value is made, to a
+  point stated on every way out of the extent it belongs to.
 - Whether a write initializes or assigns: a value put into storage holding none -- a slot's first
   value, one whose value was ended before, or a part of a body's return place, where an answer is
   built part by part -- is an assignment naming that storage as its destination, made there or moved

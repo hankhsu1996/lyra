@@ -2,7 +2,8 @@
 
 Date: 2026-10-05. Status: accepted. Moved a wait's memberships off the activation
 (`a-membership-is-one-record.md`), and revises `waiting-is-an-operation.md` D4 and
-`disable-scope-invalidation.md` D2 in place.
+`disable-scope-invalidation.md` D2 in place. Revised 2026-11-01: a wait no longer stands in the
+outermost block for the body's whole run.
 
 ## Context
 
@@ -25,22 +26,28 @@ hand-written model with the same event counts.
 
 ## Decision
 
-**Every timing control is a wait the body holds in its frame, built where what it waits for stops
-changing, and stopped at from there on.** Each stop says only that the activation is parked on it
-now; an occurrence while one is parked wakes it, and one while none is, or while the activation is
-stopped, is no occurrence. Every timing control stops through the same entry, and nothing about a
-stop is decided twice; the one other way a body gives up control is a foreign task carried on a
-fiber (LRM 35.9), which waits for no occurrence at all.
+**Every timing control is a wait the body holds in its frame, built so that a stop reached again
+stops at the same wait, and ended where nothing can reach that stop again.** Each stop says only
+that the activation is parked on it now; an occurrence while one is parked wakes it, and one while
+none is, or while the activation is stopped, is no occurrence. Every timing control stops through
+the same entry, and nothing about a stop is decided twice; the one other way a body gives up control
+is a foreign task carried on a fiber (LRM 35.9), which waits for no occurrence at all.
 
-- **Where it is built is decided by what it names.** A wait whose leaves are cells of the design,
-  and whose observations evaluate nothing but such cells where a change happens, is built once in
-  the outermost block of the body, which lasts for the body's whole run -- a process's, a call's, a
-  branch's. One that watches, or evaluates, a variable the body declares is built at its stop,
-  because that variable exists only from its declaration on (LRM 6.21). Every other wait is built at
-  its stop too, because what it waits for is known only there: a delay's amount (LRM 9.4.1), a
-  fork's branches (LRM 9.3.2), the reports an evaluation the process made
-  (`the-waiting-process-evaluates-its-wait.md`, LRM 9.4.3). The shape is the same in every case;
-  only the block differs.
+- **Where it is built is decided by what it names and by what repeats it.** A wait whose leaves are
+  cells of the design, and whose observations evaluate nothing but such cells where a change
+  happens, is built in the block holding the innermost loop around its stop, once for all the passes
+  of that loop, and ends with that block. Where no loop repeats the stop, it and the stop are a
+  block of their own. A stop reached once costs the same built there as built at the top of the
+  body, and the wait stands only while it is used: a standing wait is told of every change to what
+  it watches, so N waits on one clock in a straight line would cost N tests per edge, and each way
+  out of the body would have N waits to end. One that watches, or evaluates, a variable the body
+  declares is built at its stop, because that variable exists only from its declaration on (LRM
+  6.21). Every other wait is built at its stop too, because what it waits for is known only there: a
+  delay's amount (LRM 9.4.1), a fork's branches (LRM 9.3.2), the reports an evaluation the process
+  made (`the-waiting-process-evaluates-its-wait.md`, LRM 9.4.3). Going further out than the
+  innermost loop saves building a wait on each pass of an outer loop and keeps it standing through
+  whatever else that loop does, which nothing has measured as a gain. The shape is the same in every
+  case; only the block differs.
 - **A wait's memberships stand for the wait's life.** It enrols on each place it watches -- an
   observable, a `wait fork` condition, a process's termination -- when it is built, and leaves when
   it ends. Reaching a place asks the wait whether an activation is parked on it, and takes that
@@ -137,7 +144,7 @@ process and ours is per stop, which is the same mechanism at a finer grain.
   so a write to it describes what it changed even while the waiting process is running; the numbers
   above include that.
 - A wait in a loop whose body declares what it watches or evaluates is rebuilt each iteration, as
-  every wait was before.
+  every wait was before. So is one in an inner loop, on each pass of the loop around it.
 - An implicit list is collected once, without running the functions it asks
   (`an-implicit-list-asks-each-function-once.md`), and the wait is built on it there.
 
@@ -145,8 +152,8 @@ process and ours is per stop, which is the same mechanism at a finer grain.
 
 - `a-membership-is-one-record.md` -- a membership is owned by what shares its life, and a wait's
   stands for the wait's life.
-- `waiting-is-an-operation.md` -- D4, revised in place: every wait is held by the frame, built where
-  what it waits for stops changing.
+- `waiting-is-an-operation.md` -- D4, revised in place: every wait is held by the frame, built so a
+  stop reached again stops at the same wait.
 - `disable-scope-invalidation.md` -- D2, revised in place: a process enrols on a target for as long
   as it is inside, and a `disable` wakes it where it is blocked.
 - `the-waiting-process-evaluates-its-wait.md` -- which controls a change decides.

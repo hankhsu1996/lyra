@@ -27,4 +27,12 @@ auto EnterReactionRunningFirst(
 auto EnterReactionStoppingFirst(
     void* receiver, ReactionPart setup, ReactionPart pass) -> Coroutine<void>;
 
+// A body that never stops: an ordinary function, handed the object it
+// belongs to with its type erased for the reason a part is.
+using CompletingBody = void (*)(void* receiver);
+
+// The execution the engine schedules for such a body, which runs it once.
+auto EnterRunToCompletion(void* receiver, CompletingBody body)
+    -> Coroutine<void>;
+
 }  // namespace lyra::runtime

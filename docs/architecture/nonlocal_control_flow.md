@@ -99,17 +99,17 @@ resumption to hang it on.
 
 ## What each layer states
 
-| Layer       | States                                                                    |
-| ----------- | ------------------------------------------------------------------------- |
-| Source-near | The construct the source wrote: a named block, a task                     |
-| Semantic    | A region with its landing, a raise, and a body paired with a cleanup      |
-| Execution   | Basic blocks and edges; the cleanup copied onto every way out of the body |
-| Runtime     | Whether a target this execution is inside has been invalidated            |
+| Layer       | States                                                               |
+| ----------- | -------------------------------------------------------------------- |
+| Source-near | The construct the source wrote: a named block, a task                |
+| Semantic    | A region with its landing, a raise, and a body paired with a cleanup |
+| Execution   | Basic blocks and edges; the cleanup copied per place a way out goes  |
+| Runtime     | Whether a target this execution is inside has been invalidated       |
 
 The semantic layer states the construct once. The execution layer has no scopes -- only edges -- so
-a body's ways out are enumerated there and the cleanup is emitted on each. A backend that consumes
-the semantic layer directly does not enumerate anything: it hands the construct to its target
-language.
+a body's ways out are enumerated there and the cleanup is emitted once per place they go. A backend
+that consumes the semantic layer directly does not enumerate anything: it hands the construct to its
+target language.
 
 ## Core invariants
 
@@ -182,7 +182,7 @@ runtime library spells the two values `CancellationTarget` and `ControlEffect`.
 
 The C++ backend realizes the region as `try` / `catch`, the raise as `throw`, and the cleanup as a
 scope-exit object declared ahead of the body -- C++ states an extent's exit through a destructor
-rather than through a construct of its own. The execution backend has neither, so it emits the
+rather than through a construct of its own. The execution backend has neither, so it runs the
 cleanup on each way out of the body and asks the runtime, at the points inside a region where an
 execution regains control, whether a target it is inside has been invalidated. A departure no region
 of the body claims is itself one of those ways out: a body called directly carries it on to its
@@ -234,8 +234,9 @@ stop and leaves by the departure no region claims at the next point where it reg
 Enumerating a body's ways out is what every compiler targeting a control-flow graph or a stack
 machine does with a cleanup construct. JVM bytecode has no `finally`; the compiler copies the
 cleanup onto each exit path. An earlier design jumped to one shared copy and returned, which was
-withdrawn because the resulting graph could not be verified. Copying is the standard answer, and the
-cost is one stack of owed cleanups in the lowering.
+withdrawn because the resulting graph could not be verified. Copying per target, shared by the ways
+out of one scope to it, is the standard answer, and the cost is one stack of owed cleanups in the
+lowering.
 
 Adjacent contracts: `activation.md` owns what an activation is and which activations are cancelled
 together; `lir.md` owns the control-flow graph the cleanup is emitted into; `mir.md` owns the

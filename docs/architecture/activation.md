@@ -52,9 +52,9 @@ the awaiter consumes, not of the scheduler.
   activation held before it was suspended.
 - **What the activation is waiting for**: for a `Blocked` (or `Suspended`-from-blocked) one, the
   wait it is parked on, which can arrange that wait and report whether what it waits for has already
-  happened. The body's frame holds every wait, built where what it waits for stops changing; the
-  activation names the one it is parked on for as long as it waits, so it is never a taxonomy the
-  scheduler branches on.
+  happened. The body's frame holds every wait, built around its stop, or outside the loop that
+  repeats it; the activation names the one it is parked on for as long as it waits, so it is never a
+  taxonomy the scheduler branches on.
 - The **active leaf**: the relation from a process to the one activation currently carrying its
   thread. A process is a single thread (a task or function call runs in the caller's thread, LRM
   9.5), so when it is not executing exactly one leaf activation -- the innermost frame -- is

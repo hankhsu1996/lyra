@@ -717,12 +717,15 @@ auto BuildChangeDecidedEventWaitStmt(
             }},
         entry.occurrence);
   }
-  mir::Builder storage = WaitStorageBlock(
+  return BuildStopAtWait(
       frame, block, cells, lowerer.HirExprs(), evaluated,
-      evaluates_where_reached);
-  auto leaves = BuildEventLeaves(lowerer, frame.WithBlock(&storage.Body()), ec);
-  if (!leaves) return std::unexpected(std::move(leaves.error()));
-  return BuildWaitOnStmt(storage, block, frame, lowerer, *leaves);
+      evaluates_where_reached,
+      [&](mir::Builder storage, mir::Builder stop) -> diag::Result<mir::Stmt> {
+        auto leaves =
+            BuildEventLeaves(lowerer, frame.WithBlock(&storage.Body()), ec);
+        if (!leaves) return std::unexpected(std::move(leaves.error()));
+        return BuildWaitOnStmt(storage, stop, frame, lowerer, *leaves);
+      });
 }
 
 }  // namespace

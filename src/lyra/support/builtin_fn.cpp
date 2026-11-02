@@ -1961,6 +1961,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = RuntimeFunction("EnterReactionStoppingFirst"),
           .ending = CallEnding::kReturns,
           .answer = EntryAnswer::kExecution};
+    case BuiltinFn::kEnterRunToCompletion:
+      return {
+          .name = "enter_run_to_completion",
+          .declaration = RuntimeFunction("EnterRunToCompletion"),
+          .ending = CallEnding::kReturns,
+          .answer = EntryAnswer::kExecution};
     case BuiltinFn::kEnterScopeStaticInit:
       return {
           .name = "enter_scope_static_init",

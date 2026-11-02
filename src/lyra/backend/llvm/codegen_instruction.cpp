@@ -89,9 +89,10 @@ auto CodeGenFunction::LowerInstrInto(const lir::Instr& instr)
           [&](const lir::BitsStoreInstr& store) -> Done {
             return done(LowerBitsStore(store));
           },
-          // Bytes a frame keeps for a value come into use and go out of it
-          // with nothing to do where they lie in the frame.
-          [](const lir::StorageInstr&) -> Done { return {}; },
+          [&](const lir::StorageInstr& storage) -> Done {
+            LowerStorage(storage);
+            return {};
+          },
           [&](const lir::EndVariableInstr& ended) -> Done {
             return done(LowerEndVariable(ended));
           },

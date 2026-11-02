@@ -25,17 +25,18 @@ holds the activation token and resumes the body; a `co_await` in the body suspen
 state -- procedural locals, the implicit program counter -- lives in the coroutine frame, which the
 engine does not introspect. A body that stops only at the head of its loop is not compiled as one:
 it is a setup and a pass, plain bodies that one coroutine of the runtime calls, and that coroutine
-is what the scheduler resumes, holding the wait between passes. The engine sees one kind of
-execution either way.
+is what the scheduler resumes, holding the wait between passes. A body that never stops is a plain
+function that a coroutine of the runtime calls once. The engine sees one kind of execution either
+way.
 
-Every wait is part of that state too. It is built where what it waits for stops changing and enrols
-on what it watches for its whole life: once in the body's outermost block for a wait on storage that
-stays the same every time the body reaches the stop -- nearly every wait on storage -- and at the
-stop for one only the stop can name, a delay's amount or a fork's branches, or one that reads a
-variable the body declares. A stop only marks the activation as parked on it; an occurrence while
-one is parked wakes it, and any other occurrence is ignored. That is the C++ and Rust shape of the
-same thing -- an awaitable is a local of the coroutine, declared where its inputs are known, and a
-stop only awaits it.
+Every wait is part of that state too. It enrols on what it watches for its whole life, which is as
+short as its use allows: outside the innermost loop around its stop for a wait on storage that stays
+the same every time the body reaches the stop, so each pass stops at the one wait, and in a block of
+its own around the stop where no loop repeats it. One only the stop can name, a delay's amount or a
+fork's branches, is built at the stop, and so is one that reads a variable the body declares. A stop
+only marks the activation as parked on it; an occurrence while one is parked wakes it, and any other
+occurrence is ignored. That is the C++ and Rust shape of the same thing -- an awaitable is a local
+of the coroutine, declared where its inputs are known, and a stop only awaits it.
 
 A task is enabled with `co_await`: enabling a time-consuming task suspends the enabling process
 until the task completes (LRM 13.3). The scheduler resumes the innermost suspended frame, and each

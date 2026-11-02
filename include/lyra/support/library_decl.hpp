@@ -84,8 +84,8 @@ enum class LibraryDecl : std::uint8_t {
   // function it calls reports what it reads into; an `always_comb` or
   // `always_latch` collects its implicit list into one (LRM 9.2.2.2.1).
   kReadReport,
-  // LRM 9.4 a timing control as the body holds it, built where what it waits
-  // for stops changing and stopped at from there.
+  // LRM 9.4 a timing control as the body holds it, built so a stop reached
+  // again stops at the same wait.
   kWait,
   // LRM 13.5.2 / 8.29 a reference a call binds where what it names lies in
   // something the program can let go of while the call runs, with a lease

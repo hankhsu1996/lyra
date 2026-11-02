@@ -2389,6 +2389,13 @@ auto lyra_rt_enter_reaction_running_first(
       lyra::runtime::EnterReactionRunningFirst(receiver, setup, pass));
 }
 
+auto lyra_rt_enter_run_to_completion(
+    void* receiver, void (*body)(void*), void* out) noexcept -> void* {
+  return std::construct_at(
+      static_cast<Coroutine<void>*>(out),
+      lyra::runtime::EnterRunToCompletion(receiver, body));
+}
+
 auto lyra_rt_enter_reaction_stopping_first(
     void* receiver, bool (*setup)(void*, void*), bool (*pass)(void*, void*),
     void* out) noexcept -> void* {

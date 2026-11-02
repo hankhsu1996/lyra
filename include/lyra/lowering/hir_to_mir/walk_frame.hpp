@@ -208,6 +208,16 @@ struct WalkFrame {
   // stack, and it is null outside any loop of this body.
   BreakTarget* break_leaves = nullptr;
 
+  // The innermost loop's preheader: the block holding that loop, where what
+  // each pass would otherwise build again is built once, ahead of the loop.
+  // Null outside any loop of this body.
+  mir::Block* loop_preheader = nullptr;
+
+  // Whether this is a statement the source wrote, where a stop no loop repeats
+  // is reached once. Code the lowering writes for itself is a body that is its
+  // own loop, which reuses a wait from the top of that body.
+  bool in_source_statements = false;
+
   // What the scopes of this body the walk is inside owe on their normal ways
   // out, innermost first, each owned on the stack of its scope's lowering.
   // `loop_normal_cleanups` is what of that stood outside the body of the loop
@@ -378,9 +388,24 @@ struct WalkFrame {
     return next;
   }
 
+  // Enters statements the source wrote.
+  [[nodiscard]] auto WithSourceStatements() const -> WalkFrame {
+    WalkFrame next = *this;
+    next.in_source_statements = true;
+    return next;
+  }
+
+  // Enters the body of a loop `preheader` holds.
+  [[nodiscard]] auto WithLoopPreheader(mir::Block* preheader) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.loop_preheader = preheader;
+    return next;
+  }
+
   // Enters the body of `loop`, which a `break` there leaves by naming it.
   [[nodiscard]] auto WithBreakLeaving(BreakTarget& loop) const -> WalkFrame {
-    WalkFrame next = *this;
+    WalkFrame next = WithLoopPreheader(current_block);
     next.break_leaves = &loop;
     next.loop_normal_cleanups = normal_cleanups;
     return next;
@@ -416,6 +441,7 @@ struct WalkFrame {
     // this one, which LRM 12.8 forbids across a fork-join block as well; nor
     // does any jump of it leave a block of this one.
     next.break_leaves = nullptr;
+    next.loop_preheader = nullptr;
     next.normal_cleanups = nullptr;
     next.loop_normal_cleanups = nullptr;
     return next;
