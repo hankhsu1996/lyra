@@ -764,6 +764,12 @@ class HirDumper {
             [](const RoutedValueRef& r) -> std::string {
               return std::format("RoutedValueRef[{}]", r.id.value);
             },
+            [](const RoutedViewPlaceRef& r) -> std::string {
+              return std::format("RoutedViewPlaceRef[{}]", r.id.value);
+            },
+            [](const RoutedViewValueRef& r) -> std::string {
+              return std::format("RoutedViewValueRef[{}]", r.id.value);
+            },
             [](const RoutedObjectRef& r) -> std::string {
               return std::format("RoutedObjectRef[{}]", r.id.value);
             },
@@ -1447,14 +1453,23 @@ class HirDumper {
                   sel.steps.size());
             },
             [this](const InterfaceMemberAccessExpr& sel) -> std::string {
+              const std::string component = std::visit(
+                  Overloaded{
+                      [](PublishedMemberId id) {
+                        return std::format("member[{}]", id.value);
+                      },
+                      [](PublishedViewNameId id) {
+                        return std::format(
+                            "view[{}].name[{}]", id.modport, id.port);
+                      }},
+                  sel.component);
               return std::format(
                   "InterfaceMemberAccessExpr handle=Expr[{}] interface={} "
-                  "steps={} ScopeClass[{}].member[{}]",
+                  "steps={} ScopeClass[{}].{}",
                   sel.instance.handle.value,
                   unit_->scope_classes.KeyOf(sel.instance.scope_class)
                       .unit_name,
-                  sel.instance.steps.size(), sel.scope_class.value,
-                  sel.member.value);
+                  sel.instance.steps.size(), sel.scope_class.value, component);
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
@@ -2349,6 +2364,22 @@ class HirDumper {
     return FormatRouteWalk(r.base, r.steps) + FormatLeaf(r.leaf);
   }
 
+  static auto FormatRoute(const ViewPlaceRoute& r) -> std::string {
+    std::string routes;
+    for (const RoutedValueRef& part : r.parts) {
+      routes += std::format(" RoutedValueRef[{}]", part.id.value);
+    }
+    return std::format(
+        "ScopeClass[{}].view[{}].name[{}]{}", r.scope_class.value,
+        r.name.modport, r.name.port, routes);
+  }
+
+  static auto FormatRoute(const ViewValueRoute& r) -> std::string {
+    return std::format(
+        "ScopeClass[{}].view[{}].name[{}] RoutedObjectRef[{}]",
+        r.scope_class.value, r.name.modport, r.name.port, r.object.id.value);
+  }
+
   template <typename Walk, typename Id>
   void DumpTable(std::string_view label, const base::Arena<Walk, Id>& table) {
     for (const Id id : table.Ids()) {
@@ -2469,6 +2500,8 @@ class HirDumper {
               array_suffix, alternatives, taken));
     }
     DumpTable("RoutedValueRef", s.routes.values);
+    DumpTable("RoutedViewPlaceRef", s.routes.view_places);
+    DumpTable("RoutedViewValueRef", s.routes.view_values);
     DumpTable("RoutedObjectRef", s.routes.objects);
     DumpTable("RoutedDisableTargetRef", s.routes.disable_targets);
     for (const PortConnectionId id : s.port_connections.Ids()) {

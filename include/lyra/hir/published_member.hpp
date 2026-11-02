@@ -23,6 +23,18 @@ struct PublishedMemberId {
       -> std::strong_ordering = default;
 };
 
+// Where a name a view defines sits among what its scope published: the view,
+// then the name within it. Two views may each define a name of the same
+// spelling and mean different storage (LRM 25.5.4), so a reference names the
+// position and not the spelling.
+struct PublishedViewNameId {
+  std::uint32_t modport = base::kUnassignedId;
+  std::uint32_t port = base::kUnassignedId;
+
+  auto operator<=>(const PublishedViewNameId&) const
+      -> std::strong_ordering = default;
+};
+
 // A member holding its own mutable cell (LRM 6.5).
 struct VariableStorage {
   auto operator==(const VariableStorage&) const -> bool = default;

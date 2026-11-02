@@ -279,10 +279,34 @@ using ValueRoute = Route<DataLeaf>;
 using ObjectRoute = Route<ScopeLeaf>;
 using DisableTargetRoute = Route<DisableLeaf>;
 
+// How a scope reaches what a name a view defines as storage stands for (LRM
+// 25.5.4): the name, by where the interface published it, and one route per
+// part, in the order the interface published the parts, since a route ends at
+// one thing and the name may join several.
+struct ViewPlaceRoute {
+  ScopeClassId scope_class;
+  PublishedViewNameId name;
+  std::vector<RoutedValueRef> parts;
+
+  auto operator==(const ViewPlaceRoute&) const -> bool = default;
+};
+
+// How a scope reaches a name a view offers as a value: the name, and the route
+// to the object its value is computed on.
+struct ViewValueRoute {
+  ScopeClassId scope_class;
+  PublishedViewNameId name;
+  RoutedObjectRef object;
+
+  auto operator==(const ViewValueRoute&) const -> bool = default;
+};
+
 // Every walk one scope's names take, gathered while its bodies are lowered and
 // handed to the scope whole, a table per use a name is put to.
 struct ScopeRoutes {
   base::Arena<ValueRoute, RoutedValueRefId> values;
+  base::Arena<ViewPlaceRoute, RoutedViewPlaceRefId> view_places;
+  base::Arena<ViewValueRoute, RoutedViewValueRefId> view_values;
   base::Arena<ObjectRoute, RoutedObjectRefId> objects;
   base::Arena<DisableTargetRoute, RoutedDisableTargetRefId> disable_targets;
 

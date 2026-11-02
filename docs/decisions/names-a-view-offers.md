@@ -16,6 +16,13 @@ because a module publishes no child, is revised by
 module publishes its child instances, so such a path reaches the name where it compiles, and nothing
 is reached by name at run time.
 
+Revised 2026-11-01: where a referrer reads what a name means. The front end holds a use of one as it
+holds any member access or hierarchical value, so HIR states that use and no expansion of it, and
+HIR-to-MIR reads the published record. D2's parts and D3's subroutine stand as published. A use
+through a port takes one route per part, sealed as any route is, since a route ends at one thing, or
+for a name that is a value the route to the object; a use through a virtual interface evaluates the
+handle once and reaches each part on the object it holds.
+
 ## Why this decision matters
 
 A module bound through a modport writes the names the view offers, and that is most of what
@@ -165,7 +172,8 @@ member is a net.
 
 - Every assignment form the language allows for the storage behind a name a view offers reaches it,
   with no arm per form: blocking, compound, increment, a part-select target, an intra-assignment
-  delay, a nonblocking update, a continuous assignment, and a procedural continuous assignment.
+  delay, a nonblocking update, a continuous assignment, and a procedural continuous assignment. A
+  part-select of a name joining several declarations is not yet written.
 - The subroutine that assigned to a name, its identity, its body, and the branch that routed an
   assignment into it are all gone. A write through a view is no longer a shape a lowering has to
   recognize.

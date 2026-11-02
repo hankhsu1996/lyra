@@ -161,6 +161,38 @@ struct ScopeClassSignature {
     return std::nullopt;
   }
 
+  // Where the view `modport` published the name `name`, or nothing when it
+  // defined no such name -- which includes every name it offers under the
+  // interface's own spelling, since those are reached as members.
+  [[nodiscard]] auto FindViewName(
+      std::string_view modport, std::string_view name) const
+      -> std::optional<PublishedViewNameId> {
+    for (std::uint32_t view = 0; view < modports.size(); ++view) {
+      if (modports[view].name != modport) continue;
+      const std::vector<PublishedModportPort>& ports = modports[view].ports;
+      for (std::uint32_t port = 0; port < ports.size(); ++port) {
+        if (ports[port].name == name) {
+          return PublishedViewNameId{.modport = view, .port = port};
+        }
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] auto ViewName(PublishedViewNameId id) const
+      -> const ViewDefinedName& {
+    return modports[id.modport].ports[id.port].meaning;
+  }
+
+  // Whether `place` is one place rather than a join. Joining is what gives a
+  // name a type its parts do not have, so a single part already carrying the
+  // name's type is the name, and one that does not was joined by the view.
+  [[nodiscard]] auto IsOnePlace(const ViewDefinedPlace& place) const -> bool {
+    if (place.parts.size() != 1) return false;
+    const MemberProjection& part = place.parts.front();
+    return part.TypeWithin(members.Get(part.member).type) == place.type;
+  }
+
   // Which of the scope's disable targets the block or task `path` of the unit
   // is, or nothing where the scope published none for it.
   [[nodiscard]] auto FindDisableTarget(const support::DefPath& path) const

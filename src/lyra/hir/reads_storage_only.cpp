@@ -44,7 +44,12 @@ auto ReadsOnly(
   };
   return std::visit(
       Overloaded{
-          [&](const PrimaryExpr& p) { return accepts(p.data); },
+          // A name a view offers as a value is computed by a call, which may
+          // do anything.
+          [&](const PrimaryExpr& p) {
+            return !std::holds_alternative<RoutedViewValueRef>(p.data) &&
+                   accepts(p.data);
+          },
           [&](const UnaryExpr& e) { return reads(e.operand); },
           [&](const BinaryExpr& e) { return reads(e.lhs) && reads(e.rhs); },
           [&](const ConditionalExpr& e) {
@@ -151,6 +156,8 @@ auto IsPropertyOfTheReceiver(const Primary& primary) -> bool {
           [](const ProceduralVarRef&) { return false; },
           [](const StaticPropertyRef&) { return false; },
           [](const RoutedValueRef&) { return false; },
+          [](const RoutedViewPlaceRef&) { return false; },
+          [](const RoutedViewValueRef&) { return false; },
           [](const RoutedObjectRef&) { return false; },
           [](const IterationBindingRef&) { return false; },
           [](const PatternVarRef&) { return false; },
@@ -180,6 +187,8 @@ auto IsDeclaredByABody(const Primary& primary) -> bool {
           [](const ClassPropertyRef&) { return false; },
           [](const StaticPropertyRef&) { return false; },
           [](const RoutedValueRef&) { return false; },
+          [](const RoutedViewPlaceRef&) { return false; },
+          [](const RoutedViewValueRef&) { return false; },
           [](const RoutedObjectRef&) { return false; },
           [](const NamespaceValueRef&) { return false; }},
       primary);

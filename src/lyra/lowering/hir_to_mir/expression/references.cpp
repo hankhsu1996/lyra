@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
+#include "lyra/lowering/hir_to_mir/expression/view_names.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/real_literal.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -132,17 +133,6 @@ auto LowerHirRealLiteral(
       BuildRealLiteral(unit_lowerer.Unit(), block, type, r.value.Value()));
 }
 
-// A value reference reaches its endpoint's observable cell as an lvalue; the
-// dispatcher dereferences it to reach the storage the cell stands for. Every
-// route funnels through the one endpoint binding, so read and write share
-// exactly the reach that observation does.
-auto LowerRoutedValueRefExpr(
-    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::RoutedValueRef& reference) -> mir::Expr {
-  return EndpointCellExpr(
-      frame, lowerer.Owner().Unit(), BindEndpoint(lowerer, frame, reference));
-}
-
 auto LowerRoutedObjectRefExpr(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::RoutedObjectRef& reference, mir::TypeId type) -> mir::Expr {
@@ -176,6 +166,13 @@ auto LowerIterationBindingRefExpr(
 }
 
 }  // namespace
+
+auto LowerRoutedValueRefExpr(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const hir::RoutedValueRef& reference) -> mir::Expr {
+  return EndpointCellExpr(
+      frame, lowerer.Owner().Unit(), BindEndpoint(lowerer, frame, reference));
+}
 
 auto LowerProceduralVarRefExpr(
     ProcessLowerer& process, const WalkFrame& frame, hir::ProceduralVarId var)
@@ -275,7 +272,7 @@ auto LowerHirPrimaryExprProc(
   // A reference to an enclosing-scope declaration resolves against the body's
   // structural scope; it appears only in a structural body, so the scope is
   // reached lazily and a class method body never requests it.
-  return std::visit(
+  return std::visit<diag::Result<mir::Expr>>(
       Overloaded{
           [&](const hir::IntegerLiteral& i) -> mir::Expr {
             return LowerHirIntegerLiteral(
@@ -321,6 +318,14 @@ auto LowerHirPrimaryExprProc(
             return LowerRoutedValueRefExpr(
                 process.EnclosingScopeLowerer(), frame, c);
           },
+          [&](const hir::RoutedViewPlaceRef& v) -> diag::Result<mir::Expr> {
+            return LowerViewNameValue(
+                process, frame, ViewNameUseOf(process, v), result_type);
+          },
+          [&](const hir::RoutedViewValueRef& v) -> diag::Result<mir::Expr> {
+            return LowerViewNameValue(
+                process, frame, ViewNameUseOf(process, v), result_type);
+          },
           [&](const hir::RoutedObjectRef& o) -> mir::Expr {
             return LowerRoutedObjectRefExpr(
                 process.EnclosingScopeLowerer(), frame, o, result_type);
@@ -338,7 +343,7 @@ auto LowerHirPrimaryExprProc(
 auto LowerHirPrimaryExprStructural(
     const StructuralScopeLowerer& lowerer, WalkFrame frame,
     const hir::Primary& p, mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  return std::visit(
+  return std::visit<diag::Result<mir::Expr>>(
       Overloaded{
           [&](const hir::IntegerLiteral& i) -> mir::Expr {
             return LowerHirIntegerLiteral(
@@ -387,6 +392,14 @@ auto LowerHirPrimaryExprStructural(
           },
           [&](const hir::RoutedValueRef& c) -> mir::Expr {
             return LowerRoutedValueRefExpr(lowerer, frame, c);
+          },
+          [&](const hir::RoutedViewPlaceRef& v) -> diag::Result<mir::Expr> {
+            return LowerViewNameValue(
+                lowerer, frame, ViewNameUseOf(lowerer, v), result_type);
+          },
+          [&](const hir::RoutedViewValueRef& v) -> diag::Result<mir::Expr> {
+            return LowerViewNameValue(
+                lowerer, frame, ViewNameUseOf(lowerer, v), result_type);
           },
           [&](const hir::RoutedObjectRef& o) -> mir::Expr {
             return LowerRoutedObjectRefExpr(lowerer, frame, o, result_type);

@@ -15,7 +15,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr_builders.hpp"
-#include "lyra/hir/published_modport.hpp"
 #include "lyra/lowering/ast_to_hir/expression/view_names.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -31,22 +30,15 @@ struct HeldInstance {
   hir::ScopeClassId scope_class;
 };
 
-// A variable or net of the held instance, or of one it instantiates.
+// A variable or net of the held instance, or of one it instantiates, or a name
+// a view of one of them defines.
 struct HeldMember {
   hir::InterfaceMemberAccessExpr access;
   hir::TypeId type;
 };
 
-// A name the view the handle's type selects defines for itself, on the held
-// instance.
-struct HeldViewName {
-  hir::InterfaceInstanceAccessExpr instance;
-  hir::ViewDefinedName meaning;
-};
-
 // What a name reaches on the instance a virtual interface holds.
-using ReachedThroughHandle =
-    std::variant<HeldViewName, HeldInstance, HeldMember>;
+using ReachedThroughHandle = std::variant<HeldInstance, HeldMember>;
 
 auto ReachThroughHandle(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, hir::ExprId handle,
@@ -55,21 +47,27 @@ auto ReachThroughHandle(
     -> diag::Result<ReachedThroughHandle> {
   // A port identifier a modport names without an expression stands for the
   // interface item of the same name, which is what is published; one it
-  // defines by an expression is the view's own name (LRM 25.5.4), reached on
-  // the instance the handle holds the way a port reaches it on the one it is
-  // bound to.
+  // defines by an expression is the view's own name (LRM 25.5.4), published by
+  // the interface declaring the view, which may lie below the one the handle
+  // holds (LRM 25.9).
   const slang::ast::Symbol* item = &member;
   if (const auto* port = member.as_if<slang::ast::ModportPortSymbol>()) {
     if (port->internalSymbol == nullptr) {
+      const slang::ast::Symbol& view = port->getParentScope()->asSymbol();
       auto held = DescendThroughHandle(
-          unit_lowerer, frame, handle, handle_type, handle_type.iface.body,
+          unit_lowerer, frame, handle, handle_type, *view.getParentScope(),
           span);
       if (!held) return std::unexpected(std::move(held.error()));
-      return HeldViewName{
-          .instance = std::move(held->instance),
-          .meaning = PublishedViewNameMeaning(
-              unit_lowerer, held->place.scope_class,
-              port->getParentScope()->asSymbol().name, port->name)};
+      const hir::ScopeClassId scope_class = held->place.scope_class;
+      const hir::PublishedViewNameId name =
+          PublishedViewNameOf(unit_lowerer, scope_class, view.name, port->name);
+      return HeldMember{
+          .access =
+              hir::InterfaceMemberAccessExpr{
+                  .instance = std::move(held->instance),
+                  .scope_class = scope_class,
+                  .component = name},
+          .type = PublishedViewNameType(unit_lowerer, scope_class, name)};
     }
     item = port->internalSymbol;
   }
@@ -104,7 +102,7 @@ auto ReachThroughHandle(
           hir::InterfaceMemberAccessExpr{
               .instance = std::move(descent->instance),
               .scope_class = scope_class,
-              .member = *published},
+              .component = *published},
       .type = scope.members.Get(*published).type};
 }
 
@@ -165,16 +163,6 @@ auto LowerVirtualInterfaceMember(
   if (!reached) return std::unexpected(std::move(reached.error()));
   return std::visit(
       Overloaded{
-          [&](HeldViewName& view) {
-            const hir::ScopeClassId scope_class = view.instance.scope_class;
-            return LowerViewNameOnInstance(
-                unit_lowerer, frame,
-                ViewNameOnInstance{
-                    .instance = std::move(view.instance),
-                    .scope_class = scope_class,
-                    .meaning = std::move(view.meaning)},
-                span);
-          },
           [&](HeldInstance& held) {
             return hir::Expr{
                 .type = unit_lowerer.Unit().types.Intern(

@@ -396,10 +396,9 @@ auto LowerForeachLoops(
   // result.
   std::optional<SettledPath> settled_array;
   if (reads_array) {
-    auto path = process.LowerAccessPath(array, wrapper_frame);
-    if (!path) return std::unexpected(std::move(path.error()));
-    settled_array =
-        SettledForRead(unit_lowerer.Unit(), wrapper_frame, *std::move(path));
+    auto base = EvaluateSelectedBase(process, wrapper_frame, array);
+    if (!base) return std::unexpected(std::move(base.error()));
+    settled_array = std::move(base->path);
   }
 
   BreakTarget leaves(*frame.bindings);

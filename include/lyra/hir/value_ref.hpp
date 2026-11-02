@@ -26,8 +26,11 @@ namespace lyra::hir {
 //
 // What a name is used for decides what it may reach, and the source's position
 // decides the use (LRM 23.6, 9.6.2), so each use is a reference of its own:
-// a value read, written or waited on, which ends at data; the object a call is
-// made on; and what a `disable` ends.
+// a value read, written or waited on, which ends at data; a name a view defines
+// as storage, which ends at each thing it stands for; a name a view offers as a
+// value, computed on the instance it ends at; the object a call is made on; and
+// what a `disable` ends. Which of the two a view's name takes is what the view
+// declared it to be (LRM 25.5.4), and not where the source wrote it.
 struct RoutedValueRefId {
   std::uint32_t value = base::kUnassignedId;
 
@@ -39,6 +42,34 @@ struct RoutedValueRef {
   RoutedValueRefId id;
 
   auto operator<=>(const RoutedValueRef&) const
+      -> std::strong_ordering = default;
+};
+
+struct RoutedViewPlaceRefId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const RoutedViewPlaceRefId&) const
+      -> std::strong_ordering = default;
+};
+
+struct RoutedViewPlaceRef {
+  RoutedViewPlaceRefId id;
+
+  auto operator<=>(const RoutedViewPlaceRef&) const
+      -> std::strong_ordering = default;
+};
+
+struct RoutedViewValueRefId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const RoutedViewValueRefId&) const
+      -> std::strong_ordering = default;
+};
+
+struct RoutedViewValueRef {
+  RoutedViewValueRefId id;
+
+  auto operator<=>(const RoutedViewValueRef&) const
       -> std::strong_ordering = default;
 };
 

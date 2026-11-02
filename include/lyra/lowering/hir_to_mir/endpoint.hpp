@@ -1,9 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <variant>
 
+#include "lyra/hir/expr.hpp"
+#include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
@@ -51,6 +55,14 @@ struct BoundEndpoint {
   MemberPlace place;
   MemberKind kind = MemberKind::kCell;
 };
+
+// The reference `expr` is where it names the whole of one declaration a route
+// reaches, as its own name or as a name a view defines for it. What a
+// connection, a drive or a constraint does with such a target depends on the
+// declaration, and a part of one or a join of several is no such target.
+[[nodiscard]] auto WholeRoutedTarget(
+    const UnitLowerer& owner, const hir::StructuralScope& scope,
+    const hir::Expr& expr) -> std::optional<hir::RoutedValueRef>;
 
 // Resolves a value reference to its endpoint. Pure: it reads identities and
 // types and mutates no block.

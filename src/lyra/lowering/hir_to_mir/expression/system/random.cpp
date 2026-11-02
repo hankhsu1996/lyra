@@ -157,7 +157,7 @@ auto LowerDistributionSystemSubroutineCall(
   // stored back in that type, which is what the design reads next.
   const hir::Expr& hir_seed = hir_exprs.Get(operands[0]);
   const mir::TypeId seed_type = unit_lowerer.TranslateType(hir_seed.type);
-  if (IsJoin(hir_seed)) {
+  if (IsJoin(lowerer, hir_seed)) {
     return diag::Fail(
         hir_seed.span, diag::DiagCode::kUnsupportedSubroutineArgument,
         "a seed that joins several variables is not yet supported");

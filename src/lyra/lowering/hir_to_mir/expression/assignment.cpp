@@ -293,7 +293,7 @@ auto LowerHirAssignWrite(
   const hir::Expr& lhs = lowerer.HirExprs().Get(a.lhs);
   // A write to one place is the store itself. A write to a join takes several
   // steps, so it is a sequence of them standing where the expression does.
-  if (IsJoin(lhs)) {
+  if (IsJoin(lowerer, lhs)) {
     BlockBuilder steps(frame);
     auto value = AssignToJoin(lowerer, steps.Frame(), a, lhs);
     if (!value) return std::unexpected(std::move(value.error()));
@@ -338,7 +338,7 @@ auto LowerHirAssignExpr(
   BlockBuilder steps(frame);
   mir::Builder body = steps.Body();
   const hir::Expr& lhs = lowerer.HirExprs().Get(a.lhs);
-  if (IsJoin(lhs)) {
+  if (IsJoin(lowerer, lhs)) {
     auto value = AssignToJoin(lowerer, steps.Frame(), a, lhs);
     if (!value) return std::unexpected(std::move(value.error()));
     return steps.Build(ConvertToType(unit, body, *value, result_type));
@@ -371,7 +371,7 @@ auto LowerHirIncDecWrite(
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Builder block = frame.Builder();
   const hir::Expr& target = lowerer.HirExprs().Get(inc.target);
-  if (IsJoin(target)) {
+  if (IsJoin(lowerer, target)) {
     BlockBuilder steps(frame);
     auto stepped = StepJoin(lowerer, steps.Frame(), inc, target, std::nullopt);
     if (!stepped) return std::unexpected(std::move(stepped.error()));
@@ -400,7 +400,7 @@ auto LowerHirIncDecExpr(
   const bool yields_before =
       inc.op == hir::IncDecOp::kPostInc || inc.op == hir::IncDecOp::kPostDec;
   const hir::Expr& target = lowerer.HirExprs().Get(inc.target);
-  if (IsJoin(target)) {
+  if (IsJoin(lowerer, target)) {
     auto stepped = StepJoin(lowerer, steps.Frame(), inc, target, result_type);
     if (!stepped) return std::unexpected(std::move(stepped.error()));
     return steps.Build(yields_before ? stepped->before : stepped->after);

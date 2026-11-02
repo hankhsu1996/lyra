@@ -26,6 +26,14 @@ auto LowerHirPrimaryExprStructural(
     const StructuralScopeLowerer& lowerer, WalkFrame frame,
     const hir::Primary& p, mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
+// A value reference reaches its endpoint's observable cell as an lvalue; the
+// dispatcher dereferences it to reach the storage the cell stands for. Every
+// route funnels through the one endpoint binding, so read and write share
+// exactly the reach that observation does.
+auto LowerRoutedValueRefExpr(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const hir::RoutedValueRef& reference) -> mir::Expr;
+
 // The storage a variable a body declares is reached at, named in the frame's
 // block: its cell where it has one, the local itself where it is the value.
 // Whichever of the body's storage classes holds the variable (LRM 6.21), this

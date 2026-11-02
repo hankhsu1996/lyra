@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/concatenation.hpp"
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
+#include "lyra/lowering/hir_to_mir/expression/view_names.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -208,6 +209,26 @@ auto LowerLvalue(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     }
     return lower_join(pattern->elements, UnpackedJoin{}, type);
   }
+  if (const std::optional<ViewNameUse> view = ViewNameUseOf(lowerer, expr);
+      view.has_value() && IsViewJoin(unit_lowerer, *view)) {
+    auto parts = LowerViewNameParts(lowerer, frame, *view);
+    if (!parts) return std::unexpected(std::move(parts.error()));
+    LvalueJoin join{.members = {}, .kind = PackedJoin{}};
+    join.members.reserve(parts->size());
+    for (ViewPart& part : *parts) {
+      join.members.push_back(
+          Lvalue{
+              .form = std::move(part.place),
+              .type = unit_lowerer.TranslateType(part.type),
+              .source_type = part.type,
+              .span = expr.span});
+    }
+    return Lvalue{
+        .form = std::move(join),
+        .type = unit_lowerer.TranslateType(expr.type),
+        .source_type = expr.type,
+        .span = expr.span};
+  }
   auto place = lowerer.LowerLhsExpr(expr, frame);
   if (!place) return std::unexpected(std::move(place.error()));
   return Lvalue{
@@ -223,11 +244,19 @@ template auto LowerLvalue(
     const StructuralScopeLowerer&, const hir::Expr&, WalkFrame)
     -> diag::Result<Lvalue>;
 
-auto IsJoin(const hir::Expr& expr) -> bool {
-  return std::holds_alternative<hir::ConcatExpr>(expr.data) ||
-         std::holds_alternative<hir::StreamingConcatExpr>(expr.data) ||
-         std::holds_alternative<hir::AssignmentPatternExpr>(expr.data);
+template <ExprLowerer L>
+auto IsJoin(const L& lowerer, const hir::Expr& expr) -> bool {
+  if (std::holds_alternative<hir::ConcatExpr>(expr.data) ||
+      std::holds_alternative<hir::StreamingConcatExpr>(expr.data) ||
+      std::holds_alternative<hir::AssignmentPatternExpr>(expr.data)) {
+    return true;
+  }
+  const std::optional<ViewNameUse> view = ViewNameUseOf(lowerer, expr);
+  return view.has_value() && IsViewJoin(lowerer.Owner(), *view);
 }
+
+template auto IsJoin(const ProcessLowerer&, const hir::Expr&) -> bool;
+template auto IsJoin(const StructuralScopeLowerer&, const hir::Expr&) -> bool;
 
 auto Shares(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const Lvalue& lvalue,

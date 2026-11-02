@@ -90,20 +90,6 @@ auto HeldInterfaceObject(
   return reached;
 }
 
-// The storage of a member reached through a virtual interface, as a pointer to
-// it: the instance the access descends to, then the member at the position
-// that instance's unit published.
-template <ExprLowerer Lowerer>
-auto HeldInterfaceMember(
-    Lowerer& lowerer, const WalkFrame& frame,
-    const hir::InterfaceMemberAccessExpr& access) -> diag::Result<mir::ExprId> {
-  auto reached = HeldInterfaceObject(lowerer, frame, access.instance);
-  if (!reached) return std::unexpected(std::move(reached.error()));
-  return ReadPublishedMember(
-      lowerer.Owner(), frame.Builder(), *reached, access.scope_class,
-      access.member);
-}
-
 // An interface instance named as a value (LRM 25.9), given a pointer to its
 // object: the reference a virtual interface of `type` holds, converted from
 // that address.

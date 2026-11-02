@@ -2,19 +2,17 @@
 
 // Lowering of a name a modport defines by an expression rather than by naming
 // one of its interface's items (LRM 25.5.4) -- `.low(data[3:0])` or
-// `.plus(data + 1)`. The identifier belongs to the view rather than to the
-// interface's declarations, so what it means is read out of the view the
-// interface published, and it is reached on whichever instance the name was
-// reached through: one a route reaches, or one a virtual interface holds.
+// `.plus(data + 1)`. The front end holds a use of one as it holds a use of any
+// other name, so the use is stated as such, and what the name stands for is
+// read out of the view the interface published where the use is translated.
 
 #include <string_view>
-#include <variant>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/interface_member_access.hpp"
-#include "lyra/hir/published_modport.hpp"
+#include "lyra/hir/published_member.hpp"
 #include "lyra/hir/scope_class.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -24,32 +22,19 @@ class HierarchicalValueExpression;
 
 namespace lyra::lowering::ast_to_hir {
 
-// A name a view defines, on one instance of the interface that publishes it.
-// How the instance is reached is kept beside the meaning because the two
-// meanings need different things from it: a place is reached member by member,
-// while a computed value is a call made on the instance itself. The instance
-// is either one a route reaches, sealed where the design elaborates, or the one
-// a virtual interface holds when the name is evaluated (LRM 25.9).
-struct ViewNameOnInstance {
-  std::variant<ScopeRoute, hir::InterfaceInstanceAccessExpr> instance;
-  hir::ScopeClassId scope_class;
-  hir::ViewDefinedName meaning;
-};
-
-// What the interface class `scope_class` records published, in its view
-// `modport`, as the meaning of the name `name`.
-auto PublishedViewNameMeaning(
+// Where the interface class `scope_class` records published, in its view
+// `modport`, the name `name`.
+auto PublishedViewNameOf(
     const UnitLowerer& unit_lowerer, hir::ScopeClassId scope_class,
-    std::string_view modport, std::string_view name) -> hir::ViewDefinedName;
+    std::string_view modport, std::string_view name)
+    -> hir::PublishedViewNameId;
 
-// LRM 25.5.4: a name a view defines is either the storage its expression
-// designates or, where the view offers it only for reading, a value the
-// interface computes. The first is reached as a place, which is what makes
-// every form of write to it an ordinary write; the second is a call on the
-// instance, because the expression names declarations this unit never sees.
-auto LowerViewNameOnInstance(
-    UnitLowerer& unit_lowerer, WalkFrame frame,
-    const ViewNameOnInstance& view_name, diag::SourceSpan span) -> hir::Expr;
+// The type a use of the name `name` has: the expression's self-determined one
+// where it is storage (LRM 25.5.4), and otherwise what the subroutine computing
+// it answers.
+auto PublishedViewNameType(
+    const UnitLowerer& unit_lowerer, hir::ScopeClassId scope_class,
+    hir::PublishedViewNameId name) -> hir::TypeId;
 
 // A name a view defines, reached by a hierarchical path: through the interface
 // port that selected the view, or down to an instance the design declares.

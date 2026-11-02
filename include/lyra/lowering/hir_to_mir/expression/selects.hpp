@@ -12,6 +12,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/published_target.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
@@ -36,6 +37,15 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto ElementStep(
     UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId receiver_type,
     mir::ExprId idx_id, mir::TypeId part_type) -> DescentStep;
+
+// The step one selector of a published path takes in a value of `receiver_type`
+// (LRM 23.2.2.2, 25.5.4). A signature carries the coordinates the declaring
+// unit wrote, and they resolve against the value they descend into as a select
+// written in a body does.
+[[nodiscard]] auto PublishedSelectorStep(
+    UnitLowerer& unit_lowerer, mir::Builder block,
+    const hir::PublishedSelector& selector, hir::TypeId receiver_type)
+    -> DescentStep;
 
 // The step `aggregate.member` takes (LRM 7.2, 7.3). An unpacked aggregate's
 // member is named by its declaration-order position: a structure's is a
@@ -210,13 +220,46 @@ auto LowerHirClassPropertyAccessExprPath(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<AccessPath>;
 
-// A member of the interface instance a virtual interface holds (LRM 25.9), as
-// the member's own storage, in either context: a read takes the value it holds
-// and a write lands in it, the way a member reached through a port is.
+// The value a construct reads through more than once, as evaluated once for it.
+struct SelectedBase {
+  SettledPath path;
+  // Whether the value lies in storage that outlives the block of steps it is
+  // evaluated in, rather than in a local of that block or in an object only
+  // that block holds a handle to.
+  bool outlives_the_steps;
+};
+
+// `base`, evaluated here, once, because what reads it names it more than once
+// (LRM 11.4.1): a queue for the part and for each `$` under a select (LRM
+// 7.10.1), an array for each dimension of a `foreach` (LRM 12.7.3).
+template <ExprLowerer Lowerer>
+auto EvaluateSelectedBase(
+    Lowerer& lowerer, const WalkFrame& at, const hir::Expr& base)
+    -> diag::Result<SelectedBase>;
+
+// The storage of `member` of the object `object` points at, as a place a wait
+// is told of where one is under way: `object` is whichever instance a virtual
+// interface held, of the class `scope_class` records (LRM 25.9).
+[[nodiscard]] auto HeldMemberPlace(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId object,
+    hir::ScopeClassId scope_class, hir::PublishedMemberId member) -> mir::Expr;
+
+// What `place` holds where it is named to be read: for a capability wrapper the
+// storage it stands for, as of the region the frame reads in, unless the place
+// keeps no sampled value of its own, and otherwise the place itself.
+[[nodiscard]] auto PlaceContents(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Expr place,
+    bool keeps_sampled_value) -> mir::Expr;
+
+// A component of the interface instance a virtual interface holds (LRM 25.9),
+// in either context: a member as its own storage, where a read takes the value
+// it holds and a write lands in it, the way a member reached through a port is;
+// a name a view defines as what it stands for.
 template <ExprLowerer Lowerer>
 auto LowerHirInterfaceMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame,
-    const hir::InterfaceMemberAccessExpr& sel) -> diag::Result<mir::Expr>;
+    const hir::InterfaceMemberAccessExpr& sel, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
 
 // An interface instance declared inside the one a virtual interface holds, as
 // the value a virtual interface of its own type would hold (LRM 25.9).

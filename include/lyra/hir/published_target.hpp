@@ -64,6 +64,12 @@ struct PublishedSliceSelector {
 using PublishedSelector =
     std::variant<PublishedElementSelector, PublishedSliceSelector>;
 
+[[nodiscard]] inline auto ProjectedTypeOf(const PublishedSelector& selector)
+    -> TypeId {
+  return std::visit(
+      [](const auto& step) { return step.projected_type; }, selector);
+}
+
 // Which of a member's own positions the part a port stands for covers, counted
 // from the low end. A connection states that positions resolve together (LRM
 // 10.11, 23.3.3.7), and only the declaring unit's source can say which ones
@@ -91,6 +97,11 @@ struct MemberProjection {
   PublishedMemberId member;
   std::vector<PublishedSelector> path;
   std::optional<PublishedPositions> positions;
+
+  // The type the part has, given the type of the member it descends from.
+  [[nodiscard]] auto TypeWithin(TypeId member_type) const -> TypeId {
+    return path.empty() ? member_type : ProjectedTypeOf(path.back());
+  }
 
   auto operator==(const MemberProjection&) const -> bool = default;
 };

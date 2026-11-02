@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/tagged_union.hpp"
+#include "lyra/lowering/hir_to_mir/expression/view_names.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/randomization.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -156,7 +157,8 @@ auto LowerAsPlaceAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           },
           [&](const hir::InterfaceMemberAccessExpr& sel)
               -> diag::Result<mir::Expr> {
-            return LowerHirInterfaceMemberAccessExpr(lowerer, frame, sel);
+            return LowerHirInterfaceMemberAccessExpr(
+                lowerer, frame, sel, result_type);
           },
           [&](const hir::InterfaceInstanceAccessExpr& sel)
               -> diag::Result<mir::Expr> {
@@ -289,28 +291,9 @@ auto LowerAsPlaceAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
       },
       expr.data);
   if (!raw_or) return raw_or;
-  const mir::Type& raw_type = lowerer.Owner().Unit().types.Get(raw_or->type);
-  if (raw_type.IsCapabilityWrapper()) {
-    // What the wrapper holds is the type of the storage it names, which for a
-    // reference to a value of any type is no type a value has, as `*r` of
-    // Rust's `&mut dyn Any` is `dyn Any` (LRM 15.4.9).
-    const mir::TypeId held = raw_type.WrappedValueType();
-    const mir::ExprId cell_id = frame.Builder().Add(*std::move(raw_or));
-    // The sampled value of an expression is the expression over the sampled
-    // values of the variables it reads (LRM 16.5.1), so the whole of what
-    // reading one changes is which value each leaf answers with -- here, where
-    // every leaf read is built.
-    if (frame.reads_as_of == ReadsAsOf::kPreponed &&
-        KeepsSampledValue(lowerer, expr)) {
-      return frame.Builder().SampledWrapperContents(
-          lowerer.Owner().Unit().types, cell_id, held);
-    }
-    // Reading what the wrapper holds names the storage it represents, which
-    // is then read where a value is wanted.
-    return frame.Builder().WrapperContents(
-        lowerer.Owner().Unit().types, cell_id, held);
-  }
-  return raw_or;
+  return PlaceContents(
+      lowerer.Owner().Unit(), frame, *std::move(raw_or),
+      KeepsSampledValue(lowerer, expr));
 }
 
 template <ExprLowerer L>
@@ -363,6 +346,9 @@ auto LowerAccessPathAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
         "access path lowering: an expression that names no storage was named "
         "as a part");
   };
+  if (const auto view = ViewNameUseOf(lowerer, expr)) {
+    return LowerViewNamePlace(lowerer, frame, *view);
+  }
   return std::visit(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<AccessPath> {
@@ -401,8 +387,8 @@ auto LowerAccessPathAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           },
           [&](const hir::InterfaceMemberAccessExpr& sel)
               -> diag::Result<AccessPath> {
-            return as_place(
-                LowerHirInterfaceMemberAccessExpr(lowerer, frame, sel));
+            return as_place(LowerHirInterfaceMemberAccessExpr(
+                lowerer, frame, sel, result_type));
           },
           // The front end verifies that an assignment's target is an lvalue
           // whose every element can be assigned to, and refuses the program
