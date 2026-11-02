@@ -12,7 +12,6 @@
 // lowers to the write alone.
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -28,14 +27,14 @@ namespace lyra::lowering::hir_to_mir {
 template <ExprLowerer Lowerer>
 auto LowerHirAssignExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignExpr& a,
-    diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 // An assignment whose value nothing reads: the write, placed where the
 // statement is reached or due later (LRM 10.4).
 template <ExprLowerer Lowerer>
 auto LowerHirAssignWrite(
-    Lowerer& lowerer, WalkFrame frame, const hir::AssignExpr& a,
-    diag::SourceSpan span) -> diag::Result<mir::Expr>;
+    Lowerer& lowerer, WalkFrame frame, const hir::AssignExpr& a)
+    -> diag::Result<mir::Expr>;
 
 // An increment or decrement whose value is read: the value the target held
 // before the step for a postfix form, after it for a prefix one.
@@ -60,6 +59,6 @@ auto LowerHirIncDecWrite(
 template <ExprLowerer Lowerer>
 auto AssignToJoin(
     Lowerer& lowerer, const WalkFrame& frame, const hir::AssignExpr& assign,
-    const hir::Expr& lhs, diag::SourceSpan span) -> diag::Result<mir::ExprId>;
+    const hir::Expr& lhs) -> diag::Result<mir::ExprId>;
 
 }  // namespace lyra::lowering::hir_to_mir

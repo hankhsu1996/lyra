@@ -224,8 +224,11 @@ what the construct means.
   makes to carry one evaluation out -- a full-expression, a condition each time it is tested, an
   operand before a suspension -- is a step of that evaluation, and ends when the evaluation
   completes, as a C++ full-expression's temporaries do; what is wanted afterwards is owned by where
-  it went, a variable, a callee, or a deferred effect's closure. Every copy, transfer and end
-  follows from these by one rule, which the lowering to LIR and the C++ target both apply.
+  it went, a variable, a callee, or a deferred effect's closure. A closure the runtime keeps past
+  the frame that made it -- a deferred effect, a started body -- refers, without owning, only to
+  storage that lives for the whole run, and the unit's verification refuses any other. Every copy,
+  transfer and end follows from these by one rule, which the lowering to LIR and the C++ target both
+  apply.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - Where in the source each expression and statement came from: the front end's own value for the

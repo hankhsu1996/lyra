@@ -106,8 +106,7 @@ auto LowerAsPlaceAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return LowerHirConditionalExpr(lowerer, frame, c, result_type);
           },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
-            return LowerHirAssignExpr(
-                lowerer, frame, a, expr.span, result_type);
+            return LowerHirAssignExpr(lowerer, frame, a, result_type);
           },
           [&](const hir::IncDecExpr& inc) -> diag::Result<mir::Expr> {
             return LowerHirIncDecExpr(lowerer, frame, inc, result_type);
@@ -479,7 +478,7 @@ auto LowerIgnoredExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
   const WalkFrame written = frame.WithSpan(expr.span);
   if (const auto* assign = std::get_if<hir::AssignExpr>(&expr.data)) {
     return mir::LoweredFrom(
-        LowerHirAssignWrite(lowerer, written, *assign, expr.span), expr.span);
+        LowerHirAssignWrite(lowerer, written, *assign), expr.span);
   }
   if (const auto* inc = std::get_if<hir::IncDecExpr>(&expr.data)) {
     return mir::LoweredFrom(

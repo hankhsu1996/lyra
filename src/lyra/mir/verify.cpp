@@ -2897,18 +2897,35 @@ class HandedClosures {
     throw InternalError("mir verify: unknown ObjectLifetime");
   }
 
+  // How long the object a value of type `reference` refers to lives, where the
+  // type says it refers to one: through a borrowed pointer, a managed reference
+  // or an unmanaged one. An owning pointer's referent ends with the owner.
+  [[nodiscard]] auto ReachThrough(TypeId reference) const
+      -> std::optional<Reached> {
+    const Type& type = unit_->types.Get(reference);
+    if (const auto* pointer = type.As<PointerType>()) {
+      return pointer->ownership == PointerOwnership::kBorrowed
+                 ? ReachOfObject(pointer->pointee)
+                 : std::nullopt;
+    }
+    if (const auto* managed = type.As<ManagedRefType>()) {
+      return ReachOfObject(managed->pointee);
+    }
+    if (const auto* unmanaged = type.As<UnmanagedRefType>()) {
+      return ReachOfObject(unmanaged->pointee);
+    }
+    return std::nullopt;
+  }
+
   // Where the storage `id` refers to lies, followed back through the steps
-  // that reach it to the binding it starts from.
+  // that reach it to the binding it starts from. A value referring to an object
+  // and a dereference of one reach the object, wherever the reference came
+  // from; a place holding such a reference is storage of whatever holds it, as
+  // a borrow of it refers to the reference rather than to the object.
   auto ReachOf(const CallableCode& code, const Block& block, ExprId id)
       -> Reached {
-    // A pointer to an object reaches storage that lives as long as the object
-    // does, wherever the pointer came from.
-    const auto* pointer =
-        unit_->types.Get(block.exprs.Get(id).type).As<PointerType>();
-    if (pointer != nullptr &&
-        pointer->ownership == PointerOwnership::kBorrowed) {
-      if (const std::optional<Reached> lives =
-              ReachOfObject(pointer->pointee)) {
+    if (const Expr& expr = block.exprs.Get(id); !IsPlace(expr.data)) {
+      if (const std::optional<Reached> lives = ReachThrough(expr.type)) {
         return *lives;
       }
     }
@@ -2927,7 +2944,11 @@ class HandedClosures {
               }
               return from(access.receiver);
             },
-            [&](const DerefExpr& deref) { return from(deref.pointer); },
+            [&](const DerefExpr& deref) {
+              const std::optional<Reached> lives =
+                  ReachThrough(block.exprs.Get(deref.pointer).type);
+              return lives.has_value() ? *lives : from(deref.pointer);
+            },
             [&](const CopyExpr& copied) { return from(copied.place); },
             [&](const MoveExpr& moved) { return from(moved.operand); },
             [&](const BorrowExpr& borrowed) { return from(borrowed.operand); },
