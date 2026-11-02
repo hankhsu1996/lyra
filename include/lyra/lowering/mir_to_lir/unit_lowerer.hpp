@@ -8,7 +8,6 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 #include "lyra/base/translation.hpp"
@@ -300,7 +299,7 @@ class UnitLowerer {
 
   // What this unit declares of a class another unit defines, as the record a
   // class extending it, or reaching into it, is laid out against.
-  auto LowerDeclaredClass(const mir::Class& cls) -> lir::Class;
+  auto LowerDeclaredClass(mir::ClassId id, const mir::Class& cls) -> lir::Class;
 
   // What an object of `cls` dispatches on and what answers each behavior of
   // every interface it is an object of, as its unit stated them.

@@ -1,5 +1,6 @@
 #include "lyra/backend/cpp/render_decl.hpp"
 
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <span>
@@ -24,8 +25,10 @@
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/closure_signature.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/linkage.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
@@ -34,6 +37,7 @@
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/linkage.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -126,6 +130,40 @@ void WriteReceiverBinding(
       *receiver);
 }
 
+// Where the definitions of one class or record are written: in the header
+// declaring it, which every file stating it reads, or in one code file.
+enum class WrittenIn : std::uint8_t { kHeader, kCodeFile };
+
+// How the definitions of one class or record are written: how the unit links
+// them, and where their text goes.
+struct DefinedAs {
+  support::Linkage linkage;
+  WrittenIn in;
+};
+
+// What C++ spells a definition's linkage with where it is written. A shared
+// one is inline in a header, where every file reading it defines it, and weak
+// in a code file, where a file that only declares it still finds the one the
+// link keeps. What only this file names is in the namespace with no name,
+// which the layout of the file says, and one defined once needs nothing.
+auto SpecifiersOf(DefinedAs defined) -> std::string_view {
+  switch (defined.linkage) {
+    case support::Linkage::kInternal:
+    case support::Linkage::kExternal:
+      return "";
+    case support::Linkage::kShared:
+      switch (defined.in) {
+        case WrittenIn::kHeader:
+          return "inline ";
+        case WrittenIn::kCodeFile:
+          return "[[gnu::weak]] ";
+      }
+      throw InternalError(
+          "backend::cpp: unknown place a definition is written");
+  }
+  throw InternalError("backend::cpp: unknown linkage");
+}
+
 // The definition of a member function -- a class's method (LRM 8.6), static
 // method (LRM 8.10), process or lifecycle body, the entry a scope answers a
 // foreign caller with (LRM 35.5.3), or a record's method -- written
@@ -133,16 +171,17 @@ void WriteReceiverBinding(
 template <typename Owner, typename Member>
 void RenderMemberFunctionDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    std::string_view specifiers, const Owner& owner, const Member& member,
+    DefinedAs defined, const Owner& owner, const Member& member,
     const mir::CallableCode& code, TargetText& out) {
   const std::optional<ReceiverSpelling> receiver = MemberReceiverOf(unit, code);
-  Write(out, specifiers, "auto ", owner, "::", member);
+  Write(out, SpecifiersOf(defined), "auto ", owner, "::", member);
   WriteMemberSignatureTail(
       unit, code, receiver, code.ParamsAfterReceiver(), out);
   out += " ";
   WriteBody(out, [&] {
     WriteReceiverBinding(unit, code, receiver, out);
-    RenderBlockStatements(ScopeView::ForCode(unit, code, report), out);
+    RenderBlockStatements(
+        ScopeView::ForCode(unit, code, defined.linkage, report), out);
   });
   out += "\n";
 }
@@ -313,7 +352,8 @@ void WriteOwnTable(
 //   const C::sv_table C::sv_methods{{&B::sv_entry_f}, &C::sv_entry_g};
 void RenderDispatchTables(
     const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s,
-    std::string_view specifiers, TargetText& out, TargetText& code) {
+    DefinedAs defined, TargetText& out, TargetText& code) {
+  const std::string_view specifiers = SpecifiersOf(defined);
   if (!s.is_interface) {
     out.OpenLine();
     Write(
@@ -350,11 +390,11 @@ void RenderDispatchTables(
 // none.
 void RenderClassCallableDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    std::string_view specifiers, mir::ClassId cls_id, const mir::Class& s,
+    DefinedAs defined, mir::ClassId cls_id, const mir::Class& s,
     mir::CallableId id, const mir::CallableDecl& m, TargetText& out) {
   if (!HasBody(m)) return;
   RenderMemberFunctionDef(
-      unit, report, specifiers, CppClassPath(unit, cls_id),
+      unit, report, defined, CppClassPath(unit, cls_id),
       CppClassCallableName(unit, s, id), m.code, out);
 }
 
@@ -372,8 +412,8 @@ void RenderClassCallableDef(
 // every other body does.
 void RenderConstructor(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    mir::ClassId cls_id, const mir::ConstructorDecl& ctor,
-    std::string_view specifiers, TargetText& signature, TargetText& code) {
+    mir::ClassId cls_id, const mir::ConstructorDecl& ctor, DefinedAs defined,
+    TargetText& signature, TargetText& code) {
   const mir::CallableCode& ctor_code = ctor.code;
   const std::optional<ReceiverSpelling> receiver =
       MemberReceiverOf(unit, ctor_code);
@@ -383,30 +423,44 @@ void RenderConstructor(
       unit, ctor_code, receiver, ctor_code.ParamsAfterReceiver(), signature);
   signature += ";\n";
   RenderMemberFunctionDef(
-      unit, report, specifiers, CppClassPath(unit, cls_id),
+      unit, report, defined, CppClassPath(unit, cls_id),
       CppConstructorMemberName(), ctor_code, code);
 }
 
+// How a static data member is defined outside its class where its definition
+// is written: inline in a header, which every file reading it defines, and once
+// in a code file.
+auto DefinitionFormIn(WrittenIn in) -> VariableForm {
+  switch (in) {
+    case WrittenIn::kHeader:
+      return VariableForm::kInlineStaticDataMemberDefinition;
+    case WrittenIn::kCodeFile:
+      return VariableForm::kStaticDataMemberDefinition;
+  }
+  throw InternalError("backend::cpp: unknown place a definition is written");
+}
+
 // A constant class `s` holds, announced in the class as `static const T name;`
-// and defined in the code file as `const T Class::name = value;`. Another unit
-// only ever needs its address, which the announcement is enough for, so the
-// value stays in this unit. The caller passes the name, since the definition's
-// is fixed and the others are positions.
+// and defined outside it as `const T Class::name = value;`, inline where the
+// header defines it. Another unit only ever needs its address, which the
+// announcement is enough for. The caller passes the name, since the
+// definition's is fixed and the others are positions.
 void RenderClassConstant(
     const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
     mir::TypeId type, const CppName& name, const mir::ValueBuild& build,
-    VariableForm defined_as, TargetText& announced, TargetText& defined) {
+    DefinedAs defined_as, TargetText& announced, TargetText& defined) {
   WriteDeclaration(
       announced, VariableDeclaration{
                      .form = VariableForm::kStaticDataMemberDeclaration,
                      .constness = Constness::kConst,
                      .type = CppType(unit, type),
                      .name = name});
-  const ScopeView view = ScopeView::ForConstant(unit, build.body, report);
+  const ScopeView view =
+      ScopeView::ForConstant(unit, build.body, defined_as.linkage, report);
   WriteDeclaration(
       defined,
       VariableDeclaration{
-          .form = defined_as,
+          .form = DefinitionFormIn(defined_as.in),
           .constness = Constness::kConst,
           .type = CppType(unit, type),
           .name = name,
@@ -459,7 +513,7 @@ auto NestingOf(const mir::CompilationUnit& unit) -> ClassNesting {
 void RenderClass(
     const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
     const mir::Class& s, std::span<const mir::ClassId> declares_inside,
-    TargetText& signature, TargetText& code);
+    DefinedAs defined, TargetText& signature, TargetText& code);
 
 // Writes a class after every class of this unit it derives from or is
 // declared inside, which the unit's class list does not guarantee, marking
@@ -485,38 +539,46 @@ void AppendClassInDependencyOrder(
   const std::span<const mir::ClassId> declares_inside =
       nesting.declares_inside[id.value];
   const TargetText::Section defined(text.definitions);
-  // A class every body states alike is what a scope published, defined beside
-  // its declaration, since a referrer reads its definition too.
-  if (mir::IsStatedByEveryBody(unit, id)) {
-    PublishedClass published{.id = id, .text = TargetText{}};
-    TargetText definitions;
-    RenderClass(
-        unit, report, id, cls, declares_inside, published.text, definitions);
-    AppendSection(published.text, definitions);
-    text.published.push_back(std::move(published));
-    return;
+  const support::Linkage linkage = mir::LinkageOf(unit, id);
+  switch (linkage) {
+    // A class every body states alike is defined beside its declaration, in
+    // the header every body reads, since a referrer reads its definition too.
+    case support::Linkage::kShared: {
+      PublishedClass published{.id = id, .text = TargetText{}};
+      TargetText definitions;
+      RenderClass(
+          unit, report, id, cls, declares_inside,
+          DefinedAs{.linkage = linkage, .in = WrittenIn::kHeader},
+          published.text, definitions);
+      AppendSection(published.text, definitions);
+      text.published.push_back(std::move(published));
+      return;
+    }
+    case support::Linkage::kExternal: {
+      PublishedClass published{.id = id, .text = TargetText{}};
+      RenderClass(
+          unit, report, id, cls, declares_inside,
+          DefinedAs{.linkage = linkage, .in = WrittenIn::kCodeFile},
+          published.text, text.definitions);
+      text.published.push_back(std::move(published));
+      return;
+    }
+    case support::Linkage::kInternal: {
+      const TargetText::Section declared(text.internal);
+      RenderClass(
+          unit, report, id, cls, declares_inside,
+          DefinedAs{.linkage = linkage, .in = WrittenIn::kCodeFile},
+          text.internal, text.definitions);
+      return;
+    }
   }
-  if (mir::IsPublished(unit, id)) {
-    PublishedClass published{.id = id, .text = TargetText{}};
-    RenderClass(
-        unit, report, id, cls, declares_inside, published.text,
-        text.definitions);
-    text.published.push_back(std::move(published));
-    return;
-  }
-  const TargetText::Section declared(text.internal);
-  RenderClass(
-      unit, report, id, cls, declares_inside, text.internal, text.definitions);
+  throw InternalError("backend::cpp: unknown linkage");
 }
 
 void RenderClass(
     const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
     const mir::Class& s, std::span<const mir::ClassId> declares_inside,
-    TargetText& signature, TargetText& code) {
-  // A class every body states is defined in its header, so each definition of
-  // it is inline, where every one of them is kept as one.
-  const bool stated_by_every_body = mir::IsStatedByEveryBody(unit, id);
-  const std::string_view specifiers = stated_by_every_body ? "inline " : "";
+    DefinedAs defined, TargetText& signature, TargetText& code) {
   TargetText& out = signature;
   Write(out, "class ", CppClassPath(unit, id));
   if (s.is_final) {
@@ -550,8 +612,8 @@ void RenderClass(
 
   if (s.constructor.has_value()) {
     const TargetText::Section declared(out);
-    const TargetText::Section defined(code);
-    RenderConstructor(unit, report, id, *s.constructor, specifiers, out, code);
+    const TargetText::Section constructor_defined(code);
+    RenderConstructor(unit, report, id, *s.constructor, defined, out, code);
   }
 
   // Members are public so cross-unit references can reach them directly.
@@ -571,36 +633,33 @@ void RenderClass(
     for (const mir::CallableId callable_id : s.callables.Ids()) {
       const mir::CallableDecl& callable = s.callables.Get(callable_id);
       RenderClassCallableDecl(unit, s, callable_id, callable, out);
-      const TargetText::Section defined(code);
+      const TargetText::Section callable_defined(code);
       RenderClassCallableDef(
-          unit, report, specifiers, id, s, callable_id, callable, code);
+          unit, report, defined, id, s, callable_id, callable, code);
     }
   }
 
   {
     const TargetText::Section tables(out);
-    const TargetText::Section defined(code);
-    RenderDispatchTables(unit, id, s, specifiers, out, code);
+    const TargetText::Section tables_defined(code);
+    RenderDispatchTables(unit, id, s, defined, out, code);
   }
 
   // The constants the class holds and then its definition, which names them:
-  // each defined in the code file beside the bodies it names.
+  // each defined beside the bodies it names.
   {
     const TargetText::Section constants(out);
-    const TargetText::Section defined(code);
-    const VariableForm defined_as =
-        stated_by_every_body ? VariableForm::kInlineStaticDataMemberDefinition
-                             : VariableForm::kStaticDataMemberDefinition;
+    const TargetText::Section constants_defined(code);
     for (const mir::ClassConstantId constant : s.constants.Ids()) {
       const mir::ClassConstantDecl& decl = s.constants.Get(constant);
       RenderClassConstant(
           unit, report, id, decl.type, CppClassConstantName(constant),
-          decl.initializer, defined_as, out, code);
+          decl.initializer, defined, out, code);
     }
     RenderClassConstant(
         unit, report, id,
         mir::LibraryTypeOf(unit.types, support::LibraryDecl::kObjectDefinition),
-        CppDefinitionName(), s.object_definition_initializer, defined_as, out,
+        CppDefinitionName(), s.object_definition_initializer, defined, out,
         code);
   }
 
@@ -659,7 +718,11 @@ void RenderFreeCallable(
   RenderFreeCallableSignature(unit, id, callable, out);
   out += " ";
   WriteBody(out, [&] {
-    RenderBlockStatements(ScopeView::ForCode(unit, callable.code, report), out);
+    RenderBlockStatements(
+        ScopeView::ForCode(
+            unit, callable.code,
+            mir::LinkageOf(unit, mir::UnitCallableTarget{.slot = id}), report),
+        out);
   });
   out += "\n";
 }
@@ -674,10 +737,11 @@ void RenderRecord(
   const mir::RecordDecl& decl = unit.GetRecord(id);
   const CppName name = CppRecordName(decl);
   // Every body's code file defines the methods, and another unit calls them
-  // with only the declaration in hand. So each definition is weak, and the
-  // link keeps one: an `inline` one would be emitted only by a file that calls
-  // it, which none of these need to.
-  const std::string_view specifiers = "[[gnu::weak]] ";
+  // with only the declaration in hand, so each is defined in the code file:
+  // an `inline` one would be emitted only by a file that calls it, which none
+  // of these need to.
+  const DefinedAs defined_as{
+      .linkage = mir::LinkageOf(unit, id), .in = WrittenIn::kCodeFile};
   const CppRecordBase library_type{.unit = &unit, .of = &decl};
   const MintedWord base = CppRecordBaseName();
   Write(declared, "struct ", name, " : ", library_type, " {\n");
@@ -697,7 +761,7 @@ void RenderRecord(
         declared);
     declared += ";\n";
     RenderMemberFunctionDef(
-        unit, report, specifiers, name, member, method.code, defined);
+        unit, report, defined_as, name, member, method.code, defined);
   }
   declared.Outdent();
   declared += "};\n";
@@ -715,7 +779,16 @@ auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
         path != nullptr && IsNestedClass(*path)) {
       continue;
     }
-    TargetText& out = mir::IsPublished(unit, id) ? text.signature : text.code;
+    TargetText& out = [&]() -> TargetText& {
+      switch (mir::LinkageOf(unit, id)) {
+        case support::Linkage::kShared:
+        case support::Linkage::kExternal:
+          return text.signature;
+        case support::Linkage::kInternal:
+          return text.code;
+      }
+      throw InternalError("backend::cpp: unknown linkage");
+    }();
     Write(out, "class ", CppClassName(unit, id), ";\n");
   }
   return text;
@@ -798,17 +871,17 @@ auto RenderUnitClosures(
       out += ";\n";
       out.Outdent();
       out += "};\n";
+      // How the runtime library calls the closure and ends it, which the
+      // library reads off the closure's type, as a class's table belongs to
+      // the class: it is this file's own, as the type is.
+      Write(
+          out, "constexpr auto ", CppClosureDefinitionName(id), " = ",
+          CppClosureDefinitionOf(), "<", name, ">();\n");
     }
 
     TargetText& out = text.definitions;
     const TargetText::Section defined(out);
-    // How the runtime library calls the closure and ends it, which the
-    // library reads off the closure's type.
     const MintedName definition = CppClosureDefinitionName(id);
-    Write(
-        out, "inline constexpr auto ", definition, " = ",
-        CppClosureDefinitionOf(), "<", name, ">();\n");
-
     Write(out, name, "::", name, "(");
     write_constructor_params(out);
     Write(out, ") : ", CppClosureBase(), "(&", definition, ")");
@@ -823,7 +896,11 @@ auto RenderUnitClosures(
     out += " ";
     WriteBody(out, [&] {
       WriteReceiverBinding(unit, code, receiver, out);
-      RenderBlockStatements(ScopeView::ForCode(unit, code, report), out);
+      RenderBlockStatements(
+          ScopeView::ForCode(
+              unit, code,
+              mir::LinkageOf(unit, mir::ClosureSource{.closure = id}), report),
+          out);
     });
     out += "\n";
   }
@@ -927,23 +1004,28 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText {
   return text;
 }
 
-// Every unit declaring the same foreign scope writes the same definition, so it
-// is `[[gnu::weak]]` for the linker to keep one. It is not `inline`: only C
-// code calls it (LRM 35.4, 35.7), and the compiler may drop an inline
-// definition nothing in C++ uses, which would fail the link.
+// Every unit declaring the same foreign scope writes the same definition, which
+// is defined in the code file: only C code calls it (LRM 35.4, 35.7), and the
+// compiler may drop an inline definition nothing in C++ uses, which would fail
+// the link.
 void RenderForeignScopeSymbols(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
     TargetText& out) {
   for (const mir::ForeignScopeEntry& entry : unit.foreign_scope_entries) {
     const TargetText::Section defined(out);
+    const support::Linkage linkage = mir::ForeignScopeEntryLinkage();
     RenderFreeSignature(
-        unit, R"(extern "C" [[gnu::weak]] )",
+        unit,
+        TextOf(
+            R"(extern "C" )",
+            SpecifiersOf(
+                DefinedAs{.linkage = linkage, .in = WrittenIn::kCodeFile})),
         CppForeignSymbolName(entry.linkage.foreign_name), entry.definition,
         out);
     out += " ";
     WriteBody(out, [&] {
       RenderBlockStatements(
-          ScopeView::ForCode(unit, entry.definition, report), out);
+          ScopeView::ForCode(unit, entry.definition, linkage, report), out);
     });
     out += "\n";
   }

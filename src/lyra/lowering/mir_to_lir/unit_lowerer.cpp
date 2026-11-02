@@ -28,10 +28,12 @@
 #include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/dispatch_table.hpp"
 #include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
+#include "lyra/mir/linkage.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
@@ -51,42 +53,6 @@ auto BlockOrdinalOf(std::optional<mir::BlockBodyOrdinal> block)
     -> std::optional<std::uint32_t> {
   if (!block.has_value()) return std::nullopt;
   return block->value;
-}
-
-// A class every body of the unit states is one the link keeps one of; one
-// another unit names is this body's own, defined once; and one nothing outside
-// this artifact names -- what realizes a scope of this body, or what the
-// lowering built for its own use -- is linked within it alone.
-auto ClassLinkage(const mir::CompilationUnit& unit, mir::ClassId id)
-    -> lir::Linkage {
-  if (mir::IsStatedByEveryBody(unit, id)) return lir::Linkage::kShared;
-  if (mir::IsPublished(unit, id)) return lir::Linkage::kExternal;
-  return lir::Linkage::kInternal;
-}
-
-// A body of the namespace something outside this artifact calls -- by its
-// linkage name, its identifier, or as an entry the unit publishes -- is
-// defined here once; one reached only by its position is this artifact's own.
-auto UnitCallableLinkage(const mir::NamespaceReach& reach) -> lir::Linkage {
-  return std::visit(
-      Overloaded{
-          [](const mir::ReachedByLinkageName&) {
-            return lir::Linkage::kExternal;
-          },
-          [](const mir::ReachedByName&) { return lir::Linkage::kExternal; },
-          [](const mir::ReachedByBringUpEntry&) {
-            return lir::Linkage::kExternal;
-          },
-          [](const mir::ReachedAsObjectEntry&) {
-            return lir::Linkage::kExternal;
-          },
-          [](const mir::ReachedInAnotherUnit&) {
-            return lir::Linkage::kExternal;
-          },
-          [](const mir::ReachedByPosition&) {
-            return lir::Linkage::kInternal;
-          }},
-      reach);
 }
 
 auto TranslateRecordKind(mir::RecordKind kind) -> lir::RecordKind {
@@ -156,18 +122,13 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
 
   // What every record is made of is settled before any body lowers, since a
   // body reaching a member of one reads it -- a method of the record
-  // included, which is why each method's function is only reserved here. A
-  // record is a declaration of the unit another unit names (LRM 7.2, 7.3),
-  // which no body's code adds to, so every body states it alike and the link
-  // keeps one.
+  // included, which is why each method's function is only reserved here.
   for (const mir::RecordId id : mir_->records.Ids()) {
     const mir::RecordDecl& decl = mir_->GetRecord(id);
-    // A record another unit declares is that unit's to link.
     lir::RecordDecl lowered{
         .defining_unit = decl.defining_unit,
         .path = decl.path,
-        .linkage = decl.defining_unit.has_value() ? lir::Linkage::kExternal
-                                                  : lir::Linkage::kShared,
+        .linkage = mir::LinkageOf(*mir_, id),
         .kind = TranslateRecordKind(decl.kind),
         .elements = TranslateTypes(decl.elements),
         .methods = {}};
@@ -210,11 +171,9 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
     }
   }
 
-  // The symbol a name declared on a scope is reached by (LRM 35.5.3): its
-  // definition names only the name and the prototype, so every unit declaring
-  // such a scope writes the same one and whatever resolves names across
-  // artifacts keeps one of them. What the unit's own namespace owns is the
-  // other of the two, and goes with the bodies below.
+  // The symbol a name declared on a scope is reached by (LRM 35.5.3). What
+  // the unit's own namespace owns is the other of the two, and goes with the
+  // bodies below.
   for (const mir::ForeignScopeEntry& shared : mir_->foreign_scope_entries) {
     auto fn =
         FunctionLowerer(*this, shared.definition, shared.linkage.foreign_name)
@@ -222,7 +181,7 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    fn->linkage = lir::Linkage::kShared;
+    fn->linkage = mir::ForeignScopeEntryLinkage();
     out_.functions.Add(*std::move(fn));
   }
 
@@ -239,7 +198,7 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    fn->linkage = UnitCallableLinkage(mir::NamespaceReachOf(*mir_, id));
+    fn->linkage = mir::LinkageOf(*mir_, mir::UnitCallableTarget{.slot = id});
     out_.functions.Add(*std::move(fn));
   }
 
@@ -268,7 +227,8 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
     const mir::Class& declared = mir_->GetClass(id);
     if (declared.defining_unit.has_value()) {
       out_.classes.Define(
-          class_identities_.Get(id).lir_class, LowerDeclaredClass(declared));
+          class_identities_.Get(id).lir_class,
+          LowerDeclaredClass(id, declared));
       continue;
     }
     auto cls = LowerClass(id, declared);
@@ -283,8 +243,6 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
 
   // A closure's captures are the storage its values own, and its invoke is a
   // function like any other body's, reading them through the receiver it takes.
-  // Only the body that builds the closure names it, so it is linked within
-  // this artifact alone.
   for (const mir::ClosureId id : mir_->closures.Ids()) {
     const mir::ClosureDecl& decl = mir_->GetClosure(id);
     lir::Closure closure;
@@ -301,7 +259,7 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    fn->linkage = lir::Linkage::kInternal;
+    fn->linkage = mir::LinkageOf(*mir_, mir::ClosureSource{.closure = id});
     out_.functions.Define(closure.invoke, *std::move(fn));
     out_.closures.Define(ClosureDeclaration(id), std::move(closure));
   }
@@ -342,8 +300,6 @@ auto UnitLowerer::StateTypeOperations(const OperationBodyProvider& bodies)
                                          ? *called->second
                                          : out_.functions.Declare();
     out_.type_operations.insert_or_assign(operation, function);
-    // A body no other unit names, under a symbol composed from the type and the
-    // operation.
     auto fn = FunctionLowerer(
                   *this, *body,
                   lir::TypeOperationSymbol(
@@ -353,7 +309,9 @@ auto UnitLowerer::StateTypeOperations(const OperationBodyProvider& bodies)
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    fn->linkage = lir::Linkage::kInternal;
+    fn->linkage = mir::LinkageOf(
+        *mir_, mir::TypeOperationSource{
+                   .type = mir_type, .answers = operation.answers});
     out_.functions.Define(function, *std::move(fn));
   }
   return !pending.empty();
@@ -563,7 +521,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     -> diag::Result<lir::Class> {
   lir::Class out;
   out.identity = cls.identity;
-  out.linkage = ClassLinkage(*mir_, owner);
+  out.linkage = mir::LinkageOf(*mir_, owner);
   const std::string_view qualifier = lir::QualifierOf(out_, cls.identity);
   out.base = cls.base.transform(
       [&](const mir::ClassRef& base) { return BaseType(base); });
@@ -617,7 +575,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     out_.constants.push_back(
         lir::GlobalConstant{
             .symbol = lir::ClassConstantSymbol(definition, constant.value),
-            .linkage = lir::Linkage::kInternal,
+            .linkage = out.linkage,
             .initializer = LowerConstant(initializer, initializer.value)});
   }
   out_.constants.push_back(
@@ -669,11 +627,12 @@ auto UnitLowerer::ClassQualifier(const mir::Class& cls) const
   return lir::QualifierOf(out_, cls.identity);
 }
 
-auto UnitLowerer::LowerDeclaredClass(const mir::Class& cls) -> lir::Class {
+auto UnitLowerer::LowerDeclaredClass(mir::ClassId id, const mir::Class& cls)
+    -> lir::Class {
   lir::Class record{
       .defining_unit = cls.defining_unit,
       .identity = cls.identity,
-      .linkage = lir::Linkage::kExternal,
+      .linkage = mir::LinkageOf(*mir_, id),
       .base = cls.base.transform(
           [&](const mir::ClassRef& base) { return BaseType(base); }),
       .members = {},

@@ -233,6 +233,19 @@ what the construct means.
   apply.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
+- What decides how a definition is linked, which no node states because it is no fact of the
+  language: who may name each definition -- what a unit published, and what is reached only by its
+  position -- and whether a unit's declarations alone build it or one body's code does. How many
+  artifacts define a name is a fact of how a unit is compiled, as rustc settles it after its MIR
+  when it splits a crate into codegen units; here a unit compiled to several bodies is several
+  artifacts under one unit's names, and the C++ target reads MIR directly, so the answer is one
+  query over these facts that the lowering to LIR and that target both ask, as clang's code
+  generation asks `ASTContext::GetGVALinkageForFunction`. A definition every body states alike
+  stands in for the others where the program is linked, so it names nothing that is one body's own
+  -- a closure, a class or a function a body numbers among its own, a member table -- and the unit's
+  verification refuses one that does. A constant is the value it is and an operation of a type is
+  named by the type and the operation, so naming either means the same in every body. A constant and
+  a member table are data each body holds for its own code, and have no linkage of their own.
 - Where in the source each expression and statement came from: the front end's own value for the
   piece of source it was lowered from, or no place where it was lowered from none, as rustc's THIR
   carries a span on every expression. A node is given it as it is built, by whatever lowers that

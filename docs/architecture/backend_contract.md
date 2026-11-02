@@ -372,9 +372,21 @@ A constant of an integral type is its bits at its type. The unit holds each dist
 use names which, and nothing in MIR builds one. How a target writes a value of a type from its bits
 is a question about the type, so type mapping answers it (invariant 3): a target with literals
 spells one, and a target that lays values out as data states the bytes. A backend defines the
-constants its own output names. The unit's set is where a value gets one identity, and it is not a
-list of what an artifact must contain, because an operation folded where it was built leaves its
-operands in the set with no use.
+constants its own output names, each its own artifact's. The unit's set is where a value gets one
+identity, and it is not a list of what an artifact must contain, because an operation folded where
+it was built leaves its operands in the set with no use.
+
+How a definition MIR states is linked -- every body of the unit alike, one body for others to name,
+or one body alone -- is one answer read off MIR's facts, and each backend spells it: a target's
+linkage, or for C++ the namespace with no name, `inline` in a header and a weak definition in a code
+file. A backend that worked it out for itself would be a second answer to one question, and the two
+answers are held in step by nothing. What a target builds below MIR for its own realization -- the
+records it hands the library of a type, the data it holds a constant as -- is linked as that target
+decides. A definition every body states alike is kept in place of the others, and how a target makes
+the kept copy mean what each dropped one did is that target's: LLVM's `weak_odr` asks only that the
+copies behave alike, so each may read its own module's data; C++ asks that every name in them denote
+the same entity, which a constant of one file's own does only where it is never bound to a reference
+([basic.def.odr]/16), so the C++ backend writes such a constant in place there.
 
 A value-emission entry may not read _past_ its node to synthesize operands or pick a form: not an
 enclosing declaration, not a sibling, not an expected destination, not a node reached by matching on

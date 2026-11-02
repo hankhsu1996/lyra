@@ -6,8 +6,8 @@ execution backend lays a closure's captures out itself, so a closure value is bu
 instruction of its own -- the building code stores the address of the closure's definition at the
 start of the storage the value lies in, as a constructor stores a class's table address, and fills
 each capture the way its storage holds one -- rather than through the generic constructor protocol
-with promotion driven by a schema. The closure's definition is a constant its unit emits, stating
-its body and the body ending it. D1, D3 and D6 stand, and D5 is revised below.
+with promotion driven by a schema. The closure's definition is a constant the body building it
+emits, stating its body and the body ending it. D1 and D3 stand, and D5 and D6 are revised below.
 
 ## Why this decision matters
 
@@ -79,9 +79,11 @@ D5. A capture is written only where the closure's kind says so. The invoke's rec
     the box for a body that takes the closure over. Revised 2026-10-17: this entry made every
     receiver read-only, which held while no closure kept state; the watch is the first that does.
 
-D6. A closure's linkage name is qualified by its declaring unit. Its ordinal is counted per unit and
-    the whole program links into one name space, which is the same reason a class and a namespace
-    callable are qualified.
+D6. A closure, its body and its definition belong to the body building it, and nothing outside
+    that body names them, so all three are linked within it alone. Its ordinal is counted per body.
+    Revised 2026-11-02: this entry qualified a closure's name by its unit, written when a unit was
+    one body; a unit compiled to several bodies numbers each body's closures from zero under one
+    unit's names, and a definition linked beyond its body was kept once for all of them.
 ```
 
 ## Consequences

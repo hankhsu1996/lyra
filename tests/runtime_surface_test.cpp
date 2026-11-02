@@ -6,6 +6,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <iterator>
+#include <optional>
 #include <ranges>
 #include <regex>
 #include <set>
@@ -148,6 +149,41 @@ module Test;
 endmodule
 )sv";
 
+// A design whose one module is compiled to two bodies: its two instances build
+// different blocks of a conditional generate, whose processes write different
+// bits and wait on different controls, so each body builds closures of its own
+// under the same names; the module declares a structure whose member
+// initializers its methods read, and exports a function to C under one global
+// name (LRM 35.4), which every body states alike.
+constexpr std::string_view kTwoBodiesDesignSource = R"sv(
+module Stage #(parameter int R = 0) (input logic clk, input logic d);
+  typedef struct { int x = 5; int y = 9; } pair_t;
+  pair_t p;
+  function int twice(int x);
+    return 2 * x;
+  endfunction
+  export "DPI-C" function twice;
+  logic [2:1] s = '0;
+  if (R == 1) begin : low
+    always_ff @(posedge clk) s[1] <= d;
+  end else begin : high
+    always_ff @(posedge clk or negedge d) s[2] <= d;
+  end
+endmodule
+
+module Test;
+  logic clk = 0;
+  logic d = 1;
+  Stage #(.R(0)) u0 (.clk, .d);
+  Stage #(.R(1)) u1 (.clk, .d);
+  initial begin
+    #1 clk = 1;
+    #1 $display("%b %b %0d", u0.s, u1.s, u1.p.x);
+    $finish;
+  end
+endmodule
+)sv";
+
 // Whether a definition an emitted unit holds is one the unit's own design
 // decided. That is so where it names something of a unit's -- its scopes, the
 // lambdas its bodies write -- or where a template of the runtime is
@@ -215,15 +251,16 @@ auto IsRuntimeEntity(std::string_view mangled) -> bool {
   });
 }
 
-// The names `nm --format=just-symbols` prints, one per line, in order.
-auto SymbolNames(std::string_view listing) -> std::vector<std::string> {
-  std::vector<std::string> names;
+// The lines a tool printed, in order, empty ones left out: for `nm
+// --format=just-symbols`, the names it lists.
+auto LinesOf(std::string_view listing) -> std::vector<std::string> {
+  std::vector<std::string> lines;
   for (const auto line : std::views::split(listing, '\n')) {
     if (!line.empty()) {
-      names.emplace_back(std::string_view(line));
+      lines.emplace_back(std::string_view(line));
     }
   }
-  return names;
+  return lines;
 }
 
 // Emits `source` into `project`.
@@ -244,9 +281,11 @@ void EmitDesign(
 }
 
 // Compiles every unit of `project` with `compiler`, as an unoptimized build of
-// the design does, and adds the object it leaves to `objects`.
+// the design does, and `added` beside its flags, and adds the object it leaves
+// to `objects`.
 void CompileUnits(
     const std::filesystem::path& compiler, const std::filesystem::path& project,
+    std::span<const std::string_view> added,
     std::vector<std::filesystem::path>& objects) {
   std::vector<lyra::driver::ProcessRequest> compiles;
   for (const auto& entry : std::filesystem::directory_iterator(project)) {
@@ -257,6 +296,7 @@ void CompileUnits(
     object.replace_extension(".o");
     std::vector<std::string> args = lyra::driver::DesignCompileFlags(
         lyra::driver::OptimizationLevel::kO0, lyra::support::Sanitizer::kNone);
+    args.insert(args.end(), added.begin(), added.end());
     args.insert(
         args.end(),
         {"-I", (project / "runtime" / "include").string(), "-I",
@@ -272,6 +312,38 @@ void CompileUnits(
     ASSERT_EQ(compiled.exit_code, 0) << "an emitted unit did not compile:\n"
                                      << compiled.stderr_text;
   }
+}
+
+// The one of `names` a section holds, where a compile given a section per
+// definition named the section after it, `.<kind>.<symbol>` with a kind that
+// may itself hold dots, `.data.rel.ro`; nothing for a section holding none of
+// them, such as the pool of a file's string literals.
+auto SymbolOfSection(
+    std::string_view section, const std::set<std::string>& names)
+    -> std::optional<std::string> {
+  for (std::size_t at = section.find('.'); at != std::string_view::npos;
+       at = section.find('.', at + 1)) {
+    const std::string candidate(section.substr(at + 1));
+    if (names.contains(candidate)) {
+      return candidate;
+    }
+  }
+  return std::nullopt;
+}
+
+// What a relocation refers to, as `llvm-objdump -r` prints it -- a symbol, or
+// the section holding one, with an addend after it -- where it is one of
+// `names`.
+auto RelocationTarget(
+    std::string_view value, const std::set<std::string>& names)
+    -> std::optional<std::string> {
+  const std::size_t addend = value.find_first_of("+-", 1);
+  const std::string target(
+      addend == std::string_view::npos ? value : value.substr(0, addend));
+  if (names.contains(target)) {
+    return target;
+  }
+  return SymbolOfSection(target, names);
 }
 
 }  // namespace
@@ -304,7 +376,7 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
   const auto project = *dir_or / "project";
   ASSERT_NO_FATAL_FAILURE(EmitDesign(lyra_exe, kDesignSource, project));
   std::vector<std::filesystem::path> objects;
-  ASSERT_NO_FATAL_FAILURE(CompileUnits(clangxx, project, objects));
+  ASSERT_NO_FATAL_FAILURE(CompileUnits(clangxx, project, {}, objects));
 
   std::vector<std::string> unit_namespaces;
   for (const auto& object : objects) {
@@ -322,10 +394,9 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
     auto demangled_or = lyra::driver::RunProcessCaptured(nm, demangled_args);
     ASSERT_TRUE(mangled_or) << mangled_or.error().Text();
     ASSERT_TRUE(demangled_or) << demangled_or.error().Text();
-    const std::vector<std::string> mangled =
-        SymbolNames(mangled_or->stdout_text);
+    const std::vector<std::string> mangled = LinesOf(mangled_or->stdout_text);
     const std::vector<std::string> demangled =
-        SymbolNames(demangled_or->stdout_text);
+        LinesOf(demangled_or->stdout_text);
     ASSERT_EQ(mangled.size(), demangled.size());
     for (std::size_t at = 0; at < mangled.size(); ++at) {
       if (IsRuntimeEntity(mangled[at]) &&
@@ -375,7 +446,7 @@ TEST(RuntimeSurface, AUnitOfAnotherCompilerFindsWhatItCallsInTheLibrary) {
       return std::vector<std::string>{};
     }
     EXPECT_EQ(listed_or->exit_code, 0) << listed_or->stderr_text;
-    return SymbolNames(listed_or->stdout_text);
+    return LinesOf(listed_or->stdout_text);
   };
 
   const std::vector<std::string> library =
@@ -388,7 +459,7 @@ TEST(RuntimeSurface, AUnitOfAnotherCompilerFindsWhatItCallsInTheLibrary) {
     const auto project = *dir_or / std::format("design{}", at) / "project";
     ASSERT_NO_FATAL_FAILURE(EmitDesign(lyra_exe, source, project));
     std::vector<std::filesystem::path> objects;
-    ASSERT_NO_FATAL_FAILURE(CompileUnits(gcc, project, objects));
+    ASSERT_NO_FATAL_FAILURE(CompileUnits(gcc, project, {}, objects));
 
     // Each design is a program of its own, so what one defines answers nothing
     // another asks.
@@ -424,6 +495,123 @@ TEST(RuntimeSurface, AUnitOfAnotherCompilerFindsWhatItCallsInTheLibrary) {
       missing);
 }
 
+// A unit compiled to two bodies is two translation units sharing the unit's
+// names, and a definition of vague linkage -- one every file stating it
+// defines and the link keeps one of -- stands in for the others in each. So it
+// has to mean the same in both, and one referring to a definition only its own
+// file has cannot: the other file's copy refers to the other file's, and which
+// copy runs is the linker's choice. Nothing reports it, since the program links
+// and runs whichever was kept, so this reads it off each object: what every
+// section holding a definition of vague linkage refers to, against which
+// definitions the object keeps to itself.
+TEST(RuntimeSurface, ADefinitionAnotherBodyMayStandInForNamesNothingOfItsOwn) {
+  const auto clangxx = lyra::test::ResolveClangxx();
+  ASSERT_FALSE(clangxx.empty());
+  const auto nm = lyra::test::ResolveLlvmNm();
+  ASSERT_FALSE(nm.empty());
+  const auto objdump = lyra::test::ResolveLlvmObjdump();
+  ASSERT_FALSE(objdump.empty());
+  const auto lyra_exe = lyra::test::ResolveLyra();
+  ASSERT_FALSE(lyra_exe.empty());
+  auto dir_or = conformance::framework::MakeScratchDir();
+  ASSERT_TRUE(dir_or) << dir_or.error();
+
+  const auto project = *dir_or / "project";
+  ASSERT_NO_FATAL_FAILURE(
+      EmitDesign(lyra_exe, kTwoBodiesDesignSource, project));
+  // A section per definition, so each relocation is read against the one
+  // definition whose text carries it.
+  constexpr std::array<std::string_view, 2> kSectionPerDefinition = {
+      "-ffunction-sections", "-fdata-sections"};
+  std::vector<std::filesystem::path> objects;
+  ASSERT_NO_FATAL_FAILURE(
+      CompileUnits(clangxx, project, kSectionPerDefinition, objects));
+
+  std::string misread;
+  std::size_t vague_read = 0;
+  for (const auto& object : objects) {
+    const std::vector<std::string> listed_args = {
+        "--defined-only", "--format=posix", object.string()};
+    auto listed_or = lyra::driver::RunProcessCaptured(nm, listed_args);
+    ASSERT_TRUE(listed_or) << listed_or.error().Text();
+    ASSERT_EQ(listed_or->exit_code, 0) << listed_or->stderr_text;
+    // `name type value size`: a lowercase type is a definition the object
+    // keeps to itself, and `V`, `W` and `u` are the vague ones -- a weak
+    // function C code calls by its own name among them. Only an entity of the
+    // program is read: an assembler's local label, a string literal's above
+    // all, has no identity a program may rely on (C++ [lex.string]).
+    std::set<std::string> own;
+    std::set<std::string> vague;
+    for (const std::string& line : LinesOf(listed_or->stdout_text)) {
+      const std::size_t space = line.find(' ');
+      if (space == std::string::npos || space + 1 >= line.size()) {
+        continue;
+      }
+      const std::string name = line.substr(0, space);
+      const char type = line[space + 1];
+      if (name.starts_with('.')) {
+        continue;
+      }
+      if (type == 'V' || type == 'W' || type == 'u') {
+        vague.insert(name);
+      } else if (type >= 'a' && type <= 'z' && type != 'v' && type != 'w') {
+        own.insert(name);
+      }
+    }
+
+    const std::vector<std::string> dumped_args = {"-r", object.string()};
+    auto dumped_or = lyra::driver::RunProcessCaptured(objdump, dumped_args);
+    ASSERT_TRUE(dumped_or) << dumped_or.error().Text();
+    ASSERT_EQ(dumped_or->exit_code, 0) << dumped_or->stderr_text;
+    // `RELOCATION RECORDS FOR [section]:`, then `offset type value` per
+    // relocation the section carries.
+    std::optional<std::string> holder;
+    for (const std::string& line : LinesOf(dumped_or->stdout_text)) {
+      constexpr std::string_view kRecords = "RELOCATION RECORDS FOR [";
+      if (line.starts_with(kRecords)) {
+        const std::string section =
+            line.substr(kRecords.size(), line.find(']') - kRecords.size());
+        holder = SymbolOfSection(section, vague);
+        if (holder.has_value()) {
+          ++vague_read;
+        }
+        continue;
+      }
+      if (!holder.has_value()) {
+        continue;
+      }
+      const std::size_t value_at = line.find_last_of(' ');
+      if (value_at == std::string::npos) {
+        continue;
+      }
+      // An entity local to the holder's own body -- a lambda it writes -- is
+      // part of its definition, so whichever copy is kept reaches its own.
+      const std::optional<std::string> target =
+          RelocationTarget(line.substr(value_at + 1), own);
+      if (!target.has_value()) {
+        continue;
+      }
+      const bool of_the_holder =
+          holder->starts_with("_Z") &&
+          target->starts_with(std::format("_ZZ{}", holder->substr(2)));
+      if (!of_the_holder) {
+        misread += std::format(
+            "  {}: {} refers to {}\n", object.filename().string(), *holder,
+            *target);
+      }
+    }
+  }
+
+  EXPECT_GT(vague_read, 0U) << "no object was read as holding a definition of "
+                               "vague linkage, so this measured nothing";
+  EXPECT_TRUE(misread.empty()) << std::format(
+      "definitions every body states alike refer to what one body keeps to "
+      "itself:\n{}What only a body names is written in the namespace with no "
+      "name, and a definition every body states alike writes a constant it "
+      "names in place.",
+      misread);
+}
+
 // The runtime writes its descriptors itself and names no standard stream of
 // the C++ library, which is what lets an ending hand the design's output over
 // from a signal handler, and what keeps a program it links from needing the
@@ -441,7 +629,7 @@ TEST(RuntimeSurface, TheLibraryNamesNoStandardStream) {
   auto listed_or = lyra::driver::RunProcessCaptured(nm, args);
   ASSERT_TRUE(listed_or) << listed_or.error().Text();
   ASSERT_EQ(listed_or->exit_code, 0) << listed_or->stderr_text;
-  const std::vector<std::string> asked = SymbolNames(listed_or->stdout_text);
+  const std::vector<std::string> asked = LinesOf(listed_or->stdout_text);
 
   EXPECT_FALSE(std::ranges::contains(asked, "_ZSt4cout"))
       << "the library writes standard output through std::cout";

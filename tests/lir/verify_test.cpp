@@ -11,11 +11,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
-#include "lyra/lir/linkage.hpp"
 #include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/linkage.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -54,7 +54,7 @@ struct PairBody {
         RecordDecl{
             .defining_unit = std::nullopt,
             .path = {},
-            .linkage = Linkage::kExternal,
+            .linkage = support::Linkage::kExternal,
             .kind = kind,
             .elements = {integer, integer},
             .methods = {}});

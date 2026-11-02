@@ -37,6 +37,7 @@
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -2063,6 +2064,141 @@ TEST(MirVerifyTest, AnEntryAnotherUnitDefinesHoldsNothingOfItsOwn) {
   ExpectRefused(
       unit_declaring({.named = false}),
       "declares with no name a subroutine another unit defines");
+}
+
+// A definition every body of a unit states alike -- a record's method here --
+// stands in for the others where the program is linked, so it names nothing a
+// body has for itself alone: a call of a function only its position reaches is
+// refused, and the same call of one reached by its name stands.
+TEST(MirVerifyTest, ADefinitionEveryBodyStatesNamesNothingOneBodyHas) {
+  const auto unit_whose_method_calls = [](bool a_named_function) {
+    return UnitWithCode([&](CompilationUnit& u, CallableCode&) {
+      CallableCode callee = CallableCode::Defined(diag::SourceSpan{});
+      callee.result_type = u.builtins.void_type;
+      const CallableId called = u.callables.Add(
+          CallableDecl{
+              .code = std::move(callee),
+              .foreign = std::nullopt,
+              .virtual_dispatch = std::nullopt,
+              .defining_unit = std::nullopt});
+      if (a_named_function) {
+        u.named_callables.push_back(NamedCallable{.name = "g", .body = called});
+      }
+      CallableCode method = CallableCode::Defined(diag::SourceSpan{});
+      method.result_type = u.builtins.void_type;
+      Builder body(method.Body(), diag::SourceSpan{});
+      const ExprId call = body.Add(
+          Expr{
+              .data =
+                  CallExpr{
+                      .callee =
+                          Direct{.target = UnitCallableTarget{.slot = called}},
+                      .arguments = {}},
+              .type = u.builtins.void_type});
+      body.AppendStmt(ExprStmt{.expr = call});
+      u.records.Add(
+          RecordDecl{
+              .defining_unit = std::nullopt,
+              .path = {},
+              .kind = RecordKind::kStruct,
+              .elements = {}});
+      u.record_methods.Declare();
+      u.record_methods.Define(
+          RecordId{0}, RecordMethods{RecordMethod{
+                           .answers = support::ValueOperator::kEquality,
+                           .code = std::move(method)}});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(unit_whose_method_calls(true)));
+  ExpectRefused(
+      unit_whose_method_calls(false), "names a function only one body has");
+}
+
+// What a class every body states holds for the library is stated alike with
+// the rest of it, and a method reaches another class by a member as well as by
+// a call: a class only one body has is refused in each, and the class itself
+// stands in the first.
+TEST(MirVerifyTest, WhatEveryBodyStatesReachesNoClassOneBodyHas) {
+  const auto class_named = [](support::ClassName name) {
+    Class cls;
+    cls.identity = std::move(name);
+    cls.base = ClassRef{ClassObjectRootRef{}};
+    return cls;
+  };
+  const auto stated_by_every_body = [] {
+    return support::DefPath{
+        .data = {support::ClassStep{.name = "C", .arguments = std::nullopt}}};
+  };
+
+  const auto unit_whose_definition_names = [&](bool its_own_class) {
+    return UnitWithBody([&](CompilationUnit& u, Builder) {
+      const ClassId own = u.DeclareClass();
+      const ClassId shared = u.DeclareClass();
+      u.DefineClass(
+          own, class_named(support::UnnamedClass{.disambiguator = 0}));
+      Class stated = class_named(stated_by_every_body());
+      ValueBuild& definition = stated.object_definition_initializer;
+      definition.value =
+          Builder(definition.body, diag::SourceSpan{})
+              .Add(
+                  Expr{
+                      .data =
+                          ReferenceExpr{
+                              .target =
+                                  DefinitionRef{
+                                      .of = its_own_class ? shared : own}},
+                      .type = u.builtins.int_type});
+      u.DefineClass(shared, std::move(stated));
+    });
+  };
+  const auto refusal_of = [](const CompilationUnit& unit) {
+    try {
+      Verify(unit);
+    } catch (const InternalError& error) {
+      return std::string(error.what());
+    }
+    return std::string{};
+  };
+  EXPECT_EQ(
+      refusal_of(unit_whose_definition_names(true))
+          .find("a class only one body has"),
+      std::string::npos);
+  ExpectRefused(
+      unit_whose_definition_names(false), "names a class only one body has");
+
+  ExpectRefused(
+      UnitWithBody([&](CompilationUnit& u, Builder) {
+        const ClassId own = u.DeclareClass();
+        u.DefineClass(
+            own, class_named(support::UnnamedClass{.disambiguator = 0}));
+        CallableCode method = CallableCode::Defined(diag::SourceSpan{});
+        method.result_type = u.builtins.void_type;
+        Builder body(method.Body(), diag::SourceSpan{});
+        const ExprId object =
+            body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+        const ExprId member = body.Add(
+            Expr{
+                .data =
+                    FieldAccessExpr{
+                        .receiver = object,
+                        .field =
+                            ClassFieldTarget{.owner = own, .slot = FieldId{0}}},
+                .type = u.builtins.int_type});
+        body.AppendStmt(ExprStmt{.expr = member});
+        u.records.Add(
+            RecordDecl{
+                .defining_unit = std::nullopt,
+                .path = {},
+                .kind = RecordKind::kStruct,
+                .elements = {}});
+        u.record_methods.Declare();
+        u.record_methods.Define(
+            RecordId{0}, RecordMethods{RecordMethod{
+                             .answers = support::ValueOperator::kEquality,
+                             .code = std::move(method)}});
+      }),
+      "names a class only one body has");
 }
 
 // A class another unit defines is declared here once, under that unit's name,

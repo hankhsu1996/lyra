@@ -872,17 +872,19 @@ cc_test(
     copts = LYRA_COPTS,
     # Emits a design, compiles its units against the shipped headers with the
     # clang of the release Lyra links and with the executing machine's GCC, and
-    # reads what each object defines and asks for with that release's symbol
-    # lister.
+    # reads what each object defines and asks for, and what each of its
+    # sections refers to, with that release's symbol lister and object dumper.
     data = [
         "//:lyra",
         "@llvm//:builtin_resource_dir",
         "@llvm//tools:clang++",
         "@llvm//tools:llvm-nm",
+        "@llvm//tools:llvm-objdump",
     ],
     env = {
         "CLANGXX": "$(rlocationpath @llvm//tools:clang++)",
         "LLVM_NM": "$(rlocationpath @llvm//tools:llvm-nm)",
+        "LLVM_OBJDUMP": "$(rlocationpath @llvm//tools:llvm-objdump)",
     },
     deps = [
         ":framework",

@@ -19,10 +19,10 @@
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
-#include "lyra/lir/linkage.hpp"
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/linkage.hpp"
 
 namespace lyra::lir {
 
@@ -996,7 +996,7 @@ struct Function {
   // completes into storage it is handed.
   std::optional<ValueId> return_place;
   std::vector<BasicBlock> blocks;
-  Linkage linkage = Linkage::kExternal;
+  support::Linkage linkage = support::Linkage::kExternal;
 };
 
 // The type of an operand: the type of the value a use names, of a constant, or

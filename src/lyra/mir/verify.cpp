@@ -22,6 +22,7 @@
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/closure_decl.hpp"
@@ -36,6 +37,7 @@
 #include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
 #include "lyra/mir/keeper.hpp"
+#include "lyra/mir/linkage.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/object_lifetime.hpp"
 #include "lyra/mir/operand_use.hpp"
@@ -51,6 +53,7 @@
 #include "lyra/support/float_width.hpp"
 #include "lyra/support/integral_operation.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/linkage.hpp"
 #include "lyra/support/value_operation.hpp"
 #include "lyra/value/frame_bound.hpp"
 
@@ -3252,6 +3255,144 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
   }
 }
 
+auto IsInternal(support::Linkage linkage) -> bool {
+  switch (linkage) {
+    case support::Linkage::kInternal:
+      return true;
+    case support::Linkage::kExternal:
+    case support::Linkage::kShared:
+      return false;
+  }
+  throw InternalError("mir verify: unknown linkage");
+}
+
+auto IsShared(support::Linkage linkage) -> bool {
+  switch (linkage) {
+    case support::Linkage::kShared:
+      return true;
+    case support::Linkage::kInternal:
+    case support::Linkage::kExternal:
+      return false;
+  }
+  throw InternalError("mir verify: unknown linkage");
+}
+
+using Named = std::optional<std::string_view>;
+
+// What `data` names that is one body's own, or nothing. That is what a body
+// numbers by where it stands among its own -- a closure, a class or a function
+// only it states -- since the same number in another body is another thing,
+// and a member table, which each body holds for itself and a call reads where
+// it lies. A constant is the value it is, which a target can write in place,
+// and an operation of a type is named by the type and the operation, so each
+// body's is the same; a record and a builtin are no body's alone.
+auto InternalNamedBy(const CompilationUnit& unit, const ExprData& data)
+    -> Named {
+  const auto of_class = [&](ClassId owner) -> Named {
+    if (IsInternal(LinkageOf(unit, owner))) {
+      return "a class only one body has";
+    }
+    return std::nullopt;
+  };
+  if (std::holds_alternative<ClosureExpr>(data)) {
+    return "a closure";
+  }
+  if (const auto* access = std::get_if<FieldAccessExpr>(&data)) {
+    const auto* field = std::get_if<ClassFieldTarget>(&access->field);
+    return field != nullptr ? of_class(field->owner) : std::nullopt;
+  }
+  if (const auto* reference = std::get_if<ReferenceExpr>(&data)) {
+    return std::visit(
+        Overloaded{
+            [](const LocalRef&) -> Named { return std::nullopt; },
+            [&](const DefinitionRef& r) { return of_class(r.of); },
+            [](const EnumTableRef&) -> Named {
+              return "an enumeration's member table";
+            },
+            [](const IntegralConstantRef&) -> Named { return std::nullopt; },
+            [&](const StaticPropertyRef& r) { return of_class(r.owner); },
+            [](const StaticVariableRef&) -> Named { return std::nullopt; },
+            [&](const ClassConstantRef& r) { return of_class(r.owner); },
+            [&](const FunctionRef& r) { return of_class(r.body.owner); },
+            [&](const DispatchEntryRef& r) { return of_class(r.body.owner); },
+            [&](const DestructorRef& r) { return of_class(r.of); },
+            [&](const DispatchTableRef& r) { return of_class(r.of); },
+            [&](const InterfaceTableRef& r) { return of_class(r.of); },
+            [](const ExternalObjectEntryRef&) -> Named {
+              return std::nullopt;
+            }},
+        reference->target);
+  }
+  const auto* call = std::get_if<CallExpr>(&data);
+  const auto* direct =
+      call != nullptr ? std::get_if<Direct>(&call->callee) : nullptr;
+  if (direct == nullptr) {
+    return std::nullopt;
+  }
+  return std::visit(
+      Overloaded{
+          [&](const CallableTarget& t) { return of_class(t.owner); },
+          [](const ClosureTarget&) -> Named { return "a closure"; },
+          [&](const UnitCallableTarget& t) -> Named {
+            if (IsInternal(LinkageOf(unit, t))) {
+              return "a function only one body has";
+            }
+            return std::nullopt;
+          },
+          [](const support::BuiltinFn&) -> Named { return std::nullopt; },
+          [&](const ConstructorTarget& t) { return of_class(t.cls); },
+          [](const RecordMethodTarget&) -> Named { return std::nullopt; },
+          [](const TypeOperationTarget&) -> Named { return std::nullopt; },
+          [](const ExternalBringUpTarget&) -> Named { return std::nullopt; },
+          [](const ForeignSymbolTarget&) -> Named { return std::nullopt; }},
+      direct->target);
+}
+
+void VerifyNamesNothingInternal(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  for (const Expr& expr : block.exprs) {
+    if (const Named named = InternalNamedBy(unit, expr.data)) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} is defined alike by every body stating it, and "
+              "names {} -- please report this as a bug",
+              describe(), *named));
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyNamesNothingInternal(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// A definition every artifact stating it defines alike is kept in place of
+// the others, so it has to mean the same in each: it names nothing whose
+// content is one body's own. That covers its code and, for a class, the
+// constants and the definition the library reads it through.
+void VerifySharedCodeNamesNothingInternal(
+    const CompilationUnit& unit, std::string_view when) {
+  ForEachCode(unit, [&](const CodeSource& at, const CallableCode& code) {
+    if (IsShared(LinkageOf(unit, at)) && code.body.has_value()) {
+      VerifyNamesNothingInternal(unit, *code.body, [&] {
+        return std::format("{}, {}", Describe(unit, at), when);
+      });
+    }
+  });
+  for (const ClassId id : unit.classes.Ids()) {
+    if (!IsShared(LinkageOf(unit, id))) continue;
+    const Class& cls = unit.GetClass(id);
+    const auto describe = [&] {
+      return std::format(
+          "the constants of {}, {}", DescribeClass(unit, id), when);
+    };
+    for (const ClassConstantId constant : cls.constants.Ids()) {
+      VerifyNamesNothingInternal(
+          unit, cls.constants.Get(constant).initializer.body, describe);
+    }
+    VerifyNamesNothingInternal(
+        unit, cls.object_definition_initializer.body, describe);
+  }
+}
+
 }  // namespace
 
 auto EvaluatesNothing(const Block& block, ExprId id) -> bool {
@@ -3287,6 +3428,7 @@ void VerifyBody(
 void Verify(const CompilationUnit& unit, std::string_view when) {
   VerifyLibraryTypes(unit, when);
   VerifyDeclaredEntries(unit, when);
+  VerifySharedCodeNamesNothingInternal(unit, when);
   const auto describer = [&](const CodeSource& at) {
     return [&unit, &at, when] {
       return std::format("{}, {}", Describe(unit, at), when);

@@ -68,6 +68,10 @@ auto ResolveLlvmNm() -> std::filesystem::path {
   return ResolveNamedTool("LLVM_NM");
 }
 
+auto ResolveLlvmObjdump() -> std::filesystem::path {
+  return ResolveNamedTool("LLVM_OBJDUMP");
+}
+
 auto ResolveClangxx() -> std::filesystem::path {
   return ResolveNamedTool("CLANGXX");
 }

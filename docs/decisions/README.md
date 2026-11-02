@@ -1072,7 +1072,8 @@ the detail lives in the entry itself.
   callable it first kept out of the IR is what a closure handed to the runtime is cast to. How the
   value is built is superseded by
   [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where the
-  building code fills captures it laid out, and a body the definition names ends them.
+  building code fills captures it laid out, and a body the definition names ends them. A closure and
+  its definition are the building body's alone, linked within it.
 
 ### Foreign-language boundary
 
@@ -1364,7 +1365,9 @@ the detail lives in the entry itself.
   of a body for a specialization, and D6 are revised by
   [every-body-the-front-end-does-not-share-is-lowered](every-body-the-front-end-does-not-share-is-lowered.md):
   nothing names a specialization before it is lowered, a body is named by its unit and its ordinal
-  among the unit's bodies, and the root's tables are stated per lowering.**
+  among the unit's bodies, and the root's tables are stated per lowering.** Read D3 too for why how
+  each definition is linked is one query over what MIR states, and why a definition every body
+  states alike names nothing one body states alone.
 - [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
   -- which generate blocks an instance built is part of its unit's name, as the branch an
   `if constexpr` keeps is part of a C++ instantiation: an alternative not selected is not
