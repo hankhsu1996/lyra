@@ -24,7 +24,6 @@
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/symbol_name.hpp"
-#include "lyra/lir/type_builders.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/value_step.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
@@ -188,23 +187,6 @@ auto LocalLabel(const mir::CallableCode& code, mir::LocalId local)
   return name.has_value() ? std::string{*name} : std::string{};
 }
 
-// Whether a local is a cell as MIR declared it -- a variable the source
-// declared, which reports its writes -- rather than a value the body keeps.
-auto IsDeclaredCell(const mir::CompilationUnit& unit, mir::TypeId declared)
-    -> bool {
-  return unit.types.Get(declared).Is<mir::ObservableType>();
-}
-
-// The value a local's storage holds: what its cell holds where MIR declared
-// one, and otherwise the local's own type.
-auto StoredValueType(const mir::CompilationUnit& unit, mir::TypeId declared)
-    -> mir::TypeId {
-  if (const auto* cell = unit.types.Get(declared).As<mir::ObservableType>()) {
-    return cell->value;
-  }
-  return declared;
-}
-
 }  // namespace
 
 auto FunctionLowerer::LowerCallTarget(
@@ -359,10 +341,10 @@ auto FunctionLowerer::TakeParam(mir::LocalId param) -> lir::ValueId {
 
 void FunctionLowerer::BindParam(mir::LocalId param, lir::ValueId argument) {
   // A parameter is a declared local whose first write is the incoming
-  // argument, so it binds exactly as any declaration does: a parameter the body
-  // gave storage of its own begins there, and any other is a frame slot. An
-  // argument the caller only lends is copied into a slot owning its value,
-  // which the body may then write (LRM 13.5.1) and ends on its way out.
+  // argument, so it binds exactly as any declaration does: a parameter MIR
+  // declared a cell begins there, and any other is a frame slot. An argument
+  // the caller only lends is copied into a slot owning its value, which the
+  // body may then write (LRM 13.5.1) and ends on its way out.
   if (variable_slot_[param.value].has_value()) {
     InitializeCell(BeginVariable(param), lir::Use{.value = argument});
     return;
@@ -411,25 +393,19 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
             .kind = lir::LocalKind::kPlace});
   }
 
-  // The body's variables, in declaration order. A declaration is what gives a
-  // variable storage, so nothing about what the body does with one is read
-  // here -- not whether anything writes it, not whether anything binds a
-  // second name to it. A variable whose value is more than one quantity held
-  // entire gets storage of its own there, which a reference can bind and
-  // which survives a suspension, and so does a cell MIR declared, which is a
-  // variable the source declared; any other stays a value of the body.
+  // The body's variables, in declaration order: each cell MIR declared, which
+  // is a variable the source declared. Whether a local reports its writes is a
+  // fact of its type, so nothing about what the body does with one is read
+  // here. Any other local is a slot of the frame, which a reference can bind
+  // and which the target keeps across a suspension.
   for (const mir::LocalId local : code_->locals.Ids()) {
     const mir::TypeId declared = code_->locals.Get(local).type;
-    if (!IsDeclaredCell(unit_->Mir(), declared) &&
-        !unit_->Mir().types.Get(declared).IsRuntimeStoredValue()) {
+    if (!unit_->Mir().types.Get(declared).Is<mir::ObservableType>()) {
       continue;
     }
     variable_slot_[local.value] =
         static_cast<std::uint32_t>(fn_.variables.size());
-    fn_.variables.push_back(
-        lir::CellOf(
-            unit_->Types(),
-            unit_->TranslateType(StoredValueType(unit_->Mir(), declared))));
+    fn_.variables.push_back(unit_->TranslateType(declared));
   }
 
   // The entry block exists first, so the arguments are taken there, ahead of
@@ -1072,29 +1048,17 @@ auto FunctionLowerer::OpenLocalSlot(mir::LocalId local, lir::TypeId type)
 auto FunctionLowerer::DeclareLocal(
     const mir::Block& block, mir::LocalId local, mir::ExprId init)
     -> diag::Result<void> {
-  // A local the body gave storage of its own begins where its declaration is
-  // reached, so each entry to the declaration is a fresh variable in the one
-  // storage. A cell MIR declared takes what it holds from the initialization
-  // that follows; any other such variable from its initializer.
-  const mir::TypeId declared = code_->locals.Get(local).type;
-  if (IsDeclaredCell(unit_->Mir(), declared)) {
+  // A cell MIR declared begins where its declaration is reached, so each entry
+  // to the declaration is a fresh variable in the one storage, and takes what
+  // it holds from the initialization that follows.
+  if (variable_slot_[local.value].has_value()) {
     BeginVariable(local);
     return {};
-  }
-  if (variable_slot_[local.value].has_value()) {
-    const lir::Operand cell = BeginVariable(local);
-    const std::size_t depth = scopes_.size();
-    auto value = LowerExpr(block, init);
-    if (!value) {
-      return std::unexpected(std::move(value.error()));
-    }
-    InitializeCell(cell, *std::move(value));
-    return CloseExtent(depth);
   }
   // The initial value is made where the local lies, as rustc's
   // `expr_into_dest` builds a `let`'s initializer into its place, so a value
   // that never moves -- a closure -- is a local like any other.
-  const lir::TypeId type = unit_->TranslateType(declared);
+  const lir::TypeId type = unit_->TranslateType(code_->locals.Get(local).type);
   const std::size_t depth = scopes_.size();
   const lir::ValueId slot = OpenLocalSlot(local, type);
   auto made = LowerExprInto(block, init, LocalPlace(slot));
@@ -1118,11 +1082,20 @@ auto FunctionLowerer::Load(lir::Place place, lir::TypeId type) -> lir::Operand {
 auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
     -> lir::Operand {
   // A frame slot of an owned type owns its value, so it ends the one it held
-  // before taking the one it is given, and takes that one's end with it.
+  // before taking the one it is given, and takes that one's end with it. What
+  // it is given may lie inside what it held, as in `n = n.next`, so that is
+  // made a value of its own first, as rustc evaluates the right-hand side of a
+  // drop and replace.
   if (lir::IsPlaceLocal(fn_, place.base) && place.chain.empty()) {
     const lir::TypeId type =
         fn_.values.Get(std::get<lir::Use>(place.base).value).type;
     if (unit_->Types().Get(type).IsOwnedValue()) {
+      if (IsLentCopyable(value)) {
+        value = Emit(
+            type,
+            lir::CallInstr{
+                .target = lir::CopyValueTarget{}, .args = {std::move(value)}});
+      }
       EndValue(Load(place, type));
       AssignFrom(std::move(place), std::move(value));
       return VoidValue();
@@ -1168,9 +1141,8 @@ void FunctionLowerer::ReserveVariableStorage() {
 
 auto FunctionLowerer::BeginVariable(mir::LocalId local) -> lir::Operand {
   const lir::VariablePosition position{*variable_slot_[local.value]};
-  const lir::TypeId value = unit_->TranslateType(
-      StoredValueType(unit_->Mir(), code_->locals.Get(local).type));
-  const lir::TypeId address = AddressType(lir::CellOf(unit_->Types(), value));
+  const lir::TypeId address =
+      AddressType(unit_->TranslateType(code_->locals.Get(local).type));
   const lir::Operand cell = Emit(
       address,
       lir::BeginVariableInstr{.variables = *variables_, .position = position});
@@ -1191,12 +1163,6 @@ auto FunctionLowerer::StorageAt(lir::Operand address) -> lir::Place {
   return lir::Place{
       .base = std::move(address),
       .chain = {lir::Projection{lir::DerefProjection{}}}};
-}
-
-auto FunctionLowerer::ValueAt(lir::Operand address) -> lir::Place {
-  lir::Place place = StorageAt(std::move(address));
-  place.chain.emplace_back(lir::DerefProjection{});
-  return place;
 }
 
 auto FunctionLowerer::LowerBlockInto(const mir::Block& block)
@@ -1962,40 +1928,8 @@ auto BitsStartOf(const mir::CallExpr& step) -> mir::ExprId {
 
 }  // namespace
 
-auto FunctionLowerer::HolderReach(Reach part) -> Reach {
-  switch (part) {
-    case Reach::kRead:
-      return Reach::kRead;
-    case Reach::kWhole:
-    case Reach::kInto:
-      return Reach::kInto;
-  }
-  throw InternalError("mir_to_lir: unknown reach");
-}
-
-auto FunctionLowerer::BorrowReach(mir::Mutability mutability) -> Reach {
-  switch (mutability) {
-    case mir::Mutability::kReadOnly:
-      return Reach::kRead;
-    case mir::Mutability::kMutable:
-      return Reach::kWhole;
-  }
-  throw InternalError("mir_to_lir: unknown mutability");
-}
-
-auto FunctionLowerer::WritesInto(Reach reach) -> bool {
-  switch (reach) {
-    case Reach::kRead:
-    case Reach::kWhole:
-      return false;
-    case Reach::kInto:
-      return true;
-  }
-  throw InternalError("mir_to_lir: unknown reach");
-}
-
 auto FunctionLowerer::ElementPlace(
-    const mir::Block& block, const mir::CallExpr& element, Reach reach)
+    const mir::Block& block, const mir::CallExpr& element)
     -> diag::Result<lir::Place> {
   const std::optional<mir::ExprId> whole = mir::CalleeReceiver(element.callee);
   if (!whole.has_value()) {
@@ -2003,7 +1937,7 @@ auto FunctionLowerer::ElementPlace(
         "mir_to_lir: a reference into a receiver is taken on one, and this "
         "call names none -- please report this as a bug");
   }
-  auto place = PlaceHolding(block, *whole, HolderReach(reach));
+  auto place = PlaceHolding(block, *whole);
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
@@ -2044,11 +1978,10 @@ auto FunctionLowerer::PartStep(
   throw InternalError("mir_to_lir: unknown part selection");
 }
 
-auto FunctionLowerer::PlaceHolding(
-    const mir::Block& block, mir::ExprId id, Reach reach)
+auto FunctionLowerer::PlaceHolding(const mir::Block& block, mir::ExprId id)
     -> diag::Result<lir::Place> {
   if (mir::IsPlace(block.exprs.Get(id).data)) {
-    return LowerPlace(block, id, reach);
+    return LowerPlace(block, id);
   }
   auto value = LowerExpr(block, id);
   if (!value) {
@@ -2066,21 +1999,6 @@ auto FunctionLowerer::HeldInSlot(lir::Operand value, lir::TypeId type)
     OpenScope(SlotEnd{.slot = slot});
   }
   return slot;
-}
-
-auto FunctionLowerer::OpenWrite(lir::Operand handle, lir::TypeId value)
-    -> diag::Result<lir::Operand> {
-  auto write = EmitCallTo(
-      lir::BuiltinTarget{.fn = support::BuiltinFn::kOpenForWrite},
-      {std::move(handle)},
-      unit_->Types().Intern(lir::Type{lir::OpenWriteType{.value = value}}));
-  if (!write) {
-    return std::unexpected(std::move(write.error()));
-  }
-  return EmitCallTo(
-      lir::BuiltinTarget{.fn = support::BuiltinFn::kDesignateWhole},
-      {*std::move(write)},
-      unit_->Types().Intern(lir::Type{lir::DesignationType{.value = value}}));
 }
 
 auto FunctionLowerer::Land(lir::Operand designation, lir::TypeId value)
@@ -2131,7 +2049,7 @@ auto FunctionLowerer::WrapperContentsPlace(
   // are values, and a value opens a chain rather than continuing one.
   if (wrapper_ty.Is<mir::ObservableType>() ||
       wrapper_ty.Is<mir::ResolvedType>()) {
-    auto place = LowerPlace(block, wrapper, Reach::kWhole);
+    auto place = LowerPlace(block, wrapper);
     if (!place) {
       return std::unexpected(std::move(place.error()));
     }
@@ -2253,7 +2171,7 @@ auto FunctionLowerer::SymbolPlace(std::string symbol, mir::TypeId type)
 }
 
 auto FunctionLowerer::ReferencePlace(
-    const mir::ReferenceTarget& target, mir::TypeId type, Reach reach)
+    const mir::ReferenceTarget& target, mir::TypeId type)
     -> diag::Result<lir::Place> {
   return std::visit(
       Overloaded{
@@ -2269,30 +2187,10 @@ auto FunctionLowerer::ReferencePlace(
                     [&](const PlaceBinding& place) -> diag::Result<lir::Place> {
                       return LocalPlace(place.slot);
                     },
-                    // The binding holds a reference to the cell the local
-                    // lives in, so the local's storage is what that reference
-                    // points at: one step to the cell, one more to its value.
-                    // The cell reports its writes, which the source's plain
-                    // variable does not say, so a write into part of it is
-                    // opened on the cell here.
+                    // A cell is named as the cell, whose own operations read
+                    // and write it, as a design variable's cell is.
                     [&](const CellBinding& cell) -> diag::Result<lir::Place> {
-                      // A cell MIR declared is named as the cell, whose own
-                      // operations read and write it, as a design variable's
-                      // cell is.
-                      if (IsDeclaredCell(
-                              unit_->Mir(), code_->locals.Get(ref.var).type)) {
-                        return StorageAt(cell.cell);
-                      }
-                      if (!WritesInto(reach)) {
-                        return ValueAt(cell.cell);
-                      }
-                      const lir::TypeId value =
-                          unit_->TranslateType(code_->locals.Get(ref.var).type);
-                      auto opened = OpenWrite(cell.cell, value);
-                      if (!opened) {
-                        return std::unexpected(std::move(opened.error()));
-                      }
-                      return Land(*std::move(opened), value);
+                      return StorageAt(cell.cell);
                     }},
                 *binding);
           },
@@ -2370,8 +2268,7 @@ auto FunctionLowerer::ReferencePlace(
       target);
 }
 
-auto FunctionLowerer::LowerPlace(
-    const mir::Block& block, mir::ExprId id, Reach reach)
+auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
     -> diag::Result<lir::Place> {
   const mir::Expr& expr = block.exprs.Get(id);
   const diag::ApplySourceSpan from(span_, expr.span);
@@ -2382,11 +2279,10 @@ auto FunctionLowerer::LowerPlace(
   diag::Result<lir::Place> lowered = std::visit(
       Overloaded{
           [&](const mir::ReferenceExpr& reference) -> diag::Result<lir::Place> {
-            return ReferencePlace(reference.target, expr.type, reach);
+            return ReferencePlace(reference.target, expr.type);
           },
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Place> {
-            auto place =
-                PlaceHolding(block, field.receiver, HolderReach(reach));
+            auto place = PlaceHolding(block, field.receiver);
             if (!place) {
               return std::unexpected(std::move(place.error()));
             }
@@ -2398,7 +2294,7 @@ auto FunctionLowerer::LowerPlace(
           // reaches through, a member of an untagged union among them.
           [&](const mir::DerefExpr& deref) -> diag::Result<lir::Place> {
             if (const mir::CallExpr* element = ReferencedPartCall(block, id)) {
-              return ElementPlace(block, *element, reach);
+              return ElementPlace(block, *element);
             }
             return WrapperContentsPlace(block, deref.pointer);
           },
@@ -2485,7 +2381,7 @@ auto FunctionLowerer::LowerRead(const mir::Block& block, mir::ExprId place)
         "a storage cell has no value to read; it is reached "
         "through its address");
   }
-  auto named = LowerPlace(block, place, Reach::kRead);
+  auto named = LowerPlace(block, place);
   if (!named) {
     return std::unexpected(std::move(named.error()));
   }
@@ -2512,7 +2408,7 @@ auto FunctionLowerer::LowerArgument(const mir::Block& block, mir::ExprId id)
     }
     return HandOn(*std::move(value));
   }
-  auto place = LowerPlace(block, id, Reach::kWhole);
+  auto place = LowerPlace(block, id);
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
@@ -2790,21 +2686,22 @@ auto FunctionLowerer::LowerReferenceBind(
     throw InternalError(
         "mir_to_lir: a reference is built over exactly one referent");
   }
-  auto cell = LowerCellPlace(block, call.arguments[0]);
-  if (!cell) {
-    return std::unexpected(std::move(cell.error()));
+  // What a reference binds and what a store descends into are the same
+  // storage, so one answer serves both, and a referent that names no storage
+  // meets its refusal where naming is decided.
+  auto referent = LowerPlace(block, call.arguments[0]);
+  if (!referent) {
+    return std::unexpected(std::move(referent.error()));
   }
   return Emit(
-      unit_->TranslateType(type), lir::AddrOfInstr{.place = *std::move(cell)});
+      unit_->TranslateType(type),
+      lir::AddrOfInstr{.place = *std::move(referent)});
 }
 
 auto FunctionLowerer::LowerReferenceIntoReceiver(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
     -> diag::Result<lir::Operand> {
-  auto place = ElementPlace(
-      block, call,
-      BorrowReach(
-          unit_->Mir().types.Get(type).Get<mir::ReferenceType>().mutability));
+  auto place = ElementPlace(block, call);
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
@@ -2885,25 +2782,6 @@ auto FunctionLowerer::LowerObjectWriteOpening(
       {*std::move(object)}, unit_->TranslateType(type));
 }
 
-auto FunctionLowerer::LowerCellPlace(
-    const mir::Block& block, mir::ExprId referent) -> diag::Result<lir::Place> {
-  const mir::Expr& expr = block.exprs.Get(referent);
-  // A local the body gave storage of its own is named by the handle its
-  // declaration took on that storage, which reaches the storage in one step
-  // where reading the local reaches its value in two.
-  if (const std::optional<mir::LocalId> local = mir::ReferencedLocal(expr.data);
-      local.has_value() && locals_[local->value].has_value()) {
-    if (const auto* cell = std::get_if<CellBinding>(&*locals_[local->value])) {
-      return StorageAt(cell->cell);
-    }
-  }
-  // Every other referent is named the way a write to it names it: what a
-  // reference binds and what a store descends into are the same storage, so
-  // one answer serves both, and a referent that names no storage meets its
-  // refusal where naming is decided.
-  return LowerPlace(block, referent, Reach::kWhole);
-}
-
 auto FunctionLowerer::LowerCallInto(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type,
     const lir::Destination& destination) -> diag::Result<void> {
@@ -2941,10 +2819,9 @@ auto FunctionLowerer::LowerCallInto(
     return settled(LowerReferenceToContents(block, call, type));
   }
 
-  // A reference is the address of the cell it binds, so building one is the
-  // ordinary address-of over the referent's place. No runtime value stands
-  // between the holder and that cell; reading and writing through the reference
-  // are the cell's own access, reached the way every other call is.
+  // A reference is the address of the storage it binds, so building one is the
+  // ordinary address-of over the referent's place; which kind of storage that
+  // is, is the reference's own to carry.
   if (mir::BindsReference(unit_->Mir().types, call, type)) {
     return settled(LowerReferenceBind(block, call, type));
   }
@@ -3209,7 +3086,7 @@ auto FunctionLowerer::LowerCoroutineAwait(
 auto FunctionLowerer::LowerAssign(
     const mir::Block& block, const mir::AssignExpr& assign)
     -> diag::Result<lir::Operand> {
-  auto place = LowerPlace(block, assign.target, Reach::kWhole);
+  auto place = LowerPlace(block, assign.target);
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
@@ -3267,7 +3144,7 @@ auto FunctionLowerer::LowerBitsStore(
   }
   // Anywhere else the bits are written where they lie, by one statement naming
   // the place and the parts.
-  auto place = LowerPlace(block, taken_on, Reach::kInto);
+  auto place = LowerPlace(block, taken_on);
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
@@ -3364,7 +3241,7 @@ auto FunctionLowerer::LowerMutatingCall(
         *std::move(designation));
   }
   // The receiver is storage, changed where it lies.
-  auto place = LowerPlace(block, *receiver, Reach::kInto);
+  auto place = LowerPlace(block, *receiver);
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
@@ -3625,7 +3502,7 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
         mir::PlaceKind::kOverlaid) {
       return used();
     }
-    auto named = LowerPlace(block, place, Reach::kRead);
+    auto named = LowerPlace(block, place);
     if (!named) {
       return std::unexpected(std::move(named.error()));
     }
@@ -3637,12 +3514,7 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
           // lies, and a value in a slot that lasts to the end of the
           // full-expression, as clang binds a reference to a temporary.
           [&](const mir::BorrowExpr& borrow) -> Lowered {
-            auto referent = PlaceHolding(
-                block, borrow.operand,
-                BorrowReach(unit_->Mir()
-                                .types.Get(type)
-                                .Get<mir::ReferenceType>()
-                                .mutability));
+            auto referent = PlaceHolding(block, borrow.operand);
             if (!referent) {
               return std::unexpected(std::move(referent.error()));
             }
@@ -3666,7 +3538,7 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
                   "where "
                   "the reference's own operations reach its storage");
             }
-            auto place = LowerPlace(block, addr.operand, Reach::kWhole);
+            auto place = LowerPlace(block, addr.operand);
             if (!place) {
               return std::unexpected(std::move(place.error()));
             }
@@ -3705,7 +3577,7 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
           // The tag is read where the union lies, as rustc reads an enum's
           // discriminant.
           [&](const mir::DiscriminantExpr& read) -> Lowered {
-            auto place = PlaceHolding(block, read.tagged, Reach::kRead);
+            auto place = PlaceHolding(block, read.tagged);
             if (!place) {
               return std::unexpected(std::move(place.error()));
             }

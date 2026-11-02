@@ -86,16 +86,11 @@ expression reading only such variables.
   `ref` formal lent a variable, an element, a member or a class property, and on a `ref` port.
 - A closure's snapshot of a variable -- what a fork branch captures by value -- is the value rather
   than a cell: it is the closure's own copy and no other process reaches it.
-- The execution backend still gives a value a function declares a cell of its own where the runtime
-  keeps the value, for the storage reasons
-  [a-body-holds-a-value-or-its-execution-stores-it](a-body-holds-a-value-or-its-execution-stores-it.md)
-  gives, and that cell is the reporting kind. It reports writes nothing can wait on; the C++ backend
-  does not, and neither is wrong.
-- This extends
-  [a-body-holds-a-value-or-its-execution-stores-it](a-body-holds-a-value-or-its-execution-stores-it.md)
-  rather than revising it: where a variable's storage lives is still that entry's question, and a
-  `chandle` local of a body that can wait is now a cell too, so a wait on one is answered rather
-  than refused.
+- A value a function declares is no cell on either backend, since 2026-11-01. The execution backend
+  had gone on giving one a reporting cell where the runtime keeps the value, whose writes nothing
+  could wait on.
+- A `chandle` local of a body that can wait is a cell too, so a wait on one is answered rather than
+  refused.
 - Still refused: a sampled value of a `ref static` formal, which the front end's output does not yet
   distinguish from a plain `ref`'s, and a history function (`$past`, `$rose` and the rest) over an
   expression reading both an automatic variable and one the design element holds, which needs the

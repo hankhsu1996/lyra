@@ -10,7 +10,7 @@
 
 namespace lyra::runtime {
 
-// One execution's value storage: the cells a body reaches across suspensions,
+// One execution's value storage: the cells a body's awaited calls answer into,
 // and it is only the values. The frame -- locals, resume state -- belongs to
 // the generated body and this is not it, which is why it is not named one.
 //
@@ -40,7 +40,7 @@ class ActivationValueStore {
 };
 
 // The running execution, as the generated code of one stretch of it reaches
-// it: the stretch allocates a value whose lifetime crosses a suspension in the
+// it: the stretch allocates the cell an awaited call answers into in the
 // execution's store, and settles a departure that leaves the body where the
 // execution carries it on once the body has completed, without being handed
 // either -- so the runtime names both around each stretch it runs. The

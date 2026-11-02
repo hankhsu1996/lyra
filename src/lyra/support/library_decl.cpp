@@ -11,7 +11,7 @@
 
 namespace lyra::support {
 
-auto IsRuntimeStoredValue(LibraryDecl decl) -> bool {
+auto IsDomainObject(LibraryDecl decl) -> bool {
   return std::holds_alternative<DomainObject>(DeclarationOf(decl).holding);
 }
 

@@ -540,9 +540,9 @@ the detail lives in the entry itself.
   [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md).
 - [a-declared-local-is-storage](a-declared-local-is-storage.md) -- a local has storage because the
   source declared a variable, so the lowering asks nothing about what the body does with it; where
-  that storage lives follows the local's own lifetime. Deciding a variable need not exist is a
-  saving taken by whoever sees the whole function, and taken upstream it refused legal programs
-  wherever its idea of a write was narrower than a write.
+  that storage lives follows whether MIR states a cell, and every other local is a frame slot.
+  Deciding a variable need not exist is a saving taken by whoever sees the whole function, and taken
+  upstream it refused legal programs wherever its idea of a write was narrower than a write.
 - [a-declared-variable-is-one-storage](a-declared-variable-is-one-storage.md) -- the other half of
   that same pass, and the last question the translation answered from reading a whole body. A
   variable is one storage its declaration decides, owned by the execution that declared it, and the
@@ -550,13 +550,12 @@ the detail lives in the entry itself.
   one no statement spells. Read it for why the obvious argument for emitting nothing there expires,
   and for the test that separates an answer that survives the work ahead from one that does not.
 - [a-body-holds-a-value-or-its-execution-stores-it](a-body-holds-a-value-or-its-execution-stores-it.md)
-  -- the third cut of that same question, and the one the standard settles outright. A variable is a
-  value of its body where the body holds the whole of that value and storage its execution owns
-  where it does not, which puts a class handle on the storage side and a chandle on the other for
-  the reason Table 8-1 gives. Which types those are is one classification answering for every type,
-  since a list of the ones somebody remembered had already answered wrongly twice. Read it also for
-  what a variable naming an object is waited on for, and for why holding a reference in the target's
-  own frame is the wrong place rather than the unbuilt one.
+  -- the third cut of that same question, whose placement rule no longer stands: a local lies where
+  [a-declared-local-is-storage](a-declared-local-is-storage.md) says. Which types a holder has the
+  whole of is one classification answering for every type, which puts a class handle on one side and
+  a chandle on the other for the reason Table 8-1 gives, since a list of the ones somebody
+  remembered had already answered wrongly twice. Read it also for what a variable naming an object
+  is waited on for.
 - [a-variable-a-body-declares-reports-its-writes](a-variable-a-body-declares-reports-its-writes.md)
   -- every variable a body that can wait declares is a cell reporting its writes, stated in MIR,
   because any process that can reach it may wait on it, while a function's stay values since nothing
@@ -1018,13 +1017,11 @@ the detail lives in the entry itself.
   left by a departure completes through its final suspension and hands the departure to the adapter,
   as a C++ promise stores an escaping exception, because a coroutine unwound out of is released at
   its last wait when nothing in it reaches its end.
-- [cross-suspension-value-storage](cross-suspension-value-storage.md) -- a value-typed non-managed
-  procedural local in a suspending body is an activation-frame value: overwritten in place, owned by
-  the activation (which also RAII-owns the generated coroutine), reached through a frame-held handle
-  so its value outlives the per-stretch scope. Every coroutine value local that is not lent gets one
-  (no liveness analysis); the cell shares a storage core with the signal cell but is not observable,
-  and the access is a `ValueCellTarget` LIR call so the backend stays mechanical. Native in-frame
-  layout, a backend-private arena, and a narrow liveness pass are rejected.
+- [cross-suspension-value-storage](cross-suspension-value-storage.md) -- how a value crossed a
+  suspension while a stretch's arena held it. No local lives in such a cell since
+  [a-declared-local-is-storage](a-declared-local-is-storage.md) D2; a value cell still holds an
+  awaited call's answer, shares a storage core with the signal cell and is not observable, and is
+  reached by a `ValueCellTarget` LIR call.
 - [managed-value-realization](managed-value-realization.md) -- a managed value never lives in
   storage this compiler does not describe, because the coroutine frame is delegated to LLVM and its
   contents are not enumerable. Three described storages -- the static instance tree, activation

@@ -93,10 +93,9 @@ out the way clang carries it out.**
 - Memory follows what the program can read. The loop of calls holds 4.5 MB at a million calls as at
   a hundred thousand, and the combinational block 5.4 MB at two hundred passes against 5.6 MB at
   one.
-- The runtime allocates no value on the generated side's behalf. What survives a suspension still
-  lives in the activation's variables
-  ([cross-suspension-value-storage](cross-suspension-value-storage.md)), which this decision leaves
-  as they are.
+- The runtime allocates no value on the generated side's behalf. What survives a suspension lies in
+  the frame like anything else, which the target keeps across one; a declared variable lies among
+  the activation's variables because a process can wait on it.
 - Both call directions share the out-storage convention: the runtime calls a closure's value body
   and an integral constant's initializer with storage of its own, and takes the value from there.
 - A value handed to a call erased crosses as its address and its type and is borrowed for the call,

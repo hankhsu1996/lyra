@@ -25,7 +25,7 @@ Three facts make the coupling accidental rather than necessary:
   wraps a design-hierarchy variable in an observable cell unconditionally and a class-method static
   local unconditionally not, and neither branch asks whether anything subscribes.
 - **Two non-observable storage kinds already exist and are in use**: the activation value cell a
-  cross-suspension local gets, which the runtime documents as "no subscriber wakeup: a procedural
+  suspending call answers into, which the runtime documents as "no subscriber wakeup: a procedural
   local is not observable", and the inline value a class property lives in.
 - **Nothing in the value layer is observable at all.** Exactly two types carry subscriber metadata
   -- the variable cell and the resolved net -- so no struct member, array element, queue element or
@@ -97,11 +97,13 @@ event". Coarser tracking is conforming; a per-property subscriber is one option 
   body's variables one storage decided by its declaration alone, and read LRM 9.4.2 as granting
   every variable the property of being waitable -- the event expression takes an expression with no
   restriction on what declared it -- so giving only some of them that property would be a saving
-  taken from reading the whole body, which is the shape that entry removes. Every body variable is
-  therefore an observable cell today, borrowed or not. What this entry establishes is untouched: the
-  form is still decided by the declaration and never by what an expression elsewhere does, and a
-  class property is still not observable. What is open is whether the subscriber record every
-  procedural variable now carries is worth what it costs, which is a measurement nobody has taken.
+  taken from reading the whole body, which is the shape that entry removes. Every variable of a body
+  that can wait is therefore an observable cell today, borrowed or not; a function's variables and
+  every local the compiler makes are plain since 2026-11-01, so D1 holds of them. What this entry
+  establishes is untouched: the form is still decided by the declaration and never by what an
+  expression elsewhere does, and a class property is still not observable. What is open is whether
+  the subscriber record every procedural variable now carries is worth what it costs, which is a
+  measurement nobody has taken.
 
 - **A reference must be able to name both forms.** That is a requirement on the reference's
   representation, and it is settled in

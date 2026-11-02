@@ -244,7 +244,7 @@ auto BuildReference(void* out, const ErasedReference& reference) -> void* {
   return std::construct_at(static_cast<ErasedReference*>(out), reference);
 }
 
-// A variable of `T`, and a procedural local of one, behind the addresses the
+// A variable of `T`, and a value cell of one, behind the addresses the
 // ABI carries them as.
 template <class T>
 auto VariableAt(void* cell) -> typename VariableOf<T>::Type& {
@@ -252,8 +252,8 @@ auto VariableAt(void* cell) -> typename VariableOf<T>::Type& {
 }
 
 template <class T>
-auto LocalAt(void* cell) -> typename LocalOf<T>::Type& {
-  return *static_cast<typename LocalOf<T>::Type*>(cell);
+auto ValueCellAt(void* cell) -> typename ValueCellFor<T>::Type& {
+  return *static_cast<typename ValueCellFor<T>::Type*>(cell);
 }
 
 // A counted hold on a new variable of `T`, told the width or the type of a
@@ -1768,18 +1768,18 @@ auto HistoryAt(void* history) -> SampledHistory<T>& {
   return *static_cast<SampledHistory<T>*>(history);
 }
 
-// A cell the running activation owns, for a value a body holds across a
-// suspension, told the width or the type of a value it keeps after itself.
+// A cell the running activation owns, for what an awaited call answers, told
+// the width or the type of a value it keeps after itself.
 template <class T, class... Told>
 auto AllocateValueCell(const Told&... told) noexcept -> void* {
-  using Local = typename LocalOf<T>::Type;
+  using Cell = typename ValueCellFor<T>::Type;
   ActivationValueStore& values =
       GeneratedCallScope::Current().ActivationValues();
   if constexpr (DynamicallySized<T>) {
-    return values.NewWithTail<Local>(
+    return values.NewWithTail<Cell>(
         StorageFor<T>::Type::ValueLayoutFor(told...), told...);
   } else {
-    return values.New<Local>();
+    return values.New<Cell>();
   }
 }
 
@@ -2050,8 +2050,6 @@ using lyra::runtime::LandLaidOutDesignation;
 using lyra::runtime::LeasedReference;
 using lyra::runtime::LeaseObject;
 using lyra::runtime::LeaveCancellationTarget;
-using lyra::runtime::LocalAt;
-using lyra::runtime::LocalOf;
 using lyra::runtime::Logic16;
 using lyra::runtime::Logic32;
 using lyra::runtime::Logic64;
@@ -2125,6 +2123,8 @@ using lyra::runtime::Timer;
 using lyra::runtime::Trigger;
 using lyra::runtime::TriggerHandles;
 using lyra::runtime::ValueCell;
+using lyra::runtime::ValueCellAt;
+using lyra::runtime::ValueCellFor;
 using lyra::runtime::Var;
 using lyra::runtime::VariableAt;
 using lyra::runtime::VariableOf;
@@ -4744,23 +4744,23 @@ auto lyra_rt_evaluation_attempts_answer(const void* attempts) -> std::uint64_t {
   return static_cast<const EvaluationAttempts*>(attempts)->Answer();
 }
 
-// A procedural local whose value crosses a suspension. The cell is allocated in
-// the running execution's own value store, so the handle the generated frame
-// carries across a suspension points at storage that outlives every stretch of
+// What a body that awaits a call holds of its answer across the suspension. The
+// cell is allocated in the running execution's own value store, so the handle
+// the generated frame carries points at storage that outlives every stretch of
 // that body. A store overwrites the cell in place -- the first store installs
 // the declared representation -- and a load answers with the value where the
-// cell holds it. A procedural local is not observable, so no runtime handle
-// threads through and no subscriber wakes.
+// cell holds it. Nothing waits on it, so no runtime handle threads through and
+// no subscriber wakes.
 auto lyra_rt_string_value_cell_alloc() noexcept -> void* {
   return AllocateValueCell<String>();
 }
 
 void lyra_rt_string_value_cell_store(void* cell, const void* value) noexcept {
-  LocalAt<String>(cell).Assign(Read<String>(value));
+  ValueCellAt<String>(cell).Assign(Read<String>(value));
 }
 
 auto lyra_rt_string_value_cell_load(void* cell) noexcept -> void* {
-  return &LocalAt<String>(cell).Storage();
+  return &ValueCellAt<String>(cell).Storage();
 }
 
 void lyra_rt_assert(bool holds, const char* message) {
@@ -5106,11 +5106,11 @@ auto lyra_rt_real_value_cell_alloc() noexcept -> void* {
 }
 
 void lyra_rt_real_value_cell_store(void* cell, const void* value) noexcept {
-  LocalAt<Real>(cell).Assign(Read<Real>(value));
+  ValueCellAt<Real>(cell).Assign(Read<Real>(value));
 }
 
 auto lyra_rt_real_value_cell_load(void* cell) noexcept -> void* {
-  return &LocalAt<Real>(cell).Storage();
+  return &ValueCellAt<Real>(cell).Storage();
 }
 
 auto lyra_rt_real_print_item_make(
@@ -5159,11 +5159,11 @@ auto lyra_rt_shortreal_value_cell_alloc() noexcept -> void* {
 
 void lyra_rt_shortreal_value_cell_store(
     void* cell, const void* value) noexcept {
-  LocalAt<ShortReal>(cell).Assign(Read<ShortReal>(value));
+  ValueCellAt<ShortReal>(cell).Assign(Read<ShortReal>(value));
 }
 
 auto lyra_rt_shortreal_value_cell_load(void* cell) noexcept -> void* {
-  return &LocalAt<ShortReal>(cell).Storage();
+  return &ValueCellAt<ShortReal>(cell).Storage();
 }
 
 auto lyra_rt_shortreal_print_item_make(
@@ -5188,11 +5188,11 @@ auto lyra_rt_unmanagedref_value_cell_alloc() noexcept -> void* {
 
 void lyra_rt_unmanagedref_value_cell_store(
     void* cell, const void* value) noexcept {
-  LocalAt<UnmanagedRef>(cell).Assign(Read<UnmanagedRef>(value));
+  ValueCellAt<UnmanagedRef>(cell).Assign(Read<UnmanagedRef>(value));
 }
 
 auto lyra_rt_unmanagedref_value_cell_load(void* cell) noexcept -> void* {
-  return &LocalAt<UnmanagedRef>(cell).Storage();
+  return &ValueCellAt<UnmanagedRef>(cell).Storage();
 }
 
 // A variable holding a reference that owns nothing, which a process may wait
@@ -5255,11 +5255,11 @@ auto lyra_rt_managedref_value_cell_alloc() noexcept -> void* {
 // keeps what it loaded copies it, and so owns a share of its own.
 void lyra_rt_managedref_value_cell_store(
     void* cell, const void* value) noexcept {
-  LocalAt<ObjectRef>(cell).Assign(Read<ObjectRef>(value));
+  ValueCellAt<ObjectRef>(cell).Assign(Read<ObjectRef>(value));
 }
 
 auto lyra_rt_managedref_value_cell_load(void* cell) noexcept -> void* {
-  return &LocalAt<ObjectRef>(cell).Storage();
+  return &ValueCellAt<ObjectRef>(cell).Storage();
 }
 
 // A variable of class type, which a process may wait on: LRM 9.4.2 makes a
@@ -5544,11 +5544,12 @@ auto lyra_rt_dynarray_value_cell_alloc() noexcept -> void* {
 }
 
 void lyra_rt_dynarray_value_cell_store(void* cell, const void* value) noexcept {
-  LocalAt<RuntimeDynamicArray>(cell).Assign(Read<RuntimeDynamicArray>(value));
+  ValueCellAt<RuntimeDynamicArray>(cell).Assign(
+      Read<RuntimeDynamicArray>(value));
 }
 
 auto lyra_rt_dynarray_value_cell_load(void* cell) noexcept -> void* {
-  return &LocalAt<RuntimeDynamicArray>(cell).Storage();
+  return &ValueCellAt<RuntimeDynamicArray>(cell).Storage();
 }
 
 // LRM 10.9.1: an enumerated element list is the unit laid down once, and a
@@ -5876,17 +5877,17 @@ auto lyra_rt_any_value_cell_alloc() noexcept -> void* {
   return lyra::runtime::AllocateValueCell<AnyValueOfAnyType>();
 }
 void lyra_rt_any_value_cell_store(void* cell, const void* value) noexcept {
-  lyra::runtime::LocalAt<AnyValueOfAnyType>(cell).Assign(
+  lyra::runtime::ValueCellAt<AnyValueOfAnyType>(cell).Assign(
       lyra::runtime::Read<AnyValueOfAnyType>(value));
 }
 auto lyra_rt_any_value_cell_load(void* cell) noexcept -> void* {
-  return &lyra::runtime::LocalAt<AnyValueOfAnyType>(cell).Storage();
+  return &lyra::runtime::ValueCellAt<AnyValueOfAnyType>(cell).Storage();
 }
 void lyra_rt_any_value_cell_construct(void* storage) {
   lyra::runtime::BuildAt<lyra::runtime::ValueCell<AnyValueOfAnyType>>(storage);
 }
 void lyra_rt_any_value_cell_destroy(void* storage) {
-  std::destroy_at(&lyra::runtime::LocalAt<AnyValueOfAnyType>(storage));
+  std::destroy_at(&lyra::runtime::ValueCellAt<AnyValueOfAnyType>(storage));
 }
 auto lyra_rt_any_shared_cell_make(void* out) -> void* {
   return lyra::runtime::MakeSharedCell<AnyValueOfAnyType>(out);
@@ -6407,11 +6408,11 @@ auto lyra_rt_queue_value_cell_alloc() noexcept -> void* {
 }
 
 void lyra_rt_queue_value_cell_store(void* cell, const void* value) noexcept {
-  LocalAt<RuntimeQueue>(cell).Assign(Read<RuntimeQueue>(value));
+  ValueCellAt<RuntimeQueue>(cell).Assign(Read<RuntimeQueue>(value));
 }
 
 auto lyra_rt_queue_value_cell_load(void* cell) noexcept -> void* {
-  return &LocalAt<RuntimeQueue>(cell).Storage();
+  return &ValueCellAt<RuntimeQueue>(cell).Storage();
 }
 
 auto lyra_rt_assocarray_default(
@@ -6615,12 +6616,12 @@ auto lyra_rt_assocarray_value_cell_alloc() noexcept -> void* {
 
 void lyra_rt_assocarray_value_cell_store(
     void* cell, const void* value) noexcept {
-  LocalAt<RuntimeAssociativeArray>(cell).Assign(
+  ValueCellAt<RuntimeAssociativeArray>(cell).Assign(
       Read<RuntimeAssociativeArray>(value));
 }
 
 auto lyra_rt_assocarray_value_cell_load(void* cell) noexcept -> void* {
-  return &LocalAt<RuntimeAssociativeArray>(cell).Storage();
+  return &ValueCellAt<RuntimeAssociativeArray>(cell).Storage();
 }
 
 // LRM 7.12.2 ordering methods, which reorder the array where it lies.
@@ -7696,7 +7697,7 @@ void lyra_rt_unmanagedref_value_cell_construct(void* storage) {
 }
 void lyra_rt_laidout_value_cell_construct(
     const void* held_type, void* storage) {
-  BuildAt<LocalOf<LaidOutValue>::Type>(
+  BuildAt<ValueCellFor<LaidOutValue>::Type>(
       storage, lyra::runtime::ElementTypeAt(held_type));
 }
 
@@ -7795,26 +7796,26 @@ void lyra_rt_managedref_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<ObjectRef>(storage));
 }
 void lyra_rt_string_value_cell_destroy(void* storage) {
-  std::destroy_at(&LocalAt<String>(storage));
+  std::destroy_at(&ValueCellAt<String>(storage));
 }
 void lyra_rt_bitvec_value_cell_destroy(void* storage) {
-  std::destroy_at(&LocalAt<BitVec>(storage));
+  std::destroy_at(&ValueCellAt<BitVec>(storage));
 }
 void lyra_rt_laidout_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<LocalOf<LaidOutValue>::Type*>(storage));
+  std::destroy_at(static_cast<ValueCellFor<LaidOutValue>::Type*>(storage));
 }
 
 void lyra_rt_dynarray_value_cell_destroy(void* storage) {
-  std::destroy_at(&LocalAt<RuntimeDynamicArray>(storage));
+  std::destroy_at(&ValueCellAt<RuntimeDynamicArray>(storage));
 }
 void lyra_rt_queue_value_cell_destroy(void* storage) {
-  std::destroy_at(&LocalAt<RuntimeQueue>(storage));
+  std::destroy_at(&ValueCellAt<RuntimeQueue>(storage));
 }
 void lyra_rt_assocarray_value_cell_destroy(void* storage) {
-  std::destroy_at(&LocalAt<RuntimeAssociativeArray>(storage));
+  std::destroy_at(&ValueCellAt<RuntimeAssociativeArray>(storage));
 }
 void lyra_rt_managedref_value_cell_destroy(void* storage) {
-  std::destroy_at(&LocalAt<ObjectRef>(storage));
+  std::destroy_at(&ValueCellAt<ObjectRef>(storage));
 }
 void lyra_rt_laidout_net_destroy(void* storage) {
   std::destroy_at(static_cast<ResolvedNet<LaidOutValue>*>(storage));
@@ -9052,10 +9053,11 @@ auto lyra_rt_bit_wide_value_cell_alloc(std::int64_t width) noexcept -> void* {
   return AllocateValueCell<BitWide>(static_cast<std::uint64_t>(width));
 }
 void lyra_rt_bit_wide_value_cell_construct(std::int64_t width, void* storage) {
-  BuildAt<LocalOf<BitWide>::Type>(storage, static_cast<std::uint64_t>(width));
+  BuildAt<ValueCellFor<BitWide>::Type>(
+      storage, static_cast<std::uint64_t>(width));
 }
 void lyra_rt_bit_wide_value_cell_destroy(void* storage) {
-  std::destroy_at(&LocalAt<BitWide>(storage));
+  std::destroy_at(&ValueCellAt<BitWide>(storage));
 }
 void lyra_rt_bit_wide_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<BitWide>>(storage);
@@ -9178,10 +9180,11 @@ auto lyra_rt_logic_wide_value_cell_alloc(std::int64_t width) noexcept -> void* {
 }
 void lyra_rt_logic_wide_value_cell_construct(
     std::int64_t width, void* storage) {
-  BuildAt<LocalOf<LogicWide>::Type>(storage, static_cast<std::uint64_t>(width));
+  BuildAt<ValueCellFor<LogicWide>::Type>(
+      storage, static_cast<std::uint64_t>(width));
 }
 void lyra_rt_logic_wide_value_cell_destroy(void* storage) {
-  std::destroy_at(&LocalAt<LogicWide>(storage));
+  std::destroy_at(&ValueCellAt<LogicWide>(storage));
 }
 void lyra_rt_logic_wide_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<LogicWide>>(storage);

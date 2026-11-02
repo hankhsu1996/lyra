@@ -378,7 +378,7 @@ auto LayoutOf(
           [&](const support::ValueCellMember& m) {
             return WithValueClass(m.domain, [&]<typename T>() -> ObjectLayout {
               if constexpr (AdmitsLocal<T>::value) {
-                return HolderLayout<typename LocalOf<T>::Type, T>(held);
+                return HolderLayout<typename ValueCellFor<T>::Type, T>(held);
               } else {
                 return NotRealized<ObjectLayout>();
               }
@@ -524,7 +524,7 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
                 return ContentsAt{.offset = ReadAt<ValueCell<T>>()};
               } else if constexpr (DynamicallySized<T>) {
                 return through(
-                    TailThroughOffset<typename LocalOf<T>::Type, T>(
+                    TailThroughOffset<typename ValueCellFor<T>::Type, T>(
                         [](const auto& local) {
                           return local.BytesThrough();
                         }));

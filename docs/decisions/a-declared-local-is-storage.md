@@ -29,11 +29,24 @@ with the variable is consulted, and no state exists in which a local has none. T
 `../architecture/storage.md` invariant 1 already says of every variable; the lowering was deciding
 it a second time, from worse information.
 
-**D2. Where that storage lives follows the local's own lifetime, and nothing else.** A local lent by
-reference gets a cell, because that is the one storage a reference can name; a value-typed local of
-a suspending body gets a cell of the execution's own store, because its value has to outlive the
-stretch that made it; every other local gets a frame slot. Whether those three should be one is a
-question this does not settle; what it settles is that "no storage" is not among them.
+**D2. Where that storage lives follows what the local is, and nothing else.** A variable MIR states
+as a cell lies among the body's variables, because that is storage a process can wait on; every
+other local is a slot of the frame, which a reference binds as it binds any storage and which the
+target keeps across a suspension. "No storage" is not among them.
+
+Until 2026-11-01 this said a value-typed local of a suspending body got a cell of the execution's
+own store, because its value had to outlive the stretch that made it, and a lent local got a cell
+because that was the one storage a reference could name. Neither reason stands. A value lives in its
+maker's frame ([a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md)), and a
+reference carries what holds its storage, or nothing
+([a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md)). What was left was a cell
+that reported writes nothing could wait on, whose every write paid to detect a change, and a default
+asked of a type that has none. clang gives every local an alloca (`EmitAutoVarAlloca` in
+`clang/lib/CodeGen/CGDecl.cpp`) and LLVM's coroutine split moves those a suspension crosses into the
+coroutine's frame (`llvm/lib/Transforms/Coroutines/CoroFrame.cpp`), as rustc's coroutine transform
+saves the locals `locals_live_across_suspend_points` finds
+(`rustc_mir_transform/src/coroutine/layout.rs`). Neither lowering asks whether a local crosses one,
+and neither does this.
 
 **D3. Keeping a variable out of memory is a saving taken by whoever sees the whole function.** A
 step that translates one node at a time cannot answer whether a variable needs to exist, because the
@@ -85,15 +98,12 @@ stops that layer being worth filling in. A missing pass is a thing to build, nev
 
 - A local's possible homes lose one alternative, so a consumer asking where a local lives has one
   fewer answer to handle, and the state that produced the refusal cannot be spelled.
-- The whole-body pass that ran before lowering keeps one job: marking the locals something lends. A
-  local it misses is refused by name where the lending is attempted, rather than silently given the
-  wrong home.
-- Reaching a local's storage cannot fail for want of storage. What remains is a local whose value
-  crosses a suspension, which lives in the execution's own store and is reached by the calls that
-  read and write it, so it has no address for anything that needs one to point at; that refuses and
-  says so.
+- Reaching a local's storage cannot fail for want of storage.
 - Every local now costs a slot in the generated frame. The benchmark corpus measures that cost on
   this path as on the C++ one, and the layer that would remove it is the one named above.
+- A body's frame holds class handles across a stop in slots the target lays out, where only a
+  variable lies in storage the compiler lists. A collector needs both found, as it needs a value a
+  running call made found, so what finds them has to read the frame's slots.
 
 ## Cross-references
 
@@ -102,6 +112,6 @@ stops that layer being worth filling in. A missing pass is a thing to build, nev
 - `storage-owns-its-value.md` -- a storage entity owns the representation of its current value, and
   a component the language gives identity is itself storage.
 - `reference-binds-a-cell.md` -- why a lending requirement must not decide how a storage is
-  represented, which is the remaining half of D2.
+  represented.
 - `jit-value-realization.md` -- the opaque-handle baseline, and the three-regime observation this
   reduces by one.

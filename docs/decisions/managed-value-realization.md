@@ -88,11 +88,11 @@ by scanning.
 
 ### D2. The activation frame becomes described
 
-Cross-suspension value storage is a set of independently allocated cells in an untyped arena today
-([cross-suspension-value-storage](cross-suspension-value-storage.md)), which is sufficient while
-only non-managed values live there and insufficient the moment one managed value does. The frame
-gains a per-callable description of its slots and their value domains; the activation holds one
-frame object built from it, and a load or a store names a slot.
+A body's cells lie in its described variables and its other values in slots the target lays out
+([a-declared-local-is-storage](a-declared-local-is-storage.md)), which is sufficient until a
+collector has to find a value in either. The frame gains a per-callable description of its slots and
+their value domains; the activation holds one frame object built from it, and a load or a store
+names a slot.
 
 This removes an operation rather than adding one: with the frame built once from its description,
 the per-cell allocation the current shape needs has nothing left to do.

@@ -9,7 +9,9 @@ ends at the end of its full-expression. `GeneratedCallScope` now only names the 
 invariant below becomes its frame form -- a value never outlives its full-expression except by being
 handed to storage that owns it (a slot, a cell, the caller's storage for a return), and every such
 hand-off either takes the value's end with it or copies. The vocabulary this entry fixes, and the
-withdrawn rejection at its end, stand.
+withdrawn rejection at its end, stand. Since 2026-11-01 a local lies in the frame or is a cell MIR
+states ([a-declared-local-is-storage](a-declared-local-is-storage.md) D2), so the store holds only
+what an awaited call answers into.
 
 ## Context
 

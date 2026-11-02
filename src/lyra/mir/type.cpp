@@ -298,12 +298,10 @@ auto Type::WrappedValueType() const -> TypeId {
   throw InternalError("mir: type is not a capability wrapper");
 }
 
-auto Type::IsRuntimeStoredValue() const -> bool {
+auto Type::IsAggregateOrLibraryValue() const -> bool {
   // One arm per MIR type and no catch-all, so a type added later fails to
   // compile here until it says which side it is on -- rather than silently
-  // answering that the holder has the whole of it, which is a wrong answer and
-  // not a refusal: the holder goes on holding a handle after the storage behind
-  // it is gone.
+  // answering that a frame keeps nothing for it, which undercounts the frame.
   return Visit(
       Overloaded{
           // An integral value is the bits its type declares, an enumeration's
@@ -321,9 +319,7 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const ErasedValueType&) { return false; },
           // A type the library declares says whether a value of it lies in
           // storage of its own its holder keeps a claim on.
-          [](const LibraryType& t) {
-            return support::IsRuntimeStoredValue(t.decl);
-          },
+          [](const LibraryType& t) { return support::IsDomainObject(t.decl); },
 
           // A class handle is one of these and a reference owning nothing is
           // not, which LRM 8.4 Table 8-1 states directly: an unreferenced

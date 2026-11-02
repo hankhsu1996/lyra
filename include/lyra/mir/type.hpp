@@ -599,7 +599,7 @@ class Type {
   // Narrower than being a domain the runtime realizes values of, which a
   // reference owning nothing also is: its value is the address it carries, and
   // the address is in the holder's own hands.
-  [[nodiscard]] auto IsRuntimeStoredValue() const -> bool;
+  [[nodiscard]] auto IsAggregateOrLibraryValue() const -> bool;
 
   // Whether a temporary can hold a value of this type and stand in its place,
   // and whether it is then read out as a copy or moved out, as rustc's builder

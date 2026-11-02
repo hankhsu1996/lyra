@@ -290,7 +290,7 @@ auto FrameBytesOf(const CompilationUnit& unit, TypeId type) -> std::size_t {
                ? FrameBytesOf(unit, cell->value)
                : 0;
   }
-  if (!held.IsIntegral() && !held.IsRuntimeStoredValue()) {
+  if (!held.IsIntegral() && !held.IsAggregateOrLibraryValue()) {
     return 0;
   }
   const std::size_t bytes = LayoutOf(unit, type).size;

@@ -1,6 +1,9 @@
 # A reference binds a cell, and every referent is one
 
-Date: 2026-08-27 Status: accepted, reopened 2026-09-03 (see the closing section)
+Date: 2026-08-27 Status: accepted, reopened 2026-09-03 (see the closing section); its point 2 and
+invariants 1 and 3 no longer hold, as
+[a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md) and
+[a-declared-local-is-storage](a-declared-local-is-storage.md) D2 state
 
 ## Context
 

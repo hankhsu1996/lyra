@@ -19,10 +19,10 @@ class ValueCell : public ValueStorageCore<T> {};
 // fixed-size unpacked array -- told its width or type where the cell is built,
 // and holding what that type builds before anything writes it from then.
 template <class HeldAs>
-class TailLocal {
+class TailValueCell {
  public:
   template <class Told>
-  explicit TailLocal(const Told& told) : held_(told) {
+  explicit TailValueCell(const Told& told) : held_(told) {
   }
 
   [[nodiscard]] auto BytesThrough() const -> void* const* {
@@ -33,14 +33,14 @@ class TailLocal {
   HeldAs held_;
 };
 
-// The cell a procedural local of `T` is.
+// The cell holding a value of `T` that nothing observes.
 template <class T>
-struct LocalOf {
+struct ValueCellFor {
   using Type = ValueCell<T>;
 };
 template <DynamicallySized T>
-struct LocalOf<T> {
-  using Type = TailLocal<typename StorageFor<T>::Type>;
+struct ValueCellFor<T> {
+  using Type = TailValueCell<typename StorageFor<T>::Type>;
 };
 
 }  // namespace lyra::runtime
