@@ -25,6 +25,7 @@
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/types/Type.h>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -1645,7 +1646,7 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
 
 auto UnitLowerer::ObservedThroughModport(
     const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame,
-    RouteOrigin origin) -> diag::Result<std::vector<hir::SensitivityEntry>> {
+    RouteOrigin origin) -> diag::Result<ObservedViewName> {
   const auto span = frontend::PointSpanOf(offered.location);
   const auto refuse = [&](base::DiagFormat<> message) {
     return diag::Fail(
@@ -1675,12 +1676,44 @@ auto UnitLowerer::ObservedThroughModport(
   }
   const ScopeRoute& route = *reached;
   const hir::ScopeClassId scope_class = on->scope_class;
-  return WholeMembersAlong(
-      frame, route, scope_class,
-      hir::WatchedMembers(
-          unit_.scope_classes.Get(scope_class)
-              .ViewName(PublishedViewNameOf(
-                  *this, scope_class, view->asSymbol().name, offered.name))));
+  const hir::ViewDefinedName& meaning =
+      unit_.scope_classes.Get(scope_class)
+          .ViewName(PublishedViewNameOf(
+              *this, scope_class, view->asSymbol().name, offered.name));
+  return ObservedViewName{
+      .meaning = &meaning,
+      .members = WholeMembersAlong(
+          frame, route, scope_class, hir::WatchedMembers(meaning))};
+}
+
+auto UnitLowerer::ViewPlaceRouteOf(const WalkFrame& frame, hir::ExprId expr)
+    -> const hir::ViewPlaceRoute& {
+  const hir::Expr* reached = &frame.Exprs().Get(expr);
+  while (true) {
+    if (const auto* element =
+            std::get_if<hir::ElementSelectExpr>(&reached->data)) {
+      reached = &frame.Exprs().Get(element->base_value);
+    } else if (
+        const auto* range = std::get_if<hir::RangeSelectExpr>(&reached->data)) {
+      reached = &frame.Exprs().Get(range->base_value);
+    } else if (
+        const auto* member =
+            std::get_if<hir::MemberAccessExpr>(&reached->data)) {
+      reached = &frame.Exprs().Get(member->base_value);
+    } else {
+      break;
+    }
+  }
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&reached->data);
+  const auto* use = primary == nullptr
+                        ? nullptr
+                        : std::get_if<hir::RoutedViewPlaceRef>(&primary->data);
+  if (use == nullptr) {
+    throw InternalError(
+        "UnitLowerer::ViewPlaceRouteOf: a use of a name designating storage "
+        "selects from the routed use of that name");
+  }
+  return RoutesOf(frame.Current()).view_places.Get(use->id);
 }
 
 auto UnitLowerer::WholeMembersAlong(
@@ -1861,23 +1894,63 @@ auto UnitLowerer::WatchedEntriesOf(
     };
 
     switch (resolved->kind) {
-      // A name a view defined for itself stands for an expression the interface
-      // evaluates (LRM 25.5.4), so it is no single declaration to wait on. What
-      // waiting on it means is waiting on every member that expression reads,
-      // which the interface publishes alongside the name.
+      // A name a view defined for itself stands for an expression of the
+      // interface's (LRM 25.5.4), which may join several declarations or
+      // compute a value, so it is no declaration of its own to wait on. Each
+      // name that reached it is watched from where that name started, the way
+      // a variable read is below, at every member the interface published it
+      // as a change to.
       case Referent::kViewDefinedName: {
-        // Each name that reached it is watched from where that name started,
-        // the way a variable read is below.
+        const auto& offered = target.as<slang::ast::ModportPortSymbol>();
+        // A name designating storage is read and written as the places it
+        // stands for, each at the bits a use reaches (LRM 11.5.3), so a write
+        // taking some bits of a place out of a list leaves the rest of that
+        // place on it (LRM 9.2.2.2.1 b). A use of the whole name is its own
+        // prefix. Each prefix is stated once and watched at every place it
+        // reaches; a reader taking only whole cells watches each member whole.
+        AccessedPart named = read;
+        if (std::holds_alternative<WholePart>(read.part)) {
+          named.part = SelectedParts{.prefixes = read.reached_by};
+        }
+        std::optional<std::vector<hir::WatchedPart>> stated;
+        bool prefixes_watched = false;
+        const auto add = [&](hir::SensitivityEntry entry) {
+          if (!std::ranges::contains(out, entry)) {
+            out.push_back(std::move(entry));
+          }
+        };
         for (RouteOrigin& origin : StartsOfNames(frame, read.reached_by)) {
-          auto entries = ObservedThroughModport(
-              target.as<slang::ast::ModportPortSymbol>(), frame,
-              std::move(origin));
-          if (!entries) return std::unexpected(std::move(entries.error()));
-          for (hir::SensitivityEntry& entry : *entries) {
-            if (!std::ranges::contains(out, entry)) {
-              out.push_back(std::move(entry));
+          auto observed =
+              ObservedThroughModport(offered, frame, std::move(origin));
+          if (!observed) return std::unexpected(std::move(observed.error()));
+          if (!std::holds_alternative<hir::ViewDefinedPlace>(
+                  *observed->meaning)) {
+            std::ranges::for_each(observed->members, add);
+            continue;
+          }
+          if (!stated.has_value()) {
+            auto asked = parts_of(named);
+            if (!asked) return std::unexpected(std::move(asked.error()));
+            stated = *std::move(asked);
+          }
+          for (const hir::WatchedPart& part : *stated) {
+            const auto* select = std::get_if<hir::WatchedSelect>(&part);
+            if (select == nullptr) {
+              std::ranges::for_each(observed->members, add);
+              continue;
+            }
+            if (prefixes_watched) continue;
+            const hir::ViewPlaceRoute& route =
+                ViewPlaceRouteOf(frame, select->prefix);
+            for (std::uint32_t place = 0; place < route.parts.size(); ++place) {
+              add(hir::SensitivityEntry{
+                  .cell = hir::ValueTarget{route.parts[place]},
+                  .part = hir::WatchedSelect{
+                      .prefix = select->prefix,
+                      .place = base::ComponentIndex{place}}});
             }
           }
+          prefixes_watched = true;
         }
         break;
       }
@@ -1969,7 +2042,8 @@ auto UnitLowerer::SensitivityEntriesOf(
                     }
                     parts.emplace_back(
                         hir::WatchedSelect{
-                            .prefix = frame.Exprs().Add(*std::move(lowered))});
+                            .prefix = frame.Exprs().Add(*std::move(lowered)),
+                            .place = base::ComponentIndex{0}});
                   }
                   return parts;
                 }},

@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -267,9 +268,10 @@ auto LeafPartOf(
           [&](const hir::WatchedSelect& select) -> diag::Result<LeafPart> {
             const hir::Expr& prefix = lowerer.HirExprs().Get(select.prefix);
             const WalkFrame block_frame = frame.WithBlock(&block.Body());
-            auto part = lowerer.LowerAccessPath(prefix, block_frame);
-            if (!part) return std::unexpected(std::move(part.error()));
-            NamedPart named = PartNamedBy(unit, block, *part);
+            auto places = PlacesNamed(lowerer, prefix, block_frame);
+            if (!places) return std::unexpected(std::move(places.error()));
+            NamedPart named =
+                PartNamedBy(unit, block, places->at(select.place.value));
             const mir::ExprId steps =
                 StepArray(unit, block, std::move(named.steps));
             if (!named.positions.has_value()) {

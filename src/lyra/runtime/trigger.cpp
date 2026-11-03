@@ -21,6 +21,16 @@ Trigger::Trigger(Trigger&&) noexcept = default;
 auto Trigger::operator=(Trigger&&) noexcept -> Trigger& = default;
 Trigger::~Trigger() = default;
 
+auto PositionsInPart(std::int64_t first, std::int64_t count)
+    -> value::BitPositions {
+  if (first < 0 && first + count > 0) {
+    return {.lsb = 0, .width = static_cast<std::uint64_t>(first + count)};
+  }
+  return {
+      .lsb = static_cast<std::uint64_t>(first),
+      .width = static_cast<std::uint64_t>(count)};
+}
+
 Trigger::Trigger(
     Observable* observable, Observation observation,
     std::span<const std::int64_t> steps, std::int64_t lsb_bit_offset,
@@ -28,9 +38,7 @@ Trigger::Trigger(
     : observable(observable),
       part(steps),
       observation(std::move(observation)),
-      reads{
-          .lsb = static_cast<std::uint64_t>(lsb_bit_offset),
-          .width = static_cast<std::uint64_t>(bit_width)} {
+      reads(PositionsInPart(lsb_bit_offset, bit_width)) {
 }
 
 Trigger::Trigger(
@@ -41,9 +49,7 @@ Trigger::Trigger(
       through(place.Member()),
       part(place.PathOf(steps)),
       observation(std::move(observation)),
-      reads{
-          .lsb = static_cast<std::uint64_t>(lsb_bit_offset),
-          .width = static_cast<std::uint64_t>(bit_width)} {
+      reads(PositionsInPart(lsb_bit_offset, bit_width)) {
 }
 
 Change::Change() = default;

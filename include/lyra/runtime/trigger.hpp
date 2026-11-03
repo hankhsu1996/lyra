@@ -44,6 +44,17 @@ class WatchedPlace {
   std::uintptr_t word_ = 0;
 };
 
+// The positions of a part a leaf or a report is told of, from its first
+// position and how many there are, none meaning the whole part. A select over
+// a name a view joins several declarations under names the same positions in
+// each, so in the less significant ones it may begin below the part, as a
+// write of it does and lands only on what lies within (LRM 11.5.1): only the
+// positions at or above the part's first are named. One lying wholly below the
+// part keeps a first position past every one it has, so nothing written there
+// reaches it.
+[[nodiscard]] auto PositionsInPart(std::int64_t first, std::int64_t count)
+    -> value::BitPositions;
+
 // One leaf of a wait: a place it watches, which part of the place, which
 // positions of that part it reads -- bits where the part is a packed value,
 // elements where it is an array read as a slice (LRM 7.4.6) -- and what

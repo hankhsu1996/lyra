@@ -1854,13 +1854,25 @@ class UnitLowerer {
       hir::ScopeClassId standing, std::span<NamedHop> hops)
       -> std::optional<PublishedDescent>;
 
-  // What a process waiting on a name a modport offers observes: every member
-  // the expression behind that name reads (LRM 25.5.4), each reached the way
-  // the interface was, from `origin`. The name is no storage of its own, so
-  // nothing waits on it directly.
+  // A name a modport offers, reached from one place a read started: what the
+  // interface published it as, and a watch of the whole of each member a
+  // change to it is a change to.
+  struct ObservedViewName {
+    const hir::ViewDefinedName* meaning = nullptr;
+    std::vector<hir::SensitivityEntry> members;
+  };
+
+  // What a process waiting on a name a modport offers observes, each member
+  // reached the way the interface was, from `origin` (LRM 25.5.4). The name
+  // is no storage of its own, so nothing waits on it directly.
   auto ObservedThroughModport(
       const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame,
-      RouteOrigin origin) -> diag::Result<std::vector<hir::SensitivityEntry>>;
+      RouteOrigin origin) -> diag::Result<ObservedViewName>;
+
+  // The route of the use of a name designating storage that `expr` is, or
+  // selects from.
+  [[nodiscard]] auto ViewPlaceRouteOf(const WalkFrame& frame, hir::ExprId expr)
+      -> const hir::ViewPlaceRoute&;
 
   // A watch of the whole of each of `members`, which the scope of class
   // `scope_class` published, on the object `route` reaches.

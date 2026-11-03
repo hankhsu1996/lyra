@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/compilation_unit.hpp"
@@ -59,7 +60,8 @@ void Assign(
     sensitivity.push_back(
         SensitivityEntry{
             .cell = ValueTarget{RoutedValueRef{}},
-            .part = WatchedSelect{.prefix = prefix}});
+            .part = WatchedSelect{
+                .prefix = prefix, .place = base::ComponentIndex{0}}});
   }
   unit.root_scope.continuous_assigns.Add(
       ContinuousAssign{

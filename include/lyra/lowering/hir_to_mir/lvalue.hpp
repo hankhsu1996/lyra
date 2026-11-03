@@ -218,12 +218,21 @@ void ForEachPlace(const Lvalue& lvalue, Visit visit) {
     const mir::CompilationUnit& unit, mir::Builder block,
     const LvalueSlice& slice, mir::TypeId type) -> std::vector<AccessPath>;
 
-// Each place a write of `lvalue` lands on, in the order its shares are cut: a
-// select of a join lands on the members at the bits it reaches, where the
-// places `lvalue` is made of are the members whole.
+// Each place a write of `lvalue` lands on, most significant first: a select of
+// a join lands on the members at the bits it reaches, where the places
+// `lvalue` is made of are the members whole.
 [[nodiscard]] auto PlacesWritten(
     const mir::CompilationUnit& unit, mir::Builder block, const Lvalue& lvalue)
     -> std::vector<AccessPath>;
+
+// Each place `expr`, a longest static prefix (LRM 11.5.3), names, in the order
+// a write through it lands on them: the one part of one value it selects, or
+// one place in each declaration a name a view joins several under stands for.
+// Nothing is appended, so a construct that only names parts -- a wait, a
+// report of what a body reads -- asks this.
+template <ExprLowerer L>
+auto PlacesNamed(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<std::vector<AccessPath>>;
 
 // The share of `value` each place of `lvalue` takes, where `value` is a value
 // or the place one lies in. One place takes the value, read where it is a

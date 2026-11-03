@@ -25,7 +25,10 @@ handle once and reaches each part on the object it holds.
 
 Revised 2026-11-02: a select of a joined name is written, which this entry left out. The name stands
 for a concatenation of places, and selecting it is a select over that concatenation (LRM 25.5.4,
-11.5.1), which [a-write-names-a-place-or-a-join](a-write-names-a-place-or-a-join.md) D1 states.
+11.5.1), which [a-write-names-a-place-or-a-join](a-write-names-a-place-or-a-join.md) D1 states. What
+a body reads or writes through a name designating storage is the bits of each place a use reaches,
+the places a write through the use lands on, so an implicit list takes out of a part only the bits
+written there (LRM 9.2.2.2.1 b); it was every declaration the name joins, whole.
 
 ## Why this decision matters
 

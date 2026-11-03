@@ -92,6 +92,11 @@ auto ViewDefinesTheName(const slang::ast::Symbol& item) -> bool {
   return port != nullptr && port->explicitConnection != nullptr;
 }
 
+auto ViewNameDesignatesStorage(const slang::ast::ModportPortSymbol& port)
+    -> bool {
+  return port.direction != slang::ast::ArgumentDirection::In;
+}
+
 auto ViewExpressionOf(const slang::ast::ModportPortSymbol& port)
     -> const slang::ast::Expression& {
   const slang::ast::Expression* connection = port.getConnectionExpr();

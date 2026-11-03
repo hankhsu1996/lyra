@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -24,11 +25,18 @@ struct WatchedWhole {
 };
 
 // A leaf reads the part of its cell the source selected: the longest static
-// prefix the source wrote (LRM 11.5.3), a select over the cell whose indices
-// are constants. A genvar or a parameter is such a constant and each
-// construction is given its own, so the part is evaluated where the leaf is.
+// prefix the source wrote (LRM 11.5.3), a select whose indices are constants,
+// over the cell or over a name a view defines for storage the cell is part of.
+// A genvar or a parameter is such a constant and each construction is given
+// its own, so the part is evaluated where the leaf is.
+//
+// A name a view defines may join several declarations (LRM 25.5.4), and a
+// prefix over it reaches one place in each; `place` says which of them this
+// leaf is about, counted from the most significant as the view's expression
+// joins them. A prefix reaching one place has only the first.
 struct WatchedSelect {
   ExprId prefix;
+  base::ComponentIndex place;
 
   auto operator==(const WatchedSelect&) const -> bool = default;
 };

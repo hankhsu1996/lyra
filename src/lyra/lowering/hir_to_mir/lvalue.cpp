@@ -339,6 +339,25 @@ auto IsJoin(const L& lowerer, const hir::Expr& expr) -> bool {
 template auto IsJoin(const ProcessLowerer&, const hir::Expr&) -> bool;
 template auto IsJoin(const StructuralScopeLowerer&, const hir::Expr&) -> bool;
 
+template <ExprLowerer L>
+auto PlacesNamed(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<std::vector<AccessPath>> {
+  if (!IsJoin(lowerer, expr)) {
+    auto place = lowerer.LowerAccessPath(expr, frame);
+    if (!place) return std::unexpected(std::move(place.error()));
+    return std::vector{*std::move(place)};
+  }
+  auto lvalue = LowerLvalue(lowerer, expr, frame);
+  if (!lvalue) return std::unexpected(std::move(lvalue.error()));
+  return PlacesWritten(lowerer.Owner().Unit(), frame.Builder(), *lvalue);
+}
+
+template auto PlacesNamed(ProcessLowerer&, const hir::Expr&, WalkFrame)
+    -> diag::Result<std::vector<AccessPath>>;
+template auto PlacesNamed(
+    const StructuralScopeLowerer&, const hir::Expr&, WalkFrame)
+    -> diag::Result<std::vector<AccessPath>>;
+
 auto SelectedParts(
     const mir::CompilationUnit& unit, mir::Builder block,
     const LvalueSlice& slice, mir::TypeId type) -> std::vector<AccessPath> {
