@@ -78,7 +78,7 @@ auto BuildWrappedBranching(
       process, wrapper_frame, std::move(*catch_all_or), check, arm_kind);
 
   if (asserts_uniqueness) {
-    std::vector<mir::ExprId> held;
+    std::vector<mir::LocalId> held;
     held.reserve(arms.size());
     for (const SearchedArm& arm : arms) {
       const mir::LocalId any =
@@ -88,15 +88,14 @@ auto BuildWrappedBranching(
           !assigned) {
         return std::unexpected(std::move(assigned.error()));
       }
-      held.push_back(wrapper.ReadLocal(any, unit.builtins.machine_bool));
+      held.push_back(any);
     }
-    const std::vector<mir::LocalId> kept =
-        BuildUniquenessCheck(process, wrapper_frame, held, *check, arm_kind);
+    BuildUniquenessCheck(process, wrapper_frame, held, *check, arm_kind);
     for (std::size_t arm = 0; arm < arms.size(); ++arm) {
       arms[arm].conditions = {
-          [local = kept[arm], bit = unit.builtins.bit1](
+          [local = held[arm], type = unit.builtins.machine_bool](
               const WalkFrame& at) -> diag::Result<mir::ExprId> {
-            return at.Builder().ReadLocal(local, bit);
+            return at.Builder().ReadLocal(local, type);
           }};
     }
   }

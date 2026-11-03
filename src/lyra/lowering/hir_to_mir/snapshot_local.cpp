@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 
 #include <cstdint>
-#include <optional>
 
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -16,11 +15,8 @@ namespace lyra::lowering::hir_to_mir {
 
 auto SnapshotExprToLocal(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::Builder wrapper,
-    mir::TypeId type, mir::ExprId expr_id,
-    std::optional<BindingOriginId> origin) -> mir::LocalId {
-  const mir::LocalId snap_var = origin.has_value()
-                                    ? frame.bindings->Declare(*origin, type)
-                                    : frame.bindings->DeclareAnonymous(type);
+    mir::TypeId type, mir::ExprId expr_id) -> mir::LocalId {
+  const mir::LocalId snap_var = frame.bindings->DeclareAnonymous(type);
   const mir::ExprId default_init =
       wrapper.Add(BuildDefaultValueExpr(unit_lowerer.Unit(), wrapper, type));
   wrapper.AppendStmt(

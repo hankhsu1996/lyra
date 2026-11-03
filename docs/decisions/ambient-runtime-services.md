@@ -89,9 +89,13 @@ Concretely:
    the two together travels with the report rather than with the region holding it -- the scheduler
    keeps one uniform shape per region and knows nothing of violation reports. A check reached before
    any process exists is then simply a report nothing can discard: a static variable's initializer
-   runs ahead of every procedure (LRM 6.8), so no flush point can name it and it survives to the
-   Observed region. Each suspending construct declares whether resuming from it is a flush point, so
-   the resume path never branches on which construct a wait came from.
+   runs ahead of every procedure (LRM 6.8), and a function a parameter or a generate condition is
+   computed with runs while the design is built, ahead of every initializer, so no flush point can
+   name it and it survives to the Observed region. So a facility a body reaches has to be usable
+   from the moment the run exists, before the design is built, and reaches the run as every body
+   does rather than through anything set up as the design is brought up. Each suspending construct
+   declares whether resuming from it is a flush point, so the resume path never branches on which
+   construct a wait came from.
 
 `self` retains its role in `mir.md` invariant 11: the per-instance handle for instance-method
 bodies. What it loses is its second job as the runtime-access route. The two concerns were

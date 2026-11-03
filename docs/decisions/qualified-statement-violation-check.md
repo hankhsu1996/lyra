@@ -50,8 +50,8 @@ D2. An explicit catch-all discharges totality. LRM 12.4.2 states it for the `els
     arms that both match.
 
 D3. Totality is the statement reaching its fall-through arm, not a count of arms that matched. A
-    statement asserting totality and nothing else therefore needs no arm predicate, no snapshot,
-    and no captured environment: arriving where nothing matched is the violation.
+    statement asserting totality and nothing else therefore needs no arm predicate and no
+    snapshot: arriving where nothing matched is the violation.
 
 D4. What the live assertions need decides what the statement evaluates. Uniqueness needs every
     arm's predicate, and LRM 12.4.2 and 12.5.3 require evaluating every arm for `unique` and
@@ -128,9 +128,13 @@ reports `unique case` with no `default` and is silent once one is added, in both
 - A `unique` violation and a `unique0` violation are the same uniqueness report; the two qualifiers
   differ only in whether totality is also asserted.
 - Reporting stays where LRM 12.4.2.1 puts it, and where 12.5.3.1 sends the case form. The check is
-  evaluated where the statement executes and the report matures in the Observed region, subject to
-  the flush points that make it immune to zero-delay glitches; `ambient-runtime-services.md`
-  invariant 8 owns that machinery and this decision does not touch it.
+  evaluated where the statement executes, only a violation found there keeps a report (LRM 12.4.2.1,
+  "once a violation is detected"), and the report matures in the Observed region, subject to the
+  flush points that make it immune to zero-delay glitches; `ambient-runtime-services.md` invariant 8
+  owns that machinery and this decision does not touch it. Revised 2026-11-02: uniqueness was
+  counted by the body the region ran, from the arms' answers captured at the statement, so every
+  execution kept a report, and one made while the design was built reached the statement's control
+  before it could be used.
 - No layer below HIR-to-MIR learns anything. MIR sees a cascade and, where an assertion is live, a
   closure submitted to a region -- primitives it already has.
 

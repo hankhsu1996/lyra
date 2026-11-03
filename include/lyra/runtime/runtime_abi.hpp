@@ -627,7 +627,8 @@ void lyra_rt_submit_at_run_end(void* runtime, void* closure);
 // `register_in` and `register` make it one the tasks select under the run's
 // `effects`, held by the instance `scope` or by none, as a statement of Table
 // 20-6 `type` stating Table 20-7 `directive`, 0 where it states none;
-// `register_within` makes it one a task naming `block` selects. `allowed` is
+// `register_within` makes it one a task naming `block` selects under the same
+// `effects`. `allowed` is
 // what an execution beginning now may do, as `support::kAssertion*` bits.
 // `submit_observed` and `submit_final` queue a deferred assertion's action,
 // which is started as an execution of its own once the report matures
@@ -639,7 +640,7 @@ void lyra_rt_assertion_control_register_in(
 void lyra_rt_assertion_control_register(
     void* control, void* effects, std::uint64_t type, std::uint64_t directive);
 void lyra_rt_assertion_control_register_within(
-    void* control, const void* block);
+    void* control, void* effects, const void* block);
 auto lyra_rt_assertion_control_allowed(const void* control) -> std::uint64_t;
 void lyra_rt_assertion_control_submit_observed(void* control, void* body);
 void lyra_rt_assertion_control_submit_final(void* control, void* body);

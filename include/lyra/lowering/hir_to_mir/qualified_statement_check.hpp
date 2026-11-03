@@ -10,7 +10,6 @@
 
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -58,13 +57,12 @@ auto BuildFallThrough(
     -> std::optional<mir::Block>;
 
 // What a statement asserting uniqueness does before it selects an arm: `held`
-// is every arm's answer, already evaluated in `frame`'s block, and each is kept
-// there as a bit. A body submitted to the Observed region counts the bits and
-// reports where more than one arm held (LRM 12.4.2.1). Answers with the locals
-// holding the bits, in arm order, which is what the statement then selects by.
-auto BuildUniquenessCheck(
+// holds every arm's answer, already evaluated in `frame`'s block. Where more
+// than one arm held, the statement keeps a report to the Observed region (LRM
+// 12.4.2.1), and an execution with at most one keeps nothing.
+void BuildUniquenessCheck(
     ProcessLowerer& process, const WalkFrame& frame,
-    std::span<const mir::ExprId> held, const hir::QualifiedCheck& check,
-    QualifiedArmKind arm_kind) -> std::vector<mir::LocalId>;
+    std::span<const mir::LocalId> held, const hir::QualifiedCheck& check,
+    QualifiedArmKind arm_kind);
 
 }  // namespace lyra::lowering::hir_to_mir

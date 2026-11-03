@@ -47,21 +47,31 @@ task runs many times is one control. LRM clause 39 gives each assertion the same
 iterated per design or per instance, with enable, disable, reset and lock callbacks that are the
 tasks' own.
 
-**D2. A control is registered where the design is built, and a task walks the registry.** Each
-control registers under the instance holding it, or under none for a class's or a package's, and
-under every named block and task it stands in, a label's included. A task naming nothing walks the
-instances from the tops and takes every control no instance holds; naming an instance or a generate
-block it walks the instances `levels` from it down, a block counting as no level, and a count below
-0 asks for none; naming a block or a task it takes what registered within it. A name may stand for
-several scopes: an array of instances is each instance, which the declaration fixed (LRM 23.3.2),
-and a loop generate construct's name is each block the loop built in the object holding it, which is
-that object's construction (LRM 27.4), so the loop's blocks are found as the task runs. A name of a
-loop's block without a path selects it by its own index. A scope where no controlled statement can
-stand -- a clocking block, a declaration of a sequence, a property or a type -- selects nothing, and
-a list whose every name selects nothing is not a call naming no list, which is the whole design.
-Registration happens before any process runs, so a task at time zero reaches a statement no process
-has reached. Applying a control twice leaves what once does, so a call naming overlapping scopes
-needs no deduplication.
+**D2. A control is registered where its scope's storage is brought up, and a task walks the
+registry.** Each control registers under the instance holding it, or under none for a class's or a
+package's, and under every named block and task it stands in, a label's included. A task naming
+nothing walks the instances from the tops and takes every control no instance holds; naming an
+instance or a generate block it walks the instances `levels` from it down, a block counting as no
+level, and a count below 0 asks for none; naming a block or a task it takes what registered within
+it. A name may stand for several scopes: an array of instances is each instance, which the
+declaration fixed (LRM 23.3.2), and a loop generate construct's name is each block the loop built in
+the object holding it, which is that object's construction (LRM 27.4), so the loop's blocks are
+found as the task runs. A name of a loop's block without a path selects it by its own index. A scope
+where no controlled statement can stand -- a clocking block, a declaration of a sequence, a property
+or a type -- selects nothing, and a list whose every name selects nothing is not a call naming no
+list, which is the whole design. Registration happens before any process runs, so a task at time
+zero reaches a statement no process has reached. Applying a control twice leaves what once does, so
+a call naming overlapping scopes needs no deduplication.
+
+Registering is how a task finds a control, and nothing a statement does waits on it: a control is
+usable from the moment its storage exists, and reaches the run as every body does. A statement can
+run before the design's storage is brought up, because a function a parameter or a generate
+condition is computed with runs while the design is built.
+
+Revised 2026-11-02: the control used to learn the run at registration, which this decision placed
+after construction, and a `unique case` in a function a `localparam` called ended the run there as
+an internal error. The moments a statement runs had been listed as a process and a static
+initializer; construction is the third.
 
 **D3. What an execution may do is read once, where it begins, and kept.** An immediate assertion
 reads it as the statement is reached; a deferred one decides there which action it queues; a
@@ -125,7 +135,7 @@ word it answers. The tables' meanings, Lock, the walk and the generation are the
   have to say which of the two it protects; a control per statement has one answer to each.
 - **Finding the controls by walking bodies when a task runs.** Nothing at run time holds a body's
   statements, and a scope's controlled statements are a fact the lowering already has, so recording
-  them where the design is built costs nothing a walk would not.
+  them as the design's storage is brought up costs nothing a walk would not.
 - **Reading the control at each step of an execution.** It would let a change reach an execution
   under way, which R2 and R4 forbid, and Kill, the one control that must, is answered by D4.
 - **A Kill that finds the reports it withdraws.** The region's lists hold every pending effect of

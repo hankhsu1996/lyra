@@ -90,7 +90,8 @@ void RegisterAssertionControl(
     if (!target.has_value()) continue;
     call(
         support::BuiltinFn::kAssertionControlRegisterWithin,
-        {CancellationTarget(process, install_frame, *target)});
+        {block.Add(BuildCurrentRuntimeCallExpr(unit)),
+         CancellationTarget(process, install_frame, *target)});
   }
 }
 
