@@ -185,9 +185,9 @@ void lyra_rt_write(void* files, std::int64_t descriptor, void* text);
 // The severity-fixed diagnostic channel (LRM 20.10). The dispatcher is reached
 // from the runtime once, then emitted to; `text` is already formatted, and
 // where the call is written is handed over as to every entry that reports for
-// the design, which locates the report and keys its per-site rate limit. One
-// entry per severity, so the generated module names the severity it means and
-// no severity tag crosses the boundary.
+// the design, which locates the report. One entry per severity, so the
+// generated module names the severity it means and no severity tag crosses the
+// boundary.
 auto lyra_rt_diagnostic(void* runtime) -> void*;
 void lyra_rt_emit_info(
     void* dispatcher, const void* text, const void* location);

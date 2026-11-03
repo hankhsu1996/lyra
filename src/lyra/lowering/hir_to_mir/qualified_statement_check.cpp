@@ -64,9 +64,8 @@ auto KeywordOf(hir::UniquePriorityCheck check) -> std::string_view {
 
 // Formats the report text already staged in `block` and hands it to the
 // diagnostic broker at warning severity (LRM 20.10), placed where `block`
-// builds from -- the qualified statement -- so the dispatcher attributes and
-// rate-limits by where the statement is written rather than by where the
-// report matured.
+// builds from -- the qualified statement -- so the report names where the
+// statement is written rather than where the report matured.
 void AppendReportEmit(
     mir::CompilationUnit& unit, mir::Builder block,
     std::vector<RuntimePrintItem> items) {

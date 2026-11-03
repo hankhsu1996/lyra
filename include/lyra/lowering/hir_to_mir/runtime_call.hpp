@@ -99,7 +99,7 @@ struct DelayEntries {
 
 // The entry a delay amount is read by, and the amount as that entry takes it.
 struct DelayRead {
-  support::BuiltinFn entry;
+  support::BuiltinFn entry{};
   mir::ExprId amount;
 };
 
@@ -140,13 +140,13 @@ struct DelayRead {
     const mir::CompilationUnit& unit, mir::Builder block) -> mir::Expr;
 
 // The call handing one report to the diagnostic broker at `severity` (LRM
-// 20.10): the text already formatted. Where the report is placed, which the
-// dispatcher attributes and rate-limits by, is where the call is written,
-// which every call of an entry that reports is handed. Composing the text is
-// where reports differ -- a severity task formats the design's own values,
-// while a report the tool writes on its own behalf has fixed words -- and
-// issuing one is where they do not. Returned detached, because the severity
-// that ends the run has a statement of its own to follow it.
+// 20.10): the text already formatted. Where the report is placed is where the
+// call is written, which every call of an entry that reports is handed.
+// Composing the text is where reports differ -- a severity task formats the
+// design's own values, while a report the tool writes on its own behalf has
+// fixed words -- and issuing one is where they do not. Returned detached,
+// because the severity that ends the run has a statement of its own to follow
+// it.
 [[nodiscard]] auto BuildReportCallExpr(
     const mir::CompilationUnit& unit, support::BuiltinFn severity,
     mir::ExprId diagnostic_id, mir::ExprId text_id) -> mir::Expr;

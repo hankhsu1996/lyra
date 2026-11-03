@@ -178,8 +178,7 @@ D7. The diagnostic a stop prints is fixed by the level (LRM 20.2, Table 20-1) an
     the task executes rather than at the end of the run, because what level 1 prints is the location
     of the call and the time it was made, which is a fact of that moment. It goes to the diagnostic
     channel and is not a severity record: it states what the tool did, carries none of LRM 20.10's
-    four levels, and happens once by construction, so it takes neither a severity label nor the
-    per-site rate limit a severity report takes.
+    four levels, and happens once by construction, so it takes no severity label.
 
 D8. The simulation's boundary is the elaboration phase boundary. Variable initialization and
     process activation are simulation activity at time zero (LRM 3.12, LRM 4), so an error raised

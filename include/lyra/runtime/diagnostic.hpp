@@ -1,12 +1,10 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/source_location.hpp"
@@ -27,8 +25,8 @@ enum class Severity : std::uint8_t {
 // generated-code entry points: each takes a pre-formatted body string (from
 // `runtime.Format(items)`) and where the call is written, which the program
 // hands over last as every operation that can fail is handed it, and writes
-// at its fixed severity. The place serves both as the message prefix and as
-// the rate-limit dedup key, so distinct call sites get distinct counters.
+// at its fixed severity. Each call generates its report (LRM 20.10), however
+// often one place is reached.
 //
 // LRM 20.10 also requires every report to say where in the design and when it
 // was made. Those are facts of the moment rather than of the call, so they are
@@ -46,15 +44,10 @@ class DiagnosticDispatcher {
   };
   using ContextSource = std::function<Context()>;
 
-  // Per-(place, severity) suppression after this many emits in one run.
-  // Zero disables rate limiting.
-  static constexpr std::uint32_t kDefaultRateLimit = 10;
-
   // Every report goes to the error stream of `files`, which hands what the
   // design wrote to standard output over first, so a report follows what was
   // printed before it wherever the two streams meet.
-  explicit DiagnosticDispatcher(
-      FileTable& files, std::uint32_t rate_limit = kDefaultRateLimit);
+  explicit DiagnosticDispatcher(FileTable& files);
 
   // The run has to exist before it can be asked where it is, so the source is
   // installed rather than taken at construction.
@@ -101,22 +94,9 @@ class DiagnosticDispatcher {
       std::string_view body, std::span<const base::DiagMessage> notes = {});
   void Write(std::string_view text);
 
-  struct CountKey {
-    std::string place;
-    Severity severity;
-
-    auto operator==(const CountKey&) const -> bool = default;
-  };
-
-  struct CountKeyHash {
-    auto operator()(const CountKey& k) const noexcept -> std::size_t;
-  };
-
   FileTable* files_;
   ContextSource context_;
-  std::uint32_t rate_limit_;
   bool reported_fatal_ = false;
-  std::unordered_map<CountKey, std::uint32_t, CountKeyHash> emit_counts_;
 };
 
 // The place a report names for `at`, as "file:line:col" (LRM 20.10); empty

@@ -1,9 +1,6 @@
 #include "lyra/runtime/diagnostic.hpp"
 
-#include <cstddef>
-#include <cstdint>
 #include <format>
-#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -54,17 +51,7 @@ auto ToolSeverityText(Severity s) -> std::string_view {
 
 }  // namespace
 
-auto DiagnosticDispatcher::CountKeyHash::operator()(
-    const CountKey& k) const noexcept -> std::size_t {
-  const std::size_t place_hash = std::hash<std::string>{}(k.place);
-  const std::size_t severity_hash =
-      std::hash<std::uint8_t>{}(static_cast<std::uint8_t>(k.severity));
-  return place_hash ^ (severity_hash << 1U);
-}
-
-DiagnosticDispatcher::DiagnosticDispatcher(
-    FileTable& files, std::uint32_t rate_limit)
-    : files_(&files), rate_limit_(rate_limit) {
+DiagnosticDispatcher::DiagnosticDispatcher(FileTable& files) : files_(&files) {
 }
 
 void DiagnosticDispatcher::Write(std::string_view text) {
@@ -135,30 +122,11 @@ void DiagnosticDispatcher::Emit(
   // A report is placed where the operation it is about was written. One about
   // no place -- the tool failed the design under no statement of its own -- is
   // placed where the procedure it is made under is written; which instance
-  // and what time are context, so they are a note of their own. The place is
-  // also what a repeated report is counted by.
+  // and what time are context, so they are a note of their own.
   const std::optional<Context> context =
       context_ ? std::optional{context_()} : std::nullopt;
   const std::string place =
       SourceLocationText(at.IsValid() || !context ? at : context->written_at);
-  if (rate_limit_ > 0) {
-    const CountKey key{.place = place, .severity = severity};
-    auto& count = emit_counts_[key];
-    if (count >= rate_limit_) {
-      if (count == rate_limit_) {
-        ++count;
-        Write(
-            std::format(
-                "{}{}note: further {} reports from here are not shown after "
-                "{} of them\n",
-                place, place.empty() ? "" : ": ", word, rate_limit_));
-      } else {
-        ++count;
-      }
-      return;
-    }
-    ++count;
-  }
 
   std::string text;
   if (!place.empty()) {
