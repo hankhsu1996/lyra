@@ -17,7 +17,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/stmt.hpp"

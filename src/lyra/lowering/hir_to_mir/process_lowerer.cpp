@@ -862,4 +862,24 @@ auto ProcessLowerer::BuildReturnPayload(
           .type = payload_type});
 }
 
+auto ProcessLowerer::ControlCellOf(hir::ControlledAssertionId assertion) const
+    -> const StaticCellBinding& {
+  const auto found = controls_.find(assertion);
+  if (found == controls_.end()) {
+    throw InternalError(
+        "ProcessLowerer::ControlCellOf: a statement the assertion control "
+        "tasks select was given no control cell");
+  }
+  return found->second;
+}
+
+auto ProcessLowerer::ControlPlace(
+    const WalkFrame& frame, hir::ControlledAssertionId assertion) const
+    -> mir::ExprId {
+  const StaticCellBinding& binding = ControlCellOf(assertion);
+  return frame.Builder().Add(BuildStaticStorageAccess(
+      owner_->Unit(), frame, binding.home, binding.cell_type,
+      mir::EnclosingHops{}));
+}
+
 }  // namespace lyra::lowering::hir_to_mir

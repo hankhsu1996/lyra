@@ -129,12 +129,6 @@ struct DelayRead {
     support::BuiltinFn entry, std::vector<mir::ExprId> arguments = {})
     -> mir::Expr;
 
-// Builds `current_runtime().ViolationReports()`, the keeper a violation report
-// is emplaced into, which keeps it in the Observed region unless the process
-// that made it is flushed first. Returns the call detached, as above.
-[[nodiscard]] auto BuildViolationReportsCallExpr(
-    const UnitLowerer& unit_lowerer, mir::Builder block) -> mir::Expr;
-
 // Builds the diagnostic broker expression `current_runtime().Diagnostic()`:
 // a `Diagnostic` method call on the engine handle, typed as the unit's
 // `diagnostic` builtin. Returns the call detached; the caller interns it. The

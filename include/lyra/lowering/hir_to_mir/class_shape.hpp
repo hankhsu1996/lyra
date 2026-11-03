@@ -10,7 +10,7 @@
 #include "lyra/base/translation.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/static_property_id.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"

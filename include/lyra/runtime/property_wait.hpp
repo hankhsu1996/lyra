@@ -15,6 +15,7 @@
 
 namespace lyra::runtime {
 
+class AssertionControl;
 class RuntimeEffects;
 
 // The one evaluation an expect statement starts (LRM 16.17), told of what it
@@ -31,7 +32,8 @@ class PropertyEvaluation {
  public:
   PropertyEvaluation(
       RuntimeEffects& effects, std::span<const Trigger* const> clock,
-      std::span<const Trigger* const> disable_reads, std::uint64_t words);
+      std::span<const Trigger* const> disable_reads, std::uint64_t words,
+      const AssertionControl* control);
 
   PropertyEvaluation(const PropertyEvaluation&) = delete;
   auto operator=(const PropertyEvaluation&) -> PropertyEvaluation& = delete;
@@ -86,14 +88,17 @@ class PropertyEvaluation {
 };
 
 // The wait an expect statement stops at, holding its evaluation over position
-// sets `words` wide and woken by its answer alone. The leaves are read here
-// and not kept, laid out in one array or each where its builder left it.
+// sets `words` wide and woken by its answer alone, under the statement's
+// `control`. The leaves are read here and not kept, laid out in one array or
+// each where its builder left it.
 auto WaitOnPropertyEvaluation(
     RuntimeEffects& effects, std::span<const Trigger> clock,
-    std::span<const Trigger> disable_reads, std::uint64_t words) -> Wait;
+    std::span<const Trigger> disable_reads, std::uint64_t words,
+    const AssertionControl* control) -> Wait;
 auto WaitOnPropertyEvaluation(
     RuntimeEffects& effects, std::span<const Trigger* const> clock,
-    std::span<const Trigger* const> disable_reads, std::uint64_t words) -> Wait;
+    std::span<const Trigger* const> disable_reads, std::uint64_t words,
+    const AssertionControl* control) -> Wait;
 
 // The attempt the wait an expect statement built holds.
 auto AttemptsOf(Wait* wait) -> EvaluationAttempts*;

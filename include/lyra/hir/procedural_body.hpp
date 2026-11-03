@@ -37,6 +37,10 @@ struct ProceduralBody {
   // expressions they read for the same reason.
   base::Arena<Constraint, ConstraintId> constraints;
   base::Registry<ProceduralVarDecl, ProceduralVarId> procedural_vars;
+  // The statements of this body the assertion control tasks select, each
+  // declared by the scope it stands in.
+  base::Arena<ControlledAssertionDecl, ControlledAssertionId>
+      controlled_assertions;
 
   auto operator==(const ProceduralBody&) const -> bool = default;
 };

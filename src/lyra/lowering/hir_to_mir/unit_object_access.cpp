@@ -106,6 +106,16 @@ auto ReadPublishedMember(
       });
 }
 
+auto ReachPublishedLoop(
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
+    hir::ScopeClassId scope_class, hir::PublishedLoopId loop) -> mir::ExprId {
+  return AddressPublishedSlot(
+      unit_lowerer, block, object, scope_class,
+      [&](const PublishedScopeLayout& layout) {
+        return layout.loops.Get(loop);
+      });
+}
+
 auto ReachPublishedDisableTarget(
     UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
     const hir::PublishedDisableTargetLeaf& leaf) -> mir::ExprId {

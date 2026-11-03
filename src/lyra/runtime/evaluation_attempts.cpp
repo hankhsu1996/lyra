@@ -3,15 +3,16 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/assertion_control.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/support/assertion_control.hpp"
 #include "lyra/support/property_answer.hpp"
 
 namespace lyra::runtime {
@@ -41,6 +42,18 @@ auto AnswerOf(std::uint64_t answer) -> support::PropertyAnswer {
   return static_cast<support::PropertyAnswer>(answer);
 }
 
+// Whether what an attempt came to may run the statement it selects, as its
+// control allowed when it began (LRM 20.11): a success runs the pass statement
+// where passing that way was allowed, vacuously or not (LRM 16.14.8), and a
+// failure the fail statement where failing was.
+auto MayRun(std::uint64_t allowed, bool holds, bool nonvacuous) -> bool {
+  if (!holds) {
+    return (allowed & support::kAssertionFails) != 0;
+  }
+  return (allowed & (nonvacuous ? support::kAssertionPassesNonvacuously
+                                : support::kAssertionPassesVacuously)) != 0;
+}
+
 }  // namespace
 
 auto EvaluationAttempts::AnswersOf(
@@ -56,17 +69,22 @@ auto EvaluationAttempts::AnswersOf(
 
 void EvaluationAttempts::Install(
     RuntimeEffects& effects, std::uint64_t words, OwnedCall pass_action,
-    OwnedCall fail_action) {
+    OwnedCall fail_action, AssertionControl* control) {
   Size(words);
   answered_ = Installed{
       .pass_action = std::move(pass_action),
       .fail_action = std::move(fail_action)};
+  control_ = control;
+  control->Watch(*this);
   effects.RegisterConcurrentAssertion(*this);
 }
 
-void EvaluationAttempts::Hold(std::uint64_t words) {
+void EvaluationAttempts::Hold(
+    std::uint64_t words, const AssertionControl* control) {
   Size(words);
-  answered_ = Held{.answer = support::AttemptAnswer::kPending};
+  answered_ =
+      Held{.answer = support::AttemptAnswer::kPending, .action_runs = false};
+  control_ = control;
 }
 
 void EvaluationAttempts::Size(std::uint64_t words) {
@@ -92,7 +110,11 @@ void EvaluationAttempts::SeedWord(std::uint64_t word, std::uint64_t bits) {
 
 void EvaluationAttempts::OpenAttempt() {
   RequireInstalled();
-  OpenEvaluation(std::nullopt, 0);
+  const std::uint64_t allowed = control_->Allowed();
+  if ((allowed & support::kAssertionChecks) == 0) {
+    return;
+  }
+  OpenEvaluation(OpensAttempt{.allowed = allowed}, 0);
 }
 
 void EvaluationAttempts::BeginTick() {
@@ -100,7 +122,7 @@ void EvaluationAttempts::BeginTick() {
   for (Evaluation& evaluation : evaluations_) {
     evaluation.stepped = false;
     for (ImplicationAnswers& answers : evaluation.implications) {
-      answers.this_tick = support::PropertyAnswer::kHoldsStrongly;
+      answers.this_tick = Outcome::OfNoInstance();
     }
   }
   cursor_ = 0;
@@ -108,6 +130,10 @@ void EvaluationAttempts::BeginTick() {
 
 void EvaluationAttempts::DisableTick() {
   RequireInstalled();
+  Discard();
+}
+
+void EvaluationAttempts::Discard() {
   words_.clear();
   evaluations_.clear();
   cursor_ = 0;
@@ -164,35 +190,52 @@ auto EvaluationAttempts::PartOf(std::int64_t index) const -> std::uint64_t {
   return EvaluationAt(index).part;
 }
 
-auto EvaluationAttempts::ImplicationAnswer(
-    std::int64_t index, std::uint64_t implication) const -> std::uint64_t {
+auto EvaluationAttempts::ImplicationOutcome(
+    std::int64_t index, std::uint64_t implication) const -> Outcome {
   for (const ImplicationAnswers& answers : EvaluationAt(index).implications) {
     if (answers.implication == implication) {
-      return static_cast<std::uint64_t>(
-          std::min(answers.settled, answers.this_tick));
+      return answers.settled.Conjoined(answers.this_tick);
     }
   }
-  return static_cast<std::uint64_t>(support::PropertyAnswer::kHoldsStrongly);
+  return Outcome::OfNoInstance();
 }
 
-void EvaluationAttempts::Resolve(std::int64_t index, std::uint64_t answer) {
+auto EvaluationAttempts::ImplicationAnswer(
+    std::int64_t index, std::uint64_t implication) const -> std::uint64_t {
+  return static_cast<std::uint64_t>(
+      ImplicationOutcome(index, implication).answer);
+}
+
+auto EvaluationAttempts::ImplicationNonvacuous(
+    std::int64_t index, std::uint64_t implication) const -> std::uint64_t {
+  return ImplicationOutcome(index, implication).nonvacuous ? 1 : 0;
+}
+
+void EvaluationAttempts::Resolve(
+    std::int64_t index, std::uint64_t answer, std::uint64_t nonvacuous) {
   Evaluation& evaluation = EvaluationAt(index);
-  evaluation.answer = AnswerOf(answer);
-  if (!evaluation.consequent_of.has_value()) {
+  evaluation.outcome = {
+      .answer = AnswerOf(answer), .nonvacuous = nonvacuous != 0};
+  const auto* consequent_of = std::get_if<ConsequentOf>(&evaluation.role);
+  if (consequent_of == nullptr) {
     return;
   }
   ImplicationAnswers& answers = AnswersOf(
-      evaluations_[evaluation.consequent_of->parent],
-      evaluation.consequent_of->implication);
-  answers.this_tick = std::min(answers.this_tick, evaluation.answer);
+      evaluations_[consequent_of->parent], consequent_of->implication);
+  answers.this_tick = answers.this_tick.Conjoined(evaluation.outcome);
 }
 
 void EvaluationAttempts::Report(
-    support::PropertyAnswer answer, RuntimeEffects& effects) {
-  const bool holds = answer == support::PropertyAnswer::kHoldsStrongly;
+    const Evaluation& attempt, RuntimeEffects& effects) {
+  const bool holds =
+      attempt.outcome.answer == support::PropertyAnswer::kHoldsStrongly;
+  const bool runs = MayRun(
+      std::get<OpensAttempt>(attempt.role).allowed, holds,
+      attempt.outcome.nonvacuous);
   std::visit(
       Overloaded{
           [&](Installed& installed) {
+            if (!runs) return;
             OwnedCall* action =
                 holds ? &installed.pass_action : &installed.fail_action;
             effects.Submit(
@@ -201,6 +244,7 @@ void EvaluationAttempts::Report(
           [&](Held& held) {
             held.answer = holds ? support::AttemptAnswer::kHolds
                                 : support::AttemptAnswer::kFails;
+            held.action_runs = runs;
           }},
       answered_);
 }
@@ -216,26 +260,26 @@ void EvaluationAttempts::Settle(RuntimeEffects& effects) {
   std::vector<std::uint64_t> kept_words;
   for (std::size_t index = 0; index < evaluations_.size(); ++index) {
     Evaluation& evaluation = evaluations_[index];
-    const std::optional<ConsequentOf>& consequent_of = evaluation.consequent_of;
-    if (consequent_of.has_value() &&
+    const auto* consequent_of = std::get_if<ConsequentOf>(&evaluation.role);
+    if (consequent_of != nullptr &&
         renumbered[consequent_of->parent] == kLeaves) {
       continue;
     }
-    if (IsSettled(evaluation.answer)) {
-      if (consequent_of.has_value()) {
+    if (IsSettled(evaluation.outcome.answer)) {
+      if (consequent_of != nullptr) {
         ImplicationAnswers& answers = AnswersOf(
             kept[renumbered[consequent_of->parent]],
             consequent_of->implication);
-        answers.settled = std::min(answers.settled, evaluation.answer);
+        answers.settled = answers.settled.Conjoined(evaluation.outcome);
       } else {
-        Report(evaluation.answer, effects);
+        Report(evaluation, effects);
       }
       continue;
     }
     renumbered[index] = kept.size();
     Evaluation moved = std::move(evaluation);
-    if (moved.consequent_of.has_value()) {
-      moved.consequent_of->parent = renumbered[moved.consequent_of->parent];
+    if (auto* moved_consequent = std::get_if<ConsequentOf>(&moved.role)) {
+      moved_consequent->parent = renumbered[moved_consequent->parent];
     }
     kept.push_back(std::move(moved));
     const auto first = static_cast<std::ptrdiff_t>(index * width_);
@@ -260,6 +304,17 @@ auto EvaluationAttempts::Answer() const -> std::uint64_t {
   return static_cast<std::uint64_t>(held->answer);
 }
 
+auto EvaluationAttempts::ActionRuns() const -> bool {
+  RequireInstalled();
+  const auto* held = std::get_if<Held>(&answered_);
+  if (held == nullptr) {
+    throw InternalError(
+        "EvaluationAttempts::ActionRuns: an installed assertion starts the "
+        "statements its answers select, and has no answer to read");
+  }
+  return held->action_runs;
+}
+
 void EvaluationAttempts::SettleAtEndOfRun() {
   RequireInstalled();
   auto* installed = std::get_if<Installed>(&answered_);
@@ -269,10 +324,16 @@ void EvaluationAttempts::SettleAtEndOfRun() {
         "registered for the end of the run");
   }
   for (const Evaluation& evaluation : evaluations_) {
-    if (evaluation.consequent_of.has_value()) {
+    const auto* opened = std::get_if<OpensAttempt>(&evaluation.role);
+    if (opened == nullptr) {
       continue;
     }
-    if (evaluation.answer >= support::PropertyAnswer::kHolds) {
+    const bool holds =
+        evaluation.outcome.answer >= support::PropertyAnswer::kHolds;
+    if (!MayRun(opened->allowed, holds, evaluation.outcome.nonvacuous)) {
+      continue;
+    }
+    if (holds) {
       installed->pass_action();
     } else {
       installed->fail_action();
@@ -292,13 +353,15 @@ void EvaluationAttempts::RequireInstalled() const {
 }
 
 void EvaluationAttempts::OpenEvaluation(
-    std::optional<ConsequentOf> consequent_of, std::uint64_t part) {
+    std::variant<OpensAttempt, ConsequentOf> role, std::uint64_t part) {
   evaluations_.push_back(
       Evaluation{
-          .consequent_of = consequent_of,
+          .role = role,
           .part = part,
           .stepped = false,
-          .answer = support::PropertyAnswer::kPending,
+          .outcome =
+              {.answer = support::PropertyAnswer::kPending,
+               .nonvacuous = false},
           .implications = {}});
   words_.insert(words_.end(), seed_.begin(), seed_.end());
 }

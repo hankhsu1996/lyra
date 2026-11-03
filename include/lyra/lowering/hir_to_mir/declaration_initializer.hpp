@@ -3,13 +3,14 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-// Brings one body's static-lifetime declaration up (LRM 6.21) in the two phases
-// `StorageBringUp` names.
+// Brings one body's static-lifetime cell up in the two phases `StorageBringUp`
+// names: a variable's initial value (LRM 6.21), or a statement's assertion
+// control, registered for the control tasks to select (LRM 20.11).
 //
 // The initializer expression is lowered in the value frame's context -- its
 // arena, its bindings, its `self` -- so the lowered output carries no arena
@@ -18,7 +19,7 @@ namespace lyra::lowering::hir_to_mir {
 // storage its cell stands for.
 auto IntegrateStaticInitializer(
     ProcessLowerer& process, const hir::ProceduralBody& body,
-    const StorageBringUp& bring_up, const StaticVarBinding& binding)
+    const StorageBringUp& bring_up, const StaticCellBinding& binding)
     -> diag::Result<void>;
 
 }  // namespace lyra::lowering::hir_to_mir

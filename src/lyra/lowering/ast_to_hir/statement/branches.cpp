@@ -15,22 +15,37 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/ast_to_hir/expression/operators.hpp"
 #include "lyra/lowering/ast_to_hir/pattern.hpp"
+#include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
+#include "lyra/support/assertion_control.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-auto LowerUniquePriorityCheck(slang::ast::UniquePriorityCheck check)
-    -> std::optional<hir::UniquePriorityCheck> {
+// A qualified statement's check, which the assertion control tasks select its
+// violation reports by (LRM 12.4.2, 20.11).
+auto LowerUniquePriorityCheck(
+    const WalkFrame& frame, slang::ast::UniquePriorityCheck check)
+    -> std::optional<hir::QualifiedCheck> {
+  const auto checked = [&](hir::UniquePriorityCheck keyword,
+                           support::AssertionType type) {
+    return hir::QualifiedCheck{
+        .keyword = keyword,
+        .control = DeclareControlledAssertion(frame, type, std::nullopt)};
+  };
   switch (check) {
     case slang::ast::UniquePriorityCheck::None:
       return std::nullopt;
     case slang::ast::UniquePriorityCheck::Unique:
-      return hir::UniquePriorityCheck::kUnique;
+      return checked(
+          hir::UniquePriorityCheck::kUnique, support::AssertionType::kUnique);
     case slang::ast::UniquePriorityCheck::Unique0:
-      return hir::UniquePriorityCheck::kUnique0;
+      return checked(
+          hir::UniquePriorityCheck::kUnique0, support::AssertionType::kUnique0);
     case slang::ast::UniquePriorityCheck::Priority:
-      return hir::UniquePriorityCheck::kPriority;
+      return checked(
+          hir::UniquePriorityCheck::kPriority,
+          support::AssertionType::kPriority);
   }
   throw InternalError(
       "LowerUniquePriorityCheck: unknown slang UniquePriorityCheck value");
@@ -73,7 +88,7 @@ auto LowerCaseStmt(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::CaseStatement& cs,
     diag::SourceSpan span) -> diag::Result<hir::Stmt> {
   const auto label_test = LowerLabelTest(cs.condition);
-  const auto case_check = LowerUniquePriorityCheck(cs.check);
+  const auto case_check = LowerUniquePriorityCheck(frame, cs.check);
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
   const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_expr));
@@ -120,7 +135,7 @@ auto LowerConditionalStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ConditionalStatement& cs, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  const auto if_check = LowerUniquePriorityCheck(cs.check);
+  const auto if_check = LowerUniquePriorityCheck(frame, cs.check);
   auto clauses_or = LowerConditionClauses(proc, frame, cs.conditions, span);
   if (!clauses_or) return std::unexpected(std::move(clauses_or.error()));
   auto then_stmt = proc.LowerStmt(cs.ifTrue, frame);
@@ -148,7 +163,7 @@ auto LowerPatternCaseStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::PatternCaseStatement& cs, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  const auto case_check = LowerUniquePriorityCheck(cs.check);
+  const auto case_check = LowerUniquePriorityCheck(frame, cs.check);
   const hir::CaseKeyword keyword = LowerPatternCaseKeyword(cs.condition);
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));

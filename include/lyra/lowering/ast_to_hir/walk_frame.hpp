@@ -111,9 +111,10 @@ struct OpenProceduralScope {
   hir::ProceduralScopeKind kind;
   // Absent when the source named nothing; the stand-in is settled at sealing.
   std::optional<std::string> source_name;
-  // Never supplied by whoever opens the scope: both fill in as the walk
+  // Never supplied by whoever opens the scope: each fills in as the walk
   // descends.
   std::vector<hir::ProceduralVarId> declarations;
+  std::vector<hir::ControlledAssertionId> controlled_assertions;
   std::vector<hir::ProceduralScopeId> children;
 };
 
@@ -495,11 +496,13 @@ struct WalkFrame {
   [[nodiscard]] auto SealScope(OpenProceduralScope scope) const
       -> hir::ProceduralScopeId {
     ProceduralScopes().Define(
-        scope.id, hir::ProceduralScopeDecl{
-                      .kind = scope.kind,
-                      .source_name = std::move(scope.source_name),
-                      .declarations = std::move(scope.declarations),
-                      .child_scopes = std::move(scope.children)});
+        scope.id,
+        hir::ProceduralScopeDecl{
+            .kind = scope.kind,
+            .source_name = std::move(scope.source_name),
+            .declarations = std::move(scope.declarations),
+            .controlled_assertions = std::move(scope.controlled_assertions),
+            .child_scopes = std::move(scope.children)});
     if (open_scope != nullptr) {
       open_scope->children.push_back(scope.id);
     }

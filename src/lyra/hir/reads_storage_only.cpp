@@ -159,6 +159,7 @@ auto IsPropertyOfTheReceiver(const Primary& primary) -> bool {
           [](const RoutedViewPlaceRef&) { return false; },
           [](const RoutedViewValueRef&) { return false; },
           [](const RoutedObjectRef&) { return false; },
+          [](const ScopeArgumentRef&) { return false; },
           [](const IterationBindingRef&) { return false; },
           [](const PatternVarRef&) { return false; },
           [](const NamespaceValueRef&) { return false; }},
@@ -190,6 +191,7 @@ auto IsDeclaredByABody(const Primary& primary) -> bool {
           [](const RoutedViewPlaceRef&) { return false; },
           [](const RoutedViewValueRef&) { return false; },
           [](const RoutedObjectRef&) { return false; },
+          [](const ScopeArgumentRef&) { return false; },
           [](const NamespaceValueRef&) { return false; }},
       primary);
 }

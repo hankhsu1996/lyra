@@ -1311,6 +1311,13 @@ class UnitLowerer {
   // against only those that could equal it.
   auto InternBlockBody(hir::StructuralScope scope) -> hir::BlockBodyId;
 
+  // The walk to `target` every route to a scope takes, each loop's block it
+  // passes picked by `select_of`.
+  [[nodiscard]] auto RouteSelecting(
+      const WalkFrame& frame, const slang::ast::Scope& target,
+      RouteOrigin origin, const LoopSelectOf& select_of)
+      -> diag::Result<std::optional<ScopeRoute>>;
+
   // The selects `written`, a path a name read where `frame` stands wrote,
   // gives each loop's block it passes, each lowered once and stored beside the
   // routes it belongs to.
@@ -1643,6 +1650,14 @@ class UnitLowerer {
       const WalkFrame& frame, const slang::ast::Scope& target,
       RouteOrigin origin) -> diag::Result<std::optional<ScopeRoute>>;
 
+  // How this reader reaches a loop's block a name wrote with no path -- `g[1]`
+  // where the loop is declared -- whose select the front end spent resolving
+  // the name to the block, so the select is the block's own index (LRM 23.6,
+  // 27.4).
+  [[nodiscard]] auto RouteToLoopBlockByItsIndex(
+      const WalkFrame& frame, const slang::ast::GenerateBlockSymbol& block,
+      RouteOrigin origin, diag::SourceSpan span) -> diag::Result<ScopeRoute>;
+
   // Where a name written in this unit starts: through an interface port or
   // upward at the enclosing scope it landed in, where it leaves the unit's
   // instance, and at the reader for a name that never leaves and for every
@@ -1677,6 +1692,12 @@ class UnitLowerer {
   // as, recorded in this unit -- this unit's own included.
   [[nodiscard]] auto PublishedClassOf(const slang::ast::Scope& scope)
       -> hir::ScopeClassId;
+
+  // Where the scope holding the loop generate construct `loop` published it:
+  // that scope's class, and the loop's position among its loops (LRM 27.4).
+  [[nodiscard]] auto PublishedLoopOf(
+      const slang::ast::GenerateBlockArraySymbol& loop)
+      -> std::pair<hir::ScopeClassId, hir::PublishedLoopId>;
 
   // A route starting where `scope` stands for this reader: `scope` is an
   // instance's body or a generate block outside the reader, and the route

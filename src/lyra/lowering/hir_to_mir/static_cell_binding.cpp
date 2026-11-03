@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 
 #include <vector>
 
@@ -9,6 +9,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -74,39 +75,55 @@ auto BindBodyStatics(
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
     const StaticStorageOwner& owner, const hir::ProceduralBody& body)
-    -> StaticVarBindings {
-  StaticVarBindings bindings;
+    -> StaticCellBindings {
+  StaticCellBindings bindings;
+  const mir::TypeId control_type = mir::LibraryTypeOf(
+      unit_lowerer.Unit().types, support::LibraryDecl::kAssertionControl);
   // Descends the body's lexical scope tree, since a declaration states its
-  // scope only by sitting in it.
+  // scope only by sitting in it, carrying the scopes passed on the way down.
+  std::vector<hir::ProceduralScopeId> enclosing;
   const auto bind = [&](const auto& self_ref,
                         hir::ProceduralScopeId scope_id) -> void {
     const hir::ProceduralScopeDecl& scope = scopes.Get(scope_id);
+    enclosing.push_back(scope_id);
     for (const hir::ProceduralVarId var_id : scope.declarations) {
       const hir::ProceduralVarDecl& var = body.procedural_vars.Get(var_id);
       if (var.lifetime != hir::VariableLifetime::kStatic) continue;
       const mir::TypeId cell_type = CellTypeFor(
           unit_lowerer, owner, unit_lowerer.TranslateType(var.type));
       bindings.push_back(
-          StaticVarBinding{
-              .var = var_id,
+          StaticCellBinding{
+              .of = var_id,
               .scope = scope_id,
               .home = PlacedOrDeclared(owner, var_id, cell_type),
               .cell_type = cell_type});
     }
+    for (const hir::ControlledAssertionId assertion :
+         scope.controlled_assertions) {
+      bindings.push_back(
+          StaticCellBinding{
+              .of =
+                  AssertionControlCell{
+                      .assertion = assertion, .within = enclosing},
+              .scope = scope_id,
+              .home = DeclareStaticCell(owner, control_type),
+              .cell_type = control_type});
+    }
     for (const hir::ProceduralScopeId child : scope.child_scopes) {
       self_ref(self_ref, child);
     }
+    enclosing.pop_back();
   };
   bind(bind, body.root_scope);
   return bindings;
 }
 
-auto InstanceFieldOf(const StaticVarBinding& binding) -> mir::ClassFieldTarget {
+auto InstanceFieldOf(const StaticCellBinding& binding)
+    -> mir::ClassFieldTarget {
   const auto* home = std::get_if<InstanceFieldHome>(&binding.home);
   if (home == nullptr) {
     throw InternalError(
-        "InstanceFieldOf: a static-lifetime variable of a body outside the "
-        "design "
+        "InstanceFieldOf: a static-lifetime cell of a body outside the design "
         "hierarchy was asked for its field, but no object holds one -- please "
         "report this as a bug");
   }

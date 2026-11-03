@@ -164,14 +164,26 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_postponed_effects", &lyra_rt_postponed_effects);
   add("lyra_rt_submit_at_run_end", &lyra_rt_submit_at_run_end);
   add("lyra_rt_observed_effects", &lyra_rt_observed_effects);
-  add("lyra_rt_violation_reports", &lyra_rt_violation_reports);
   add("lyra_rt_deferred_effects_allocate", &lyra_rt_deferred_effects_allocate);
   add("lyra_rt_deferred_effects_commit", &lyra_rt_deferred_effects_commit);
-  add("lyra_rt_violation_reports_allocate",
-      &lyra_rt_violation_reports_allocate);
-  add("lyra_rt_violation_reports_commit", &lyra_rt_violation_reports_commit);
-  add("lyra_rt_submit_deferred_observed", &lyra_rt_submit_deferred_observed);
-  add("lyra_rt_submit_deferred_final", &lyra_rt_submit_deferred_final);
+  add("lyra_rt_assertion_control_allocate",
+      &lyra_rt_assertion_control_allocate);
+  add("lyra_rt_assertion_control_commit", &lyra_rt_assertion_control_commit);
+  add("lyra_rt_assertion_control_register_in",
+      &lyra_rt_assertion_control_register_in);
+  add("lyra_rt_assertion_control_register",
+      &lyra_rt_assertion_control_register);
+  add("lyra_rt_assertion_control_register_within",
+      &lyra_rt_assertion_control_register_within);
+  add("lyra_rt_assertion_control_allowed", &lyra_rt_assertion_control_allowed);
+  add("lyra_rt_assertion_control_submit_observed",
+      &lyra_rt_assertion_control_submit_observed);
+  add("lyra_rt_assertion_control_submit_final",
+      &lyra_rt_assertion_control_submit_final);
+  add("lyra_rt_assert_control_of_design", &lyra_rt_assert_control_of_design);
+  add("lyra_rt_assert_control_of_scope", &lyra_rt_assert_control_of_scope);
+  add("lyra_rt_assert_control_of_block", &lyra_rt_assert_control_of_block);
+  add("lyra_rt_assert_control_of_loop", &lyra_rt_assert_control_of_loop);
   add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_delay_real", &lyra_rt_delay_real);
   add("lyra_rt_delay_ticks", &lyra_rt_delay_ticks);
@@ -628,12 +640,16 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_evaluation_attempts_part_of);
   add("lyra_rt_evaluation_attempts_implication_answer",
       &lyra_rt_evaluation_attempts_implication_answer);
+  add("lyra_rt_evaluation_attempts_implication_nonvacuous",
+      &lyra_rt_evaluation_attempts_implication_nonvacuous);
   add("lyra_rt_evaluation_attempts_resolve",
       &lyra_rt_evaluation_attempts_resolve);
   add("lyra_rt_evaluation_attempts_settle",
       &lyra_rt_evaluation_attempts_settle);
   add("lyra_rt_evaluation_attempts_answer",
       &lyra_rt_evaluation_attempts_answer);
+  add("lyra_rt_evaluation_attempts_action_runs",
+      &lyra_rt_evaluation_attempts_action_runs);
   add("lyra_rt_string_value_cell_alloc", &lyra_rt_string_value_cell_alloc);
   add("lyra_rt_string_value_cell_store", &lyra_rt_string_value_cell_store);
   add("lyra_rt_string_value_cell_load", &lyra_rt_string_value_cell_load);
@@ -1292,6 +1308,8 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_timer_construct", &lyra_rt_timer_construct);
   add("lyra_rt_evaluation_attempts_construct",
       &lyra_rt_evaluation_attempts_construct);
+  add("lyra_rt_assertion_control_construct",
+      &lyra_rt_assertion_control_construct);
   add("lyra_rt_loop_blocks_construct", &lyra_rt_loop_blocks_construct);
   add("lyra_rt_channel_cancellation_construct",
       &lyra_rt_channel_cancellation_construct);
@@ -1339,6 +1357,7 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_timer_destroy", &lyra_rt_timer_destroy);
   add("lyra_rt_evaluation_attempts_destroy",
       &lyra_rt_evaluation_attempts_destroy);
+  add("lyra_rt_assertion_control_destroy", &lyra_rt_assertion_control_destroy);
   add("lyra_rt_loop_blocks_destroy", &lyra_rt_loop_blocks_destroy);
 }
 

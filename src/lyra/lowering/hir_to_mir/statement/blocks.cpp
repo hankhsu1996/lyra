@@ -21,7 +21,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -96,9 +96,8 @@ auto CancellationTargetType(mir::CompilationUnit& unit) -> mir::TypeId {
       unit.types, support::LibraryDecl::kCancellationTarget);
 }
 
-// The expression reaching the target a region claims and a `disable`
-// invalidates (LRM 9.6.2). A target is storage rather than a value, so what
-// every operation on one takes is its address.
+}  // namespace
+
 auto CancellationTarget(
     ProcessLowerer& process, const WalkFrame& frame,
     const StaticStorageHome& target) -> mir::ExprId {
@@ -115,6 +114,32 @@ auto CancellationTarget(
                   .pointee = target_type,
                   .ownership = mir::PointerOwnership::kBorrowed}})});
 }
+
+auto NamedTarget(
+    ProcessLowerer& process, const WalkFrame& frame,
+    const hir::DisableTarget& target) -> mir::ExprId {
+  return std::visit(
+      Overloaded{
+          [&](const hir::DirectDisableTarget& t) {
+            const std::optional<StaticStorageHome>& home =
+                process.Scopes().Get(t.scope).disable_target;
+            if (!home.has_value()) {
+              throw InternalError(
+                  "NamedTarget: the named scope owns no disable target, so "
+                  "the source named it nothing and no name could have reached "
+                  "it -- please report this as a bug");
+            }
+            return CancellationTarget(process, frame, *home);
+          },
+          [&](const hir::RoutedDisableTarget& t) {
+            return frame.Builder().AsValue(
+                process.Owner().Unit().types,
+                process.RouteEnd(frame, t.target.id));
+          }},
+      target);
+}
+
+namespace {
 
 // Appends one end of a target's extent -- entering it or leaving it -- as a
 // statement of `frame`'s block.
@@ -283,26 +308,7 @@ auto LowerDisableStmt(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
 
-  // Both forms hand the statement the one thing it acts on: the target's
-  // address. A scope of this body's own declaration scope is a cell reached
-  // where it sits; one anywhere else is reached through the route to it.
-  const mir::ExprId member = std::visit(
-      Overloaded{
-          [&](const hir::DirectDisableTarget& t) {
-            const std::optional<StaticStorageHome>& home =
-                process.Scopes().Get(t.scope).disable_target;
-            if (!home.has_value()) {
-              throw InternalError(
-                  "LowerDisableStmt: the named scope owns no disable target, "
-                  "so the source named it nothing and no name could have "
-                  "reached it -- please report this as a bug");
-            }
-            return CancellationTarget(process, frame, *home);
-          },
-          [&](const hir::RoutedDisableTarget& t) {
-            return process.RouteEnd(frame, t.target.id);
-          }},
-      d.target);
+  const mir::ExprId member = NamedTarget(process, frame, d.target);
   const mir::ExprId services =
       block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
   // One call carries the whole statement (LRM 9.6.2): it invalidates the
@@ -314,7 +320,7 @@ auto LowerDisableStmt(
           .data =
               mir::CallExpr{
                   .callee = mir::Direct{.target = support::BuiltinFn::kDisable},
-                  .arguments = {block.AsValue(unit.types, member), services}},
+                  .arguments = {member, services}},
           .type = unit.builtins.void_type});
   return mir::Stmt{
       .label = std::move(label), .data = mir::ExprStmt{.expr = disable}};

@@ -60,7 +60,7 @@
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/switch_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
@@ -2841,7 +2841,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   declared_subroutines_ = {
       hir_scope.structural_subroutines.size(), std::move(declared_subroutines)};
 
-  std::vector<StaticVarBindings> process_statics;
+  std::vector<StaticCellBindings> process_statics;
   process_statics.reserve(hir_scope.processes.size());
   for (const hir::ProcessId id : hir_scope.processes.Ids()) {
     process_statics.push_back(BindBodyStatics(
@@ -2855,7 +2855,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   process_static_bindings_ = {
       hir_scope.processes.size(), std::move(process_statics)};
 
-  std::vector<StaticVarBindings> assertion_statics;
+  std::vector<StaticCellBindings> assertion_statics;
   assertion_statics.reserve(hir_scope.concurrent_assertions.size());
   for (const hir::ConcurrentAssertionId id :
        hir_scope.concurrent_assertions.Ids()) {
@@ -3417,7 +3417,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
                                     .virtual_dispatch,
             .defining_unit = std::nullopt});
     subroutine_callables.push_back(declared.callable);
-    for (const StaticVarBinding& binding : declared.statics) {
+    for (const StaticCellBinding& binding : declared.statics) {
       auto integ = IntegrateStaticInitializer(
           subroutine_lowerer, src.body,
           StorageBringUp{.install = install_frame, .value = init_frame},
@@ -3495,7 +3495,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
 
   for (const hir::ProcessId id : hir_scope.processes.Ids()) {
     const auto& p = hir_scope.processes.Get(id);
-    const StaticVarBindings& statics = process_static_bindings_.Get(id);
+    const StaticCellBindings& statics = process_static_bindings_.Get(id);
     // What the procedure's body is built of, beyond its statements, is lowered
     // from the procedure.
     ProcessLowerer process_lowerer(
@@ -3540,7 +3540,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
               starts_as(BuiltinFn::kRegisterTriggered);
             }},
         p.kind);
-    for (const StaticVarBinding& binding : statics) {
+    for (const StaticCellBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
           process_lowerer, p.body,
           StorageBringUp{.install = install_frame, .value = init_frame},

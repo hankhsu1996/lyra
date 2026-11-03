@@ -11,6 +11,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/pool_id.hpp"
+#include "lyra/support/assertion_control.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::support {
@@ -320,6 +321,22 @@ struct CoverageDatabaseSystemSubroutineInfo {
   CoverageDatabaseCall call;
 };
 
+// LRM 20.11 the assertion control tasks. `$assertcontrol` states what it does
+// in its first argument and what it selects by in the three after it; every
+// other one is `$assertcontrol` with those fixed and takes only the levels and
+// the list, which is how the clause defines them. A selection the call leaves
+// out is the clause's default, every type of Table 20-6 and every directive of
+// Table 20-7, and the levels' default is 0, every level.
+struct AssertionControlStatedByCall {};
+struct AssertionControlFixed {
+  AssertionControlType control;
+  std::uint8_t types;
+};
+
+struct AssertionControlSystemSubroutineInfo {
+  std::variant<AssertionControlStatedByCall, AssertionControlFixed> form;
+};
+
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     ProgramControlSystemSubroutineInfo, DiagnosticSystemSubroutineInfo,
@@ -331,7 +348,7 @@ using SystemSubroutineSemantic = std::variant<
     RandomSystemSubroutineInfo, DistributionSystemSubroutineInfo,
     SampledValueSystemSubroutineInfo, ValueChangeSystemSubroutineInfo,
     PastValueSystemSubroutineInfo, ValueDumpSystemSubroutineInfo,
-    CoverageDatabaseSystemSubroutineInfo>;
+    CoverageDatabaseSystemSubroutineInfo, AssertionControlSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -1287,6 +1304,99 @@ inline constexpr std::array kSystemSubroutines = {
         .semantic =
             CoverageDatabaseSystemSubroutineInfo{
                 .call = CoverageDatabaseCall::kLoadCoverageDb},
+    },
+    // LRM 20.11: `$assertcontrol` takes the control type and then, each
+    // optional, the types, the directives, the levels and the list; each other
+    // assertion control task takes the levels and the list.
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{100},
+        .name = "$assertcontrol",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
+        .semantic =
+            AssertionControlSystemSubroutineInfo{
+                .form = AssertionControlStatedByCall{}},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{101},
+        .name = "$asserton",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
+        .semantic =
+            AssertionControlSystemSubroutineInfo{
+                .form = AssertionControlFixed{.control = AssertionControlType::kOn, .types = kEveryAssertion}},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{102},
+        .name = "$assertoff",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
+        .semantic =
+            AssertionControlSystemSubroutineInfo{
+                .form = AssertionControlFixed{.control = AssertionControlType::kOff, .types = kEveryAssertion}},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{103},
+        .name = "$assertkill",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
+        .semantic =
+            AssertionControlSystemSubroutineInfo{
+                .form = AssertionControlFixed{.control = AssertionControlType::kKill, .types = kEveryAssertion}},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{104},
+        .name = "$assertpasson",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
+        .semantic =
+            AssertionControlSystemSubroutineInfo{
+                .form = AssertionControlFixed{.control = AssertionControlType::kPassOn, .types = kEveryAssertionAndExpect}},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{105},
+        .name = "$assertpassoff",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
+        .semantic =
+            AssertionControlSystemSubroutineInfo{
+                .form = AssertionControlFixed{.control = AssertionControlType::kPassOff, .types = kEveryAssertionAndExpect}},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{106},
+        .name = "$assertfailon",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
+        .semantic =
+            AssertionControlSystemSubroutineInfo{
+                .form = AssertionControlFixed{.control = AssertionControlType::kFailOn, .types = kEveryAssertionAndExpect}},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{107},
+        .name = "$assertfailoff",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
+        .semantic =
+            AssertionControlSystemSubroutineInfo{
+                .form = AssertionControlFixed{.control = AssertionControlType::kFailOff, .types = kEveryAssertionAndExpect}},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{108},
+        .name = "$assertnonvacuouson",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
+        .semantic =
+            AssertionControlSystemSubroutineInfo{
+                .form = AssertionControlFixed{.control = AssertionControlType::kNonvacuousOn, .types = kEveryAssertionAndExpect}},
+    },
+    SystemSubroutineDesc{
+        .id = SystemSubroutineId{109},
+        .name = "$assertvacuousoff",
+        .kind = SystemSubroutineKind::kTask,
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
+        .semantic =
+            AssertionControlSystemSubroutineInfo{
+                .form = AssertionControlFixed{.control = AssertionControlType::kVacuousOff, .types = kEveryAssertionAndExpect}},
     },
 };
 

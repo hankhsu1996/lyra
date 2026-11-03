@@ -44,6 +44,7 @@
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -224,7 +225,27 @@ auto FindPublishedChoice(
   return std::nullopt;
 }
 
+// What a walk that found no route to a scope answers the name with.
+auto ScopeNotReached(diag::SourceSpan span) -> diag::Result<ScopeRoute> {
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedExpressionForm,
+      "a scope reached this way is not yet supported");
+}
+
 }  // namespace
+
+auto UnitLowerer::PublishedLoopOf(
+    const slang::ast::GenerateBlockArraySymbol& loop)
+    -> std::pair<hir::ScopeClassId, hir::PublishedLoopId> {
+  const hir::ScopeClassId holder = PublishedClassOf(*loop.getParentScope());
+  const auto& loops = unit_.scope_classes.Get(holder).loops;
+  for (const hir::PublishedLoopId at : loops.Ids()) {
+    if (loops.Get(at).name == loop.name) return {holder, at};
+  }
+  throw InternalError(
+      "UnitLowerer::PublishedLoopOf: a scope holding a named loop generate "
+      "construct publishes it");
+}
 
 auto UnitLowerer::RoutesOf(ScopeFrameId owner_frame) -> hir::ScopeRoutes& {
   return routes_by_frame_[owner_frame];
@@ -541,7 +562,7 @@ auto UnitLowerer::DisableTargetFrom(
   const auto refuse = [&] {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedStatementForm,
-        "a disable of a block or task reached this way is not yet supported");
+        "naming a block or task reached this way is not yet supported");
   };
   // A name leaving the instance or passing a generate block reaches a target
   // only its publication says anything about, whatever this unit minted for
@@ -979,9 +1000,7 @@ auto UnitLowerer::RouteToScopeOrRefuse(
   auto walked = RouteToScope(frame, target, std::move(origin));
   if (!walked) return std::unexpected(std::move(walked.error()));
   if (!walked->has_value()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a scope reached this way is not yet supported");
+    return ScopeNotReached(span);
   }
   return **std::move(walked);
 }
@@ -991,8 +1010,35 @@ auto UnitLowerer::RouteToScope(
     -> diag::Result<std::optional<ScopeRoute>> {
   auto selects = SelectsWritten(frame, origin.written);
   if (!selects) return std::unexpected(std::move(selects.error()));
-  const LoopSelectOf& select_of = *selects;
+  return RouteSelecting(frame, target, std::move(origin), *selects);
+}
 
+auto UnitLowerer::RouteToLoopBlockByItsIndex(
+    const WalkFrame& frame, const slang::ast::GenerateBlockSymbol& block,
+    RouteOrigin origin, diag::SourceSpan span) -> diag::Result<ScopeRoute> {
+  auto selects = SelectsWritten(frame, origin.written);
+  if (!selects) return std::unexpected(std::move(selects.error()));
+  const ScopeUnderConstruction& holder = RouteHolderOf(frame);
+  const hir::ExprId position = holder.scope->exprs.Add(MakeIntegralLiteralExpr(
+      *block.getArrayIndex(), unit_.builtins.int_type, span));
+  const LoopSelectOf select_of =
+      [written = *std::move(selects), &block,
+       position](const slang::ast::GenerateBlockSymbol& passed)
+      -> std::optional<hir::ExprId> {
+    if (&passed == &block) return position;
+    return written(passed);
+  };
+  auto walked = RouteSelecting(frame, block, std::move(origin), select_of);
+  if (!walked) return std::unexpected(std::move(walked.error()));
+  if (!walked->has_value()) {
+    return ScopeNotReached(span);
+  }
+  return **std::move(walked);
+}
+
+auto UnitLowerer::RouteSelecting(
+    const WalkFrame& frame, const slang::ast::Scope& target, RouteOrigin origin,
+    const LoopSelectOf& select_of) -> diag::Result<std::optional<ScopeRoute>> {
   // A name that left the reader's instance starts where it landed, which is a
   // scope of whatever instance stands there rather than of this unit's own
   // object -- even where that instance is of this unit -- so every hop below it

@@ -1049,13 +1049,20 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kPostponedEffects:
     case support::BuiltinFn::kSubmitAtRunEnd:
     case support::BuiltinFn::kObservedEffects:
-    case support::BuiltinFn::kViolationReports:
     case support::BuiltinFn::kDeferredEffectsAllocate:
     case support::BuiltinFn::kDeferredEffectsCommit:
-    case support::BuiltinFn::kViolationReportsAllocate:
-    case support::BuiltinFn::kViolationReportsCommit:
-    case support::BuiltinFn::kSubmitDeferredObserved:
-    case support::BuiltinFn::kSubmitDeferredFinal:
+    case support::BuiltinFn::kAssertionControlAllocate:
+    case support::BuiltinFn::kAssertionControlCommit:
+    case support::BuiltinFn::kAssertionControlRegisterIn:
+    case support::BuiltinFn::kAssertionControlRegister:
+    case support::BuiltinFn::kAssertionControlRegisterWithin:
+    case support::BuiltinFn::kAssertionControlAllowed:
+    case support::BuiltinFn::kAssertionControlSubmitObserved:
+    case support::BuiltinFn::kAssertionControlSubmitFinal:
+    case support::BuiltinFn::kAssertControlOfDesign:
+    case support::BuiltinFn::kAssertControlOfScope:
+    case support::BuiltinFn::kAssertControlOfBlock:
+    case support::BuiltinFn::kAssertControlOfLoop:
     case support::BuiltinFn::kFiles:
     case support::BuiltinFn::kCancellationFor:
     case support::BuiltinFn::kIsCancelled:
@@ -1354,9 +1361,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEvaluationAttemptsCount:
     case support::BuiltinFn::kEvaluationAttemptsPartOf:
     case support::BuiltinFn::kEvaluationAttemptsImplicationAnswer:
+    case support::BuiltinFn::kEvaluationAttemptsImplicationNonvacuous:
     case support::BuiltinFn::kEvaluationAttemptsResolve:
     case support::BuiltinFn::kEvaluationAttemptsSettle:
     case support::BuiltinFn::kEvaluationAttemptsAnswer:
+    case support::BuiltinFn::kEvaluationAttemptsActionRuns:
     // A delayed continuous assignment's timer holds a closure and a place in a
     // queue, and no value of the design (LRM 10.3.3).
     case support::BuiltinFn::kTimerBind:

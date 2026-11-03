@@ -34,6 +34,14 @@ class LoopBlocks {
   // stands there.
   [[nodiscard]] auto At(std::int64_t index) const -> Scope*;
 
+  // Each block the loop built, in no order the language gives (LRM 27.4).
+  template <typename Visit>
+  void ForEach(const Visit& visit) const {
+    for (const auto& [index, block] : blocks_) {
+      visit(*block);
+    }
+  }
+
  private:
   std::unordered_map<std::int64_t, Scope*> blocks_;
 };

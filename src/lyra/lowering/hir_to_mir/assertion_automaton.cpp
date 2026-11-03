@@ -420,14 +420,6 @@ auto Builder::BuildAnswer(
             const PropertyFragment rhs = BuildAnswer(binary.rhs, terms);
             Positions start = lhs.start;
             AddPositions(start, rhs.start);
-            // LRM 16.12.8 defines `implies` and `iff` by what they answer
-            // where each operand holds or fails, which Annex F.3.4.3.2 writes
-            // as `not p1 or p2` and the conjunction of both directions.
-            const auto implies = [&](std::uint32_t from, std::uint32_t to) {
-              return add(
-                  GreatestTerm{
-                      .lhs = add(NegatedTerm{.operand = from}), .rhs = to});
-            };
             std::uint32_t term = 0;
             switch (binary.connective) {
               case hir::PropertyConnective::kAnd:
@@ -437,14 +429,11 @@ auto Builder::BuildAnswer(
                 term = add(GreatestTerm{.lhs = lhs.term, .rhs = rhs.term});
                 break;
               case hir::PropertyConnective::kImplies:
-                term = implies(lhs.term, rhs.term);
+                term = add(ImpliesTerm{.from = lhs.term, .to = rhs.term});
                 break;
-              case hir::PropertyConnective::kIff: {
-                const std::uint32_t forward = implies(lhs.term, rhs.term);
-                const std::uint32_t backward = implies(rhs.term, lhs.term);
-                term = add(LeastTerm{.lhs = forward, .rhs = backward});
+              case hir::PropertyConnective::kIff:
+                term = add(IffTerm{.lhs = lhs.term, .rhs = rhs.term});
                 break;
-              }
             }
             return PropertyFragment{.start = std::move(start), .term = term};
           },
@@ -516,7 +505,8 @@ auto Builder::Build(const hir::PropertySpec& spec) -> AssertionAutomaton {
               [&](ImplicationTerm& implication) {
                 widen(implication.antecedent);
               },
-              [](NegatedTerm&) {}, [](LeastTerm&) {}, [](GreatestTerm&) {}},
+              [](NegatedTerm&) {}, [](LeastTerm&) {}, [](GreatestTerm&) {},
+              [](ImpliesTerm&) {}, [](IffTerm&) {}},
           term);
     }
   }

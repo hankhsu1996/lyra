@@ -602,7 +602,8 @@ auto lyra_rt_enumeration_prev(
 
 // The keepers a closure the program defers is made in (LRM 4.4): the deferred
 // effects of the region that will run it -- the write a non-blocking assignment
-// defers, the print a `$strobe` postpones, an assertion's tick -- and where a
+// defers, the print a `$strobe` postpones, an assertion's tick -- and the
+// assertion control of a `unique` / `unique0` / `priority` statement, where its
 // violation report is kept for the observed region. The program makes the
 // closure at the address `*_allocate` hands out, `size` bytes at a multiple of
 // `alignment`, and `*_commit` takes over the closure made at `made`: it is
@@ -610,24 +611,57 @@ auto lyra_rt_enumeration_prev(
 auto lyra_rt_nba_effects(void* runtime) -> void*;
 auto lyra_rt_postponed_effects(void* runtime) -> void*;
 auto lyra_rt_observed_effects(void* runtime) -> void*;
-auto lyra_rt_violation_reports(void* runtime) -> void*;
 auto lyra_rt_deferred_effects_allocate(
     void* effects, std::uint64_t size, std::uint64_t alignment) -> void*;
 void lyra_rt_deferred_effects_commit(void* effects, void* made);
-auto lyra_rt_violation_reports_allocate(
-    void* keeper, std::uint64_t size, std::uint64_t alignment) -> void*;
-void lyra_rt_violation_reports_commit(void* keeper, void* made);
+auto lyra_rt_assertion_control_allocate(
+    void* control, std::uint64_t size, std::uint64_t alignment) -> void*;
+void lyra_rt_assertion_control_commit(void* control, void* made);
 
 // Hands a callable to what is owed once the simulation has ended, after the
 // final procedures: writing the coverage database (LRM 19.9). It takes the
 // closure's box over.
 void lyra_rt_submit_at_run_end(void* runtime, void* closure);
 
-// Queues a deferred assertion's action, which is started as an execution of
-// its own once the report matures (LRM 16.4). Each takes ownership of the
-// coroutine `body` points at, built where the statement is.
-void lyra_rt_submit_deferred_observed(void* runtime, void* body);
-void lyra_rt_submit_deferred_final(void* runtime, void* body);
+// What the assertion control tasks set for one statement (LRM 20.11).
+// `register_in` and `register` make it one the tasks select under the run's
+// `effects`, held by the instance `scope` or by none, as a statement of Table
+// 20-6 `type` stating Table 20-7 `directive`, 0 where it states none;
+// `register_within` makes it one a task naming `block` selects. `allowed` is
+// what an execution beginning now may do, as `support::kAssertion*` bits.
+// `submit_observed` and `submit_final` queue a deferred assertion's action,
+// which is started as an execution of its own once the report matures
+// (LRM 16.4), each taking ownership of the coroutine `body` points at, built
+// where the statement is.
+void lyra_rt_assertion_control_register_in(
+    void* control, void* effects, void* scope, std::uint64_t type,
+    std::uint64_t directive);
+void lyra_rt_assertion_control_register(
+    void* control, void* effects, std::uint64_t type, std::uint64_t directive);
+void lyra_rt_assertion_control_register_within(
+    void* control, const void* block);
+auto lyra_rt_assertion_control_allowed(const void* control) -> std::uint64_t;
+void lyra_rt_assertion_control_submit_observed(void* control, void* body);
+void lyra_rt_assertion_control_submit_final(void* control, void* body);
+
+// An assertion control task (LRM 20.11): its `control_type`,
+// `assertion_type`, `directive_type` and `levels` as evaluated, applied to the
+// whole design, to the instance or generate block `scope`, to the named block
+// or subroutine whose disable target is `block`, or to every block the loop
+// generate construct `blocks` built.
+void lyra_rt_assert_control_of_design(
+    void* runtime, std::int64_t control_type, std::int64_t types,
+    std::int64_t directives, std::int64_t levels, const void* location);
+void lyra_rt_assert_control_of_scope(
+    void* runtime, void* scope, std::int64_t control_type, std::int64_t types,
+    std::int64_t directives, std::int64_t levels, const void* location);
+void lyra_rt_assert_control_of_block(
+    void* runtime, const void* block, std::int64_t control_type,
+    std::int64_t types, std::int64_t directives, const void* location);
+void lyra_rt_assert_control_of_loop(
+    void* runtime, const void* blocks, std::int64_t control_type,
+    std::int64_t types, std::int64_t directives, std::int64_t levels,
+    const void* location);
 
 // The NBA region of an effect carrying a delay control (LRM 9.4.5): the region
 // is the same, the slot is the one `duration` steps of the scope's time unit
@@ -765,7 +799,7 @@ auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void*;
 // and `disable_property_evaluation` is the disable condition having held.
 auto lyra_rt_wait_on_property_evaluation(
     void* runtime, LyraSpan clock, LyraSpan disable_reads, std::uint64_t words,
-    void* out) -> void*;
+    const void* control, void* out) -> void*;
 auto lyra_rt_attempts_of(void* wait) -> void*;
 void lyra_rt_bind_property_evaluation(void* wait, void* step, void* test);
 void lyra_rt_disable_property_evaluation(void* wait);
@@ -1396,23 +1430,25 @@ auto lyra_rt_managedref_sampled_history_at(
 // through the storage's own address. These carry machine words rather than
 // values of the design, which is why one entry serves every assertion.
 //
-// `install` fixes how wide a position set is and the statements an outcome
-// selects. `open_attempt` opens an attempt on the staged seed. A tick opens
-// with `begin_tick`, or with `disable_tick` where the disable condition held;
-// `live_word` bounds the Boolean expressions the tick has to read, and
-// `next_unstepped` walks the evaluations it still owes a step, answering -1
-// when none is left. `bits_at`, `set_word` and `step` read one evaluation's
-// position set, replace it with its successor, and mark it stepped;
-// `seed_word` stages the set a new evaluation starts from and `seed` opens one
-// on it as an instance of one implication of another. `count`, `part_of`,
-// `implication_answer` and `resolve` answer each evaluation from the last
-// back: how many there are, which part of the property one answers for, the
-// least answer an implication's instances reached, and what it answered.
-// `settle` answers every attempt the tick resolved, and `answer` reads what the
-// one attempt an expect statement holds came to.
+// `install` fixes how wide a position set is, the statements an outcome
+// selects and the assertion's control. `open_attempt` opens an attempt on the
+// staged seed. A tick opens with `begin_tick`, or with `disable_tick` where the
+// disable condition held; `live_word` bounds the Boolean expressions the tick
+// has to read, and `next_unstepped` walks the evaluations it still owes a step,
+// answering -1 when none is left. `bits_at`, `set_word` and `step` read one
+// evaluation's position set, replace it with its successor, and mark it
+// stepped; `seed_word` stages the set a new evaluation starts from and `seed`
+// opens one on it as an instance of one implication of another. `count`,
+// `part_of`, `implication_answer`, `implication_nonvacuous` and `resolve`
+// answer each evaluation from the last back: how many there are, which part of
+// the property one answers for, the least answer an implication's instances
+// reached and whether any was nonvacuous, and what it answered and whether
+// that was nonvacuous. `settle` answers every attempt the tick resolved, and
+// `answer` and `action_runs` read what the one attempt an expect statement
+// holds came to and whether the arm it selects may run.
 void lyra_rt_evaluation_attempts_install(
     void* attempts, void* effects, std::uint64_t words, void* pass_action,
-    void* fail_action);
+    void* fail_action, void* control);
 void lyra_rt_evaluation_attempts_seed_word(
     void* attempts, std::uint64_t word, std::uint64_t bits);
 void lyra_rt_evaluation_attempts_open_attempt(void* attempts);
@@ -1436,10 +1472,15 @@ auto lyra_rt_evaluation_attempts_part_of(
 auto lyra_rt_evaluation_attempts_implication_answer(
     const void* attempts, std::int64_t index, std::uint64_t implication)
     -> std::uint64_t;
+auto lyra_rt_evaluation_attempts_implication_nonvacuous(
+    const void* attempts, std::int64_t index, std::uint64_t implication)
+    -> std::uint64_t;
 void lyra_rt_evaluation_attempts_resolve(
-    void* attempts, std::int64_t index, std::uint64_t answer);
+    void* attempts, std::int64_t index, std::uint64_t answer,
+    std::uint64_t nonvacuous);
 void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects);
 auto lyra_rt_evaluation_attempts_answer(const void* attempts) -> std::uint64_t;
+auto lyra_rt_evaluation_attempts_action_runs(const void* attempts) -> bool;
 
 // A value a body holds across a suspension (LRM 9.4) -- what a call it awaits
 // completes with. The cell lives in the running activation's store, so the
@@ -2775,6 +2816,7 @@ void lyra_rt_assocarray_sampled_history_construct(void* storage);
 void lyra_rt_managedref_sampled_history_construct(void* storage);
 void lyra_rt_cancellation_target_construct(void* storage);
 void lyra_rt_evaluation_attempts_construct(void* storage);
+void lyra_rt_assertion_control_construct(void* storage);
 void lyra_rt_timer_construct(void* storage);
 void lyra_rt_loop_blocks_construct(void* storage);
 void lyra_rt_channel_cancellation_construct(void* storage);
@@ -2807,6 +2849,7 @@ void lyra_rt_assocarray_sampled_history_destroy(void* storage);
 void lyra_rt_managedref_sampled_history_destroy(void* storage);
 void lyra_rt_cancellation_target_destroy(void* storage);
 void lyra_rt_evaluation_attempts_destroy(void* storage);
+void lyra_rt_assertion_control_destroy(void* storage);
 void lyra_rt_timer_destroy(void* storage);
 void lyra_rt_loop_blocks_destroy(void* storage);
 

@@ -130,9 +130,6 @@ enum class LibraryDecl : std::uint8_t {
   // LRM 4.4 the effects one region of one time slot holds pending; a closure
   // a region keeps is made in the storage it hands out and kept there.
   kDeferredEffects,
-  // LRM 12.4.2.1 where a violation report is kept until the raising process
-  // reaches a flush point; it keeps as a region's deferred effects do.
-  kViolationReportKeeper,
   // LRM 16.9.3 what the ticks of one clocking event settled for one
   // expression. Its argument is the type of the values it keeps; how far back
   // it reaches is fixed by filling it, so it is no argument.
@@ -140,6 +137,11 @@ enum class LibraryDecl : std::uint8_t {
   // LRM 16.14.1 what one concurrent assertion has in flight: an attempt per
   // tick its clock reached and has not answered.
   kEvaluationAttempts,
+  // LRM 20.11 what the assertion control tasks set for one assertion, expect
+  // statement or violation report. It is also where the statement's violation
+  // reports are kept until they mature (LRM 12.4.2.1), as a region's deferred
+  // effects keep theirs.
+  kAssertionControl,
   // LRM 27.4 the blocks one loop generate built, each under the value its
   // index stood at, which a name reaching one asks it for (LRM 23.6).
   kLoopBlocks,
@@ -859,14 +861,6 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
               .commit = BuiltinFn::kDeferredEffectsCommit});
       return &kDeferredEffects;
     }
-    case LibraryDecl::kViolationReportKeeper: {
-      static constexpr LibraryDeclData kViolationReportKeeper = kKeeper(
-          "violation report keeper", "lyra::runtime::ViolationReportKeeper",
-          KeeperEntries{
-              .allocate = BuiltinFn::kViolationReportsAllocate,
-              .commit = BuiltinFn::kViolationReportsCommit});
-      return &kViolationReportKeeper;
-    }
     case LibraryDecl::kSampledHistory: {
       static constexpr LibraryDeclData kSampledHistory = [] {
         LibraryDeclData declaration = kKeptStorage(
@@ -883,6 +877,18 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
           "concurrent assertion attempts", "evaluation_attempts",
           "lyra::runtime::EvaluationAttempts");
       return &kEvaluationAttempts;
+    }
+    case LibraryDecl::kAssertionControl: {
+      static constexpr LibraryDeclData kAssertionControl = [] {
+        LibraryDeclData declaration = kKeptObject(
+            "assertion control", "assertion_control",
+            "lyra::runtime::AssertionControl");
+        declaration.keeper = KeeperEntries{
+            .allocate = BuiltinFn::kAssertionControlAllocate,
+            .commit = BuiltinFn::kAssertionControlCommit};
+        return declaration;
+      }();
+      return &kAssertionControl;
     }
     case LibraryDecl::kLoopBlocks: {
       static constexpr LibraryDeclData kLoopBlocks = kKeptObject(

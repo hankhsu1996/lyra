@@ -91,13 +91,22 @@ enum class UniquePriorityCheck : std::uint8_t {
   kPriority,
 };
 
+// A qualified statement's check, and the statement as the assertion control
+// tasks select its violation reports (LRM 12.4.2, 20.11).
+struct QualifiedCheck {
+  UniquePriorityCheck keyword;
+  ControlledAssertionId control;
+
+  auto operator==(const QualifiedCheck&) const -> bool = default;
+};
+
 // LRM 12.4 / 12.6.2. `conditions` is the predicate's clause sequence, always
 // at least one entry; a plain `if (expr)` is the single pattern-free clause.
 struct IfStmt {
   std::vector<ConditionClause> conditions;
   StmtId then_stmt;
   std::optional<StmtId> else_stmt;
-  std::optional<UniquePriorityCheck> check;
+  std::optional<QualifiedCheck> check;
 
   auto operator==(const IfStmt&) const -> bool = default;
 };
@@ -127,7 +136,7 @@ struct CaseStmt {
   ExprId condition;
   std::vector<CaseItem> items;
   std::optional<StmtId> default_stmt;
-  std::optional<UniquePriorityCheck> check;
+  std::optional<QualifiedCheck> check;
 
   auto operator==(const CaseStmt&) const -> bool = default;
 };
@@ -153,7 +162,7 @@ struct PatternCaseStmt {
   ExprId condition;
   std::vector<PatternCaseItem> items;
   std::optional<StmtId> default_stmt;
-  std::optional<UniquePriorityCheck> check;
+  std::optional<QualifiedCheck> check;
 
   auto operator==(const PatternCaseStmt&) const -> bool = default;
 };
@@ -193,6 +202,8 @@ struct AssertStmt {
   std::optional<StmtId> pass_stmt;
   std::optional<StmtId> fail_stmt;
 
+  ControlledAssertionId control;
+
   auto operator==(const AssertStmt&) const -> bool = default;
 };
 
@@ -206,6 +217,8 @@ struct CoverStmt {
   AssertionTiming timing;
   ExprId condition;
   std::optional<StmtId> pass_stmt;
+
+  ControlledAssertionId control;
 
   auto operator==(const CoverStmt&) const -> bool = default;
 };
@@ -228,6 +241,8 @@ struct ConcurrentAssertStmt {
   std::optional<StmtId> pass_stmt;
   std::optional<StmtId> fail_stmt;
 
+  ControlledAssertionId control;
+
   auto operator==(const ConcurrentAssertStmt&) const -> bool = default;
 };
 
@@ -237,6 +252,8 @@ struct ConcurrentAssertStmt {
 struct ConcurrentCoverStmt {
   PropertySpec spec;
   std::optional<StmtId> pass_stmt;
+
+  ControlledAssertionId control;
 
   auto operator==(const ConcurrentCoverStmt&) const -> bool = default;
 };
@@ -250,6 +267,8 @@ struct ExpectStmt {
   PropertySpec spec;
   std::optional<StmtId> pass_stmt;
   std::optional<StmtId> fail_stmt;
+
+  ControlledAssertionId control;
 
   auto operator==(const ExpectStmt&) const -> bool = default;
 };
@@ -392,29 +411,6 @@ struct WaitForkStmt {
 struct DisableForkStmt {
   auto operator==(const DisableForkStmt&) const -> bool = default;
 };
-
-// The scope a `disable` names, when it belongs to the declaration scope the
-// statement's own body does. The identity indexes that scope's registry, so
-// naming it needs no navigation at all -- the zero case of a reach, and the
-// only form available inside a class method or a package subroutine, neither of
-// which stands on the design hierarchy a route walks.
-struct DirectDisableTarget {
-  ProceduralScopeId scope;
-
-  auto operator==(const DirectDisableTarget&) const -> bool = default;
-};
-
-// The scope a `disable` names elsewhere on the elaborated hierarchy (LRM 23.6):
-// a route to it, walked the way any other name's route is. Which of the two
-// forms a statement carries says where the target lives and nothing about how
-// the source spelled it.
-struct RoutedDisableTarget {
-  RoutedDisableTargetRef target;
-
-  auto operator==(const RoutedDisableTarget&) const -> bool = default;
-};
-
-using DisableTarget = std::variant<DirectDisableTarget, RoutedDisableTarget>;
 
 // LRM 9.6.2 `disable <named block or task>`: terminate the activity of the
 // named scope so execution resumes at the statement following it. The target is

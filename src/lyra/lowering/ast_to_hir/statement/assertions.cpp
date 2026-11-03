@@ -57,7 +57,8 @@ auto AddActionArm(hir::ProceduralBody& body, std::optional<hir::Stmt> arm)
 auto AssertStmtOf(
     hir::AssertionDirective directive, hir::AssertionTiming timing,
     hir::ExprId condition, std::optional<hir::StmtId> pass_stmt,
-    std::optional<hir::StmtId> fail_stmt, diag::SourceSpan span) -> hir::Stmt {
+    std::optional<hir::StmtId> fail_stmt, hir::ControlledAssertionId control,
+    diag::SourceSpan span) -> hir::Stmt {
   return hir::Stmt{
       .label = std::nullopt,
       .data =
@@ -66,7 +67,8 @@ auto AssertStmtOf(
               .timing = timing,
               .condition = condition,
               .pass_stmt = pass_stmt,
-              .fail_stmt = fail_stmt},
+              .fail_stmt = fail_stmt,
+              .control = control},
       .span = span};
 }
 
@@ -78,6 +80,20 @@ auto TimingOf(const slang::ast::ImmediateAssertionStatement& as)
   if (!as.isDeferred) return hir::AssertionTiming::kSimple;
   return as.isFinal ? hir::AssertionTiming::kFinal
                     : hir::AssertionTiming::kObserved;
+}
+
+// The type an immediate assertion is selected by (LRM Table 20-6), which its
+// timing decides.
+auto ImmediateTypeOf(hir::AssertionTiming timing) -> support::AssertionType {
+  switch (timing) {
+    case hir::AssertionTiming::kSimple:
+      return support::AssertionType::kSimpleImmediate;
+    case hir::AssertionTiming::kObserved:
+      return support::AssertionType::kObservedDeferredImmediate;
+    case hir::AssertionTiming::kFinal:
+      return support::AssertionType::kFinalDeferredImmediate;
+  }
+  throw InternalError("ImmediateTypeOf: unknown assertion timing");
 }
 
 // Where a sequence or property node was written, so a refusal underlines the
@@ -927,11 +943,24 @@ auto LowerExpectStmt(
           hir::ExpectStmt{
               .spec = *std::move(spec_or),
               .pass_stmt = AddActionArm(body, *std::move(pass_or)),
-              .fail_stmt = AddActionArm(body, *std::move(fail_or))},
+              .fail_stmt = AddActionArm(body, *std::move(fail_or)),
+              .control = DeclareControlledAssertion(
+                  frame, support::AssertionType::kExpect, std::nullopt)},
       .span = span};
 }
 
 }  // namespace
+
+auto DeclareControlledAssertion(
+    const WalkFrame& frame, support::AssertionType type,
+    std::optional<support::AssertionDirectiveType> directive)
+    -> hir::ControlledAssertionId {
+  const hir::ControlledAssertionId id =
+      frame.current_procedural_body->controlled_assertions.Add(
+          hir::ControlledAssertionDecl{.type = type, .directive = directive});
+  frame.OpenScope().controlled_assertions.push_back(id);
+  return id;
+}
 
 auto EvaluatedInSimulation(
     const slang::ast::ConcurrentAssertionStatement& assertion,
@@ -1019,15 +1048,19 @@ auto LowerImmediateAssertionStmt(
   const std::optional<hir::StmtId> fail_stmt =
       AddActionArm(body, *std::move(fail_or));
 
+  const auto control = [&](support::AssertionDirectiveType directive) {
+    return DeclareControlledAssertion(
+        frame, ImmediateTypeOf(timing), directive);
+  };
   switch (as.assertionKind) {
     case slang::ast::AssertionKind::Assert:
       return AssertStmtOf(
           hir::AssertionDirective::kAssert, timing, condition, pass_stmt,
-          fail_stmt, span);
+          fail_stmt, control(support::AssertionDirectiveType::kAssert), span);
     case slang::ast::AssertionKind::Assume:
       return AssertStmtOf(
           hir::AssertionDirective::kAssume, timing, condition, pass_stmt,
-          fail_stmt, span);
+          fail_stmt, control(support::AssertionDirectiveType::kAssume), span);
     case slang::ast::AssertionKind::CoverProperty:
       return hir::Stmt{
           .label = std::nullopt,
@@ -1035,7 +1068,8 @@ auto LowerImmediateAssertionStmt(
               hir::CoverStmt{
                   .timing = timing,
                   .condition = condition,
-                  .pass_stmt = pass_stmt},
+                  .pass_stmt = pass_stmt,
+                  .control = control(support::AssertionDirectiveType::kCover)},
           .span = span};
     case slang::ast::AssertionKind::CoverSequence:
     case slang::ast::AssertionKind::Restrict:
@@ -1083,23 +1117,35 @@ auto LowerConcurrentAssertion(
   const std::optional<hir::StmtId> fail_stmt =
       AddActionArm(body, *std::move(fail_or));
 
-  const auto assert_form =
-      [&](hir::AssertionDirective directive) -> hir::ConcurrentAssertion {
+  const auto control = [&](support::AssertionDirectiveType directive) {
+    return DeclareControlledAssertion(
+        frame, support::AssertionType::kConcurrent, directive);
+  };
+  const auto assert_form = [&](hir::AssertionDirective directive,
+                               support::AssertionDirectiveType selected_by)
+      -> hir::ConcurrentAssertion {
     return hir::ConcurrentAssertStmt{
         .directive = directive,
         .spec = *std::move(spec_or),
         .pass_stmt = pass_stmt,
-        .fail_stmt = fail_stmt};
+        .fail_stmt = fail_stmt,
+        .control = control(selected_by)};
   };
 
   switch (as.assertionKind) {
     case slang::ast::AssertionKind::Assert:
-      return assert_form(hir::AssertionDirective::kAssert);
+      return assert_form(
+          hir::AssertionDirective::kAssert,
+          support::AssertionDirectiveType::kAssert);
     case slang::ast::AssertionKind::Assume:
-      return assert_form(hir::AssertionDirective::kAssume);
+      return assert_form(
+          hir::AssertionDirective::kAssume,
+          support::AssertionDirectiveType::kAssume);
     case slang::ast::AssertionKind::CoverProperty:
       return hir::ConcurrentAssertion{hir::ConcurrentCoverStmt{
-          .spec = *std::move(spec_or), .pass_stmt = pass_stmt}};
+          .spec = *std::move(spec_or),
+          .pass_stmt = pass_stmt,
+          .control = control(support::AssertionDirectiveType::kCover)}};
     // A cover sequence counts every match of an attempt rather than the
     // attempt (LRM 16.14.3).
     case slang::ast::AssertionKind::CoverSequence:

@@ -1845,7 +1845,7 @@ TEST(MirVerifyTest, APlacementMakesItsValueInStorageItDoesNotOwn) {
       "allocates by");
   ExpectRefused(
       placing(
-          support::BuiltinFn::kViolationReportsAllocate,
+          support::BuiltinFn::kAssertionControlAllocate,
           PointerOwnership::kBorrowed),
       "names an allocation function other than the one its argument "
       "allocates by");

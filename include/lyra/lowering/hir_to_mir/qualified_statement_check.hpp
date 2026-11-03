@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -35,8 +36,7 @@ struct QualifiedAssertions {
 // arms left, so a statement carrying one claims nothing about whether some arm
 // holds; what it claims about two arms holding at once is untouched. A
 // statement with no qualifier claims nothing.
-auto AssertionsOf(
-    std::optional<hir::UniquePriorityCheck> check, bool has_catch_all)
+auto AssertionsOf(std::optional<hir::QualifiedCheck> check, bool has_catch_all)
     -> QualifiedAssertions;
 
 // What a violation report calls the arms of the statement it is about: LRM
@@ -49,11 +49,12 @@ enum class QualifiedArmKind { kCondition, kCaseItem };
 // qualifier asserting totality owes -- arriving there is the violation. A
 // statement never carries both, because an explicit catch-all is what
 // discharges that assertion. Reporting is deferred to the Observed region as
-// LRM 12.4.2.1 requires.
+// LRM 12.4.2.1 requires, and kept by the statement's assertion control (LRM
+// 20.11).
 auto BuildFallThrough(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    ProcessLowerer& process, const WalkFrame& frame,
     std::optional<mir::Block> catch_all,
-    std::optional<hir::UniquePriorityCheck> check, QualifiedArmKind arm_kind)
+    std::optional<hir::QualifiedCheck> check, QualifiedArmKind arm_kind)
     -> std::optional<mir::Block>;
 
 // What a statement asserting uniqueness does before it selects an arm: `held`
@@ -62,8 +63,8 @@ auto BuildFallThrough(
 // reports where more than one arm held (LRM 12.4.2.1). Answers with the locals
 // holding the bits, in arm order, which is what the statement then selects by.
 auto BuildUniquenessCheck(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    std::span<const mir::ExprId> held, hir::UniquePriorityCheck check,
+    ProcessLowerer& process, const WalkFrame& frame,
+    std::span<const mir::ExprId> held, const hir::QualifiedCheck& check,
     QualifiedArmKind arm_kind) -> std::vector<mir::LocalId>;
 
 }  // namespace lyra::lowering::hir_to_mir

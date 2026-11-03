@@ -16,6 +16,7 @@
 #include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/lowering/hir_to_mir/assertion_automaton.hpp"
+#include "lyra/lowering/hir_to_mir/assertion_control.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
@@ -154,6 +155,7 @@ struct AssertionDispositions {
   std::optional<hir::StmtId> pass_stmt;
   std::optional<hir::StmtId> fail_stmt;
   std::optional<hir::AssertionDirective> reports_as;
+  hir::ControlledAssertionId control;
 };
 
 auto DispositionsOf(const hir::ConcurrentAssertion& assertion)
@@ -165,14 +167,16 @@ auto DispositionsOf(const hir::ConcurrentAssertion& assertion)
                 .spec = &check.spec,
                 .pass_stmt = check.pass_stmt,
                 .fail_stmt = check.fail_stmt,
-                .reports_as = check.directive};
+                .reports_as = check.directive,
+                .control = check.control};
           },
           [](const hir::ConcurrentCoverStmt& cover) {
             return AssertionDispositions{
                 .spec = &cover.spec,
                 .pass_stmt = cover.pass_stmt,
                 .fail_stmt = std::nullopt,
-                .reports_as = std::nullopt};
+                .reports_as = std::nullopt,
+                .control = cover.control};
           }},
       assertion);
 }
@@ -277,47 +281,66 @@ auto AnswerWord(
   return Word(block, type, static_cast<std::uint64_t>(answer));
 }
 
-// The least answer an implication's instances reached, for the evaluation the
-// code being built answers.
-using ImplicationAnswerOf =
-    std::function<mir::ExprId(mir::Builder, std::uint32_t)>;
+// What an implication's instances came to, for the evaluation the code being
+// built answers: the least answer any reached, and whether any was
+// nonvacuous.
+struct ImplicationAnswersOf {
+  std::function<mir::ExprId(mir::Builder, std::uint32_t)> answer;
+  std::function<mir::ExprId(mir::Builder, std::uint32_t)> nonvacuous;
+};
+
+// What one part answers for one evaluation, held in locals of the body.
+struct PartAnswer {
+  mir::LocalId answer;
+  mir::LocalId nonvacuous;
+};
 
 // What one part answers for one evaluation (Annex F.5.3.2), from the positions
 // `bits` it is live at once the tick has stepped it and from what its
-// implications' instances answered. The answers are ordered, so negation is the
-// order reversed and a conjunction and a disjunction are the least and the
-// greatest of two (LRM 16.12.3-16.12.5). A term may be read by two later ones
-// -- `iff` reads each operand twice -- so each is held in a local of its own.
+// implications' instances answered, and whether that evaluation is nonvacuous
+// (LRM 16.14.8), as a word that is 1 where it is. The answers are ordered, so
+// negation is the order reversed and a conjunction and a disjunction are the
+// least and the greatest of two (LRM 16.12.3-16.12.5). A term may be read by
+// two later ones -- `iff` reads each operand twice -- so each is held in a
+// local of its own.
 auto BuildPartAnswer(
     const mir::CompilationUnit& unit, CallableBindings& bindings,
     mir::Builder block, const AutomatonPart& part,
     const std::vector<mir::LocalId>& bits,
-    const ImplicationAnswerOf& implication_answer) -> mir::LocalId {
+    const ImplicationAnswersOf& instances) -> PartAnswer {
   const mir::TypeId type = unit.builtins.machine_word;
+  const mir::TypeId bool_type = unit.builtins.machine_bool;
   const auto hold = [&](mir::ExprId value) {
     const mir::LocalId local = bindings.DeclareAnonymous(type);
     block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = value});
     return local;
   };
+  const auto read = [&](mir::LocalId local) {
+    return block.ReadLocal(local, type);
+  };
   const auto extreme = [&](mir::BinaryOp keeps_lhs, mir::LocalId lhs,
                            mir::LocalId rhs) {
-    const mir::ExprId compared_lhs = block.ReadLocal(lhs, type);
-    const mir::ExprId compared_rhs = block.ReadLocal(rhs, type);
     const mir::ExprId condition =
-        Op(unit, block, unit.builtins.machine_bool, keeps_lhs, compared_lhs,
-           compared_rhs);
-    const mir::ExprId kept_lhs = block.ReadLocal(lhs, type);
-    const mir::ExprId kept_rhs = block.ReadLocal(rhs, type);
-    return Choose(block, type, condition, kept_lhs, kept_rhs);
+        Op(unit, block, bool_type, keeps_lhs, read(lhs), read(rhs));
+    return Choose(block, type, condition, read(lhs), read(rhs));
   };
   const auto answer = [&](support::PropertyAnswer value) {
     return AnswerWord(block, type, value);
   };
+  const auto reversed = [&](mir::LocalId operand) {
+    return hold(
+        Op(unit, block, type, mir::BinaryOp::kSub,
+           answer(support::PropertyAnswer::kHoldsStrongly), read(operand)));
+  };
+  const auto either = [&](mir::LocalId lhs, mir::LocalId rhs) {
+    return Op(
+        unit, block, type, mir::BinaryOp::kBitwiseOr, read(lhs), read(rhs));
+  };
 
-  std::vector<mir::LocalId> held;
+  std::vector<PartAnswer> held;
   held.reserve(part.terms.size());
   for (const AnswerTerm& term : part.terms) {
-    const mir::ExprId value = std::visit(
+    const PartAnswer answered = std::visit(
         Overloaded{
             [&](const SequenceTerm& sequence) {
               const support::PropertyAnswer while_live =
@@ -332,23 +355,66 @@ auto BuildPartAnswer(
               const mir::ExprId fails = answer(support::PropertyAnswer::kFails);
               const mir::ExprId otherwise =
                   Choose(block, type, live, live_answer, fails);
-              return Choose(block, type, kept, holds_strongly, otherwise);
+              return PartAnswer{
+                  .answer = hold(
+                      Choose(block, type, kept, holds_strongly, otherwise)),
+                  .nonvacuous = hold(Word(block, type, 1))};
             },
             [&](const NegatedTerm& negated) {
-              const mir::ExprId lhs =
-                  answer(support::PropertyAnswer::kHoldsStrongly);
-              const mir::ExprId rhs =
-                  block.ReadLocal(held[negated.operand], type);
-              return Op(unit, block, type, mir::BinaryOp::kSub, lhs, rhs);
+              const PartAnswer& operand = held[negated.operand];
+              return PartAnswer{
+                  .answer = reversed(operand.answer),
+                  .nonvacuous = operand.nonvacuous};
             },
             [&](const LeastTerm& least) {
-              return extreme(
-                  mir::BinaryOp::kLessThan, held[least.lhs], held[least.rhs]);
+              const PartAnswer& lhs = held[least.lhs];
+              const PartAnswer& rhs = held[least.rhs];
+              return PartAnswer{
+                  .answer = hold(extreme(
+                      mir::BinaryOp::kLessThan, lhs.answer, rhs.answer)),
+                  .nonvacuous = hold(either(lhs.nonvacuous, rhs.nonvacuous))};
             },
             [&](const GreatestTerm& greatest) {
-              return extreme(
-                  mir::BinaryOp::kGreaterThan, held[greatest.lhs],
-                  held[greatest.rhs]);
+              const PartAnswer& lhs = held[greatest.lhs];
+              const PartAnswer& rhs = held[greatest.rhs];
+              return PartAnswer{
+                  .answer = hold(extreme(
+                      mir::BinaryOp::kGreaterThan, lhs.answer, rhs.answer)),
+                  .nonvacuous = hold(either(lhs.nonvacuous, rhs.nonvacuous))};
+            },
+            [&](const ImpliesTerm& implies) {
+              const PartAnswer& from = held[implies.from];
+              const PartAnswer& to = held[implies.to];
+              // The left operand is true (LRM 16.14.8 z) where the trace so
+              // far satisfies it, the reading every answer here takes (Annex
+              // F.5.3.1): the success is reported at the tick it is decided,
+              // which may come before the left operand is decided.
+              const mir::ExprId from_holds = Op(
+                  unit, block, bool_type, mir::BinaryOp::kGreaterEqual,
+                  read(from.answer), answer(support::PropertyAnswer::kHolds));
+              const mir::ExprId both =
+                  Op(unit, block, type, mir::BinaryOp::kBitwiseAnd,
+                     read(from.nonvacuous), read(to.nonvacuous));
+              return PartAnswer{
+                  .answer = hold(extreme(
+                      mir::BinaryOp::kGreaterThan, reversed(from.answer),
+                      to.answer)),
+                  .nonvacuous = hold(Choose(
+                      block, type, from_holds, both, Word(block, type, 0)))};
+            },
+            [&](const IffTerm& iff) {
+              const PartAnswer& lhs = held[iff.lhs];
+              const PartAnswer& rhs = held[iff.rhs];
+              const mir::LocalId forward = hold(extreme(
+                  mir::BinaryOp::kGreaterThan, reversed(lhs.answer),
+                  rhs.answer));
+              const mir::LocalId backward = hold(extreme(
+                  mir::BinaryOp::kGreaterThan, reversed(rhs.answer),
+                  lhs.answer));
+              return PartAnswer{
+                  .answer = hold(
+                      extreme(mir::BinaryOp::kLessThan, forward, backward)),
+                  .nonvacuous = hold(either(lhs.nonvacuous, rhs.nonvacuous))};
             },
             [&](const ImplicationTerm& implication) {
               const mir::ExprId matched =
@@ -358,12 +424,16 @@ auto BuildPartAnswer(
                   answer(support::PropertyAnswer::kHoldsStrongly);
               const mir::LocalId antecedent =
                   hold(Choose(block, type, matched, holds, holds_strongly));
-              const mir::LocalId instances =
-                  hold(implication_answer(block, implication.implication));
-              return extreme(mir::BinaryOp::kLessThan, antecedent, instances);
+              const mir::LocalId reached =
+                  hold(instances.answer(block, implication.implication));
+              return PartAnswer{
+                  .answer = hold(
+                      extreme(mir::BinaryOp::kLessThan, antecedent, reached)),
+                  .nonvacuous = hold(
+                      instances.nonvacuous(block, implication.implication))};
             }},
         term);
-    held.push_back(hold(value));
+    held.push_back(answered);
   }
   if (held.empty()) {
     throw InternalError(
@@ -716,14 +786,20 @@ auto LowerTick(
              Word(resolve_builder, word_type, word)},
             word_type));
   }
-  const ImplicationAnswerOf implication_answer =
-      [&](mir::Builder block, std::uint32_t implication) {
-        return call(
-            block, support::BuiltinFn::kEvaluationAttemptsImplicationAnswer,
-            {block.ReadLocal(answering, index_type),
-             Word(block, word_type, implication)},
-            word_type);
-      };
+  const auto of_instances = [&](support::BuiltinFn fn) {
+    return [&, fn](mir::Builder block, std::uint32_t implication) {
+      return call(
+          block, fn,
+          {block.ReadLocal(answering, index_type),
+           Word(block, word_type, implication)},
+          word_type);
+    };
+  };
+  const ImplicationAnswersOf instances{
+      .answer = of_instances(
+          support::BuiltinFn::kEvaluationAttemptsImplicationAnswer),
+      .nonvacuous = of_instances(
+          support::BuiltinFn::kEvaluationAttemptsImplicationNonvacuous)};
   std::vector<ValueArm> arms;
   arms.reserve(automaton.parts.size());
   for (std::size_t part = 0; part < automaton.parts.size(); ++part) {
@@ -733,13 +809,14 @@ auto LowerTick(
             .body = [&, part](const WalkFrame& in) -> diag::Result<mir::Block> {
               mir::Block block;
               mir::Builder answered = in.Builder().Into(block);
-              const mir::LocalId answer = BuildPartAnswer(
+              const PartAnswer answer = BuildPartAnswer(
                   unit, bindings, answered, automaton.parts[part], stepped,
-                  implication_answer);
+                  instances);
               call_stmt(
                   answered, support::BuiltinFn::kEvaluationAttemptsResolve,
                   {answered.ReadLocal(answering, index_type),
-                   answered.ReadLocal(answer, word_type)});
+                   answered.ReadLocal(answer.answer, word_type),
+                   answered.ReadLocal(answer.nonvacuous, word_type)});
               return block;
             }});
   }
@@ -1018,7 +1095,7 @@ auto BuildEvaluationAttemptsExpr(
 auto LowerConcurrentAssertion(
     StructuralScopeLowerer& lowerer, mir::Class& mir_class,
     const WalkFrame& ctor_frame, const StorageBringUp& bring_up,
-    const DeclaredScopes& scopes, const StaticVarBindings& statics,
+    const DeclaredScopes& scopes, const StaticCellBindings& statics,
     hir::ConcurrentAssertionId id, const hir::ConcurrentAssertionDecl& decl)
     -> diag::Result<InstalledConcurrentAssertion> {
   const AssertionDispositions dispositions = DispositionsOf(decl.assertion);
@@ -1041,7 +1118,7 @@ auto LowerConcurrentAssertion(
       action, ctor_frame, lowerer, id, *dispositions.spec, automaton);
   if (!advance) return std::unexpected(std::move(advance.error()));
 
-  for (const StaticVarBinding& binding : statics) {
+  for (const StaticCellBinding& binding : statics) {
     auto integrated =
         IntegrateStaticInitializer(action, decl.action, bring_up, binding);
     if (!integrated) return std::unexpected(std::move(integrated.error()));
@@ -1084,7 +1161,8 @@ auto LowerConcurrentAssertion(
       .pass_action = pass_id,
       .fail_action = fail_id,
       .words = automaton.words,
-      .written_at = decl.span};
+      .written_at = decl.span,
+      .control = action.ControlCellOf(dispositions.control)};
 }
 
 auto LowerExpectStmt(
@@ -1133,7 +1211,10 @@ auto LowerExpectStmt(
               {scope_builder.Add(
                    BuildCurrentRuntimeCallExpr(process.Owner().Unit())),
                *clock, *disable_reads,
-               Word(scope_builder, word_type, automaton.words)},
+               Word(scope_builder, word_type, automaton.words),
+               scope_builder.Add(ControlAddress(
+                   unit, scope_builder, inner,
+                   process.ControlCellOf(expect.control)))},
               unit.builtins.wait)));
   const mir::LocalId wait_pointer = DeclareLocal(
       inner, scope_builder.Add(
@@ -1271,11 +1352,24 @@ auto LowerExpectStmt(
     fail = LowerStmtIntoChildScope(process, inner, *expect.fail_stmt);
   }
   if (!fail) return std::unexpected(std::move(fail.error()));
+  // The process goes on whatever arm runs, and the arm runs where the control
+  // allowed it when the expect began (LRM 20.11).
+  mir::Block answered;
+  mir::Builder answered_builder = scope_builder.Into(answered);
+  answered_builder.AppendStmt(
+      mir::IfStmt{
+          .condition =
+              answer_is(answered_builder, support::AttemptAnswer::kFails),
+          .then_scope = answered_builder.AddScope(*std::move(fail)),
+          .else_scope = answered_builder.AddScope(*std::move(pass))});
   scope_builder.AppendStmt(
       mir::IfStmt{
-          .condition = answer_is(scope_builder, support::AttemptAnswer::kFails),
-          .then_scope = scope_builder.AddScope(*std::move(fail)),
-          .else_scope = scope_builder.AddScope(*std::move(pass))});
+          .condition = AttemptsCall(
+              scope_builder, support::BuiltinFn::kEvaluationAttemptsActionRuns,
+              attempts_at(attempts_held)(scope_builder), {},
+              unit.builtins.machine_bool),
+          .then_scope = scope_builder.AddScope(std::move(answered)),
+          .else_scope = std::nullopt});
 
   return mir::Stmt{
       .label = std::move(label),
@@ -1313,7 +1407,9 @@ void AppendConcurrentAssertionInstall(
               block, support::BuiltinFn::kEvaluationAttemptsInstall, attempts,
               {block.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner().Unit())),
                Word(block, unit.builtins.machine_word, installed.words),
-               arm(installed.pass_action), arm(installed.fail_action)},
+               arm(installed.pass_action), arm(installed.fail_action),
+               block.Add(ControlAddress(
+                   unit, block, activate_frame, installed.control))},
               void_type)});
 }
 

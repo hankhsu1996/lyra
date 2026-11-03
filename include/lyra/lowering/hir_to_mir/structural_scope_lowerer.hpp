@@ -28,7 +28,7 @@
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
@@ -288,17 +288,20 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto ProceduralStaticField(
       const hir::ProceduralBodyRef& body, hir::ProceduralVarId var) const
       -> mir::ClassFieldTarget {
-    const StaticVarBindings& statics = std::visit(
+    const StaticCellBindings& statics = std::visit(
         Overloaded{
-            [&](hir::ProcessId id) -> const StaticVarBindings& {
+            [&](hir::ProcessId id) -> const StaticCellBindings& {
               return process_static_bindings_.Get(id);
             },
-            [&](hir::StructuralSubroutineId id) -> const StaticVarBindings& {
+            [&](hir::StructuralSubroutineId id) -> const StaticCellBindings& {
               return declared_subroutines_.Get(id).statics;
             }},
         body);
-    for (const StaticVarBinding& binding : statics) {
-      if (binding.var == var) return InstanceFieldOf(binding);
+    for (const StaticCellBinding& binding : statics) {
+      const auto* declared = std::get_if<hir::ProceduralVarId>(&binding.of);
+      if (declared != nullptr && *declared == var) {
+        return InstanceFieldOf(binding);
+      }
     }
     throw InternalError(
         "StructuralScopeLowerer::ProceduralStaticField: the var was given no "
@@ -391,10 +394,11 @@ class StructuralScopeLowerer {
   // A process is anonymous (LRM 9.2), so nothing can name it early and it takes
   // no callable identity: its answer is storage alone, where a subroutine's is
   // a whole declared callable.
-  base::Translation<hir::ProcessId, StaticVarBindings> process_static_bindings_;
+  base::Translation<hir::ProcessId, StaticCellBindings>
+      process_static_bindings_;
   // The same for a concurrent assertion's action block, whose block-local
   // variables are static by default as any procedure's are (LRM 6.21).
-  base::Translation<hir::ConcurrentAssertionId, StaticVarBindings>
+  base::Translation<hir::ConcurrentAssertionId, StaticCellBindings>
       assertion_static_bindings_;
   mir::ClassId class_id_{};
   // The member this scope's object keeps the object of the scope around it in,

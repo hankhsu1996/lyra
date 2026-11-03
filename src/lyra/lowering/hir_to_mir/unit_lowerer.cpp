@@ -49,7 +49,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -159,7 +159,7 @@ auto UnitsReadBy(const mir::CompilationUnit& unit, const mir::Block& body)
 // another unit's by the identifier that unit published (`unit::name`).
 auto PopulateNamespaceOwnStorage(
     UnitLowerer& unit_lowerer, const hir::StructuralScope& scope,
-    const base::Translation<hir::StructuralSubroutineId, StaticVarBindings>&
+    const base::Translation<hir::StructuralSubroutineId, StaticCellBindings>&
         subroutine_statics,
     const DeclaredScopes& scopes, const WalkFrame& install_frame,
     const WalkFrame& value_frame) -> diag::Result<void> {
@@ -244,12 +244,12 @@ auto PopulateNamespaceOwnStorage(
   for (const hir::StructuralSubroutineId id :
        scope.structural_subroutines.Ids()) {
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
-    const StaticVarBindings& statics = subroutine_statics.Get(id);
+    const StaticCellBindings& statics = subroutine_statics.Get(id);
     ProcessLowerer body_lowerer(
         unit_lowerer, nullptr, scope.time_resolution, src.body, std::nullopt,
         WalkFrame{}.WithScopeName(unit_lowerer.Hir().fixed_name), scopes,
         statics);
-    for (const StaticVarBinding& binding : statics) {
+    for (const StaticCellBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
           body_lowerer, src.body,
           StorageBringUp{.install = install_frame, .value = value_frame},
@@ -1084,7 +1084,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
           unit_.types, support::LibraryDecl::kCancellationTarget),
       block_events);
 
-  base::Translation<hir::StructuralSubroutineId, StaticVarBindings>
+  base::Translation<hir::StructuralSubroutineId, StaticCellBindings>
       subroutine_statics{scope.structural_subroutines.size()};
   for (const hir::SubroutineDecl& src : scope.structural_subroutines) {
     subroutine_statics.Append(BindBodyStatics(

@@ -8,8 +8,31 @@
 
 #include "lyra/base/pool_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
+#include "lyra/support/assertion_control.hpp"
 
 namespace lyra::hir {
+
+struct ControlledAssertionId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const ControlledAssertionId&) const
+      -> std::strong_ordering = default;
+};
+
+// A statement the assertion control tasks select (LRM 20.11): an assertion,
+// an expect statement, or a `unique` / `unique0` / `priority` statement, whose
+// violation reports they control. What a task selects it by is its type
+// (Table 20-6) and, for one of the four assertion types, the directive it
+// states (Table 20-7). A task naming a scope selects every one the scope holds,
+// so each is declared by the scope it stands in, as a variable is; its identity
+// is the statement's and not an execution's, so a task's or a loop's many runs
+// of one statement are one of these.
+struct ControlledAssertionDecl {
+  support::AssertionType type;
+  std::optional<support::AssertionDirectiveType> directive;
+
+  auto operator==(const ControlledAssertionDecl&) const -> bool = default;
+};
 
 struct ProceduralScopeId {
   std::uint32_t value = base::kUnassignedId;
@@ -80,6 +103,7 @@ struct ProceduralScopeDecl {
   // storage.
   std::optional<std::string> source_name;
   std::vector<ProceduralVarId> declarations;
+  std::vector<ControlledAssertionId> controlled_assertions;
   std::vector<ProceduralScopeId> child_scopes;
 
   auto operator==(const ProceduralScopeDecl&) const -> bool = default;

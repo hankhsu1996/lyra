@@ -11,7 +11,7 @@
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/procedural_scope.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_id.hpp"
 

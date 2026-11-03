@@ -9,6 +9,7 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/any.hpp"
+#include "lyra/runtime/assertion_control.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
@@ -125,6 +126,7 @@ constexpr void ForEachDeclaredObjectClass(const Visit& visit) {
   visit(LibraryDecl::kCancellationTarget, BuiltIn<CancellationTarget>{});
   visit(LibraryDecl::kTimer, BuiltIn<Timer>{});
   visit(LibraryDecl::kEvaluationAttempts, BuiltIn<EvaluationAttempts>{});
+  visit(LibraryDecl::kAssertionControl, BuiltIn<AssertionControl>{});
   visit(LibraryDecl::kLoopBlocks, BuiltIn<LoopBlocks>{});
 }
 

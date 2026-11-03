@@ -1,8 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <variant>
 #include <vector>
 
@@ -11,6 +11,7 @@
 
 namespace lyra::runtime {
 
+class AssertionControl;
 class RuntimeEffects;
 
 // Every evaluation attempt of one property that is still in flight (LRM
@@ -50,20 +51,24 @@ class EvaluationAttempts {
   auto operator=(EvaluationAttempts&&) -> EvaluationAttempts& = delete;
   ~EvaluationAttempts() = default;
 
-  // Fixes how wide a position set is and the statements an outcome selects.
+  // Fixes how wide a position set is, the statements an outcome selects, and
+  // the control whose state decides whether an attempt begins and which of
+  // them its outcome runs (LRM 20.11), which reaches these attempts again to
+  // abort them.
   //
   // Registering here is what puts the answers of attempts the run ends in the
   // middle of before the design's `final` procedures, which read what those
   // statements wrote.
   void Install(
       RuntimeEffects& effects, std::uint64_t words, OwnedCall pass_action,
-      OwnedCall fail_action);
+      OwnedCall fail_action, AssertionControl* control);
 
   // Fixes how wide a position set is for the one attempt of an expect
   // statement, whose process reads the answer itself (LRM 16.17): nothing runs
   // when it settles and nothing is owed when the run ends, since a process
-  // still waiting then never goes on.
-  void Hold(std::uint64_t words);
+  // still waiting then never goes on. `control` decides which arm an answer may
+  // run; nothing turns an expect off or aborts it (LRM 20.11).
+  void Hold(std::uint64_t words, const AssertionControl* control);
 
   // Stages one word of the position set the next `OpenAttempt` or `Seed`
   // starts an evaluation from. A seed is a constant of the automaton, so it is
@@ -71,7 +76,8 @@ class EvaluationAttempts {
   void SeedWord(std::uint64_t word, std::uint64_t bits);
 
   // Opens an attempt on the staged seed, answering for the whole property; the
-  // next sweep steps it.
+  // next sweep steps it. The attempt keeps what its control allowed when it
+  // began, and none begins while checking is off (LRM 20.11).
   void OpenAttempt();
 
   // A tick of the clock: every evaluation becomes one this tick has not yet
@@ -83,6 +89,10 @@ class EvaluationAttempts {
   // runs no statement, and one that would start here starts disabled (LRM
   // 16.12, 16.14.1).
   void DisableTick();
+
+  // Aborts every attempt in flight, which settles none of them and runs no
+  // statement (LRM 20.11 Kill).
+  void Discard();
 
   // One word of the union of every position any unstepped evaluation is live
   // at, which is what bounds the Boolean expressions this tick has to read.
@@ -123,10 +133,17 @@ class EvaluationAttempts {
   [[nodiscard]] auto ImplicationAnswer(
       std::int64_t index, std::uint64_t implication) const -> std::uint64_t;
 
+  // 1 where some instance of `implication` of the evaluation at `index` is
+  // nonvacuous, of those held and those settled, and 0 otherwise, including
+  // where it has none (LRM 16.14.8).
+  [[nodiscard]] auto ImplicationNonvacuous(
+      std::int64_t index, std::uint64_t implication) const -> std::uint64_t;
+
   // Records what the evaluation at `index` answered this tick, a
-  // `support::PropertyAnswer`, and counts it in the implication it is a
-  // consequent of.
-  void Resolve(std::int64_t index, std::uint64_t answer);
+  // `support::PropertyAnswer`, and whether it is nonvacuous (1) or not (0),
+  // and counts both in the implication it is a consequent of.
+  void Resolve(
+      std::int64_t index, std::uint64_t answer, std::uint64_t nonvacuous);
 
   // Settles every attempt this tick answered (LRM 16.14.1): an instance whose
   // answer reached either end is folded into its implication and leaves with
@@ -138,6 +155,10 @@ class EvaluationAttempts {
 
   // What a held attempt has come to, as a `support::AttemptAnswer`.
   [[nodiscard]] auto Answer() const -> std::uint64_t;
+
+  // Whether the arm a held attempt's answer selects may run, as its control
+  // allowed when the attempt began and by whether the success was vacuous.
+  [[nodiscard]] auto ActionRuns() const -> bool;
 
   // The run is over, so no tick will settle what is left. An attempt's last
   // answer is what the finished trace says (Annex F.5.3.1): it succeeded where
@@ -155,15 +176,45 @@ class EvaluationAttempts {
   };
   struct Held {
     support::AttemptAnswer answer;
+    bool action_runs;
   };
 
-  // What one implication's instances have answered: the least any instance
-  // that has settled and left reached, which outlives it, and the least the
-  // live ones answered this tick. One no instance has answered holds strongly.
+  // What an evaluation has come to: its answer and whether it is nonvacuous
+  // (LRM 16.14.8), which every reader takes together.
+  struct Outcome {
+    support::PropertyAnswer answer;
+    bool nonvacuous;
+
+    // What an implication with no instance comes to: it asks nothing, so it
+    // holds strongly, vacuously.
+    static constexpr auto OfNoInstance() -> Outcome {
+      return {
+          .answer = support::PropertyAnswer::kHoldsStrongly,
+          .nonvacuous = false};
+    }
+
+    // An implication holds where every one of its instances does, so two of
+    // them come to the least answer either reached, conjoined, and are
+    // nonvacuous where either is (LRM 16.14.8 h).
+    [[nodiscard]] auto Conjoined(Outcome other) const -> Outcome {
+      return {
+          .answer = std::min(answer, other.answer),
+          .nonvacuous = nonvacuous || other.nonvacuous};
+    }
+  };
+
+  // What one implication's instances have come to: those that settled and
+  // left, which outlive them, and the live ones this tick.
   struct ImplicationAnswers {
     std::uint64_t implication = 0;
-    support::PropertyAnswer settled = support::PropertyAnswer::kHoldsStrongly;
-    support::PropertyAnswer this_tick = support::PropertyAnswer::kHoldsStrongly;
+    Outcome settled = Outcome::OfNoInstance();
+    Outcome this_tick = Outcome::OfNoInstance();
+  };
+
+  // The evaluation an attempt opened, answering for the whole property, and
+  // what its control allowed when it began, as `support::kAssertion*` bits.
+  struct OpensAttempt {
+    std::uint64_t allowed;
   };
 
   // The evaluation whose antecedent matched or whose selection read its
@@ -174,29 +225,33 @@ class EvaluationAttempts {
   };
 
   struct Evaluation {
-    // Absent for the evaluation an attempt opened.
-    std::optional<ConsequentOf> consequent_of;
+    std::variant<OpensAttempt, ConsequentOf> role;
     std::uint64_t part = 0;
     bool stepped = false;
-    support::PropertyAnswer answer = support::PropertyAnswer::kPending;
+    Outcome outcome = {
+        .answer = support::PropertyAnswer::kPending, .nonvacuous = false};
     std::vector<ImplicationAnswers> implications;
   };
 
   // The record of `implication` in `evaluation`, made on first use.
   static auto AnswersOf(Evaluation& evaluation, std::uint64_t implication)
       -> ImplicationAnswers&;
+  // What the instances of `implication` of the evaluation at `index` have
+  // come to, settled and live together.
+  [[nodiscard]] auto ImplicationOutcome(
+      std::int64_t index, std::uint64_t implication) const -> Outcome;
 
   void RequireInstalled() const;
   void Size(std::uint64_t words);
   void OpenEvaluation(
-      std::optional<ConsequentOf> consequent_of, std::uint64_t part);
+      std::variant<OpensAttempt, ConsequentOf> role, std::uint64_t part);
   [[nodiscard]] auto IndexOf(std::int64_t index) const -> std::size_t;
   [[nodiscard]] auto EvaluationAt(std::int64_t index) -> Evaluation&;
   [[nodiscard]] auto EvaluationAt(std::int64_t index) const
       -> const Evaluation&;
   [[nodiscard]] auto WordIndex(std::int64_t index, std::uint64_t word) const
       -> std::size_t;
-  void Report(support::PropertyAnswer answer, RuntimeEffects& effects);
+  void Report(const Evaluation& attempt, RuntimeEffects& effects);
 
   // One position set per evaluation, laid end to end: an evaluation's words are
   // `words_` at its index times the width.
@@ -204,6 +259,7 @@ class EvaluationAttempts {
   std::vector<Evaluation> evaluations_;
   std::vector<std::uint64_t> seed_;
   std::variant<Installed, Held> answered_;
+  const AssertionControl* control_ = nullptr;
   std::size_t width_ = 0;
   // Every evaluation before it has been stepped this tick, which is what makes
   // the sweep a forward scan rather than a search.
