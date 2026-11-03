@@ -24,12 +24,13 @@ enum class DpiScalarAbi : std::uint8_t {
   kInt,
   kLongInt,
   kReal,
+  kShortReal,
   kString,
   kChandle,
 };
 
 // A by-value scalar carrier: the SV value crosses in a C register as its scalar
-// C type (`int`, `double`, `const char*`, `void*`, `unsigned char`).
+// C type (`int`, `double`, `float`, `const char*`, `void*`, `unsigned char`).
 struct ScalarCarrier {
   DpiScalarAbi abi = DpiScalarAbi::kVoid;
 
@@ -115,8 +116,8 @@ enum class DpiDirection : std::uint8_t {
 
 // Whether the category is one of the 2- and 4-state scalar and packed types --
 // the ones an open array holds in canonical form (LRM Annex H.7.3). The
-// remainder (`real`, `string`, `chandle`, and `void`, which is not an argument
-// at all) are the C-compatible-representation half of that rule.
+// remainder (`real`, `shortreal`, `string`, `chandle`, and `void`, which is not
+// an argument at all) are the C-compatible-representation half of that rule.
 [[nodiscard]] constexpr auto DpiScalarAbiIsIntegral(DpiScalarAbi abi) -> bool {
   switch (abi) {
     case DpiScalarAbi::kBitScalar:
@@ -128,6 +129,7 @@ enum class DpiDirection : std::uint8_t {
       return true;
     case DpiScalarAbi::kVoid:
     case DpiScalarAbi::kReal:
+    case DpiScalarAbi::kShortReal:
     case DpiScalarAbi::kString:
     case DpiScalarAbi::kChandle:
       return false;
@@ -177,6 +179,8 @@ enum class DpiDirection : std::uint8_t {
       return "longint";
     case DpiScalarAbi::kReal:
       return "real";
+    case DpiScalarAbi::kShortReal:
+      return "shortreal";
     case DpiScalarAbi::kString:
       return "string";
     case DpiScalarAbi::kChandle:

@@ -2,10 +2,19 @@
 // and the small ones -- the integer atoms, the reals, a scalar bit or logic, a
 // chandle, and a string -- cross in a register rather than through a pointer,
 // which is also the set a function result is restricted to (LRM 35.5.5,
-// 35.5.6, Table H.1, Annex H.8.7, H.8.9). Every answer below is derived from
-// every argument of its call, and the arguments of a call differ from one
-// another, so a value that failed to cross cannot produce it.
+// 35.5.6, Table H.1, Annex H.8.7, H.8.9). A `realtime` is a `real` (LRM
+// 6.12) and crosses as C's `double`, while a `shortreal` is C's `float`, so it
+// crosses at single precision and not as a `real` would. An enumeration
+// crosses as its base type does (LRM 35.5.6, Annex H.7.3). Every answer below
+// is derived from every argument of its call, and the arguments of a call
+// differ from one another, so a value that failed to cross cannot produce it.
 module Top;
+  typedef enum int {
+    kRed = 3,
+    kGreen = 40,
+    kBlue = 500
+  } colour_t;
+
   import "DPI-C" function byte byte_mix(input byte a, input byte b);
   import "DPI-C" function shortint shortint_mix(
       input shortint a, input shortint b);
@@ -13,6 +22,13 @@ module Top;
   import "DPI-C" function longint longint_mix(
       input longint a, input longint b);
   import "DPI-C" function real real_mix(input real a, input real b);
+  import "DPI-C" function realtime realtime_half(input realtime t);
+  import "DPI-C" function shortreal shortreal_mix(
+      input shortreal a, input shortreal b);
+  import "DPI-C" function void shortreal_scale(
+      inout shortreal value, output shortreal tripled);
+  import "DPI-C" function void next_colour(
+      input colour_t c, output colour_t previous, output colour_t next);
   import "DPI-C" function bit bit_xor(input bit a, input bit b);
   import "DPI-C" function logic rotate_logic(input logic v);
   import "DPI-C" function string join_text(input string a, input string b);
@@ -25,6 +41,12 @@ module Top;
   int int_answer;
   longint longint_answer;
   real real_answer;
+  realtime halved_time;
+  shortreal shortreal_answer;
+  shortreal scaled;
+  shortreal tripled;
+  colour_t after_green;
+  colour_t before_green;
   bit differing;
   bit matching;
   logic from_zero;
@@ -42,6 +64,20 @@ module Top;
     int_answer = int_mix(12345, 678);
     longint_answer = longint_mix(64'sd9, 64'sd123456789);
     real_answer = real_mix(2.5, 0.125);
+    halved_time = realtime_half(12.5);
+
+    // The foreign side rounds to single precision after each step, which for
+    // these operands lands one unit away from their product taken in `double`
+    // and rounded once, so the answer is compared by its bits.
+    shortreal_answer = shortreal_mix(0.3, 7.0);
+
+    scaled = 1.5;
+    tripled = 0.0;
+    shortreal_scale(scaled, tripled);
+
+    before_green = kBlue;
+    after_green = kRed;
+    next_colour(kGreen, before_green, after_green);
 
     differing = bit_xor(1'b1, 1'b0);
     matching = bit_xor(1'b1, 1'b1);
@@ -72,6 +108,17 @@ module Top;
       $fatal(1, "longint_answer was %0d, expected 9123456789", longint_answer);
     if (real_answer != 20.125)
       $fatal(1, "real_answer was %f, expected 20.125", real_answer);
+    if (halved_time != 6.25)
+      $fatal(1, "halved_time was %f, expected 6.25", halved_time);
+    if ($shortrealtobits(shortreal_answer) !== 32'h3F21_47AE)
+      $fatal(1, "shortreal_answer had bits %h, expected 3f2147ae",
+             $shortrealtobits(shortreal_answer));
+    if (scaled != 3.0) $fatal(1, "scaled was %f, expected 3.0", scaled);
+    if (tripled != 4.5) $fatal(1, "tripled was %f, expected 4.5", tripled);
+    if (after_green !== kBlue)
+      $fatal(1, "after_green was %0d, expected 500", after_green);
+    if (before_green !== kRed)
+      $fatal(1, "before_green was %0d, expected 3", before_green);
     if (differing !== 1'b1)
       $fatal(1, "differing was %b, expected 1", differing);
     if (matching !== 1'b0)

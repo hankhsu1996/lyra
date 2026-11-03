@@ -123,24 +123,34 @@ leaves a dimension unsized (LRM 35.5.6.1): what crosses is then a function of th
 type, which only the call site holds. One mechanism serves every import, so the call site is where
 all of them marshal.
 
-The carrier is a **backend-ABI carrier type**, not an SV value-semantic type. It lives in the same
-category as the runtime plumbing types the MIR type system already carries (the services, scope,
-reference, and pointer types) and maps through the per-backend type-mapping dispatch to the target C
-ABI type. Its lifetime is a call-lowering artifact: it is produced by a marshal-in primitive and
-consumed by the foreign call or a marshal-out primitive, never held as a user variable.
+The carrier is the type a value crosses as, not an SV value-semantic type: a machine scalar for a
+value Table H.1 passes in a register (`float` for a `shortreal`, `double` for a `real`, the C
+integer of an atom's width), and a type the runtime library declares for a canonical vector or an
+open array's image. It maps through the per-backend type-mapping dispatch to the target C ABI type.
+No type of MIR names the boundary itself (`mir.md`, machine data). Which carrier a type crosses as
+is a total function of the SV type: every packed type other than a 2-state integer atom and a scalar
+`bit` or `logic` is one canonical vector of its width (LRM 35.5.6, Annex H.7.3), and an enumeration
+is its base type (Annex H.7.3). Its lifetime is a call-lowering artifact: it is produced by a
+marshal-in primitive and consumed by the foreign call or a marshal-out primitive, never held as a
+user variable.
+
+_Revised 2026-11-02._ This paragraph used to call the carrier "a backend-ABI carrier type" in the
+category of the runtime's plumbing types. It was written before MIR had machine types, and `mir.md`
+since rules out a type whose content is that a value is at a boundary; what each carrier is already
+followed `mir.md`, and the paragraph now says so.
 
 Invariant -- the carrier is ABI-temporary. The carrier type occurs only where the boundary itself
 is: a foreign signature's formals and result, the boundary object an argument crosses in, and the
 marshal calls that convert between it and an SV value. It is never a user variable's type, never
 appears in a user expression or type check, is never stored to an SV variable, and on the calling
 side never escapes the single lowered-call window (marshal-in, foreign call, marshal-out, one
-statement). It is a runtime plumbing type, never a member of the SV value-type set.
+statement). It is a machine or runtime library type, never a member of the SV value-type set.
 
 Reason: the two backends have different runtime ABIs (native value methods vs opaque-handle
 `extern "C"` calls). A conversion expressed as a MIR call renders mechanically on both; a
-backend-realized conversion would be written twice and drift. The carrier being a plumbing type, not
-a value type, keeps it out of the SV value model and adds no new MIR expression primitive -- it is a
-type in an existing category, and the conversion is an ordinary call.
+backend-realized conversion would be written twice and drift. The carrier being a machine or library
+type, not a value type, keeps it out of the SV value model and adds no new MIR expression primitive
+-- it is a type in an existing category, and the conversion is an ordinary call.
 
 The single lowered-call window of the invariant holds of the calling side and not of an export's
 entry, where the carrier is what the entry hands back. A number or a pointer is the carrier itself,
@@ -258,8 +268,8 @@ usage inflate the scope.
   logic into value emission, which `backend_contract.md` forbids, and duplicates the logic across
   the two backends' different runtime ABIs.
 - **The ABI carrier as an SV value-semantic type or a new MIR expression primitive.** Pollutes the
-  value model with a foreign-ABI shape and opens the closed primitive set. The carrier is a plumbing
-  type in an existing category, materialized only during call lowering.
+  value model with a foreign-ABI shape and opens the closed primitive set. The carrier is a machine
+  or library type, materialized only during call lowering.
 - **A process-global (non-thread-local) export context.** Works under a single-threaded engine but
   assumes one global engine and aliases across concurrent or multi-engine runs; the thread-local
   form is the precise scope.

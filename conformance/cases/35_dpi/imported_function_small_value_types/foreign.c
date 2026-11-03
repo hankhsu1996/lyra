@@ -25,6 +25,30 @@ double real_mix(double a, double b) {
   return (a * 8.0) + b;
 }
 
+double realtime_half(double t) {
+  return t / 2.0;
+}
+
+/* Each step is taken in `float` and rounded there. */
+float shortreal_mix(float a, float b) {
+  float square = a * a;
+  return square * b;
+}
+
+/* An inout `float` is read and written through a pointer, and an output one
+   only written (LRM Annex H.8.4, H.8.8). */
+void shortreal_scale(float* value, float* tripled) {
+  *tripled = *value * 3.0F;
+  *value = *value * 2.0F;
+}
+
+/* An enumeration declared over `int` is an `int` here (LRM Annex H.7.3); its
+   names do not cross. */
+void next_colour(int32_t c, int32_t* previous, int32_t* next) {
+  *previous = c == 40 ? 3 : 0;
+  *next = c == 40 ? 500 : 0;
+}
+
 svBit bit_xor(svBit a, svBit b) {
   return (svBit)(a ^ b);
 }
