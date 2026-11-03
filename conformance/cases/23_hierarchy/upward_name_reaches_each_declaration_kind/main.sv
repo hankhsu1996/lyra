@@ -39,7 +39,7 @@ module Top;
   int drive = 21;
 
   initial begin : marked
-    int kept = 55;
+    static int kept = 55;
     #10;
   end
 

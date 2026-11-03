@@ -276,6 +276,7 @@ array, whose parts lie at no fixed place in the value (7.10.3), are not yet carr
 ### Forbidden, accepted by the front end
 
 Run as the front end analyzed it, with whatever warning it gives, which is what tells the author.
+Every command that reads the design prints that warning, `run` included, before any program starts.
 
 #### A message as the first argument of `$fatal`
 
@@ -326,6 +327,28 @@ The front end takes `input logic` as a variable as well, which is not a forbidde
 analysis that differs from the standard's: `input logic d` is `input wire logic d`, a net, so left
 unconnected it reads z (6.6) where a variable reads x. That is a defect of the analysis, recorded as
 a wrong answer of Lyra's.
+
+#### A static variable initialized in a procedural block with no `static`
+
+```systemverilog
+always @(posedge clk) begin
+  int count = 0;
+  count++;
+end
+```
+
+6.21: "an explicit static keyword shall be required when an initialization value is specified as
+part of a static variable's declaration to indicate the user's intent of executing that
+initialization only once at the beginning of simulation." Forbidden. The clause's `top_illegal`
+example marks it "should not compile", and examples are informative (1.10).
+
+The text is in common use, and its meaning is not in question. The standard itself says what such a
+variable is, static, its initializer applied once before any process starts (6.21, 6.8). The rule
+exists so that an author who meant a fresh value on each entry, as `automatic` gives, is not
+silently given the other. The front end warns of every such declaration (`-Wexplicit-static`), and
+keeps it a warning on purpose. Its author answered that most tools take the text and much code
+assumes it legal, and that a user who wants the refusal asks for `-Werror=explicit-static` (slang
+#1110). Lyra takes the variable as static. Write `static` or `automatic`.
 
 ### Not settled by the standard, so refused
 

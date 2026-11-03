@@ -110,7 +110,7 @@ module Top;
   end
 
   initial begin
-    Worker worker = new();
+    static Worker worker = new();
     worker.run();
     in_method = worker.seen;
     in_method_same = worker.same_object;

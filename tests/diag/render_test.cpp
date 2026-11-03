@@ -150,14 +150,6 @@ TEST(DiagRender, SinkSummaryAggregatesCounts) {
   EXPECT_TRUE(sink.HasErrors());
 }
 
-// A warning left out is left out of the count as well.
-TEST(DiagRender, WarningsReachTheReportOnlyWhenShown) {
-  lyra::diag::DiagnosticSink sink;
-  sink.Report(lyra::diag::Make(DiagCode::kWarningPedantic, "pedantic"));
-  EXPECT_FALSE(sink.HasErrors());
-  EXPECT_EQ(Shown(sink, RenderOptions{.show_warnings = false}), "");
-}
-
 TEST(DiagRender, SinkEmptyHasNoSummary) {
   EXPECT_EQ(Shown(lyra::diag::DiagnosticSink{}), "");
 }

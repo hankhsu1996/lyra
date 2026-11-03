@@ -10,9 +10,9 @@
 // to it inside the reader's own unit.
 module Child;
   task Ticker();
-    int counted = 66;
+    static int counted = 66;
     begin : inner
-      int deeper = 77;
+      static int deeper = 77;
       #10;
     end
   endtask
@@ -20,7 +20,7 @@ module Child;
   initial Ticker();
 
   initial begin : marked
-    int kept = 55;
+    static int kept = 55;
     #10;
   end
 
@@ -36,7 +36,7 @@ module Top;
   Child c ();
 
   task Watcher();
-    int seen = 88;
+    static int seen = 88;
     #10;
   endtask
 
@@ -44,7 +44,7 @@ module Top;
 
   if (1) begin : sib
     task Counter();
-      int tallied = 99;
+      static int tallied = 99;
       #10;
     endtask
     initial Counter();

@@ -19,7 +19,7 @@ module Leaf #(parameter int P = 1) (output int got, output logic [7:0] cut);
   endclass
 
   initial begin
-    Probe probe = new;
+    static Probe probe = new;
     #1;
     cut = 8'(all_set[P:0]);
     got = probe.read();
@@ -41,7 +41,7 @@ module Top;
     endclass
 
     initial begin
-      Probe probe = new;
+      static Probe probe = new;
       #1;
       cut[i] = 8'(all_set[i:0]);
       got[i] = probe.read();

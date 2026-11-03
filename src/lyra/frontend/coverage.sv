@@ -718,7 +718,7 @@ class integral_coverpoint #(type T = int) extends coverage_coverpoint;
       out.push_back(prefix);
       return;
     end
-    foreach (steps[at].spans[i]) begin
+    for (int i = 0; i < steps[at].spans.size(); i++) begin
       key_t key = steps[at].spans[i].lo;
       forever begin
         for (int times = steps[at].least; times <= steps[at].most; times++) begin
@@ -771,17 +771,14 @@ class integral_coverpoint #(type T = int) extends coverage_coverpoint;
   // one (LRM 19.5.5, 19.5.6).
   local function void remove_excluded_sequences();
     key_t excluded[$][$];
-    foreach (transition_bins[t]) begin
-      if (transition_bins[t].kind == COVERAGE_BINS) continue;
-      foreach (sequences[t][s])
-        if (bounded(sequences[t][s])) expand(sequences[t][s], 0, {}, excluded);
-    end
+    foreach (sequences[t, s])
+      if (transition_bins[t].kind != COVERAGE_BINS && bounded(sequences[t][s]))
+        expand(sequences[t][s], 0, {}, excluded);
     if (excluded.size() == 0) return;
     foreach (transition_bins[t]) begin
       step_t kept[$][$];
-      bit any_bounded = 0;
       if (transition_bins[t].kind != COVERAGE_BINS) continue;
-      foreach (sequences[t][s]) begin
+      for (int s = 0; s < sequences[t].size(); s++) begin
         key_t concrete[$][$];
         if (!bounded(sequences[t][s])) begin
           kept.push_back(sequences[t][s]);
@@ -821,7 +818,8 @@ class integral_coverpoint #(type T = int) extends coverage_coverpoint;
     bit any_counting = 0;
     foreach (value_bins[i]) begin
       if (value_bins[i].kind == COVERAGE_IGNORE_BINS || value_bins[i].kind == COVERAGE_ILLEGAL_BINS)
-        foreach (value_bins[i].spans[j]) excluded.push_back(value_bins[i].spans[j]);
+        for (int j = 0; j < value_bins[i].spans.size(); j++)
+          excluded.push_back(value_bins[i].spans[j]);
       if (value_bins[i].kind == COVERAGE_BINS) any_counting = 1;
     end
     foreach (transition_bins[i]) if (transition_bins[i].kind == COVERAGE_BINS) any_counting = 1;
@@ -957,12 +955,13 @@ class integral_coverpoint #(type T = int) extends coverage_coverpoint;
     bit pending_after = 0;
     foreach (transition_bins[t]) begin
       bit completed = 0;
-      foreach (sequences[t][s]) begin
+      for (int s = 0; s < sequences[t].size(); s++) begin
         attempt_t next[$];
         bit done = 0;
         if (attempts[t][s].size() > 0) pending_before = 1;
         attempts[t][s].push_back('{0, 0});
-        foreach (attempts[t][s][a]) advance(sequences[t][s], attempts[t][s][a], key, next, done);
+        for (int a = 0; a < attempts[t][s].size(); a++)
+          advance(sequences[t][s], attempts[t][s][a], key, next, done);
         attempts[t][s] = next;
         if (attempts[t][s].size() > 0) pending_after = 1;
         if (done) completed = 1;
@@ -1101,8 +1100,9 @@ class integral_coverpoint #(type T = int) extends coverage_coverpoint;
     foreach (transition_bins[t]) begin
       if (transition_bins[t].kind != COVERAGE_BINS || transition_bins[t].first_index != index)
         continue;
-      foreach (sequences[t][s]) foreach (sequences[t][s][$].spans[k])
-        spans.push_back(sequences[t][s][$].spans[k]);
+      for (int s = 0; s < sequences[t].size(); s++)
+        for (int k = 0; k < sequences[t][s][$].spans.size(); k++)
+          spans.push_back(sequences[t][s][$].spans[k]);
       normalize(spans);
       return;
     end
@@ -1166,15 +1166,16 @@ class integral_coverpoint #(type T = int) extends coverage_coverpoint;
     foreach (value_bins[i]) begin
       if (value_bins[i].kind != COVERAGE_BINS) continue;
       if (value_bins[i].per_value) begin
-        size_t width = size_of(value_bins[i].spans);
-        total += int'(width);
-        foreach (per_value_counts[i][key])
-          if (per_value_counts[i][key] >= option.at_least) covered++;
+        total += int'(size_of(value_bins[i].spans));
       end else if (value_bins[i].spans.size() > 0) begin
         total++;
         if (value_bins[i].count >= option.at_least) covered++;
       end
     end
+    foreach (per_value_counts[i, key])
+      if (value_bins[i].kind == COVERAGE_BINS && value_bins[i].per_value &&
+          per_value_counts[i][key] >= option.at_least)
+        covered++;
     foreach (transition_bins[i]) begin
       if (transition_bins[i].kind != COVERAGE_BINS || sequences[i].size() == 0) continue;
       total++;
@@ -1474,7 +1475,7 @@ class real_coverpoint extends coverage_coverpoint;
     foreach (real_bins[i]) begin
       bit meets = 0;
       if (real_bins[i].kind != COVERAGE_BINS) continue;
-      foreach (real_bins[i].parts[p]) foreach (pending[q])
+      for (int p = 0; p < real_bins[i].parts.size(); p++) foreach (pending[q])
         if (real_bins[i].parts[p].lo <= pending[q].hi && pending[q].lo <= real_bins[i].parts[p].hi) meets = 1;
       if (meets) indices.push_back(at);
       at++;
@@ -1491,7 +1492,7 @@ class real_coverpoint extends coverage_coverpoint;
       longint size = 0;
       if (real_bins[i].kind != COVERAGE_BINS) continue;
       if (at++ != index) continue;
-      foreach (real_bins[i].parts[p]) begin
+      for (int p = 0; p < real_bins[i].parts.size(); p++) begin
         if (real_bins[i].parts[p].lo != real_bins[i].parts[p].hi) return -1;
         size++;
       end
@@ -1692,7 +1693,7 @@ class coverage_cross extends coverage_item;
     foreach (pending_components[d]) begin
       longint grown[$];
       foreach (tuples[t])
-        foreach (pending_components[d][n])
+        for (int n = 0; n < pending_components[d].size(); n++)
           grown.push_back(tuples[t] * dimensions[d].normal_bin_count() + pending_components[d][n]);
       tuples = grown;
     end
@@ -1738,7 +1739,10 @@ class coverage_cross extends coverage_item;
 
   function void finish();
     held_by_user_bin.delete();
-    foreach (user_bins[b]) foreach (user_bins[b].selection.tuples[t]) held_by_user_bin[t] = 1;
+    foreach (user_bins[b]) begin
+      coverage_selection selection = user_bins[b].selection;
+      foreach (selection.tuples[t]) held_by_user_bin[t] = 1;
+    end
     retained = 0;
     if (option.cross_retain_auto_bins || user_bins.size() == 0)
       retained = int'(product - held_by_user_bin.size());
@@ -1764,7 +1768,7 @@ class coverage_cross extends coverage_item;
     foreach (dimensions[d]) begin
       longint grown[$];
       foreach (tuples[t])
-        foreach (dimensions[d].hits[h])
+        for (int h = 0; h < dimensions[d].hits.size(); h++)
           grown.push_back(tuples[t] * dimensions[d].normal_bin_count() + dimensions[d].hits[h]);
       tuples = grown;
     end
@@ -2050,8 +2054,10 @@ class covergroup_type;
         found.counts_by_name(counts);
         if (found.at_least() > least) least = found.at_least();
       end
-      if (loaded.exists(item)) foreach (loaded[item][b])
-        counts[b] = counts.exists(b) ? counts[b] + loaded[item][b] : loaded[item][b];
+      if (loaded.exists(item)) begin
+        longint read_back[string] = loaded[item];
+        foreach (read_back[b]) counts[b] = counts.exists(b) ? counts[b] + read_back[b] : read_back[b];
+      end
       foreach (counts[b]) begin
         total++;
         if (counts[b] >= least) covered++;
@@ -2087,7 +2093,7 @@ class covergroup_type;
       longint weights = 0;
       string items[$];
       bit seen[string];
-      foreach (instances[i]) foreach (instances[i].items[j])
+      foreach (instances[i]) for (int j = 0; j < instances[i].items.size(); j++)
         if (!seen.exists(instances[i].items[j].name)) begin
           seen[instances[i].items[j].name] = 1;
           items.push_back(instances[i].items[j].name);
@@ -2173,9 +2179,10 @@ class covergroup_type;
       int item_weight = coverpoint_type_options.exists(item) ?
           coverpoint_type_options[item].weight :
           cross_type_options.exists(item) ? cross_type_options[item].weight : 1;
-      foreach (loaded[item][b]) begin
+      longint read_back[string] = loaded[item];
+      foreach (read_back[b]) begin
         item_total++;
-        if (loaded[item][b] > 0) item_covered++;
+        if (read_back[b] > 0) item_covered++;
       end
       covered += item_covered;
       total += item_total;
@@ -2211,13 +2218,14 @@ class covergroup_type;
       $fdisplay(fd, "          <cgSourceId file=\"1\" line=\"1\" inlineCount=\"1\"/>");
       $fdisplay(fd, "        </cgId>");
       foreach (loaded[item]) begin
+        longint read_back[string] = loaded[item];
         $fdisplay(fd, "        <coverpoint name=\"%s\" key=\"0\">", coverage_registry::escaped(item));
         $fdisplay(fd, "          <options/>");
-        foreach (loaded[item][b]) begin
+        foreach (read_back[b]) begin
           $fdisplay(fd, "          <coverpointBin name=\"%s\" type=\"bins\" key=\"0\">",
                     coverage_registry::escaped(b));
           $fdisplay(fd, "            <range from=\"-1\" to=\"-1\">");
-          $fdisplay(fd, "              <contents coverageCount=\"%0d\"/>", loaded[item][b]);
+          $fdisplay(fd, "              <contents coverageCount=\"%0d\"/>", read_back[b]);
           $fdisplay(fd, "            </range>");
           $fdisplay(fd, "          </coverpointBin>");
         end
