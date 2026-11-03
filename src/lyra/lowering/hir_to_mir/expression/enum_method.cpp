@@ -31,7 +31,7 @@ auto AskMembers(
     UnitLowerer& unit_lowerer, mir::Builder block, support::BuiltinFn question,
     hir::TypeId enum_type, std::vector<mir::ExprId> operands,
     mir::TypeId answer_type) -> mir::Expr {
-  const mir::ExprId members = mir::BuildEnumTableRef(
+  const mir::ExprId members = mir::BuildEnumMemberTable(
       unit_lowerer.Unit(), block, unit_lowerer.TranslateType(enum_type));
   return mir::Expr{
       .data =

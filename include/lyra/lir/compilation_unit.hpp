@@ -15,13 +15,12 @@
 #include "lyra/base/translation.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
-#include "lyra/lir/enum_table.hpp"
-#include "lyra/lir/enum_table_id.hpp"
+#include "lyra/lir/constant_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
-#include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/record_id.hpp"
+#include "lyra/lir/referent.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/value_step.hpp"
@@ -61,50 +60,18 @@ struct ConstantInt {
   std::int64_t value = 0;
 };
 
+// A value of an integral type: its bits, laid out as the value layer lays a
+// value of that type out.
+struct ConstantIntegral {
+  IntegralConstant value;
+};
+
 // An address naming nothing.
 struct ConstantNull {};
 
-// The address of what ends an object of the class `cls`, of this unit or
-// another: each member, then the storage the object was created in.
-struct ConstantDestructor {
-  TypeId cls;
-};
-
-// The address of the table an object of the class `cls`, of this unit, lays
-// the bodies of its behaviors out in, laid out by the target from what the
-// class states of its dispatch.
-struct ConstantDispatchTable {
-  TypeId cls;
-};
-
-// The same for the table it gives the interface `iface`.
-struct ConstantInterfaceTable {
-  TypeId cls;
-  TypeId iface;
-};
-
-// The address of a NUL-terminated string.
-struct ConstantString {
-  std::string text;
-};
-
-// The address of a function of this unit.
-struct ConstantFunction {
-  FunctionId function;
-};
-
-// The address of a function another unit emits, linked under `symbol`: an
-// entry of that unit's that answers to no name, declared at `prototype`, the
-// type that unit published it with.
-struct ConstantExternalFunction {
-  std::string symbol;
-  TypeId prototype;
-};
-
-// The address of data linked under `symbol`: a constant of this unit, or a
-// class's definition, which another unit may emit.
-struct ConstantAddress {
-  std::string symbol;
+// The address of what `to` names.
+struct ConstantPointer {
+  Referent to;
 };
 
 // A structure of the runtime library, its members given in the order the
@@ -115,43 +82,47 @@ struct ConstantRecord {
   std::vector<Constant> parts;
 };
 
-// Values of one type, one after another.
+// Values of the array's element type, one after another.
 struct ConstantArray {
   std::vector<Constant> elements;
 };
 
-// A view of the `count` entries of the array linked under `symbol`: where the
-// first is and how many there are.
+// A view of every entry of the array constant `array` of this unit: where the
+// first is and how many there are, which is how long the array's type says it
+// is.
 struct ConstantSpan {
-  std::string symbol;
-  std::uint64_t count = 0;
+  ConstantId array;
 };
 
 // A value fixed where the unit is compiled and built from nothing that runs --
 // literals, addresses, and structures, arrays and views of them -- so a target
-// emits it as data.
+// emits it as data. It carries no type: whatever holds it states the type it is
+// a value of, which says how it is laid out.
 struct Constant {
   std::variant<
-      ConstantInt, ConstantNull, ConstantDestructor, ConstantDispatchTable,
-      ConstantInterfaceTable, ConstantString, ConstantFunction,
-      ConstantExternalFunction, ConstantAddress, ConstantRecord, ConstantArray,
-      ConstantSpan>
+      ConstantInt, ConstantIntegral, ConstantNull, ConstantPointer,
+      ConstantRecord, ConstantArray, ConstantSpan>
       value;
 };
 
+// One value the unit settled before the program runs, and its type. It is data
+// of this artifact alone, which nothing outside it names, so it carries no
+// symbol: a target places it where it likes, as clang does an unnamed constant.
+struct ConstantDecl {
+  TypeId type;
+  Constant value;
+};
+
 // Read-only data this unit defines, linked under `symbol` and holding
-// `initializer` from before the program starts. Everything naming it -- another
-// constant, or under external linkage another unit -- does so by that symbol,
-// which is stated here and composed nowhere below.
+// `initializer`, a value of `type`, from before the program starts. Everything
+// naming it from another artifact does so by that symbol, which is stated here
+// and composed nowhere below.
 struct GlobalConstant {
   std::string symbol;
   support::Linkage linkage = support::Linkage::kInternal;
+  TypeId type;
   Constant initializer;
 };
-
-// The body a slot of a table holds: a function of this unit, or one another
-// unit defines, reached by its symbol.
-using TableBody = std::variant<ConstantFunction, ConstantExternalFunction>;
 
 // One behavior an object of a class dispatches on (LRM 8.20) and the body
 // answering it, none where the class leaves it abstract (LRM 8.21) and for a
@@ -307,20 +278,15 @@ struct CompilationUnit {
   // the type's table.
   std::map<std::pair<TypeId, ValueStep>, FunctionId> type_steps;
   std::vector<StaticStorage> static_storage;
-  // The read-only data the unit defines. What the runtime library reads of each
-  // class -- its record of the class, under its definition symbol, and the
-  // constants that record points at, all linked as the class is -- is here,
-  // except the tables of the bodies its objects dispatch through, which the
-  // class states and a target lays out. So is the record of each location the
-  // unit's program states.
-  std::vector<GlobalConstant> constants;
-  // Each enumeration member table the unit holds, which an operand names.
-  base::Translation<EnumTableId, EnumTableDecl> enum_tables;
-  // Each constant integral value the unit holds: its type and its bits, which
-  // is the whole of a value of an integral type, so a target states one as
-  // data.
-  base::Translation<IntegralConstantId, IntegralConstantDecl>
-      integral_constants;
+  // The definition of each class the unit defines, which the runtime library
+  // reads of it, under the class's definition symbol and linked as the class
+  // is. The tables its objects dispatch through are not among them: the class
+  // states what they hold and a target lays them out.
+  std::vector<GlobalConstant> definitions;
+  // Each value the unit settled before the program runs, which an operand, a
+  // definition or another constant names: integral values, enumeration member
+  // tables, locations, the tables a definition points at.
+  base::Translation<ConstantId, ConstantDecl> constants;
   std::optional<ClassId> root;
 };
 

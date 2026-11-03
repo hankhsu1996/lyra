@@ -368,13 +368,15 @@ HIR-to-MIR emits the call, then render translates uniformly. The asymmetry betwe
 default-initialized, some need construction" is expressed in MIR's expression set, not in render's
 branch tables.
 
-A constant of an integral type is its bits at its type. The unit holds each distinct one once and a
-use names which, and nothing in MIR builds one. How a target writes a value of a type from its bits
-is a question about the type, so type mapping answers it (invariant 3): a target with literals
-spells one, and a target that lays values out as data states the bytes. A backend defines the
-constants its own output names, each its own artifact's. The unit's set is where a value gets one
-identity, and it is not a list of what an artifact must contain, because an operation folded where
-it was built leaves its operands in the set with no use.
+A constant is the value it is -- an integral value's bits at its type, a structure of the library a
+part per member, an array, a view, an address. The unit holds each distinct one once and a use names
+which, and nothing in MIR builds one. How a target writes a value of a type is a question about the
+type, so type mapping answers it (invariant 3): a target with literals spells one, and a target that
+lays values out as data states the bytes, each by one function from the value and its type that
+knows no kind of constant. A backend defines the constants its own output names, each its own
+artifact's. The unit's set is where a value gets one identity, and it is not a list of what an
+artifact must contain, because an operation folded where it was built leaves its operands in the set
+with no use.
 
 How a definition MIR states is linked -- every body of the unit alike, one body for others to name,
 or one body alone -- is one answer read off MIR's facts, and each backend spells it: a target's
@@ -384,9 +386,14 @@ answers are held in step by nothing. What a target builds below MIR for its own 
 records it hands the library of a type, the data it holds a constant as -- is linked as that target
 decides. A definition every body states alike is kept in place of the others, and how a target makes
 the kept copy mean what each dropped one did is that target's: LLVM's `weak_odr` asks only that the
-copies behave alike, so each may read its own module's data; C++ asks that every name in them denote
-the same entity, which a constant of one file's own does only where it is never bound to a reference
-([basic.def.odr]/16), so the C++ backend writes such a constant in place there.
+copies behave alike, so each may read its own module's data, as clang's and rustc's constants are
+each module's private data; C++ asks that every name in them denote the same entity
+([basic.def.odr]/16), which a constant of one file's own is not and a static of an inline definition
+is ([dcl.inline]), so the C++ backend writes a constant such a definition names in place, as a
+static of its own. The text of such a definition is a function of what it states and nothing else: a
+position the unit holds something at, which differs between bodies of one unit, appears in it
+nowhere, as an Itanium symbol is composed from what it names and never from where a compiler kept
+it.
 
 A value-emission entry may not read _past_ its node to synthesize operands or pick a form: not an
 enclosing declaration, not a sibling, not an expected destination, not a node reached by matching on
@@ -420,6 +427,6 @@ passed for its type alone is the wrong way to say any of them: nothing downstrea
 operand from one whose contents matter, so every backend builds contents it then discards, and every
 runtime entry taking one advertises a parameter whose value it must document as unused. What a
 declaration fixes and an entry needs as numbers -- an array's declared range -- is machine operands
-of the call that needs it. An enumeration's member table is constant data of the enumeration: the
-unit holds it once, a use names it, and it reaches render as that name, never composed by the
+of the call that needs it. An enumeration's member table is a constant like any other: the unit
+holds it once as a value, a use names it, and it reaches render as that name, never composed by the
 consuming call's render.

@@ -306,7 +306,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
       body.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit())));
   operands.push_back(mem_value);
   if (enumerated) {
-    operands.push_back(mir::BuildEnumTableRef(unit, body, elem_mir));
+    operands.push_back(mir::BuildEnumMemberTable(unit, body, elem_mir));
   }
   operands.push_back(name_id);
   for (const mir::ExprId operand : addressing->operands) {

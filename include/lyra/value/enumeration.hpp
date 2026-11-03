@@ -1,12 +1,12 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
 #include <vector>
 
+#include "lyra/value/constant_span.hpp"
 #include "lyra/value/integral_fwd.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/string.hpp"
@@ -35,16 +35,21 @@ namespace lyra::value {
 // member when it is bit-identical to one, unknown bits included.
 //
 // The members are constant data of the enumeration, which whoever compiled it
-// states once and this only reads: the base type's width and whether it has an
-// unknown plane, the members' planes laid out as that says, and the members'
-// names in the same order. It is laid out as C lays a structure out, because a
-// unit states one as data. A value asked about is of the base type.
+// states once and this only reads: the members' planes laid out as the base
+// type's width and its unknown plane say, the members' names in the same
+// order, and that width and whether the base has an unknown plane. It is laid
+// out as C lays a structure out, because a unit states one as data. A value
+// asked about is of the base type.
 struct Enumeration {
-  const std::uint64_t* planes;
-  const char* const* names;
-  std::uint64_t members;
-  std::uint64_t width;
-  bool four_state;
+  ConstantSpan<std::uint64_t> planes;
+  ConstantSpan<const char*> names;
+  std::uint64_t width = 0;
+  bool four_state = false;
+
+  // How many members the enumeration declares.
+  [[nodiscard]] constexpr auto Count() const -> std::size_t {
+    return names.size;
+  }
 
   // LRM 6.24.2: where a value lies among the declared members, and nothing for
   // one that is no member.
@@ -67,54 +72,34 @@ struct Enumeration {
   // The member at `position` in declared order.
   [[nodiscard]] auto MemberAt(std::size_t position) const -> ConstIntegralView;
 
- private:
-  // The member `steps` places after the one `value` is, wrapping.
-  [[nodiscard]] auto Stepped(const ConstIntegralView& value, std::size_t steps)
-      const -> std::optional<ConstIntegralView>;
-};
-
-// An enumeration's members as a unit compiled with the base type states them:
-// the planes and the names held in the constant itself, and the same questions
-// asked of a value of the base type.
-template <std::uint64_t kWidth, bool kFourState, std::size_t kMembers>
-struct EnumerationMembers {
-  std::array<
-      std::uint64_t, kMembers * EnumerationMemberWords(kWidth, kFourState)>
-      planes;
-  std::array<const char*, kMembers> names;
-
+  // The same questions asked of a value of the base type, as code compiled
+  // with that type asks them.
   template <IntegralValue T>
   [[nodiscard]] auto Has(const T& value) const -> bool {
-    return Read().PositionOf(value.AsWords().View()).has_value();
+    return PositionOf(value.AsWords().View()).has_value();
   }
 
   template <IntegralValue T>
   [[nodiscard]] auto Name(const T& value) const -> String {
-    return Read().NameOf(value.AsWords().View());
+    return NameOf(value.AsWords().View());
   }
 
   // A value that is no member steps to the base type's default (LRM Table
   // 6-7).
   template <IntegralValue T>
   [[nodiscard]] auto Next(const T& value, std::int64_t count) const -> T {
-    return MemberOr<T>(Read().MemberAfter(value.AsWords().View(), count));
+    return MemberOr<T>(MemberAfter(value.AsWords().View(), count));
   }
   template <IntegralValue T>
   [[nodiscard]] auto Prev(const T& value, std::int64_t count) const -> T {
-    return MemberOr<T>(Read().MemberBefore(value.AsWords().View(), count));
-  }
-
-  // The members as code compiled once for every enumeration reads them.
-  [[nodiscard]] constexpr auto Read() const -> Enumeration {
-    return Enumeration{
-        .planes = planes.data(),
-        .names = names.data(),
-        .members = kMembers,
-        .width = kWidth,
-        .four_state = kFourState};
+    return MemberOr<T>(MemberBefore(value.AsWords().View(), count));
   }
 
  private:
+  // The member `steps` places after the one `value` is, wrapping.
+  [[nodiscard]] auto Stepped(const ConstIntegralView& value, std::size_t steps)
+      const -> std::optional<ConstIntegralView>;
+
   template <IntegralValue T>
   [[nodiscard]] static auto MemberOr(std::optional<ConstIntegralView> member)
       -> T {

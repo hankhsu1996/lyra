@@ -24,15 +24,13 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
-#include "lyra/mir/enum_table_pool.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
-#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/library_records.hpp"
 #include "lyra/mir/phase.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
-#include "lyra/mir/source_location_pool.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -279,13 +277,11 @@ struct CompilationUnit {
   std::string source_name;
   TypePool types;
   // The values this unit settles before the program runs, each held once and
-  // named by every occurrence: the constant integral values its bodies were
-  // built with, the member tables of the enumerations they ask about, and the
-  // locations they hand the library, where an operation that can fail was
-  // written. Each fills as bodies are lowered.
-  IntegralConstantPool integral_constants;
-  EnumTablePool enum_tables;
-  SourceLocationPool source_locations;
+  // named by every occurrence: the integral values its bodies were built with,
+  // the member tables of the enumerations they ask about, the locations they
+  // hand the library where an operation that can fail was written, and every
+  // table a class's definition points at. Each fills as it is built.
+  ConstantPool constants;
   BuiltinMirTypes builtins;
   // Every structure of the runtime library a constant may be stated as, with
   // the type of each member, read off the library's own declarations when the

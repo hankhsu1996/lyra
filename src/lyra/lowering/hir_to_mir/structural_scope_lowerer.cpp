@@ -2350,18 +2350,14 @@ auto DescribeDumped(
     append(
         mir::MakeCallExpr(
             mir::Direct{.target = entry, .receiver = member},
-            {runtime(), DumpEntryAddress(
-                            unit, block, frame.current_class.id,
-                            *frame.current_class.cls, declaration)},
+            {runtime(), DumpEntryAddress(unit, block, declaration)},
             unit.builtins.void_type));
   }
   for (const hir::DumpedBlock& inside : dumped.blocks) {
     append(
         mir::MakeCallExpr(
             mir::Direct{.target = support::BuiltinFn::kBeginDescribedBlock},
-            {runtime(), DumpBlockAddress(
-                            unit, block, frame.current_class.id,
-                            *frame.current_class.cls, inside)},
+            {runtime(), DumpBlockAddress(unit, block, inside)},
             unit.builtins.void_type));
     auto inner = DescribeDumped(lowerer, frame, inside.members);
     if (!inner) return std::unexpected(std::move(inner.error()));
@@ -3402,8 +3398,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
       };
     }
     ProcessLowerer subroutine_lowerer(
-        unit_lowerer, this, hir_scope.time_resolution, src.body, src.root_stmt,
-        ctor_frame, scopes_, declared.statics, std::move(write_body));
+        unit_lowerer, this, src.body, src.root_stmt, ctor_frame, scopes_,
+        declared.statics, std::move(write_body));
     auto code_or = subroutine_lowerer.Run(
         src, CallableForm::kInstanceMember, std::nullopt);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
@@ -3499,8 +3495,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     // What the procedure's body is built of, beyond its statements, is lowered
     // from the procedure.
     ProcessLowerer process_lowerer(
-        unit_lowerer, this, hir_scope.time_resolution, p.body, p.root_stmt,
-        ctor_frame.WithSpan(p.span), scopes_, statics);
+        unit_lowerer, this, p.body, p.root_stmt, ctor_frame.WithSpan(p.span),
+        scopes_, statics);
     auto code_or = process_lowerer.Run(p);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     const mir::CallableId body = mir_class.callables.Add(
@@ -3767,10 +3763,10 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   // The design root states every specialization's construction table, its
   // own among them, since nothing hands it one.
   if (design_root_.has_value()) {
-    construction_table_ = StateConstructionTables(
-        unit, class_id_, mir_class, design_root_->root,
-        design_root_->instantiations,
-        ObjectEntryTypes(unit_lowerer, design_root_->object_entries));
+    construction_table_ = mir::ConstantRef{
+        .constant = StateConstructionTables(
+            unit, design_root_->root, design_root_->instantiations,
+            ObjectEntryTypes(unit_lowerer, design_root_->object_entries))};
   }
   mir_class.exports = std::move(exports);
   unit.DefineClass(class_id_, std::move(mir_class));
@@ -3866,6 +3862,13 @@ void StructuralScopeLowerer::DefinePublishedClasses(UnitLowerer& unit_lowerer) {
         mir::ConstructorDecl{.code = std::move(published.ctor)};
     unit.DefineClass(id, std::move(published.cls));
   }
+}
+
+auto TimeScopeOf(
+    const UnitLowerer& unit_lowerer, const StructuralScopeLowerer* declaring)
+    -> TimeResolution {
+  return declaring != nullptr ? declaring->Resolution()
+                              : unit_lowerer.Hir().root_scope.time_resolution;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

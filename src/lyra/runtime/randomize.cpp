@@ -202,7 +202,7 @@ auto CycleOf(
   if (part.members == nullptr) {
     return modes.CycleOf(part.path, width, std::nullopt);
   }
-  const std::uint64_t count = part.members->members;
+  const std::uint64_t count = part.members->Count();
   return modes.CycleOf(
       part.path, std::bit_width(count == 0 ? 0 : count - 1), count);
 }

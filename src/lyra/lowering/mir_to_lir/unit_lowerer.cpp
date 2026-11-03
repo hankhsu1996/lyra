@@ -17,6 +17,7 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/constant_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/symbol_name.hpp"
@@ -26,23 +27,22 @@
 #include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
-#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/code_source.hpp"
+#include "lyra/mir/constant_id.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/dispatch_table.hpp"
-#include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/linkage.hpp"
 #include "lyra/mir/record_decl.hpp"
-#include "lyra/mir/source_location_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/value_build.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/support/library_callback.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/linkage.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -320,57 +320,20 @@ auto UnitLowerer::StateTypeOperations(const OperationBodyProvider& bodies)
 }
 
 auto UnitLowerer::Finish() && -> lir::CompilationUnit {
-  // An integral constant is its type and its bits here, which is the whole of
-  // a value of an integral type.
-  base::Translation<lir::IntegralConstantId, lir::IntegralConstantDecl>
-      constants(mir_->integral_constants.size());
-  for (const mir::IntegralConstantId id : mir_->integral_constants.Ids()) {
-    const mir::IntegralConstantDecl& decl = mir_->integral_constants.Get(id);
-    constants.Append(
-        lir::IntegralConstantDecl{
-            .type = TranslateType(decl.type),
-            .value = lir::IntegralConstant{
-                .value_words = decl.value.value_words,
-                .state_words = decl.value.state_words}});
+  // Every body is lowered by now, so every constant one names is in the pool.
+  // A definition every body states alike reads its own artifact's copy of
+  // each, which holds what every other copy holds.
+  std::vector<lir::ConstantDecl> constants;
+  constants.reserve(mir_->constants.size());
+  for (const mir::ConstantId id : mir_->constants.Ids()) {
+    const mir::ConstantDecl& constant = mir_->constants.Get(id);
+    constants.push_back(
+        lir::ConstantDecl{
+            .type = TranslateType(constant.type),
+            .value = LowerConstant(constant.type, constant.value)});
   }
-  out_.integral_constants = std::move(constants);
-
-  // A location is a record of the library's, with a symbol of this artifact.
-  for (const mir::SourceLocationId id : mir_->source_locations.Ids()) {
-    const diag::SourcePosition& at = mir_->source_locations.Get(id);
-    out_.constants.push_back(
-        lir::GlobalConstant{
-            .symbol = lir::SourceLocationSymbol(id.value),
-            .linkage = support::Linkage::kInternal,
-            .initializer = lir::Constant{lir::ConstantRecord{
-                .decl = support::LibraryDecl::kSourceLocationRecord,
-                .parts = {
-                    lir::Constant{lir::ConstantString{.text = at.file}},
-                    lir::Constant{lir::ConstantInt{.value = at.line}},
-                    lir::Constant{lir::ConstantInt{.value = at.column}}}}}});
-  }
-
-  // An enumeration's member table is its base type and its members' names and
-  // bits here.
-  base::Translation<lir::EnumTableId, lir::EnumTableDecl> tables(
-      mir_->enum_tables.size());
-  for (const mir::EnumTableId id : mir_->enum_tables.Ids()) {
-    const mir::EnumType& enumeration = mir_->enum_tables.Get(id);
-    lir::EnumTableDecl table{
-        .base = out_.types.Intern(TranslateType(mir::Type{enumeration.base})),
-        .members = {}};
-    table.members.reserve(enumeration.members.size());
-    for (const mir::EnumMember& member : enumeration.members) {
-      table.members.push_back(
-          lir::EnumTableMember{
-              .name = member.name,
-              .value = lir::IntegralConstant{
-                  .value_words = member.value.value_words,
-                  .state_words = member.value.state_words}});
-    }
-    tables.Append(std::move(table));
-  }
-  out_.enum_tables = std::move(tables);
+  out_.constants = base::Translation<lir::ConstantId, lir::ConstantDecl>(
+      mir_->constants.size(), std::move(constants));
   return std::move(out_);
 }
 
@@ -480,14 +443,14 @@ auto UnitLowerer::ClassBodySymbol(
           : lir::SymbolPartOf(mir::NameOf(cls.named_callables, id), id.value));
 }
 
-auto UnitLowerer::EntryConstant(
+auto UnitLowerer::EntryBody(
     const mir::CallableTarget& method, lir::TypeId prototype)
     -> lir::TableBody {
   const mir::Class& owner = mir_->GetClass(method.owner);
   if (!owner.defining_unit.has_value()) {
     if (const std::optional<mir::CallableId> entry =
             owner.EntryOf(method.slot)) {
-      return lir::ConstantFunction{
+      return lir::FunctionReferent{
           .function = MethodFunction(method.owner, *entry)};
     }
     throw InternalError(
@@ -496,7 +459,7 @@ auto UnitLowerer::EntryConstant(
   }
   const std::string_view qualifier = ClassQualifier(owner);
   lir::SymbolPart class_part = ClassPart(method.owner);
-  return lir::ConstantExternalFunction{
+  return lir::ExternalFunctionReferent{
       .symbol = lir::MethodEntrySymbol(
           qualifier, std::move(class_part),
           DispatchNamePart(mir::DispatchNameOf(*mir_, owner, method.slot))),
@@ -595,23 +558,16 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     fn->linkage = out.linkage;
     out_.functions.Define(*body, *std::move(fn));
   }
-  const std::string definition = DefinitionSymbolOf(owner);
-  for (const mir::ClassConstantId constant : cls.constants.Ids()) {
-    const mir::ValueBuild& initializer =
-        cls.constants.Get(constant).initializer;
-    out_.constants.push_back(
+  if (cls.definition.has_value()) {
+    const mir::TypeId definition = mir::LibraryTypeOf(
+        mir_->types, support::LibraryDecl::kObjectDefinition);
+    out_.definitions.push_back(
         lir::GlobalConstant{
-            .symbol = lir::ClassConstantSymbol(definition, constant.value),
+            .symbol = DefinitionSymbolOf(owner),
             .linkage = out.linkage,
-            .initializer = LowerConstant(initializer, initializer.value)});
+            .type = TranslateType(definition),
+            .initializer = LowerConstant(definition, *cls.definition)});
   }
-  out_.constants.push_back(
-      lir::GlobalConstant{
-          .symbol = definition,
-          .linkage = out.linkage,
-          .initializer = LowerConstant(
-              cls.object_definition_initializer,
-              cls.object_definition_initializer.value)});
   return out;
 }
 
@@ -673,234 +629,112 @@ auto UnitLowerer::LowerDeclaredClass(mir::ClassId id, const mir::Class& cls)
   return record;
 }
 
-auto UnitLowerer::ClassConstantSymbolOf(
-    const mir::ClassConstantRef& constant) const -> std::string {
-  return lir::ClassConstantSymbol(
-      DefinitionSymbolOf(constant.owner), constant.constant.value);
-}
-
-auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
-    -> lir::Constant {
-  const mir::Expr& expr = build.body.exprs.Get(id);
-  const auto not_data = [](std::string_view what) -> lir::Constant {
-    throw InternalError(
-        std::format(
-            "mir_to_lir: a constant is built of {}, which is no data -- please "
-            "report this as a bug",
-            what));
-  };
-  const auto parts_of = [&](std::span<const mir::ExprId> parts) {
-    std::vector<lir::Constant> out;
-    out.reserve(parts.size());
-    for (const mir::ExprId part : parts) {
-      out.push_back(LowerConstant(build, part));
-    }
-    return out;
-  };
+auto UnitLowerer::LowerConstant(
+    mir::TypeId type, const mir::ConstantValue& value) -> lir::Constant {
+  const mir::Type& held = mir_->types.Get(type);
   return std::visit(
       Overloaded{
-          [](const mir::StringLiteral& s) -> lir::Constant {
-            return {lir::ConstantString{.text = s.value}};
+          [](const mir::IntegralValue& v) -> lir::Constant {
+            return {lir::ConstantIntegral{
+                .value = lir::IntegralConstant{
+                    .value_words = v.planes.value_words,
+                    .state_words = v.planes.state_words}}};
           },
-          [](const mir::NullLiteral&) -> lir::Constant {
+          [](const mir::MachineIntValue& v) -> lir::Constant {
+            return {lir::ConstantInt{.value = v.value}};
+          },
+          [](const mir::NullValue&) -> lir::Constant {
             return {lir::ConstantNull{}};
           },
-          [](const mir::MachineIntLiteral& i) -> lir::Constant {
-            return {lir::ConstantInt{.value = i.value}};
+          [](const mir::CStringValue& v) -> lir::Constant {
+            return {
+                lir::ConstantPointer{.to = lir::TextReferent{.text = v.text}}};
           },
-          // Read as a value, a body is its address; nothing else a reference
-          // names is data until its address is taken.
-          [&](const mir::ReferenceExpr& r) -> lir::Constant {
-            return std::visit(
-                Overloaded{
-                    [&](const mir::FunctionRef& f) -> lir::Constant {
-                      return {lir::ConstantFunction{
-                          .function =
-                              MethodFunction(f.body.owner, f.body.slot)}};
-                    },
-                    [&](const mir::ExternalObjectEntryRef& e) -> lir::Constant {
-                      return {lir::ConstantExternalFunction{
-                          .symbol = lir::ObjectEntrySymbol(
-                              e.unit_name, e.body_name,
-                              BlockOrdinalOf(e.block)),
-                          .prototype = TranslateType(expr.type)}};
-                    },
-                    [&](const mir::DispatchEntryRef& e) -> lir::Constant {
-                      return std::visit(
-                          Overloaded{
-                              [](lir::ConstantFunction f) -> lir::Constant {
-                                return {f};
-                              },
-                              [](lir::ConstantExternalFunction f)
-                                  -> lir::Constant { return {std::move(f)}; }},
-                          EntryConstant(e.body, TranslateType(expr.type)));
-                    },
-                    [&](const mir::DestructorRef& d) -> lir::Constant {
-                      return {
-                          lir::ConstantDestructor{.cls = ClassValueType(d.of)}};
-                    },
-                    [&](const mir::DispatchTableRef& t) -> lir::Constant {
-                      return {lir::ConstantDispatchTable{
-                          .cls = ClassValueType(t.of)}};
-                    },
-                    [&](const mir::InterfaceTableRef& t) -> lir::Constant {
-                      return {lir::ConstantInterfaceTable{
-                          .cls = ClassValueType(t.of),
-                          .iface = ClassValueType(t.iface)}};
-                    },
-                    [&](const mir::ClassConstantRef&) {
-                      return not_data("a constant read whole");
-                    },
-                    [&](const mir::SourceLocationRef&) {
-                      return not_data("a location's record read whole");
-                    },
-                    [&](const mir::LocalRef&) { return not_data("a local"); },
-                    [&](const mir::DefinitionRef&) {
-                      return not_data("a definition read whole");
-                    },
-                    [&](const mir::EnumTableRef&) {
-                      return not_data("an enumeration's member table");
-                    },
-                    [&](const mir::IntegralConstantRef&) {
-                      return not_data("an integral constant");
-                    },
-                    [&](const mir::StaticPropertyRef&) {
-                      return not_data("a static property");
-                    },
-                    [&](const mir::StaticVariableRef&) {
-                      return not_data("a static variable");
-                    }},
-                r.target);
+          [&](const mir::PointerValue& v) -> lir::Constant {
+            return {lir::ConstantPointer{.to = ReferentOf(v.to, v.type)}};
           },
-          // Retyping an address changes nothing about which address it is.
-          [&](const mir::CastExpr& c) -> lir::Constant {
-            return LowerConstant(build, c.operand);
-          },
-          [&](const mir::AddressOfExpr& a) -> lir::Constant {
-            const auto* named = std::get_if<mir::ReferenceExpr>(
-                &build.body.exprs.Get(a.operand).data);
-            if (named == nullptr) {
-              return not_data("the address of something no name reaches");
+          // A structure's parts are of the types the library declares its
+          // members at.
+          [&](const mir::RecordValue& v) -> lir::Constant {
+            const support::LibraryDecl decl = held.Get<mir::LibraryType>().decl;
+            const std::span<const mir::TypeId> members =
+                *mir_->LibraryRecordMembers(decl);
+            lir::ConstantRecord record{.decl = decl, .parts = {}};
+            record.parts.reserve(v.parts.size());
+            for (std::size_t i = 0; i < v.parts.size(); ++i) {
+              record.parts.push_back(LowerConstant(members[i], v.parts[i]));
             }
-            return std::visit(
-                Overloaded{
-                    [&](const mir::DefinitionRef& d) -> lir::Constant {
-                      return {lir::ConstantAddress{
-                          .symbol = DefinitionSymbolOf(d.of)}};
-                    },
-                    [&](const mir::ClassConstantRef& c) -> lir::Constant {
-                      return {lir::ConstantAddress{
-                          .symbol = ClassConstantSymbolOf(c)}};
-                    },
-                    [&](const mir::FunctionRef&) {
-                      return not_data("the address of a body's address");
-                    },
-                    [&](const mir::DispatchEntryRef&) {
-                      return not_data("the address of a body's address");
-                    },
-                    [&](const mir::DestructorRef&) {
-                      return not_data("the address of a body's address");
-                    },
-                    [&](const mir::DispatchTableRef&) {
-                      return not_data("the address of a table's address");
-                    },
-                    [&](const mir::InterfaceTableRef&) {
-                      return not_data("the address of a table's address");
-                    },
-                    [&](const mir::ExternalObjectEntryRef&) {
-                      return not_data("the address of a body's address");
-                    },
-                    [&](const mir::LocalRef&) {
-                      return not_data("the address of a local");
-                    },
-                    [&](const mir::EnumTableRef&) {
-                      return not_data(
-                          "the address of an enumeration's member table");
-                    },
-                    [&](const mir::IntegralConstantRef&) {
-                      return not_data("the address of an integral constant");
-                    },
-                    [&](const mir::StaticPropertyRef&) {
-                      return not_data("the address of a static property");
-                    },
-                    [&](const mir::StaticVariableRef&) {
-                      return not_data("the address of a static variable");
-                    },
-                    [&](const mir::SourceLocationRef&) {
-                      return not_data("the address of a location's record");
-                    }},
-                named->target);
+            return {std::move(record)};
           },
-          // What is composed is what the type says: a structure of the library
-          // from its members, or an array from its elements.
-          [&](const mir::CompositeExpr& c) -> lir::Constant {
-            const mir::Type& type = mir_->types.Get(expr.type);
-            if (const auto* record = type.As<mir::LibraryType>()) {
-              return {lir::ConstantRecord{
-                  .decl = record->decl, .parts = parts_of(c.parts)}};
+          [&](const mir::ArrayValue& v) -> lir::Constant {
+            const mir::TypeId element =
+                held.Get<mir::MachineArrayType>().element;
+            lir::ConstantArray array;
+            array.elements.reserve(v.elements.size());
+            for (const mir::ConstantValue& part : v.elements) {
+              array.elements.push_back(LowerConstant(element, part));
             }
-            if (type.Is<mir::MachineArrayType>()) {
-              return {lir::ConstantArray{.elements = parts_of(c.parts)}};
-            }
-            return not_data("a composite of some other type");
+            return {std::move(array)};
           },
-          [&](const mir::MachineBoolLiteral&) {
-            return not_data("a machine boolean");
-          },
-          [&](const mir::FloatingLiteral&) {
-            return not_data("a floating literal");
-          },
-          [&](const mir::UnaryExpr&) { return not_data("a unary operation"); },
-          [&](const mir::BinaryExpr&) {
-            return not_data("a binary operation");
-          },
-          [&](const mir::ConditionalExpr&) {
-            return not_data("a conditional");
-          },
-          [&](const mir::BlockExpr&) { return not_data("a block"); },
-          [&](const mir::AssignExpr&) { return not_data("an assignment"); },
-          // Constructing a view is the one call that is data: the view is built
-          // from the address of the array it views, and holds as many entries
-          // as that array's type says it has.
-          [&](const mir::CallExpr& c) -> lir::Constant {
-            if (!std::holds_alternative<mir::Construct>(c.callee) ||
-                !mir_->types.Get(expr.type).Is<mir::MachineSpanType>()) {
-              return not_data("a call");
-            }
-            const mir::ExprId array = c.arguments.at(0);
-            lir::Constant entries = LowerConstant(build, array);
-            auto* address = std::get_if<lir::ConstantAddress>(&entries.value);
-            if (address == nullptr) {
-              return not_data("a view of an array no symbol names");
-            }
-            const mir::TypeId viewed =
-                mir_->types.Get(build.body.exprs.Get(array).type)
-                    .Get<mir::PointerType>()
-                    .pointee;
-            return {lir::ConstantSpan{
-                .symbol = std::move(address->symbol),
-                .count =
-                    mir_->types.Get(viewed).Get<mir::MachineArrayType>().size}};
-          },
-          [&](const mir::NewExpr&) { return not_data("an allocation"); },
-          [&](const mir::DerefExpr&) { return not_data("a dereference"); },
-          [&](const mir::BorrowExpr&) { return not_data("a reference"); },
-          [&](const mir::MoveExpr&) { return not_data("a move"); },
-          [&](const mir::CopyExpr&) { return not_data("a read"); },
-          [&](const mir::DiscriminantExpr&) {
-            return not_data("a read of a tag");
-          },
-          [&](const mir::FieldAccessExpr&) {
-            return not_data("a field access");
-          },
-          [&](const mir::ClosureExpr&) { return not_data("a closure"); },
-          [&](const mir::UnionExpr&) { return not_data("a union"); },
-          [&](const mir::AwaitExpr&) { return not_data("an await"); },
-          [&](const mir::WaitExpr&) { return not_data("a wait"); },
-          [&](const mir::VectorGetExpr&) {
-            return not_data("a vector element");
+          [](const mir::SpanValue& v) -> lir::Constant {
+            return {lir::ConstantSpan{.array = TranslateConstant(v.array)}};
           }},
-      expr.data);
+      value.value);
+}
+
+auto UnitLowerer::ReferentOf(
+    const mir::ReferenceTarget& target, mir::TypeId named) -> lir::Referent {
+  return std::visit(
+      Overloaded{
+          [](const mir::LocalRef&) -> lir::Referent {
+            throw InternalError(
+                "mir_to_lir: the address of a local is held where only an "
+                "address fixed before the program runs may be -- please "
+                "report this as a bug");
+          },
+          [](const mir::ConstantRef& r) -> lir::Referent {
+            return lir::ConstantReferent{
+                .constant = TranslateConstant(r.constant)};
+          },
+          [&](const mir::DefinitionRef& r) -> lir::Referent {
+            return lir::DefinitionReferent{.cls = LirClass(r.of)};
+          },
+          [&](const mir::StaticVariableRef& r) -> lir::Referent {
+            return lir::SharedStorageReferent{
+                .symbol = StaticVariableSymbolOf(r.variable)};
+          },
+          [&](const mir::StaticPropertyRef& r) -> lir::Referent {
+            return lir::SharedStorageReferent{
+                .symbol = StaticPropertySymbolOf(r)};
+          },
+          [&](const mir::FunctionRef& f) -> lir::Referent {
+            return lir::FunctionReferent{
+                .function = MethodFunction(f.body.owner, f.body.slot)};
+          },
+          [&](const mir::ExternalObjectEntryRef& e) -> lir::Referent {
+            return lir::ExternalFunctionReferent{
+                .symbol = lir::ObjectEntrySymbol(
+                    e.unit_name, e.body_name, BlockOrdinalOf(e.block)),
+                .prototype = TranslateType(named)};
+          },
+          [&](const mir::DispatchEntryRef& e) -> lir::Referent {
+            return lir::ReferentOf(EntryBody(e.body, TranslateType(named)));
+          },
+          [&](const mir::DestructorRef& d) -> lir::Referent {
+            return lir::DestructorReferent{.cls = LirClass(d.of)};
+          },
+          [&](const mir::DispatchTableRef& t) -> lir::Referent {
+            return lir::DispatchTableReferent{.cls = LirClass(t.of)};
+          },
+          [&](const mir::InterfaceTableRef& t) -> lir::Referent {
+            return lir::InterfaceTableReferent{
+                .cls = LirClass(t.of), .iface = LirClass(t.iface)};
+          }},
+      target);
+}
+
+auto UnitLowerer::LirClass(mir::ClassId cls) const -> lir::ClassId {
+  return class_identities_.Get(cls).lir_class;
 }
 
 auto UnitLowerer::SlotRef(const mir::VirtualSlot& slot)
@@ -936,7 +770,7 @@ auto UnitLowerer::LowerDispatch(const mir::Class& cls)
             .behavior = SlotRef(dispatched.behavior),
             .answered_by = dispatched.answered_by.transform(
                 [&](const mir::CallableTarget& body) {
-                  return EntryConstant(body, erased);
+                  return EntryBody(body, erased);
                 })});
   }
   return dispatch;
@@ -954,7 +788,7 @@ auto UnitLowerer::LowerInterfaceTables(const mir::Class& cls)
          implemented.answered_by) {
       table.answered_by.push_back(
           body.transform([&](const mir::CallableTarget& answered) {
-            return EntryConstant(answered, erased);
+            return EntryBody(answered, erased);
           }));
     }
     tables.push_back(std::move(table));
@@ -1052,8 +886,7 @@ auto UnitLowerer::ClosureValueType(mir::ClosureId closure) -> lir::TypeId {
 
 auto UnitLowerer::ClassValueType(mir::ClassId cls) -> lir::TypeId {
   return out_.types.Intern(
-      lir::Type{
-          lir::ObjectType{.class_id = class_identities_.Get(cls).lir_class}});
+      lir::Type{lir::ObjectType{.class_id = LirClass(cls)}});
 }
 
 }  // namespace lyra::lowering::mir_to_lir

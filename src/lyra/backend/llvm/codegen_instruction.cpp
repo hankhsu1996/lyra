@@ -2117,34 +2117,14 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
             return llvm::ConstantInt::get(
                 llvm::Type::getInt64Ty(module_->Context()), measured());
           },
-          // A member table is data of the module, named by its address.
-          [&](const lir::EnumTableRef& c) -> diag::Result<llvm::Value*> {
-            return module_->GetAddrOfEnumTable(c.table);
+          // A constant's bytes are data of the module, and a value of a type
+          // held where its bytes lie is that data's address.
+          [&](const lir::ConstantRef& c) -> diag::Result<llvm::Value*> {
+            return module_->GetAddrOfConstant(c.constant);
           },
-          // A constant's bytes are data of the module, and a value is held by
-          // where its bytes lie, so the constant is that data's address.
-          [&](const lir::IntegralConstantRef& c) -> diag::Result<llvm::Value*> {
-            return module_->GetAddrOfIntegralConstant(c.constant);
-          },
-          // The symbol is the storage itself: a shared variable, which the
-          // unit declaring it defines and builds before the program starts, so
-          // a reference of any unit names the same address, or a constant of
-          // this unit's own.
-          [&](const lir::StaticRef& s) -> diag::Result<llvm::Value*> {
-            return module_->SharedStorage(s.symbol);
-          },
-          // The definition is the global itself, so its address is the
-          // operand.
-          [&](const lir::DefinitionRef& c) -> diag::Result<llvm::Value*> {
-            auto definition = module_->DefinitionOf(c.defined);
-            if (!definition) {
-              return std::unexpected(std::move(definition.error()));
-            }
-            return *definition;
-          },
-          // A function is its own address.
-          [&](const lir::FunctionRef& f) -> diag::Result<llvm::Value*> {
-            return module_->UnitFunction(f.function);
+          // An address is what it names, wherever it stands.
+          [&](const lir::AddressConst& c) -> diag::Result<llvm::Value*> {
+            return module_->AddressOf(c.to);
           }},
       operand);
 }

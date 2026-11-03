@@ -133,17 +133,20 @@ specialization, and goes on to be compiled. The published classes are built from
 so every body states them alike, and the link keeps one of each (fact 7): the execution backend
 links them weak, and the C++ backend defines them inline in the header every body writes alike,
 which the project keeps one copy of. What only a body states -- the classes realizing its scopes,
-its closures and the table each is called through, the functions nothing else names, the constants
-and member tables its code names -- is named by the body: under its name on the execution backend,
-and in the namespace with no name on the C++ backend. Which of the three a definition is -- every
-body alike, this body for others, this body alone -- is one query over what MIR states, which each
-backend reads and spells. A definition every body states alike stands in for the others where the
-program is linked, so it names nothing a body numbers among its own -- a closure, a class or a
-function only that body states, a member table -- and MIR's verification refuses one that does; a
-constant is the value it is, which each target writes or holds so the kept copy reads the same.
-Added 2026-11-02: the C++ backend had written a closure's table at the unit's scope with vague
-linkage, so two bodies of one unit, each numbering its closures from zero, ran each other's
-processes, and the linkage had been worked out separately by each backend.
+its closures and the table each is called through, the functions nothing else names -- is named by
+the body: under its name on the execution backend, and in the namespace with no name on the C++
+backend. Which of the three a definition is -- every body alike, this body for others, this body
+alone -- is one query over what MIR states, which each backend reads and spells. A definition every
+body states alike stands in for the others where the program is linked, so it names nothing a body
+numbers among its own -- a closure, a class or a function only that body states -- and MIR's
+verification refuses one that does, through every constant it reaches; a constant is the value it
+is, an enumeration's member table among them, which each target writes or holds so the kept copy
+reads the same. Revised 2026-11-02: a member table was refused here as each body's own, because a
+table was a kind of its own with no value MIR stated; once every constant is a value, a table is no
+more one body's than an integral constant is. Added 2026-11-02: the C++ backend had written a
+closure's table at the unit's scope with vague linkage, so two bodies of one unit, each numbering
+its closures from zero, ran each other's processes, and the linkage had been worked out separately
+by each backend.
 
 **D4. A scope declaring a class is one body per distinct code, as any other.** A class reaches the
 object of the scope declaring it as that scope's body compiled it (fact 5), and that code is the

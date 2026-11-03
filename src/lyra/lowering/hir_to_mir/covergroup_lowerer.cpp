@@ -713,17 +713,8 @@ class ClassWriter {
   }
 
   [[nodiscard]] auto Lowerer() const -> ProcessLowerer {
-    return {
-        *u_,
-        declaring_scope_,
-        declaring_scope_ != nullptr
-            ? declaring_scope_->HirScope().time_resolution
-            : u_->Hir().root_scope.time_resolution,
-        decl_->body,
-        std::nullopt,
-        owner_,
-        *scopes_,
-        {}};
+    return {*u_,    declaring_scope_, decl_->body, std::nullopt,
+            owner_, *scopes_,         {}};
   }
 
   // The name the run's registry knows the covergroup's type by (LRM 19.11.3).

@@ -246,7 +246,7 @@ auto PopulateNamespaceOwnStorage(
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
     const StaticCellBindings& statics = subroutine_statics.Get(id);
     ProcessLowerer body_lowerer(
-        unit_lowerer, nullptr, scope.time_resolution, src.body, std::nullopt,
+        unit_lowerer, nullptr, src.body, std::nullopt,
         WalkFrame{}.WithScopeName(unit_lowerer.Hir().fixed_name), scopes,
         statics);
     for (const StaticCellBinding& binding : statics) {
@@ -426,7 +426,7 @@ auto PublishObjectEntry(
                 code.params.push_back(handed_in);
                 return body.ReadLocal(handed_in, table_type);
               },
-              [&](const mir::ClassConstantRef& own) {
+              [&](const mir::ConstantRef& own) {
                 return body.Add(
                     mir::MakeAddressOfExpr(
                         body.Add(
@@ -1179,8 +1179,8 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
        scope.structural_subroutines.Ids()) {
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
     ProcessLowerer subroutine_lowerer(
-        *this, nullptr, scope.time_resolution, src.body, src.root_stmt,
-        namespace_frame, package_scopes, subroutine_statics.Get(id));
+        *this, nullptr, src.body, src.root_stmt, namespace_frame,
+        package_scopes, subroutine_statics.Get(id));
     auto code_or = subroutine_lowerer.Run(src, std::nullopt, std::nullopt);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
     unit_.callables.Define(

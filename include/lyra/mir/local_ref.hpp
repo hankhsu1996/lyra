@@ -12,6 +12,8 @@ namespace lyra::mir {
 // a field access over the closure receiver (the invoke body's `locals[0]`).
 struct LocalRef {
   LocalId var{};
+
+  auto operator==(const LocalRef&) const -> bool = default;
 };
 
 }  // namespace lyra::mir

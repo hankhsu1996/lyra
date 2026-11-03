@@ -14,6 +14,7 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -27,22 +28,23 @@ auto BuildDefinitionRead(
     -> mir::ExprId;
 
 // States the definition of every class `unit` defines, each the constant its
-// unit emits, adding to each class the constants that takes. A definition
-// reads what the class's whole lineage gives -- the body each virtual method
-// runs, each interface class's, each of what the runtime library asks of an
-// object -- so it is stated once every class of the unit is complete.
+// unit emits, and the constants of the unit that definition points at. A
+// definition reads what the class's whole lineage gives -- the body each
+// virtual method runs, each interface class's, each of what the runtime
+// library asks of an object -- so it is stated once every class of the unit is
+// complete.
 void StateObjectDefinitions(mir::CompilationUnit& unit);
 
-// The address, as a value of `block`, of what class `id` states of one thing a
-// value dump may record of its instances, and of one named block, task or
+// The address, as a value of `block`, of the record of one thing a value dump
+// may record of an instance, and of one named block, task or
 // function around such things (LRM 21.7.1.2), each held as a constant of the
-// class.
+// unit.
 auto DumpEntryAddress(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
-    mir::Class& cls, const hir::DumpedDeclaration& declaration) -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const hir::DumpedDeclaration& declaration) -> mir::ExprId;
 auto DumpBlockAddress(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
-    mir::Class& cls, const hir::DumpedBlock& dumped) -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const hir::DumpedBlock& dumped) -> mir::ExprId;
 
 // The type of the entry that makes a block of a block body (LRM 27): where the
 // block hangs, the construction table it is built with, then, for a block of a
@@ -53,7 +55,7 @@ auto DumpBlockAddress(
 // its object's, so the scope building one, the body defining the entry and the
 // design root listing it each state the type from here, from whether the block
 // is handed its index, the one fact all three know.
-auto BlockEntryType(mir::CompilationUnit& unit, bool handed_its_index)
+auto BlockEntryType(const mir::CompilationUnit& unit, bool handed_its_index)
     -> mir::TypeId;
 
 // Where the block body `body` stands among its unit's, which is the order the
@@ -63,18 +65,17 @@ auto BlockEntryType(mir::CompilationUnit& unit, bool handed_its_index)
   return mir::BlockBodyOrdinal{body.value};
 }
 
-// States, as constants of class `id` of the design's root unit, the
-// construction table of the root's own lowering `root`, which it answers
-// with, and of every lowering `instantiations` holds that an object is
-// made of below it. Each lowering's table is stated once however many
-// instantiations make it. An instantiation's entry holds the object entry of
-// the body that lowering is, at the type `entry_types` gives
-// its unit's entry, and a block's the entry that body publishes for
-// the block body built there, each with its prototype erased.
+// States, as constants of the design's root unit, the construction table of
+// the root's own lowering `root`, which it answers with, and of every lowering
+// `instantiations` holds that an object is made of below it; tables holding
+// the same entries are one constant. An instantiation's entry holds the object
+// entry of the body that lowering is, at the type `entry_types` gives its
+// unit's entry, and a block's the entry that body publishes for the block body
+// built there, each with its prototype erased.
 auto StateConstructionTables(
-    mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    const hir::LoweringRef& root, const DesignInstantiations& instantiations,
+    const mir::CompilationUnit& unit, const hir::LoweringRef& root,
+    const DesignInstantiations& instantiations,
     const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
-    -> mir::ClassConstantRef;
+    -> mir::ConstantId;
 
 }  // namespace lyra::lowering::hir_to_mir

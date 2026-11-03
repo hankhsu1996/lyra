@@ -107,13 +107,12 @@ class ProcessLowerer {
   ProcessLowerer(
       UnitLowerer& unit_lowerer,
       const StructuralScopeLowerer* enclosing_scope_lowerer,
-      TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
+      const hir::ProceduralBody& hir_body,
       std::optional<hir::StmtId> hir_root_stmt, WalkFrame owner_ctor_frame,
       const DeclaredScopes& scopes, std::span<const StaticCellBinding> statics,
       BodyWriter body_writer = {})
       : owner_(&unit_lowerer),
         enclosing_scope_lowerer_(enclosing_scope_lowerer),
-        time_resolution_(time_resolution),
         hir_body_(&hir_body),
         hir_root_stmt_(hir_root_stmt),
         owner_ctor_frame_(std::move(owner_ctor_frame)),
@@ -303,8 +302,10 @@ class ProcessLowerer {
     return EnclosingScopeLowerer().RouteEnd(frame, id);
   }
 
+  // The time scope the body is declared in (LRM 3.14.2.2), which what it
+  // waits for and reports is read in.
   [[nodiscard]] auto Resolution() const -> TimeResolution {
-    return time_resolution_;
+    return TimeScopeOf(*owner_, enclosing_scope_lowerer_);
   }
 
   void MapProceduralVar(
@@ -465,7 +466,6 @@ class ProcessLowerer {
 
   UnitLowerer* owner_;
   const StructuralScopeLowerer* enclosing_scope_lowerer_;
-  TimeResolution time_resolution_;
   const hir::ProceduralBody* hir_body_;
   std::optional<hir::StmtId> hir_root_stmt_;
   WalkFrame owner_ctor_frame_;

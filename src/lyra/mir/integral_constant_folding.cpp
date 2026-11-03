@@ -15,6 +15,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/frame_size.hpp"
@@ -61,19 +62,6 @@ auto ShapeOf(const CompilationUnit& unit, TypeId type)
   return ty.IsIntegral() ? std::optional(ShapeOf(ty.Integral())) : std::nullopt;
 }
 
-// The constant an integral operand names, absent where it names none.
-auto ConstantOf(const CompilationUnit& unit, const Expr& operand)
-    -> const IntegralConstant* {
-  const auto* reference = std::get_if<ReferenceExpr>(&operand.data);
-  if (reference == nullptr) {
-    return nullptr;
-  }
-  const auto* constant = std::get_if<IntegralConstantRef>(&reference->target);
-  return constant == nullptr
-             ? nullptr
-             : &unit.integral_constants.Get(constant->constant).value;
-}
-
 // One operand as the operation is applied to it, absent where the operand is
 // not a value fixed before the program runs.
 auto AppliedOperand(
@@ -84,7 +72,8 @@ auto AppliedOperand(
     case IntegralOperandKind::kBits:
     case IntegralOperandKind::kNumber:
     case IntegralOperandKind::kSameType: {
-      const IntegralConstant* constant = ConstantOf(unit, operand);
+      const IntegralConstant* constant =
+          IntegralPlanesNamedBy(unit.constants, operand.data);
       if (constant == nullptr) {
         return std::nullopt;
       }
@@ -182,7 +171,8 @@ auto IntegralOpOf(UnaryOp op) -> IntegralOp {
 
 auto FoldStringFromBits(const CompilationUnit& unit, const Expr& operand)
     -> std::optional<std::string> {
-  const IntegralConstant* constant = ConstantOf(unit, operand);
+  const IntegralConstant* constant =
+      IntegralPlanesNamedBy(unit.constants, operand.data);
   if (constant == nullptr) {
     return std::nullopt;
   }
@@ -201,7 +191,8 @@ auto FoldStringFromBits(const CompilationUnit& unit, const Expr& operand)
 auto FoldFormattedText(
     const CompilationUnit& unit, const Expr& operand,
     const value::FormatSpec& spec) -> std::optional<std::string> {
-  const IntegralConstant* constant = ConstantOf(unit, operand);
+  const IntegralConstant* constant =
+      IntegralPlanesNamedBy(unit.constants, operand.data);
   if (constant == nullptr) {
     return std::nullopt;
   }

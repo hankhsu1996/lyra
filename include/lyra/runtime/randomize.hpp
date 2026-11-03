@@ -130,13 +130,11 @@ void ConstraintDeclareErased(
 void ConstraintMembersOf(
     const value::ObjectRef& problem, const ErasedReference& variable,
     const value::Enumeration& members);
-template <
-    value::LyraValue T, std::uint64_t kWidth, bool kFourState,
-    std::size_t kMembers>
+template <value::LyraValue T>
 void ConstraintMembers(
     const value::ObjectRef& problem, const VariableRef<T>& variable,
-    const value::EnumerationMembers<kWidth, kFourState, kMembers>& members) {
-  ConstraintMembersOf(problem, variable.Erased(), members.Read());
+    const value::Enumeration& members) {
+  ConstraintMembersOf(problem, variable.Erased(), members);
 }
 [[nodiscard]] auto NamedMembers(
     const value::ObjectRef& problem, const ErasedReference& variable)

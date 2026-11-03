@@ -12,13 +12,16 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/constant_id.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
-#include "lyra/mir/integral_constant_id.hpp"
+#include "lyra/mir/library_record_builder.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -66,14 +69,14 @@ auto BuildMachineCount(
 auto MakeIntegralLiteral(
     const CompilationUnit& unit, TypeId type, const IntegralConstant& value)
     -> Expr {
-  const IntegralConstantId constant = unit.integral_constants.Intern(
-      IntegralConstantDecl{
+  const ConstantId constant = unit.constants.Intern(
+      ConstantDecl{
           .type = type,
-          .value = CanonicalIntegralConstant(
-              unit.types.Get(type).Integral(), value)});
+          .value = ConstantValue{IntegralValue{
+              .planes = CanonicalIntegralConstant(
+                  unit.types.Get(type).Integral(), value)}}});
   return Expr{
-      .data =
-          ReferenceExpr{.target = IntegralConstantRef{.constant = constant}},
+      .data = ReferenceExpr{.target = ConstantRef{.constant = constant}},
       .type = type};
 }
 
@@ -86,6 +89,20 @@ auto PositionOf(const diag::SourceManager& sources, diag::SourceSpan span)
         "-- please report this as a bug");
   }
   return *std::move(position);
+}
+
+auto InternSourceLocation(
+    const CompilationUnit& unit, const diag::SourcePosition& position)
+    -> ConstantId {
+  using Record = base::SourceLocation::Impl;
+  LibraryRecordBuilder<Record> record(unit);
+  record.Set(&Record::file, ConstantValue{CStringValue{.text = position.file}});
+  record.Set(
+      &Record::line, ConstantValue{MachineIntValue{.value = position.line}});
+  record.Set(
+      &Record::column,
+      ConstantValue{MachineIntValue{.value = position.column}});
+  return std::move(record).Intern();
 }
 
 namespace {

@@ -80,18 +80,18 @@ closure's definition is such a constant too, stating its body and the body endin
 unit names another unit's class's constant by symbol, which its signature already makes an explicit
 dependency. Nothing is declared to the library at run time, and the library composes no record. The
 constant is a value MIR states like any other: the class holds it, and the arrays its tables point
-at, as constants whose values are ordinary expressions -- a structure composed from its members, an
-array from its elements, a name, an address, a body named as code. A table is a read-only view of
-its array, a value of its own type -- where the first entry lies and how many there are, as a slice
-is in Rust and a `std::span` in C++ -- built from the array's address, which is all it is built
-from, since how many entries there are is the array's type. A body the library enters is a body of
-the class that takes no receiver, stated in MIR too. So a backend translates the constant with what
-it translates every expression with and writes nothing of its own; the execution backend emits it as
-data, each member at the offset the library's structure gives it, which is read off the structure
-itself where the compiler is built rather than restated. The type of each member is read off the
-same declaration, and a unit holds it as it holds its builtin types, so each part is built at its
-member's type and the unit's verification holds it there as it holds a tuple's components. A member
-that is a structure of the library is composed as one.
+at are constants of the unit -- a structure a part per member, an array of elements, a text, an
+address, code named by its address. A table is a read-only view of its array, a value of its own
+type -- where the first entry lies and how many there are, as a slice is in Rust and a `std::span`
+in C++ -- built from the array's address, which is all it is built from, since how many entries
+there are is the array's type. A body the library enters is a body of the class that takes no
+receiver, stated in MIR too. So a backend writes the constant with the one function it writes every
+constant with and decides nothing of its own; the execution backend emits it as data, each member at
+the offset the library's structure gives it, which is read off the structure itself where the
+compiler is built rather than restated. The type of each member is read off the same declaration,
+and a unit holds it as it holds its builtin types, so each part is built at its member's type and
+the unit's verification holds it there as it holds a tuple's components. A member that is a
+structure of the library is composed as one.
 
 **D5. The compiler does not link a C++ front end.** The only C++ a program meets is the library Lyra
 ships and is built with, so every fact generated code needs about it is a fact of that library read
@@ -290,9 +290,11 @@ record first had MIR state only what the constant said -- which bodies, which na
 backend write the library's structures itself. The C++ backend then held a family of functions
 composing those structures member by member, and a function writing the lambda that enters a method
 object first, none of which any MIR node stated; the execution backend held the same structures a
-second time. Stated as expressions, the constant needs nothing a backend does not already have: a
-composite, a literal, an address, a cast. What MIR gained is a reference naming a body as code and a
-class's own constants. A type's run-time description was already stated this way.
+second time. Stated as a value, the constant needs nothing a backend does not already have: a
+structure, a literal, an address. What MIR gained is a reference naming a body as code and a value
+held by the class. Revised 2026-11-02: the constant was stated as an expression tree, which the
+lowering to the execution model evaluated and refused all but data of; it is a value of the unit's
+constant grammar now ([a-constant-is-stated-not-computed](a-constant-is-stated-not-computed.md) D3).
 
 **It is emitted as data, because the earlier objections to initialized data no longer hold.** The
 record this replaces rejected emitting the records as data on two grounds, that the storage a member

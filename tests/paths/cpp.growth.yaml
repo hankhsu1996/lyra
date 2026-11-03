@@ -12,22 +12,21 @@ format_items: [mir.types]
 instance_array: [bytes]
 listed_operands: [mir.types]
 loop_of_children_sized_by_index:
-  - mir.class constants
   - mir.classes
+  - mir.constants
   - mir.constructors
-  - mir.integral constants
 loop_of_clocked_procedures_sized_by_index:
   - mir.callables
   - mir.captures
-  - mir.class constants
   - mir.classes
   - mir.closures
+  - mir.constants
   - mir.constructors
   - mir.types
 loop_sizing_by_index:
   - mir.callables
-  - mir.class constants
   - mir.classes
+  - mir.constants
   - mir.constructors
   - mir.types
 record_members_owning_storage: [mir.types]

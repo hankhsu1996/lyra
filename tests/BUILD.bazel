@@ -230,20 +230,11 @@ cc_test(
 )
 
 cc_test(
-    name = "mir_integral_constant_test",
-    srcs = ["mir/integral_constant_test.cpp"],
+    name = "mir_constant_value_test",
+    srcs = ["mir/constant_value_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
-        "//:mir",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "mir_source_location_pool_test",
-    srcs = ["mir/source_location_pool_test.cpp"],
-    copts = LYRA_COPTS,
-    deps = [
+        "//:diag",
         "//:mir",
         "@googletest//:gtest_main",
     ],

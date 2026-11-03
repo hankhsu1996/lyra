@@ -56,7 +56,7 @@ auto WordsFor(std::uint64_t width) -> std::size_t {
 auto MemberBits(const value::Enumeration& members)
     -> std::vector<std::optional<std::vector<bool>>> {
   std::vector<std::optional<std::vector<bool>>> out;
-  for (std::size_t position = 0; position < members.members; ++position) {
+  for (std::size_t position = 0; position < members.Count(); ++position) {
     const value::ConstIntegralView member = members.MemberAt(position);
     if (std::ranges::any_of(
             member.unknown, [](std::uint64_t word) { return word != 0; })) {

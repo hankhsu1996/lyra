@@ -4,8 +4,7 @@
 // (LRM 11.4.12, 10.10, 11.4.12.1, 11.4.14, 11.4.13).
 // @each-adds: bytes,
 // @each-adds: mir.fields 2, lir.members 2,
-// @each-adds: mir.class constants 1, lir.constants 1,
-// @each-adds: mir.integral constants 1, lir.integral constants 1
+// @each-adds: mir.constants 2, lir.constants 2
 module Top #(parameter int N = 4);
   int [[v{i}|, ]];
   string [[s{i}|, ]];

@@ -29,6 +29,7 @@ constexpr void ForEachLibraryRecord(const Visit& visit) {
   visit.template operator()<DumpBlock>(Decl::kDumpBlock);
   visit.template operator()<base::SourceLocation::Impl>(
       Decl::kSourceLocationRecord);
+  visit.template operator()<value::Enumeration>(Decl::kEnumeration);
 }
 
 // Where `Record` is listed above: the declaration naming it, and how many times

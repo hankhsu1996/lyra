@@ -243,10 +243,21 @@ what the construct means.
   query over these facts that the lowering to LIR and that target both ask, as clang's code
   generation asks `ASTContext::GetGVALinkageForFunction`. A definition every body states alike
   stands in for the others where the program is linked, so it names nothing that is one body's own
-  -- a closure, a class or a function a body numbers among its own, a member table -- and the unit's
-  verification refuses one that does. A constant is the value it is and an operation of a type is
-  named by the type and the operation, so naming either means the same in every body. A constant and
-  a member table are data each body holds for its own code, and have no linkage of their own.
+  -- a closure, a class or a function a body numbers among its own -- and the unit's verification
+  refuses one that does, through every constant it reaches. A constant is the value it is and an
+  operation of a type is named by the type and the operation, so naming either means the same in
+  every body. A constant is data each body holds for its own code and its own definitions, and has
+  no linkage of its own.
+- Every value settled before the program runs, as the value it is: an integral value's bits, a
+  machine integer, a null, a text, an address -- of another constant, of a class's definition, of a
+  variable of a namespace or a class, of code -- a structure of the library a part per member, an
+  array, and a view of an array. The unit holds each value once with the type it is a value of, and
+  a use names the entry, as clang states an evaluated constant as an `APValue` and rustc as a
+  `ConstValue`. Nothing in one runs, so no consumer evaluates one: an enumeration's member table,
+  where an operation was written, and every table a class's definition points at are such values,
+  and a class's definition is one too, held by the class, since every unit names it by the class.
+  The table its objects dispatch through is not: the class states which body answers each behavior,
+  and a target lays the table out.
 - Where in the source each expression and statement came from: the front end's own value for the
   piece of source it was lowered from, or no place where it was lowered from none, as rustc's THIR
   carries a span on every expression. A node is given it as it is built, by whatever lowers that

@@ -6,6 +6,7 @@
 #include "lyra/backend/cpp/precedence.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -70,6 +71,13 @@ template <typename... Pieces>
 void Write(const ScopeView& view, TargetText& out, const Pieces&... pieces) {
   (WritePiece(view, out, pieces), ...);
 }
+
+// The entity `target` names, as a reference to it reads: `C::x`, or for what
+// a table holds the address of, `&C::sv_methods`. A local and a constant of
+// the unit are named where the text naming them is, so neither is one.
+void WriteNamedEntity(
+    const mir::CompilationUnit& unit, const mir::ReferenceTarget& target,
+    TargetText& out);
 
 // The operands, in order, separated by commas, each as a whole expression.
 void WriteCommaSeparated(

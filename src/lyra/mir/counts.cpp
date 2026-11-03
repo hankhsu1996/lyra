@@ -32,7 +32,6 @@ struct HeldByClasses {
   std::uint64_t callables = 0;
   std::uint64_t coroutines = 0;
   std::uint64_t static_properties = 0;
-  std::uint64_t constants = 0;
 };
 
 auto IsCoroutine(const CompilationUnit& unit, const CallableCode& code)
@@ -44,7 +43,7 @@ auto IsCoroutine(const CompilationUnit& unit, const CallableCode& code)
 // does not compile here until it is said what kind of thing it is, or that it
 // is none.
 void Add(const CompilationUnit& unit, const Class& cls, HeldByClasses& held) {
-  const auto& [defining_unit, identity, base, implements, conforming, entries, dispatch, interface_tables, is_final, is_interface, self_pointer_type, time_resolution, execution, dumped_as, fields, named_fields, constructor, contained, callables, static_properties, named_static_properties, named_callables, library_callbacks, exports, constants, object_definition_initializer] =
+  const auto& [defining_unit, identity, base, implements, conforming, entries, dispatch, interface_tables, is_final, is_interface, self_pointer_type, time_resolution, execution, dumped_as, fields, named_fields, constructor, contained, callables, static_properties, named_static_properties, named_callables, library_callbacks, exports, definition] =
       cls;
   // What another unit defines is declared here, and held there.
   if (defining_unit.has_value()) {
@@ -58,7 +57,6 @@ void Add(const CompilationUnit& unit, const Class& cls, HeldByClasses& held) {
     held.coroutines += IsCoroutine(unit, callable.code) ? 1 : 0;
   }
   held.static_properties += static_properties.size();
-  held.constants += constants.size();
 }
 
 // How many levels the tallest expression of `block` stands on, an expression
@@ -126,7 +124,7 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // on it are answers to questions asked of it, which no unit states, its
   // phase says where it stands, and its builtin types and the library's
   // structures are the same in every unit, so none of these is counted.
-  const auto& [name, body_name, source_name, types, integral_constants, enum_tables, source_locations, builtins, library_records, classes, content, callables, named_callables, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, closures, layouts, phase] =
+  const auto& [name, body_name, source_name, types, constants, builtins, library_records, classes, content, callables, named_callables, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, closures, layouts, phase] =
       unit;
 
   HeldByClasses in_classes;
@@ -179,10 +177,7 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
        .held = static_variables.size() - declared_static_variables},
       {.kind = "declared static variables", .held = declared_static_variables},
       {.kind = "static properties", .held = in_classes.static_properties},
-      {.kind = "class constants", .held = in_classes.constants},
-      {.kind = "integral constants", .held = integral_constants.size()},
-      {.kind = "enum tables", .held = enum_tables.size()},
-      {.kind = "source locations", .held = source_locations.size()},
+      {.kind = "constants", .held = constants.size()},
       {.kind = "types", .held = types.size()},
       {.kind = "foreign scope entries", .held = foreign_scope_entries.size()},
       {.kind = "consumed signatures",

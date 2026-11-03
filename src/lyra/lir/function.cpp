@@ -150,11 +150,8 @@ auto OperandType(const Function& fn, const Operand& operand) -> TypeId {
           [](const BoolConst& c) { return c.type; },
           [](const VoidConst& c) { return c.type; },
           [](const LayoutConst& c) { return c.type; },
-          [](const EnumTableRef& c) { return c.type; },
-          [](const IntegralConstantRef& c) { return c.type; },
-          [](const StaticRef& s) { return s.type; },
-          [](const DefinitionRef& c) { return c.type; },
-          [](const FunctionRef& c) { return c.type; }},
+          [](const ConstantRef& c) { return c.type; },
+          [](const AddressConst& c) { return c.type; }},
       operand);
 }
 

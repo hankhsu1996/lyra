@@ -42,8 +42,6 @@ enum class SymbolCategory : std::uint8_t {
   kAllocatingCreation,
   kBaseObjectDestructor,
   kDeletingDestructor,
-  kClassConstant,
-  kSourceLocation,
   kDispatchTable,
 };
 
@@ -219,15 +217,6 @@ enum class Destructor : std::uint8_t { kBaseObject, kDeleting };
 
 auto DestructorSymbol(std::string_view definition, Destructor which)
     -> std::string;
-
-// The symbol of one constant a declaration holds, by the position it sits at
-// among them.
-auto ClassConstantSymbol(std::string_view definition, std::uint32_t ordinal)
-    -> std::string;
-
-// The symbol of the unit's `ordinal`th location, which its artifact alone
-// names.
-auto SourceLocationSymbol(std::uint32_t ordinal) -> std::string;
 
 // The symbols of the table a value of a class dispatches through and of the
 // one it gives an interface it implements, composed over the symbols

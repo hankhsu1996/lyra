@@ -11,6 +11,7 @@
 
 #include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/naming.hpp"
+#include "lyra/backend/cpp/render_constant.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
@@ -20,7 +21,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
-#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
@@ -33,7 +33,6 @@
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_builders.hpp"
-#include "lyra/mir/value_build.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_decl.hpp"
@@ -433,43 +432,6 @@ void RenderConstructor(
       CppConstructorMemberName(), ctor_code, code);
 }
 
-// How a static data member is defined outside its class where its definition
-// is written: inline in a header, which every file reading it defines, and once
-// in a code file.
-auto DefinitionFormIn(WrittenIn in) -> VariableForm {
-  switch (in) {
-    case WrittenIn::kHeader:
-      return VariableForm::kInlineStaticDataMemberDefinition;
-    case WrittenIn::kCodeFile:
-      return VariableForm::kStaticDataMemberDefinition;
-  }
-  throw InternalError("backend::cpp: unknown place a definition is written");
-}
-
-// A constant class `id` holds, which only its unit's code names -- the
-// definition its objects carry, and the bodies creating them -- announced in
-// the class's own part as `static const T sv_data_<n>;` and defined outside it
-// as `const T C::sv_detail::sv_data_<n> = value;`, inline where the header
-// defines the class.
-void RenderClassConstantDefinition(
-    const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
-    mir::ClassConstantId constant, DefinedAs defined_as, TargetText& defined) {
-  const mir::ClassConstantDecl& decl =
-      unit.GetClass(id).constants.Get(constant);
-  const CppName name = CppClassConstantName(constant);
-  const ScopeView view = ScopeView::ForConstant(
-      unit, decl.initializer.body, defined_as.linkage, report);
-  WriteDeclaration(
-      defined,
-      VariableDeclaration{
-          .form = DefinitionFormIn(defined_as.in),
-          .constness = Constness::kConst,
-          .type = CppType(unit, decl.type),
-          .name = name,
-          .qualifier = ClassDetailPath{.of = CppClassPath(unit, id)}},
-      [&](TargetText& value) { Write(view, value, decl.initializer.value); });
-}
-
 // The definition every object of class `id` carries (LRM 8.16 reads it), which
 // text naming the class by its name alone reaches: declared beside the class,
 // in the scope declaring it -- the unit's namespace, or for the class of a
@@ -484,11 +446,15 @@ void RenderObjectDefinition(
   const CppType type(
       unit,
       mir::LibraryTypeOf(unit.types, support::LibraryDecl::kObjectDefinition));
+  if (!cls.definition.has_value()) {
+    throw InternalError(
+        "backend::cpp: a class this unit defines has no definition -- please "
+        "report this as a bug");
+  }
   const support::Linkage linkage = mir::LinkageOf(unit, id);
-  const ScopeView view = ScopeView::ForConstant(
-      unit, cls.object_definition_initializer.body, linkage, report);
   const auto write_value = [&](TargetText& value) {
-    Write(view, value, cls.object_definition_initializer.value);
+    WriteConstantValue(
+        unit, linkage, report, type.Type(), *cls.definition, value);
   };
   const std::string_view specifiers =
       SpecifiersOf(DefinedAs{.linkage = linkage, .in = WrittenIn::kCodeFile});
@@ -717,18 +683,6 @@ void RenderClass(
     const TargetText::Section own_properties(own);
     RenderClassStaticProperties(unit, s, declared_properties, own);
   }
-  {
-    const TargetText::Section constants(own);
-    for (const mir::ClassConstantId constant : s.constants.Ids()) {
-      const mir::ClassConstantDecl& decl = s.constants.Get(constant);
-      WriteDeclaration(
-          own, VariableDeclaration{
-                   .form = VariableForm::kStaticDataMemberDeclaration,
-                   .constness = Constness::kConst,
-                   .type = CppType(unit, decl.type),
-                   .name = CppClassConstantName(constant)});
-    }
-  }
   own.Outdent();
   {
     const TargetText::Section own_defined(detail);
@@ -772,14 +726,6 @@ void RenderClass(
     const TargetText::Section tables(out);
     const TargetText::Section tables_defined(code);
     RenderDispatchTables(unit, id, s, defined, out, code);
-  }
-
-  // The constants the class holds, each defined beside the bodies it names.
-  {
-    const TargetText::Section constants_defined(code);
-    for (const mir::ClassConstantId constant : s.constants.Ids()) {
-      RenderClassConstantDefinition(unit, report, id, constant, defined, code);
-    }
   }
 
   out.Outdent();

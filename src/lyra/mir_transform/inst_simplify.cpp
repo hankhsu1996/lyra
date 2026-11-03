@@ -11,6 +11,7 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -48,20 +49,14 @@ auto TypeArgumentOf(const mir::CallExpr& call) -> mir::TypeId {
 auto IsFirstPosition(
     const mir::CompilationUnit& unit, const mir::Block& block, mir::ExprId id)
     -> bool {
-  const auto* reference =
-      std::get_if<mir::ReferenceExpr>(&block.exprs.Get(id).data);
-  const auto* constant =
-      reference == nullptr
-          ? nullptr
-          : std::get_if<mir::IntegralConstantRef>(&reference->target);
-  if (constant == nullptr) {
+  const mir::IntegralConstant* position =
+      mir::IntegralPlanesNamedBy(unit.constants, block.exprs.Get(id).data);
+  if (position == nullptr) {
     return false;
   }
-  const mir::IntegralConstant& position =
-      unit.integral_constants.Get(constant->constant).value;
   const auto is_zero = [](std::uint64_t word) { return word == 0; };
-  return std::ranges::all_of(position.value_words, is_zero) &&
-         std::ranges::all_of(position.state_words, is_zero);
+  return std::ranges::all_of(position->value_words, is_zero) &&
+         std::ranges::all_of(position->state_words, is_zero);
 }
 
 // Whether bits read at type `part` from the first bit of a value of type

@@ -10,6 +10,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/value/constant_span.hpp"
 #include "lyra/value/object_ref.hpp"
 
 namespace lyra::mir {
@@ -89,7 +90,7 @@ auto MirTypeOf(const TypePool& types) -> TypeId {
                     .pointee = LibraryTypeOf(
                         types, support::LibraryDecl::kObjectRoot)}}),
             .mutability = Mutability::kReadOnly}});
-  } else if constexpr (abi::kIsConstantSpan<Field>) {
+  } else if constexpr (value::kIsConstantSpan<Field>) {
     // The library lays a view of entries out as where the first one is and
     // how many there are, which is all a view holds; a layout saying more or
     // otherwise is not one this reads as a view.

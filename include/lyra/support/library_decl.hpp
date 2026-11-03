@@ -800,11 +800,11 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
           LibraryConstructor{.entry = BuiltinFn::kDpiOpenArrayMake});
       return &kDpiOpenArray;
     }
-    // A table the run keeps for the whole of it, so a member naming one
-    // points at storage outliving every reader rather than owning a copy.
+    // A table a unit states as a constant, which outlives every reader, so a
+    // member naming one points at it rather than owning a copy.
     case LibraryDecl::kEnumeration: {
       static constexpr LibraryDeclData kEnumeration = kNamedByAddress(
-          "enumeration", "lyra::value::EnumerationMembers", BorrowedMember{});
+          "enumeration", "lyra::value::Enumeration", BorrowedMember{});
       return &kEnumeration;
     }
     case LibraryDecl::kDpiBitChunk: {

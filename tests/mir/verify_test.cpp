@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/abi/library_records.hpp"
+#include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -25,11 +27,14 @@
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/library_record_builder.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -37,7 +42,6 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
-#include "lyra/mir/value_build.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
@@ -981,20 +985,9 @@ TEST(MirVerifyTest, ACallIsHeldToItsEntrysOneDeclaration) {
 // refused; the same operation over a value the program computes stands.
 TEST(MirVerifyTest, AnOperationOverConstantsIsStatedAsItsConstant) {
   const auto one = [](const CompilationUnit& u, Builder body) {
-    return body.Add(
-        Expr{
-            .data =
-                ReferenceExpr{
-                    .target =
-                        IntegralConstantRef{
-                            .constant = u.integral_constants.Intern(
-                                IntegralConstantDecl{
-                                    .type = u.builtins.int_type,
-                                    .value =
-                                        IntegralConstant{
-                                            .value_words = {1},
-                                            .state_words = {}}})}},
-            .type = u.builtins.int_type});
+    return body.Add(MakeIntegralLiteral(
+        u, u.builtins.int_type,
+        IntegralConstant{.value_words = {1}, .state_words = {}}));
   };
   const auto computed = [](const CompilationUnit& u, Builder body) {
     return body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
@@ -1330,104 +1323,117 @@ TEST(MirVerifyTest, ACompositesPartsAreOfTheirPositionsTypes) {
       composing(Built::kNeither, {true}), "a composite of a type with no");
 }
 
-// A constant of a class is held to its types as a body is: each part of a
-// structure of the library is of the type the library declares its member at,
-// a view is built from the address of an array of its own entries, and the
-// constant is of the type it states.
-TEST(MirVerifyTest, AConstantOfAClassMeetsTheTypesItStates) {
+// A constant of the unit is a value of its type: each part of a structure of
+// the library is a value of the type the library declares its member at, a
+// structure has a part for each member, a view is of an array of its own
+// entries, an integral's bits are canonical for its width, an array is as long
+// as its type, and a constant is named, by a pointer or by a body, at its own
+// type.
+TEST(MirVerifyTest, AConstantIsAValueOfItsType) {
   enum class Wrong : std::uint8_t {
     kNothing,
     kEntryMember,
     kViewOfOtherEntries,
-    kEntriesOfOtherRecord,
-    kStatedType,
+    kTooFewParts,
+    kPointerAtOtherType,
+    kBitsNotCanonical,
+    kArrayOfOtherLength,
   };
   const auto stating = [](Wrong wrong) {
     return UnitWithBody([wrong](CompilationUnit& u, Builder) {
       const auto library = [&](support::LibraryDecl decl) {
         return u.types.Intern(Type{LibraryType{.decl = decl, .args = {}}});
       };
-      const auto read_only_pointer = [&](TypeId pointee) {
-        return u.types.Intern(
-            Type{PointerType{
-                .pointee = pointee,
-                .ownership = PointerOwnership::kBorrowed,
-                .mutability = Mutability::kReadOnly}});
-      };
-      const ClassId id = u.DeclareClass();
-      Class cls;
-      cls.base = ClassRef{ClassObjectRootRef{}};
-      // `[{entry, table}]`: the instantiations one generate's places are made
-      // by, one of them; none where they are to be another library structure.
       const TypeId instantiation =
           library(support::LibraryDecl::kInstantiation);
-      const TypeId viewed = wrong == Wrong::kEntriesOfOtherRecord
+      // `{entry, table}`, an instantiation that makes nothing.
+      ConstantValue entry{RecordValue{
+          .parts = {
+              ConstantValue{NullValue{}},
+              wrong == Wrong::kEntryMember
+                  ? ConstantValue{CStringValue{.text = "not an address"}}
+                  : ConstantValue{NullValue{}}}}};
+      if (wrong == Wrong::kTooFewParts) {
+        entry = ConstantValue{RecordValue{.parts = {}}};
+      }
+      const TypeId listed = wrong == Wrong::kViewOfOtherEntries
                                 ? library(support::LibraryDecl::kScopeCallable)
                                 : instantiation;
-      ValueBuild entries;
-      std::vector<ExprId> rows;
-      if (viewed == instantiation) {
-        const std::span<const TypeId> members =
-            *u.LibraryRecordMembers(support::LibraryDecl::kInstantiation);
-        const ExprId entry = entries.body.exprs.Add(
-            Expr{.data = NullLiteral{}, .type = members[0]});
-        const ExprId table = entries.body.exprs.Add(
-            Expr{
-                .data = NullLiteral{},
-                .type = wrong == Wrong::kEntryMember
-                            ? read_only_pointer(
-                                  library(support::LibraryDecl::kScopeInfo))
-                            : members[1]});
-        rows.push_back(entries.body.exprs.Add(
-            Expr{
-                .data = CompositeExpr{.parts = {entry, table}},
-                .type = instantiation}));
-      }
-      const TypeId array = MachineArrayOf(u.types, viewed, rows.size());
-      entries.value = entries.body.exprs.Add(
-          Expr{.data = CompositeExpr{.parts = std::move(rows)}, .type = array});
-      const ClassConstantId held = cls.constants.Add(
-          ClassConstantDecl{.type = array, .initializer = std::move(entries)});
-
+      const TypeId array = MachineArrayOf(u.types, listed, 1);
+      ArrayValue entries;
+      entries.elements.push_back(
+          wrong == Wrong::kViewOfOtherEntries
+              ? ConstantValue{RecordValue{
+                    .parts =
+                        {ConstantValue{CStringValue{.text = "f"}},
+                         ConstantValue{NullValue{}}}}}
+              : std::move(entry));
+      const ConstantId places = u.constants.Intern(
+          ConstantDecl{
+              .type = array, .value = ConstantValue{std::move(entries)}});
       // `{places}`: the generate's places, a view of that array.
-      ValueBuild build;
-      Block& block = build.body;
-      const ExprId named = block.exprs.Add(
-          Expr{
-              .data =
-                  ReferenceExpr{
-                      .target =
-                          ClassConstantRef{.owner = id, .constant = held}},
-              .type = array});
-      const ExprId address =
-          block.exprs.Add(MakeAddressOfExpr(named, read_only_pointer(array)));
-      const TypeId spanned = wrong == Wrong::kViewOfOtherEntries
-                                 ? library(support::LibraryDecl::kScopeCallable)
-                                 : viewed;
-      const ExprId places = block.exprs.Add(
-          Expr{
-              .data = CallExpr{.callee = Construct{}, .arguments = {address}},
-              .type =
-                  u.types.Intern(Type{MachineSpanType{.element = spanned}})});
-      const TypeId generate = library(support::LibraryDecl::kGeneratePlaces);
-      build.value = block.exprs.Add(
-          Expr{.data = CompositeExpr{.parts = {places}}, .type = generate});
-      cls.constants.Add(
-          ClassConstantDecl{
-              .type = wrong == Wrong::kStatedType
-                          ? library(support::LibraryDecl::kDumpBlock)
-                          : generate,
-              .initializer = std::move(build)});
-      u.DefineClass(id, std::move(cls));
+      u.constants.Intern(
+          ConstantDecl{
+              .type = library(support::LibraryDecl::kGeneratePlaces),
+              .value = ConstantValue{RecordValue{
+                  .parts = {ConstantValue{SpanValue{.array = places}}}}}});
+      if (wrong == Wrong::kPointerAtOtherType) {
+        u.constants.Intern(
+            ConstantDecl{
+                .type = u.builtins.source_location_record_ptr,
+                .value = ConstantValue{PointerValue{
+                    .to = ConstantRef{.constant = places},
+                    .type = u.builtins.source_location_record}}});
+      }
+      // A one-bit value whose word sets a bit above its width.
+      if (wrong == Wrong::kBitsNotCanonical) {
+        u.constants.Intern(
+            ConstantDecl{
+                .type = u.builtins.bit1,
+                .value = ConstantValue{IntegralValue{
+                    .planes = {.value_words = {2}, .state_words = {}}}}});
+      }
+      if (wrong == Wrong::kArrayOfOtherLength) {
+        u.constants.Intern(
+            ConstantDecl{
+                .type = MachineArrayOf(u.types, u.builtins.machine_word, 2),
+                .value = ConstantValue{ArrayValue{
+                    .elements = {
+                        ConstantValue{MachineIntValue{.value = 1}}}}}});
+      }
+    });
+  };
+  // A body naming a constant at another type than the constant's own.
+  const auto naming_at_other_type = [] {
+    return UnitWithBody([](CompilationUnit& u, Builder body) {
+      const ConstantId held = u.constants.Intern(
+          ConstantDecl{
+              .type = u.builtins.int_type,
+              .value = ConstantValue{IntegralValue{
+                  .planes = {.value_words = {1}, .state_words = {}}}}});
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.Add(
+                  Expr{
+                      .data =
+                          ReferenceExpr{
+                              .target = ConstantRef{.constant = held}},
+                      .type = u.builtins.int_unsigned})});
     });
   };
 
   EXPECT_NO_THROW(Verify(stating(Wrong::kNothing)));
-  ExpectRefused(stating(Wrong::kEntryMember), "hands a part of a composite");
-  ExpectRefused(stating(Wrong::kViewOfOtherEntries), "builds a view of type");
+  ExpectRefused(stating(Wrong::kEntryMember), "states a text");
   ExpectRefused(
-      stating(Wrong::kEntriesOfOtherRecord), "hands a part of a composite");
-  ExpectRefused(stating(Wrong::kStatedType), "hands a constant it states");
+      stating(Wrong::kViewOfOtherEntries),
+      "a view of a constant that is no array of its element");
+  ExpectRefused(stating(Wrong::kTooFewParts), "a structure of 0 parts");
+  ExpectRefused(
+      stating(Wrong::kPointerAtOtherType),
+      "the address of a constant at another type than its own");
+  ExpectRefused(stating(Wrong::kBitsNotCanonical), "bits not canonical");
+  ExpectRefused(stating(Wrong::kArrayOfOtherLength), "an array of 1 elements");
+  ExpectRefused(naming_at_other_type(), "hands a constant it names");
 }
 
 // Code named as a value is of the type the code has -- every parameter it
@@ -2160,17 +2166,33 @@ TEST(MirVerifyTest, WhatEveryBodyStatesReachesNoClassOneBodyHas) {
       u.DefineClass(
           own, class_named(support::UnnamedClass{.disambiguator = 0}));
       Class stated = class_named(stated_by_every_body());
-      ValueBuild& definition = stated.object_definition_initializer;
-      definition.value =
-          Builder(definition.body, diag::SourceSpan{})
-              .Add(
-                  Expr{
-                      .data =
-                          ReferenceExpr{
-                              .target =
-                                  DefinitionRef{
-                                      .of = its_own_class ? shared : own}},
-                      .type = u.builtins.int_type});
+      // What its definition names is reached through a constant of the unit,
+      // the table of the interfaces it implements, which every body stating
+      // the class states alike.
+      const ConstantValue null{NullValue{}};
+      LibraryRecordBuilder<abi::InterfaceRow> row(u);
+      row.Set(
+          &abi::InterfaceRow::of,
+          ConstantValue{PointerValue{
+              .to = DefinitionRef{.of = its_own_class ? shared : own},
+              .type = LibraryTypeOf(
+                  u.types, support::LibraryDecl::kObjectDefinition)}});
+      row.Set(&abi::InterfaceRow::table, null);
+      LibraryRecordBuilder<abi::ObjectDefinition> definition(u);
+      definition.Set(&abi::ObjectDefinition::base, null);
+      definition.Set(&abi::ObjectDefinition::scope, null);
+      definition.Set(&abi::ObjectDefinition::class_object, null);
+      definition.Set(&abi::ObjectDefinition::end, null);
+      std::vector<ConstantValue> rows;
+      rows.push_back(std::move(row).Build());
+      definition.Set(
+          &abi::ObjectDefinition::interfaces,
+          ViewOf(
+              u,
+              LibraryTypeOf(u.types, abi::LibraryDeclOf<abi::InterfaceRow>()),
+              std::move(rows)));
+      definition.Set(&abi::ObjectDefinition::methods, null);
+      stated.definition = std::move(definition).Build();
       u.DefineClass(shared, std::move(stated));
     });
   };
@@ -2182,10 +2204,7 @@ TEST(MirVerifyTest, WhatEveryBodyStatesReachesNoClassOneBodyHas) {
     }
     return std::string{};
   };
-  EXPECT_EQ(
-      refusal_of(unit_whose_definition_names(true))
-          .find("a class only one body has"),
-      std::string::npos);
+  EXPECT_EQ(refusal_of(unit_whose_definition_names(true)), "");
   ExpectRefused(
       unit_whose_definition_names(false), "names a class only one body has");
 
@@ -2254,11 +2273,7 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
                   .defining_unit = std::nullopt});
         }
         if (declared.object_record) {
-          cls.object_definition_initializer.value =
-              Builder(
-                  cls.object_definition_initializer.body, diag::SourceSpan{})
-                  .Add(
-                      Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+          cls.definition = ConstantValue{NullValue{}};
         }
         u.DefineClass(u.DeclareClass(), std::move(cls));
       };

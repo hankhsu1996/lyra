@@ -3,8 +3,6 @@
 #include <cstdint>
 #include <vector>
 
-#include "lyra/lir/type_id.hpp"
-
 namespace lyra::lir {
 
 // A LIR-owned integral constant value: the bits, and nothing else. How wide the
@@ -21,12 +19,6 @@ namespace lyra::lir {
 struct IntegralConstant {
   std::vector<std::uint64_t> value_words;
   std::vector<std::uint64_t> state_words;
-};
-
-// One constant a unit holds: the integral type it is a value of, and its bits.
-struct IntegralConstantDecl {
-  TypeId type;
-  IntegralConstant value;
 };
 
 }  // namespace lyra::lir

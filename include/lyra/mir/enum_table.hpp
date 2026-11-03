@@ -9,9 +9,9 @@
 namespace lyra::mir {
 
 // The members `enumeration` declares, as the table the questions LRM 6.19.5
-// and 6.24.2 ask of a value are answered against. Naming the table is what puts
-// it in the unit.
-[[nodiscard]] auto BuildEnumTableRef(
+// and 6.24.2 ask of a value are answered against: a constant of the unit, named
+// as a value of `block`.
+[[nodiscard]] auto BuildEnumMemberTable(
     const CompilationUnit& unit, Builder block, TypeId enumeration) -> ExprId;
 
 }  // namespace lyra::mir
