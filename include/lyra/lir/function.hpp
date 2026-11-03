@@ -15,11 +15,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/pool_id.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/lir/enum_table_id.hpp"
+#include "lyra/lir/constant_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
-#include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/operator.hpp"
+#include "lyra/lir/referent.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/linkage.hpp"
@@ -120,57 +120,35 @@ struct LayoutConst {
   TypeId type;
 };
 
-// An enumeration's member table, named by the entry holding it. Its contents
-// are data the unit states and an operand is a leaf, so what the operand
-// carries is which table it is.
-struct EnumTableRef {
-  EnumTableId table;
+// A constant of the unit, named by the entry holding it, read as its value.
+// Its contents are data the unit states and an operand is a leaf, so what the
+// operand carries is which constant it is. `type` is the constant's own, and is
+// one whose value is held where its bytes lie -- an integral value, a structure
+// of the library -- since a machine value a body writes is a literal of its
+// own, as clang writes an integer as a literal rather than a global.
+struct ConstantRef {
+  ConstantId constant;
   TypeId type;
 };
 
-// A constant value of the unit, named by the entry holding it. Its contents are
-// data the unit states and an operand is a leaf, so what the operand carries is
-// which constant it is.
-struct IntegralConstantRef {
-  IntegralConstantId constant;
+// The address of what `to` names, read as a value: code handed to whatever
+// calls back through it, or storage a place opens at and dereferences --
+// storage no instance owns, reached by it rather than by a local slot or a
+// receiver chain, and data the unit emits, which is only read. `type` is
+// the address's own: a pointer to what is named, or a function's machine
+// function type.
+struct AddressConst {
+  Referent to;
   TypeId type;
 };
 
-// The address of storage named by its linkage symbol: a variable the whole
-// program shares -- of a package (LRM 26.2) or of a compilation-unit scope (LRM
-// 3.12.1), which a referrer reaches by a fully resolved name -- or a constant
-// the unit states. No local slot and no receiver chain arrives at such
-// storage, so a place over one opens at the symbol and dereferences it. `type`
-// is a pointer to what the symbol names; how the name is resolved -- a link
-// line, an execution session -- is below LIR.
-struct StaticRef {
-  std::string symbol;
-  TypeId type;
-};
-
-// The address of the definition every value of `defined` carries, a constant
-// the unit declaring that type emits. `type` is a pointer to the definition.
-struct DefinitionRef {
-  TypeId defined;
-  TypeId type;
-};
-
-// The address of a function of this unit, read as a value: code handed to
-// whatever calls back through it. `type` is the function's machine function
-// type.
-struct FunctionRef {
-  FunctionId function;
-  TypeId type;
-};
-
-// An instruction input: a prior value, an inline constant, or a reference to
-// a constant, to shared storage or to code. A constant or a reference is an
-// operand rather than a value of its own because it has no dataflow origin to
-// name -- it is materialized at the use site.
+// An instruction input: a prior value, an inline constant, a constant of the
+// unit, or an address. A constant or an address is an operand rather than a
+// value of its own because it has no dataflow origin to name -- it is
+// materialized at the use site.
 using Operand = std::variant<
     Use, IntConst, StrConst, FloatConst, NullConst, BoolConst, VoidConst,
-    LayoutConst, EnumTableRef, IntegralConstantRef, StaticRef, DefinitionRef,
-    FunctionRef>;
+    LayoutConst, ConstantRef, AddressConst>;
 
 // A runtime-library entry. `position` names the part the entry acts on where
 // the call itself fixes it, carried on the callee rather than among the

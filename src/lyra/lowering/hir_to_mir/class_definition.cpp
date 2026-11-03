@@ -31,11 +31,13 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/dispatch_table.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/library_record_builder.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
-#include "lyra/mir/value_build.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/support/library_decl.hpp"
 
@@ -57,23 +59,21 @@ auto BuildDefinitionRead(
 
 namespace {
 
-// What a class tells the runtime library is constants of the class, each
-// stated as the expression that is its value: a structure the library
-// declares, composed from a part for each member it declares. For a class
-// `Mid` an instance of the design hierarchy is built of, exporting one task as
-// `bump` (LRM 35.5):
+// What a class tells the runtime library is constants of the unit, each stated
+// as the value it is: a structure the library declares, composed from a part
+// for each member it declares. For a class `Mid` an instance of the design
+// hierarchy is built of, exporting one task as `bump` (LRM 35.5):
 //
-//   const array<ScopeCallable, 1> Mid::exports =
-//       {{{"bump", &Mid::bump_entry}}};
-//   const ScopeInfo Mid::info =
+//   const array<ScopeCallable, 1> exports = {{{"bump", &Mid::bump_entry}}};
+//   const ScopeInfo info =
 //       {{unit, precision, ...}, ConstantSpan(&exports), ...};
-//   const array<InterfaceRow, 0> Mid::rows = {};
+//   const array<InterfaceRow, 0> rows = {};
 //   const ObjectDefinition Mid::definition =
 //       {nullptr, &info, nullptr, &Mid::end, ConstantSpan(&rows),
 //        &Mid::methods};
 //
-// A table is an array the class holds, and whatever points at one holds a
-// view of all of it, made from the array's address.
+// A table is an array constant of the unit, and whatever points at one holds a
+// view of all of it.
 
 auto ReadOnlyPointerTo(const mir::CompilationUnit& unit, mir::TypeId pointee)
     -> mir::TypeId {
@@ -84,187 +84,60 @@ auto ReadOnlyPointerTo(const mir::CompilationUnit& unit, mir::TypeId pointee)
           .mutability = mir::Mutability::kReadOnly}});
 }
 
-auto Null(mir::Builder block, mir::TypeId type) -> mir::ExprId {
-  return block.Add(mir::Expr{.data = mir::NullLiteral{}, .type = type});
+auto Null() -> mir::ConstantValue {
+  return mir::ConstantValue{mir::NullValue{}};
 }
 
-auto Name(
-    const mir::CompilationUnit& unit, mir::Builder block, std::string_view text)
-    -> mir::ExprId {
-  return block.Add(
-      mir::MakeStringLiteral(
-          unit.builtins.machine_c_string, std::string{text}));
+auto Name(std::string_view text) -> mir::ConstantValue {
+  return mir::ConstantValue{mir::CStringValue{.text = std::string{text}}};
 }
 
-// The types the library declares the members of `Record` at, in its order.
-template <typename Record>
-auto MembersOf(const mir::CompilationUnit& unit)
-    -> std::span<const mir::TypeId> {
-  const std::optional<std::span<const mir::TypeId>> members =
-      unit.LibraryRecordMembers(abi::LibraryDeclOf<Record>());
-  if (!members.has_value()) {
-    throw InternalError(
-        "hir_to_mir: a unit declares no structure of the library a constant "
-        "is stated as -- please report this as a bug");
-  }
-  return *members;
+auto Number(std::int64_t value) -> mir::ConstantValue {
+  return mir::ConstantValue{mir::MachineIntValue{.value = value}};
 }
 
-// The type the library declares `member` at.
-template <typename Record, typename Member>
-auto MemberTypeOf(const mir::CompilationUnit& unit, Member Record::* member)
-    -> mir::TypeId {
-  return MembersOf<Record>(unit)[abi::PositionOf(member)];
+// The address of what `to` names, which naming it in a body is a value of
+// `type`.
+auto PointerTo(mir::ReferenceTarget to, mir::TypeId type)
+    -> mir::ConstantValue {
+  return mir::ConstantValue{
+      mir::PointerValue{.to = std::move(to), .type = type}};
 }
 
-// A structure of the library composed from a part for each of its members,
-// each part named by the member it fills, so it stands where the library
-// declares that member and is built at the type the library declares it at.
-//
-//   LibraryRecordBuilder<abi::ScopeCallable> entry(unit, block);
-//   entry.Set(&abi::ScopeCallable::name, name);
-//   entry.Set(&abi::ScopeCallable::entry, body);
-//   std::move(entry).Build()  // {name, body}
-template <typename Record>
-class LibraryRecordBuilder {
- public:
-  static constexpr support::LibraryDecl kDecl = abi::LibraryDeclOf<Record>();
-
-  LibraryRecordBuilder(const mir::CompilationUnit& unit, mir::Builder block)
-      : unit_(&unit), block_(block) {
-    parts_.resize(MembersOf<Record>(unit).size());
-  }
-
-  // The type the library declares `member` at.
-  template <typename Member>
-  [[nodiscard]] auto TypeOf(Member Record::* member) const -> mir::TypeId {
-    return MemberTypeOf(*unit_, member);
-  }
-
-  template <typename Member>
-  void Set(Member Record::* member, mir::ExprId part) {
-    std::optional<mir::ExprId>& at = parts_[abi::PositionOf(member)];
-    if (at.has_value()) {
-      throw InternalError(
-          "hir_to_mir: a member of a structure of the library is given "
-          "twice -- please report this as a bug");
-    }
-    at = part;
-  }
-
-  // `member` holding the number `value`, at the type of the member.
-  template <typename Member>
-  void SetNumber(Member Record::* member, std::int64_t value) {
-    Set(member, block_.Add(
-                    mir::Expr{
-                        .data = mir::MachineIntLiteral{.value = value},
-                        .type = TypeOf(member)}));
-  }
-
-  // `member` holding nothing.
-  template <typename Member>
-  void SetNull(Member Record::* member) {
-    Set(member, Null(block_, TypeOf(member)));
-  }
-
-  // The structure, once every member is given.
-  [[nodiscard]] auto Build() && -> mir::ExprId {
-    std::vector<mir::ExprId> parts;
-    parts.reserve(parts_.size());
-    for (const std::optional<mir::ExprId>& part : parts_) {
-      if (!part.has_value()) {
-        throw InternalError(
-            "hir_to_mir: a structure of the library is composed with a "
-            "member left out -- please report this as a bug");
-      }
-      parts.push_back(*part);
-    }
-    return block_.Add(
-        mir::Expr{
-            .data = mir::CompositeExpr{.parts = std::move(parts)},
-            .type = mir::LibraryTypeOf(unit_->types, kDecl)});
-  }
-
- private:
-  const mir::CompilationUnit* unit_;
-  mir::Builder block_;
-  std::vector<std::optional<mir::ExprId>> parts_;
-};
-
-// `callable` of class `id`, named as the code it is: `&Mid::bump_entry`.
+// `callable` of class `id`, as the code it is: `&Mid::bump_entry`.
 auto Function(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
-    const mir::Class& cls, mir::CallableId callable) -> mir::ExprId {
-  return block.Add(
-      mir::Expr{
-          .data =
-              mir::ReferenceExpr{
-                  .target =
-                      mir::FunctionRef{
-                          .body =
-                              mir::CallableTarget{
-                                  .owner = id, .slot = callable}}},
-          .type = mir::FunctionTypeOf(
-              unit.types, cls.callables.Get(callable).code)});
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
+    mir::CallableId callable) -> mir::ConstantValue {
+  return PointerTo(
+      mir::FunctionRef{
+          .body = mir::CallableTarget{.owner = id, .slot = callable}},
+      mir::FunctionTypeOf(unit.types, cls.callables.Get(callable).code));
 }
 
-// The address of `constant`, a value of `type`, as a value of `block`.
-auto AddressOfConstant(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    const mir::ClassConstantRef& constant, mir::TypeId type) -> mir::ExprId {
-  return block.Add(
-      mir::MakeAddressOfExpr(
-          block.Add(
-              mir::Expr{
-                  .data = mir::ReferenceExpr{.target = constant},
-                  .type = type}),
-          ReadOnlyPointerTo(unit, type)));
+// The address of `constant`, a constant of the unit.
+auto AddressOf(const mir::CompilationUnit& unit, mir::ConstantId constant)
+    -> mir::ConstantValue {
+  return PointerTo(
+      mir::ConstantRef{.constant = constant},
+      unit.constants.Get(constant).type);
 }
 
-// Holds `build` as a constant of class `id`, at the type of the value it is
-// built as, and answers its address as a value of `block`.
-auto ConstantAddress(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
-    mir::Class& cls, mir::ValueBuild build) -> mir::ExprId {
-  const mir::TypeId type = build.body.exprs.Get(build.value).type;
-  const mir::ClassConstantId constant = cls.constants.Add(
-      mir::ClassConstantDecl{.type = type, .initializer = std::move(build)});
-  return AddressOfConstant(
-      unit, block, mir::ClassConstantRef{.owner = id, .constant = constant},
-      type);
-}
-
-// A table of `count` entries of the library's structure `Entry`, each written
-// by `write` into the block it is handed: the entries are held as an array
-// constant of class `id`, which owns them, and the table, a value of `block`,
-// is a view of all of that array, made from its address.
+// A table of `count` entries of the library's structure `Entry`, each the value
+// `write` answers for its position: an array constant of the unit holding the
+// entries, and a view of all of it.
 template <typename Entry>
 auto Table(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
-    mir::Class& cls, std::size_t count,
-    const std::function<mir::ExprId(mir::Builder, std::size_t)>& write)
-    -> mir::ExprId {
-  const mir::TypeId entry =
-      mir::LibraryTypeOf(unit.types, abi::LibraryDeclOf<Entry>());
-  mir::ValueBuild build;
-  mir::Builder record(build.body, diag::SourceSpan{});
-  std::vector<mir::ExprId> elements;
-  elements.reserve(count);
+    const mir::CompilationUnit& unit, std::size_t count,
+    const std::function<mir::ConstantValue(std::size_t)>& write)
+    -> mir::ConstantValue {
+  std::vector<mir::ConstantValue> entries;
+  entries.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
-    elements.push_back(write(record, i));
+    entries.push_back(write(i));
   }
-  build.value = record.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = std::move(elements)},
-          .type = mir::MachineArrayOf(unit.types, entry, count)});
-  const mir::ExprId entries =
-      ConstantAddress(unit, block, id, cls, std::move(build));
-  return block.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{.callee = mir::Construct{}, .arguments = {entries}},
-          .type = unit.types.Intern(
-              mir::Type{mir::MachineSpanType{.element = entry}})});
+  return mir::ViewOf(
+      unit, mir::LibraryTypeOf(unit.types, abi::LibraryDeclOf<Entry>()),
+      std::move(entries));
 }
 
 // A body answering a callback the library makes on an object, and the
@@ -275,24 +148,13 @@ struct LibraryBody {
   mir::TypeId prototype;
 };
 
-// The entry the library enters for `body`, held at `member_type`, the
-// prototype the library declares the member holding it at, as a value of
-// `block`; none where no body answers. The entry is named at its own prototype
-// and read at the library's.
-auto EntryOrNone(
-    mir::Builder block, const std::optional<LibraryBody>& body,
-    mir::TypeId member_type) -> mir::ExprId {
+// The entry the library enters for `body`, named at its own prototype, which
+// the member holding it declares as the library's; none where no body answers.
+auto EntryOrNone(const std::optional<LibraryBody>& body) -> mir::ConstantValue {
   if (!body.has_value()) {
-    return Null(block, member_type);
+    return Null();
   }
-  const mir::ExprId named = block.Add(
-      mir::Expr{
-          .data =
-              mir::ReferenceExpr{
-                  .target = mir::DispatchEntryRef{.body = body->body}},
-          .type = body->prototype});
-  return block.Add(
-      mir::Expr{.data = mir::CastExpr{.operand = named}, .type = member_type});
+  return PointerTo(mir::DispatchEntryRef{.body = body->body}, body->prototype);
 }
 
 // The callback answering each phase of a scope of the design hierarchy, by
@@ -350,106 +212,105 @@ auto BodyFor(const LibraryBodies& bodies, support::LibraryCallback callback)
 // entry of the body answering its callback.
 template <typename Record, typename Answers>
 void SetEntries(
-    mir::Builder block, LibraryRecordBuilder<Record>& record,
-    const Answers& answers, const LibraryBodies& bodies) {
+    mir::LibraryRecordBuilder<Record>& record, const Answers& answers,
+    const LibraryBodies& bodies) {
   for (const auto& [member, callback] : answers) {
-    record.Set(
-        member,
-        EntryOrNone(block, BodyFor(bodies, callback), record.TypeOf(member)));
+    record.Set(member, EntryOrNone(BodyFor(bodies, callback)));
   }
 }
 
 // What a class of the design hierarchy states of its instances, as a constant
-// of class `id`, and its address as a value of `block`: its timescale and how
-// what an instance starts is run, what a dump records it as, the bodies its
-// exports name, then the body of each of its phases.
+// of the unit, and its address: its timescale and how what an instance starts
+// is run, what a dump records it as, the bodies its exports name, then the
+// body of each of its phases.
 auto ScopeInfoAddress(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
-    mir::Class& cls, const LibraryBodies& bodies) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
+    const LibraryBodies& bodies) -> mir::ConstantValue {
   using abi::ScopeInfo;
   using abi::ScopeMetadata;
-  mir::ValueBuild build;
-  mir::Builder at(build.body, diag::SourceSpan{});
-  LibraryRecordBuilder<ScopeMetadata> metadata(unit, at);
-  metadata.SetNumber(
-      &ScopeMetadata::time_unit_power, cls.time_resolution.unit_power);
-  metadata.SetNumber(
+  mir::LibraryRecordBuilder<ScopeMetadata> metadata(unit);
+  metadata.Set(
+      &ScopeMetadata::time_unit_power, Number(cls.time_resolution.unit_power));
+  metadata.Set(
       &ScopeMetadata::time_precision_power,
-      cls.time_resolution.precision_power);
-  metadata.SetNumber(
-      &ScopeMetadata::execution, static_cast<std::uint8_t>(cls.execution));
-  metadata.SetNumber(
-      &ScopeMetadata::dumped_as, static_cast<std::uint8_t>(cls.dumped_as));
-  LibraryRecordBuilder<ScopeInfo> info(unit, at);
+      Number(cls.time_resolution.precision_power));
+  metadata.Set(
+      &ScopeMetadata::execution,
+      Number(static_cast<std::uint8_t>(cls.execution)));
+  metadata.Set(
+      &ScopeMetadata::dumped_as,
+      Number(static_cast<std::uint8_t>(cls.dumped_as)));
+  mir::LibraryRecordBuilder<ScopeInfo> info(unit);
   info.Set(&ScopeInfo::metadata, std::move(metadata).Build());
   info.Set(
       &ScopeInfo::exports,
-      Table<abi::ScopeCallable>(
-          unit, at, id, cls, cls.exports.size(),
-          [&](mir::Builder entry, std::size_t i) {
-            using abi::ScopeCallable;
-            const mir::NamedCallable& exported = cls.exports[i];
-            LibraryRecordBuilder<ScopeCallable> callable(unit, entry);
-            callable.Set(
-                &ScopeCallable::name, Name(unit, entry, exported.name));
-            callable.Set(
-                &ScopeCallable::entry,
-                entry.Add(
-                    mir::Expr{
-                        .data =
-                            mir::CastExpr{
-                                .operand = Function(
-                                    unit, entry, id, cls, exported.body)},
-                        .type = callable.TypeOf(&ScopeCallable::entry)}));
-            return std::move(callable).Build();
-          }));
-  SetEntries(at, info, kScopePhases, bodies);
-  build.value = std::move(info).Build();
-  return ConstantAddress(unit, block, id, cls, std::move(build));
+      Table<abi::ScopeCallable>(unit, cls.exports.size(), [&](std::size_t i) {
+        using abi::ScopeCallable;
+        const mir::NamedCallable& exported = cls.exports[i];
+        mir::LibraryRecordBuilder<ScopeCallable> callable(unit);
+        callable.Set(&ScopeCallable::name, Name(exported.name));
+        callable.Set(
+            &ScopeCallable::entry, Function(unit, id, cls, exported.body));
+        return std::move(callable).Build();
+      }));
+  SetEntries(info, kScopePhases, bodies);
+  return AddressOf(unit, std::move(info).Intern());
+}
+
+// The address of `constant`, a constant of the unit, as a value of `block`.
+auto AddressIn(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ConstantId constant) -> mir::ExprId {
+  const mir::TypeId type = unit.constants.Get(constant).type;
+  return block.Add(
+      mir::MakeAddressOfExpr(
+          block.Add(
+              mir::Expr{
+                  .data =
+                      mir::ReferenceExpr{
+                          .target = mir::ConstantRef{.constant = constant}},
+                  .type = type}),
+          ReadOnlyPointerTo(unit, type)));
 }
 
 }  // namespace
 
 //   {"count", 7, 0, 8, kReg, 1, 1, kInput, 2}
 auto DumpEntryAddress(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
-    mir::Class& cls, const hir::DumpedDeclaration& declaration) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const hir::DumpedDeclaration& declaration) -> mir::ExprId {
   using abi::DumpEntry;
-  mir::ValueBuild build;
-  mir::Builder record(build.body, diag::SourceSpan{});
   const hir::DumpedDeclaration::Range range = declaration.range.value_or(
       hir::DumpedDeclaration::Range{.left = 0, .right = 0});
   const hir::DumpedDeclaration::Port port = declaration.port.value_or(
       hir::DumpedDeclaration::Port{
           .direction = support::DumpPortDirection::kInput, .position = 0});
-  LibraryRecordBuilder<DumpEntry> entry(unit, record);
-  entry.Set(&DumpEntry::identifier, Name(unit, record, declaration.identifier));
-  entry.SetNumber(&DumpEntry::left, range.left);
-  entry.SetNumber(&DumpEntry::right, range.right);
-  entry.SetNumber(&DumpEntry::width, declaration.width);
-  entry.SetNumber(
-      &DumpEntry::kind, static_cast<std::uint8_t>(declaration.kind));
-  entry.SetNumber(&DumpEntry::has_range, declaration.range.has_value() ? 1 : 0);
-  entry.SetNumber(&DumpEntry::has_port, declaration.port.has_value() ? 1 : 0);
-  entry.SetNumber(
-      &DumpEntry::port_direction, static_cast<std::uint8_t>(port.direction));
-  entry.SetNumber(&DumpEntry::port_position, port.position);
-  build.value = std::move(entry).Build();
-  return ConstantAddress(unit, block, id, cls, std::move(build));
+  mir::LibraryRecordBuilder<DumpEntry> entry(unit);
+  entry.Set(&DumpEntry::identifier, Name(declaration.identifier));
+  entry.Set(&DumpEntry::left, Number(range.left));
+  entry.Set(&DumpEntry::right, Number(range.right));
+  entry.Set(&DumpEntry::width, Number(declaration.width));
+  entry.Set(
+      &DumpEntry::kind, Number(static_cast<std::uint8_t>(declaration.kind)));
+  entry.Set(
+      &DumpEntry::has_range, Number(declaration.range.has_value() ? 1 : 0));
+  entry.Set(&DumpEntry::has_port, Number(declaration.port.has_value() ? 1 : 0));
+  entry.Set(
+      &DumpEntry::port_direction,
+      Number(static_cast<std::uint8_t>(port.direction)));
+  entry.Set(&DumpEntry::port_position, Number(port.position));
+  return AddressIn(unit, block, std::move(entry).Intern());
 }
 
 //   {"blk", kBegin}
 auto DumpBlockAddress(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
-    mir::Class& cls, const hir::DumpedBlock& dumped) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const hir::DumpedBlock& dumped) -> mir::ExprId {
   using abi::DumpBlock;
-  mir::ValueBuild build;
-  mir::Builder record(build.body, diag::SourceSpan{});
-  LibraryRecordBuilder<DumpBlock> entry(unit, record);
-  entry.Set(&DumpBlock::identifier, Name(unit, record, dumped.identifier));
-  entry.SetNumber(&DumpBlock::kind, static_cast<std::uint8_t>(dumped.kind));
-  build.value = std::move(entry).Build();
-  return ConstantAddress(unit, block, id, cls, std::move(build));
+  mir::LibraryRecordBuilder<DumpBlock> entry(unit);
+  entry.Set(&DumpBlock::identifier, Name(dumped.identifier));
+  entry.Set(&DumpBlock::kind, Number(static_cast<std::uint8_t>(dumped.kind)));
+  return AddressIn(unit, block, std::move(entry).Intern());
 }
 
 namespace {
@@ -465,26 +326,17 @@ struct BodyRef {
 };
 
 // The object entry of the body `made` names, or the entry it publishes for its
-// block body `built`, at the type `entry` its unit declared it with, read at
-// `erased`, the prototype a table holds every entry at, as a value of `block`.
+// block body `built`, named at the type `entry` its unit declared it with,
+// which a table holds at the prototype it holds every entry at.
 //
 //   (Erased)&Child::sv_create
-auto ErasedObjectEntry(
-    mir::Builder block, const BodyRef& made,
-    std::optional<mir::BlockBodyOrdinal> built, mir::TypeId entry,
-    mir::TypeId erased) -> mir::ExprId {
-  const mir::ExprId declared = block.Add(
-      mir::Expr{
-          .data =
-              mir::ReferenceExpr{
-                  .target =
-                      mir::ExternalObjectEntryRef{
-                          .unit_name = made.unit,
-                          .body_name = made.body,
-                          .block = built}},
-          .type = entry});
-  return block.Add(
-      mir::Expr{.data = mir::CastExpr{.operand = declared}, .type = erased});
+auto ObjectEntry(
+    const BodyRef& made, std::optional<mir::BlockBodyOrdinal> built,
+    mir::TypeId entry) -> mir::ConstantValue {
+  return PointerTo(
+      mir::ExternalObjectEntryRef{
+          .unit_name = made.unit, .body_name = made.body, .block = built},
+      entry);
 }
 
 // The construction tables the design root states: one per scope of each
@@ -506,12 +358,10 @@ auto ErasedObjectEntry(
 class ConstructionTables {
  public:
   ConstructionTables(
-      mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
+      const mir::CompilationUnit& unit,
       const DesignInstantiations& instantiations,
       const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
       : unit_(&unit),
-        id_(id),
-        cls_(&cls),
         instantiations_(&instantiations),
         entry_types_(&entry_types) {
     for (const auto& [_, made] : instantiations.by_lowering) {
@@ -520,13 +370,13 @@ class ConstructionTables {
   }
 
   // The table of the lowering `made`, which is stated once.
-  auto Of(const hir::LoweringRef& made) -> mir::ClassConstantRef {
+  auto Of(const hir::LoweringRef& made) -> mir::ConstantId {
     if (const auto stated = of_lowering_.find(made.lowering);
         stated != of_lowering_.end()) {
       return stated->second;
     }
     const LoweringMade& found = Made(made);
-    const mir::ClassConstantRef table =
+    const mir::ConstantId table =
         Of(BodyRef{.unit = made.unit, .body = found.body}, std::nullopt,
            found.made);
     of_lowering_.emplace(made.lowering, table);
@@ -539,7 +389,7 @@ class ConstructionTables {
   struct Entry {
     BodyRef made;
     std::optional<mir::BlockBodyOrdinal> block;
-    mir::ClassConstantRef table;
+    mir::ConstantId table;
 
     auto operator==(const Entry&) const -> bool = default;
   };
@@ -550,8 +400,6 @@ class ConstructionTables {
   struct Places {
     bool handed_an_index = false;
     std::vector<std::optional<Entry>> places;
-
-    auto operator==(const Places&) const -> bool = default;
   };
 
   // What a table holds: an entry per object of each instantiation, then the
@@ -559,8 +407,6 @@ class ConstructionTables {
   struct Content {
     std::vector<Entry> instances;
     std::vector<Places> generates;
-
-    auto operator==(const Content&) const -> bool = default;
   };
 
   // Where blocks of one generate stand among the scopes the design builds of
@@ -645,7 +491,7 @@ class ConstructionTables {
   // there are. A table named by another is stated before it.
   auto Of(
       const BodyRef& owner, std::optional<hir::BlockBodyId> scope,
-      const hir::ScopeInstantiations& layout) -> mir::ClassConstantRef {
+      const hir::ScopeInstantiations& layout) -> mir::ConstantId {
     Content content;
     for (const hir::LoweringRef& made : layout.Instantiated()) {
       content.instances.push_back(
@@ -686,89 +532,64 @@ class ConstructionTables {
         placed.places.resize(std::min<std::size_t>(placed.places.size(), 1));
       }
     }
-    for (const auto& [held, table] : stated_) {
-      if (held == content) return table;
-    }
-    const mir::ClassConstantRef table = State(content);
-    stated_.emplace_back(std::move(content), table);
-    return table;
+    return State(content);
   }
 
-  // States a table holding `content`.
-  auto State(const Content& content) -> mir::ClassConstantRef {
+  // The table holding `content`, which tables holding the same entries share.
+  auto State(const Content& content) -> mir::ConstantId {
     using abi::ConstructionTable;
     using abi::GeneratePlaces;
     using abi::Instantiation;
-    mir::ValueBuild build;
-    mir::Builder record(build.body, diag::SourceSpan{});
-    LibraryRecordBuilder<ConstructionTable> table(*unit_, record);
+    mir::LibraryRecordBuilder<ConstructionTable> table(*unit_);
     table.Set(
         &ConstructionTable::instantiations,
         Table<Instantiation>(
-            *unit_, record, id_, *cls_, content.instances.size(),
-            [&](mir::Builder entry, std::size_t i) {
+            *unit_, content.instances.size(), [&](std::size_t i) {
               const Entry& made = content.instances[i];
-              return EntryRecord(entry, made, EntryTypeOf(made.made.unit));
+              return EntryRecord(made, EntryTypeOf(made.made.unit));
             }));
     table.Set(
         &ConstructionTable::generates,
         Table<GeneratePlaces>(
-            *unit_, record, id_, *cls_, content.generates.size(),
-            [&](mir::Builder at_generate, std::size_t g) {
+            *unit_, content.generates.size(), [&](std::size_t g) {
               const Places& generate = content.generates[g];
               const mir::TypeId entry_type =
                   BlockEntryType(*unit_, generate.handed_an_index);
-              LibraryRecordBuilder<GeneratePlaces> places(*unit_, at_generate);
+              mir::LibraryRecordBuilder<GeneratePlaces> places(*unit_);
               places.Set(
                   &GeneratePlaces::places,
                   Table<Instantiation>(
-                      *unit_, at_generate, id_, *cls_, generate.places.size(),
-                      [&](mir::Builder entry, std::size_t k) {
+                      *unit_, generate.places.size(), [&](std::size_t k) {
                         const std::optional<Entry>& block = generate.places[k];
                         return block.has_value()
-                                   ? EntryRecord(entry, *block, entry_type)
-                                   : NoEntryRecord(entry);
+                                   ? EntryRecord(*block, entry_type)
+                                   : NoEntryRecord();
                       }));
               return std::move(places).Build();
             }));
-    build.value = std::move(table).Build();
-    return mir::ClassConstantRef{
-        .owner = id_,
-        .constant = cls_->constants.Add(
-            mir::ClassConstantDecl{
-                .type = mir::LibraryTypeOf(
-                    unit_->types, support::LibraryDecl::kConstructionTable),
-                .initializer = std::move(build)})};
+    return std::move(table).Intern();
   }
 
-  // The record of the entry `made`, its entry read at the type `entry_type`
+  // The record of the entry `made`, its entry named at the type `entry_type`
   // that entry has.
-  auto EntryRecord(
-      mir::Builder entry, const Entry& made, mir::TypeId entry_type)
-      -> mir::ExprId {
+  auto EntryRecord(const Entry& made, mir::TypeId entry_type)
+      -> mir::ConstantValue {
     using abi::Instantiation;
-    LibraryRecordBuilder<Instantiation> record(*unit_, entry);
+    mir::LibraryRecordBuilder<Instantiation> record(*unit_);
     record.Set(
-        &Instantiation::entry, ErasedObjectEntry(
-                                   entry, made.made, made.block, entry_type,
-                                   record.TypeOf(&Instantiation::entry)));
-    record.Set(
-        &Instantiation::table,
-        AddressOfConstant(
-            *unit_, entry, made.table,
-            mir::LibraryTypeOf(
-                unit_->types, support::LibraryDecl::kConstructionTable)));
+        &Instantiation::entry, ObjectEntry(made.made, made.block, entry_type));
+    record.Set(&Instantiation::table, AddressOf(*unit_, made.table));
     return std::move(record).Build();
   }
 
   // A place this object built no block at -- an alternative it did not select
   // -- that no one entry fills, which holds no entry; the body's code never
   // reads one there.
-  auto NoEntryRecord(mir::Builder entry) -> mir::ExprId {
+  auto NoEntryRecord() -> mir::ConstantValue {
     using abi::Instantiation;
-    LibraryRecordBuilder<Instantiation> record(*unit_, entry);
-    record.SetNull(&Instantiation::entry);
-    record.SetNull(&Instantiation::table);
+    mir::LibraryRecordBuilder<Instantiation> record(*unit_);
+    record.Set(&Instantiation::entry, Null());
+    record.Set(&Instantiation::table, Null());
     return std::move(record).Build();
   }
 
@@ -799,14 +620,10 @@ class ConstructionTables {
     return found->second;
   }
 
-  mir::CompilationUnit* unit_;
-  mir::ClassId id_;
-  mir::Class* cls_;
+  const mir::CompilationUnit* unit_;
   const DesignInstantiations* instantiations_;
   const std::map<std::string, mir::TypeId, std::less<>>* entry_types_;
-  std::map<std::string, mir::ClassConstantRef, std::less<>> of_lowering_;
-  // Each table stated, with what it holds.
-  std::vector<std::pair<Content, mir::ClassConstantRef>> stated_;
+  std::map<std::string, mir::ConstantId, std::less<>> of_lowering_;
   // Every block built at each place of every scope the design builds.
   std::map<GeneratePlace, std::vector<const hir::PlacedBlock*>> built_at_;
   // The one entry each place, or each generate, holds wherever a block was
@@ -959,17 +776,6 @@ auto FactsOf(
   return facts;
 }
 
-// The address of a table `id`'s dispatch is laid out in, as a value of
-// `block` of type `type`: what `target` names.
-auto TableAddress(
-    mir::Builder block, mir::ReferenceTarget target, mir::TypeId type)
-    -> mir::ExprId {
-  return block.Add(
-      mir::Expr{
-          .data = mir::ReferenceExpr{.target = std::move(target)},
-          .type = type});
-}
-
 // Gives each body of `cls`, class `id`, that something reaches without knowing
 // the object's class its entry: every one taking part in dispatch or answering
 // a callback the library makes on an object, that the class defines. One
@@ -1003,90 +809,75 @@ void AddEntries(
   }
 }
 
-// What `randomize()` asks of an object of class `id`, as a constant of the
-// class, and its address as a value of `block`.
+// What `randomize()` asks of an object of a class, as a constant of the unit,
+// and its address.
 auto ClassObjectInfoAddress(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
-    mir::Class& cls, const LibraryBodies& bodies) -> mir::ExprId {
-  mir::ValueBuild build;
-  mir::Builder record(build.body, diag::SourceSpan{});
-  LibraryRecordBuilder<abi::ClassObjectInfo> info(unit, record);
-  SetEntries(record, info, kRandomizationOnProblem, bodies);
-  SetEntries(record, info, kRandomizationHooks, bodies);
-  build.value = std::move(info).Build();
-  return ConstantAddress(unit, block, id, cls, std::move(build));
+    const mir::CompilationUnit& unit, const LibraryBodies& bodies)
+    -> mir::ConstantValue {
+  using abi::ClassObjectInfo;
+  mir::LibraryRecordBuilder<ClassObjectInfo> info(unit);
+  SetEntries(info, kRandomizationOnProblem, bodies);
+  SetEntries(info, kRandomizationHooks, bodies);
+  return AddressOf(unit, std::move(info).Intern());
 }
 
-// The definition of class `id`, `cls`, from what its lineage decides, adding
-// to `cls` the constants it takes.
+// The address of the definition of `of`, a class of this unit or another.
+auto DefinitionAddress(const mir::CompilationUnit& unit, mir::ClassId of)
+    -> mir::ConstantValue {
+  return PointerTo(
+      mir::DefinitionRef{.of = of},
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kObjectDefinition));
+}
+
+// The definition of class `id`, `cls`, from what its lineage decides.
 //
 //   {&Base::definition, &info, &randomization, &end, ConstantSpan(&rows),
 //    &methods}
 auto DefinitionOf(
-    const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    const LineageFacts& facts) -> mir::ValueBuild {
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
+    const LineageFacts& facts) -> mir::ConstantValue {
   using abi::InterfaceRow;
   using abi::ObjectDefinition;
-  mir::ValueBuild build;
-  mir::Builder block(build.body, diag::SourceSpan{});
-  LibraryRecordBuilder<ObjectDefinition> definition(unit, block);
-  if (const std::optional<mir::ClassId> base = mir::DeclaredBase(cls)) {
-    definition.Set(
-        &ObjectDefinition::base, BuildDefinitionRead(unit, block, *base));
-  } else {
-    definition.SetNull(&ObjectDefinition::base);
-  }
-  if (facts.stands_in_hierarchy) {
-    definition.Set(
-        &ObjectDefinition::scope,
-        ScopeInfoAddress(unit, block, id, cls, facts.bodies));
-  } else {
-    definition.SetNull(&ObjectDefinition::scope);
-  }
-  if (facts.is_class_object) {
-    definition.Set(
-        &ObjectDefinition::class_object,
-        ClassObjectInfoAddress(unit, block, id, cls, facts.bodies));
-  } else {
-    definition.SetNull(&ObjectDefinition::class_object);
-  }
-  if (facts.is_interface) {
-    definition.SetNull(&ObjectDefinition::end);
-  } else {
-    definition.Set(
-        &ObjectDefinition::end,
-        block.Add(
-            mir::Expr{
-                .data =
-                    mir::ReferenceExpr{.target = mir::DestructorRef{.of = id}},
-                .type = definition.TypeOf(&ObjectDefinition::end)}));
-  }
+  mir::LibraryRecordBuilder<ObjectDefinition> definition(unit);
+  const std::optional<mir::ClassId> base = mir::DeclaredBase(cls);
+  definition.Set(
+      &ObjectDefinition::base,
+      base.has_value() ? DefinitionAddress(unit, *base) : Null());
+  definition.Set(
+      &ObjectDefinition::scope,
+      facts.stands_in_hierarchy ? ScopeInfoAddress(unit, id, cls, facts.bodies)
+                                : Null());
+  definition.Set(
+      &ObjectDefinition::class_object,
+      facts.is_class_object ? ClassObjectInfoAddress(unit, facts.bodies)
+                            : Null());
+  definition.Set(
+      &ObjectDefinition::end,
+      facts.is_interface ? Null()
+                         : PointerTo(
+                               mir::DestructorRef{.of = id},
+                               definition.TypeOf(&ObjectDefinition::end)));
   definition.Set(
       &ObjectDefinition::interfaces,
       Table<InterfaceRow>(
-          unit, block, id, cls, facts.interface_tables.size(),
-          [&](mir::Builder entry, std::size_t i) {
+          unit, facts.interface_tables.size(), [&](std::size_t i) {
             const mir::ClassId iface = facts.interface_tables[i].of;
-            LibraryRecordBuilder<InterfaceRow> row(unit, entry);
-            row.Set(&InterfaceRow::of, BuildDefinitionRead(unit, entry, iface));
+            mir::LibraryRecordBuilder<InterfaceRow> row(unit);
+            row.Set(&InterfaceRow::of, DefinitionAddress(unit, iface));
             row.Set(
                 &InterfaceRow::table,
-                TableAddress(
-                    entry, mir::InterfaceTableRef{.of = id, .iface = iface},
+                PointerTo(
+                    mir::InterfaceTableRef{.of = id, .iface = iface},
                     row.TypeOf(&InterfaceRow::table)));
             return std::move(row).Build();
           }));
-  if (facts.is_interface) {
-    definition.SetNull(&ObjectDefinition::methods);
-  } else {
-    definition.Set(
-        &ObjectDefinition::methods,
-        TableAddress(
-            block, mir::DispatchTableRef{.of = id},
-            definition.TypeOf(&ObjectDefinition::methods)));
-  }
-  build.value = std::move(definition).Build();
-  return build;
+  definition.Set(
+      &ObjectDefinition::methods,
+      facts.is_interface ? Null()
+                         : PointerTo(
+                               mir::DispatchTableRef{.of = id},
+                               definition.TypeOf(&ObjectDefinition::methods)));
+  return std::move(definition).Build();
 }
 
 }  // namespace
@@ -1103,7 +894,7 @@ void StateObjectDefinitions(mir::CompilationUnit& unit) {
   // and one handed the call's problem too takes it as every body answering
   // such a callback declares it.
   const CallbackPrototypes prototypes{
-      .on_object = MemberTypeOf(unit, &abi::ScopeInfo::resolve),
+      .on_object = mir::LibraryRecordMemberType(unit, &abi::ScopeInfo::resolve),
       .on_object_and_problem = unit.types.Intern(
           mir::Type{mir::MachineFunctionType{
               .params = {mir::ObjectRootPointer(unit.types), *problem},
@@ -1133,13 +924,12 @@ void StateObjectDefinitions(mir::CompilationUnit& unit) {
                        AddEntries(unit, id, cls, prototypes);
                        cls.dispatch = stated->dispatch;
                        cls.interface_tables = stated->interface_tables;
-                       cls.object_definition_initializer =
-                           DefinitionOf(unit, id, cls, *stated);
+                       cls.definition = DefinitionOf(unit, id, cls, *stated);
                        return cls;
                      });
 }
 
-auto BlockEntryType(mir::CompilationUnit& unit, bool handed_its_index)
+auto BlockEntryType(const mir::CompilationUnit& unit, bool handed_its_index)
     -> mir::TypeId {
   std::vector<mir::TypeId> params{
       unit.builtins.scope_ptr, mir::ConstructionTablePointer(unit.types)};
@@ -1156,12 +946,11 @@ auto BlockEntryType(mir::CompilationUnit& unit, bool handed_its_index)
 }
 
 auto StateConstructionTables(
-    mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    const hir::LoweringRef& root, const DesignInstantiations& instantiations,
+    const mir::CompilationUnit& unit, const hir::LoweringRef& root,
+    const DesignInstantiations& instantiations,
     const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
-    -> mir::ClassConstantRef {
-  return ConstructionTables(unit, id, cls, instantiations, entry_types)
-      .Of(root);
+    -> mir::ConstantId {
+  return ConstructionTables(unit, instantiations, entry_types).Of(root);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -12,6 +12,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -109,6 +110,12 @@ template <std::ranges::sized_range Ranges>
     const diag::SourceManager& sources, diag::SourceSpan span)
     -> diag::SourcePosition;
 
+// The unit's constant holding what `position` says, a record of the library's
+// stating the file, the line and the column.
+[[nodiscard]] auto InternSourceLocation(
+    const CompilationUnit& unit, const diag::SourcePosition& position)
+    -> ConstantId;
+
 // The unit's constant for `position`, as the value of the library's location
 // type that names it, each step added to `into`, a builder or a rebuild.
 template <typename Into>
@@ -120,8 +127,8 @@ template <typename Into>
           .data =
               ReferenceExpr{
                   .target =
-                      SourceLocationRef{
-                          .location = unit.source_locations.Intern(position)}},
+                      ConstantRef{
+                          .constant = InternSourceLocation(unit, position)}},
           .type = unit.builtins.source_location_record});
   return into.Add(
       Expr{

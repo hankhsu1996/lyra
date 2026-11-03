@@ -17,15 +17,14 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
-#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/enum_table_id.hpp"
+#include "lyra/mir/constant_id.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/static_property_id.hpp"
@@ -68,10 +67,6 @@ auto FormatBits(const IntegralConstant& value) -> std::string {
     text += std::format(" x/z'h{}", FormatWords(value.state_words));
   }
   return text;
-}
-
-auto FormatIntegralConstant(const IntegralConstantDecl& decl) -> std::string {
-  return std::format("Type[{}] {}", decl.type.value, FormatBits(decl.value));
 }
 
 auto BreakLabelSuffix(std::optional<LabelId> label) -> std::string {
@@ -136,15 +131,16 @@ class MirDumper {
       Line(std::format("[{}] {}", id.value, FormatType(unit.types.Get(id))));
     }
     Dedent();
-    // The constant integral values the unit holds. A reference to one names
-    // its position, so the bits are printed here once rather than at every use.
+    // The values the unit holds. A reference to one names its position, so
+    // each value is printed here once rather than at every use.
     Line("Constants:");
     Indent();
-    for (const IntegralConstantId id : unit.integral_constants.Ids()) {
+    for (const ConstantId id : unit.constants.Ids()) {
+      const ConstantDecl& constant = unit.constants.Get(id);
       Line(
           std::format(
-              "[{}] {}", id.value,
-              FormatIntegralConstant(unit.integral_constants.Get(id))));
+              "[{}] Type[{}] {}", id.value, constant.type.value,
+              FormatConstantValue(constant.value)));
     }
     Dedent();
     Line("Class:");
@@ -184,17 +180,6 @@ class MirDumper {
       }
       Dedent();
     }
-    Line("EnumTables:");
-    Indent();
-    for (const EnumTableId id : unit.enum_tables.Ids()) {
-      Line(std::format("[{}]", id.value));
-      Indent();
-      for (const EnumMember& member : unit.enum_tables.Get(id).members) {
-        Line(member.name);
-      }
-      Dedent();
-    }
-    Dedent();
     if (unit.records.size() > 0) {
       Line("Records:");
       Indent();
@@ -661,12 +646,8 @@ class MirDumper {
             [this](const DefinitionRef& r) -> std::string {
               return std::format("DefinitionRef of={}", FormatClassRef(r.of));
             },
-            [](const EnumTableRef& r) -> std::string {
-              return std::format("EnumTableRef EnumTable[{}]", r.table.value);
-            },
-            [](const IntegralConstantRef& r) -> std::string {
-              return std::format(
-                  "IntegralConstantRef Const[{}]", r.constant.value);
+            [](const ConstantRef& r) -> std::string {
+              return std::format("ConstantRef Const[{}]", r.constant.value);
             },
             [](const StaticPropertyRef& r) -> std::string {
               return std::format(
@@ -677,17 +658,6 @@ class MirDumper {
               return std::format(
                   "StaticVariableRef variable=StaticVariable[{}]",
                   r.variable.value);
-            },
-            [&](const SourceLocationRef& r) -> std::string {
-              const diag::SourcePosition& at =
-                  unit_->source_locations.Get(r.location);
-              return std::format(
-                  "SourceLocationRef {}:{}:{}", at.file, at.line, at.column);
-            },
-            [](const ClassConstantRef& r) -> std::string {
-              return std::format(
-                  "ClassConstantRef owner=Class[{}] constant=Constant[{}]",
-                  r.owner.value, r.constant.value);
             },
             [](const FunctionRef& r) -> std::string {
               return std::format(
@@ -719,6 +689,38 @@ class MirDumper {
                                       : std::string{});
             }},
         target);
+  }
+
+  [[nodiscard]] auto FormatConstantValue(const ConstantValue& value) const
+      -> std::string {
+    const auto list = [&](std::span<const ConstantValue> parts) {
+      std::string text;
+      for (const ConstantValue& part : parts) {
+        text += text.empty() ? "" : ", ";
+        text += FormatConstantValue(part);
+      }
+      return text;
+    };
+    return std::visit(
+        Overloaded{
+            [](const IntegralValue& v) { return FormatBits(v.planes); },
+            [](const MachineIntValue& v) { return std::format("{}", v.value); },
+            [](const NullValue&) { return std::string{"null"}; },
+            [](const CStringValue& v) { return std::format("\"{}\"", v.text); },
+            [this](const PointerValue& v) {
+              return std::format(
+                  "&({}: Type[{}])", FormatReferenceTarget(v.to), v.type.value);
+            },
+            [&](const RecordValue& v) {
+              return std::format("{{{}}}", list(v.parts));
+            },
+            [&](const ArrayValue& v) {
+              return std::format("[{}]", list(v.elements));
+            },
+            [](const SpanValue& v) {
+              return std::format("span(Const[{}])", v.array.value);
+            }},
+        value.value);
   }
 
   [[nodiscard]] auto ResolveScopeAtHops(std::uint32_t hops) const
@@ -882,15 +884,6 @@ class MirDumper {
         name);
   }
 
-  // A constant is an expression tree with no statements, so what is dumped
-  // under each is its expressions and which of them is the constant.
-  void DumpValueBuild(std::string_view what, const ValueBuild& build) {
-    Line(std::format("{} = Expr[{}]", what, build.value.value));
-    Indent();
-    DumpBlock(build.body);
-    Dedent();
-  }
-
   void DumpClass(ClassId id, const Class& s) {
     dumped_.insert(id.value);
     scope_stack_.push_back(&s);
@@ -948,12 +941,11 @@ class MirDumper {
                 answer(body)));
       }
     }
-    for (const ClassConstantId constant : s.constants.Ids()) {
-      DumpValueBuild(
-          std::format("Constant[{}]", constant.value),
-          s.constants.Get(constant).initializer);
+    if (s.definition.has_value()) {
+      Line(
+          std::format(
+              "ObjectDefinition = {}", FormatConstantValue(*s.definition)));
     }
-    DumpValueBuild("ObjectDefinition", s.object_definition_initializer);
 
     Line("Contained:");
     Indent();

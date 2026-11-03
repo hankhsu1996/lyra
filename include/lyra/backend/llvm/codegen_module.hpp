@@ -22,9 +22,8 @@
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
-#include "lyra/lir/enum_table_id.hpp"
+#include "lyra/lir/constant_id.hpp"
 #include "lyra/lir/function_id.hpp"
-#include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/value_step.hpp"
 #include "lyra/support/declared_member_storage.hpp"
@@ -178,20 +177,19 @@ class CodeGenModule {
   [[nodiscard]] auto DomainOf(lir::TypeId type) const
       -> diag::Result<support::ValueDomain>;
 
-  // Storage the whole program shares, under the symbol it is linked by. The
-  // symbol is the storage itself, so its address is what a reference names.
-  auto SharedStorage(const std::string& symbol) -> llvm::GlobalVariable*;
+  // The global linked under `symbol` -- a definition, or storage the whole
+  // program shares -- or a declaration of it where nothing has defined it yet,
+  // which the definition replaces where this unit is the one defining it. The
+  // symbol is the global itself, so its address is what a reference names.
+  auto GlobalNamed(const std::string& symbol) -> llvm::GlobalVariable*;
 
-  // One of the unit's enumeration member tables: constant data laid out as
-  // the library's record of one, whose address is what a question about a
-  // value is asked against. The module defines the ones its code names.
-  auto GetAddrOfEnumTable(lir::EnumTableId table) -> llvm::GlobalVariable*;
-
-  // One of the unit's integral constants: constant data holding the bytes a
-  // value of its type is laid out in, whose address is where the value lies.
-  // The module defines the ones its code names.
-  auto GetAddrOfIntegralConstant(lir::IntegralConstantId constant)
-      -> llvm::GlobalVariable*;
+  // One of the unit's constants: data laid out as a value of its type is, whose
+  // address is where the value lies. The module defines the ones its code and
+  // its definitions name.
+  auto GetAddrOfConstant(lir::ConstantId constant) -> llvm::GlobalVariable*;
+  // The address of what `referent` names, wherever the address stands: an
+  // operand, a part of a constant, a slot of a table.
+  auto AddressOf(const lir::Referent& referent) -> llvm::Constant*;
 
   // How a value of the declaration `type` names is laid out -- a class of this
   // unit or of another, the part the runtime library builds where a class
@@ -340,12 +338,21 @@ class CodeGenModule {
   // captures need, and the body a call runs in the protocol that body answers
   // to.
   auto EmitClosureDefinition(lir::ClosureId id) -> diag::Result<void>;
-  // Defines the data `constant` states, under its symbol and linkage: a
-  // structure of the library, or an array of them or of code addresses.
-  void DefineData(const lir::GlobalConstant& constant);
+  // Defines the data `constant` states, under its symbol and linkage.
+  auto DefineData(const lir::GlobalConstant& constant) -> llvm::GlobalVariable*;
+  // `value`, a value of `type`, as the data it is laid out as.
+  auto ValueData(lir::TypeId type, const lir::Constant& value)
+      -> llvm::Constant*;
+  // An address a constant holds, as the data it is.
+  auto AddressData(const lir::Constant& address) -> llvm::Constant*;
+
   // A structure of the library as data, each member where the library's own
   // declaration of the structure puts it.
   auto RecordData(const lir::ConstantRecord& record) -> llvm::Constant*;
+  // A view of entries of a constant array as data.
+  auto SpanData(const lir::ConstantSpan& span) -> llvm::Constant*;
+  // The alignment data of `type` is laid out at.
+  auto DataAlign(lir::TypeId type) -> std::uint64_t;
   // What code generation reads of a class a value holds part of, of this unit
   // or another: the symbol its definition is linked under; what it extends,
   // which is nothing for an interface, of which no value is built, and
@@ -369,10 +376,7 @@ class CodeGenModule {
   auto LayOut(const Declared& declared) -> diag::Result<PlacedMembers>;
   // How a closure's captures are laid out, after the library's part of it.
   auto LayOutCaptures(lir::ClosureId id) -> diag::Result<PlacedMembers>;
-  // The definition linked under `symbol`, or a declaration of it where nothing
-  // has defined it yet.
-  auto DefinitionGlobal(const std::string& symbol) -> llvm::GlobalVariable*;
-  // An integer of `bytes` bytes, as a field of a constant record.
+  // The low `bytes` bytes of `value`, as an integer of that width.
   auto Int(std::uint64_t value, std::size_t bytes) -> llvm::Constant*;
   // The address of `name` as a NUL-terminated constant.
   auto NameConstant(std::string_view name) -> llvm::Constant*;
@@ -380,9 +384,6 @@ class CodeGenModule {
   // another's, linked under `symbol`: it takes the value and answers nothing.
   auto ValueFunction(const std::string& symbol) -> llvm::Function*;
   auto DeclaredClass(lir::ClassId id) const -> Declared;
-  auto DefineEnumTable(lir::EnumTableId table) -> llvm::GlobalVariable*;
-  auto DefineIntegralConstant(lir::IntegralConstantId constant)
-      -> llvm::GlobalVariable*;
 
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::Module> module_;
@@ -390,9 +391,7 @@ class CodeGenModule {
   CodeGenTypes types_;
   CodeGenValueTypes value_types_;
   base::Translation<lir::FunctionId, llvm::Function*> functions_;
-  std::unordered_map<lir::EnumTableId, llvm::GlobalVariable*> enum_tables_;
-  std::unordered_map<lir::IntegralConstantId, llvm::GlobalVariable*>
-      integral_constants_;
+  std::unordered_map<lir::ConstantId, llvm::GlobalVariable*> constants_;
   std::unordered_map<lir::TypeId, PlacedMembers> placed_members_;
 };
 

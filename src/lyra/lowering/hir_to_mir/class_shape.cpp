@@ -85,8 +85,7 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .named_callables = {},
       .library_callbacks = library_callbacks,
       .exports = {},
-      .constants = {},
-      .object_definition_initializer = {}};
+      .definition = std::nullopt};
   for (std::size_t i = 0; i < callable_signatures.size(); ++i) {
     cls.callables.Declare();
   }

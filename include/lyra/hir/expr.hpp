@@ -200,8 +200,7 @@ struct MemberAccessExpr {
 // class and the slot within that class's property arena. Owner-qualified
 // because under inheritance the receiver's runtime class may not be the
 // declaring class -- the receiver reaches the object through a handle to a
-// class that extends the property owner. The external arm is used when the
-// declaring class lives in another compilation unit.
+// class that extends the property owner.
 struct ClassPropertyAccessExpr {
   ExprId base_value;
   ClassPropertyTarget target;

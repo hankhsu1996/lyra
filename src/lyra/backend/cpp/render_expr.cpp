@@ -17,6 +17,7 @@
 
 #include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/render_call.hpp"
+#include "lyra/backend/cpp/render_constant.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
@@ -249,41 +250,41 @@ void RenderFieldAccessExpr(
 void RenderReferenceExpr(
     const ScopeView& view, const mir::ReferenceExpr& reference,
     TargetText& out) {
+  if (const auto* local = std::get_if<mir::LocalRef>(&reference.target)) {
+    Write(out, LookupLocalName(view, *local));
+    return;
+  }
+  if (const auto* constant = std::get_if<mir::ConstantRef>(&reference.target)) {
+    WriteConstantReference(
+        view.Unit(), view.Linkage(), view.Report(), constant->constant, out);
+    return;
+  }
+  WriteNamedEntity(view.Unit(), reference.target, out);
+}
+
+}  // namespace
+
+void WriteNamedEntity(
+    const mir::CompilationUnit& unit, const mir::ReferenceTarget& target,
+    TargetText& out) {
+  const auto named_where_written = []() {
+    throw InternalError(
+        "backend::cpp: a local or a constant is named as an entity of no text "
+        "-- please report this as a bug");
+  };
   std::visit(
       Overloaded{
-          [&](const mir::LocalRef& l) { Write(out, LookupLocalName(view, l)); },
+          [&](const mir::LocalRef&) { named_where_written(); },
+          [&](const mir::ConstantRef&) { named_where_written(); },
           [&](const mir::DefinitionRef& r) {
-            Write(out, CppDefinitionOf{.of = CppClassRef(view.Unit(), r.of)});
-          },
-          [&](const mir::EnumTableRef& r) {
-            view.NameEnumTable(r.table);
-            Write(out, CppEnumTableName(r.table));
-          },
-          // A constant is its value, named where only this file defines what
-          // names it, since a named one is built once. A definition another
-          // file may keep instead of this one writes the value itself: C++
-          // asks the names of every copy to denote the same entities, which a
-          // constant of this file's own does only where it is never bound to
-          // a reference ([basic.def.odr]), and these are.
-          [&](const mir::IntegralConstantRef& r) {
-            switch (view.Linkage()) {
-              case support::Linkage::kInternal:
-              case support::Linkage::kExternal:
-                view.NameConstant(r.constant);
-                Write(out, CppIntegralConstantName(r.constant));
-                return;
-              case support::Linkage::kShared:
-                Write(out, CppIntegralLiteral(view.Unit(), r.constant));
-                return;
-            }
-            throw InternalError("backend::cpp: unknown linkage");
+            Write(out, CppDefinitionOf{.of = CppClassRef(unit, r.of)});
           },
           // A property the source declared is a member of its class (LRM
           // 8.9); a cell the class keeps for its own bodies is a member of the
           // class's own part, which only its unit's code reads.
           [&](const mir::StaticPropertyRef& r) {
-            const mir::Class& owner_cls = view.Unit().GetClass(r.owner);
-            const ClassPath owner = CppClassPath(view.Unit(), r.owner);
+            const mir::Class& owner_cls = unit.GetClass(r.owner);
+            const ClassPath owner = CppClassPath(unit, r.owner);
             if (IsKeptForItsBodies(owner_cls.named_static_properties, r.prop)) {
               Write(out, ClassDetailPath{.of = owner}, "::");
             } else {
@@ -296,7 +297,6 @@ void RenderReferenceExpr(
           // Qualified by the unit's namespace even inside that unit, because
           // inside a class a member of the same name would be found first.
           [&](const mir::StaticVariableRef& r) {
-            const mir::CompilationUnit& unit = view.Unit();
             Write(
                 out,
                 CppNamespaceMemberScope(
@@ -306,65 +306,33 @@ void RenderReferenceExpr(
                 "::",
                 CppStaticVariableName(unit.named_static_variables, r.variable));
           },
-          // A location is a constant record whose address is handed on, named
-          // where only this file defines what names it. A definition another
-          // file may keep instead of this one holds the record itself, as a
-          // static of its own: the address of a constant of this file's own
-          // would be another entity in every copy ([basic.def.odr]), while a
-          // static of an inline definition is one object in all of them
-          // ([dcl.inline]).
-          [&](const mir::SourceLocationRef& r) {
-            switch (view.Linkage()) {
-              case support::Linkage::kInternal:
-              case support::Linkage::kExternal:
-                view.NameSourceLocation(r.location);
-                Write(out, CppSourceLocationName(r.location));
-                return;
-              case support::Linkage::kShared: {
-                const auto record = CppType(
-                    view.Unit(), view.Unit().builtins.source_location_record);
-                Write(
-                    out, "[]() -> const ", record, "& { static constexpr ",
-                    record, " held = ",
-                    CppSourceLocationLiteral(view.Unit(), r.location),
-                    "; return held; }()");
-                return;
-              }
-            }
-            throw InternalError("backend::cpp: unknown linkage");
-          },
-          [&](const mir::ClassConstantRef& r) {
-            Write(
-                out, ClassDetailPath{.of = CppClassPath(view.Unit(), r.owner)},
-                "::", CppClassConstantName(r.constant));
-          },
           [&](const mir::FunctionRef& r) {
-            const mir::Class& owner = view.Unit().GetClass(r.body.owner);
+            const mir::Class& owner = unit.GetClass(r.body.owner);
             Write(
-                out, CppClassPath(view.Unit(), r.body.owner),
-                "::", CppClassCallableName(view.Unit(), owner, r.body.slot));
+                out, CppClassPath(unit, r.body.owner),
+                "::", CppClassCallableName(unit, owner, r.body.slot));
           },
           // `&B::sv_entry_f`.
           [&](const mir::DispatchEntryRef& r) {
-            const mir::Class& owner = view.Unit().GetClass(r.body.owner);
+            const mir::Class& owner = unit.GetClass(r.body.owner);
             Write(
-                out, "&", CppClassPath(view.Unit(), r.body.owner),
-                "::", CppDispatchEntryName(view.Unit(), owner, r.body.slot));
+                out, "&", CppClassPath(unit, r.body.owner),
+                "::", CppDispatchEntryName(unit, owner, r.body.slot));
           },
           // `&lyra::runtime::EndObjectOf<C>`.
           [&](const mir::DestructorRef& r) {
-            Write(out, "&", CppObjectEnd{.of = CppClassRef(view.Unit(), r.of)});
+            Write(out, "&", CppObjectEnd{.of = CppClassRef(unit, r.of)});
           },
           // `&C::sv_methods`.
           [&](const mir::DispatchTableRef& r) {
             Write(
-                out, "&", CppClassPath(view.Unit(), r.of),
+                out, "&", CppClassPath(unit, r.of),
                 "::", CppDispatchTableName());
           },
           // `&C::sv_methods_0`, the class's table for the interface.
           [&](const mir::InterfaceTableRef& r) {
             const std::vector<mir::InterfaceTable>& tables =
-                view.Unit().GetClass(r.of).interface_tables;
+                unit.GetClass(r.of).interface_tables;
             const auto row = std::ranges::find_if(
                 tables, [&](const mir::InterfaceTable& table) {
                   return table.of == r.iface;
@@ -375,7 +343,7 @@ void RenderReferenceExpr(
                   "does not implement -- please report this as a bug");
             }
             Write(
-                out, "&", CppClassPath(view.Unit(), r.of), "::",
+                out, "&", CppClassPath(unit, r.of), "::",
                 CppInterfaceTableName(
                     static_cast<std::uint32_t>(row - tables.begin())));
           },
@@ -384,8 +352,10 @@ void RenderReferenceExpr(
                 out, CppBodyScope(r.unit_name, r.body_name),
                 "::", CppObjectEntryName(r.block));
           }},
-      reference.target);
+      target);
 }
+
+namespace {
 
 // A new-expression. A value is formed in the storage `new` allocates, which C++
 // guarantees where it is a value of the type allocated
@@ -667,22 +637,14 @@ void RenderExpr(
             out += ")";
           },
           [&](const mir::MachineIntLiteral& h) {
-            // An unsigned integer is written in hex, `0xffULL`, since a signed
-            // spelling of a large one would be negative. A signed one is
-            // decimal, `-5LL`, and a negative one is a prefix form.
-            const auto& machine =
-                view.Unit().types.Get(expr.type).Get<mir::MachineIntType>();
-            if (machine.signedness == mir::Signedness::kUnsigned) {
-              out += "0x";
-              WriteNumber(out, static_cast<std::uint64_t>(h.value), 16);
-              out += "ULL";
-              return;
-            }
-            const auto value = static_cast<std::int64_t>(h.value);
-            const Enclosure enclosure(
-                out, value < 0 ? Precedence::kPrefix : Precedence::kPostfix,
-                at_least);
-            WriteInt64Constant(out, value);
+            const CppMachineIntLiteral literal{
+                .value = h.value,
+                .signedness = view.Unit()
+                                  .types.Get(expr.type)
+                                  .Get<mir::MachineIntType>()
+                                  .signedness};
+            const Enclosure enclosure(out, PrecedenceOf(literal), at_least);
+            Write(out, literal);
           },
           [&](const mir::ReferenceExpr& r) {
             RenderReferenceExpr(view, r, out);

@@ -17,15 +17,12 @@
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/callable_id.hpp"
-#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
-#include "lyra/mir/enum_table_id.hpp"
+#include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local_ref.hpp"
-#include "lyra/mir/source_location_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -466,9 +463,8 @@ struct DerefExpr {
 // storage; a value names no storage, and neither does a union's member (LRM
 // 13.5.2).
 // `Expr::type` is `PointerType{ ownership = kBorrowed, pointee = operand.type
-// }`. `AddressOf(Deref(p))` collapses to `p` at backend lowering when `p` is a
-// borrowed pointer (the round-trip is a no-op); over a managed handle it does
-// not collapse, since the address of the handle's object is not the handle.
+// }`. Over a managed handle the address of the handle's object is not the
+// handle, so the address of a dereference is not its operand.
 struct AddressOfExpr {
   ExprId operand;
 };
@@ -605,22 +601,18 @@ struct VectorGetExpr {
 // runtime class definition itself, so a use wanting its address takes it.
 struct DefinitionRef {
   ClassId of;
+
+  auto operator==(const DefinitionRef&) const -> bool = default;
 };
 
-// The members an enumeration declares, named by the entry holding them: what
-// the questions LRM 6.19.5 and 6.24.2 ask of a value are answered against. The
-// members are settled at compile time and shared by every question about that
-// enumeration, so the unit states them once and a use names which table.
-// `Expr::type` is the library's member table.
-struct EnumTableRef {
-  EnumTableId table;
-};
+// A value the unit settled before the program runs, named by the entry holding
+// it: an integral value, an enumeration's member table, where an operation was
+// written, a table the library reads. It is shared by every use that reaches
+// it, so a use says which one. `Expr::type` is the entry's own type.
+struct ConstantRef {
+  ConstantId constant;
 
-// A constant integral value, named by the entry holding it. The value is
-// settled before the program runs and shared by every use that reaches it, so
-// a use says which one. `Expr::type` is the constant's own integral type.
-struct IntegralConstantRef {
-  IntegralConstantId constant;
+  auto operator==(const ConstantRef&) const -> bool = default;
 };
 
 // A place naming a class's static property (`Class::name`, LRM 8.9): a mutable
@@ -636,6 +628,8 @@ struct IntegralConstantRef {
 struct StaticPropertyRef {
   ClassId owner;
   StaticPropertyId prop;
+
+  auto operator==(const StaticPropertyRef&) const -> bool = default;
 };
 
 // A place naming a variable a unit's namespace owns (LRM 26.2), by the position
@@ -646,23 +640,8 @@ struct StaticPropertyRef {
 // observable-cell type, so a read wraps it in `Get` and a write in `Set`.
 struct StaticVariableRef {
   StaticVariableId variable;
-};
 
-// The unit's constant holding what a location says, a record of the library's,
-// whose address is what a value of the library's location type holds.
-struct SourceLocationRef {
-  SourceLocationId location;
-
-  auto operator==(const SourceLocationRef&) const -> bool = default;
-};
-
-// A constant a class of this unit holds, by the position it sits at in that
-// class's arena. `Expr::type` is the constant's own type.
-struct ClassConstantRef {
-  ClassId owner;
-  ClassConstantId constant;
-
-  auto operator==(const ClassConstantRef&) const -> bool = default;
+  auto operator==(const StaticVariableRef&) const -> bool = default;
 };
 
 // A body of a class this unit defines, named as the code it is rather than
@@ -671,6 +650,8 @@ struct ClassConstantRef {
 // a value it is the body's address, the way a function's name is in C.
 struct FunctionRef {
   CallableTarget body;
+
+  auto operator==(const FunctionRef&) const -> bool = default;
 };
 
 // The entry that makes an object of one body of another unit, or a block of
@@ -684,6 +665,8 @@ struct ExternalObjectEntryRef {
   std::string unit_name;
   std::string body_name;
   std::optional<BlockBodyOrdinal> block;
+
+  auto operator==(const ExternalObjectEntryRef&) const -> bool = default;
 };
 
 // The entry of the method `body`: the body, stated by the class defining the
@@ -694,6 +677,8 @@ struct ExternalObjectEntryRef {
 // enters. `Expr::type` is the entry's machine function type.
 struct DispatchEntryRef {
   CallableTarget body;
+
+  auto operator==(const DispatchEntryRef&) const -> bool = default;
 };
 
 // What ends an object of the class `of`: each member, the class's own and then
@@ -703,6 +688,8 @@ struct DispatchEntryRef {
 // function type, taking the object as the root every object is.
 struct DestructorRef {
   ClassId of;
+
+  auto operator==(const DestructorRef&) const -> bool = default;
 };
 
 // The table of the bodies an object of the class `of` runs for the behaviors
@@ -714,11 +701,15 @@ struct DestructorRef {
 // this unit defines. `Expr::type` is a pointer to read-only data of no type.
 struct DispatchTableRef {
   ClassId of;
+
+  auto operator==(const DispatchTableRef&) const -> bool = default;
 };
 
 struct InterfaceTableRef {
   ClassId of;
   ClassId iface;
+
+  auto operator==(const InterfaceTableRef&) const -> bool = default;
 };
 
 // Which declared thing a reference names. The alternatives differ in the table
@@ -727,8 +718,7 @@ struct InterfaceTableRef {
 // referent's business: every one of them reaches storage, a constant or code
 // that exists whether or not this expression names it.
 using ReferenceTarget = std::variant<
-    LocalRef, DefinitionRef, EnumTableRef, IntegralConstantRef,
-    StaticPropertyRef, StaticVariableRef, ClassConstantRef, SourceLocationRef,
+    LocalRef, DefinitionRef, ConstantRef, StaticPropertyRef, StaticVariableRef,
     FunctionRef, DispatchEntryRef, DestructorRef, DispatchTableRef,
     InterfaceTableRef, ExternalObjectEntryRef>;
 
@@ -849,11 +839,9 @@ struct Expr {
       .type = type};
 }
 
-// `lyra::runtime::current_runtime()` -- reaches the attached Runtime's
-// capability view through a thread-local pointer the Runtime publishes for
-// its lifetime. Zero-argument free function so every body kind -- module
-// process, class method, package function, class static method -- takes one
-// uniform runtime-access path with no receiver.
+// The running simulation's services, reached with no receiver, so every kind
+// of body -- a module's process, a class's method, a package's function, a
+// class's static method -- reaches them one way.
 [[nodiscard]] inline auto MakeCurrentRuntimeCallExpr(TypeId effects) -> Expr {
   return Expr{
       .data =

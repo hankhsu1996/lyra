@@ -16,29 +16,19 @@
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
-#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/mir/value_build.hpp"
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/support/library_callback.hpp"
 #include "lyra/support/scope_execution.hpp"
 
 namespace lyra::mir {
-
-// A constant a class holds: plain machine data of type `type`, whose value is
-// `initializer` -- an expression over nothing that runs, only names, addresses
-// and literals -- so a target states it as data. The runtime library reads such
-// a constant as one of its own structures or as an array of them.
-struct ClassConstantDecl {
-  TypeId type;
-  ValueBuild initializer;
-};
 
 // A class static property (LRM 8.9): a named, mutable type-associated storage
 // cell the class owns, shared by every instance.
@@ -179,10 +169,11 @@ struct Class {
   bool is_final = false;
   bool is_interface = false;
   TypeId self_pointer_type;
-  // The class's resolved time unit and precision (LRM 3.14.2). The runtime is
-  // told both where a class standing in the design hierarchy is declared, so
-  // the engine can take the design-global minimum (LRM 3.14.3) and delays
-  // scale to it.
+  // The time unit and precision of the time scope a class standing in the
+  // design hierarchy realizes (LRM 3.14.2.2), which the runtime is told where
+  // the class is declared, so the engine can take the design-global minimum
+  // (LRM 3.14.3) and delays scale to it. A class the source declares is no
+  // time scope, and nothing reads this of one.
   TimeResolution time_resolution;
   // How the runtime runs what an instance of a class standing in the design
   // hierarchy starts (LRM 24.3.1), told where its timescale is.
@@ -248,20 +239,18 @@ struct Class {
   // identifier the foreign side calls each by, and the body it reaches. Only a
   // class an instance of the design hierarchy is built of has any.
   std::vector<NamedCallable> exports;
-  // The read-only tables the class's record below points at. Nothing outside
-  // the class names one.
-  base::Arena<ClassConstantDecl, ClassConstantId> constants;
-  // The value of the class's record: the one constant every object of the class
-  // points at, which the runtime library reads to answer what cannot be asked
-  // where the asker is compiled -- what the class extends, how an object of it
-  // ends, what an instance of the design hierarchy does in each phase and the
-  // DPI-C exports it answers, what `randomize()` asks of an object of a source
-  // class, the interfaces it implements, and the body each behavior it
-  // dispatches on runs. Other units name it by the class, which is why it is
-  // not among `constants`, and its type is the same for every class, which is
-  // why only its value is here. It is stated once every class of the unit is,
-  // since it reads what the class's whole lineage gives.
-  ValueBuild object_definition_initializer;
+  // The value of the class's definition: the one constant every object of the
+  // class points at, which the runtime library reads to answer what cannot be
+  // asked where the asker is compiled -- what the class extends, how an object
+  // of it ends, what an instance of the design hierarchy does in each phase and
+  // the DPI-C exports it answers, what `randomize()` asks of an object of a
+  // source class, the interfaces it implements, and the body each behavior it
+  // dispatches on runs. Every unit names it by the class, so it is the class's
+  // and not one of the unit's constants, and its type is the same for every
+  // class, so only its value is here. It is stated once every class of the
+  // unit is, since it reads what the class's whole lineage gives, and none
+  // where another unit defines the class.
+  std::optional<ConstantValue> definition;
 
   // The callable this class answers the library's `callback` with, or nothing
   // where the class gives it none of its own.

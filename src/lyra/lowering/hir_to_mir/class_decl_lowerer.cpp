@@ -248,16 +248,16 @@ struct BodyStatics {
 auto LowerStaticStorageInto(
     UnitLowerer& unit_lowerer, const StructuralScopeLowerer* declaring_scope,
     const hir::ClassDecl& hir_class, const hir::ClassDeclaration& declared,
-    const ClassShape& shape, const mir::Class& mir_class,
-    const DeclaredScopes& scopes, std::span<const BodyStatics> body_statics,
-    const StorageBringUp& bring_up) -> diag::Result<void> {
+    const ClassShape& shape, const DeclaredScopes& scopes,
+    std::span<const BodyStatics> body_statics, const StorageBringUp& bring_up)
+    -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const WalkFrame& frame = bring_up.value;
   mir::Builder block = frame.Builder();
   mir::Builder install_block = bring_up.install.Builder();
   ProcessLowerer lowerer(
-      unit_lowerer, declaring_scope, mir_class.time_resolution,
-      hir_class.static_init, std::nullopt, frame, scopes, {});
+      unit_lowerer, declaring_scope, hir_class.static_init, std::nullopt, frame,
+      scopes, {});
 
   const auto cell_type_of = [&](hir::StaticPropertyId property) {
     return mir::ObservableCellOf(
@@ -302,8 +302,8 @@ auto LowerStaticStorageInto(
   // body's arena.
   for (const BodyStatics& body : body_statics) {
     ProcessLowerer body_lowerer(
-        unit_lowerer, declaring_scope, mir_class.time_resolution, *body.body,
-        std::nullopt, frame, scopes, body.statics);
+        unit_lowerer, declaring_scope, *body.body, std::nullopt, frame, scopes,
+        body.statics);
     for (const StaticCellBinding& binding : body.statics) {
       auto integ = IntegrateStaticInitializer(
           body_lowerer, *body.body, bring_up, binding);
@@ -819,8 +819,8 @@ auto ClassDeclLowerer::PopulateBodies(
 
   const hir::SubroutineDecl& ctor = hir_class.constructor;
   ProcessLowerer ctor_lowerer(
-      unit_lowerer, declaring_scope_, mir_class.time_resolution, ctor.body,
-      ctor.root_stmt, frame, scopes_, ctor_static_bindings_);
+      unit_lowerer, declaring_scope_, ctor.body, ctor.root_stmt, frame, scopes_,
+      ctor_static_bindings_);
 
   // Register the ctor formals early so a base-constructor arg (LRM 8.7) can
   // reference them: `super.new(a * 2)` in the derived ctor reads its own `a`
@@ -955,8 +955,8 @@ auto ClassDeclLowerer::PopulateBodies(
     const WalkFrame method_owner_frame =
         BodyFrame(declaring_frame, mir_class, method_link);
     ProcessLowerer method_lowerer(
-        unit_lowerer, declaring_scope_, mir_class.time_resolution, method.body,
-        method.root_stmt, method_owner_frame, scopes_, statics);
+        unit_lowerer, declaring_scope_, method.body, method.root_stmt,
+        method_owner_frame, scopes_, statics);
     // A function's form a waited evaluation calls goes where the class
     // reserved it.
     std::optional<mir::CallableId> reporting;
@@ -1060,8 +1060,8 @@ auto ClassDeclLowerer::PopulateBodies(
   // rest of what it owns. Either way once, and before any process runs (LRM
   // 10.5).
   if (auto r = LowerStaticStorageInto(
-          unit_lowerer, declaring_scope_, hir_class, declared, shape, mir_class,
-          scopes_, body_statics, owner_bring_up);
+          unit_lowerer, declaring_scope_, hir_class, declared, shape, scopes_,
+          body_statics, owner_bring_up);
       !r) {
     return std::unexpected(std::move(r.error()));
   }

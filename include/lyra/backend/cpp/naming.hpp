@@ -16,17 +16,14 @@
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
-#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/dispatch_table.hpp"
-#include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/record_decl.hpp"
-#include "lyra/mir/source_location_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_callback.hpp"
@@ -886,26 +883,19 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
   return MintedCppName("closure_definition", id.value);
 }
 
-// The name of an enumeration's member table, `sv_enum_<n>`: a position in the
-// unit's list of them, since the source names none.
-[[nodiscard]] inline auto CppEnumTableName(mir::EnumTableId table)
+// The name of a constant of the unit, `sv_const_<n>`: a position in the unit's
+// list of constants, since the source wrote the value and no name.
+[[nodiscard]] inline auto CppConstantName(mir::ConstantId constant)
     -> MintedName {
-  return MintedCppName("enum", table.value);
+  return MintedCppName("const", constant.value);
 }
 
-// The name of a location the unit's program hands the library,
-// `sv_location_<n>`: a position in the unit's list of them, since the source
-// names none.
-[[nodiscard]] inline auto CppSourceLocationName(mir::SourceLocationId location)
+// The name of a constant an in-place spelling defines as a static of its own,
+// `sv_held_<n>`: its position among the statics that spelling defines, which
+// follows the value alone, so every copy of the spelling names it alike.
+[[nodiscard]] inline auto CppHeldConstantName(std::uint32_t position)
     -> MintedName {
-  return MintedCppName("location", location.value);
-}
-
-// The name of a constant value the unit uses, `sv_const_<n>`: a position in the
-// unit's list of constants, since the source wrote the value and no name.
-[[nodiscard]] inline auto CppIntegralConstantName(mir::IntegralConstantId c)
-    -> MintedName {
-  return MintedCppName("const", c.value);
+  return MintedCppName("held", position);
 }
 
 // The name a struct or a union gives the library type it is built on,
@@ -995,10 +985,9 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
 
 // The name of the part of a class only its own unit's code reads,
 // `sv_detail`: a class nested in it and declared there, defined with the
-// class's code. It holds what the class keeps for its bodies and the constants
-// its definition and its creation name, which follow the class's code rather
-// than what it declares, so text that only reads the declaration never has it
-// whole.
+// class's code. It holds what the class keeps for its bodies, which follows
+// the class's code rather than what it declares, so text that only reads the
+// declaration never has it whole.
 [[nodiscard]] inline auto CppClassDetailName() -> MintedWord {
   return MintedWord{.word = "detail"};
 }
@@ -1060,13 +1049,6 @@ inline void WriteOne(TargetText& out, const DefinitionPath& definition) {
         "::");
   }
   Write(out, CppDefinitionName(unit, definition.id));
-}
-
-// The name of a constant a class holds, `sv_data_<n>`: a position in the
-// class's list of constants, since the source names none.
-[[nodiscard]] inline auto CppClassConstantName(mir::ClassConstantId constant)
-    -> MintedName {
-  return MintedCppName("data", constant.value);
 }
 
 // A DPI-C linkage name, written exactly as given. It is a C identifier (LRM

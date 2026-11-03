@@ -22,9 +22,10 @@ auto BoundFramesOnBody(
     const PassContext& context, const mir::CodeSource& at,
     const mir::CallableCode& code) -> std::optional<mir::CallableCode>;
 
-// The same for what a unit declares that no body is: a closure's fields and a
-// class's constants, which come first because a closure is as large as its
-// captures as it holds them, so no body may ask before this.
+// The same for what a unit declares that no body is: a closure's fields, the
+// unit's constants and each class's definition, which come first because a
+// closure is as large as its captures as it holds them, so no body may ask
+// before this.
 auto BoundFramesOfDeclarations(mir::CompilationUnit unit)
     -> mir::CompilationUnit;
 

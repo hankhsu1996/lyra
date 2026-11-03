@@ -1972,7 +1972,7 @@ auto ChosenMembers(
   if (!unit_lowerer.Unit().types.Get(value).Is<mir::EnumType>()) {
     return std::nullopt;
   }
-  return mir::BuildEnumTableRef(unit_lowerer.Unit(), block, value);
+  return mir::BuildEnumMemberTable(unit_lowerer.Unit(), block, value);
 }
 
 auto StaticConstraintModeKey(

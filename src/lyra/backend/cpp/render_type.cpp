@@ -180,7 +180,7 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             Write(out, "std::array<", type(m.element), ", ", m.size, ">");
           },
           [&](const mir::MachineSpanType& m) {
-            Write(out, "lyra::abi::ConstantSpan<", type(m.element), ">");
+            Write(out, "lyra::value::ConstantSpan<", type(m.element), ">");
           },
           [&](const mir::MachineFunctionType& m) {
             // A pointer to a function type, spelled so that a declaration
@@ -379,73 +379,46 @@ namespace {
 void WritePlane(TargetText& out, std::span<const std::uint64_t> words) {
   out += "{";
   WriteSeparated(out, words, ", ", [&](std::uint64_t word) {
-    out += "0x";
-    WriteNumber(out, word, 16);
-    out += "ULL";
+    Write(
+        out, CppMachineIntLiteral{
+                 .value = static_cast<std::int64_t>(word),
+                 .signedness = mir::Signedness::kUnsigned});
   });
   out += "}";
 }
 
 }  // namespace
 
+void WriteOne(TargetText& out, const CppMachineIntLiteral& literal) {
+  switch (literal.signedness) {
+    case mir::Signedness::kUnsigned:
+      out += "0x";
+      WriteNumber(out, static_cast<std::uint64_t>(literal.value), 16);
+      out += "ULL";
+      return;
+    case mir::Signedness::kSigned:
+      WriteInt64Constant(out, literal.value);
+      return;
+  }
+  throw InternalError("backend::cpp: unknown signedness");
+}
+
+auto PrecedenceOf(const CppMachineIntLiteral& literal) -> Precedence {
+  switch (literal.signedness) {
+    case mir::Signedness::kUnsigned:
+      return Precedence::kPostfix;
+    case mir::Signedness::kSigned:
+      return literal.value < 0 ? Precedence::kPrefix : Precedence::kPostfix;
+  }
+  throw InternalError("backend::cpp: unknown signedness");
+}
+
 void WriteOne(TargetText& out, const CppIntegralLiteral& literal) {
-  const mir::IntegralConstantDecl& constant =
-      literal.Unit().integral_constants.Get(literal.Constant());
-  Write(out, CppType(literal.Unit(), constant.type), "::FromWords(");
-  WritePlane(out, constant.value.value_words);
+  Write(out, literal.type, "::FromWords(");
+  WritePlane(out, literal.value_words);
   out += ", ";
-  WritePlane(out, constant.value.state_words);
+  WritePlane(out, literal.state_words);
   out += ")";
-}
-
-void WriteOne(TargetText& out, const CppSourceLocationLiteral& literal) {
-  const diag::SourcePosition& at =
-      literal.Unit().source_locations.Get(literal.Location());
-  Write(
-      out,
-      CppType(literal.Unit(), literal.Unit().builtins.source_location_record),
-      "{");
-  WriteCStringLiteral(at.file, out);
-  Write(out, ", ", at.line, ", ", at.column, "}");
-}
-
-// Every enumeration's table goes by one type name, so each table states how
-// wide its base type is, whether that type has an unknown plane, and how many
-// members it holds, which is what tells the C++ compiler which table type it
-// is.
-void WriteOne(TargetText& out, const CppEnumTableLiteral& literal) {
-  const mir::CompilationUnit& unit = literal.Unit();
-  const mir::EnumType& enumeration = unit.enum_tables.Get(literal.Table());
-  bool four_state = false;
-  switch (enumeration.base.state_kind) {
-    case mir::IntegralStateKind::kTwoState:
-      break;
-    case mir::IntegralStateKind::kFourState:
-      four_state = true;
-      break;
-  }
-  std::vector<value::ConstPlanes> members;
-  members.reserve(enumeration.members.size());
-  for (const mir::EnumMember& member : enumeration.members) {
-    members.push_back(
-        value::ConstPlanes{
-            .value = member.value.value_words,
-            .unknown = member.value.state_words});
-  }
-  Write(out, CppType(unit, unit.builtins.enumeration), "<");
-  WriteNumber(out, enumeration.base.bit_width, 10);
-  out += four_state ? ", true, " : ", false, ";
-  WriteNumber(out, static_cast<std::uint64_t>(enumeration.members.size()), 10);
-  out += ">{";
-  WritePlane(
-      out, value::EnumerationPlanes(
-               enumeration.base.bit_width, four_state, members));
-  out += ", {";
-  WriteSeparated(
-      out, enumeration.members, ", ", [&](const mir::EnumMember& member) {
-        Write(out, CppNameLiteral(member.name));
-      });
-  out += "}}";
 }
 
 auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)

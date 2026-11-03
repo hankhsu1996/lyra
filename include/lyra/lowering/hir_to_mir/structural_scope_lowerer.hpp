@@ -47,7 +47,7 @@ class StructuralScopeLowerer;
 // by whoever asks for the object, or a constant the unit states of itself.
 struct ConstructionTableSupplied {};
 using ConstructionTableSource =
-    std::variant<ConstructionTableSupplied, mir::ClassConstantRef>;
+    std::variant<ConstructionTableSupplied, mir::ConstantRef>;
 
 // A value whoever builds a scope hands it: the declaration it fills, and the
 // type the constructor takes it as.
@@ -496,5 +496,13 @@ auto ApplyInstanceSelects(
 [[nodiscard]] auto BuildExecutionStart(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
     support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId;
+
+// The time unit and precision of the time scope a declaration in `declaring`
+// lies in (LRM 3.14.2.2), or in the unit's own scope where `declaring` is
+// none. A class or a covergroup is no time scope, so what its bodies wait for
+// and report is read in the scope declaring it.
+[[nodiscard]] auto TimeScopeOf(
+    const UnitLowerer& unit_lowerer, const StructuralScopeLowerer* declaring)
+    -> TimeResolution;
 
 }  // namespace lyra::lowering::hir_to_mir

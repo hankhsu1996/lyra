@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -12,9 +13,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/enum_table_id.hpp"
-#include "lyra/mir/integral_constant_id.hpp"
-#include "lyra/mir/source_location_id.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::backend::cpp {
@@ -69,71 +68,29 @@ struct CppConstQualifier {
 
 void WriteOne(TargetText& out, const CppConstQualifier& qualifier);
 
-// A constant of an integral type, written as the value its words are: the
+// A value of the integral type `type`, written as the value its words are: the
 // value plane's words and then the unknown plane's, least significant first.
-class CppIntegralLiteral {
- public:
-  CppIntegralLiteral(
-      const mir::CompilationUnit& unit, mir::IntegralConstantId constant)
-      : unit_(&unit), constant_(constant) {
-  }
-  [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
-    return *unit_;
-  }
-  [[nodiscard]] auto Constant() const -> mir::IntegralConstantId {
-    return constant_;
-  }
-
- private:
-  const mir::CompilationUnit* unit_;
-  mir::IntegralConstantId constant_;
+struct CppIntegralLiteral {
+  CppType type;
+  std::span<const std::uint64_t> value_words;
+  std::span<const std::uint64_t> state_words;
 };
 
 void WriteOne(TargetText& out, const CppIntegralLiteral& literal);
 
-// An enumeration's member table, written as the constant its members are:
-// every member's planes in declared order, then the members' names in the same
-// order.
-class CppEnumTableLiteral {
- public:
-  CppEnumTableLiteral(const mir::CompilationUnit& unit, mir::EnumTableId table)
-      : unit_(&unit), table_(table) {
-  }
-  [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
-    return *unit_;
-  }
-  [[nodiscard]] auto Table() const -> mir::EnumTableId {
-    return table_;
-  }
-
- private:
-  const mir::CompilationUnit* unit_;
-  mir::EnumTableId table_;
+// A machine integer, written as the number it is: an unsigned one in hex,
+// `0xffULL`, since a signed spelling of a large one would be negative, and a
+// signed one in decimal, `-5LL`, which a negative one spells as a prefix form.
+struct CppMachineIntLiteral {
+  std::int64_t value = 0;
+  mir::Signedness signedness = mir::Signedness::kSigned;
 };
 
-void WriteOne(TargetText& out, const CppEnumTableLiteral& literal);
+void WriteOne(TargetText& out, const CppMachineIntLiteral& literal);
 
-// A constant of the library's location record, written as what it says: the
-// file as `__FILE__ names it there, the line and the column.
-class CppSourceLocationLiteral {
- public:
-  CppSourceLocationLiteral(
-      const mir::CompilationUnit& unit, mir::SourceLocationId location)
-      : unit_(&unit), location_(location) {
-  }
-  [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
-    return *unit_;
-  }
-  [[nodiscard]] auto Location() const -> mir::SourceLocationId {
-    return location_;
-  }
-
- private:
-  const mir::CompilationUnit* unit_;
-  mir::SourceLocationId location_;
-};
-
-void WriteOne(TargetText& out, const CppSourceLocationLiteral& literal);
+// How tightly `literal`'s spelling binds: a negative one is a prefix form.
+[[nodiscard]] auto PrecedenceOf(const CppMachineIntLiteral& literal)
+    -> Precedence;
 
 // What a construction call names before its argument list. Usually the type
 // itself, `T(args)`; for a sequence the library function that takes the

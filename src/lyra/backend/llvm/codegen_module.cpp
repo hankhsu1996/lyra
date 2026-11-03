@@ -50,6 +50,7 @@
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
+#include "lyra/value/constant_span.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/layout.hpp"
@@ -111,8 +112,8 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
     if (cls.defining_unit.has_value() || !cls.base.has_value()) continue;
     EmitTables(cls, DeclaredClass(id));
   }
-  for (const lir::GlobalConstant& constant : unit_->constants) {
-    DefineData(constant);
+  for (const lir::GlobalConstant& definition : unit_->definitions) {
+    DefineData(definition);
   }
   for (const lir::ClosureId id : unit_->closures.Ids()) {
     if (auto defined = EmitClosureDefinition(id); !defined) {
@@ -583,9 +584,12 @@ auto CodeGenModule::AtExit() -> llvm::FunctionCallee {
 
 auto CodeGenModule::Int(std::uint64_t value, std::size_t bytes)
     -> llvm::Constant* {
+  const std::uint64_t bits = bytes * 8;
+  const std::uint64_t mask =
+      bits >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << bits) - 1;
   return llvm::ConstantInt::get(
-      llvm::Type::getIntNTy(*context_, static_cast<unsigned>(bytes * 8)),
-      value);
+      llvm::Type::getIntNTy(*context_, static_cast<unsigned>(bits)),
+      value & mask);
 }
 
 auto CodeGenModule::NameConstant(std::string_view name) -> llvm::Constant* {
@@ -612,47 +616,6 @@ auto CodeGenModule::RecordData(const lir::ConstantRecord& record)
             "library's structure holds {} -- please report this as a bug",
             field));
   };
-  const auto pointer_of = [&](const lir::Constant& part) -> llvm::Constant* {
-    return std::visit(
-        Overloaded{
-            [&](const lir::ConstantNull&) -> llvm::Constant* {
-              return llvm::ConstantPointerNull::get(types_.Ptr());
-            },
-            [&](const lir::ConstantString& c) -> llvm::Constant* {
-              return NameConstant(c.text);
-            },
-            [&](const lir::ConstantFunction& c) -> llvm::Constant* {
-              return UnitFunction(c.function);
-            },
-            [&](const lir::ConstantExternalFunction& c) -> llvm::Constant* {
-              return ExternalFunction(c.symbol, c.prototype);
-            },
-            [&](const lir::ConstantAddress& c) -> llvm::Constant* {
-              return DefinitionGlobal(c.symbol);
-            },
-            [&](const lir::ConstantDestructor& c) -> llvm::Constant* {
-              return ValueFunction(
-                  lir::DestructorSymbol(
-                      *lir::DefinitionSymbol(*unit_, c.cls),
-                      lir::Destructor::kDeleting));
-            },
-            [&](const lir::ConstantDispatchTable& c) -> llvm::Constant* {
-              return DefinitionGlobal(
-                  lir::DispatchTableSymbol(
-                      *lir::DefinitionSymbol(*unit_, c.cls)));
-            },
-            [&](const lir::ConstantInterfaceTable& c) -> llvm::Constant* {
-              return DefinitionGlobal(
-                  lir::InterfaceTableSymbol(
-                      *lir::DefinitionSymbol(*unit_, c.cls),
-                      *lir::DefinitionSymbol(*unit_, c.iface)));
-            },
-            [&](const lir::ConstantInt&) { return mismatch("a pointer"); },
-            [&](const lir::ConstantRecord&) { return mismatch("a pointer"); },
-            [&](const lir::ConstantArray&) { return mismatch("a pointer"); },
-            [&](const lir::ConstantSpan&) { return mismatch("a pointer"); }},
-        part.value);
-  };
   ConstantRecord out(*context_, layout.layout.size);
   for (std::size_t i = 0; i < layout.fields.size(); ++i) {
     const FieldLayout& field = layout.fields[i];
@@ -664,17 +627,11 @@ auto CodeGenModule::RecordData(const lir::ConstantRecord& record)
               if (integer == nullptr) {
                 mismatch("an integer");
               }
-              // The two's-complement bits of the value at the field's width.
-              const std::uint64_t bits = integer_field.size * 8;
-              const std::uint64_t mask = bits == 64
-                                             ? ~std::uint64_t{0}
-                                             : (std::uint64_t{1} << bits) - 1;
               out.Place(
-                  field.offset,
-                  Int(static_cast<std::uint64_t>(integer->value) & mask,
-                      static_cast<unsigned>(integer_field.size)));
+                  field.offset, Int(static_cast<std::uint64_t>(integer->value),
+                                    integer_field.size));
             },
-            [&](PointerField) { out.Place(field.offset, pointer_of(part)); },
+            [&](PointerField) { out.Place(field.offset, AddressData(part)); },
             [&](RecordField) {
               const auto* nested =
                   std::get_if<lir::ConstantRecord>(&part.value);
@@ -683,121 +640,175 @@ auto CodeGenModule::RecordData(const lir::ConstantRecord& record)
               }
               out.Place(field.offset, RecordData(*nested));
             },
-            // A view of no entries points nowhere, as the library's own
-            // empty view does.
-            [&](const SpanField& span_field) {
+            [&](SpanField) {
               const auto* span = std::get_if<lir::ConstantSpan>(&part.value);
               if (span == nullptr) {
                 mismatch("a view of entries");
               }
-              llvm::Constant* const entries =
-                  span->count == 0
-                      ? llvm::ConstantPointerNull::get(types_.Ptr())
-                      : static_cast<llvm::Constant*>(
-                            DefinitionGlobal(span->symbol));
-              out.Place(field.offset, entries);
-              out.Place(
-                  field.offset + span_field.count_at,
-                  Int(span->count, sizeof(std::uint64_t)));
+              out.Place(field.offset, SpanData(*span));
             }},
         field.kind);
   }
   return std::move(out).Build();
 }
 
-void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
-  const std::string& symbol = constant.symbol;
-  const auto not_whole = [](std::string_view stated) -> llvm::GlobalVariable* {
-    throw InternalError(
-        std::format(
-            "llvm codegen: a constant is {} and no structure or array -- "
-            "please report this as a bug",
-            stated));
-  };
-  std::visit(
+// A view as the library lays its own out: where the first entry is, and how
+// many there are, which the viewed array's type says. A view of no entries
+// points nowhere, as the library's own empty view does.
+auto CodeGenModule::SpanData(const lir::ConstantSpan& span) -> llvm::Constant* {
+  using View = value::ConstantSpan<std::byte>;
+  const std::uint64_t count =
+      unit_->types.Get(unit_->constants.Get(span.array).type)
+          .Get<lir::MachineArrayType>()
+          .size;
+  ConstantRecord out(*context_, sizeof(View));
+  out.Place(
+      offsetof(View, data),
+      count == 0 ? llvm::ConstantPointerNull::get(types_.Ptr())
+                 : static_cast<llvm::Constant*>(GetAddrOfConstant(span.array)));
+  out.Place(offsetof(View, size), Int(count, sizeof(View::size)));
+  return std::move(out).Build();
+}
+
+auto CodeGenModule::DefineData(const lir::GlobalConstant& constant)
+    -> llvm::GlobalVariable* {
+  return DefineConstant(
+      constant.symbol, ValueData(constant.type, constant.initializer),
+      LinkageOf(constant.linkage), llvm::Align(DataAlign(constant.type)));
+}
+
+// A structure of the library is laid out as the library's declaration of it
+// says, and an array of values one after another.
+auto CodeGenModule::ValueData(lir::TypeId type, const lir::Constant& value)
+    -> llvm::Constant* {
+  return std::visit(
       Overloaded{
-          [&](const lir::ConstantRecord& record) {
-            return DefineConstant(
-                symbol, RecordData(record), LinkageOf(constant.linkage),
-                llvm::Align(LayoutOfLibraryRecord(record.decl).layout.align));
+          [&](const lir::ConstantInt& c) -> llvm::Constant* {
+            return Int(
+                static_cast<std::uint64_t>(c.value),
+                types_.LayoutOf(type).layout.size);
           },
-          // Every element of an array is of one type, so the first says what
-          // the array is of; an array of none holds nothing of any type.
-          [&](const lir::ConstantArray& array) {
+          // The bytes are laid out by the value layer's own rule, so a
+          // constant here and a value the library builds of the same type are
+          // the same bytes. A constant whose type can hold x or z and that
+          // holds none states no unknown plane, which is then clear.
+          [&](const lir::ConstantIntegral& c) -> llvm::Constant* {
+            const value::IntegralShape shape =
+                types_.RequiredIntegralShapeOf(type);
+            value::WrittenWords words(shape);
+            const value::IntegralView planes = words.MutableView();
+            if (c.value.value_words.size() != planes.value.size() ||
+                c.value.state_words.size() > planes.unknown.size()) {
+              throw InternalError(
+                  "llvm codegen: an integral constant's planes do not span the "
+                  "width its type states -- please report this as a bug");
+            }
+            std::ranges::copy(c.value.value_words, planes.value.begin());
+            std::ranges::copy(c.value.state_words, planes.unknown.begin());
+            std::vector<std::uint8_t> bytes(shape.Bytes());
+            words.StoreTo(bytes.data());
+            return llvm::ConstantDataArray::get(*context_, bytes);
+          },
+          [&](const lir::ConstantRecord& c) { return RecordData(c); },
+          [&](const lir::ConstantArray& c) -> llvm::Constant* {
+            const lir::TypeId element_type =
+                unit_->types.Get(type).Get<lir::MachineArrayType>().element;
             std::vector<llvm::Constant*> elements;
-            elements.reserve(array.elements.size());
-            std::uint64_t align = 1;
-            for (const lir::Constant& element : array.elements) {
-              std::visit(
-                  Overloaded{
-                      [&](const lir::ConstantRecord& record) {
-                        elements.push_back(RecordData(record));
-                        align = LayoutOfLibraryRecord(record.decl).layout.align;
-                      },
-                      [&](const lir::ConstantFunction& function) {
-                        elements.push_back(UnitFunction(function.function));
-                        align = alignof(void*);
-                      },
-                      [&](const lir::ConstantInt&) { not_whole("an integer"); },
-                      [&](const lir::ConstantNull&) { not_whole("a null"); },
-                      [&](const lir::ConstantString&) {
-                        not_whole("a string");
-                      },
-                      [&](const lir::ConstantExternalFunction&) {
-                        not_whole("another unit's function");
-                      },
-                      [&](const lir::ConstantAddress& address) {
-                        elements.push_back(DefinitionGlobal(address.symbol));
-                        align = alignof(void*);
-                      },
-                      [&](const lir::ConstantDestructor&) {
-                        not_whole("an address");
-                      },
-                      [&](const lir::ConstantDispatchTable&) {
-                        not_whole("an address");
-                      },
-                      [&](const lir::ConstantInterfaceTable&) {
-                        not_whole("an address");
-                      },
-                      [&](const lir::ConstantArray&) {
-                        not_whole("an array of arrays");
-                      },
-                      [&](const lir::ConstantSpan&) {
-                        not_whole("an array of views");
-                      }},
-                  element.value);
+            elements.reserve(c.elements.size());
+            for (const lir::Constant& element : c.elements) {
+              elements.push_back(ValueData(element_type, element));
             }
             llvm::Type* element_ty = elements.empty()
                                          ? llvm::Type::getInt8Ty(*context_)
                                          : elements.front()->getType();
-            return DefineConstant(
-                symbol,
-                llvm::ConstantArray::get(
-                    llvm::ArrayType::get(element_ty, elements.size()),
-                    elements),
-                LinkageOf(constant.linkage), llvm::Align(align));
+            return llvm::ConstantArray::get(
+                llvm::ArrayType::get(element_ty, elements.size()), elements);
           },
-          [&](const lir::ConstantInt&) { return not_whole("an integer"); },
-          [&](const lir::ConstantNull&) { return not_whole("a null"); },
-          [&](const lir::ConstantString&) { return not_whole("a string"); },
-          [&](const lir::ConstantFunction&) {
-            return not_whole("a function's address");
+          [&](const lir::ConstantSpan& c) { return SpanData(c); },
+          [&](const lir::ConstantNull&) -> llvm::Constant* {
+            return llvm::ConstantPointerNull::get(types_.Ptr());
           },
-          [&](const lir::ConstantExternalFunction&) {
-            return not_whole("a function's address");
+          [&](const lir::ConstantPointer& c) { return AddressOf(c.to); }},
+      value.value);
+}
+
+auto CodeGenModule::AddressData(const lir::Constant& address)
+    -> llvm::Constant* {
+  const auto no_address = [](std::string_view stated) -> llvm::Constant* {
+    throw InternalError(
+        std::format(
+            "llvm codegen: a constant states {} where the library's structure "
+            "holds an address -- please report this as a bug",
+            stated));
+  };
+  return std::visit(
+      Overloaded{
+          [&](const lir::ConstantNull&) -> llvm::Constant* {
+            return llvm::ConstantPointerNull::get(types_.Ptr());
           },
-          [&](const lir::ConstantAddress&) { return not_whole("an address"); },
-          [&](const lir::ConstantDestructor&) {
-            return not_whole("an address");
+          [&](const lir::ConstantPointer& c) { return AddressOf(c.to); },
+          [&](const lir::ConstantInt&) { return no_address("an integer"); },
+          [&](const lir::ConstantIntegral&) {
+            return no_address("an integral value");
           },
-          [&](const lir::ConstantDispatchTable&) {
-            return not_whole("an address");
+          [&](const lir::ConstantRecord&) { return no_address("a structure"); },
+          [&](const lir::ConstantArray&) { return no_address("an array"); },
+          [&](const lir::ConstantSpan&) { return no_address("a view"); }},
+      address.value);
+}
+
+auto CodeGenModule::AddressOf(const lir::Referent& referent)
+    -> llvm::Constant* {
+  return std::visit(
+      Overloaded{
+          [&](const lir::FunctionReferent& r) -> llvm::Constant* {
+            return UnitFunction(r.function);
           },
-          [&](const lir::ConstantInterfaceTable&) {
-            return not_whole("an address");
+          [&](const lir::ExternalFunctionReferent& r) -> llvm::Constant* {
+            return ExternalFunction(r.symbol, r.prototype);
           },
-          [&](const lir::ConstantSpan&) { return not_whole("a view"); }},
-      constant.initializer.value);
+          [&](const lir::ConstantReferent& r) -> llvm::Constant* {
+            return GetAddrOfConstant(r.constant);
+          },
+          [&](const lir::DefinitionReferent& r) -> llvm::Constant* {
+            return GlobalNamed(lir::DefinitionSymbol(*unit_, r.cls));
+          },
+          [&](const lir::SharedStorageReferent& r) -> llvm::Constant* {
+            return GlobalNamed(r.symbol);
+          },
+          [&](const lir::DestructorReferent& r) -> llvm::Constant* {
+            return ValueFunction(
+                lir::DestructorSymbol(
+                    lir::DefinitionSymbol(*unit_, r.cls),
+                    lir::Destructor::kDeleting));
+          },
+          [&](const lir::DispatchTableReferent& r) -> llvm::Constant* {
+            return GlobalNamed(
+                lir::DispatchTableSymbol(lir::DefinitionSymbol(*unit_, r.cls)));
+          },
+          [&](const lir::InterfaceTableReferent& r) -> llvm::Constant* {
+            return GlobalNamed(
+                lir::InterfaceTableSymbol(
+                    lir::DefinitionSymbol(*unit_, r.cls),
+                    lir::DefinitionSymbol(*unit_, r.iface)));
+          },
+          [&](const lir::TextReferent& r) -> llvm::Constant* {
+            return NameConstant(r.text);
+          }},
+      referent);
+}
+
+// A structure of the library is aligned as the library declares it, and so is
+// an array of them; every other value as its type lays it out.
+auto CodeGenModule::DataAlign(lir::TypeId type) -> std::uint64_t {
+  const lir::Type& held = unit_->types.Get(type);
+  const auto* array = held.As<lir::MachineArrayType>();
+  const lir::Type& element =
+      array != nullptr ? unit_->types.Get(array->element) : held;
+  if (const auto* library = element.As<lir::LibraryType>()) {
+    return LayoutOfLibraryRecord(library->decl).layout.align;
+  }
+  return types_.LayoutOf(type).layout.align;
 }
 
 auto CodeGenModule::DeclarationOf(lir::TypeId type) const -> Declared {
@@ -1206,15 +1217,7 @@ auto CodeGenModule::EntryAddress(const std::optional<lir::TableBody>& body)
   if (!body.has_value()) {
     return llvm::ConstantPointerNull::get(types_.Ptr());
   }
-  return std::visit(
-      Overloaded{
-          [&](const lir::ConstantFunction& c) -> llvm::Constant* {
-            return UnitFunction(c.function);
-          },
-          [&](const lir::ConstantExternalFunction& c) -> llvm::Constant* {
-            return ExternalFunction(c.symbol, c.prototype);
-          }},
-      *body);
+  return AddressOf(lir::ReferentOf(*body));
 }
 
 void CodeGenModule::EmitTables(
@@ -1394,12 +1397,6 @@ auto CodeGenModule::DefineSharedStorage(const lir::StaticStorage& storage)
   return {};
 }
 
-auto CodeGenModule::SharedStorage(const std::string& symbol)
-    -> llvm::GlobalVariable* {
-  return llvm::cast<llvm::GlobalVariable>(
-      module_->getOrInsertGlobal(symbol, llvm::Type::getInt8Ty(*context_)));
-}
-
 // The storage is built before the program starts and lasts until it exits,
 // ending after it as a C++ program ends a namespace-scope object: by handing
 // the platform what ends it.
@@ -1410,7 +1407,7 @@ auto CodeGenModule::StateSharedStorage(
   if (!described) {
     return std::unexpected(std::move(described.error()));
   }
-  llvm::GlobalVariable* shared = SharedStorage(storage.symbol);
+  llvm::GlobalVariable* shared = GlobalNamed(storage.symbol);
   if (auto built =
           BuildMemberStorage(builder, storage.type, *described, shared);
       !built) {
@@ -1428,14 +1425,11 @@ auto CodeGenModule::StateSharedStorage(
 }
 
 auto CodeGenModule::LibraryData(std::string_view symbol) -> llvm::Constant* {
-  return DefinitionGlobal(std::string(symbol));
+  return GlobalNamed(std::string(symbol));
 }
 
-auto CodeGenModule::DefinitionGlobal(const std::string& symbol)
+auto CodeGenModule::GlobalNamed(const std::string& symbol)
     -> llvm::GlobalVariable* {
-  // Named before it is defined, or defined by another unit, it is a
-  // declaration, which the definition replaces where this unit is the one
-  // defining it.
   return llvm::cast<llvm::GlobalVariable>(
       module_->getOrInsertGlobal(symbol, llvm::Type::getInt8Ty(*context_)));
 }
@@ -1450,120 +1444,23 @@ auto CodeGenModule::DefinitionOf(lir::TypeId type)
         "'--backend llvm'",
         unit_->types.Get(type).KindName());
   }
-  return DefinitionGlobal(*symbol);
+  return GlobalNamed(*symbol);
 }
 
-auto CodeGenModule::GetAddrOfEnumTable(lir::EnumTableId table)
+auto CodeGenModule::GetAddrOfConstant(lir::ConstantId constant)
     -> llvm::GlobalVariable* {
-  if (const auto found = enum_tables_.find(table);
-      found != enum_tables_.end()) {
+  if (const auto found = constants_.find(constant); found != constants_.end()) {
     return found->second;
   }
-  llvm::GlobalVariable* defined = DefineEnumTable(table);
-  enum_tables_.emplace(table, defined);
-  return defined;
-}
-
-auto CodeGenModule::GetAddrOfIntegralConstant(lir::IntegralConstantId constant)
-    -> llvm::GlobalVariable* {
-  if (const auto found = integral_constants_.find(constant);
-      found != integral_constants_.end()) {
-    return found->second;
-  }
-  llvm::GlobalVariable* defined = DefineIntegralConstant(constant);
-  integral_constants_.emplace(constant, defined);
-  return defined;
-}
-
-// The record the library reads a table through, pointing at the planes and the
-// names, each an array of this module's own. No label here reaches a linker,
-// so a table's identity is enough to tell its data from another's.
-auto CodeGenModule::DefineEnumTable(lir::EnumTableId table)
-    -> llvm::GlobalVariable* {
-  using value::Enumeration;
-  const lir::EnumTableDecl& decl = unit_->enum_tables.Get(table);
-  const auto constant = [&](std::string_view part, llvm::Constant* data) {
-    auto* defined = llvm::cast<llvm::GlobalVariable>(module_->getOrInsertGlobal(
-        std::format("enum_table_{}{}", table.value, part), data->getType()));
-    defined->setLinkage(llvm::GlobalValue::PrivateLinkage);
-    defined->setConstant(true);
-    defined->setInitializer(data);
-    return defined;
-  };
-  const value::IntegralShape base = types_.RequiredIntegralShapeOf(decl.base);
-  std::vector<value::ConstPlanes> member_planes;
-  std::vector<llvm::Constant*> name_data;
-  member_planes.reserve(decl.members.size());
-  name_data.reserve(decl.members.size());
-  for (const lir::EnumTableMember& member : decl.members) {
-    member_planes.push_back(
-        value::ConstPlanes{
-            .value = member.value.value_words,
-            .unknown = member.value.state_words});
-    name_data.push_back(NameConstant(member.name));
-  }
-  llvm::GlobalVariable* planes = constant(
-      "_planes",
-      llvm::ConstantDataArray::get(
-          *context_, llvm::ArrayRef<std::uint64_t>(value::EnumerationPlanes(
-                         base.width, base.IsFourState(), member_planes))));
-  planes->setAlignment(llvm::Align(alignof(std::uint64_t)));
-  llvm::GlobalVariable* names = constant(
-      "_names",
-      llvm::ConstantArray::get(
-          llvm::ArrayType::get(types_.Ptr(), name_data.size()), name_data));
-  names->setAlignment(llvm::Align(alignof(const char*)));
-  ConstantRecord out(*context_, sizeof(Enumeration));
-  out.Place(offsetof(Enumeration, planes), planes);
-  out.Place(offsetof(Enumeration, names), names);
-  out.Place(
-      offsetof(Enumeration, members),
-      Int(decl.members.size(), sizeof(Enumeration::members)));
-  out.Place(
-      offsetof(Enumeration, width),
-      Int(base.width, sizeof(Enumeration::width)));
-  out.Place(
-      offsetof(Enumeration, four_state),
-      Int(base.IsFourState() ? 1 : 0, sizeof(Enumeration::four_state)));
-  llvm::GlobalVariable* defined = constant("", std::move(out).Build());
-  defined->setAlignment(llvm::Align(alignof(Enumeration)));
-  return defined;
-}
-
-// The bytes are laid out by the value layer's own rule, so a constant here and
-// a value the library builds of the same type are the same bytes. A constant
-// whose type can hold x or z and that holds none states no unknown plane, which
-// is then clear.
-auto CodeGenModule::DefineIntegralConstant(lir::IntegralConstantId constant)
-    -> llvm::GlobalVariable* {
-  const lir::IntegralConstantDecl& decl =
-      unit_->integral_constants.Get(constant);
-  const std::optional<value::IntegralShape> shape =
-      types_.IntegralShapeOf(decl.type);
-  if (!shape.has_value()) {
-    throw InternalError(
-        "llvm codegen: an integral constant is of a type that is not integral "
-        "-- please report this as a bug");
-  }
-  value::WrittenWords words(*shape);
-  const value::IntegralView planes = words.MutableView();
-  if (decl.value.value_words.size() != planes.value.size() ||
-      decl.value.state_words.size() > planes.unknown.size()) {
-    throw InternalError(
-        "llvm codegen: an integral constant's planes do not span the width its "
-        "type states -- please report this as a bug");
-  }
-  std::ranges::copy(decl.value.value_words, planes.value.begin());
-  std::ranges::copy(decl.value.state_words, planes.unknown.begin());
-  std::vector<std::uint8_t> bytes(shape->Bytes());
-  words.StoreTo(bytes.data());
-  llvm::Constant* laid_out = llvm::ConstantDataArray::get(*context_, bytes);
-  auto* defined = llvm::cast<llvm::GlobalVariable>(module_->getOrInsertGlobal(
-      std::format("constant_{}", constant.value), laid_out->getType()));
-  defined->setLinkage(llvm::GlobalValue::PrivateLinkage);
-  defined->setConstant(true);
-  defined->setInitializer(laid_out);
-  defined->setAlignment(llvm::Align(value::IntegralAlignFor(shape->width)));
+  // Data of this artifact alone, which nothing outside it names, so it is
+  // private, as clang defines an unnamed constant.
+  const lir::ConstantDecl& decl = unit_->constants.Get(constant);
+  llvm::Constant* const value = ValueData(decl.type, decl.value);
+  auto* defined = new llvm::GlobalVariable(
+      *module_, value->getType(), true, llvm::GlobalValue::PrivateLinkage,
+      value, std::format("constant.{}", constant.value));
+  defined->setAlignment(llvm::Align(DataAlign(decl.type)));
+  constants_.emplace(constant, defined);
   return defined;
 }
 

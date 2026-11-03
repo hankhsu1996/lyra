@@ -18,8 +18,8 @@ namespace lyra::backend::llvm_backend {
 // The type of one field of a library structure a constant is stated as, as far
 // as emitting data needs it: an integer of some bytes, a pointer to data or to
 // code, a structure of the library's own, which the constant states as a
-// record of its own, or a view of entries, laid out as where the first is and,
-// `count_at` bytes past the field's start, how many there are.
+// record of its own, or a view of entries, laid out as the library's own view
+// is.
 struct IntegerField {
   std::uint64_t size = 0;
 };
@@ -28,9 +28,7 @@ struct PointerField {};
 
 struct RecordField {};
 
-struct SpanField {
-  std::uint64_t count_at = 0;
-};
+struct SpanField {};
 
 using FieldKind =
     std::variant<IntegerField, PointerField, RecordField, SpanField>;

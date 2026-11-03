@@ -8,18 +8,20 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
-#include "lyra/mir/value_build.hpp"
 #include "lyra/mir_transform/block_rebuild.hpp"
 #include "lyra/mir_transform/evaluation_temporaries.hpp"
 #include "lyra/value/frame_bound.hpp"
@@ -299,21 +301,50 @@ class BodyBoxing {
   std::vector<std::optional<mir::TypeId>> local_boxes_;
 };
 
-// `build` with its large values boxed. What a constant builds is a table of
-// machine values and code addresses, so the address of code is all that
-// changes in one.
-auto BoxedBuild(const mir::CompilationUnit& unit, const mir::ValueBuild& build)
-    -> mir::ValueBuild {
-  if (!BoxingChanges(unit, build.body)) {
-    return build;
+// `value` with what each pointer it holds names at its boxed type. A
+// constant holds machine values and addresses, so the type of code is all that
+// boxing changes in one.
+auto Boxed(const mir::CompilationUnit& unit, mir::ConstantValue value)
+    -> mir::ConstantValue {
+  std::visit(
+      Overloaded{
+          [&](mir::PointerValue& pointer) {
+            pointer.type = WithParamsBoxed(unit, pointer.type);
+          },
+          [&](mir::RecordValue& record) {
+            for (mir::ConstantValue& part : record.parts) {
+              part = Boxed(unit, std::move(part));
+            }
+          },
+          [&](mir::ArrayValue& array) {
+            for (mir::ConstantValue& element : array.elements) {
+              element = Boxed(unit, std::move(element));
+            }
+          },
+          [](mir::IntegralValue&) {}, [](mir::MachineIntValue&) {},
+          [](mir::NullValue&) {}, [](mir::CStringValue&) {},
+          [](mir::SpanValue&) {}},
+      value.value);
+  return value;
+}
+
+// The unit's constants, each boxed. A constant names another by its position,
+// so each keeps its own: two that boxing made alike would be code of two types
+// boxed to one, which no unit holds.
+auto BoxedConstants(const mir::CompilationUnit& unit) -> mir::ConstantPool {
+  mir::ConstantPool boxed;
+  for (const mir::ConstantId id : unit.constants.Ids()) {
+    const mir::ConstantDecl& constant = unit.constants.Get(id);
+    const mir::ConstantId kept = boxed.Intern(
+        mir::ConstantDecl{
+            .type = constant.type, .value = Boxed(unit, constant.value)});
+    if (kept != id) {
+      throw InternalError(
+          "mir_transform: boxing made two constants of a unit one -- please "
+          "report this as a bug");
+    }
   }
-  const RebuildRules rules{
-      .type = [&](mir::TypeId type) { return WithParamsBoxed(unit, type); }};
-  BlockRebuild rebuild(build.body, rules, diag::SourceSpan{});
-  std::vector<mir::StmtId> stmts = rebuild.Stmts(build.body.root_stmts);
-  const mir::ExprId value = rebuild.Expr(build.value);
-  return mir::ValueBuild{
-      .body = std::move(rebuild).Finish(std::move(stmts)), .value = value};
+  return boxed;
 }
 
 }  // namespace
@@ -354,21 +385,15 @@ auto BoundFramesOfDeclarations(mir::CompilationUnit unit)
             closure.fields = std::move(fields.at(id.value));
             return closure;
           });
-  unit.classes =
-      std::move(unit.classes)
-          .TransformValues([&](mir::ClassId, mir::Class cls) {
-            base::Arena<mir::ClassConstantDecl, mir::ClassConstantId> constants;
-            for (const mir::ClassConstantDecl& constant : cls.constants) {
-              constants.Add(
-                  mir::ClassConstantDecl{
-                      .type = WithParamsBoxed(unit, constant.type),
-                      .initializer = BoxedBuild(unit, constant.initializer)});
-            }
-            cls.constants = std::move(constants);
-            cls.object_definition_initializer =
-                BoxedBuild(unit, cls.object_definition_initializer);
-            return cls;
-          });
+  unit.constants = BoxedConstants(unit);
+  unit.classes = std::move(unit.classes)
+                     .TransformValues([&](mir::ClassId, mir::Class cls) {
+                       if (cls.definition.has_value()) {
+                         cls.definition =
+                             Boxed(unit, *std::move(cls.definition));
+                       }
+                       return cls;
+                     });
   return unit;
 }
 

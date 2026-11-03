@@ -8,13 +8,13 @@
 #include "lyra/abi/records.hpp"
 #include "lyra/base/source_location.hpp"
 #include "lyra/runtime/class_definition.hpp"
+#include "lyra/value/constant_span.hpp"
 #include "tests/base/written_at.hpp"
 
 namespace {
 
 using lyra::test::kWrittenAt;
 
-using lyra::abi::ConstantSpan;
 using lyra::abi::InterfaceRow;
 using lyra::abi::ObjectDefinition;
 using lyra::runtime::AdoptObject;
@@ -25,6 +25,7 @@ using lyra::runtime::GcObject;
 using lyra::runtime::InterfaceDispatch;
 using lyra::runtime::IsOfClass;
 using lyra::runtime::SelfHandle;
+using lyra::value::ConstantSpan;
 using lyra::value::ObjectRef;
 
 // The definition of a class `T` extending `base`, whose objects end as `T`'s,

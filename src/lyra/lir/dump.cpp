@@ -49,11 +49,18 @@ class LirDumper {
           std::format(
               "static \"{}\" : {}", storage.symbol, FormatType(storage.type)));
     }
-    for (const GlobalConstant& constant : unit_->constants) {
+    for (const ConstantId id : unit_->constants.Ids()) {
+      const ConstantDecl& constant = unit_->constants.Get(id);
       Line(
           std::format(
-              "{} constant \"{}\" = {}", LinkageName(constant.linkage),
-              constant.symbol, FormatConstant(constant.initializer)));
+              "[{}] constant : {} = {}", id.value, FormatType(constant.type),
+              FormatConstant(constant.value)));
+    }
+    for (const GlobalConstant& definition : unit_->definitions) {
+      Line(
+          std::format(
+              "{} definition \"{}\" = {}", LinkageName(definition.linkage),
+              definition.symbol, FormatConstant(definition.initializer)));
     }
     for (const auto& [operation, function] : unit_->type_operations) {
       if (function.has_value()) {
@@ -163,20 +170,48 @@ class LirDumper {
     throw InternalError("lir dump: unknown linkage");
   }
 
-  [[nodiscard]] auto FormatTableBody(const std::optional<TableBody>& body) const
-      -> std::string {
+  [[nodiscard]] static auto FormatTableBody(
+      const std::optional<TableBody>& body) -> std::string {
     if (!body.has_value()) {
       return "none";
     }
+    return FormatReferent(ReferentOf(*body));
+  }
+
+  // The address of what `referent` names.
+  [[nodiscard]] static auto FormatReferent(const Referent& referent)
+      -> std::string {
     return std::visit(
         Overloaded{
-            [&](const ConstantFunction& c) {
-              return std::format("&{}", unit_->functions.Get(c.function).name);
+            [](const FunctionReferent& r) {
+              return std::format("&function {}", r.function.value);
             },
-            [](const ConstantExternalFunction& c) {
-              return std::format("&{}", c.symbol);
+            [](const ExternalFunctionReferent& r) {
+              return std::format("&{}", r.symbol);
+            },
+            [](const ConstantReferent& r) {
+              return std::format("&const:{}", r.constant.value);
+            },
+            [](const DefinitionReferent& r) {
+              return std::format("&definition class {}", r.cls.value);
+            },
+            [](const SharedStorageReferent& r) {
+              return std::format("&storage {}", r.symbol);
+            },
+            [](const DestructorReferent& r) {
+              return std::format("&end class {}", r.cls.value);
+            },
+            [](const DispatchTableReferent& r) {
+              return std::format("&table class {}", r.cls.value);
+            },
+            [](const InterfaceTableReferent& r) {
+              return std::format(
+                  "&table class {} as class {}", r.cls.value, r.iface.value);
+            },
+            [](const TextReferent& r) {
+              return std::format("\"{}\"", r.text);
             }},
-        *body);
+        referent);
   }
 
   [[nodiscard]] auto FormatConstant(const Constant& constant) const
@@ -194,29 +229,23 @@ class LirDumper {
     return std::visit(
         Overloaded{
             [](const ConstantInt& c) { return std::format("{}", c.value); },
-            [](const ConstantNull&) { return std::string{"null"}; },
-            [](const ConstantDestructor& c) {
-              return std::format("&end {}", FormatType(c.cls));
-            },
-            [](const ConstantDispatchTable& c) {
-              return std::format("&table {}", FormatType(c.cls));
-            },
-            [](const ConstantInterfaceTable& c) {
+            [](const ConstantIntegral& c) {
+              const auto plane = [](std::span<const std::uint64_t> words) {
+                std::string out;
+                for (const std::uint64_t word : words) {
+                  out += std::format("{}{:#x}", out.empty() ? "" : " ", word);
+                }
+                return out;
+              };
+              if (c.value.state_words.empty()) {
+                return std::format("{{{}}}", plane(c.value.value_words));
+              }
               return std::format(
-                  "&table {} as {}", FormatType(c.cls), FormatType(c.iface));
+                  "{{{} unknown {}}}", plane(c.value.value_words),
+                  plane(c.value.state_words));
             },
-            [](const ConstantString& c) {
-              return std::format("\"{}\"", c.text);
-            },
-            [&](const ConstantFunction& c) {
-              return std::format("&{}", unit_->functions.Get(c.function).name);
-            },
-            [](const ConstantExternalFunction& c) {
-              return std::format("&{}", c.symbol);
-            },
-            [](const ConstantAddress& c) {
-              return std::format("&{}", c.symbol);
-            },
+            [](const ConstantNull&) { return std::string{"null"}; },
+            [](const ConstantPointer& c) { return FormatReferent(c.to); },
             [&](const ConstantRecord& c) {
               return std::format(
                   "{} {{{}}}", support::DeclarationOf(c.decl).name,
@@ -226,7 +255,7 @@ class LirDumper {
               return std::format("[{}]", list(c.elements));
             },
             [](const ConstantSpan& c) {
-              return std::format("span(&{}, {})", c.symbol, c.count);
+              return std::format("span(&const:{})", c.array.value);
             }},
         constant.value);
   }
@@ -623,20 +652,11 @@ class LirDumper {
               };
               return std::format("{}_of:type[{}]", measure(), c.of.value);
             },
-            [](const EnumTableRef& c) -> std::string {
-              return std::format("enumtable:{}", c.table.value);
-            },
-            [](const IntegralConstantRef& c) -> std::string {
+            [](const ConstantRef& c) -> std::string {
               return std::format("const:{}", c.constant.value);
             },
-            [](const StaticRef& s) -> std::string {
-              return std::format("staticref {}", s.symbol);
-            },
-            [](const DefinitionRef& c) -> std::string {
-              return std::format("definition {}", FormatType(c.defined));
-            },
-            [](const FunctionRef& c) -> std::string {
-              return std::format("function {}", c.function.value);
+            [](const AddressConst& c) -> std::string {
+              return FormatReferent(c.to);
             }},
         op);
   }

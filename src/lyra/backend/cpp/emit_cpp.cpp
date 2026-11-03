@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -11,6 +12,7 @@
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/naming.hpp"
+#include "lyra/backend/cpp/render_constant.hpp"
 #include "lyra/backend/cpp/render_decl.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
@@ -18,11 +20,10 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/consumed_signatures.hpp"
-#include "lyra/mir/enum_table_id.hpp"
-#include "lyra/mir/integral_constant_id.hpp"
-#include "lyra/mir/source_location_id.hpp"
 #include "lyra/mir/verify.hpp"
+#include "lyra/support/linkage.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 
 namespace lyra::backend::cpp {
@@ -54,62 +55,50 @@ struct ProjectFile {
   }
 };
 
-// The enumeration member tables the unit's text names, one `constexpr`
-// definition per table: its members are constant data, which the compiler
-// builds while the program is compiled.
-void RenderEnumTables(
-    const mir::CompilationUnit& unit, const UnitRenderReport& report,
-    TargetText& out) {
-  for (const mir::EnumTableId id : report.enum_tables_named) {
-    WriteDeclaration(
-        out,
-        VariableDeclaration{
-            .form = VariableForm::kNamespaceScopeDefinition,
-            .constness = Constness::kConstexpr,
-            .type = CppType(unit, unit.builtins.enumeration),
-            .name = CppEnumTableName(id)},
-        [&](TargetText& value) {
-          Write(value, CppEnumTableLiteral(unit, id));
-        });
-  }
-}
+// The constants the unit's code file names, each declared ahead of every text
+// naming it and defined once every class is, since a constant may hold the
+// address of a class's member: every constant a text of the file names, and
+// every constant one of those names, each `const`, defined in the order the
+// unit states them, so each is defined after what it names.
+struct NamedConstants {
+  TargetText declarations;
+  TargetText definitions;
+};
 
-// The locations the unit's text names, one `constexpr` definition per location:
-// each is a record of the library's, which the compiler builds while the
-// program is compiled.
-void RenderSourceLocations(
-    const mir::CompilationUnit& unit, const UnitRenderReport& report,
-    TargetText& out) {
-  for (const mir::SourceLocationId id : report.source_locations_named) {
-    WriteDeclaration(
-        out,
-        VariableDeclaration{
-            .form = VariableForm::kNamespaceScopeDefinition,
-            .constness = Constness::kConstexpr,
-            .type = CppType(unit, unit.builtins.source_location_record),
-            .name = CppSourceLocationName(id)},
-        [&](TargetText& value) {
-          Write(value, CppSourceLocationLiteral(unit, id));
-        });
+auto RenderNamedConstants(
+    const mir::CompilationUnit& unit, UnitRenderReport& report)
+    -> NamedConstants {
+  NamedConstants text;
+  std::map<mir::ConstantId, TargetText> defined;
+  while (defined.size() < report.constants_named.size()) {
+    for (const mir::ConstantId named : std::set(report.constants_named)) {
+      if (defined.contains(named)) continue;
+      const mir::ConstantDecl& constant = unit.constants.Get(named);
+      TargetText value;
+      WriteConstantValue(
+          unit, support::Linkage::kInternal, report, constant.type,
+          constant.value, value);
+      defined.emplace(named, std::move(value));
+    }
   }
-}
-
-// The constant values the unit's text names, one definition per distinct
-// value: each is the literal of its type. The C++ compiler builds one while
-// the program is compiled wherever the type lets it.
-void RenderIntegralConstants(
-    const mir::CompilationUnit& unit, const UnitRenderReport& report,
-    TargetText& out) {
-  for (const mir::IntegralConstantId id : report.constants_named) {
+  for (const auto& [id, value] : defined) {
+    const mir::ConstantDecl& constant = unit.constants.Get(id);
     WriteDeclaration(
-        out,
+        text.declarations, VariableDeclaration{
+                               .form = VariableForm::kExternDeclaration,
+                               .constness = Constness::kConst,
+                               .type = CppType(unit, constant.type),
+                               .name = CppConstantName(id)});
+    WriteDeclaration(
+        text.definitions,
         VariableDeclaration{
             .form = VariableForm::kNamespaceScopeDefinition,
             .constness = Constness::kConst,
-            .type = CppType(unit, unit.integral_constants.Get(id).type),
-            .name = CppIntegralConstantName(id)},
-        [&](TargetText& value) { Write(value, CppIntegralLiteral(unit, id)); });
+            .type = CppType(unit, constant.type),
+            .name = CppConstantName(id)},
+        [&](TargetText& out) { out += value; });
   }
+  return text;
 }
 
 // Includes, into the file `self`, each file `text` said it needs ahead of it.
@@ -253,14 +242,9 @@ auto HeaderOf(
 auto RenderUnitFiles(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
     -> CppUnitArtifacts {
-  // Every body is written before the constants, the member tables and the
-  // locations are, since the ones the code file defines are the ones those
-  // bodies turn out to name.
-  UnitRenderReport report{
-      .refusals = &refusals,
-      .constants_named = {},
-      .enum_tables_named = {},
-      .source_locations_named = {}};
+  // Every body is written before the constants are, since the ones the code
+  // file defines are the ones those bodies turn out to name.
+  UnitRenderReport report{.refusals = &refusals, .constants_named = {}};
   UnitRecords records = RenderUnitRecords(unit, report);
   const UnitCallables callables = RenderUnitCallables(unit, report);
   const UnitText variables = RenderUnitStaticVariables(unit);
@@ -270,9 +254,7 @@ auto RenderUnitFiles(
   const UnitClosures closures = RenderUnitClosures(unit, report);
   TargetText foreign_symbols;
   RenderForeignScopeSymbols(unit, report, foreign_symbols);
-  TargetText constant_tables;
-  RenderEnumTables(unit, report, constant_tables);
-  RenderSourceLocations(unit, report, constant_tables);
+  const NamedConstants constants = RenderNamedConstants(unit, report);
   const SourceName unit_namespace = UnitNamespaceOf(unit.name);
   // `text` placed where what only this body states is: in the unit's
   // namespace, inside the body's own where it has one.
@@ -327,18 +309,14 @@ auto RenderUnitFiles(
 
   // What nothing outside this file names -- the classes realizing the unit's
   // scopes, its closures, the functions only its own bodies call, the
-  // constants, member tables and locations its code names -- is in the
-  // namespace with no name, so another body of the unit stating its own under
-  // the same names is no conflict. Their members are still defined in the
-  // unit's namespace, which encloses it.
+  // constants its texts name -- is in the namespace with no name, so another
+  // body of the unit stating its own under the same names is no conflict.
+  // Their members are still defined in the unit's namespace, which encloses
+  // it.
   TargetText own_declarations;
   AppendSection(own_declarations, internal_forwards);
   AppendSection(own_declarations, callables.of_artifact.signature);
-  AppendSection(own_declarations, constant_tables);
-  {
-    const TargetText::Section constants(own_declarations);
-    RenderIntegralConstants(unit, report, own_declarations);
-  }
+  AppendSection(own_declarations, constants.declarations);
   TargetText own_classes;
   AppendSection(own_classes, classes.internal);
   AppendSection(own_classes, closures.declarations);
@@ -357,6 +335,7 @@ auto RenderUnitFiles(
   AppendSection(realized, callables.of_unit.code);
   AppendSectionInUnnamedNamespace(realized, callables.of_artifact.code);
   AppendSection(realized, foreign_symbols);
+  AppendSectionInUnnamedNamespace(realized, constants.definitions);
   realized += "\n";
 
   // The whole runtime through its one umbrella header, which is also what the

@@ -9,7 +9,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -26,6 +25,7 @@
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
+#include "lyra/value/constant_span.hpp"
 #include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/layout.hpp"
@@ -116,8 +116,8 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
           // entries.
           [](const MachineSpanType&) {
             return support::Layout{
-                .size = sizeof(abi::ConstantSpan<std::byte>),
-                .align = alignof(abi::ConstantSpan<std::byte>)};
+                .size = sizeof(value::ConstantSpan<std::byte>),
+                .align = alignof(value::ConstantSpan<std::byte>)};
           },
           [&](const TupleType& t) { return Product(part, t.elements); },
           // A structure's members side by side, a union's each at the start

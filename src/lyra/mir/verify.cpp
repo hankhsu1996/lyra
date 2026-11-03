@@ -23,13 +23,14 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/caller_location.hpp"
 #include "lyra/mir/class.hpp"
-#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/dump.hpp"
 #include "lyra/mir/evaluation_order.hpp"
 #include "lyra/mir/expr.hpp"
@@ -1478,12 +1479,9 @@ auto CodeNamed(
           [&](const InterfaceTableRef& r) { return none(r); },
           [&](const LocalRef& r) { return none(r); },
           [&](const DefinitionRef& r) { return none(r); },
-          [&](const EnumTableRef& r) { return none(r); },
-          [&](const IntegralConstantRef& r) { return none(r); },
+          [&](const ConstantRef& r) { return none(r); },
           [&](const StaticPropertyRef& r) { return none(r); },
-          [&](const StaticVariableRef& r) { return none(r); },
-          [&](const ClassConstantRef& r) { return none(r); },
-          [&](const SourceLocationRef& r) { return none(r); }},
+          [&](const StaticVariableRef& r) { return none(r); }},
       target);
 }
 
@@ -1523,11 +1521,11 @@ auto PositionsOf(const CompilationUnit& unit, TypeId type)
 // is a value of that type: what an assignment writes and its target, what a
 // whole write through a wrapper or a reference to bits writes and what the
 // wrapper holds or the bits reach, an arm of a choice, the value a block ends
-// with, code named as a value, what a capture is built from, a part of a
+// with, code named as a value, a constant named at its own type, what a
+// capture is built from, a part of a
 // composite, a view and the array it is built from, an argument of a
 // callable this unit holds, and the call of one, which answers what the
-// callable returns. Each block is asked on its own, in a body and in what a
-// constant is built from alike.
+// callable returns. Each block is asked on its own.
 void VerifyExprsMeetTheirTypes(
     const CompilationUnit& unit, Phase phase, const Block& block,
     const auto& describe) {
@@ -1555,6 +1553,14 @@ void VerifyExprsMeetTheirTypes(
         refuse(
             "a whole write's storage", held,
             TypeOf(block, call->arguments.at(0)));
+      }
+    }
+    if (const auto* reference = std::get_if<ReferenceExpr>(&expr.data)) {
+      if (const auto* named = std::get_if<ConstantRef>(&reference->target)) {
+        const TypeId held = unit.constants.Get(named->constant).type;
+        if (held != expr.type) {
+          refuse("a constant it names", held, expr.type);
+        }
       }
     }
     if (const auto* cast = std::get_if<CastExpr>(&expr.data);
@@ -1767,42 +1773,121 @@ void VerifyValuesMeetTheirTypes(
   }
 }
 
-// What `block` and every block inside it hand over meets the types it states,
-// as in a body.
-void VerifyBuildMeetsItsTypes(
-    const CompilationUnit& unit, const Block& block, const auto& describe) {
-  VerifyExprsMeetTheirTypes(unit, unit.phase, block, describe);
-  for (const Block& inner : block.child_scopes) {
-    VerifyBuildMeetsItsTypes(unit, inner, describe);
-  }
-}
-
-// What a constant of a class is built from meets its types as a body's
-// expressions do, and the value it is built as is of the type the constant
-// states; the definition of the class is the library's own structure for one.
-void VerifyConstantsMeetTheirTypes(
-    const CompilationUnit& unit, const Class& cls, const auto& describe) {
-  for (const ClassConstantDecl& constant : cls.constants) {
-    VerifyBuildMeetsItsTypes(unit, constant.initializer.body, describe);
-    const TypeId built =
-        TypeOf(constant.initializer.body, constant.initializer.value);
-    if (built != constant.type) {
-      RefuseValueOfType(
-          unit, "a constant it states", constant.type, built, describe);
-    }
-  }
-  const ValueBuild& definition = cls.object_definition_initializer;
-  if (definition.body.exprs.empty()) {
-    return;
-  }
-  VerifyBuildMeetsItsTypes(unit, definition.body, describe);
-  if (!unit.types.Get(TypeOf(definition.body, definition.value))
-           .IsDeclaredBy(support::LibraryDecl::kObjectDefinition)) {
+// `value` is a value of `type`: an integral's bits canonical for it, a machine
+// integer or boolean as a number, a null where a pointer or code is held, a
+// text as a C string, a pointer whose own type is `type` or one a cast reads
+// as it, naming what it states, a structure of the library with a part of each
+// member's type, an array as long as its type with elements of its element
+// type, and a view of an array of the unit holding its element type.
+void VerifyConstantMeetsItsType(
+    const CompilationUnit& unit, TypeId type, const ConstantValue& value,
+    const auto& describe) {
+  const Type& held = unit.types.Get(type);
+  const auto refuse = [&](std::string_view stated) {
     throw InternalError(
         std::format(
-            "mir verify: {} builds its definition as something other than "
-            "the library's structure for one -- please report this as a bug",
-            describe()));
+            "mir verify: {} states {} as a value of type {} -- please report "
+            "this as a bug",
+            describe(), stated, DumpType(unit, type)));
+  };
+  std::visit(
+      Overloaded{
+          [&](const IntegralValue& v) {
+            if (!held.IsIntegral() ||
+                v.planes !=
+                    CanonicalIntegralConstant(held.Integral(), v.planes)) {
+              refuse("bits not canonical for it");
+            }
+          },
+          [&](const MachineIntValue&) {
+            if (!held.Is<MachineIntType>() && !held.Is<MachineBoolType>()) {
+              refuse("a machine integer");
+            }
+          },
+          [&](const NullValue&) {
+            if (!held.Is<PointerType>() && !held.Is<MachineFunctionType>()) {
+              refuse("a null");
+            }
+          },
+          [&](const CStringValue&) {
+            if (!held.Is<MachineCStringType>()) {
+              refuse("a text");
+            }
+          },
+          [&](const PointerValue& v) {
+            if (std::holds_alternative<LocalRef>(v.to)) {
+              refuse("the address of a local");
+            }
+            if (const auto* named = std::get_if<ConstantRef>(&v.to);
+                named != nullptr &&
+                unit.constants.Get(named->constant).type != v.type) {
+              refuse("the address of a constant at another type than its own");
+            }
+            if (const CallableCode* code = CodeNamed(unit, v.to, describe);
+                code != nullptr &&
+                FunctionTypeOf(unit.types, *code) != v.type) {
+              refuse("code at another type than its own");
+            }
+            const TypeId own = OwnPointerType(unit.types, v);
+            if (own != type && !CastReadsAsAnother(unit.types, own, type)) {
+              refuse(std::format("a pointer of type {}", DumpType(unit, own)));
+            }
+          },
+          [&](const RecordValue& v) {
+            const auto* library = held.As<LibraryType>();
+            const std::optional<std::span<const TypeId>> members =
+                library == nullptr ? std::nullopt
+                                   : unit.LibraryRecordMembers(library->decl);
+            if (!members.has_value() || members->size() != v.parts.size()) {
+              refuse(std::format("a structure of {} parts", v.parts.size()));
+            }
+            for (std::size_t i = 0; i < v.parts.size(); ++i) {
+              VerifyConstantMeetsItsType(
+                  unit, (*members)[i], v.parts[i], describe);
+            }
+          },
+          [&](const ArrayValue& v) {
+            const auto* array = held.As<MachineArrayType>();
+            if (array == nullptr || array->size != v.elements.size()) {
+              refuse(std::format("an array of {} elements", v.elements.size()));
+            }
+            for (const ConstantValue& element : v.elements) {
+              VerifyConstantMeetsItsType(
+                  unit, array->element, element, describe);
+            }
+          },
+          [&](const SpanValue& v) {
+            const auto* view = held.As<MachineSpanType>();
+            const auto* array = unit.types.Get(unit.constants.Get(v.array).type)
+                                    .As<MachineArrayType>();
+            if (view == nullptr || array == nullptr ||
+                array->element != view->element) {
+              refuse("a view of a constant that is no array of its element");
+            }
+          }},
+      value.value);
+}
+
+// Every constant of the unit is a value of its type, and the definition of
+// every class it defines is the library's structure for one.
+void VerifyConstantsMeetTheirTypes(
+    const CompilationUnit& unit, std::string_view when) {
+  for (const ConstantId id : unit.constants.Ids()) {
+    const ConstantDecl& constant = unit.constants.Get(id);
+    VerifyConstantMeetsItsType(unit, constant.type, constant.value, [&] {
+      return std::format("constant {} of the unit, {}", id.value, when);
+    });
+  }
+  const TypeId definition =
+      LibraryTypeOf(unit.types, support::LibraryDecl::kObjectDefinition);
+  for (const ClassId id : unit.classes.Ids()) {
+    const std::optional<ConstantValue>& stated = unit.GetClass(id).definition;
+    if (stated.has_value()) {
+      VerifyConstantMeetsItsType(unit, definition, *stated, [&] {
+        return std::format(
+            "the definition of {}, {}", DescribeClass(unit, id), when);
+      });
+    }
   }
 }
 
@@ -2521,10 +2606,11 @@ void VerifyCallerLocationsStated(
             "this as a bug",
             describe(), what, id.value));
   };
-  const auto names_a_location = [](const Expr& expr) {
+  const auto names_a_location = [&](const Expr& expr) {
     const auto* named = std::get_if<ReferenceExpr>(&expr.data);
     return named != nullptr &&
-           std::holds_alternative<SourceLocationRef>(named->target);
+           std::holds_alternative<ConstantRef>(named->target) &&
+           expr.type == unit.builtins.source_location_record;
   };
   for (const ExprId id : block.exprs.Ids()) {
     const Expr& expr = block.exprs.Get(id);
@@ -3100,22 +3186,11 @@ class HandedClosures {
             [](const DefinitionRef&) -> Reached {
               return LivesForTheWholeRun{};
             },
-            [](const EnumTableRef&) -> Reached {
-              return LivesForTheWholeRun{};
-            },
-            [](const IntegralConstantRef&) -> Reached {
-              return LivesForTheWholeRun{};
-            },
+            [](const ConstantRef&) -> Reached { return LivesForTheWholeRun{}; },
             [](const StaticPropertyRef&) -> Reached {
               return LivesForTheWholeRun{};
             },
             [](const StaticVariableRef&) -> Reached {
-              return LivesForTheWholeRun{};
-            },
-            [](const ClassConstantRef&) -> Reached {
-              return LivesForTheWholeRun{};
-            },
-            [](const SourceLocationRef&) -> Reached {
               return LivesForTheWholeRun{};
             },
             [](const FunctionRef&) -> Reached { return LivesForTheWholeRun{}; },
@@ -3299,8 +3374,7 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
               return cls.callables.Get(callable).code.body.has_value();
             }) ||
         (cls.constructor.has_value() && cls.constructor->code.body.has_value());
-    if (holds_code || !cls.contained.empty() || !cls.constants.empty() ||
-        !cls.object_definition_initializer.body.exprs.empty()) {
+    if (holds_code || !cls.contained.empty() || cls.definition.has_value()) {
       refuse(*class_path, "holds code or data of its own for the class");
     }
   }
@@ -3392,20 +3466,49 @@ auto IsShared(support::Linkage linkage) -> bool {
 
 using Named = std::optional<std::string_view>;
 
+// What a class `owner` names that is one body's own: the class itself, where
+// only one body has it.
+auto InternalClass(const CompilationUnit& unit, ClassId owner) -> Named {
+  if (IsInternal(LinkageOf(unit, owner))) {
+    return "a class only one body has";
+  }
+  return std::nullopt;
+}
+
+// What `target` names that is one body's own, or nothing. A constant of the
+// unit is the value it is, which every artifact holding it holds alike, so
+// naming one names nothing one body has alone; what it holds is followed
+// instead. An object entry is named by the body it makes.
+auto InternalNamedBy(const CompilationUnit& unit, const ReferenceTarget& target)
+    -> Named {
+  const auto of_class = [&](ClassId owner) {
+    return InternalClass(unit, owner);
+  };
+  return std::visit(
+      Overloaded{
+          [](const LocalRef&) -> Named { return std::nullopt; },
+          [&](const DefinitionRef& r) { return of_class(r.of); },
+          [](const ConstantRef&) -> Named { return std::nullopt; },
+          [&](const StaticPropertyRef& r) { return of_class(r.owner); },
+          [](const StaticVariableRef&) -> Named { return std::nullopt; },
+          [&](const FunctionRef& r) { return of_class(r.body.owner); },
+          [&](const DispatchEntryRef& r) { return of_class(r.body.owner); },
+          [&](const DestructorRef& r) { return of_class(r.of); },
+          [&](const DispatchTableRef& r) { return of_class(r.of); },
+          [&](const InterfaceTableRef& r) { return of_class(r.of); },
+          [](const ExternalObjectEntryRef&) -> Named { return std::nullopt; }},
+      target);
+}
+
 // What `data` names that is one body's own, or nothing. That is what a body
 // numbers by where it stands among its own -- a closure, a class or a function
-// only it states -- since the same number in another body is another thing,
-// and a member table, which each body holds for itself and a call reads where
-// it lies. A constant is the value it is, which a target can write in place,
-// and an operation of a type is named by the type and the operation, so each
+// only it states -- since the same number in another body is another thing.
+// An operation of a type is named by the type and the operation, so each
 // body's is the same; a record and a builtin are no body's alone.
 auto InternalNamedBy(const CompilationUnit& unit, const ExprData& data)
     -> Named {
-  const auto of_class = [&](ClassId owner) -> Named {
-    if (IsInternal(LinkageOf(unit, owner))) {
-      return "a class only one body has";
-    }
-    return std::nullopt;
+  const auto of_class = [&](ClassId owner) {
+    return InternalClass(unit, owner);
   };
   if (std::holds_alternative<ClosureExpr>(data)) {
     return "a closure";
@@ -3415,27 +3518,7 @@ auto InternalNamedBy(const CompilationUnit& unit, const ExprData& data)
     return field != nullptr ? of_class(field->owner) : std::nullopt;
   }
   if (const auto* reference = std::get_if<ReferenceExpr>(&data)) {
-    return std::visit(
-        Overloaded{
-            [](const LocalRef&) -> Named { return std::nullopt; },
-            [&](const DefinitionRef& r) { return of_class(r.of); },
-            [](const EnumTableRef&) -> Named {
-              return "an enumeration's member table";
-            },
-            [](const IntegralConstantRef&) -> Named { return std::nullopt; },
-            [&](const StaticPropertyRef& r) { return of_class(r.owner); },
-            [](const StaticVariableRef&) -> Named { return std::nullopt; },
-            [&](const ClassConstantRef& r) { return of_class(r.owner); },
-            [](const SourceLocationRef&) -> Named { return std::nullopt; },
-            [&](const FunctionRef& r) { return of_class(r.body.owner); },
-            [&](const DispatchEntryRef& r) { return of_class(r.body.owner); },
-            [&](const DestructorRef& r) { return of_class(r.of); },
-            [&](const DispatchTableRef& r) { return of_class(r.of); },
-            [&](const InterfaceTableRef& r) { return of_class(r.of); },
-            [](const ExternalObjectEntryRef&) -> Named {
-              return std::nullopt;
-            }},
-        reference->target);
+    return InternalNamedBy(unit, reference->target);
   }
   const auto* call = std::get_if<CallExpr>(&data);
   const auto* direct =
@@ -3462,15 +3545,40 @@ auto InternalNamedBy(const CompilationUnit& unit, const ExprData& data)
       direct->target);
 }
 
+[[noreturn]] void RefuseNamingInternal(
+    std::string_view named, const auto& describe) {
+  throw InternalError(
+      std::format(
+          "mir verify: {} is defined alike by every body stating it, and names "
+          "{} -- please report this as a bug",
+          describe(), named));
+}
+
+// What `value` holds, and every constant it reaches, names nothing one body
+// has alone.
+void VerifyValueNamesNothingInternal(
+    const CompilationUnit& unit, const ConstantValue& value,
+    const auto& describe) {
+  ForEachNameReached(unit.constants, value, [&](const ReferenceTarget& to) {
+    if (const Named named = InternalNamedBy(unit, to)) {
+      RefuseNamingInternal(*named, describe);
+    }
+  });
+}
+
 void VerifyNamesNothingInternal(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   for (const Expr& expr : block.exprs) {
     if (const Named named = InternalNamedBy(unit, expr.data)) {
-      throw InternalError(
-          std::format(
-              "mir verify: {} is defined alike by every body stating it, and "
-              "names {} -- please report this as a bug",
-              describe(), *named));
+      RefuseNamingInternal(*named, describe);
+    }
+    const auto* reference = std::get_if<ReferenceExpr>(&expr.data);
+    const auto* constant = reference == nullptr
+                               ? nullptr
+                               : std::get_if<ConstantRef>(&reference->target);
+    if (constant != nullptr) {
+      VerifyValueNamesNothingInternal(
+          unit, unit.constants.Get(constant->constant).value, describe);
     }
   }
   for (const BlockId id : block.child_scopes.Ids()) {
@@ -3480,8 +3588,8 @@ void VerifyNamesNothingInternal(
 
 // A definition every artifact stating it defines alike is kept in place of
 // the others, so it has to mean the same in each: it names nothing whose
-// content is one body's own. That covers its code and, for a class, the
-// constants and the definition the library reads it through.
+// content is one body's own. That covers its code, a class's definition, and
+// every constant either reaches.
 void VerifySharedCodeNamesNothingInternal(
     const CompilationUnit& unit, std::string_view when) {
   ForEachCode(unit, [&](const CodeSource& at, const CallableCode& code) {
@@ -3492,18 +3600,15 @@ void VerifySharedCodeNamesNothingInternal(
     }
   });
   for (const ClassId id : unit.classes.Ids()) {
-    if (!IsShared(LinkageOf(unit, id))) continue;
-    const Class& cls = unit.GetClass(id);
-    const auto describe = [&] {
-      return std::format(
-          "the constants of {}, {}", DescribeClass(unit, id), when);
-    };
-    for (const ClassConstantId constant : cls.constants.Ids()) {
-      VerifyNamesNothingInternal(
-          unit, cls.constants.Get(constant).initializer.body, describe);
+    const std::optional<ConstantValue>& definition =
+        unit.GetClass(id).definition;
+    if (!definition.has_value() || !IsShared(LinkageOf(unit, id))) {
+      continue;
     }
-    VerifyNamesNothingInternal(
-        unit, cls.object_definition_initializer.body, describe);
+    VerifyValueNamesNothingInternal(unit, *definition, [&] {
+      return std::format(
+          "the definition of {}, {}", DescribeClass(unit, id), when);
+    });
   }
 }
 
@@ -3551,13 +3656,7 @@ void Verify(const CompilationUnit& unit, std::string_view when) {
   ForEachCode(unit, [&](const CodeSource& at, const CallableCode& code) {
     VerifyCode(unit, unit.phase, code, describer(at));
   });
-  for (const ClassId id : unit.classes.Ids()) {
-    const Class& cls = unit.GetClass(id);
-    VerifyConstantsMeetTheirTypes(unit, cls, [&] {
-      return std::format(
-          "the constants of {}, {}", DescribeClass(unit, id), when);
-    });
-  }
+  VerifyConstantsMeetTheirTypes(unit, when);
   // Every body is checked on its own first, since a closure handed over in one
   // is followed into the bodies that made what it captured.
   HandedClosures handed(unit);

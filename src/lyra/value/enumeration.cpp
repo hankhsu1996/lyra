@@ -32,7 +32,7 @@ auto EnumerationPlanes(
 auto Enumeration::MemberAt(std::size_t position) const -> ConstIntegralView {
   const std::size_t stride = EnumerationMemberWords(width, four_state);
   return ViewOfWords(
-      std::span(planes, members * stride).subspan(position * stride).data(),
+      planes.Entries().subspan(position * stride).data(),
       IntegralShape{
           .width = width,
           .signedness = Signedness::kUnsigned,
@@ -42,7 +42,7 @@ auto Enumeration::MemberAt(std::size_t position) const -> ConstIntegralView {
 
 auto Enumeration::PositionOf(const ConstIntegralView& value) const
     -> std::optional<std::size_t> {
-  for (std::size_t i = 0; i < members; ++i) {
+  for (std::size_t i = 0; i < Count(); ++i) {
     if (CaseEqual(MemberAt(i), value)) {
       return i;
     }
@@ -52,7 +52,7 @@ auto Enumeration::PositionOf(const ConstIntegralView& value) const
 
 auto Enumeration::NameOf(const ConstIntegralView& value) const -> String {
   const std::optional<std::size_t> at = PositionOf(value);
-  return at ? String(std::span(names, members)[*at]) : String();
+  return at ? String(names.Entries()[*at]) : String();
 }
 
 auto Enumeration::Stepped(const ConstIntegralView& value, std::size_t steps)
@@ -61,7 +61,7 @@ auto Enumeration::Stepped(const ConstIntegralView& value, std::size_t steps)
   if (!at) {
     return std::nullopt;
   }
-  return MemberAt((*at + steps) % members);
+  return MemberAt((*at + steps) % Count());
 }
 
 auto Enumeration::MemberAfter(
@@ -69,7 +69,7 @@ auto Enumeration::MemberAfter(
     -> std::optional<ConstIntegralView> {
   return Stepped(
       value,
-      static_cast<std::size_t>(static_cast<std::uint64_t>(count) % members));
+      static_cast<std::size_t>(static_cast<std::uint64_t>(count) % Count()));
 }
 
 // Stepping back `count` places lands where stepping on by the rest of a whole
@@ -78,8 +78,8 @@ auto Enumeration::MemberBefore(
     const ConstIntegralView& value, std::int64_t count) const
     -> std::optional<ConstIntegralView> {
   return Stepped(
-      value, members - static_cast<std::size_t>(
-                           static_cast<std::uint64_t>(count) % members));
+      value, Count() - static_cast<std::size_t>(
+                           static_cast<std::uint64_t>(count) % Count()));
 }
 
 }  // namespace lyra::value

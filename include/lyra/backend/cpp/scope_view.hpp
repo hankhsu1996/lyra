@@ -3,61 +3,47 @@
 #include <set>
 #include <utility>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/enum_table_id.hpp"
+#include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/integral_constant_id.hpp"
-#include "lyra/mir/source_location_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/linkage.hpp"
 
 namespace lyra::backend::cpp {
 
 // What writing a unit's bodies leaves behind beside their text: each node this
-// target has no form for, and each constant, enumeration member table and
-// location of the unit the text names. A name needs a definition in the file
-// that uses it, so the named ones are the ones the unit's code file defines.
+// target has no form for, and each constant of the unit the text names. A name
+// needs a definition in the file that uses it, so the named ones are the ones
+// the unit's code file defines.
 struct UnitRenderReport {
   diag::DiagnosticSink* refusals;
   // The piece of source the innermost node being written was lowered from,
   // which a refusal naming none of its own stands at.
   diag::SourceSpan span{};
-  std::set<mir::IntegralConstantId> constants_named;
-  std::set<mir::EnumTableId> enum_tables_named;
-  std::set<mir::SourceLocationId> source_locations_named;
+  std::set<mir::ConstantId> constants_named;
 };
 
 // Where the render is in the MIR: the unit, the function, the current block,
 // and how what is being written is linked. It holds what an arm needs to look
 // up a child node, and where to report what writing a node leaves behind; a new
 // one is made for each block entered.
-//
-// A constant's value belongs to no function; asking for one is a compiler bug.
 class ScopeView {
  public:
   // A function's body, whatever owns the function, defined under `linkage`.
   static auto ForCode(
       const mir::CompilationUnit& unit, const mir::CallableCode& code,
       support::Linkage linkage, UnitRenderReport& report) -> ScopeView {
-    return ScopeView{unit, &code, code.Body(), linkage, report};
-  }
-
-  // A constant's value: one expression, in no function, so it uses no local.
-  static auto ForConstant(
-      const mir::CompilationUnit& unit, const mir::Block& block,
-      support::Linkage linkage, UnitRenderReport& report) -> ScopeView {
-    return ScopeView{unit, nullptr, block, linkage, report};
+    return ScopeView{unit, code, code.Body(), linkage, report};
   }
 
   [[nodiscard]] auto WithBlock(const mir::Block& child) const -> ScopeView {
-    return ScopeView{*unit_, code_, child, linkage_, *report_};
+    return ScopeView{*unit_, *code_, child, linkage_, *report_};
   }
 
   ScopeView(const ScopeView&) = delete;
@@ -71,10 +57,6 @@ class ScopeView {
   }
 
   [[nodiscard]] auto Code() const -> const mir::CallableCode& {
-    if (code_ == nullptr) {
-      throw InternalError(
-          "ScopeView::Code: a constant initializer has no enclosing callable");
-    }
     return *code_;
   }
 
@@ -87,7 +69,7 @@ class ScopeView {
   }
 
   // How the definition being written is linked, which decides whether a
-  // constant it reads is named or written as its value.
+  // constant it reads is named by the code file or spelled in place.
   [[nodiscard]] auto Linkage() const -> support::Linkage {
     return linkage_;
   }
@@ -106,28 +88,18 @@ class ScopeView {
     return {report_->span, span};
   }
 
-  // Reports that the text being written names `constant`.
-  void NameConstant(mir::IntegralConstantId constant) const {
-    report_->constants_named.insert(constant);
-  }
-
-  // Reports that the text being written names `table`.
-  void NameEnumTable(mir::EnumTableId table) const {
-    report_->enum_tables_named.insert(table);
-  }
-
-  // Reports that the text being written names `location`.
-  void NameSourceLocation(mir::SourceLocationId location) const {
-    report_->source_locations_named.insert(location);
+  // Where to report what writing a node leaves behind.
+  [[nodiscard]] auto Report() const -> UnitRenderReport& {
+    return *report_;
   }
 
  private:
   ScopeView(
-      const mir::CompilationUnit& unit, const mir::CallableCode* code,
+      const mir::CompilationUnit& unit, const mir::CallableCode& code,
       const mir::Block& block, support::Linkage linkage,
       UnitRenderReport& report)
       : unit_(&unit),
-        code_(code),
+        code_(&code),
         block_(&block),
         linkage_(linkage),
         report_(&report) {

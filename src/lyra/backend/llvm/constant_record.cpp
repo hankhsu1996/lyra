@@ -18,6 +18,7 @@
 #include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/value/constant_span.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -71,14 +72,8 @@ auto LayoutOf() -> LibraryRecordLayout {
           {.offset = offset, .kind = IntegerField{.size = sizeof(Field)}});
     } else if constexpr (std::is_pointer_v<Field>) {
       layout.fields.push_back({.offset = offset, .kind = PointerField{}});
-    } else if constexpr (abi::kIsConstantSpan<Field>) {
-      static_assert(
-          offsetof(Field, data) == 0 && sizeof(Field::size) == 8,
-          "a view of entries is laid out as other than where the first is "
-          "and then a count of eight bytes");
-      layout.fields.push_back(
-          {.offset = offset,
-           .kind = SpanField{.count_at = offsetof(Field, size)}});
+    } else if constexpr (value::kIsConstantSpan<Field>) {
+      layout.fields.push_back({.offset = offset, .kind = SpanField{}});
     } else {
       layout.fields.push_back({.offset = offset, .kind = RecordField{}});
     }

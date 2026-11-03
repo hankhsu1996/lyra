@@ -15,12 +15,15 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/mir/value_build.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::mir {
 
@@ -70,8 +73,9 @@ class Reads {
     }
   }
 
-  void ReadBuild(const ValueBuild& build) {
-    ReadBlock(build.body);
+  void ReadConstant(TypeId type, const ConstantValue& value) {
+    ReadHeld(type);
+    ReadConstantValue(value);
   }
 
   [[nodiscard]] auto Take() && -> std::vector<ConsumedSignature> {
@@ -108,6 +112,29 @@ class Reads {
     for (const mir::Block& child : block.child_scopes) {
       ReadBlock(child);
     }
+  }
+
+  void ReadConstantValue(const ConstantValue& value) {
+    std::visit(
+        Overloaded{
+            [&](const PointerValue& pointer) {
+              ReadHeld(pointer.type);
+              ReadReference(pointer.to);
+            },
+            [&](const RecordValue& record) {
+              for (const ConstantValue& part : record.parts) {
+                ReadConstantValue(part);
+              }
+            },
+            [&](const ArrayValue& array) {
+              for (const ConstantValue& element : array.elements) {
+                ReadConstantValue(element);
+              }
+            },
+            [](const IntegralValue&) {}, [](const MachineIntValue&) {},
+            [](const NullValue&) {}, [](const CStringValue&) {},
+            [](const SpanValue&) {}},
+        value.value);
   }
 
   void ReadExpression(const Expr& expr) {
@@ -185,8 +212,7 @@ class Reads {
             [](const LocalRef&) {},
             // A definition's address is a symbol its class's identity names,
             // as a handle's type is; it reads nothing the class declares.
-            [](const DefinitionRef&) {}, [](const EnumTableRef&) {},
-            [](const IntegralConstantRef&) {},
+            [](const DefinitionRef&) {}, [](const ConstantRef&) {},
             [&](const StaticPropertyRef& property) {
               ReadClass(property.owner);
             },
@@ -197,7 +223,6 @@ class Reads {
                 Add(ConsumedNamespace{.unit_name = *defining});
               }
             },
-            [](const ClassConstantRef&) {}, [](const SourceLocationRef&) {},
             [&](const FunctionRef& function) {
               ReadClass(function.body.owner);
             },
@@ -237,10 +262,17 @@ auto ConsumedSignaturesOf(const CompilationUnit& unit)
     const Class& cls = unit.GetClass(id);
     if (cls.defining_unit.has_value()) continue;
     reads.ReadClass(id);
-    for (const ClassConstantDecl& constant : cls.constants) {
-      reads.ReadBuild(constant.initializer);
+    if (cls.definition.has_value()) {
+      reads.ReadConstant(
+          LibraryTypeOf(unit.types, support::LibraryDecl::kObjectDefinition),
+          *cls.definition);
     }
-    reads.ReadBuild(cls.object_definition_initializer);
+  }
+  // Every constant of the unit is read, since whichever body or definition
+  // names it, the artifact holding it names what it points at.
+  for (const ConstantId id : unit.constants.Ids()) {
+    const ConstantDecl& constant = unit.constants.Get(id);
+    reads.ReadConstant(constant.type, constant.value);
   }
   ForEachCode(unit, [&](const CodeSource&, const CallableCode& code) {
     reads.ReadCode(code);

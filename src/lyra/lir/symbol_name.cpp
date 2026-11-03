@@ -67,9 +67,6 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'x';
     case SymbolCategory::kDeletingDestructor:
       return 'k';
-    case SymbolCategory::kClassConstant:
-    case SymbolCategory::kSourceLocation:
-      return 'c';
     case SymbolCategory::kDispatchTable:
       return 'w';
   }
@@ -541,18 +538,6 @@ auto DestructorSymbol(std::string_view definition, Destructor which)
     throw InternalError("DestructorSymbol: unknown destructor");
   }();
   return SymbolName(category, {SymbolPart::Name(definition)});
-}
-
-auto SourceLocationSymbol(std::uint32_t ordinal) -> std::string {
-  return SymbolName(
-      SymbolCategory::kSourceLocation, {SymbolPart::Ordinal(ordinal)});
-}
-
-auto ClassConstantSymbol(std::string_view definition, std::uint32_t ordinal)
-    -> std::string {
-  return SymbolName(
-      SymbolCategory::kClassConstant,
-      {SymbolPart::Name(definition), SymbolPart::Ordinal(ordinal)});
 }
 
 auto DispatchTableSymbol(std::string_view definition) -> std::string {

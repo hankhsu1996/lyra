@@ -480,35 +480,31 @@ auto ReadMemWithin(
       request...);
 }
 
-template <
-    typename Memory, std::uint64_t kWidth, bool kFourState,
-    std::size_t kMembers, typename... Request>
+template <typename Memory, typename... Request>
 auto ReadMem(
     RuntimeEffects& runtime, const Memory& memory,
-    const value::EnumerationMembers<kWidth, kFourState, kMembers>& members,
-    const value::String& filename, const Request&... request) {
+    const value::Enumeration& members, const value::String& filename,
+    const Request&... request) {
   return CallWithLastOperandFirst(
       [&](base::SourceLocation at, const auto&... addressing) {
         const base::SourceLocationScope bound(at);
         return LoadMemory(
-            runtime, memory, WordValues{MemberValues{members.Read()}}, filename,
+            runtime, memory, WordValues{MemberValues{members}}, filename,
             addressing..., std::nullopt);
       },
       request...);
 }
 
-template <
-    typename Memory, std::uint64_t kWidth, bool kFourState,
-    std::size_t kMembers, typename... Request>
+template <typename Memory, typename... Request>
 auto ReadMemWithin(
     RuntimeEffects& runtime, const Memory& memory,
-    const value::EnumerationMembers<kWidth, kFourState, kMembers>& members,
-    const value::String& filename, const Request&... request) {
+    const value::Enumeration& members, const value::String& filename,
+    const Request&... request) {
   return CallWithLastOperandFirst(
       [&](base::SourceLocation at, const auto&... addressing) {
         const base::SourceLocationScope bound(at);
         return LoadMemory(
-            runtime, memory, WordValues{MemberValues{members.Read()}}, filename,
+            runtime, memory, WordValues{MemberValues{members}}, filename,
             addressing...);
       },
       request...);

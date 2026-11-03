@@ -14,33 +14,34 @@ listed_operands: [lir.types, mir.types]
 loop_of_children_sized_by_index:
   - lir.classes
   - lir.constants
-  - lir.integral constants
-  - mir.class constants
+  - lir.definitions
   - mir.classes
+  - mir.constants
   - mir.constructors
-  - mir.integral constants
 loop_of_clocked_procedures_sized_by_index:
   - lir.captures
   - lir.classes
   - lir.closures
   - lir.constants
+  - lir.definitions
   - lir.functions
   - lir.types
   - mir.callables
   - mir.captures
-  - mir.class constants
   - mir.classes
   - mir.closures
+  - mir.constants
   - mir.constructors
   - mir.types
 loop_sizing_by_index:
   - lir.classes
   - lir.constants
+  - lir.definitions
   - lir.functions
   - lir.types
   - mir.callables
-  - mir.class constants
   - mir.classes
+  - mir.constants
   - mir.constructors
   - mir.types
 record_members_owning_storage: [lir.types, mir.types]

@@ -12,6 +12,7 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
+#include "lyra/value/constant_span.hpp"
 
 namespace lyra::runtime {
 
@@ -24,7 +25,7 @@ auto CurrentSlot() -> AmbientRunContext*& {
 
 // The entry published under `name`, or null when the table holds none.
 auto FindInCallableTable(
-    abi::ConstantSpan<abi::ScopeCallable> table, std::string_view name)
+    value::ConstantSpan<abi::ScopeCallable> table, std::string_view name)
     -> abi::ErasedEntry {
   for (const abi::ScopeCallable& published : table.Entries()) {
     if (published.name == name) {

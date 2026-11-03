@@ -2197,14 +2197,8 @@ auto FunctionLowerer::ReferenceValue(
           [&](const mir::LocalRef&) { return storage(); },
           [&](const mir::StaticVariableRef&) { return storage(); },
           [&](const mir::StaticPropertyRef&) { return storage(); },
-          [&](const mir::EnumTableRef& ref) -> diag::Result<lir::Operand> {
-            return lir::Operand{lir::EnumTableRef{
-                .table = UnitLowerer::TranslateEnumTable(ref.table),
-                .type = unit_->TranslateType(type)}};
-          },
-          [&](const mir::IntegralConstantRef& ref)
-              -> diag::Result<lir::Operand> {
-            return lir::Operand{lir::IntegralConstantRef{
+          [&](const mir::ConstantRef& ref) -> diag::Result<lir::Operand> {
+            return lir::Operand{lir::ConstantRef{
                 .constant = UnitLowerer::TranslateConstant(ref.constant),
                 .type = unit_->TranslateType(type)}};
           },
@@ -2213,23 +2207,10 @@ auto FunctionLowerer::ReferenceValue(
                 "mir_to_lir: a class's definition is read whole, where only "
                 "its address is ever taken -- please report this as a bug");
           },
-          // Only a constant names another constant, and a constant is data
-          // rather than a body.
-          [&](const mir::ClassConstantRef&) -> diag::Result<lir::Operand> {
-            throw InternalError(
-                "mir_to_lir: a body reads a class's constant -- please report "
-                "this as a bug");
-          },
-          [&](const mir::SourceLocationRef&) -> diag::Result<lir::Operand> {
-            throw InternalError(
-                "mir_to_lir: a body reads a location's record -- please report "
-                "this as a bug");
-          },
           // Read as a value, a body is its address.
-          [&](const mir::FunctionRef& ref) -> diag::Result<lir::Operand> {
-            return lir::Operand{lir::FunctionRef{
-                .function =
-                    unit_->MethodFunction(ref.body.owner, ref.body.slot),
+          [&](const mir::FunctionRef&) -> diag::Result<lir::Operand> {
+            return lir::Operand{lir::AddressConst{
+                .to = unit_->ReferentOf(target, type),
                 .type = unit_->TranslateType(type)}};
           },
           // Only a class's definition holds one, and a definition is data
@@ -2263,21 +2244,16 @@ auto FunctionLowerer::ReferenceValue(
       target);
 }
 
-auto FunctionLowerer::SymbolPlace(std::string symbol, mir::TypeId type)
-    -> lir::Place {
-  return lir::Place{
-      .base =
-          lir::StaticRef{
-              .symbol = std::move(symbol),
-              .type = AddressType(unit_->TranslateType(type))},
-      .chain = {lir::Projection{lir::DerefProjection{}}}};
-}
-
 auto FunctionLowerer::ReferencePlace(
     const mir::ReferenceTarget& target, mir::TypeId type)
     -> diag::Result<lir::Place> {
-  // A constant is data a unit emits, so a place over one opens at its address,
+  // Storage no instance owns opens at its address, as does data a unit emits,
   // through which it is only read.
+  const auto at_address = [&](lir::TypeId address) -> lir::Place {
+    return StorageAt(
+        lir::AddressConst{
+            .to = unit_->ReferentOf(target, type), .type = address});
+  };
   const auto read_only_address = [&]() -> lir::TypeId {
     return unit_->Types().Intern(
         lir::Type{lir::PointerType{
@@ -2310,9 +2286,8 @@ auto FunctionLowerer::ReferencePlace(
           // that no instance holds, so it is reached by the symbol it links
           // under rather than through a receiver -- by the unit that owns it
           // exactly as by any other, since a namespace has no instance.
-          [&](const mir::StaticVariableRef& ref) -> diag::Result<lir::Place> {
-            return SymbolPlace(
-                unit_->StaticVariableSymbolOf(ref.variable), type);
+          [&](const mir::StaticVariableRef&) -> diag::Result<lir::Place> {
+            return at_address(AddressType(unit_->TranslateType(type)));
           },
           // A cell a class owns rather than an object of it (LRM 8.9) is that
           // same one cell for the whole program, so it is reached the same way
@@ -2320,36 +2295,18 @@ auto FunctionLowerer::ReferencePlace(
           // reference names is the one that declares the cell, however the
           // source spelled it, so the symbol is settled without reading what
           // any other class holds.
-          [&](const mir::StaticPropertyRef& ref) -> diag::Result<lir::Place> {
-            return SymbolPlace(unit_->StaticPropertySymbolOf(ref), type);
+          [&](const mir::StaticPropertyRef&) -> diag::Result<lir::Place> {
+            return at_address(AddressType(unit_->TranslateType(type)));
           },
           // A class's definition is a constant the declaring unit emits.
-          [&](const mir::DefinitionRef& r) -> diag::Result<lir::Place> {
-            return StorageAt(
-                lir::DefinitionRef{
-                    .defined = unit_->ClassValueType(r.of),
-                    .type = read_only_address()});
+          [&](const mir::DefinitionRef&) -> diag::Result<lir::Place> {
+            return at_address(read_only_address());
           },
-          [&](const mir::SourceLocationRef& r) -> diag::Result<lir::Place> {
-            return StorageAt(
-                lir::StaticRef{
-                    .symbol = lir::SourceLocationSymbol(r.location.value),
-                    .type = read_only_address()});
+          [&](const mir::ConstantRef&) -> diag::Result<lir::Place> {
+            return at_address(read_only_address());
           },
-          [&](const mir::ClassConstantRef& r) -> diag::Result<lir::Place> {
-            return StorageAt(
-                lir::StaticRef{
-                    .symbol = unit_->ClassConstantSymbolOf(r),
-                    .type = read_only_address()});
-          },
-          // A member table, a constant value and a function are values the
-          // unit holds, not storage anything writes through.
-          [](const mir::EnumTableRef&) -> diag::Result<lir::Place> {
-            return Unsupported("an enumeration's member table names no place");
-          },
-          [](const mir::IntegralConstantRef&) -> diag::Result<lir::Place> {
-            return Unsupported("a constant names no place");
-          },
+          // A function is code the unit holds, not storage anything writes
+          // through.
           [](const mir::FunctionRef&) -> diag::Result<lir::Place> {
             return Unsupported("a function names no place");
           },

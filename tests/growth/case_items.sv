@@ -2,7 +2,7 @@
 // lists the source writes side by side, which a step makes one longer and no
 // deeper (LRM 12.5, 12.5.1).
 // @each-adds: bytes,
-// @each-adds: mir.integral constants 1, lir.integral constants 1
+// @each-adds: mir.constants 1, lir.constants 1
 module Top #(parameter int N = 4);
   int s, r;
 

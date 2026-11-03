@@ -13,10 +13,9 @@
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/compilation_unit.hpp"
-#include "lyra/lir/enum_table_id.hpp"
+#include "lyra/lir/constant_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
-#include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -27,8 +26,8 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/enum_table_id.hpp"
-#include "lyra/mir/integral_constant_id.hpp"
+#include "lyra/mir/constant_id.hpp"
+#include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -98,20 +97,12 @@ class UnitLowerer {
   auto TranslateTypes(std::span<const mir::TypeId> source)
       -> std::vector<lir::TypeId>;
 
-  // Translates a MIR enumeration member table to its LIR-owned identity. Every
-  // table the unit holds is lowered, in pool order, so the two pools run in
-  // step and the position carries across.
-  [[nodiscard]] static auto TranslateEnumTable(mir::EnumTableId id)
-      -> lir::EnumTableId {
-    return lir::EnumTableId{.value = id.value};
-  }
-
   // Translates a MIR constant to its LIR-owned identity. Every constant the
   // unit holds is lowered, in pool order, so the two pools run in step and the
   // position carries across.
-  [[nodiscard]] static auto TranslateConstant(mir::IntegralConstantId id)
-      -> lir::IntegralConstantId {
-    return lir::IntegralConstantId{.value = id.value};
+  [[nodiscard]] static auto TranslateConstant(mir::ConstantId id)
+      -> lir::ConstantId {
+    return lir::ConstantId{.value = id.value};
   }
 
   [[nodiscard]] auto Types() const -> const lir::TypePool& {
@@ -145,6 +136,11 @@ class UnitLowerer {
   // the class the receiver has: a class carries what its bases declare as well
   // as its own.
   auto ClassValueType(mir::ClassId cls) -> lir::TypeId;
+  // What an address naming `target` names, where `named` is the type of what
+  // it names: one translation for every place an address stands in LIR. A
+  // local is a place and never such an address.
+  auto ReferentOf(const mir::ReferenceTarget& target, mir::TypeId named)
+      -> lir::Referent;
 
   // What a direct call of the callable `callable` of `owner` enters: the
   // function this unit lowers it to, or the symbol the unit defining the class
@@ -175,10 +171,6 @@ class UnitLowerer {
   [[nodiscard]] auto StaticPropertySymbolOf(
       const mir::StaticPropertyRef& ref) const -> std::string;
 
-  // The symbol a constant of a class of this unit is linked under.
-  [[nodiscard]] auto ClassConstantSymbolOf(
-      const mir::ClassConstantRef& constant) const -> std::string;
-
   // The function of this unit answering `answers` at `type`, which a call names
   // whether or not its body is lowered yet.
   [[nodiscard]] auto TypeOperationFunction(
@@ -194,7 +186,7 @@ class UnitLowerer {
 
   // The address of the entry of `method`, a method of a class this unit
   // declares, whichever unit defines it, at `prototype`.
-  [[nodiscard]] auto EntryConstant(
+  [[nodiscard]] auto EntryBody(
       const mir::CallableTarget& method, lir::TypeId prototype)
       -> lir::TableBody;
 
@@ -279,11 +271,12 @@ class UnitLowerer {
   auto TranslateType(const mir::Type& ty) -> lir::Type;
   auto LowerClass(mir::ClassId owner, const mir::Class& cls)
       -> diag::Result<lir::Class>;
-  // The value `id` of `build` states, as the data it is. A constant is built
-  // from literals, addresses and structures and arrays of them, so anything
-  // else here is a producer that stated one out of something that runs.
-  auto LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
+  // `value`, a value of `type`, as the data it is.
+  auto LowerConstant(mir::TypeId type, const mir::ConstantValue& value)
       -> lir::Constant;
+  // The class of this unit's LIR that `cls` is.
+  [[nodiscard]] auto LirClass(mir::ClassId cls) const -> lir::ClassId;
+
   // The symbol the definition of the class `of` names is linked under,
   // whichever unit defines it.
   [[nodiscard]] auto DefinitionSymbolOf(mir::ClassId of) const -> std::string;

@@ -51,9 +51,12 @@ expression tree the lowering already shaped.
 
 ### Canonicalization
 
-`AddressOf(Deref(p))` collapses to `p` -- mechanically applied by each backend's lowering of
-`AddressOfExpr`. The C++ backend skips the `&(*p)` round-trip and emits `p` directly. LLVM backends
-drop the round-trip the same way.
+No backend rewrites `AddressOf(Deref(p))` into `p`: each translates the two nodes as they stand, and
+the C++ backend writes `&(*p)`, which its compiler folds where `p` is a plain pointer, as rustc's
+MIR keeps a reborrow `&*p` and leaves its removal to the optimizer. Revised 2026-11-02: this section
+said each backend collapsed the pair, which no backend has done since a render stopped making
+optimization decisions; over a managed handle the pair was never one, since the address of the
+handle's object is not the handle.
 
 ### Borrow kind
 

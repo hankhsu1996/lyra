@@ -1,21 +1,22 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <span>
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/support/scope_execution.hpp"
+#include "lyra/value/constant_span.hpp"
+#include "lyra/value/enumeration.hpp"
 #include "lyra/value/object_ref.hpp"
 
 // The structures the runtime library reads out of constants a compiled design
 // states: what each class is, what a scope of the design hierarchy is, how each
-// object of the design is constructed, what a value dump records, and where an
-// operation was written. Each is declared once, here, or for the last in the
-// base layer whose reports read it, and both sides read the declaration: the
+// object of the design is constructed, what a value dump records, where an
+// operation was written, and an enumeration's members. Each is declared once,
+// here, or for the last two in the layer that reads them -- the base layer's
+// reports and the value layer -- and both sides read the declaration: the
 // library to read a constant, and the compiler, which is built against it, to
 // state one -- the type of each member it fills and where the member lies. A
 // record's members are the ones `ForEachField` hands over, in the order the
@@ -30,37 +31,6 @@ namespace lyra::abi {
 
 struct ObjectDefinition;
 struct ConstructionTable;
-
-// A borrowed view of the entries a unit holds as a constant array, laid out as
-// the library reads it: where the first entry is and how many there are, which
-// is what a table is in a C program, a `std::span` is in C++, and a slice is in
-// Rust. The array is what owns the entries; a view of all of it is made from
-// it, so the count is the array's own and no view of none points anywhere.
-template <typename T>
-struct ConstantSpan {
-  const T* data = nullptr;
-  std::uint64_t size = 0;
-
-  constexpr ConstantSpan() = default;
-
-  template <std::size_t N>
-  constexpr explicit ConstantSpan(const std::array<T, N>* entries) noexcept
-      : data(N == 0 ? nullptr : entries->data()), size(N) {
-  }
-
-  [[nodiscard]] auto Entries() const -> std::span<const T> {
-    return {data, size};
-  }
-};
-
-// Whether `T` is a view the library lays out as `ConstantSpan`: the one
-// structure of the library whose meaning is a view of entries rather than the
-// members it declares.
-template <typename T>
-inline constexpr bool kIsConstantSpan = false;
-
-template <typename T>
-inline constexpr bool kIsConstantSpan<ConstantSpan<T>> = true;
 
 // The time unit or precision power a scope reports when it declares no
 // timescale of its own (the synthetic `$root`). The engine's design-global
@@ -127,7 +97,7 @@ using ScopePhase = void (*)(runtime::GcObject*);
 // its object has none of this, since no instance is built of it.
 struct ScopeInfo {
   ScopeMetadata metadata;
-  ConstantSpan<ScopeCallable> exports;
+  value::ConstantSpan<ScopeCallable> exports;
   ScopePhase resolve = nullptr;
   ScopePhase initialize = nullptr;
   ScopePhase create_processes = nullptr;
@@ -187,7 +157,7 @@ struct ObjectDefinition {
   void (*end)(void*) = nullptr;
   // Every interface class the class implements, each once however many ways
   // it is reached (LRM 8.26.6.3).
-  ConstantSpan<InterfaceRow> interfaces;
+  value::ConstantSpan<InterfaceRow> interfaces;
   // The table of the body each behavior runs on an object of the class (LRM
   // 8.20), laid out by the code that dispatches on one and read by nothing
   // here. Absent for an interface class.
@@ -216,7 +186,7 @@ struct Instantiation {
 // all hold one entry lists it once, so a loop of blocks built alike states as
 // much however many it counts out.
 struct GeneratePlaces {
-  ConstantSpan<Instantiation> places;
+  value::ConstantSpan<Instantiation> places;
 };
 
 // What a constructor of a scope of the design hierarchy is handed: how each
@@ -227,8 +197,8 @@ struct GeneratePlaces {
 // same code wherever the scope stands. The tables are constants of the
 // assembled program.
 struct ConstructionTable {
-  ConstantSpan<Instantiation> instantiations;
-  ConstantSpan<GeneratePlaces> generates;
+  value::ConstantSpan<Instantiation> instantiations;
+  value::ConstantSpan<GeneratePlaces> generates;
 };
 
 // What a class of the design hierarchy states of one thing a dump may record:
@@ -404,6 +374,16 @@ constexpr void ForEachField(
   visit(file);
   visit(line);
   visit(column);
+}
+
+template <typename Visit>
+constexpr void ForEachField(
+    const value::Enumeration& record, const Visit& visit) {
+  const auto& [planes, names, width, four_state] = record;
+  visit(planes);
+  visit(names);
+  visit(width);
+  visit(four_state);
 }
 
 // Where `member` stands among the members of `Record`: the one `ForEachField`

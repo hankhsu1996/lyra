@@ -417,12 +417,8 @@ class FunctionLowerer {
   // answer and a use in value position reads it.
   auto ReferencePlace(const mir::ReferenceTarget& target, mir::TypeId type)
       -> diag::Result<lir::Place>;
-  // The storage a program-wide symbol names. The symbol carries the cell's
-  // address, so the place opens there and dereferences it -- the same shape a
-  // member place has once its receiver is resolved.
-  auto SymbolPlace(std::string symbol, mir::TypeId type) -> lir::Place;
-  // The value a name of something that is no storage stands for: a member
-  // table, a constant, a function's address.
+  // The value a name of something that is no storage stands for: a constant,
+  // a function's address.
   auto ReferenceValue(const mir::ReferenceTarget& target, mir::TypeId type)
       -> diag::Result<lir::Operand>;
   // The storage a capability wrapper stands for. A wrapper that is itself

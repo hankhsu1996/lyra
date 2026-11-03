@@ -1103,8 +1103,8 @@ auto LowerConcurrentAssertion(
       BuildAssertionAutomaton(decl.action, *dispositions.spec);
 
   ProcessLowerer action(
-      lowerer.Owner(), &lowerer, lowerer.HirScope().time_resolution,
-      decl.action, std::nullopt, ctor_frame, scopes, statics);
+      lowerer.Owner(), &lowerer, decl.action, std::nullopt, ctor_frame, scopes,
+      statics);
 
   auto pass =
       LowerActionArm(action, ctor_frame, PassArmOf(decl.action, dispositions));
