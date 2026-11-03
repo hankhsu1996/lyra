@@ -36,26 +36,6 @@ struct StructuralSubroutineRef {
   auto operator==(const StructuralSubroutineRef&) const -> bool = default;
 };
 
-// Calls a DPI-C import (LRM 35.4). `id` names the unit's own record of the
-// import; the import's foreign symbol is program-global, so the call reaches it
-// without naming whichever unit spelled the declaration, and a declaration in a
-// package or at `$unit` scope is called exactly as one in this unit's own scope
-// is.
-//
-// The instantiated scope the declaration sits in, so many enclosing levels up
-// from the call site, is the one thing about an import that is not global: a
-// `context` import observes it for the duration of its foreign call (LRM
-// 35.5.3). It is absent when the declaration sits in a namespace that is never
-// instantiated -- a package or `$unit` scope -- and the import then observes no
-// scope, so only a receiver-less export is directly reachable from it and any
-// other needs `svSetScope`.
-struct ForeignImportRef {
-  ForeignImportId id{};
-  std::optional<StructuralHops> declaring_scope;
-
-  auto operator==(const ForeignImportRef&) const -> bool = default;
-};
-
 // Which object an instance-method call runs against (LRM 8.6, 8.11, 8.15).
 // The arms are the answers, not the source spellings, so two spellings that
 // name one object share one arm.
@@ -230,6 +210,61 @@ struct PublishedScopeMethodRef {
   PublishedCallableId callable;
 
   auto operator==(const PublishedScopeMethodRef&) const -> bool = default;
+};
+
+// The scope an import is declared in, as one call reaches it, with the
+// functions evaluating the defaults the call leaves to it (LRM 13.5.3, 35.5.4)
+// named as that scope names its subroutines. Each `defaults` holds, at the
+// position of each formal the call omitted, that formal's evaluator.
+//
+// The call's own scope, so many enclosing levels up, whose subroutines this
+// unit declares.
+struct OwnDeclaringScope {
+  StructuralHops hops;
+  std::vector<std::optional<StructuralSubroutineId>> defaults;
+
+  auto operator==(const OwnDeclaringScope&) const -> bool = default;
+};
+
+// Another instance's object, which elaboration bound, whose subroutines its
+// unit published as the class `scope_class`.
+struct PublishedDeclaringScope {
+  RoutedObjectRef receiver;
+  ScopeClassId scope_class;
+  std::vector<std::optional<PublishedCallableId>> defaults;
+
+  auto operator==(const PublishedDeclaringScope&) const -> bool = default;
+};
+
+// A namespace -- a package or `$unit` scope -- which is never instantiated, so
+// no object stands for it, and whose evaluators a call names by the unit and
+// what it published of each.
+struct NamespaceDeclaringScope {
+  std::string unit_name;
+  std::vector<std::optional<DefaultEvaluator>> defaults;
+
+  auto operator==(const NamespaceDeclaringScope&) const -> bool = default;
+};
+
+using ImportDeclaringScope = std::variant<
+    OwnDeclaringScope, PublishedDeclaringScope, NamespaceDeclaringScope>;
+
+// Calls a DPI-C import (LRM 35.4). `id` names the unit's own record of the
+// import; the import's foreign symbol is program-global, so the call reaches it
+// without naming whichever unit spelled the declaration, and a declaration in a
+// package or at `$unit` scope is called exactly as one in this unit's own scope
+// is.
+//
+// Declaring an import is defining a subroutine of its scope (LRM 35.5.4), so
+// that scope is the one thing about it that is not global: a `context` import
+// observes it for the duration of its foreign call (LRM 35.5.3), and it
+// evaluates the defaults the call leaves to it. `declaring_scope` is absent
+// where the call needs neither of it.
+struct ForeignImportRef {
+  ForeignImportId id{};
+  std::optional<ImportDeclaringScope> declaring_scope;
+
+  auto operator==(const ForeignImportRef&) const -> bool = default;
 };
 
 // Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`

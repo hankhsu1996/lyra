@@ -1073,12 +1073,32 @@ class UnitLowerer {
       const slang::ast::SubroutineSymbol& sym, diag::SourceSpan span)
       -> diag::Result<hir::CalleeInterface>;
 
+  // The interface of a function evaluating an expression for a caller that
+  // hands it `parameters`, each taken as an evaluator takes a formal.
+  auto MakeEvaluatorInterface(
+      std::span<const slang::ast::FormalArgumentSymbol* const> parameters,
+      diag::SourceSpan span) -> diag::Result<hir::CalleeInterface>;
+
+  // The type the function evaluating `formal`'s default answers.
+  auto InternDefaultType(
+      const slang::ast::FormalArgumentSymbol& formal, diag::SourceSpan span)
+      -> diag::Result<hir::TypeId>;
+
   // The interface a call to `sym` is made through, where `sym` is declared in
   // the namespace of the unit named `unit_name` (LRM 26.3). Another unit's is
   // read off that unit's signature; this unit's own is its own declaration.
   auto NamespaceCalleeInterface(
       const std::string& unit_name, const slang::ast::SubroutineSymbol& sym,
       diag::SourceSpan span) -> diag::Result<hir::CalleeInterface>;
+
+  // The type the function `evaluator` of the namespace `unit_name` answers for
+  // `formal`, read off what that namespace published wherever it is another
+  // unit.
+  auto NamespaceDefaultType(
+      const std::string& unit_name,
+      const slang::ast::FormalArgumentSymbol& formal,
+      const std::string& evaluator, diag::SourceSpan span)
+      -> diag::Result<hir::TypeId>;
 
   // The property `prop` of the class `owner`, at the position the property of
   // that name has in the class's declaration, whichever unit declares it.

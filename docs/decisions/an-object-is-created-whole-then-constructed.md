@@ -44,12 +44,14 @@ its own properties its start value and then its initializer, in declaration orde
 runs its body. A class extending the library's root makes no base call. The base's arguments are
 expressions of that body, so nothing stands outside it.
 
-**D3. `new` evaluates its arguments, creates the object, takes the creator's reference to it, and
-constructs it.** A construction left partway -- its process killed (LRM 9.7), or a run-time error --
-ends that reference as any value the body owns is ended on that way out, and nothing else. The
-object ends when nothing else refers to it, and otherwise goes on existing with what its
-construction had given it (LRM 8.29). Creation does not raise; only running out of memory could stop
-it.
+**D3. `new` evaluates the arguments the source wrote, creates the object, takes the creator's
+reference to it, evaluates on it each argument the source left to a default, and constructs it.** A
+default is the class's and may name the object (a-formal-default-is-evaluated-by-its-callee D6), so
+it comes after creation; what the source wrote is the caller's and needs no object, so it comes
+first. A construction left partway -- its process killed (LRM 9.7), or a run-time error -- ends that
+reference as any value the body owns is ended on that way out, and nothing else. The object ends
+when nothing else refers to it, and otherwise goes on existing with what its construction had given
+it (LRM 8.29). Creation does not raise; only running out of memory could stop it.
 
 **D4. An instance of the design hierarchy is created and constructed the same way.** Its owner is
 unique rather than counted, and ending it ends the object through the end its class's definition
@@ -98,10 +100,12 @@ needs it set. Java answers the same need the same way. Javac stores an inner cla
 before the `super()` call, and the verifier allows a constructor exactly that before its superclass
 is initialized, assigning fields its own class declares (JVMS 4.10.2.4).
 
-**Arguments first, because a departure there then owes nothing for an object.** The JVM creates the
-object before evaluating the constructor's arguments. Evaluating them first leaves no object to
-account for when one of them is left partway, and keeps where an object's own random generator is
-seeded (LRM 18.14.1) after the arguments, where it was.
+**The written arguments first, because a departure there then owes nothing for an object.** The JVM
+creates the object before evaluating the constructor's arguments. Evaluating the ones the source
+wrote first leaves no object to account for when one of them is left partway, and keeps where an
+object's own random generator is seeded (LRM 18.14.1) after them, where it was. This once said all
+arguments, under a requirement that held no default naming the object; that reason never reached an
+omitted one, and an object nothing else refers to on a managed heap owes nothing either.
 
 **The C++ backend's constructor builds only, because a C++ constructor brings C++'s rules with it.**
 Rendering an SV constructor as a C++ constructor gave the program C++'s dispatch during construction

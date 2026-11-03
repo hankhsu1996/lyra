@@ -24,6 +24,7 @@
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -437,14 +438,11 @@ auto LowerNewClassExpr(
         "position of a derived constructor body");
   }
   std::vector<hir::ExprId> arguments;
-  if (const auto* call = nc.constructorCall(); call != nullptr) {
-    const auto& actuals = call->as<slang::ast::CallExpression>().arguments();
-    arguments.reserve(actuals.size());
-    for (const auto* actual : actuals) {
-      auto arg_or = lowerer.LowerExpr(*actual, frame);
-      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      arguments.push_back(frame.Exprs().Add(*std::move(arg_or)));
-    }
+  if (nc.constructorCall() != nullptr) {
+    auto lowered = AddConstructionActuals(
+        lowerer, frame, ConstructorEnteredBy(nc), BaseCallArguments(nc), span);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    arguments = *std::move(lowered);
   }
   const auto& cls = nc.type->getCanonicalType().as<slang::ast::ClassType>();
   auto class_id = unit_lowerer.ResolveClass(cls, span);

@@ -32,7 +32,16 @@ struct SubroutineParam {
 // a body-local variable of the return type that the body reads and writes
 // through the function name. `result_var` indexes the body's procedural-var
 // arena for that variable; it is absent for void functions and tasks, which
-// yield no value.
+// yield no value, and for a function whose result stands as the actual of a
+// formal binding a place, whose one return names the place and which no
+// variable could hold.
+//
+// `result_direction` is the direction of the formal whose actual the result
+// stands as: `input` for every function the source writes, whose result the
+// call takes as a value, and the formal's own for the function the compiler
+// makes for a formal's default (LRM 13.5.3), whose call binds the result as it
+// binds a written actual of that direction -- the place to write back into for
+// an `output` or `inout`, the storage itself for a `ref`.
 //
 // A class method's part in dispatch (LRM 8.20) is what the class declares of
 // it, not a fact of its body, so no body carries one.
@@ -66,6 +75,7 @@ struct SubroutineDecl {
   std::string name;
   SubroutineKind kind;
   TypeId result_type;
+  ParamDirection result_direction = ParamDirection::kInput;
   std::vector<SubroutineParam> params;
   std::optional<ProceduralVarId> result_var;
   ProceduralBody body;

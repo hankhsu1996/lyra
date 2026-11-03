@@ -29,6 +29,10 @@ auto ImportCalleeInterface(TypeImporter& importer, CalleeInterface interface)
     -> CalleeInterface {
   for (CalleeParam& param : interface.params) {
     param.type = importer.Import(param.type);
+    if (param.default_evaluator.has_value()) {
+      param.default_evaluator->result_type =
+          importer.Import(param.default_evaluator->result_type);
+    }
   }
   return interface;
 }
@@ -395,6 +399,9 @@ auto ImportMethods(TypeImporter& importer, const DeclaredMethods& methods)
                       ImportNamedBehavior(importer, overriding.overridden)};
             },
             [](const TypeAssociated& kept) -> MethodDispatch { return kept; },
+            [](const OnObjectBeingBuilt& kept) -> MethodDispatch {
+              return kept;
+            },
             [](const NotVirtual& kept) -> MethodDispatch { return kept; },
             [](const IntroducesVirtual& kept) -> MethodDispatch {
               return kept;

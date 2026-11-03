@@ -5,7 +5,6 @@
 #include <optional>
 #include <span>
 #include <string_view>
-#include <utility>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_id.hpp"
@@ -106,11 +105,17 @@ class CovergroupLowerer {
   DeclaredScopes scopes_;
 };
 
-// The operations of the class a covergroup is written as besides its
-// constructor, each with the name the class gives it, in the order its shape
-// reserves them.
-[[nodiscard]] auto CovergroupOperations()
-    -> std::array<std::pair<mir::CallableId, std::string_view>, 4>;
+// An operation of the class a covergroup is written as, besides its
+// constructor: the name the class gives it, and whether it runs on an object or
+// on the type.
+struct CovergroupOperation {
+  mir::CallableId callable;
+  std::string_view name;
+  CallableForm form;
+};
+
+// Those operations, in the order the class's shape reserves them.
+[[nodiscard]] auto CovergroupOperations() -> std::array<CovergroupOperation, 4>;
 
 // What the code of the operation `point` of the class the covergroup
 // `covergroup` is written as takes and answers, read off what the unit

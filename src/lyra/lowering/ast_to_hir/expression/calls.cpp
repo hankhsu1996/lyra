@@ -72,8 +72,8 @@ namespace lyra::lowering::ast_to_hir {
 namespace {
 
 // What a call wrote at each position: the value it passed, nothing where it
-// elided one or wrote a clocking event, and the positions where it left an
-// input to the callee's default (LRM 13.5.3). A default is of the type the
+// elided one or wrote a clocking event, and the positions where it left a
+// formal to the callee's default (LRM 13.5.3). A default is of the type the
 // callee states for that formal, which whoever declares the callee published,
 // so it is built only once the callee is known.
 struct WrittenActuals {
@@ -94,6 +94,24 @@ struct WrittenActuals {
               .type = interface.params[position].type,
               .data = hir::CalleeDefaultExpr{},
               .span = span});
+    }
+    return std::move(values);
+  }
+
+  // The arguments of a call of `callee`, whose omitted formals take the types
+  // the callee declares them with.
+  auto Omitting(
+      const slang::ast::SubroutineSymbol& callee, UnitLowerer& unit_lowerer,
+      WalkFrame frame,
+      diag::SourceSpan
+          span) && -> diag::Result<std::vector<std::optional<hir::ExprId>>> {
+    for (const std::size_t position : omitted) {
+      auto type = unit_lowerer.InternType(
+          callee.getArguments()[position]->getType(), span);
+      if (!type) return std::unexpected(std::move(type.error()));
+      values[position] = frame.Exprs().Add(
+          hir::Expr{
+              .type = *type, .data = hir::CalleeDefaultExpr{}, .span = span});
     }
     return std::move(values);
   }
@@ -465,6 +483,42 @@ auto BuiltinCall(
       .arguments = {operands.begin() + 1, operands.end()}};
 }
 
+// The object of the scope declaring `sym`, as a call reaches it from `origin`,
+// where its name started, and the class that scope was published as.
+struct ObjectOfScope {
+  hir::RoutedObjectRef receiver;
+  hir::ScopeClassId scope_class;
+};
+
+auto ObjectDeclaring(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, RouteOrigin origin,
+    const slang::ast::SubroutineSymbol& sym, diag::SourceSpan span)
+    -> diag::Result<ObjectOfScope> {
+  const slang::ast::Scope* owner = sym.getParentScope();
+  if (owner == nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a subroutine declared in this kind of scope is not yet supported");
+  }
+  auto walked =
+      unit_lowerer.RouteToScopeOrRefuse(frame, *owner, std::move(origin), span);
+  if (!walked) return std::unexpected(std::move(walked.error()));
+  ScopeRoute route = *std::move(walked);
+  const auto* on = std::get_if<InPublishedScope>(&route.place);
+  if (on == nullptr || !on->within.empty()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a subroutine of another instance reached this way is not yet "
+        "supported");
+  }
+  const hir::ScopeClassId scope_class = on->scope_class;
+  return ObjectOfScope{
+      .receiver = unit_lowerer.MakeRoutedObjectRef(
+          frame.Current(), std::move(route),
+          unit_lowerer.ScopeClassTypeOf(scope_class)),
+      .scope_class = scope_class};
+}
+
 // Enables a subroutine of another instance or of a generate block inside one,
 // or of a block of a loop of this one (LRM 25.7, 23.6, 27.4), reached from
 // `origin`, where the call's name started. The
@@ -481,33 +535,20 @@ auto LowerObjectSubroutineCall(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         base::DiagMessage(message));
   };
-  const slang::ast::Scope* owner = sym.getParentScope();
-  if (owner == nullptr) {
-    return refuse(
-        "a subroutine declared in this kind of scope is not yet supported");
-  }
-  auto walked =
-      unit_lowerer.RouteToScopeOrRefuse(frame, *owner, std::move(origin), span);
-  if (!walked) return std::unexpected(std::move(walked.error()));
-  ScopeRoute route = *std::move(walked);
-  const auto unsupported = [&] {
-    return refuse(
-        "a subroutine of another instance reached this way is not yet "
-        "supported");
-  };
-  const auto* on = std::get_if<InPublishedScope>(&route.place);
-  if (on == nullptr || !on->within.empty()) return unsupported();
+  auto on = ObjectDeclaring(unit_lowerer, frame, std::move(origin), sym, span);
+  if (!on) return std::unexpected(std::move(on.error()));
   const hir::ScopeClassId scope_class = on->scope_class;
+  const hir::RoutedObjectRef receiver = on->receiver;
   const hir::ScopeClassSignature& published =
       unit_lowerer.Unit().scope_classes.Get(scope_class);
   const auto callable = published.FindCallable(sym.name);
-  if (!callable.has_value()) return unsupported();
+  if (!callable.has_value()) {
+    return refuse(
+        "a subroutine of another instance reached this way is not yet "
+        "supported");
+  }
   const hir::SubroutinePrototype& prototype =
       published.callables.Get(*callable);
-  const ScopeFrameId owner_frame = frame.Current();
-  const hir::RoutedObjectRef receiver = unit_lowerer.MakeRoutedObjectRef(
-      owner_frame, std::move(route),
-      unit_lowerer.ScopeClassTypeOf(scope_class));
   return hir::Expr{
       .type = prototype.result_type,
       .data =
@@ -521,6 +562,77 @@ auto LowerObjectSubroutineCall(
                   std::move(actuals).Through(prototype.interface, frame, span)},
       .span = span,
   };
+}
+
+// What the import `sym` states of the scope declaring it for one call: how the
+// call reaches it, where the import observes it (LRM 35.5.3) or a default it
+// evaluates is left to it (LRM 13.5.3), with what evaluates each default left
+// to it, named as that scope names its subroutines (LRM 35.5.4). Nothing where
+// the call needs neither.
+auto ReachImportScope(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const slang::ast::CallExpression& call,
+    const slang::ast::SubroutineSymbol& sym,
+    std::span<const std::size_t> omitted, diag::SourceSpan span)
+    -> diag::Result<std::optional<hir::ImportDeclaringScope>> {
+  const auto formals = sym.getArguments();
+  const auto evaluator_name = [&](std::size_t position) {
+    return ArgumentDefaultName(sym.name, formals[position]->name);
+  };
+  if (const auto* unit = DeclaringNamespaceUnit(sym)) {
+    if (omitted.empty()) return std::nullopt;
+    hir::NamespaceDeclaringScope space{
+        .unit_name = CompilationUnitName(*unit, unit_lowerer.Names()),
+        .defaults =
+            std::vector<std::optional<hir::DefaultEvaluator>>(formals.size())};
+    for (const std::size_t position : omitted) {
+      auto type = unit_lowerer.NamespaceDefaultType(
+          space.unit_name, *formals[position], evaluator_name(position), span);
+      if (!type) return std::unexpected(std::move(type.error()));
+      space.defaults[position] = hir::DefaultEvaluator{
+          .name = evaluator_name(position), .result_type = *type};
+    }
+    return hir::ImportDeclaringScope{std::move(space)};
+  }
+  const bool observes = sym.flags.has(slang::ast::MethodFlags::DPIContext);
+  RouteOrigin start = unit_lowerer.StartOf(frame, sym, call.lookupInfo.hierRef);
+  const auto declaring_frame = NamesOwnDeclaration(start)
+                                   ? unit_lowerer.LookupForeignImportScope(sym)
+                                   : std::nullopt;
+  const std::optional<hir::StructuralHops> hops =
+      declaring_frame.has_value() ? frame.HopsTo(*declaring_frame)
+                                  : std::nullopt;
+  if (hops.has_value() && (hops->value == 0 || omitted.empty())) {
+    hir::OwnDeclaringScope own{
+        .hops = *hops,
+        .defaults = std::vector<std::optional<hir::StructuralSubroutineId>>(
+            formals.size())};
+    for (const std::size_t position : omitted) {
+      own.defaults[position] =
+          unit_lowerer.EvaluatorOf(*formals[position]->getDefaultValue());
+    }
+    return hir::ImportDeclaringScope{std::move(own)};
+  }
+  if (!observes && omitted.empty()) return std::nullopt;
+  auto on = ObjectDeclaring(unit_lowerer, frame, std::move(start), sym, span);
+  if (!on) return std::unexpected(std::move(on.error()));
+  hir::PublishedDeclaringScope published{
+      .receiver = on->receiver,
+      .scope_class = on->scope_class,
+      .defaults =
+          std::vector<std::optional<hir::PublishedCallableId>>(formals.size())};
+  const hir::ScopeClassSignature& signature =
+      unit_lowerer.Unit().scope_classes.Get(on->scope_class);
+  for (const std::size_t position : omitted) {
+    const auto callable = signature.FindCallable(evaluator_name(position));
+    if (!callable.has_value()) {
+      throw InternalError(
+          "ReachImportScope: a scope publishes the function evaluating a "
+          "default of each import it declares");
+    }
+    published.defaults[position] = *callable;
+  }
+  return hir::ImportDeclaringScope{std::move(published)};
 }
 
 // A subroutine of the interface instance a virtual interface holds, or of an
@@ -1166,18 +1278,12 @@ auto LowerSubroutineCall(
   if (sym->flags.has(slang::ast::MethodFlags::DPIImport)) {
     auto import_id = unit_lowerer.EnsureForeignImport(*sym);
     if (!import_id) return std::unexpected(std::move(import_id.error()));
-    // The declaration's own instantiated scope, reached from here. It is absent
-    // when the declaring scope is a namespace that is never instantiated.
-    std::optional<hir::StructuralHops> declaring_scope;
-    if (const auto declaring_frame =
-            unit_lowerer.LookupForeignImportScope(*sym)) {
-      declaring_scope = frame.HopsTo(*declaring_frame);
-      if (!declaring_scope.has_value()) {
-        throw InternalError(
-            "AST->HIR call: the scope declaring this DPI import is not on the "
-            "current scope stack");
-      }
-    }
+    auto scope = ReachImportScope(
+        unit_lowerer, frame, call, *sym, actuals.omitted, span);
+    if (!scope) return std::unexpected(std::move(scope.error()));
+    auto arguments =
+        std::move(actuals).Omitting(*sym, unit_lowerer, frame, span);
+    if (!arguments) return std::unexpected(std::move(arguments.error()));
     auto import_result_type = unit_lowerer.InternExpressionType(call, span);
     if (!import_result_type) {
       return std::unexpected(std::move(import_result_type.error()));
@@ -1188,8 +1294,8 @@ auto LowerSubroutineCall(
             hir::CallExpr{
                 .callee =
                     hir::ForeignImportRef{
-                        .id = *import_id, .declaring_scope = declaring_scope},
-                .arguments = std::move(actuals).WithNoDefault(),
+                        .id = *import_id, .declaring_scope = *std::move(scope)},
+                .arguments = *std::move(arguments),
             },
         .span = span,
     };

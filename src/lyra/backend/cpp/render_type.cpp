@@ -727,6 +727,12 @@ void WriteOne(TargetText& out, const CppNewOwner& owner) {
       "by a unique pointer -- please report this as a bug");
 }
 
+void WriteOne(TargetText& out, const CppUnconstructedObject& creation) {
+  Write(
+      out, "lyra::runtime::CreateUnconstructedObject<", creation.built, ">(&",
+      creation.built, "::", CppDefinitionName(), ")");
+}
+
 void WriteOne(TargetText& out, const CppObjectCreation& creation) {
   const mir::Type& type = creation.of.Unit().types.Get(creation.of.Type());
   const auto head = [&](std::string_view function) {

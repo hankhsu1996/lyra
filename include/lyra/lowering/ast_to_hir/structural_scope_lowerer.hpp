@@ -133,11 +133,17 @@ class StructuralScopeLowerer {
   auto PopulateSubroutineMember(
       const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
       -> diag::Result<void>;
-  auto PopulateForeignImportMember(const slang::ast::SubroutineSymbol& sym)
+  auto PopulateArgumentDefaults(
+      const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
+      -> diag::Result<void>;
+  auto PopulateForeignImportMember(
+      const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
       -> diag::Result<void>;
   auto DefineEvaluator(
       const slang::ast::Symbol& holder, std::string name,
       const slang::ast::Expression& expr, hir::TypeId result_type,
+      hir::ParamDirection result_direction,
+      std::span<const slang::ast::FormalArgumentSymbol* const> parameters,
       WalkFrame frame) -> diag::Result<void>;
   auto PopulateModportMember(
       const slang::ast::ModportSymbol& modport, WalkFrame frame)

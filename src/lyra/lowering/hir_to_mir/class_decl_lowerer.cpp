@@ -37,6 +37,7 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -310,24 +311,6 @@ auto LowerStaticStorageInto(
     }
   }
   return {};
-}
-
-// A static method (LRM 8.10) belongs to the class and runs on no object; every
-// other method runs on the one it was called through.
-auto CallableFormOf(const hir::MethodDispatch& dispatch) -> CallableForm {
-  return std::visit(
-      Overloaded{
-          [](const hir::TypeAssociated&) {
-            return CallableForm::kTypeAssociated;
-          },
-          [](const hir::NotVirtual&) { return CallableForm::kInstanceMember; },
-          [](const hir::IntroducesVirtual&) {
-            return CallableForm::kInstanceMember;
-          },
-          [](const hir::OverridesVirtual&) {
-            return CallableForm::kInstanceMember;
-          }},
-      dispatch);
 }
 
 }  // namespace
@@ -823,8 +806,7 @@ auto ClassDeclLowerer::PopulateBodies(
   mir::Builder ctor_block(ctor_code.Body(), declaring_frame.span);
   ScopeChainNode scope_link{};
   // The object, and then the instance it belongs to where the class belongs to
-  // one, which is written into the member the object records it in for the
-  // object's later bodies to read.
+  // one.
   BoundImplicitParameters bound = BindImplicitParameters(
       unit_lowerer,
       BodyFrame(declaring_frame, mir_class, scope_link)
@@ -840,28 +822,6 @@ auto ClassDeclLowerer::PopulateBodies(
       unit_lowerer, declaring_scope_, mir_class.time_resolution, ctor.body,
       ctor.root_stmt, frame, scopes_, ctor_static_bindings_);
 
-  if (const std::optional<DeclaringInstance>& instance =
-          shape.declaring_instance) {
-    const mir::ExprId value = ctor_block.Add(
-        mir::Expr{
-            .data =
-                mir::CastExpr{
-                    .operand = BuildEnclosingScopeReceiver(
-                        frame, unit_lowerer.Unit(), mir::EnclosingHops{})},
-            .type = instance->type});
-    const mir::ExprId target = ctor_block.Add(
-        mir::MakeFieldAccessExpr(
-            BuildObjectDeref(
-                unit_lowerer.Unit(), ctor_block,
-                ctor_block.Add(MakeSelfRefExpr(frame))),
-            mir::ClassFieldTarget{.owner = class_id_, .slot = instance->member},
-            instance->type));
-    ctor_block.AppendStmt(
-        mir::ExprStmt{
-            .expr = ctor_block.Add(
-                mir::MakeAssignExpr(
-                    unit_lowerer.Unit().builtins, target, value))});
-  }
   // Register the ctor formals early so a base-constructor arg (LRM 8.7) can
   // reference them: `super.new(a * 2)` in the derived ctor reads its own `a`
   // formal, and that lookup resolves through the same procedural-var
@@ -894,11 +854,14 @@ auto ClassDeclLowerer::PopulateBodies(
     // A base belonging to an instance leads its arguments with that instance,
     // which encloses the one this class belongs to.
     if (hir_class.base_call.declaring_instance.has_value()) {
-      base_args.push_back(BuildImplicitInstanceArgument(
-          ctor_lowerer, frame, *hir_class.base_call.declaring_instance));
+      base_args.push_back(EvaluatedOnce(
+          frame,
+          BuildImplicitInstanceArgument(
+              ctor_lowerer, frame, *hir_class.base_call.declaring_instance)));
     }
     auto actuals = EmitConstructionActuals(
-        ctor_lowerer, reporting, *declared.base, hir_class.base_call.arguments);
+        ctor_lowerer, reporting, *declared.base, hir_class.base_call.arguments,
+        base_args, [&] { return ctor_block.Add(MakeSelfRefExpr(frame)); });
     if (!actuals) return std::unexpected(std::move(actuals.error()));
     base_args.insert(base_args.end(), actuals->begin(), actuals->end());
     // The base's construction is part of this one, so it reports where this

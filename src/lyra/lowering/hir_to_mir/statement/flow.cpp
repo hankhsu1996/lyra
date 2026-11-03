@@ -17,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -150,12 +151,16 @@ auto LowerReturnStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::ReturnStmt& r) -> diag::Result<mir::Stmt> {
   mir::Builder block = frame.Builder();
+  // The value is bound to the result as an actual is bound to a formal: its
+  // value brought to the result's type (LRM 13.4.1, 10.8), or the place it
+  // names where the result is passed back by reference.
   std::optional<mir::ExprId> explicit_value;
   if (r.value.has_value()) {
-    auto value_or =
-        process.LowerExpr(process.HirBody().exprs.Get(*r.value), frame);
-    if (!value_or) return std::unexpected(std::move(value_or.error()));
-    explicit_value = block.Add(*std::move(value_or));
+    auto bound = EmitBoundActual(
+        process, frame, process.HirBody().exprs.Get(*r.value),
+        process.ResultPassing(), process.DeclaredResultType());
+    if (!bound) return std::unexpected(std::move(bound.error()));
+    explicit_value = *bound;
   }
   // The returned value is the completion payload: this return's explicit value
   // (or the implicit result variable) plus each output / inout formal,

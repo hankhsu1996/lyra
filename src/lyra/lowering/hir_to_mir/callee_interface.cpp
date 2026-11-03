@@ -67,20 +67,17 @@ auto BuildCompletionLayout(
   return layout;
 }
 
-auto ParamTypeOf(
-    const mir::CompilationUnit& unit, mir::TypeId value_type,
-    hir::ParamDirection direction) -> std::optional<mir::TypeId> {
-  switch (direction) {
-    case hir::ParamDirection::kOutput:
-      return std::nullopt;
-    case hir::ParamDirection::kInput:
-    case hir::ParamDirection::kInOut:
+auto PassedTypeOf(
+    const mir::CompilationUnit& unit, mir::TypeId value_type, Passing passing)
+    -> mir::TypeId {
+  switch (passing) {
+    case Passing::kByValue:
       return value_type;
     // A reference to a value of any type refers to the value where it lies,
     // whatever its type, rather than to something holding one, as Rust's
     // `&mut dyn Any` and `Box<dyn Any>` hold one unsized type two ways.
-    case hir::ParamDirection::kRef:
-    case hir::ParamDirection::kConstRef:
+    case Passing::kByReference:
+    case Passing::kByReadOnlyReference:
       return unit.types.Intern(
           mir::Type{mir::VariableRefType{
               .pointee =
@@ -88,11 +85,18 @@ auto ParamTypeOf(
                           .IsDeclaredBy(support::LibraryDecl::kAny)
                       ? unit.types.Intern(mir::Type{mir::ErasedValueType{}})
                       : value_type,
-              .mutability = direction == hir::ParamDirection::kConstRef
+              .mutability = passing == Passing::kByReadOnlyReference
                                 ? mir::Mutability::kReadOnly
                                 : mir::Mutability::kMutable}});
   }
-  throw InternalError("ParamTypeOf: unknown parameter direction");
+  throw InternalError("PassedTypeOf: unknown passing");
+}
+
+auto ParamTypeOf(
+    const mir::CompilationUnit& unit, mir::TypeId value_type,
+    hir::ParamDirection direction) -> std::optional<mir::TypeId> {
+  return ParamPassingOf(direction).transform(
+      [&](Passing passing) { return PassedTypeOf(unit, value_type, passing); });
 }
 
 auto ReportParamTypeOf(
@@ -170,13 +174,15 @@ auto CalleeFormalsOf(
 
 namespace {
 
-// The type a call yields to a callee of `kind` taking `formals` and returning
-// `result_type`.
+// The type a call yields to a callee of `kind` taking `formals`, whose result
+// of `result_type` stands as the actual of a formal of `result_direction`.
 auto CallTypeOf(
     UnitLowerer& unit_lowerer, hir::SubroutineKind kind,
-    hir::TypeId result_type, const std::vector<CalleeFormal>& formals)
-    -> mir::TypeId {
-  const mir::TypeId result = unit_lowerer.TranslateType(result_type);
+    hir::TypeId result_type, hir::ParamDirection result_direction,
+    const std::vector<CalleeFormal>& formals) -> mir::TypeId {
+  const mir::TypeId result = PassedTypeOf(
+      unit_lowerer.Unit(), unit_lowerer.TranslateType(result_type),
+      ResultPassingOf(result_direction));
   const CompletionLayout layout = BuildCompletionLayout(
       formals, result == unit_lowerer.Unit().builtins.void_type
                    ? std::nullopt
@@ -191,16 +197,17 @@ auto CallTypeOf(
 auto SubroutineCallTypeOf(
     UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl) -> mir::TypeId {
   return CallTypeOf(
-      unit_lowerer, decl.kind, decl.result_type,
+      unit_lowerer, decl.kind, decl.result_type, decl.result_direction,
       CalleeFormalsOf(unit_lowerer, decl));
 }
 
 auto SubroutineCallTypeOf(
-    UnitLowerer& unit_lowerer, const hir::CalleeInterface& interface,
-    hir::TypeId result_type) -> mir::TypeId {
+    UnitLowerer& unit_lowerer, const hir::SubroutinePrototype& published)
+    -> mir::TypeId {
   return CallTypeOf(
-      unit_lowerer, interface.kind, result_type,
-      CalleeFormalsOf(unit_lowerer, interface));
+      unit_lowerer, published.interface.kind, published.result_type,
+      published.result_direction,
+      CalleeFormalsOf(unit_lowerer, published.interface));
 }
 
 namespace {
@@ -304,8 +311,7 @@ auto PrototypeOf(
   }
   return BuildPrototype(
       unit_lowerer, self, published.interface.kind, formals,
-      SubroutineCallTypeOf(
-          unit_lowerer, published.interface, published.result_type),
+      SubroutineCallTypeOf(unit_lowerer, published),
       published.interface.track_caller);
 }
 

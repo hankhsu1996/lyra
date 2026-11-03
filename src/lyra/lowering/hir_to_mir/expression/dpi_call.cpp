@@ -35,6 +35,7 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -634,6 +635,20 @@ auto LowerForeignImportDirect(
       result_type);
 }
 
+// The direction an import's formal is declared with, which a DPI-C import
+// spells as its C-side data flow (LRM 35.5.6).
+auto ParamDirectionOf(support::DpiDirection direction) -> hir::ParamDirection {
+  switch (direction) {
+    case support::DpiDirection::kInput:
+      return hir::ParamDirection::kInput;
+    case support::DpiDirection::kOutput:
+      return hir::ParamDirection::kOutput;
+    case support::DpiDirection::kInout:
+      return hir::ParamDirection::kInOut;
+  }
+  throw InternalError("ParamDirectionOf: unknown DpiDirection");
+}
+
 // Populates `closure`'s body with the DPI import boundary: each actual crossed
 // in its own shape -- by value, or through a boundary object the foreign call
 // reaches by pointer or by handle -- then the foreign call, then the read-back
@@ -646,7 +661,7 @@ auto LowerForeignImportDirect(
 template <ExprLowerer Lowerer>
 auto PopulateForeignImportBoundary(
     Lowerer& lowerer, const WalkFrame& cframe, const hir::CallExpr& c,
-    const hir::ForeignImportDecl& import)
+    const hir::ForeignImportDecl& import, const hir::ForeignImportRef& ref)
     -> diag::Result<std::optional<mir::LocalId>> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
@@ -663,15 +678,42 @@ auto PopulateForeignImportBoundary(
     support::DpiCarrier carrier{};
     mir::TypeId sv_type{};
   };
-  std::vector<Writeback> writebacks;
-
   const std::vector<hir::ExprId> operands = RequiredOperands(c);
-  std::vector<mir::ExprId> call_args;
-  call_args.reserve(operands.size());
-  for (std::size_t i = 0; i < operands.size(); ++i) {
+  std::vector<std::optional<Writeback>> writebacks(operands.size());
+  std::vector<mir::ExprId> call_args(operands.size());
+  HeldActuals held(unit, operands.size(), OmitsAny(hir_exprs, operands));
+  // What a default's function takes of what the call bound before it: every
+  // formal but an open array, whose shape only the call has (LRM 35.6.1.1).
+  const auto evaluator_arguments = [&](std::size_t i) {
+    std::vector<mir::ExprId> arguments;
+    const std::span<const mir::ExprId> before = held.Before(i);
+    for (std::size_t j = 0; j < before.size(); ++j) {
+      if (!std::holds_alternative<support::OpenArrayCarrier>(
+              import.params[j].carrier)) {
+        arguments.push_back(before[j]);
+      }
+    }
+    return arguments;
+  };
+  // The default the call left formal `i` to, as the scope declaring the import
+  // evaluates it.
+  const auto omitted_default =
+      [&](std::size_t i) -> diag::Result<EvaluatedDefault> {
+    if (!ref.declaring_scope.has_value()) {
+      throw InternalError(
+          "PopulateForeignImportBoundary: a call leaving a formal to its "
+          "default names the scope evaluating it");
+    }
+    return EvaluateImportDefault(
+        lowerer, cframe, *ref.declaring_scope, i,
+        ParamDirectionOf(import.params[i].direction), evaluator_arguments(i));
+  };
+  const auto cross = [&](std::size_t i) -> diag::Result<void> {
     const hir::ExprId actual = operands[i];
     const hir::DpiParamAbi& param = import.params[i];
     const support::DpiCarrier& carrier = param.carrier;
+    const bool omitted = std::holds_alternative<hir::CalleeDefaultExpr>(
+        hir_exprs.Get(actual).data);
 
     // An actual the foreign side writes back to is read to seed its boundary
     // object and written once the call returns, and the source writes it once.
@@ -680,7 +722,13 @@ auto PopulateForeignImportBoundary(
     mir::ExprId seed_sv{};
     if (support::DpiDirectionWritesBack(param.direction)) {
       const hir::Expr& actual_hir = hir_exprs.Get(actual);
-      auto place_or = LowerLvalue(lowerer, actual_hir, cframe);
+      diag::Result<Lvalue> place_or = [&]() -> diag::Result<Lvalue> {
+        if (!omitted) return LowerLvalue(lowerer, actual_hir, cframe);
+        auto answered = omitted_default(i);
+        if (!answered) return std::unexpected(std::move(answered.error()));
+        return PlaceAnswered(
+            cframe, answered->answer, answered->type, actual_hir);
+      }();
       if (!place_or) return std::unexpected(std::move(place_or.error()));
       auto taken =
           ReadThenWrite(unit_lowerer.Unit(), cframe, *std::move(place_or));
@@ -695,17 +743,27 @@ auto PopulateForeignImportBoundary(
                           : unit_lowerer.TranslateType(param.sv_type);
       seed_sv = ConvertToType(unit, body, taken->incoming, crossing_type);
       written_place = std::move(taken->lvalue);
+      if (param.direction == support::DpiDirection::kOutput) {
+        held.HoldStartValue(cframe, i, crossing_type);
+      } else {
+        seed_sv = held.HoldValue(cframe, i, seed_sv);
+      }
+    } else if (omitted) {
+      auto answered = omitted_default(i);
+      if (!answered) return std::unexpected(std::move(answered.error()));
+      crossing_type = answered->type;
+      seed_sv = held.HoldValue(cframe, i, answered->answer);
     } else {
       auto sv_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
       if (!sv_or) return std::unexpected(std::move(sv_or.error()));
       crossing_type = sv_or->type;
-      seed_sv = body.Add(*std::move(sv_or));
+      seed_sv = held.HoldValue(cframe, i, body.Add(*std::move(sv_or)));
     }
 
     if (CrossesByValue(param)) {
-      call_args.push_back(MarshalSvToCarrier(
-          unit_lowerer, body, seed_sv, carrier, ForeignHold::kForTheCall));
-      continue;
+      call_args[i] = MarshalSvToCarrier(
+          unit_lowerer, body, seed_sv, carrier, ForeignHold::kForTheCall);
+      return {};
     }
 
     // Every other actual seeds a boundary object from the actual's current
@@ -721,18 +779,21 @@ auto PopulateForeignImportBoundary(
         hir_exprs.Get(actual).type, carrier_type);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     body.AppendStmt(mir::LocalDeclStmt{.target = temp, .init = *init_or});
-    call_args.push_back(
-        BuildBoundaryArgument(unit, body, carrier, temp, carrier_type));
+    call_args[i] =
+        BuildBoundaryArgument(unit, body, carrier, temp, carrier_type);
 
     if (written_place.has_value()) {
-      writebacks.push_back(
-          Writeback{
-              .temp = temp,
-              .carrier_type = carrier_type,
-              .actual = *std::move(written_place),
-              .carrier = carrier,
-              .sv_type = crossing_type});
+      writebacks[i] = Writeback{
+          .temp = temp,
+          .carrier_type = carrier_type,
+          .actual = *std::move(written_place),
+          .carrier = carrier,
+          .sv_type = crossing_type};
     }
+    return {};
+  };
+  if (auto crossed = ForEachInCallOrder(hir_exprs, operands, cross); !crossed) {
+    return std::unexpected(std::move(crossed.error()));
   }
 
   // The foreign side writes the process's standard output through the C
@@ -762,12 +823,13 @@ auto PopulateForeignImportBoundary(
     body.AppendStmt(mir::ExprStmt{.expr = body.Add(std::move(foreign_call))});
   }
 
-  for (const Writeback& wb : writebacks) {
-    const mir::ExprId temp_ref = body.LocalPlace(wb.temp, wb.carrier_type);
+  for (const std::optional<Writeback>& wb : writebacks) {
+    if (!wb.has_value()) continue;
+    const mir::ExprId temp_ref = body.LocalPlace(wb->temp, wb->carrier_type);
 
     const mir::ExprId rhs_id = BuildBoundaryReadback(
-        unit_lowerer, cframe, wb.carrier, temp_ref, wb.sv_type);
-    auto stored = AppendStores(unit_lowerer, cframe, wb.actual, rhs_id);
+        unit_lowerer, cframe, wb->carrier, temp_ref, wb->sv_type);
+    auto stored = AppendStores(unit_lowerer, cframe, wb->actual, rhs_id);
     if (!stored) return std::unexpected(std::move(stored.error()));
   }
 
@@ -791,20 +853,37 @@ auto PopulateForeignImportBoundary(
 }
 
 // The scope a `context` import makes current (LRM 35.5.3): the instantiated
-// scope of its own declaration, reached over the distance the walk already
-// knows. A declaration in a namespace that is never instantiated -- a package
-// or `$unit` scope -- has none, and enters a null one rather than leaving the
-// call to report an enclosing chain entry that is not its declaration's.
+// scope of its own declaration, as the call reaches it. A declaration in a
+// namespace that is never instantiated -- a package or `$unit` scope -- has
+// none, and enters a null one rather than leaving the call to report an
+// enclosing chain entry that is not its declaration's.
+template <ExprLowerer Lowerer>
 auto BuildDeclaringScopeExpr(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    std::optional<hir::StructuralHops> declaring_scope) -> mir::ExprId {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  if (declaring_scope.has_value()) {
-    return BuildEnclosingScopeReceiver(
-        frame, unit, mir::EnclosingHops{.value = declaring_scope->value});
-  }
-  return frame.Builder().Add(
-      mir::Expr{.data = mir::NullLiteral{}, .type = unit.builtins.scope_ptr});
+    Lowerer& lowerer, const WalkFrame& frame,
+    const std::optional<hir::ImportDeclaringScope>& declaring_scope)
+    -> diag::Result<mir::ExprId> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Builder block = frame.Builder();
+  const auto none = [&] {
+    return block.Add(
+        mir::Expr{.data = mir::NullLiteral{}, .type = unit.builtins.scope_ptr});
+  };
+  if (!declaring_scope.has_value()) return none();
+  return std::visit(
+      Overloaded{
+          [&](const hir::OwnDeclaringScope& own) -> diag::Result<mir::ExprId> {
+            return BuildEnclosingScopeReceiver(
+                frame, unit, mir::EnclosingHops{.value = own.hops.value});
+          },
+          [&](const hir::PublishedDeclaringScope& published)
+              -> diag::Result<mir::ExprId> {
+            return ObjectAs(
+                block, lowerer.RouteEnd(frame, published.receiver.id),
+                unit.builtins.scope_ptr);
+          },
+          [&](const hir::NamespaceDeclaringScope&)
+              -> diag::Result<mir::ExprId> { return none(); }},
+      *declaring_scope);
 }
 
 // Closes the extent a `context` import's foreign call runs inside (LRM 35.5.3)
@@ -822,13 +901,17 @@ auto BuildDeclaringScopeExpr(
 // execution leaves if it has been told to, which is the point it regains
 // control at when the foreign side consumed no simulation time and suspended
 // nothing.
-void CloseDpiScopeExtent(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Block&& boundary,
-    std::optional<hir::StructuralHops> declaring_scope) {
+template <ExprLowerer Lowerer>
+auto CloseDpiScopeExtent(
+    Lowerer& lowerer, const WalkFrame& frame, mir::Block&& boundary,
+    const std::optional<hir::ImportDeclaringScope>& declaring_scope)
+    -> diag::Result<void> {
+  UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Builder block = frame.Builder();
+  auto entered = BuildDeclaringScopeExpr(lowerer, frame, declaring_scope);
+  if (!entered) return std::unexpected(std::move(entered.error()));
   AppendRuntimeEffectStmt(
-      unit_lowerer, block, support::BuiltinFn::kEnterDpiScope,
-      {BuildDeclaringScopeExpr(unit_lowerer, frame, declaring_scope)});
+      unit_lowerer, block, support::BuiltinFn::kEnterDpiScope, {*entered});
 
   mir::Block cleanup;
   AppendRuntimeEffectStmt(
@@ -838,6 +921,7 @@ void CloseDpiScopeExtent(
   block.AppendFinally(std::move(boundary), std::move(cleanup));
   AppendRuntimeEffectStmt(
       unit_lowerer, block, support::BuiltinFn::kTakeDepartureIfDue, {});
+  return {};
 }
 
 // Whether crossing the boundary takes statements rather than one expression.
@@ -845,14 +929,15 @@ void CloseDpiScopeExtent(
 // object of its own, declared before the call and read back after it. And a
 // context import (LRM 35.5.3) may call back into SystemVerilog, so the scope
 // the callback resolves against is pushed before the call and popped after.
-// Neither fits in an expression, while a call with no actual and no callback
-// to arrange is one.
+// A default the call leaves to the scope is evaluated from what the call holds
+// for the formals before it. None of that fits in an expression, while a call
+// with no actual and no callback to arrange is one.
 //
 // Settled from the declaration, before the first actual is lowered, because an
 // expression belongs to the block it was lowered into and cannot move after.
-[[nodiscard]] auto BoundaryTakesStatements(const hir::ForeignImportDecl& import)
-    -> bool {
-  return import.is_context ||
+[[nodiscard]] auto BoundaryTakesStatements(
+    const hir::ForeignImportDecl& import, bool omits_any) -> bool {
+  return import.is_context || omits_any ||
          !std::ranges::all_of(import.params, CrossesByValue);
 }
 
@@ -862,9 +947,8 @@ void CloseDpiScopeExtent(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportSequenced(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::ForeignImportDecl& import,
-    std::optional<hir::StructuralHops> declaring_scope, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
+    const hir::ForeignImportDecl& import, const hir::ForeignImportRef& ref,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
 
@@ -877,7 +961,8 @@ auto LowerForeignImportSequenced(
   const WalkFrame bframe =
       import.is_context ? cframe.WithBlock(&extent_body) : cframe;
 
-  auto ret_temp = PopulateForeignImportBoundary(lowerer, bframe, c, import);
+  auto ret_temp =
+      PopulateForeignImportBoundary(lowerer, bframe, c, import, ref);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
   if (!ret_temp->has_value()) {
@@ -908,8 +993,9 @@ auto LowerForeignImportSequenced(
               mir::MakeAssignExpr(
                   unit.builtins, body.LocalPlace(result, result_type),
                   result_id))});
-  CloseDpiScopeExtent(
-      unit_lowerer, cframe, std::move(extent_body), declaring_scope);
+  auto closed = CloseDpiScopeExtent(
+      lowerer, cframe, std::move(extent_body), ref.declaring_scope);
+  if (!closed) return std::unexpected(std::move(closed.error()));
   return steps.Build(steps.Body().LocalPlace(result, result_type));
 }
 
@@ -931,8 +1017,7 @@ auto LowerForeignImportSequenced(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportTask(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::ForeignImportDecl& import,
-    std::optional<hir::StructuralHops> declaring_scope)
+    const hir::ForeignImportDecl& import, const hir::ForeignImportRef& ref)
     -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
@@ -949,8 +1034,8 @@ auto LowerForeignImportTask(
       import.is_context ? outer.Frame().WithBlock(&extent_body) : outer.Frame();
 
   ClosureBuilder fiber_body(unit, await_frame, support::ClosureKind::kFn);
-  auto ret_temp =
-      PopulateForeignImportBoundary(lowerer, fiber_body.Frame(), c, import);
+  auto ret_temp = PopulateForeignImportBoundary(
+      lowerer, fiber_body.Frame(), c, import, ref);
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
   mir::Builder body = await_frame.Builder();
@@ -973,8 +1058,9 @@ auto LowerForeignImportTask(
           .type = unit.builtins.machine_bool});
   body.AppendStmt(BuildWaitStmt(unit_lowerer, body, run_id));
   if (import.is_context) {
-    CloseDpiScopeExtent(
-        unit_lowerer, outer.Frame(), std::move(extent_body), declaring_scope);
+    auto closed = CloseDpiScopeExtent(
+        lowerer, outer.Frame(), std::move(extent_body), ref.declaring_scope);
+    if (!closed) return std::unexpected(std::move(closed.error()));
   }
   return outer.BuildCallOnce();
 }
@@ -1059,12 +1145,12 @@ auto LowerForeignImportCall(
       lowerer.Owner().Hir().foreign_imports.Get(ref.id);
 
   if (import.is_task) {
-    return LowerForeignImportTask(
-        lowerer, frame, c, import, ref.declaring_scope);
+    return LowerForeignImportTask(lowerer, frame, c, import, ref);
   }
-  if (BoundaryTakesStatements(import)) {
+  if (BoundaryTakesStatements(
+          import, OmitsAny(lowerer.HirExprs(), RequiredOperands(c)))) {
     return LowerForeignImportSequenced(
-        lowerer, frame, c, import, ref.declaring_scope, result_type);
+        lowerer, frame, c, import, ref, result_type);
   }
   return LowerForeignImportDirect(lowerer, frame, c, import, result_type);
 }
@@ -1090,7 +1176,8 @@ auto LowerForeignImportCallStmtForm(
   // hands it the marshaled result, so both are expressions the caller consumes.
   // A boundary taking no statements is the foreign call itself.
   if (import.is_task || ReturnsValue(import) ||
-      !BoundaryTakesStatements(import)) {
+      !BoundaryTakesStatements(
+          import, OmitsAny(lowerer.HirExprs(), RequiredOperands(c)))) {
     return std::nullopt;
   }
 
@@ -1101,13 +1188,17 @@ auto LowerForeignImportCallStmtForm(
   const WalkFrame bframe =
       import.is_context ? cframe.WithBlock(&extent_body) : cframe;
 
-  auto crossed = PopulateForeignImportBoundary(lowerer, bframe, c, import);
+  auto crossed = PopulateForeignImportBoundary(lowerer, bframe, c, import, ref);
   if (!crossed) {
     return diag::Result<mir::Stmt>{std::unexpected(std::move(crossed.error()))};
   }
   if (import.is_context) {
-    CloseDpiScopeExtent(
-        lowerer.Owner(), cframe, std::move(extent_body), ref.declaring_scope);
+    auto closed = CloseDpiScopeExtent(
+        lowerer, cframe, std::move(extent_body), ref.declaring_scope);
+    if (!closed) {
+      return diag::Result<mir::Stmt>{
+          std::unexpected(std::move(closed.error()))};
+    }
   }
   mir::Stmt stmt = steps.BuildStatement();
   stmt.label = label;
@@ -1171,8 +1262,8 @@ void ReturnTheFallbackAnswer(
     case hir::SubroutineKind::kConstraintBlock:
     case hir::SubroutineKind::kStaticConstraintBlock:
       throw InternalError(
-          "ReturnTheFallbackAnswer: a constraint block is exported to C -- "
-          "please report this as a bug");
+          "ReturnTheFallbackAnswer: only a task or a function is exported to "
+          "C -- please report this as a bug");
   }
   const mir::TypeId carrier =
       CarrierTypeId(unit, support::ScalarCarrier{ret_abi});

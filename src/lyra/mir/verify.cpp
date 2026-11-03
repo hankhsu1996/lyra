@@ -1948,8 +1948,9 @@ void VerifyConstantsAreFolded(
 // Storage a uniquely owning pointer or a class handle owns comes into existence
 // only by a new-expression, whose initializer has the type allocated -- a value
 // evaluated into that storage, or an object's construction, entered on the
-// object once it is created whole. A placement new-expression's storage is its
-// allocation function's instead, found by its one argument.
+// object once it is created whole -- or, for an object, none, where the code
+// then enters its constructor by name. A placement new-expression's storage is
+// its allocation function's instead, found by its one argument.
 void VerifyAllocations(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
@@ -1976,9 +1977,13 @@ void VerifyAllocations(
     // so the expression answers a pointer owning nothing, to a value of the
     // initializer's type.
     if (allocation->placement.has_value()) {
+      if (!allocation->initializer.has_value()) {
+        refuse(id, "places nothing in what its allocation function hands out");
+        continue;
+      }
       const auto* place = unit.types.Get(expr.type).As<PointerType>();
       if (place == nullptr || place->ownership != PointerOwnership::kBorrowed ||
-          block.exprs.Get(allocation->initializer).type != place->pointee) {
+          block.exprs.Get(*allocation->initializer).type != place->pointee) {
         refuse(
             id,
             "places a value but answers other than a pointer owning nothing "
@@ -2009,12 +2014,18 @@ void VerifyAllocations(
     if (!allocated.has_value()) {
       refuse(id, "yields a type that owns no storage it allocates");
     }
-    if (block.exprs.Get(allocation->initializer).type != *allocated) {
+    if (!allocation->initializer.has_value()) {
+      if (!unit.types.Get(*allocated).Is<ObjectType>()) {
+        refuse(id, "leaves what it allocates without a value");
+      }
+      continue;
+    }
+    if (block.exprs.Get(*allocation->initializer).type != *allocated) {
       refuse(id, "initializes its storage from a value of another type");
     }
     if (unit.types.Get(*allocated).Is<ObjectType>()) {
-      const auto* construction =
-          std::get_if<CallExpr>(&block.exprs.Get(allocation->initializer).data);
+      const auto* construction = std::get_if<CallExpr>(
+          &block.exprs.Get(*allocation->initializer).data);
       if (construction == nullptr ||
           !std::holds_alternative<Construct>(construction->callee)) {
         refuse(id, "creates an object it does not construct");
@@ -2099,8 +2110,9 @@ void VerifyLargeValuesLieInStorage(
     std::span<const ExprId> made_by_enclosing, const auto& describe) {
   std::vector<ExprId> made(made_by_enclosing.begin(), made_by_enclosing.end());
   for (const Expr& expr : block.exprs) {
-    if (const auto* allocation = std::get_if<NewExpr>(&expr.data)) {
-      made.push_back(allocation->initializer);
+    if (const auto* allocation = std::get_if<NewExpr>(&expr.data);
+        allocation != nullptr && allocation->initializer.has_value()) {
+      made.push_back(*allocation->initializer);
     }
   }
   if (answers_caller) {
@@ -2848,8 +2860,9 @@ class HandedClosures {
     if (const auto* made = std::get_if<ClosureExpr>(&data)) {
       return {made->closure};
     }
-    if (const auto* boxed = std::get_if<NewExpr>(&data)) {
-      return Handed(code, block, boxed->initializer);
+    if (const auto* boxed = std::get_if<NewExpr>(&data);
+        boxed != nullptr && boxed->initializer.has_value()) {
+      return Handed(code, block, *boxed->initializer);
     }
     if (const auto* borrowed = std::get_if<BorrowExpr>(&data)) {
       return Handed(code, block, borrowed->operand);

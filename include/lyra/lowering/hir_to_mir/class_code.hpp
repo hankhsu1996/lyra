@@ -56,16 +56,23 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto SlotPrototype(
     const mir::CallableCode& operation, mir::TypeId self) -> mir::CallableCode;
 
+// A method's form, as its dispatch states it: a static method (LRM 8.10)
+// belongs to the class and runs on no object, one run on an object being built
+// runs as its constructor does, and every other runs on the object it was
+// called through.
+auto CallableFormOf(const hir::MethodDispatch& dispatch) -> CallableForm;
+
 // The operation `point` of the class `id` as the class states it: taking what
 // the operation does, it reads the instance the operation runs for -- the one
-// a construction or a type-associated method is handed (LRM 8.7, 8.10), and
-// otherwise the one the object recorded in `instance.member` -- and enters the
-// code that instance's body compiled, through the method `published`, the
-// class published of the scope declaring the class, introduced for it.
+// a body of the form `form` is handed where it is entered by a construction or
+// runs on no object (LRM 8.7, 8.10), and otherwise the one the object recorded
+// in `instance.member` -- and enters the code that instance's body compiled,
+// through the method `published`, the class published of the scope declaring
+// the class, introduced for it.
 [[nodiscard]] auto EntryOf(
     UnitLowerer& unit_lowerer, mir::ClassId id,
     const DeclaringInstance& instance, const ClassCodePoint& point,
-    mir::ClassId published) -> mir::CallableCode;
+    CallableForm form, mir::ClassId published) -> mir::CallableCode;
 
 // The class `cls` a design element's unit declares, as every body of the unit
 // states it: its layout, what it answers of the interface classes it

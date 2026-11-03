@@ -655,7 +655,7 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::Subroutine: {
       const auto& sub = member.as<slang::ast::SubroutineSymbol>();
       if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
-        return PopulateForeignImportMember(sub);
+        return PopulateForeignImportMember(sub, frame);
       }
       return PopulateSubroutineMember(sub, frame);
     }
@@ -997,13 +997,17 @@ auto StructuralScopeLowerer::PopulateNetMember(
 }
 
 // The subroutine this scope evaluates `expr`, which `holder` holds, in as
-// `result_type`, for a caller that asks for the value.
+// `result_type`, for a caller that asks for the value and hands it
+// `parameters`.
 auto StructuralScopeLowerer::DefineEvaluator(
     const slang::ast::Symbol& holder, std::string name,
     const slang::ast::Expression& expr, hir::TypeId result_type,
+    hir::ParamDirection result_direction,
+    std::span<const slang::ast::FormalArgumentSymbol* const> parameters,
     WalkFrame frame) -> diag::Result<void> {
   auto evaluator = LowerEvaluatorDecl(
-      *owner_, holder, std::move(name), expr, result_type, frame);
+      *owner_, holder, std::move(name), expr, result_type, result_direction,
+      parameters, frame);
   if (!evaluator) return std::unexpected(std::move(evaluator.error()));
   frame.current_structural_scope->structural_subroutines.Define(
       owner_->EvaluatorOf(expr), *std::move(evaluator));
@@ -1025,7 +1029,7 @@ auto StructuralScopeLowerer::PopulateModportMember(
     if (!type) return std::unexpected(std::move(type.error()));
     auto defined = DefineEvaluator(
         *port, ModportReadName(modport.name, port->name),
-        ViewExpressionOf(*port), *type, frame);
+        ViewExpressionOf(*port), *type, hir::ParamDirection::kInput, {}, frame);
     if (!defined) return std::unexpected(std::move(defined.error()));
   }
   return {};
@@ -1045,7 +1049,9 @@ auto StructuralScopeLowerer::PopulateClockingMember(
                           std::string name) -> diag::Result<void> {
     auto type = owner_->InternExpressionType(expression, span);
     if (!type) return std::unexpected(std::move(type.error()));
-    return DefineEvaluator(block, std::move(name), expression, *type, frame);
+    return DefineEvaluator(
+        block, std::move(name), expression, *type, hir::ParamDirection::kInput,
+        {}, frame);
   };
   const std::vector<const slang::ast::SignalEventControl*> events =
       ClockingEventsOf(block);
@@ -1074,7 +1080,8 @@ auto StructuralScopeLowerer::PopulatePortMember(
   auto type = owner_->InternDeclaredType(port);
   if (!type) return std::unexpected(std::move(type.error()));
   return DefineEvaluator(
-      port, PortDefaultName(port.name), *initializer, *type, frame);
+      port, PortDefaultName(port.name), *initializer, *type,
+      hir::ParamDirection::kInput, {}, frame);
 }
 
 // A subroutine this scope defines for an interface (LRM 25.7) is handed to that
@@ -1141,6 +1148,26 @@ auto StructuralScopeLowerer::RecordExternDefinition(
   return {};
 }
 
+// Each formal's default is evaluated here, in the scope declaring the
+// subroutine, for every call that omits it (LRM 13.5.3).
+auto StructuralScopeLowerer::PopulateArgumentDefaults(
+    const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
+    -> diag::Result<void> {
+  for (const slang::ast::FormalArgumentSymbol* formal : sym.getArguments()) {
+    const slang::ast::Expression* default_value = formal->getDefaultValue();
+    if (default_value == nullptr) continue;
+    auto type = owner_->InternDefaultType(
+        *formal, frontend::PointSpanOf(formal->location));
+    if (!type) return std::unexpected(std::move(type.error()));
+    auto defined = DefineEvaluator(
+        *formal, ArgumentDefaultName(SubroutineNameOf(sym), formal->name),
+        *default_value, *type, ParamDirectionOf(*formal),
+        EvaluatorParametersOf(sym, *formal), frame);
+    if (!defined) return std::unexpected(std::move(defined.error()));
+  }
+  return {};
+}
+
 auto StructuralScopeLowerer::PopulateSubroutineMember(
     const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
     -> diag::Result<void> {
@@ -1156,17 +1183,8 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
   frame.current_structural_scope->structural_subroutines.Define(
       binding->subroutine_id, *std::move(decl_or));
 
-  // Each formal's default is evaluated here, in the scope declaring the
-  // subroutine, for every call that omits it (LRM 13.5.3).
-  for (const slang::ast::FormalArgumentSymbol* formal : sym.getArguments()) {
-    const slang::ast::Expression* default_value = formal->getDefaultValue();
-    if (default_value == nullptr) continue;
-    auto type = owner_->InternDeclaredType(*formal);
-    if (!type) return std::unexpected(std::move(type.error()));
-    auto defined = DefineEvaluator(
-        *formal, ArgumentDefaultName(SubroutineNameOf(sym), formal->name),
-        *default_value, *type, frame);
-    if (!defined) return std::unexpected(std::move(defined.error()));
+  if (auto defaults = PopulateArgumentDefaults(sym, frame); !defaults) {
+    return defaults;
   }
 
   // An `export "DPI-C"` (LRM 35.5) names a subroutine of its own scope, so the
@@ -1183,14 +1201,15 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
 }
 
 auto StructuralScopeLowerer::PopulateForeignImportMember(
-    const slang::ast::SubroutineSymbol& sym) -> diag::Result<void> {
+    const slang::ast::SubroutineSymbol& sym, WalkFrame frame)
+    -> diag::Result<void> {
   // The declaration is classified here even when nothing in this unit calls it,
   // so a signature outside the DPI-C type mapping (LRM 35.5.6) is reported
   // against the declaration that wrote it rather than against a call site far
   // away, or nowhere at all.
   auto id_or = owner_->EnsureForeignImport(sym);
   if (!id_or) return std::unexpected(std::move(id_or.error()));
-  return {};
+  return PopulateArgumentDefaults(sym, frame);
 }
 
 auto StructuralScopeLowerer::PopulateProceduralBlockMember(

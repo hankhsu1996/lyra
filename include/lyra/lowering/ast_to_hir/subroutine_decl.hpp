@@ -13,6 +13,7 @@
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
@@ -94,12 +95,12 @@ auto ClockingConditionName(std::string_view block, std::size_t entry)
 
 // Whether whatever declares `callee` evaluates the defaults of its formals in a
 // function of its own, which a call omitting a formal calls (LRM 13.5.3). A
-// subroutine of a scope or a namespace and a method of a class do. A DPI-C
-// import has no body of Lyra's to hold one, a constructor's call has no object
-// yet, a method the front end or the runtime supplies has no declaration of
-// the design's, and an interface class's defaults are constant expressions, the
-// same for every class implementing it (LRM 8.26.9); each of those has its
-// default lowered as written where the call stands.
+// subroutine of a scope or a namespace, an import, and a method or a
+// constructor of a class, do. A method the front end or the runtime supplies
+// has no declaration of the design's, and an interface class a design element
+// declares has no code in any body, its default being a constant the same for
+// every class implementing it (LRM 8.26.8); each of those has its default
+// lowered as written where the call stands.
 auto EvaluatesItsOwnDefaults(const slang::ast::SubroutineSymbol& callee)
     -> bool;
 
@@ -115,23 +116,56 @@ auto TracksCaller(const slang::ast::SubroutineSymbol& callee) -> bool;
 // default (LRM 13.5.3). The front end fills an omitted argument in by placing
 // the default's own expression there, so an argument that is that expression
 // is one the call omitted. Only where the callee evaluates its own defaults is
-// one answered, and only for an input, the one direction whose value a default
-// stands for. Nothing of such an argument is lowered or analyzed where the call
-// stands; it is the callee's.
+// one answered. Nothing of such an argument is lowered or analyzed where the
+// call stands; it is the callee's.
 auto OmitsArgument(const slang::ast::CallExpression& call, std::size_t position)
     -> bool;
+
+// The formals the defaults of `subroutine` name: the front end binds a default
+// among the formals of the declaration that wrote it, which for a method
+// defined outside its class is the prototype in the class (LRM 8.24).
+auto FormalsNamedByDefaults(const slang::ast::SubroutineSymbol& subroutine)
+    -> std::span<const slang::ast::FormalArgumentSymbol* const>;
+
+// The formals before `formal` that the function evaluating its default takes,
+// which a call has bound by the time it reaches `formal`, as the default names
+// them. The front end binds a formal's default in the subroutine's own scope,
+// so the default may name them, and what it names is the value this call hands
+// each one rather than the formal's storage, which for a static subroutine
+// still holds the previous call's (LRM 13.4.2). An import's open array takes
+// its shape from each call (LRM 35.6.1.1), so it has no type a parameter could
+// state and is not one.
+auto EvaluatorParametersOf(
+    const slang::ast::SubroutineSymbol& subroutine,
+    const slang::ast::FormalArgumentSymbol& formal)
+    -> std::vector<const slang::ast::FormalArgumentSymbol*>;
+
+// How the function evaluating a later formal's default takes `formal`: by
+// reference, to the place the call holds what it binds that formal in for as
+// long as the call runs, so that a default answering a place may answer that
+// one, and read-only for a `const ref`, as the callee takes it (LRM 13.5.2).
+auto EvaluatorParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
+    -> hir::ParamDirection;
+
+// What `formal`'s default evaluates: the expression the front end bound, or the
+// place it binds, which is the left side of the assignment the front end writes
+// for a formal copied back to its actual.
+auto DefaultExpressionOf(const slang::ast::FormalArgumentSymbol& formal)
+    -> const slang::ast::Expression&;
 
 // The function evaluating the expression `expr` that `holder` holds, in the
 // scope or class that wrote it, for a caller that asks for the value: the
 // expression names declarations of that scope, which would mean nothing where
 // the caller stands, so what crosses is the call and the expression is lowered
 // where it was written. It is one return of the expression as `result_type`,
-// and takes no formals.
+// standing as the actual of a formal of `result_direction`, and takes
+// `parameters`, each as `EvaluatorParamDirectionOf` says.
 auto LowerEvaluatorDecl(
     UnitLowerer& unit_lowerer, const slang::ast::Symbol& holder,
     std::string name, const slang::ast::Expression& expr,
-    hir::TypeId result_type, WalkFrame frame)
-    -> diag::Result<hir::SubroutineDecl>;
+    hir::TypeId result_type, hir::ParamDirection result_direction,
+    std::span<const slang::ast::FormalArgumentSymbol* const> parameters,
+    WalkFrame frame) -> diag::Result<hir::SubroutineDecl>;
 
 // Lowers a slang subroutine (LRM 13) into a hir::SubroutineDecl: its result
 // type, its formals as body-local procedural vars carrying their direction, the
@@ -152,6 +186,22 @@ auto LowerSubroutineDecl(
 // default.
 auto BaseCallArguments(const slang::ast::Expression& base_call)
     -> std::span<const slang::ast::Expression* const>;
+
+// The constructor a construction enters, where the front end states one: a
+// `new` or a `super.new` the source wrote, or the call of a base constructor
+// the front end bound from an extends specifier.
+auto ConstructorEnteredBy(const slang::ast::Expression& base_call)
+    -> const slang::ast::SubroutineSymbol*;
+
+// The arguments of a construction entering `constructor`, in HIR: each the
+// front end filled with a formal's default stands as the callee's default,
+// which the class evaluates (LRM 8.7, 13.5.3), and every other as written.
+template <ExprLowerer Lowerer>
+auto AddConstructionActuals(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const slang::ast::SubroutineSymbol* constructor,
+    std::span<const slang::ast::Expression* const> actuals,
+    diag::SourceSpan span) -> diag::Result<std::vector<hir::ExprId>>;
 
 // Lowers a class constructor (LRM 8.7) into its callable and the arguments of
 // its base construction as one operation. The arguments are here rather than

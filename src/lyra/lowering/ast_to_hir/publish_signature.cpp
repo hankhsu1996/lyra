@@ -354,19 +354,22 @@ auto UnitLowerer::PublishedCallableOf(
     const ScopePublicationRecord::Callable& callable)
     -> diag::Result<hir::SubroutinePrototype> {
   // An expression another unit asks for the value of is evaluated in a
-  // function of this unit that takes nothing. It answers the type the
-  // declaration holding the expression gives it, and the expression's own
+  // function of this unit, taking what the caller hands it. It answers the type
+  // the declaration holding the expression gives it, and the expression's own
   // where no declaration gives one, as for a clocking event's operand.
-  const auto evaluator = [&](std::string name,
-                             diag::Result<hir::TypeId> result_type)
-      -> diag::Result<hir::SubroutinePrototype> {
+  const auto evaluator =
+      [&](std::string name, diag::Result<hir::TypeId> result_type,
+          hir::ParamDirection result_direction,
+          std::span<const slang::ast::FormalArgumentSymbol* const> parameters,
+          diag::SourceSpan span) -> diag::Result<hir::SubroutinePrototype> {
     if (!result_type) return std::unexpected(std::move(result_type.error()));
+    auto interface = MakeEvaluatorInterface(parameters, span);
+    if (!interface) return std::unexpected(std::move(interface.error()));
     return hir::SubroutinePrototype{
         .name = std::move(name),
-        .interface =
-            hir::CalleeInterface{
-                .kind = hir::SubroutineKind::kFunction, .params = {}},
-        .result_type = *result_type};
+        .interface = *std::move(interface),
+        .result_type = *result_type,
+        .result_direction = result_direction};
   };
   return std::visit(
       Overloaded{
@@ -390,26 +393,31 @@ auto UnitLowerer::PublishedCallableOf(
           [&](const ScopePublicationRecord::PortDefault& port) {
             return evaluator(
                 PortDefaultName(port.port->name),
-                InternDeclaredType(*port.port));
+                InternDeclaredType(*port.port), hir::ParamDirection::kInput, {},
+                frontend::PointSpanOf(port.port->location));
           },
           [&](const ScopePublicationRecord::ViewRead& read) {
             return evaluator(
                 ModportReadName(read.modport->name, read.port->name),
-                InternDeclaredType(*read.port));
+                InternDeclaredType(*read.port), hir::ParamDirection::kInput, {},
+                frontend::PointSpanOf(read.port->location));
           },
           [&](const ScopePublicationRecord::ArgumentDefault& argument) {
+            const auto span = frontend::PointSpanOf(argument.formal->location);
             return evaluator(
                 ArgumentDefaultName(
                     SubroutineNameOf(*argument.subroutine),
                     argument.formal->name),
-                InternDeclaredType(*argument.formal));
+                InternDefaultType(*argument.formal, span),
+                ParamDirectionOf(*argument.formal),
+                EvaluatorParametersOf(*argument.subroutine, *argument.formal),
+                span);
           },
           [&](const ScopePublicationRecord::ClockingExpression& clocking) {
+            const auto span = frontend::PointSpanOf(clocking.block->location);
             return evaluator(
-                clocking.name,
-                InternExpressionType(
-                    *clocking.expression,
-                    frontend::PointSpanOf(clocking.block->location)));
+                clocking.name, InternExpressionType(*clocking.expression, span),
+                hir::ParamDirection::kInput, {}, span);
           }},
       callable);
 }
@@ -1295,6 +1303,30 @@ auto UnitLowerer::NamespaceCalleeInterface(
   }
   hir::TypeImporter importer = ReadingImporter(*signature);
   return hir::ImportCallable(importer, *published).interface;
+}
+
+auto UnitLowerer::NamespaceDefaultType(
+    const std::string& unit_name,
+    const slang::ast::FormalArgumentSymbol& formal,
+    const std::string& evaluator, diag::SourceSpan span)
+    -> diag::Result<hir::TypeId> {
+  if (unit_name == unit_.name) return InternDefaultType(formal, span);
+  const hir::UnitSignature* signature = Signatures().Find(unit_name);
+  const auto* namespace_unit =
+      signature == nullptr
+          ? nullptr
+          : std::get_if<hir::PublishedNamespace>(&signature->unit);
+  const hir::SubroutinePrototype* published =
+      namespace_unit == nullptr ? nullptr
+                                : namespace_unit->FindSubroutine(evaluator);
+  if (published == nullptr) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::NamespaceDefaultType: '{}' published no '{}'",
+            unit_name, evaluator));
+  }
+  hir::TypeImporter importer = ReadingImporter(*signature);
+  return hir::ImportCallable(importer, *published).result_type;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

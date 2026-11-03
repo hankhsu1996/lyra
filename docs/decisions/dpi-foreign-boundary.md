@@ -61,9 +61,12 @@ call family. Three structural facts fix its shape:
 
 An import call names that symbol directly. Because the name space is its own, the call reaches it
 without naming a class or a unit, and a declaration written in a package or at `$unit` scope is
-called from any unit with no cross-unit reference at all. What the calling unit needs is the
-declaration's ABI projection -- a fact of the declaration, identical wherever it is read -- so it
-holds its own copy and depends on no other unit's artifact.
+called from any unit with no cross-unit reference at all. What belongs to the declaring scope is
+apart from the symbol: the scope a `context` import observes, and the functions evaluating its
+defaults (a-formal-default-is-evaluated-by-its-callee D7), which a call reaches as it reaches any
+subroutine of that scope. What the calling unit needs is the declaration's ABI projection -- a fact
+of the declaration, identical wherever it is read -- so it holds its own copy and depends on no
+other unit's artifact.
 
 Reason: putting the import in a class's callable arena is a category error twice over -- it has no
 receiver, and its symbol belongs to a name space no class contains -- and it makes an import's

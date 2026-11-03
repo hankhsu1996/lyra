@@ -60,13 +60,13 @@ The segment naming the constructor is minted here rather than written by the sou
 composed in one place and both the unit that emits the body and the unit that enters it take it from
 there.
 
-### D2. A construction reads nothing about the constructor it enters
+### D2. A construction states every argument of the constructor it enters
 
-The source wrote the call, so the front end bound it against the declaration and filled in whatever
-it left to a default. Every argument the constructor takes is therefore stated by the construction
-itself, and the class's identity is the whole of what the lowering needs. This is what keeps the
-promise out of the construction path: a unit that constructs another unit's class and reaches
-nothing on it consumes no promise about it and needs none.
+The source wrote the call, so the front end bound it against the declaration. Every argument the
+constructor takes is therefore stated by the construction itself, what it left to a default as the
+class's own function evaluating it, and the class's declaration is the whole of what the lowering
+needs. This is what keeps the promise out of the construction path: a unit that constructs another
+unit's class and reaches nothing on it consumes no promise about it and needs none.
 
 The assertion the local path used to make -- that the call states one argument per formal -- goes
 with this. It compared two things one unit produced from one declaration; the other naming has only
@@ -88,11 +88,11 @@ call with the wrong arity from it, the other needed a discriminator carried acro
 to tell the two apart, and the arguments of an extends specifier were dropped on the floor because
 nothing asked for them.
 
-So the class states the complete list, and a class that cannot be given one is refused where the
-declaration is read. Nothing below re-derives it, nothing asks a promise about it, and the two
-backends receive the same complete list or never see the class at all. The refusal that remains
-names one thing -- a base constructor formal left to its default -- and it is the same refusal
-whichever unit declares the base, because the default value is what is missing either way.
+So the class states the complete list. Nothing below re-derives it, nothing asks a promise about it,
+and the two backends receive the same complete list. A base constructor formal left to its default
+stands in it as the base's default, which the base's class evaluates
+(a-formal-default-is-evaluated-by-its-callee D6), so it is the same whichever unit declares the
+base.
 
 ### D4. Extending another unit's class consumes that unit's promise only where it reads one
 
@@ -126,12 +126,6 @@ states for a construction, one layer up.
   composing a call with the wrong arity, which its host compiler rejected, and the execution backend
   coped with a refusal that could not see the difference either.
 
-- **Fill a missing default from the declaring class's scope, so the list is complete even there.**
-  The right end state, and what removes the one refusal that remains. Left out because a default is
-  an expression of the base's own scope: carrying it means deciding how an expression crosses a unit
-  boundary and where it is evaluated, which is a subject rather than a step. Swift compiles each
-  default into its own named function for exactly this reason, which is the shape to survey first.
-
 - **Give LIR a call target of its own for a cross-unit constructor.** Rejected because the existing
   one already means "a function this unit does not compile, reached by its linkage name"; a second
   spelling of that would describe the same call twice.
@@ -144,10 +138,7 @@ states for a construction, one layer up.
   class of its own unit whose arguments were written on the extends specifier -- those arguments had
   been dropped, silently on one backend and as uncompilable output on the other.
 - What a base construction carries is stated once, where the class is read. Both backends receive a
-  complete list or never see the class, and neither carries a rule the other does not.
-- One refusal remains and it is the same in every naming: a base constructor formal left to its
-  default value. What it waits on is a default value crossing a unit boundary, not anything about
-  classes.
+  complete list, and neither carries a rule the other does not.
 - A unit that constructs another unit's class, reaching nothing on it, depends on that class:
   building an object reads the class it builds.
 - The word qualifying a constructor's symbol is composed in one place. A class's own unit and every

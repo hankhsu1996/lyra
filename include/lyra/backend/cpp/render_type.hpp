@@ -175,6 +175,12 @@ struct CppObjectCreation {
 
 void WriteOne(TargetText& out, const CppObjectCreation& creation);
 
+// The call creating an object of `built` and entering no constructor.
+struct CppUnconstructedObject {
+  CppType built;
+};
+void WriteOne(TargetText& out, const CppUnconstructedObject& creation);
+
 // The library's product of a product type's components, `Tuple<Ts...>`: what a
 // tuple is spelled as.
 struct CppTupleComponents {

@@ -106,7 +106,7 @@ void ForEachOperand(Data& data, const auto& reach) {
                 value(argument);
               }
             }
-            value(e.initializer);
+            if (e.initializer.has_value()) value(*e.initializer);
           },
           [&](AsConstAs<Data, DerefExpr>& e) {
             reach(e.pointer, OperandUse::kPointer);

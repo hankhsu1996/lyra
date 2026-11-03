@@ -14,6 +14,8 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/OperatorExpressions.h>
+#include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
@@ -32,6 +34,7 @@
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/support/dpi_abi.hpp"
@@ -125,6 +128,26 @@ auto ClockingConditionName(std::string_view block, std::size_t entry)
 }
 
 namespace {
+
+// Whether `place` names bits of a packed value, or a join of places, which no
+// reference binds (LRM 13.5.2).
+auto NamesNoSingleStorage(const slang::ast::Expression& place) -> bool {
+  const auto within = [](const slang::ast::Expression& value) {
+    return value.type->isIntegral() || NamesNoSingleStorage(value);
+  };
+  if (const auto* element =
+          place.as_if<slang::ast::ElementSelectExpression>()) {
+    return within(element->value());
+  }
+  if (const auto* range = place.as_if<slang::ast::RangeSelectExpression>()) {
+    return within(range->value());
+  }
+  if (const auto* member = place.as_if<slang::ast::MemberAccessExpression>()) {
+    return within(member->value());
+  }
+  return place.as_if<slang::ast::ConcatenationExpression>() != nullptr ||
+         place.as_if<slang::ast::StreamingConcatenationExpression>() != nullptr;
+}
 
 // The function evaluating `formal`'s default, or nothing where it has none or
 // this unit evaluates it in no subroutine of its own.
@@ -307,6 +330,14 @@ auto ClassifyOpenArray(const slang::ast::Type& type, diag::SourceSpan span)
       .carrier = std::move(open), .marshaled_type = element->marshaled_type};
 }
 
+// Whether a formal of `type` crosses the boundary as an open array, as the
+// classification of the formal states it.
+auto CrossesAsOpenArray(const slang::ast::Type& type) -> bool {
+  const diag::Result<DpiTypeAbi> abi = ClassifyDpiType(type, {});
+  return abi.has_value() &&
+         std::holds_alternative<support::OpenArrayCarrier>(abi->carrier);
+}
+
 auto ClassifyDpiType(const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<DpiTypeAbi> {
   const slang::ast::SymbolKind kind = type.getCanonicalType().kind;
@@ -434,15 +465,11 @@ auto LowerSubroutineDeclImpl(
   // ordering the runtime observes when it invokes the base ctor first.
   std::optional<std::vector<hir::ExprId>> base_arguments;
   if (base_call_ast != nullptr) {
-    std::vector<hir::ExprId> lowered;
-    const auto actuals = BaseCallArguments(*base_call_ast);
-    lowered.reserve(actuals.size());
-    for (const auto* actual : actuals) {
-      auto arg_or = lowerer.LowerExpr(*actual, body_frame);
-      if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      lowered.push_back(body.exprs.Add(*std::move(arg_or)));
-    }
-    base_arguments = std::move(lowered);
+    auto lowered = AddConstructionActuals(
+        lowerer, body_frame, ConstructorEnteredBy(*base_call_ast),
+        BaseCallArguments(*base_call_ast), frontend::PointSpanOf(sym.location));
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    base_arguments = *std::move(lowered);
   }
 
   // A subroutine an interface leaves to a connected module has no body of its
@@ -485,18 +512,24 @@ auto LowerSubroutineDeclImpl(
       .base_arguments = std::move(base_arguments)};
 }
 
+// Whether `actual` is the default of `formal`: the front end fills an omitted
+// argument in by placing the default's own expression there.
+auto IsDefaultOf(
+    const slang::ast::FormalArgumentSymbol& formal,
+    const slang::ast::Expression& actual) -> bool {
+  return formal.getDefaultValue() == &actual;
+}
+
 }  // namespace
 
 auto EvaluatesItsOwnDefaults(const slang::ast::SubroutineSymbol& callee)
     -> bool {
-  if (callee.flags.has(slang::ast::MethodFlags::DPIImport) ||
-      callee.flags.has(slang::ast::MethodFlags::Constructor) ||
-      callee.flags.has(slang::ast::MethodFlags::BuiltIn) ||
+  if (callee.flags.has(slang::ast::MethodFlags::BuiltIn) ||
       RuntimeCarriedMethodOf(callee).has_value()) {
     return false;
   }
   const slang::ast::ClassType* cls = DeclaringClassOf(callee);
-  return cls == nullptr || !cls->isInterface;
+  return cls == nullptr || !cls->isInterface || !BelongsToAnInstance(*cls);
 }
 
 auto TracksCaller(const slang::ast::SubroutineSymbol& callee) -> bool {
@@ -513,35 +546,115 @@ auto OmitsArgument(const slang::ast::CallExpression& call, std::size_t position)
   if (!EvaluatesItsOwnDefaults(callee)) return false;
   const auto formals = callee.getArguments();
   if (position >= formals.size()) return false;
-  const slang::ast::FormalArgumentSymbol& formal = *formals[position];
-  return formal.direction == slang::ast::ArgumentDirection::In &&
-         formal.getDefaultValue() != nullptr &&
-         formal.getDefaultValue() == call.arguments()[position];
+  return IsDefaultOf(*formals[position], *call.arguments()[position]);
+}
+
+auto FormalsNamedByDefaults(const slang::ast::SubroutineSymbol& subroutine)
+    -> std::span<const slang::ast::FormalArgumentSymbol* const> {
+  const slang::ast::MethodPrototypeSymbol* prototype =
+      subroutine.getPrototype();
+  return prototype != nullptr ? prototype->getArguments()
+                              : subroutine.getArguments();
+}
+
+auto EvaluatorParametersOf(
+    const slang::ast::SubroutineSymbol& subroutine,
+    const slang::ast::FormalArgumentSymbol& formal)
+    -> std::vector<const slang::ast::FormalArgumentSymbol*> {
+  const auto declared = subroutine.getArguments();
+  const auto it = std::ranges::find(declared, &formal);
+  if (it == declared.end()) {
+    throw InternalError(
+        "EvaluatorParametersOf: a formal is one of the subroutine declaring "
+        "it");
+  }
+  const bool imported =
+      subroutine.flags.has(slang::ast::MethodFlags::DPIImport);
+  std::vector<const slang::ast::FormalArgumentSymbol*> parameters;
+  for (const slang::ast::FormalArgumentSymbol* before :
+       FormalsNamedByDefaults(subroutine)
+           .first(static_cast<std::size_t>(it - declared.begin()))) {
+    if (!imported || !CrossesAsOpenArray(before->getType())) {
+      parameters.push_back(before);
+    }
+  }
+  return parameters;
+}
+
+auto EvaluatorParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
+    -> hir::ParamDirection {
+  const hir::ParamDirection direction = ParamDirectionOf(formal);
+  switch (direction) {
+    case hir::ParamDirection::kConstRef:
+      return direction;
+    case hir::ParamDirection::kRef:
+    case hir::ParamDirection::kInput:
+    case hir::ParamDirection::kOutput:
+    case hir::ParamDirection::kInOut:
+      return hir::ParamDirection::kRef;
+  }
+  throw InternalError("EvaluatorParamDirectionOf: unknown direction");
+}
+
+auto DefaultExpressionOf(const slang::ast::FormalArgumentSymbol& formal)
+    -> const slang::ast::Expression& {
+  const slang::ast::Expression& bound = *formal.getDefaultValue();
+  const slang::ast::Expression* place = ArgLValue(bound);
+  return place != nullptr ? *place : bound;
 }
 
 auto LowerEvaluatorDecl(
     UnitLowerer& unit_lowerer, const slang::ast::Symbol& holder,
     std::string name, const slang::ast::Expression& expr,
-    hir::TypeId result_type, WalkFrame frame)
-    -> diag::Result<hir::SubroutineDecl> {
+    hir::TypeId result_type, hir::ParamDirection result_direction,
+    std::span<const slang::ast::FormalArgumentSymbol* const> parameters,
+    WalkFrame frame) -> diag::Result<hir::SubroutineDecl> {
   const auto span = frontend::PointSpanOf(holder.location);
   hir::ProceduralBody body;
   OpenProceduralScope root{
       frame.ProceduralScopes().Declare(),
       hir::ProceduralScopeKind::kSubroutineRoot, name};
-  const hir::ProceduralVarId result_var = body.procedural_vars.Declare();
-  body.procedural_vars.Define(
-      result_var,
-      hir::ProceduralVarDecl{.name = std::nullopt, .type = result_type});
-  root.declarations.push_back(result_var);
   ProcessLowerer lowerer(unit_lowerer, holder);
   const WalkFrame body_frame =
       frame.WithProceduralBody(&body).WithOpenScope(&root);
-  auto value = lowerer.LowerExpr(expr, body_frame);
+  std::vector<hir::SubroutineParam> params;
+  params.reserve(parameters.size());
+  for (const slang::ast::FormalArgumentSymbol* parameter : parameters) {
+    auto type = unit_lowerer.InternType(
+        parameter->getType(), frontend::PointSpanOf(parameter->location));
+    if (!type) return std::unexpected(std::move(type.error()));
+    params.push_back(
+        hir::SubroutineParam{
+            .var = lowerer.AddEvaluatorParameter(
+                body_frame, body, *parameter, *type),
+            .direction = EvaluatorParamDirectionOf(*parameter),
+            .default_evaluator = std::nullopt});
+  }
+  // A result the call takes as a value has the result variable every function
+  // has (LRM 13.4.1); one standing as the actual of a formal binding a place
+  // names that place, which no variable holds.
+  const bool names_a_place = result_direction != hir::ParamDirection::kInput;
+  std::optional<hir::ProceduralVarId> result_var;
+  if (!names_a_place) {
+    result_var = body.procedural_vars.Declare();
+    body.procedural_vars.Define(
+        *result_var,
+        hir::ProceduralVarDecl{.name = std::nullopt, .type = result_type});
+    root.declarations.push_back(*result_var);
+  }
+  const slang::ast::Expression* place = ArgLValue(expr);
+  const slang::ast::Expression& evaluated = place != nullptr ? *place : expr;
+  if (names_a_place && NamesNoSingleStorage(evaluated)) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a default of an 'output' or 'inout' formal naming part of a packed "
+        "value is not yet supported");
+  }
+  auto value = lowerer.LowerExpr(evaluated, body_frame);
   if (!value) return std::unexpected(std::move(value.error()));
   // A wait on the value asks the evaluator what it reads (LRM 9.4.2), and an
   // expression a scope evaluates reads that scope's own storage.
-  auto cells = CellsOfWaitedExpression(lowerer, body_frame, expr);
+  auto cells = CellsOfWaitedExpression(lowerer, body_frame, evaluated);
   if (!cells) return std::unexpected(std::move(cells.error()));
   hir::Reads reads{
       .cells = *std::move(cells),
@@ -558,12 +671,61 @@ auto LowerEvaluatorDecl(
       .name = std::move(name),
       .kind = hir::SubroutineKind::kFunction,
       .result_type = result_type,
-      .params = {},
+      .result_direction = result_direction,
+      .params = std::move(params),
       .result_var = result_var,
       .body = std::move(body),
       .root_stmt = root_stmt,
       .reads = std::move(reads),
       .span = span};
+}
+
+template <ExprLowerer Lowerer>
+auto AddConstructionActuals(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const slang::ast::SubroutineSymbol* constructor,
+    std::span<const slang::ast::Expression* const> actuals,
+    diag::SourceSpan span) -> diag::Result<std::vector<hir::ExprId>> {
+  std::vector<hir::ExprId> lowered;
+  lowered.reserve(actuals.size());
+  for (std::size_t i = 0; i < actuals.size(); ++i) {
+    if (constructor != nullptr && EvaluatesItsOwnDefaults(*constructor) &&
+        IsDefaultOf(*constructor->getArguments()[i], *actuals[i])) {
+      auto type = lowerer.Owner().InternType(
+          constructor->getArguments()[i]->getType(), span);
+      if (!type) return std::unexpected(std::move(type.error()));
+      lowered.push_back(frame.Exprs().Add(
+          hir::Expr{
+              .type = *type, .data = hir::CalleeDefaultExpr{}, .span = span}));
+      continue;
+    }
+    auto actual = lowerer.LowerExpr(*actuals[i], frame);
+    if (!actual) return std::unexpected(std::move(actual.error()));
+    lowered.push_back(frame.Exprs().Add(*std::move(actual)));
+  }
+  return lowered;
+}
+
+template auto AddConstructionActuals(
+    ProcessLowerer&, const WalkFrame&, const slang::ast::SubroutineSymbol*,
+    std::span<const slang::ast::Expression* const>, diag::SourceSpan)
+    -> diag::Result<std::vector<hir::ExprId>>;
+template auto AddConstructionActuals(
+    StructuralScopeLowerer&, const WalkFrame&,
+    const slang::ast::SubroutineSymbol*,
+    std::span<const slang::ast::Expression* const>, diag::SourceSpan)
+    -> diag::Result<std::vector<hir::ExprId>>;
+
+auto ConstructorEnteredBy(const slang::ast::Expression& base_call)
+    -> const slang::ast::SubroutineSymbol* {
+  const slang::ast::Expression* invocation = &base_call;
+  if (const auto* written = base_call.as_if<slang::ast::NewClassExpression>()) {
+    invocation = written->constructorCall();
+    if (invocation == nullptr) return nullptr;
+  }
+  const auto* const* callee = std::get_if<const slang::ast::SubroutineSymbol*>(
+      &invocation->as<slang::ast::CallExpression>().subroutine);
+  return callee == nullptr ? nullptr : *callee;
 }
 
 auto BaseCallArguments(const slang::ast::Expression& base_call)

@@ -123,6 +123,9 @@ class ClassRegistry {
             [](const TypeAssociated&) -> std::optional<ClassMethodTarget> {
               return std::nullopt;
             },
+            [](const OnObjectBeingBuilt&) -> std::optional<ClassMethodTarget> {
+              return std::nullopt;
+            },
             [](const NotVirtual&) -> std::optional<ClassMethodTarget> {
               return std::nullopt;
             },

@@ -14,6 +14,7 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
@@ -31,6 +32,7 @@
 #include "lyra/lowering/hir_to_mir/randomization.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -42,6 +44,79 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
+
+// `new` allocates an object and initializes it by its constructor, to which the
+// actuals flow; the handle owns it from there. A class declared in a structural
+// scope is a type of that scope's instance (LRM 6.22), so the object records
+// which instance it belongs to and construction is where that arrives -- ahead
+// of the source actuals, the way every construction prefix does. A default the
+// call leaves to the class is evaluated on the object, ahead of any of its
+// constructors, so such a construction creates the object apart from entering
+// its constructor.
+template <ExprLowerer Lowerer>
+auto LowerClassNew(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::ClassNewExpr& n,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::TypeId object_type = *mir::AllocatedType(unit.types, result_type);
+  if (!OmitsAny(lowerer.HirExprs(), n.arguments)) {
+    std::vector<mir::ExprId> args;
+    args.reserve(n.arguments.size() + 2);
+    if (n.declaring_instance.has_value()) {
+      args.push_back(
+          BuildImplicitInstanceArgument(lowerer, frame, *n.declaring_instance));
+    }
+    auto actuals = EmitConstructionActuals(
+        lowerer, frame, n.class_id, n.arguments, {}, []() -> mir::ExprId {
+          throw InternalError(
+              "LowerClassNew: a construction omitting nothing evaluates "
+              "nothing on its object");
+        });
+    if (!actuals) return std::unexpected(std::move(actuals.error()));
+    args.insert(args.end(), actuals->begin(), actuals->end());
+    args.push_back(BuildReportHandedOn(unit, frame));
+    return mir::MakeNewExpr(
+        frame.Builder().Add(
+            mir::MakeObjectConstructionExpr(object_type, std::move(args))),
+        result_type);
+  }
+
+  BlockBuilder steps(frame);
+  const WalkFrame& inner = steps.Frame();
+  mir::Builder body = steps.Body();
+  std::vector<mir::ExprId> leading;
+  if (n.declaring_instance.has_value()) {
+    leading.push_back(EvaluatedOnce(
+        inner,
+        BuildImplicitInstanceArgument(lowerer, inner, *n.declaring_instance)));
+  }
+  std::optional<mir::LocalId> created;
+  const auto object = [&]() -> mir::ExprId {
+    if (!created.has_value()) {
+      created = DeclareLocal(
+          inner, body.Add(mir::MakeCreatedObjectExpr(result_type)));
+    }
+    return BuildObjectPointer(
+        unit, body, body.ReadLocal(*created, result_type));
+  };
+  auto actuals = EmitConstructionActuals(
+      lowerer, inner, n.class_id, n.arguments, leading, object);
+  if (!actuals) return std::unexpected(std::move(actuals.error()));
+  std::vector<mir::ExprId> args = leading;
+  args.insert(args.end(), actuals->begin(), actuals->end());
+  args.push_back(BuildReportHandedOn(unit, inner));
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target =
+                          mir::ConstructorTarget{
+                              .cls = lowerer.Owner().ClassIdentity(n.class_id)},
+                      .receiver = BuildObjectDeref(unit, body, object())},
+                  std::move(args), unit.builtins.void_type))});
+  return steps.Build(body.ReadLocal(*created, result_type));
+}
 
 // Whether `expr`, read as of the Preponed region, answers with a value its cell
 // kept. A variable a body declares with automatic lifetime -- a `ref` formal
@@ -198,30 +273,7 @@ auto LowerAsPlaceAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                 lowerer, frame, a, result_type);
           },
           [&](const hir::ClassNewExpr& n) -> diag::Result<mir::Expr> {
-            // `new` allocates an object and initializes it by its constructor,
-            // to which the actuals flow; the handle owns it from there.
-            std::vector<mir::ExprId> args;
-            args.reserve(n.arguments.size() + 1);
-            // A class declared in a structural scope is a type of that scope's
-            // instance (LRM 6.22), so the object records which instance it
-            // belongs to and construction is where that arrives -- ahead of
-            // the source actuals, the way every construction prefix does.
-            if (n.declaring_instance.has_value()) {
-              args.push_back(BuildImplicitInstanceArgument(
-                  lowerer, frame, *n.declaring_instance));
-            }
-            auto actuals = EmitConstructionActuals(
-                lowerer, frame, n.class_id, n.arguments);
-            if (!actuals) return std::unexpected(std::move(actuals.error()));
-            args.insert(args.end(), actuals->begin(), actuals->end());
-            args.push_back(BuildReportHandedOn(lowerer.Owner().Unit(), frame));
-            const mir::TypeId object_type =
-                *mir::AllocatedType(lowerer.Owner().Unit().types, result_type);
-            return mir::MakeNewExpr(
-                frame.Builder().Add(
-                    mir::MakeObjectConstructionExpr(
-                        object_type, std::move(args))),
-                result_type);
+            return LowerClassNew(lowerer, frame, n, result_type);
           },
           [&](const hir::TaggedUnionExpr& t) -> diag::Result<mir::Expr> {
             return LowerHirTaggedUnionExpr(

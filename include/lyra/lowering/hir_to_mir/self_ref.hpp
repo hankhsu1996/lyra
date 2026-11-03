@@ -37,8 +37,11 @@ struct BoundImplicitParameters {
 // for -- a type-associated one, or a constructor, which enters its base before
 // its object records anything (LRM 8.7). A body handed the instance reaches it
 // through that parameter; any other keeps the way `frame` reaches it. A body
-// taking an object that lives while referenced also holds a share of it from
-// where it begins (LRM 8.29), which its closures capture to keep the object.
+// of the constructor form handed the instance writes it first into the member
+// its object records it in, since whatever then runs on the object may read it.
+// A body taking an object that lives while referenced also holds a share of it
+// from where it begins (LRM 8.29), which its closures capture to keep the
+// object.
 auto BindImplicitParameters(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const ClassShape& owner, CallableForm form) -> BoundImplicitParameters;

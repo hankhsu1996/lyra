@@ -41,15 +41,25 @@ auto IsRuntimeLibraryMethod(const slang::ast::SubroutineSymbol& method)
   return owner != nullptr && ImportedRuntimeClassOf(*owner).has_value();
 }
 
-// Walks a function body's or a procedure's statements for the calls an
-// implicit list follows into the function called (LRM 9.2.2.2.1): those the
-// clause analyzes as normal functions -- a function of a design element or a
-// package, one named hierarchically, a static method named through its class.
-// A method called on an object, a static one included, adds nothing but its
-// arguments, which are the caller's text; a task adds nothing at all; foreign
-// code and a method of a class the runtime library defines (LRM 9.7 `process`)
-// read nothing a list can hold; and a construction is a reference to a class
-// object.
+// Whether an implicit list follows `call` into the function it calls (LRM
+// 9.2.2.2.1): one the clause analyzes as a normal function -- a function of a
+// design element or a package, one named hierarchically, a static method named
+// through its class. A method called on an object, a static one included, adds
+// nothing but its arguments, which are the caller's text; a task adds nothing
+// at all; foreign code and a method of a class the runtime library defines
+// (LRM 9.7 `process`) read nothing a list can hold; and a construction is a
+// reference to a class object.
+auto IsListed(
+    const slang::ast::CallExpression& call,
+    const slang::ast::SubroutineSymbol& callee) -> bool {
+  return callee.subroutineKind == slang::ast::SubroutineKind::Function &&
+         !callee.flags.has(slang::ast::MethodFlags::DPIImport) &&
+         !callee.flags.has(slang::ast::MethodFlags::Constructor) &&
+         !IsRuntimeLibraryMethod(callee) && !IsMadeOnAnObject(call, callee);
+}
+
+// Walks a function body's or a procedure's statements for the calls an implicit
+// list follows.
 class ListedCalls : public slang::ast::ASTVisitor<
                         ListedCalls, slang::ast::VisitFlags::AllGood> {
  public:
@@ -64,12 +74,10 @@ class ListedCalls : public slang::ast::ASTVisitor<
                 &call.subroutine)) {
       if (IsListed(call, **callee)) Add(call);
     }
-    // An omitted argument's default is the callee's text, and a call it makes
-    // is the callee's, which states what it reads.
     call.visitExprsNoArgs(*this);
     const auto args = call.arguments();
     for (std::size_t i = 0; i < args.size(); ++i) {
-      if (!OmitsArgument(call, i)) args[i]->visit(*this);
+      if (!ListFollowsDefaultOf(call, i)) args[i]->visit(*this);
     }
   }
 
@@ -79,15 +87,6 @@ class ListedCalls : public slang::ast::ASTVisitor<
   }
 
  private:
-  static auto IsListed(
-      const slang::ast::CallExpression& call,
-      const slang::ast::SubroutineSymbol& callee) -> bool {
-    return callee.subroutineKind == slang::ast::SubroutineKind::Function &&
-           !callee.flags.has(slang::ast::MethodFlags::DPIImport) &&
-           !callee.flags.has(slang::ast::MethodFlags::Constructor) &&
-           !IsRuntimeLibraryMethod(callee) && !IsMadeOnAnObject(call, callee);
-  }
-
   void Add(const slang::ast::CallExpression& call) {
     auto lowered = proc_->LowerExpr(call, frame_);
     if (!lowered) {
@@ -143,6 +142,15 @@ auto RefusedWhenAsked(diag::Diagnostic diagnostic, diag::SourceSpan body)
 }
 
 }  // namespace
+
+auto ListFollowsDefaultOf(
+    const slang::ast::CallExpression& call, std::size_t position) -> bool {
+  if (!OmitsArgument(call, position)) return false;
+  const slang::ast::SubroutineSymbol& callee =
+      *std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
+  return IsListed(call, callee) && callee.getArguments()[position]->direction ==
+                                       slang::ast::ArgumentDirection::In;
+}
 
 template <typename Lowerer>
 auto CellsOfWaitedExpression(

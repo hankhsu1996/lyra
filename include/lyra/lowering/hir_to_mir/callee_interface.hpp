@@ -13,6 +13,7 @@
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
+#include "lyra/lowering/hir_to_mir/passing.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
@@ -112,13 +113,21 @@ auto BuildCompletionLayout(
     const std::vector<CalleeFormal>& formals,
     std::optional<mir::TypeId> result_type) -> CompletionLayout;
 
+// The type a value of `value_type` has where it is passed as `passing` says:
+// the value type itself by value, and by reference a reference to it, a live
+// alias of storage that exists elsewhere (LRM 13.5.2). This is the sole
+// statement of what a reference to a value is, for a parameter and for a
+// result alike.
+auto PassedTypeOf(
+    const mir::CompilationUnit& unit, mir::TypeId value_type, Passing passing)
+    -> mir::TypeId;
+
 // The type a formal carries as a parameter of the callable, or nothing where it
-// is no parameter at all. An `input` and an `inout` carry the formal's value
-// type; a `ref` / `const ref` carries a reference to it, being a live alias of
-// the caller's storage (LRM 13.5.2); an `output` carries nothing, being a body
-// local whose final value rides the completion instead (LRM 13.5). This is the
-// sole statement of which formals are parameters, so a definition and the
-// prototype it implements cannot declare different parameter lists.
+// is no parameter at all: what its direction passes in, which for an `output`
+// is nothing, it being a body local whose final value rides the completion
+// instead (LRM 13.5). This is the sole statement of which formals are
+// parameters, so a definition and the prototype it implements cannot declare
+// different parameter lists.
 auto ParamTypeOf(
     const mir::CompilationUnit& unit, mir::TypeId value_type,
     hir::ParamDirection direction) -> std::optional<mir::TypeId>;
@@ -163,11 +172,11 @@ auto ConstructorFormalsOf(UnitLowerer& unit_lowerer, hir::ClassId cls)
 auto SubroutineCallTypeOf(
     UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl) -> mir::TypeId;
 
-// The same, for a callee this unit has no declaration of, read off the
-// interface and the result its unit published.
+// The same, for a callee this unit has no declaration of, read off what its
+// unit published of it.
 auto SubroutineCallTypeOf(
-    UnitLowerer& unit_lowerer, const hir::CalleeInterface& interface,
-    hir::TypeId result_type) -> mir::TypeId;
+    UnitLowerer& unit_lowerer, const hir::SubroutinePrototype& published)
+    -> mir::TypeId;
 
 // Declares, last of `params`, the parameter a body reporting a failure of the
 // design at its caller is handed where it was called, and states it as the

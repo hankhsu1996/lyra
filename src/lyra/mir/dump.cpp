@@ -812,8 +812,10 @@ class MirDumper {
                             FormatExprList(n.placement->arguments))
                       : std::string{};
               return std::format(
-                  "NewExpr{} initializer=Expr[{}]", placement,
-                  n.initializer.value);
+                  "NewExpr{} initializer={}", placement,
+                  n.initializer.has_value()
+                      ? std::format("Expr[{}]", n.initializer->value)
+                      : std::string{"none"});
             },
             [](const FieldAccessExpr& m) -> std::string {
               return std::format(

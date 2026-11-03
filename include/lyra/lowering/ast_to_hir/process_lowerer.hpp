@@ -117,6 +117,14 @@ class ProcessLowerer {
       const slang::ast::VariableSymbol& var, hir::TypeId type)
       -> hir::ProceduralVarId;
 
+  // A parameter of this body standing for `var`, which a call hands a value of
+  // its own each time, even where `var` itself is static storage the unit
+  // declared: what the body reads through it is what the call handed.
+  auto AddEvaluatorParameter(
+      const WalkFrame& frame, hir::ProceduralBody& body,
+      const slang::ast::VariableSymbol& var, hir::TypeId type)
+      -> hir::ProceduralVarId;
+
   // The constants `scope` declares whose value differs between the objects
   // built from this unit, each a declaration of the scope the walk frame is
   // building, holding its initializer and reached by name like any local. A
