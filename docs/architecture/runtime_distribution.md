@@ -117,10 +117,15 @@ to. The in-place path produces the same surface in its work directory, and copie
 
 ## Command output contract
 
-`run` executes the simulation; its stdout and stderr are the simulation's own. Compile-phase
-diagnostics do not bleed into them -- warnings are not shown during `run` (use `dump`, `emit cpp`,
-or `build` to see them), and compile errors are reported and abort before any simulation begins.
-This keeps `run` faithfully pipeable and testable as "the simulation's output".
+`run` builds the design and executes the simulation, and says of the source what `build` says. Its
+stdout is the simulation's own, so `run` is pipeable as the simulation's output. Its stderr is where
+diagnostics go, the compiler's and the simulation's alike. What the compiler said of the source is
+printed there before any simulation begins, and a compile error ends the command there. A caller
+that wants the simulation's own stderr alone builds the program and runs it, which is what a test of
+the simulation's reports does. This is the split `cargo run` makes between a compiler's warnings and
+the program it starts. A warning the compiler gives is often the only thing that tells an author
+what was made of their text (`language_conformance.md`), so no command that compiles the design
+keeps one back.
 
 ## Out of scope
 

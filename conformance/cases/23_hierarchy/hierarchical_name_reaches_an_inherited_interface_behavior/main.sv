@@ -36,7 +36,7 @@ module Inner;
   Labelled held;
 
   initial begin
-    Square s = new();
+    static Square s = new();
     held = s;
   end
 endmodule

@@ -41,13 +41,6 @@ class Reporter {
     fmt::print(stderr, "{}", diag::RenderDiagnostics(sink, *sources_, opts_));
   }
 
-  // The same rendering with warnings left out.
-  [[nodiscard]] auto WithoutWarnings() const -> Reporter {
-    diag::RenderOptions opts = opts_;
-    opts.show_warnings = false;
-    return Reporter{opts, *sources_};
-  }
-
  private:
   diag::RenderOptions opts_;
   const diag::SourceManager* sources_;

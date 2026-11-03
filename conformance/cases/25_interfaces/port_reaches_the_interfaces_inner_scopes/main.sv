@@ -9,14 +9,14 @@ interface Bus;
   int published = 11;
 
   task static tick();
-    int counted = 22;
+    static int counted = 22;
     #10;
   endtask
 
   initial tick();
 
   initial begin : watch
-    int kept = 33;
+    static int kept = 33;
     #10;
   end
 

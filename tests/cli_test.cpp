@@ -778,13 +778,10 @@ TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
       lyra, *tmp_or, "run --backend llvm --compat all --top Test twice.sv");
   ASSERT_THAT(twice, ExitedWithCode(0)) << twice.stderr_text;
   EXPECT_EQ(twice.stdout_text, "the last definition\n");
-  const auto warned =
-      RunLyraFrom(lyra, *tmp_or, "check --compat all --top Test twice.sv");
-  EXPECT_THAT(warned, ExitedWithCode(0)) << warned.stderr_text;
   EXPECT_NE(
-      warned.stderr_text.find("warning: duplicate definition"),
+      twice.stderr_text.find("warning: duplicate definition"),
       std::string::npos)
-      << warned.stderr_text;
+      << twice.stderr_text;
 
   // The second and third write the statement through a macro, where the text
   // has no place in any file. Each is shown as the front end shows its own
@@ -844,7 +841,8 @@ TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
         refused.stderr_text.find(
             place + "warning: unknown system name '$no_such_task'"),
         std::string::npos)
-        << source << ": the front end's account of the same text was withheld: "
+        << source
+        << ": the front end's account of the same text was not printed: "
         << refused.stderr_text;
   }
 }
@@ -859,12 +857,45 @@ TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
 // string ending in `%` (LRM 21.2.1.2) are others: the front end evaluates the
 // first as a comparison of values, and the other two run as a field padded on
 // the right and a `%` printed. The finish number is the first argument of a
-// `$fatal`, so it is evaluated before the message's arguments.
+// `$fatal`, so it is evaluated before the message's arguments. A variable of a
+// static procedural block written with an initializer and no `static` is
+// another (LRM 6.21): it is static, initialized once, as the front end takes
+// it. What tells its author is the front end's warning, so `run` says it as
+// `build` does, before the program's own output; a caller who wants the
+// refusal asks for it by name.
 TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "implicit_static.sv",
+      "module Test;\n"
+      "  bit clk;\n"
+      "  initial repeat (6) #1 clk = ~clk;\n"
+      "  always @(posedge clk) begin\n"
+      "    int count = 0;\n"
+      "    count++;\n"
+      "    $display(\"count %0d\", count);\n"
+      "  end\n"
+      "endmodule\n");
+  const auto warned = RunLyraFrom(
+      lyra, *tmp_or, "run --backend llvm --top Test implicit_static.sv");
+  ASSERT_THAT(warned, ExitedWithCode(0)) << warned.stderr_text;
+  EXPECT_EQ(warned.stdout_text, "count 1\ncount 2\ncount 3\n")
+      << "the variable was not initialized once";
+  EXPECT_NE(
+      warned.stderr_text.find(
+          "implicit_static.sv:5:9: warning: initializing a static variable in "
+          "a procedural context requires an explicit 'static' keyword"),
+      std::string::npos)
+      << "the run did not print the front end's warning: "
+      << warned.stderr_text;
+  const auto strict = RunLyraFrom(
+      lyra, *tmp_or,
+      "check -Werror=explicit-static --top Test implicit_static.sv");
+  EXPECT_THAT(strict, ExitedWithCode(Ne(0))) << strict.stderr_text;
 
   WriteFile(
       *tmp_or / "message_first.sv",
@@ -875,23 +906,20 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
       "    $fatal(\"Randomize %0d failed\", n);\n"
       "  end\n"
       "endmodule\n");
-  const auto checked =
-      RunLyraFrom(lyra, *tmp_or, "check --top Test message_first.sv");
-  EXPECT_THAT(checked, ExitedWithCode(0)) << checked.stderr_text;
-  EXPECT_NE(
-      checked.stderr_text.find(
-          "warning: finish argument must have value of 0, 1, or 2"),
-      std::string::npos)
-      << checked.stderr_text;
-
+  // The run says first what the front end said of the source, which quotes the
+  // call; what the program printed is what follows it.
   const auto fatal = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --top Test message_first.sv");
   EXPECT_THAT(fatal, ExitedWithCode(Ne(0))) << fatal.stderr_text;
+  const std::size_t report =
+      fatal.stderr_text.find("fatal:           7\nnote: in 'Test' at time 3");
+  ASSERT_NE(report, std::string::npos) << fatal.stderr_text;
   EXPECT_NE(
-      fatal.stderr_text.find("fatal:           7\nnote: in 'Test' at time 3"),
+      fatal.stderr_text.rfind(
+          "warning: finish argument must have value of 0, 1, or 2", report),
       std::string::npos)
-      << fatal.stderr_text;
-  EXPECT_EQ(fatal.stderr_text.find("Randomize"), std::string::npos)
+      << "the run did not print the front end's warning: " << fatal.stderr_text;
+  EXPECT_EQ(fatal.stderr_text.find("Randomize", report), std::string::npos)
       << "the text in the level's place was printed: " << fatal.stderr_text;
   EXPECT_NE(
       fatal.stderr_text.find("note: '$finish' at time 3"), std::string::npos)
@@ -905,16 +933,13 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
       "    $finish(5);\n"
       "  end\n"
       "endmodule\n");
-  const auto out_of_range =
-      RunLyraFrom(lyra, *tmp_or, "check --top Test level_out_of_range.sv");
-  EXPECT_THAT(out_of_range, ExitedWithCode(0)) << out_of_range.stderr_text;
-  EXPECT_NE(
-      out_of_range.stderr_text.find("warning: finish argument must have value"),
-      std::string::npos)
-      << out_of_range.stderr_text;
   const auto finished = RunLyraFrom(
       lyra, *tmp_or, "run --backend llvm --top Test level_out_of_range.sv");
   ASSERT_THAT(finished, ExitedWithCode(0)) << finished.stderr_text;
+  EXPECT_NE(
+      finished.stderr_text.find("warning: finish argument must have value"),
+      std::string::npos)
+      << finished.stderr_text;
   EXPECT_NE(
       finished.stderr_text.find("note: '$finish' at time 4"), std::string::npos)
       << "the run did not end at level 1: " << finished.stderr_text;

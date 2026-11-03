@@ -26,7 +26,7 @@ module Child (
   Cell handle = new();
 
   initial begin : marked
-    int kept = 55;
+    static int kept = 55;
     #10;
   end
 

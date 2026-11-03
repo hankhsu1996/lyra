@@ -86,7 +86,7 @@ module Top;
         endfunction
       endclass
       initial begin
-        Reader reader = new;
+        static Reader reader = new;
         #1;
         seen = reader.Below();
       end

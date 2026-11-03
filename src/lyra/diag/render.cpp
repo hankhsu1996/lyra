@@ -32,20 +32,6 @@ auto Said(DiagKind kind, const std::string& message) -> std::string {
   throw InternalError("diag::Said: invalid DiagKind");
 }
 
-auto IsShown(DiagKind kind, const RenderOptions& opts) -> bool {
-  switch (kind) {
-    case DiagKind::kError:
-    case DiagKind::kUnsupported:
-    case DiagKind::kHostError:
-    case DiagKind::kInternalError:
-    case DiagKind::kNote:
-      return true;
-    case DiagKind::kWarning:
-      return opts.show_warnings;
-  }
-  throw InternalError("diag::IsShown: invalid DiagKind");
-}
-
 // The place a message is about, where no place is the span that is none.
 auto PlaceOf(const DiagSpan& diag_span) -> SourceSpan {
   return std::visit(
@@ -61,11 +47,7 @@ auto PlaceOf(const DiagSpan& diag_span) -> SourceSpan {
 auto RenderDiagnostic(
     const Diagnostic& diag, const SourceManager& source_manager,
     const RenderOptions& opts) -> std::string {
-  std::string out;
-  if (!IsShown(diag.primary.kind, opts)) {
-    return out;
-  }
-  out += source_manager.Show(
+  std::string out = source_manager.Show(
       diag.primary.kind, PlaceOf(diag.primary.span),
       Said(diag.primary.kind, diag.primary.message), opts.use_color);
   for (const auto& note : diag.notes) {
@@ -83,9 +65,6 @@ auto RenderDiagnostics(
   std::uint32_t warning_count = 0;
   bool asks_for_report = false;
   for (const auto& d : sink.Diagnostics()) {
-    if (!IsShown(d.primary.kind, opts)) {
-      continue;
-    }
     switch (d.primary.kind) {
       case DiagKind::kError:
       case DiagKind::kUnsupported:

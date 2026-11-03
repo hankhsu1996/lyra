@@ -24,7 +24,7 @@ module Child;
   int up_tag = 0;
 
   initial begin
-    Framed f = new();
+    static Framed f = new();
     lone = f;
   end
 
@@ -61,7 +61,7 @@ module Top;
   endtask
 
   initial begin
-    Stamped s = new();
+    static Stamped s = new();
     lone = s;
   end
 

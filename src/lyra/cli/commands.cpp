@@ -896,12 +896,6 @@ auto RunProgram(const CommandContext& ctx) -> int {
   return *exit_code;
 }
 
-// Whether the compiler's warnings reach the terminal, the front end's and its
-// own alike. A program that is run owns its streams, so what the compiler had
-// to say about the source stays out of them unless it refused the source
-// outright.
-enum class CompilerWarnings : std::uint8_t { kShown, kWithheld };
-
 // The request resolved against the design's declaration: everything that is
 // known before the design is read.
 struct Request {
@@ -984,38 +978,24 @@ auto ResolveRequest(const Invocation& invocation) -> std::optional<Request> {
       .args = *std::move(parsed), .dpi_inputs = *std::move(dpi_inputs)};
 }
 
-// What the front end made of a request: the design, where it arrived at one,
-// and what it said of the source that has not been printed.
-struct Elaboration {
-  std::optional<frontend::ParseResult> design;
-  std::string withheld;
-};
-
-// Elaborates the design the request describes, reporting whatever stops that.
-// Arriving at a design is the whole of what `check` asks.
-auto Elaborate(
-    const Invocation& invocation, const Request& request,
-    CompilerWarnings warnings) -> Elaboration {
+// Elaborates the design the request describes, printing what the front end
+// said of the source and answering with the design where it arrived at one.
+// Arriving at a design is the whole of what `check` asks. What the front end
+// said is printed before any program is started, so none of it lands among
+// what a program prints.
+auto Elaborate(const Invocation& invocation, const Request& request)
+    -> std::optional<frontend::ParseResult> {
   support::RecordWidth(request.args.compile_width);
   auto front_end = [&] {
     const profiling::StageScope stage("front end");
     const status::Phase phase("Elaborating");
     return compiler::RunFrontEnd(*invocation.driver);
   }();
-  // An account that refuses the source is printed whatever the command is,
-  // because then there is no program whose streams need protecting.
-  const bool shows_warnings =
-      warnings == CompilerWarnings::kShown || !front_end.elaborated;
-  if (!shows_warnings) {
-    return Elaboration{
-        .design = std::move(front_end.elaborated),
-        .withheld = std::move(front_end.diagnostics)};
-  }
   if (!front_end.diagnostics.empty()) {
     status::Clear();
     fmt::print(stderr, "{}", front_end.diagnostics);
   }
-  return Elaboration{.design = std::move(front_end.elaborated), .withheld = {}};
+  return std::move(front_end.elaborated);
 }
 
 using DesignCommand = std::move_only_function<int(const CommandContext&)>;
@@ -1037,51 +1017,38 @@ auto Attempt(DesignCommand command, const CommandContext& ctx) -> int {
 // once the command is done. A failure of the compiler's own anywhere in the
 // run, contained by a unit or not, is what the exit status says.
 auto RunOnRequest(
-    const Invocation& invocation, const Request& request,
-    CompilerWarnings warnings, DesignCommand command) -> int {
-  auto elaboration = Elaborate(invocation, request, warnings);
-  if (!elaboration.design) {
+    const Invocation& invocation, const Request& request, DesignCommand command)
+    -> int {
+  auto elaborated = Elaborate(invocation, request);
+  if (!elaborated) {
     return 1;
   }
-  frontend::ParseResult& elaborated = *elaboration.design;
   diag::DiagnosticSink sink;
   const int exit_code = Attempt(
       std::move(command), CommandContext{
                               .args = &request.args,
-                              .elaborated = &elaborated,
+                              .elaborated = &*elaborated,
                               .sink = &sink,
                               .dpi_inputs = request.dpi_inputs,
                               .program_path = invocation.program_path});
-  const Reporter& report = *invocation.report;
-  if (warnings == CompilerWarnings::kWithheld && !sink.HasErrors()) {
-    report.WithoutWarnings()(sink);
-  } else {
-    // No program runs, so nothing of the compiler's is withheld any longer,
-    // and what the front end said comes first because it read the source
-    // first.
-    fmt::print(stderr, "{}", elaboration.withheld);
-    report(sink);
-  }
+  (*invocation.report)(sink);
   return sink.HasInternalErrors() ? kCompilerFailureExit : exit_code;
 }
 
 // The same for a command that asks nothing of the request before the design is
 // read.
-auto RunOnDesign(
-    const Invocation& invocation, CompilerWarnings warnings,
-    DesignCommand command) -> int {
+auto RunOnDesign(const Invocation& invocation, DesignCommand command) -> int {
   const auto request = ResolveRequest(invocation);
   if (!request) {
     return 1;
   }
-  return RunOnRequest(invocation, *request, warnings, std::move(command));
+  return RunOnRequest(invocation, *request, std::move(command));
 }
 
 // `check` asks only whether the request arrives at a design.
 auto RunCheck(const Invocation& invocation) -> int {
   const auto request = ResolveRequest(invocation);
-  if (!request ||
-      !Elaborate(invocation, *request, CompilerWarnings::kShown).design) {
+  if (!request || !Elaborate(invocation, *request)) {
     return 1;
   }
   status::Finished();
@@ -1105,7 +1072,7 @@ auto RunBuildCommand(const Invocation& invocation) -> int {
     named = *std::move(claimed);
   }
   return RunOnRequest(
-      invocation, *request, CompilerWarnings::kShown,
+      invocation, *request,
       [named = std::move(named)](const CommandContext& ctx) mutable {
         return RunBuild(ctx, std::move(named));
       });
@@ -1127,8 +1094,7 @@ auto RunEmitCommand(const Invocation& invocation) -> int {
         ec.message()));
     return 1;
   }
-  return RunOnRequest(
-      invocation, *request, CompilerWarnings::kShown, RunEmitCpp);
+  return RunOnRequest(invocation, *request, RunEmitCpp);
 }
 
 // Empties the store. It consults no design and never reaches the compiler, so
@@ -1165,21 +1131,21 @@ auto RunCommand(const Invocation& invocation) -> int {
     case CommandKind::kCheck:
       return RunCheck(invocation);
     case CommandKind::kDumpAst:
-      return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpAst);
+      return RunOnDesign(invocation, RunDumpAst);
     case CommandKind::kDumpHir:
-      return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpHir);
+      return RunOnDesign(invocation, RunDumpHir);
     case CommandKind::kDumpMir:
-      return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpMir);
+      return RunOnDesign(invocation, RunDumpMir);
     case CommandKind::kDumpLir:
-      return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpLir);
+      return RunOnDesign(invocation, RunDumpLir);
     case CommandKind::kDumpLlvm:
-      return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpLlvm);
+      return RunOnDesign(invocation, RunDumpLlvm);
     case CommandKind::kEmitCpp:
       return RunEmitCommand(invocation);
     case CommandKind::kBuild:
       return RunBuildCommand(invocation);
     case CommandKind::kRun:
-      return RunOnDesign(invocation, CompilerWarnings::kWithheld, RunProgram);
+      return RunOnDesign(invocation, RunProgram);
     case CommandKind::kCacheClear:
       return RunCacheClear(invocation);
   }

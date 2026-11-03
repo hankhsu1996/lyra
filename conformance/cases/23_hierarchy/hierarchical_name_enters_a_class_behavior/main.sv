@@ -61,7 +61,7 @@ module Child;
   int up_legs_after = 0;
 
   initial begin
-    Bird b = new();
+    static Bird b = new();
     pet = b;
     voice = b;
   end
@@ -125,7 +125,7 @@ module Top;
   int down_legs_after = 0;
 
   initial begin
-    Triangle t = new();
+    static Triangle t = new();
     pet = t;
     sided = t;
   end

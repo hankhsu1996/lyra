@@ -14,7 +14,7 @@ module Top;
     Base kept;
     int cast = -1;
     initial begin
-      C mine = new;
+      static C mine = new;
       kept = mine;
       #1;
       cast = $cast(mine, unread[0].kept);
@@ -44,7 +44,7 @@ module Top;
       Base kept;
       int cast = -1;
       initial begin
-        C mine = new;
+        static C mine = new;
         kept = mine;
         #1;
         cast = $cast(mine, deeper[0].inner.kept);
