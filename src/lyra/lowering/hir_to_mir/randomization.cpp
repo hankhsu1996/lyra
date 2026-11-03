@@ -650,7 +650,7 @@ auto NameModeVariables(const ConstraintWriter& w, hir::ExprId id)
   const auto each = [&](const auto& self, const std::vector<DescentStep>& more,
                         hir::TypeId type) -> void {
     const auto at = [&] {
-      AccessPath named = NamedIn(settled, block);
+      AccessPath named = NamedIn(unit, settled, block);
       named.descent.insert(named.descent.end(), more.begin(), more.end());
       return named;
     };
@@ -1360,7 +1360,8 @@ auto FoldElements(
                                 mir::Direct{
                                     .target = BuiltinFn::kSize,
                                     .receiver = PathValue(
-                                        unit, block, NamedIn(settled, block))},
+                                        unit, block,
+                                        NamedIn(unit, settled, block))},
                             .arguments = {}},
                     .type = unit.builtins.int_type});
   const mir::LocalId position =
@@ -1400,7 +1401,7 @@ auto FoldElements(
   pass_builder.AppendStmt(
       mir::LocalDeclStmt{.target = index_local, .init = index});
   const mir::TypeId element_type = unit_lowerer.TranslateType(*element);
-  const AccessPath array_path = NamedIn(settled, pass_builder);
+  const AccessPath array_path = NamedIn(unit, settled, pass_builder);
   const DescentStep to_element = ElementStep(
       unit_lowerer, pass_builder, array.type,
       pass_builder.ReadLocal(index_local, unit.builtins.int_type),

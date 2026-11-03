@@ -55,7 +55,7 @@ void AssignLocal(
 
 auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value) -> mir::ExprId {
   mir::Builder block = frame.Builder();
-  if (mir::EvaluatesNothing(block.Body(), value)) {
+  if (mir::EvaluatesNothing(frame.bindings->Types(), block.Body(), value)) {
     return value;
   }
   const mir::TypeId type = block.Get(value).type;

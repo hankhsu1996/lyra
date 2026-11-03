@@ -23,6 +23,7 @@
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
+#include "lyra/mir/object_operand.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -428,16 +429,20 @@ auto StoredWrapper(
 // nothing can be: a name, a constant, or a place formed over those means the
 // same wherever it is written, while a computation written again would run
 // again.
-auto NamedAgain(const mir::Block& from, mir::Builder to, mir::ExprId id)
-    -> mir::ExprId {
-  const mir::Expr& node = from.exprs.Get(id);
-  const auto again = [&](mir::ExprId operand) {
-    return NamedAgain(from, to, operand);
-  };
+auto NamedAgain(
+    const mir::TypePool& types, const mir::Block& from, mir::Builder to,
+    mir::ExprId id) -> mir::ExprId {
   const auto computes = []() -> mir::ExprData {
     throw InternalError(
         "access path: a settled path evaluates nothing, and this one holds a "
         "node that computes");
+  };
+  if (!mir::EvaluatesNothing(types, from, id)) {
+    computes();
+  }
+  const mir::Expr& node = from.exprs.Get(id);
+  const auto again = [&](mir::ExprId operand) {
+    return NamedAgain(types, from, to, operand);
   };
   mir::ExprData data = std::visit(
       Overloaded{
@@ -1006,7 +1011,7 @@ auto SettledPlace(
     const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
     -> mir::ExprId {
   mir::Builder block = frame.Builder();
-  if (mir::EvaluatesNothing(block.Body(), place)) {
+  if (mir::EvaluatesNothing(unit.types, block.Body(), place)) {
     return place;
   }
   const mir::Expr node = block.Get(place);
@@ -1042,6 +1047,18 @@ auto SettledPlace(
               return block.Add(
                   mir::MakeDerefExpr(
                       SettledPlace(unit, frame, deref.pointer), node.type));
+            }
+            // Reaching an object through a class handle opens the handle,
+            // which can fail the design, so it is opened once, into a pointer
+            // to the object, while a share of the handle keeps the object.
+            if (mir::HandleReached(unit.types, block.Body(), node)
+                    .has_value()) {
+              return BuildObjectDeref(
+                  unit, block,
+                  EvaluatedOnce(
+                      frame,
+                      BuildObjectPointer(
+                          unit, block, EvaluatedOnce(frame, deref.pointer))));
             }
             return block.Add(
                 mir::MakeDerefExpr(
@@ -1134,7 +1151,9 @@ auto SettledForRead(
       .descent = std::move(settled.descent)};
 }
 
-auto NamedIn(const SettledPath& settled, mir::Builder to) -> AccessPath {
+auto NamedIn(
+    const mir::CompilationUnit& unit, const SettledPath& settled,
+    mir::Builder to) -> AccessPath {
   const mir::Block& from = *settled.named_in;
   AccessPath path{.owner = settled.owner, .descent = settled.descent};
   // Naming a node again reads it out of one pool while adding to the other, so
@@ -1142,7 +1161,9 @@ auto NamedIn(const SettledPath& settled, mir::Builder to) -> AccessPath {
   if (&from == &to.Body()) {
     return path;
   }
-  const auto again = [&](mir::ExprId id) { return NamedAgain(from, to, id); };
+  const auto again = [&](mir::ExprId id) {
+    return NamedAgain(unit.types, from, to, id);
+  };
   path.owner = std::visit(
       Overloaded{
           [&](mir::ExprId place) -> PathOwner { return again(place); },
@@ -1155,7 +1176,7 @@ auto NamedIn(const SettledPath& settled, mir::Builder to) -> AccessPath {
       path.owner);
   for (DescentStep& step : path.descent) {
     ForEachOperand(step, [&](mir::ExprId& operand) {
-      operand = NamedAgain(from, to, operand);
+      operand = NamedAgain(unit.types, from, to, operand);
     });
   }
   return path;

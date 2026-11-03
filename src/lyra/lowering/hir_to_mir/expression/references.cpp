@@ -127,7 +127,7 @@ auto LowerHirQueueLastIndex(
                           .target = support::BuiltinFn::kSize,
                           .receiver = PathValue(
                               unit, block,
-                              NamedIn(*frame.selected_queue, block))},
+                              NamedIn(unit, *frame.selected_queue, block))},
                   .arguments = {}},
           .type = type});
   return BuildMirBinaryExpr(

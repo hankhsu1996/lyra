@@ -134,8 +134,9 @@ auto ConversionBody(
     mir::Builder given_builder = block.Into(given);
     const mir::ExprId absent = EntryCall(
         unit, given_builder, support::BuiltinFn::kAssocAbsentValue,
-        PathPlace(unit, given_builder, NamedIn(walked.path, given_builder)), {},
-        from_element);
+        PathPlace(
+            unit, given_builder, NamedIn(unit, walked.path, given_builder)),
+        {}, from_element);
     const mir::ExprId held = given_builder.ReadLocal(built, to);
     const mir::ExprId converted =
         ConvertToType(unit, given_builder, absent, element);
@@ -147,7 +148,7 @@ auto ConversionBody(
     block.AppendIfThen(
         EntryCall(
             unit, block, support::BuiltinFn::kAssocHasStatedDefault,
-            PathPlace(unit, block, NamedIn(walked.path, block)), {},
+            PathPlace(unit, block, NamedIn(unit, walked.path, block)), {},
             unit.builtins.machine_bool),
         std::move(given));
   }

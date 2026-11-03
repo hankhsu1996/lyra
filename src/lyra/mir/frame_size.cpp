@@ -321,7 +321,8 @@ auto ValuesAFrameKeeps(const CompilationUnit& unit, const Block& block)
     const TypeId type = block.exprs.Get(id).type;
     if (made.at(id.value) && !ValueLiesInStorage(unit, block, id) &&
         (IsTooLargeForAFrame(unit, type) ||
-         (!EvaluatesNothing(block, id) && FrameBytesOf(unit, type) > 0))) {
+         (!EvaluatesNothing(unit.types, block, id) &&
+          FrameBytesOf(unit, type) > 0))) {
       kept.push_back(id);
     }
   }

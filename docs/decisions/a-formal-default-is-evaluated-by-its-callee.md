@@ -3,7 +3,9 @@
 ## Date
 
 2026-10-26, rewritten 2026-11-02 when defaults naming earlier formals, the defaults of formals that
-bind places, of constructors and of DPI-C imports were brought under one rule.
+bind places, of constructors and of DPI-C imports were brought under one rule. D2 extended the same
+day: it said the object is evaluated once without saying how, and a call made through a class
+property read the handle once per default and could be made on an object a default had let go of.
 
 ## Status
 
@@ -48,6 +50,20 @@ callee's default and nothing of the expression is lowered where the call is, so 
 the caller does not see it either. Lowering the call asks the evaluating function on the same object
 the callee is made on, which is evaluated once and stands at both. A method's default is the one of
 the method the call names, whichever body its object's class runs.
+
+The object is the call's first binding, so a call that omits an argument holds it as it holds the
+formals (D4): after the arguments the source wrote and before the first default, it reads the class
+handle the source named once into a share of its own, opens it once, and enters every default and
+the callee on what that opening answers. The share is what keeps the object while the defaults are
+evaluated and the callee runs, so a default that points the named handle at another object, or lets
+go of every other handle to it, leaves the call on the object it began with. What the call holds
+lives in a scope of the call's own, a block expression or, for a task, the body the enabler awaits,
+and ends with it, as a C++ temporary ends with its full-expression. The object is therefore the one
+the handle names once the written arguments have run, which is when an ordinary call forms its
+object too
+([an-evaluation-runs-its-operands-first-to-last](an-evaluation-runs-its-operands-first-to-last.md)
+D1). Scala's rewrite of such a call binds its prefix the same way, `val q = p` ahead of every
+default getter called on `q` (SLS 6.6.1).
 
 **D3. What the default reads is part of what the call reads.** The evaluating function of an `input`
 states its reads, as any function does, and a call an implicit list follows asks it too (LRM

@@ -80,7 +80,7 @@ auto BuildPositionLoopStmt(
               body_builder.ReadLocal(position, int_type))});
   const EntryPlace place{
       .index = index, .index_type = int_type, .position = position};
-  AccessPath named = NamedIn(array.path, body_builder);
+  AccessPath named = NamedIn(unit, array.path, body_builder);
   DescentStep visited = StepToVisited(unit, body_builder, place, element_type);
   auto ran = visit(
       at, VisitedEntry{
@@ -116,7 +116,7 @@ auto BuildKeyedLoopStmt(
   mir::Builder body_builder = at.Builder();
   const EntryPlace place{
       .index = key, .index_type = key_type, .position = std::nullopt};
-  AccessPath named = NamedIn(array.path, body_builder);
+  AccessPath named = NamedIn(unit, array.path, body_builder);
   DescentStep visited = StepToVisited(unit, body_builder, place, element);
   auto ran = visit(
       at, VisitedEntry{
@@ -129,7 +129,7 @@ auto BuildKeyedLoopStmt(
 
   const auto array_value = [&](const WalkFrame& in) {
     mir::Builder steps = in.Builder();
-    return PathValue(unit, steps, NamedIn(array.path, steps));
+    return PathValue(unit, steps, NamedIn(unit, array.path, steps));
   };
   const auto key_place = [&](const WalkFrame& in) {
     return AccessPath{
@@ -212,7 +212,7 @@ auto EntryCount(
                       mir::Direct{
                           .target = support::BuiltinFn::kSize,
                           .receiver = PathAsPlace(
-                              unit, block, NamedIn(array.path, block))},
+                              unit, block, NamedIn(unit, array.path, block))},
                   .arguments = {}},
           .type = unit.builtins.int_type});
 }

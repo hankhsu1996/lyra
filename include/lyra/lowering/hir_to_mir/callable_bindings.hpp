@@ -18,6 +18,7 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/callable_bounds.hpp"
 
@@ -164,6 +165,9 @@ class CallableBindings {
   // answers to no identifier: a local the source declared is one some other
   // body may reach, which is what an origin is for.
   auto DeclareAnonymous(mir::TypeId type) -> mir::LocalId;
+
+  // The types every node of this body is of.
+  [[nodiscard]] auto Types() const -> const mir::TypePool&;
 
   // A label no other statement of this body carries.
   [[nodiscard]] auto NextLabel() -> mir::LabelId {

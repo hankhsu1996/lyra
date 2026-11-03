@@ -604,7 +604,7 @@ auto LowerSort(
   const mir::TypeId key_type = KeyType(lowerer, ref, array);
   auto compared = [&]() -> diag::Result<AccessPath> {
     if (!ref.with_clause.has_value()) {
-      return NamedIn(array.path, body);
+      return NamedIn(unit, array.path, body);
     }
     const mir::TypeId keys_type =
         mir::QueueOf(unit.types, key_type, support::UnboundedQueue{});
@@ -626,7 +626,7 @@ auto LowerSort(
       BuildIsLess(unit_lowerer, steps.Frame(), *compared, key_type, comparison);
   const mir::ExprId sorted = body.Add(BuildBuiltinMethodCall(
       unit_lowerer.Unit(), body, support::BuiltinFn::kSort,
-      PathPlace(unit, body, NamedIn(array.path, body)), {order},
+      PathPlace(unit, body, NamedIn(unit, array.path, body)), {order},
       unit.builtins.void_type));
   if (!written_back.has_value()) {
     return steps.Build(sorted);
@@ -634,7 +634,7 @@ auto LowerSort(
   body.AppendStmt(mir::ExprStmt{.expr = sorted});
   return steps.Build(body.Add(BuildStoreExpr(
       unit, body, *written_back,
-      PathValue(unit, body, NamedIn(array.path, body)))));
+      PathValue(unit, body, NamedIn(unit, array.path, body)))));
 }
 
 }  // namespace

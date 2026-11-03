@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -315,10 +314,11 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
       InternalError);
 }
 
-// A node that names a thing, spells a constant, forms a place or reads one
-// computes nothing itself, so it may stand at two places, and what counts is
-// what it reaches: a read of a place formed over a call reaches that call at
-// each.
+// A node that names a thing, spells a constant, forms a place or reads a
+// variable it names computes nothing itself, so it may stand at two places,
+// and what counts is what it reaches: two reads of a place formed over a
+// computation reach that computation at each. A read of any other storage
+// computes, since a write between two of them would make them two values.
 TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
   EXPECT_NO_THROW(
       Verify(UnitWithBody([](const CompilationUnit& u, Builder body) {
@@ -329,22 +329,40 @@ TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
         body.AppendStmt(ExprStmt{.expr = AddSum(u, body, literal, literal)});
       })));
 
+  EXPECT_NO_THROW(
+      Verify(UnitWithCode([](CompilationUnit& u, CallableCode& code) {
+        const LocalId local =
+            code.locals.Add(LocalDecl{.type = u.builtins.int_type});
+        Builder body(code.Body(), diag::SourceSpan{});
+        const ExprId read = body.ReadLocal(local, u.builtins.int_type);
+        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
+      })));
+
   const auto place_over = [](const CompilationUnit& u, Builder body,
                              ExprId pointer) {
     return body.Add(MakeDerefExpr(pointer, u.builtins.int_type));
   };
-  EXPECT_NO_THROW(
-      Verify(UnitWithBody([&](const CompilationUnit& u, Builder body) {
-        const ExprId null =
-            body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
-        const ExprId read = body.Read(place_over(u, body, null));
-        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
-      })));
+  const auto null = [](const CompilationUnit& u, Builder body) {
+    return body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+  };
+  EXPECT_NO_THROW(Verify(UnitWithBody([&](const CompilationUnit& u,
+                                          Builder body) {
+    const ExprId place = place_over(u, body, null(u, body));
+    body.AppendStmt(
+        ExprStmt{.expr = AddSum(u, body, body.Read(place), body.Read(place))});
+  })));
   EXPECT_TRUE(RefusedFor(
       UnitWithBody([&](const CompilationUnit& u, Builder body) {
-        const ExprId read =
-            body.Read(place_over(u, body, AddComputation(u, body)));
+        const ExprId read = body.Read(place_over(u, body, null(u, body)));
         body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
+      }),
+      "one run evaluates it at two of them"));
+  EXPECT_TRUE(RefusedFor(
+      UnitWithBody([&](const CompilationUnit& u, Builder body) {
+        const ExprId place = place_over(u, body, AddComputation(u, body));
+        body.AppendStmt(
+            ExprStmt{
+                .expr = AddSum(u, body, body.Read(place), body.Read(place))});
       }),
       "one run evaluates it at two of them"));
 }
@@ -380,11 +398,12 @@ TEST(MirVerifyTest, StorageIsReadOnlyWhereAReadSaysSo) {
     return body.Add(MakeDerefExpr(null, u.builtins.int_type));
   };
 
-  EXPECT_NO_THROW(
-      Verify(UnitWithBody([&](const CompilationUnit& u, Builder body) {
-        const ExprId read = body.Read(storage(u, body));
-        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
-      })));
+  EXPECT_NO_THROW(Verify(UnitWithBody([&](const CompilationUnit& u,
+                                          Builder body) {
+    const ExprId place = storage(u, body);
+    body.AppendStmt(
+        ExprStmt{.expr = AddSum(u, body, body.Read(place), body.Read(place))});
+  })));
   ExpectRefused(
       UnitWithBody([&](const CompilationUnit& u, Builder body) {
         const ExprId place = storage(u, body);
@@ -2401,6 +2420,34 @@ TEST(MirVerifyTest, AHandleIsOpenedByTheLibrary) {
   ExpectRefused(
       dereferenced, "reaches an object through a class handle itself");
   EXPECT_NO_THROW(VerifyIn(Phase::kBuilt, dereferenced));
+}
+
+// Reaching an object through a class handle opens the handle, which can fail
+// the design, so it is an evaluation in the unit as it is built as much as
+// once the library's call makes the opening, and one reached at two places is
+// refused before the conversion.
+TEST(MirVerifyTest, AnObjectReachedThroughAHandleIsAnEvaluation) {
+  const auto twice = UnitWithBody([](const CompilationUnit& u, Builder body) {
+    const TypeId object =
+        LibraryTypeOf(u.types, support::LibraryDecl::kObjectRoot);
+    const ExprId handle = body.Add(
+        Expr{
+            .data = NullLiteral{},
+            .type = u.types.Intern(Type{ManagedRefType{.pointee = object}})});
+    const ExprId opened =
+        body.Add(Expr{.data = DerefExpr{.pointer = handle}, .type = object});
+    body.AppendStmt(ExprStmt{.expr = opened});
+    body.AppendStmt(ExprStmt{.expr = opened});
+  });
+  try {
+    VerifyIn(Phase::kBuilt, twice);
+    ADD_FAILURE() << "accepted an object reached through a handle twice";
+  } catch (const InternalError& error) {
+    const std::string message = error.what();
+    EXPECT_NE(
+        message.find("one run evaluates it at two of them"), std::string::npos)
+        << message;
+  }
 }
 
 }  // namespace

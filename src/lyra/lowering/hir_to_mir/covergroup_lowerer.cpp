@@ -1129,10 +1129,12 @@ class ClassWriter {
     const auto item = [&](const Writer& at) {
       return at.Read(Item(at, cross.name).first);
     };
-    // The coverpoint the cross's dimension `d` is, of the running object.
+    // The coverpoint of the running object the cross's dimension `name` names,
+    // read once for every call a selection makes on it.
     const auto point = [&](const Writer& at, std::string_view name) {
       auto [path, found] = Item(at, name);
-      return std::pair{at.Read(path), found.library_class};
+      return std::pair{
+          EvaluatedOnce(at.Frame(), at.Read(path)), found.library_class};
     };
     const auto& select = cross.selects.Get(id);
     return std::visit(
@@ -1463,8 +1465,9 @@ class ClassWriter {
           {e.Read(Record(e)), e.String(point.name),
            block.ReadLocal(counted.at(point.name), bit)});
       e.Store(property, made);
-      const mir::ExprId item =
-          e.Read(e.Own(own_, own_.layout.coverpoints.at(p)));
+      // The item is named by every statement setting it up, so it is read
+      // once.
+      const mir::ExprId item = EvaluatedOnce(e.Frame(), e.Read(property));
       const auto [options, options_type] = OptionsOf(e, item, cls);
       if (auto r = WriteOptions(e, point.options, false, options, options_type);
           !r) {
@@ -1503,7 +1506,9 @@ class ClassWriter {
           {e.Read(Record(e)), e.String(cross.name),
            block.ReadLocal(counted.at(cross.name), bit)});
       e.Store(property, made);
-      const mir::ExprId item = e.Read(e.Own(own_, own_.layout.crosses.at(c)));
+      // The item is named by every statement setting it up, so it is read
+      // once.
+      const mir::ExprId item = EvaluatedOnce(e.Frame(), e.Read(property));
       const auto [options, options_type] = OptionsOf(e, item, cls);
       if (auto r = WriteOptions(e, cross.options, false, options, options_type);
           !r) {
@@ -2166,13 +2171,21 @@ auto CovergroupLowerer::PopulateBodies(
 auto CovergroupOperations() -> std::array<CovergroupOperation, 4> {
   return {
       CovergroupOperation{
-          kSample, kCovergroupSample, CallableForm::kInstanceMember},
+          .callable = kSample,
+          .name = kCovergroupSample,
+          .form = CallableForm::kInstanceMember},
       CovergroupOperation{
-          kMakeRecord, kCovergroupMakeRecord, CallableForm::kInstanceMember},
+          .callable = kMakeRecord,
+          .name = kCovergroupMakeRecord,
+          .form = CallableForm::kInstanceMember},
       CovergroupOperation{
-          kTypeRecord, kCovergroupTypeRecord, CallableForm::kTypeAssociated},
+          .callable = kTypeRecord,
+          .name = kCovergroupTypeRecord,
+          .form = CallableForm::kTypeAssociated},
       CovergroupOperation{
-          kDeclareType, kCovergroupDeclareType, CallableForm::kTypeAssociated}};
+          .callable = kDeclareType,
+          .name = kCovergroupDeclareType,
+          .form = CallableForm::kTypeAssociated}};
 }
 
 auto CovergroupOperationPrototype(

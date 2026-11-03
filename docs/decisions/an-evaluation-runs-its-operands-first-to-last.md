@@ -40,7 +40,11 @@ is "same as `a[i] = a[i] +2`"), so there the target's operands run first. A read
 storage holds at the moment it runs, not when the operator using it does. The object of a call and
 the target of a write often stand for storage that ends with the full-expression -- a write in
 progress, a part one designates -- and such a thing can be formed only where it is used, so it runs
-last, after everything that could be held.
+last, after everything that could be held. A call that leaves arguments to the callee's defaults
+evaluates those after its object, since each is evaluated on it: the object is formed after the
+arguments the source wrote and held by a share of its handle until the call ends, which is what a
+receiver formed first lacks here
+([a-formal-default-is-evaluated-by-its-callee](a-formal-default-is-evaluated-by-its-callee.md) D2).
 
 **D2. The conversion into the legalized phase leaves no node with two operands a target could run in
 the other order to another answer, and the verification refuses a unit that does.** The test is the

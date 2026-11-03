@@ -219,10 +219,11 @@ same boundary, met while designing a different construct.
 - Sequencing and escaping are separate concepts with separate nodes: a body invoked in place is a
   block expression, a body someone else holds is a closure. No lowering builds a closure to
   sequence.
-- A call whose lowering settles no value answers with a statement rather than an expression, so the
-  two call families that can do so -- a subroutine writing back to its actuals alone, and a foreign
-  boundary whose foreign side returns nothing -- have a statement form beside their expression one.
-  Each is reached from statement position, which is the only position the frontend admits them in.
+- A call whose lowering settles no value answers with a statement where it stands as one, so the two
+  call families that can do so -- a subroutine call taking steps of its own (writing back to its
+  actuals, or holding the object it is made on while its defaults run), and a foreign boundary whose
+  foreign side returns nothing -- have a statement form beside their expression one. A loop's step
+  may also be such a call (LRM 12.7.1), and there the expression form yields its completion.
 - The node does not survive lowering to the machine model. Below MIR it is the steps' instructions
   followed by the value's, then the end of the block's own storage, which is what a flattened form
   would have produced -- so the node costs its expressive power and a copy of a value it yields that
