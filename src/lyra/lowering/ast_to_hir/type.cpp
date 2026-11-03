@@ -919,6 +919,7 @@ auto UnitLowerer::IsTypeAssociatedMethod(
     return std::visit(
         Overloaded{
             [](const hir::TypeAssociated&) { return true; },
+            [](const hir::OnObjectBeingBuilt&) { return false; },
             [](const hir::NotVirtual&) { return false; },
             [](const hir::IntroducesVirtual&) { return false; },
             [](const hir::OverridesVirtual&) { return false; }},
@@ -942,20 +943,57 @@ auto UnitLowerer::MakeCalleeInterface(
   for (const auto* formal : sym.getArguments()) {
     auto formal_type = InternType(formal->getType(), span);
     if (!formal_type) return std::unexpected(std::move(formal_type.error()));
+    std::optional<hir::DefaultEvaluator> default_evaluator;
+    if (formal->getDefaultValue() != nullptr && EvaluatesItsOwnDefaults(sym)) {
+      auto answered = InternDefaultType(*formal, span);
+      if (!answered) return std::unexpected(std::move(answered.error()));
+      default_evaluator = hir::DefaultEvaluator{
+          .name = ArgumentDefaultName(sym.name, formal->name),
+          .result_type = *answered};
+    }
     params.push_back(
         hir::CalleeParam{
             .direction = ParamDirectionOf(*formal),
             .type = *formal_type,
-            .default_evaluator = formal->getDefaultValue() == nullptr ||
-                                         !EvaluatesItsOwnDefaults(sym)
-                                     ? std::nullopt
-                                     : std::optional{ArgumentDefaultName(
-                                           sym.name, formal->name)}});
+            .default_evaluator = std::move(default_evaluator)});
   }
   return hir::CalleeInterface{
       .kind = ToHirSubroutineKind(sym.subroutineKind),
       .params = std::move(params),
       .track_caller = TracksCaller(sym)};
+}
+
+auto UnitLowerer::InternDefaultType(
+    const slang::ast::FormalArgumentSymbol& formal, diag::SourceSpan span)
+    -> diag::Result<hir::TypeId> {
+  switch (ParamDirectionOf(formal)) {
+    case hir::ParamDirection::kInput:
+      return InternType(formal.getType(), span);
+    case hir::ParamDirection::kOutput:
+    case hir::ParamDirection::kInOut:
+    case hir::ParamDirection::kRef:
+    case hir::ParamDirection::kConstRef:
+      return InternExpressionType(DefaultExpressionOf(formal), span);
+  }
+  throw InternalError("InternDefaultType: unknown direction");
+}
+
+auto UnitLowerer::MakeEvaluatorInterface(
+    std::span<const slang::ast::FormalArgumentSymbol* const> parameters,
+    diag::SourceSpan span) -> diag::Result<hir::CalleeInterface> {
+  std::vector<hir::CalleeParam> params;
+  params.reserve(parameters.size());
+  for (const slang::ast::FormalArgumentSymbol* parameter : parameters) {
+    auto type = InternType(parameter->getType(), span);
+    if (!type) return std::unexpected(std::move(type.error()));
+    params.push_back(
+        hir::CalleeParam{
+            .direction = EvaluatorParamDirectionOf(*parameter),
+            .type = *type,
+            .default_evaluator = std::nullopt});
+  }
+  return hir::CalleeInterface{
+      .kind = hir::SubroutineKind::kFunction, .params = std::move(params)};
 }
 
 auto UnitLowerer::MakeClassPropertyTarget(
@@ -1206,6 +1244,7 @@ auto UnitLowerer::InternOwnClass(
   for (const auto* proto : pure_prototypes) {
     take_defaults(*proto->getSubroutine());
   }
+  if (constructor_sym != nullptr) take_defaults(*constructor_sym);
 
   // Take an identity for every method before any body lowers, so a body may
   // name a peer whatever order the source declared them in (LRM 13.7) and so a
@@ -1393,22 +1432,36 @@ auto UnitLowerer::InternOwnClass(
       return std::unexpected(std::move(added.error()));
     }
   }
+  // A default runs where the method it belongs to does, with no say for the
+  // object in which default a call takes (LRM 8.20): on the object being built
+  // for a constructor's, which no constructor has reached yet, and on no object
+  // for a static method and for an interface class's, a constant that is
+  // the same for every class implementing it (LRM 8.26.8).
+  const auto evaluator_dispatch =
+      [&](const slang::ast::SubroutineSymbol& method) -> hir::MethodDispatch {
+    if (method.flags.has(slang::ast::MethodFlags::Constructor)) {
+      return hir::OnObjectBeingBuilt{};
+    }
+    if (method.flags.has(slang::ast::MethodFlags::Static) || cls.isInterface) {
+      return hir::TypeAssociated{};
+    }
+    return hir::NotVirtual{};
+  };
   for (const auto& [method, formal] : defaulted_formals) {
-    auto result_type = InternType(formal->getType(), span);
+    auto result_type = InternDefaultType(*formal, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
+    auto interface =
+        MakeEvaluatorInterface(EvaluatorParametersOf(*method, *formal), span);
+    if (!interface) return std::unexpected(std::move(interface.error()));
     declaration.methods.Add(
         hir::DeclaredMethod{
             .prototype =
                 hir::SubroutinePrototype{
                     .name = ArgumentDefaultName(method->name, formal->name),
-                    .interface =
-                        hir::CalleeInterface{
-                            .kind = hir::SubroutineKind::kFunction,
-                            .params = {}},
-                    .result_type = *result_type},
-            .dispatch = method->flags.has(slang::ast::MethodFlags::Static)
-                            ? hir::MethodDispatch{hir::TypeAssociated{}}
-                            : hir::MethodDispatch{hir::NotVirtual{}},
+                    .interface = *std::move(interface),
+                    .result_type = *result_type,
+                    .result_direction = ParamDirectionOf(*formal)},
+            .dispatch = evaluator_dispatch(*method),
             .replaces = std::nullopt,
             .makes = std::nullopt});
   }
@@ -1570,11 +1623,12 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   for (const auto& [method, formal] : pending.defaulted_formals) {
     std::string name = ArgumentDefaultName(method->name, formal->name);
     const hir::MethodId position = MethodPositionOf(pending.id, name);
-    auto result_type = InternDeclaredType(*formal);
+    auto result_type = InternDefaultType(*formal, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     auto evaluator = LowerEvaluatorDecl(
         *this, *formal, std::move(name), *formal->getDefaultValue(),
-        *result_type, class_frame);
+        *result_type, ParamDirectionOf(*formal),
+        EvaluatorParametersOf(*method, *formal), class_frame);
     if (!evaluator) return std::unexpected(std::move(evaluator.error()));
     decl.methods.Define(position, *std::move(evaluator));
   }
@@ -1646,31 +1700,27 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     if (!base_arguments.has_value()) {
       if (written != nullptr) {
         base_clause = written;
-        std::vector<hir::ExprId> lowered;
-        const auto actuals = BaseCallArguments(*written);
-        lowered.reserve(actuals.size());
-        for (const auto* actual : actuals) {
-          auto arg_or = init_lowerer.LowerExpr(*actual, init_frame);
-          if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-          lowered.push_back(constructor.body.exprs.Add(*std::move(arg_or)));
-        }
-        base_arguments = std::move(lowered);
+        auto lowered = AddConstructionActuals(
+            init_lowerer, init_frame, ConstructorEnteredBy(*written),
+            BaseCallArguments(*written), span);
+        if (!lowered) return std::unexpected(std::move(lowered.error()));
+        base_arguments = *std::move(lowered);
       } else {
         // Each formal takes its default, as an argument a call leaves out
         // does (LRM 13.5.3).
-        std::vector<hir::ExprId> defaults;
-        if (const slang::ast::SubroutineSymbol* base_constructor =
-                Defining(
-                    base_type->getCanonicalType().as<slang::ast::ClassType>())
-                    ->getConstructor()) {
+        std::vector<const slang::ast::Expression*> defaults;
+        const slang::ast::SubroutineSymbol* base_constructor =
+            Defining(base_type->getCanonicalType().as<slang::ast::ClassType>())
+                ->getConstructor();
+        if (base_constructor != nullptr) {
           for (const auto* formal : base_constructor->getArguments()) {
-            auto arg_or =
-                init_lowerer.LowerExpr(*formal->getDefaultValue(), init_frame);
-            if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-            defaults.push_back(constructor.body.exprs.Add(*std::move(arg_or)));
+            defaults.push_back(formal->getDefaultValue());
           }
         }
-        base_arguments = std::move(defaults);
+        auto lowered = AddConstructionActuals(
+            init_lowerer, init_frame, base_constructor, defaults, span);
+        if (!lowered) return std::unexpected(std::move(lowered.error()));
+        base_arguments = *std::move(lowered);
       }
     }
     // The base's instance is found from where this class is declared, the way

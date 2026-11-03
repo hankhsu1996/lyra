@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
+#include "lyra/lowering/hir_to_mir/passing.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -384,6 +385,15 @@ class ProcessLowerer {
     return frame.WithScopeName(RootScope().name);
   }
 
+  // How this body passes its result back, and the result's own type, which a
+  // return binds its value to as an actual is bound to a formal (LRM 13.4.1).
+  [[nodiscard]] auto ResultPassing() const -> Passing {
+    return result_passing_;
+  }
+  [[nodiscard]] auto DeclaredResultType() const -> mir::TypeId {
+    return declared_result_type_;
+  }
+
   // Assembles the completion-payload value a `return` should carry in the
   // subroutine being lowered: the product of the function's explicit return
   // value (or its implicit result variable when a `return` supplies none)
@@ -456,6 +466,8 @@ class ProcessLowerer {
   // by each output / inout formal.
   mir::TypeId result_type_;
   std::optional<hir::ProceduralVarId> result_var_;
+  Passing result_passing_ = Passing::kByValue;
+  mir::TypeId declared_result_type_;
   std::vector<hir::ProceduralVarId> output_vars_;
   BodyWriter body_writer_;
 

@@ -104,6 +104,32 @@ void HoldReceiverShare(
                   .type = share_type})});
 }
 
+// Writes the instance a body run as a constructor is handed into the member
+// the object records it in, before anything else, since whatever that body runs
+// on the object may read it.
+void RecordDeclaringInstance(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    const DeclaringInstance& instance) {
+  mir::Builder block = frame.Builder();
+  const mir::ExprId value = block.Add(
+      mir::Expr{
+          .data =
+              mir::CastExpr{
+                  .operand = BuildEnclosingScopeReceiver(
+                      frame, unit, mir::EnclosingHops{})},
+          .type = instance.type});
+  const mir::ExprId target = block.Add(
+      mir::MakeFieldAccessExpr(
+          BuildObjectDeref(unit, block, block.Add(MakeSelfRefExpr(frame))),
+          mir::ClassFieldTarget{
+              .owner = frame.current_class.id, .slot = instance.member},
+          instance.type));
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr =
+              block.Add(mir::MakeAssignExpr(unit.builtins, target, value))});
+}
+
 }  // namespace
 
 auto BindImplicitParameters(
@@ -146,6 +172,10 @@ auto BindImplicitParameters(
     bound.params.push_back(bindings.Declare(
         DeclaringInstanceOrigin{}, owner.declaring_instance->type));
     bound.frame = bound.frame.WithStructuralBase(ScopeThroughParameter{});
+    if (takes.object) {
+      RecordDeclaringInstance(
+          unit_lowerer.Unit(), bound.frame, *owner.declaring_instance);
+    }
   }
   return bound;
 }

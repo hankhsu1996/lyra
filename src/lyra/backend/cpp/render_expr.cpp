@@ -392,7 +392,15 @@ void RenderReferenceExpr(
 void RenderNewExpr(
     const ScopeView& view, const mir::NewExpr& n, mir::TypeId owner,
     Precedence at_least, TargetText& out) {
-  const mir::Expr& initializer = view.Expr(n.initializer);
+  if (!n.initializer.has_value()) {
+    Write(
+        view, out,
+        CppUnconstructedObject{
+            .built = CppType(
+                view.Unit(), *mir::AllocatedType(view.Unit().types, owner))});
+    return;
+  }
+  const mir::Expr& initializer = view.Expr(*n.initializer);
   const CppType built = CppType(view.Unit(), initializer.type);
   // A placement form is C++'s own, `::new (args) T(init)`, a unary
   // expression: C++ finds the allocation function by the types of the
@@ -403,13 +411,13 @@ void RenderNewExpr(
     const Enclosure enclosure(out, Precedence::kPrefix, at_least);
     out += "::new (";
     WriteCommaSeparated(view, out, n.placement->arguments);
-    Write(view, out, ") ", built, "(", n.initializer, ")");
+    Write(view, out, ") ", built, "(", *n.initializer, ")");
     return;
   }
   if (!view.Unit().types.Get(initializer.type).Is<mir::ObjectType>()) {
     Write(
         view, out, CppNewOwner{.of = CppType(view.Unit(), owner)}, "(::new ",
-        built, "(", n.initializer, "))");
+        built, "(", *n.initializer, "))");
     return;
   }
   const auto* construction = std::get_if<mir::CallExpr>(&initializer.data);

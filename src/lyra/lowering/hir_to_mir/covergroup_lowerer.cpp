@@ -682,9 +682,10 @@ class ClassWriter {
   }
 
   auto Write() -> diag::Result<void> {
-    for (const auto& [slot, name] : CovergroupOperations()) {
+    for (const CovergroupOperation& operation : CovergroupOperations()) {
       cls_->named_callables.push_back(
-          mir::NamedCallable{.name = std::string{name}, .body = slot});
+          mir::NamedCallable{
+              .name = std::string{operation.name}, .body = operation.callable});
     }
     if (auto r = WriteConstructor(); !r) return r;
     if (auto r = WriteSample(); !r) return r;
@@ -1353,30 +1354,6 @@ class ClassWriter {
     mir::Builder block = bound.frame.Builder();
     ProcessLowerer lowerer = Lowerer();
 
-    // The instance the object belongs to, recorded before anything else, since
-    // a method the base's construction dispatches to may read it.
-    if (const std::optional<DeclaringInstance>& instance =
-            Shape().declaring_instance) {
-      const mir::ExprId value = block.Add(
-          mir::Expr{
-              .data =
-                  mir::CastExpr{
-                      .operand = BuildEnclosingScopeReceiver(
-                          bound.frame, unit, mir::EnclosingHops{})},
-              .type = instance->type});
-      const mir::ExprId target = block.Add(
-          mir::MakeFieldAccessExpr(
-              BuildObjectDeref(
-                  unit, block, block.Add(MakeSelfRefExpr(bound.frame))),
-              mir::ClassFieldTarget{
-                  .owner = class_id_, .slot = instance->member},
-              instance->type));
-      block.AppendStmt(
-          mir::ExprStmt{
-              .expr = block.Add(
-                  mir::MakeAssignExpr(unit.builtins, target, value))});
-    }
-
     // `new(embedding, formals..., counted...)`: the object embedding the
     // covergroup, what the source passed, and whether each item the class
     // declares counts toward the instance.
@@ -1594,7 +1571,8 @@ class ClassWriter {
           hir::ProceduralVarRef{.var = formal.var},
           decl_->body.procedural_vars.Get(formal.var).type, diag::SourceSpan{});
       auto bound = EmitBoundActual(
-          e.Body(), e.Frame(), named, published.formals.at(i).direction,
+          e.Body(), e.Frame(), named,
+          *ParamPassingOf(published.formals.at(i).direction),
           u_->TranslateType(published.formals.at(i).type));
       if (!bound) return std::unexpected(std::move(bound.error()));
       arguments.push_back(*bound);
@@ -2194,13 +2172,16 @@ auto CovergroupLowerer::PopulateBodies(
   return {};
 }
 
-auto CovergroupOperations()
-    -> std::array<std::pair<mir::CallableId, std::string_view>, 4> {
+auto CovergroupOperations() -> std::array<CovergroupOperation, 4> {
   return {
-      std::pair{kSample, kCovergroupSample},
-      std::pair{kMakeRecord, kCovergroupMakeRecord},
-      std::pair{kTypeRecord, kCovergroupTypeRecord},
-      std::pair{kDeclareType, kCovergroupDeclareType}};
+      CovergroupOperation{
+          kSample, kCovergroupSample, CallableForm::kInstanceMember},
+      CovergroupOperation{
+          kMakeRecord, kCovergroupMakeRecord, CallableForm::kInstanceMember},
+      CovergroupOperation{
+          kTypeRecord, kCovergroupTypeRecord, CallableForm::kTypeAssociated},
+      CovergroupOperation{
+          kDeclareType, kCovergroupDeclareType, CallableForm::kTypeAssociated}};
 }
 
 auto CovergroupOperationPrototype(
@@ -2319,14 +2300,14 @@ auto StateCovergroupClassFromDeclaration(
       RoleIn(unit_lowerer, covergroup, kSampleBehavior),
       RoleIn(unit_lowerer, covergroup, kMakeRecordBehavior), std::nullopt,
       std::nullopt};
-  for (const auto& [callable, name] : CovergroupOperations()) {
+  for (const auto& [callable, name, form] : CovergroupOperations()) {
     stated.named_callables.push_back(
         mir::NamedCallable{.name = std::string{name}, .body = callable});
     const mir::CallableId added = stated.callables.Add(
         mir::CallableDecl{
             .code = EntryOf(
                 unit_lowerer, id, instance,
-                ClassCallableCode{.callable = callable}, declaring),
+                ClassCallableCode{.callable = callable}, form, declaring),
             .foreign = std::nullopt,
             .virtual_dispatch = roles.at(callable.value),
             .defining_unit = std::nullopt});
@@ -2339,7 +2320,8 @@ auto StateCovergroupClassFromDeclaration(
   }
   stated.constructor = mir::ConstructorDecl{
       .code = EntryOf(
-          unit_lowerer, id, instance, ClassConstructorCode{}, declaring)};
+          unit_lowerer, id, instance, ClassConstructorCode{},
+          CallableForm::kConstructor, declaring)};
   return stated;
 }
 
@@ -2568,8 +2550,8 @@ auto BindCovergroupActuals(
   for (std::size_t i = 0; i < formals.size(); ++i) {
     const hir::Expr& written = lowerer.HirExprs().Get(actuals[i]);
     const mir::TypeId type = lowerer.Owner().TranslateType(formals[i].type);
-    auto actual =
-        EmitBoundActual(lowerer, frame, written, formals[i].direction, type);
+    auto actual = EmitBoundActual(
+        lowerer, frame, written, *ParamPassingOf(formals[i].direction), type);
     if (!actual) return std::unexpected(std::move(actual.error()));
     bound.push_back(*actual);
   }
@@ -2660,8 +2642,8 @@ auto BindLibraryActuals(
         method.prototype.interface.params.at(leading + i);
     const hir::Expr& written = lowerer.HirExprs().Get(actuals[i]);
     const mir::TypeId type = lowerer.Owner().TranslateType(formal.type);
-    auto actual =
-        EmitBoundActual(lowerer, frame, written, formal.direction, type);
+    auto actual = EmitBoundActual(
+        lowerer, frame, written, *ParamPassingOf(formal.direction), type);
     if (!actual) return std::unexpected(std::move(actual.error()));
     bound.push_back(*actual);
   }

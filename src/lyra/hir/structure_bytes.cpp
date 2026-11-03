@@ -258,7 +258,10 @@ class Writer {
     List(callee.params, [&](const CalleeParam& p) {
       Kind(p.direction);
       Type(p.type);
-      Optional(p.default_evaluator, [&](const std::string& e) { Text(e); });
+      Optional(p.default_evaluator, [&](const DefaultEvaluator& d) {
+        Text(d.name);
+        Type(d.result_type);
+      });
     });
   }
 
@@ -266,6 +269,7 @@ class Writer {
     Text(prototype.name);
     Interface(prototype.interface);
     Type(prototype.result_type);
+    Kind(prototype.result_direction);
   }
 
   void Projection(const MemberProjection& projection) {
@@ -469,6 +473,7 @@ class Writer {
         std::visit(
             Overloaded{
                 [&](const TypeAssociated&) { Mark('t'); },
+                [&](const OnObjectBeingBuilt&) { Mark('b'); },
                 [&](const NotVirtual&) { Mark('n'); },
                 [&](const IntroducesVirtual& v) {
                   Mark('i');

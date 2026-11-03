@@ -321,6 +321,7 @@ auto FormatMethodDispatch(const MethodDispatch& dispatch) -> std::string {
   return std::visit(
       Overloaded{
           [](const TypeAssociated&) { return std::string{" static"}; },
+          [](const OnObjectBeingBuilt&) { return std::string{" building"}; },
           [](const NotVirtual&) { return std::string{}; },
           [&](const IntroducesVirtual& introduces) {
             return " virtual" + pure(introduces.is_pure);
@@ -1158,11 +1159,37 @@ class HirDumper {
             },
             [this](const ForeignImportRef& f) -> std::string {
               const auto& decl = unit_->foreign_imports.Get(f.id);
+              const auto omitted = [](const auto& defaults) {
+                std::size_t count = 0;
+                for (const auto& evaluator : defaults) {
+                  count += evaluator.has_value() ? 1 : 0;
+                }
+                return count;
+              };
               return std::format(
                   "ForeignImport[{}]({}) \"{}\"", f.id.value,
                   f.declaring_scope.has_value()
-                      ? std::format(
-                            "declaring_scope=hops:{}", f.declaring_scope->value)
+                      ? std::visit(
+                            Overloaded{
+                                [&](const OwnDeclaringScope& own) {
+                                  return std::format(
+                                      "declaring_scope=hops:{} defaults={}",
+                                      own.hops.value, omitted(own.defaults));
+                                },
+                                [&](const PublishedDeclaringScope& published) {
+                                  return std::format(
+                                      "declaring_scope=RoutedObjectRef[{}] "
+                                      "defaults={}",
+                                      published.receiver.id.value,
+                                      omitted(published.defaults));
+                                },
+                                [&](const NamespaceDeclaringScope& space) {
+                                  return std::format(
+                                      "declaring_scope=namespace:{} "
+                                      "defaults={}",
+                                      space.unit_name, omitted(space.defaults));
+                                }},
+                            *f.declaring_scope)
                       : "declaring_scope=none",
                   decl.name);
             },
@@ -2581,6 +2608,10 @@ class HirDumper {
     std::string flags{dispatch};
     if (!d.root_stmt.has_value()) flags += " prototype";
     if (d.track_caller) flags += " track_caller";
+    if (d.result_direction != ParamDirection::kInput) {
+      flags += std::format(
+          " result-as={}", FormatParamDirection(d.result_direction));
+    }
     Line(
         std::format(
             "{}[{}] {} \"{}\" : Type[{}]{}", label, index,

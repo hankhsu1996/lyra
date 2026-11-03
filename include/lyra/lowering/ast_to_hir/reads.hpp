@@ -6,6 +6,7 @@
 // handle is the evaluation's to state as it reaches it, and needs nothing
 // stated here.
 
+#include <cstddef>
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
@@ -14,6 +15,7 @@
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
+class CallExpression;
 class ClassType;
 class Expression;
 class ProceduralBlockSymbol;
@@ -46,6 +48,16 @@ auto ReadsOfConstruction(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::ClassType& cls,
     const slang::ast::SubroutineSymbol* constructor,
     const slang::ast::Expression* base_clause) -> hir::Reads;
+
+// Whether what the default at `position` of `call` reads reaches an implicit
+// list through the callee (LRM 9.2.2.2.1, 13.5.3): the list follows the
+// function the call names, and the argument is an `input`, whose default a
+// function evaluates that states its reads as any function does. A default of
+// any other formal names a place the call binds, and one of a call the list
+// does not follow has no function the list asks, so the list reads each as it
+// reads what the call wrote.
+auto ListFollowsDefaultOf(
+    const slang::ast::CallExpression& call, std::size_t position) -> bool;
 
 // The implicit list of an `always_comb` / `always_latch` (LRM 9.2.2.2.1): what
 // its own text reads and writes, and each function call it makes, which states

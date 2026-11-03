@@ -18,6 +18,15 @@ struct TypeAssociated {
   auto operator==(const TypeAssociated&) const -> bool = default;
 };
 
+// A method of the class that a construction calls: it runs as the constructor
+// does, on the object being built before any constructor has run, and is handed
+// what the constructor is handed ahead of its formals, since the object records
+// none of that yet. A formal's default of a constructor is one (LRM 8.7,
+// 13.5.3).
+struct OnObjectBeingBuilt {
+  auto operator==(const OnObjectBeingBuilt&) const -> bool = default;
+};
+
 // A method of an object that the object gets no say in: a call runs what the
 // class the call names declares (LRM 8.14), so it holds no position in any
 // table.
@@ -69,7 +78,8 @@ struct OverridesVirtual {
 // overrides follows from every name the classes above declare, which only the
 // front end sees.
 using MethodDispatch = std::variant<
-    TypeAssociated, NotVirtual, IntroducesVirtual, OverridesVirtual>;
+    TypeAssociated, OnObjectBeingBuilt, NotVirtual, IntroducesVirtual,
+    OverridesVirtual>;
 
 // Whether the method leaves its behavior to a class extending this one (LRM
 // 8.21), and so has no body.
@@ -78,6 +88,7 @@ using MethodDispatch = std::variant<
   return std::visit(
       Overloaded{
           [](const TypeAssociated&) { return false; },
+          [](const OnObjectBeingBuilt&) { return false; },
           [](const NotVirtual&) { return false; },
           [](const IntroducesVirtual& introduces) {
             return introduces.is_pure;

@@ -610,29 +610,34 @@ void UnitLowerer::DeclareLoopGenerate(
 void UnitLowerer::DeclareSubroutine(
     const slang::ast::SubroutineSymbol& sub, ScopeDeclarations& decls,
     ScopePublicationRecord& published, ScopeFrameId frame) {
+  // A formal's default is evaluated in this scope each time a call omits it
+  // (LRM 13.5.3), wherever the call is, so it is a subroutine of this scope
+  // the caller asks for, as a port's default is. An import's is too: declaring
+  // one defines a subroutine of the scope (LRM 35.5.4).
+  const auto declare_defaults = [&] {
+    for (const slang::ast::FormalArgumentSymbol* formal : sub.getArguments()) {
+      const slang::ast::Expression* default_value = formal->getDefaultValue();
+      if (default_value == nullptr) continue;
+      const hir::StructuralSubroutineId evaluator =
+          decls.structural_subroutines.Declare();
+      MapEvaluator(*default_value, evaluator);
+      published.callables.emplace_back(
+          ScopePublicationRecord::ArgumentDefault{
+              .subroutine = &sub, .formal = formal, .id = evaluator});
+    }
+  };
   if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
     if (hir::RootsAnObject(unit_.role)) {
       MapForeignImportScope(sub, frame);
     }
+    declare_defaults();
     return;
   }
   const hir::StructuralSubroutineId id = decls.structural_subroutines.Declare();
   MapSubroutineBinding(sub, frame, id);
   published.callables.emplace_back(
       ScopePublicationRecord::Subroutine{.symbol = &sub, .id = id});
-  // A formal's default is evaluated in this scope each time a call omits it
-  // (LRM 13.5.3), wherever the call is, so it is a subroutine of this scope
-  // the caller asks for, as a port's default is.
-  for (const slang::ast::FormalArgumentSymbol* formal : sub.getArguments()) {
-    const slang::ast::Expression* default_value = formal->getDefaultValue();
-    if (default_value == nullptr) continue;
-    const hir::StructuralSubroutineId evaluator =
-        decls.structural_subroutines.Declare();
-    MapEvaluator(*default_value, evaluator);
-    published.callables.emplace_back(
-        ScopePublicationRecord::ArgumentDefault{
-            .subroutine = &sub, .formal = formal, .id = evaluator});
-  }
+  declare_defaults();
   support::DefPath path =
       support::Extended(published.class_path, ProceduralStepOf(sub));
   published.disable_targets.push_back(

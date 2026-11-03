@@ -434,8 +434,14 @@ struct PlacementAllocation {
 // pointee type, which the backend supplies, and owns that storage, so the
 // expression answers a pointer owning nothing, and an initializer that raises
 // gives nothing back (no deallocation function matches, as in C++).
+//
+// An object created with no `initializer` exists whole and of its class with
+// none of its constructors run, as a JVM `new` answers one before its
+// `invokespecial`. Whoever made the expression enters the
+// constructor by name on what it answers, having first evaluated on the object
+// what that constructor is handed (LRM 8.7, 13.5.3).
 struct NewExpr {
-  ExprId initializer;
+  std::optional<ExprId> initializer;
   std::optional<PlacementAllocation> placement = std::nullopt;
 };
 
@@ -855,6 +861,11 @@ struct Expr {
               .callee = Direct{.target = support::BuiltinFn::kCurrentRuntime},
               .arguments = {}},
       .type = effects};
+}
+
+// `new T`, an object with no constructor run yet, owned by `owner`.
+[[nodiscard]] inline auto MakeCreatedObjectExpr(TypeId owner) -> Expr {
+  return Expr{.data = NewExpr{.initializer = std::nullopt}, .type = owner};
 }
 
 // `new T(initializer)`, owned by `owner`.

@@ -2611,7 +2611,14 @@ auto FunctionLowerer::ObjectAddress(
 auto FunctionLowerer::LowerNew(
     const mir::Block& block, const mir::NewExpr& allocation, mir::TypeId owner)
     -> diag::Result<lir::Operand> {
-  const mir::Expr& initializer = block.exprs.Get(allocation.initializer);
+  if (!allocation.initializer.has_value()) {
+    auto created = EmitObjectCreation(
+        unit_->TranslateType(*mir::AllocatedType(unit_->Mir().types, owner)),
+        owner);
+    if (!created) return std::unexpected(std::move(created.error()));
+    return created->held;
+  }
+  const mir::Expr& initializer = block.exprs.Get(*allocation.initializer);
   if (unit_->Mir().types.Get(initializer.type).Is<mir::ObjectType>()) {
     return LowerObjectNew(block, initializer, owner);
   }
@@ -2636,7 +2643,7 @@ auto FunctionLowerer::LowerNew(
   const std::size_t released_at = scopes_.size();
   OpenScope(StorageRelease{.storage = storage});
   if (auto made =
-          LowerExprInto(block, allocation.initializer, StorageAt(storage));
+          LowerExprInto(block, *allocation.initializer, StorageAt(storage));
       !made) {
     return std::unexpected(std::move(made.error()));
   }
@@ -2677,7 +2684,7 @@ auto FunctionLowerer::LowerPlacementNew(
     return storage;
   }
   if (auto made =
-          LowerExprInto(block, allocation.initializer, StorageAt(*storage));
+          LowerExprInto(block, *allocation.initializer, StorageAt(*storage));
       !made) {
     return std::unexpected(std::move(made.error()));
   }
@@ -2709,13 +2716,23 @@ auto FunctionLowerer::LowerCellNew(
       lir::ConstructTarget{}, {storage}, unit_->TranslateType(owner));
 }
 
+auto FunctionLowerer::EmitObjectCreation(
+    lir::TypeId object_type, mir::TypeId owner) -> diag::Result<CreatedObject> {
+  const lir::Operand storage = Emit(
+      AddressType(object_type),
+      lir::CallInstr{
+          .target = lir::CreationTarget{.cls = object_type}, .args = {}});
+  auto held = EmitCallTo(
+      lir::ConstructTarget{}, {storage}, unit_->TranslateType(owner));
+  if (!held) return std::unexpected(std::move(held.error()));
+  return CreatedObject{.storage = storage, .held = *held};
+}
+
 auto FunctionLowerer::LowerObjectNew(
     const mir::Block& block, const mir::Expr& initializer, mir::TypeId owner)
     -> diag::Result<lir::Operand> {
   // An object has no value apart from where it lies, so its initializer is its
-  // construction. A construction carries every argument its constructor takes
-  // -- the source wrote the call, so the front end bound it against the
-  // declaration and filled in whatever it left to a default.
+  // construction, which carries every argument its constructor takes.
   const auto* construction = std::get_if<mir::CallExpr>(&initializer.data);
   if (construction == nullptr ||
       !std::holds_alternative<mir::Construct>(construction->callee)) {
@@ -2737,23 +2754,16 @@ auto FunctionLowerer::LowerObjectNew(
   // code, and its creator holds it from there. A construction left partway
   // ends that hold as any value this body owns is ended, and the object goes
   // on existing while anything else refers to it (LRM 8.29).
-  const lir::TypeId object_type = unit_->TranslateType(initializer.type);
-  const lir::Operand storage = Emit(
-      AddressType(object_type),
-      lir::CallInstr{
-          .target = lir::CreationTarget{.cls = object_type}, .args = {}});
-  auto held = EmitCallTo(
-      lir::ConstructTarget{}, {storage}, unit_->TranslateType(owner));
-  if (!held) {
-    return held;
-  }
+  auto created =
+      EmitObjectCreation(unit_->TranslateType(initializer.type), owner);
+  if (!created) return std::unexpected(std::move(created.error()));
   auto constructed = EnterConstructor(
-      mir::ClassOfObject(unit_->Mir().types, initializer.type), storage,
-      std::move(arguments));
+      mir::ClassOfObject(unit_->Mir().types, initializer.type),
+      created->storage, std::move(arguments));
   if (!constructed) {
     return std::unexpected(std::move(constructed.error()));
   }
-  return held;
+  return created->held;
 }
 
 auto FunctionLowerer::EnterConstructor(

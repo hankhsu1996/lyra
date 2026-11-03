@@ -631,8 +631,8 @@ auto UnitLowerer::SettlePublishedScope(
           CovergroupOperationPrototype(*this, covergroup, point));
     };
     operation(ClassConstructorCode{}, "new");
-    for (const auto& [callable, name] : CovergroupOperations()) {
-      operation(ClassCallableCode{.callable = callable}, name);
+    for (const CovergroupOperation& made : CovergroupOperations()) {
+      operation(ClassCallableCode{.callable = made.callable}, made.name);
     }
   }
   shape.callable_signatures = {signatures.size(), std::move(signatures)};
@@ -1672,6 +1672,10 @@ auto UnitLowerer::DispatchRoleOf(const hir::ClassMethodTarget& method) const
   return std::visit(
       Overloaded{
           [](const hir::TypeAssociated&)
+              -> std::optional<mir::VirtualDispatchRole> {
+            return std::nullopt;
+          },
+          [](const hir::OnObjectBeingBuilt&)
               -> std::optional<mir::VirtualDispatchRole> {
             return std::nullopt;
           },

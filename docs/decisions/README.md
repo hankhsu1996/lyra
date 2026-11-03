@@ -442,11 +442,14 @@ the detail lives in the entry itself.
   dependency the published boundary does not see. Importing a type in full while publishing, a
   declared read exception for sequence bodies, and a published sequence template are rejected.
 - [a-formal-default-is-evaluated-by-its-callee](a-formal-default-is-evaluated-by-its-callee.md) --
-  an omitted argument's default is evaluated by a function of whatever declares the subroutine, on
-  the object the callee is made on, because a default may read the callee's own storage (LRM
-  13.5.3); the call states only that the default applies, and what the default reads is part of what
-  the call reads. A prologue told by a hidden argument which formals were passed, and lowering the
-  callee's text in the caller, are rejected.
+  an omitted argument's default is evaluated by a function of whatever declares the subroutine, an
+  import or a constructor, on the object the callee is made on, because a default may read the
+  callee's own storage (LRM 13.5.3); the function takes the formals before it by reference to what
+  the call binds them, passes back the place where the formal binds one, and for a constructor runs
+  on the object ahead of its constructor; the call states only that the default applies, and what
+  the default reads is part of what the call reads. A prologue told by a hidden argument which
+  formals were passed, one adapter with an omission mask, and lowering the callee's text in the
+  caller, are rejected.
 - [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) --
   every scope a name can step into publishes every declaration a name can reach, as a class the
   referrer reaches by typed steps, offsets and calls through the object; an upward name starts at
@@ -759,9 +762,9 @@ the detail lives in the entry itself.
   decides where each answer is read and nothing after it; the constructor is named the way every
   other cross-unit method is, a construction reads nothing about it, and a class states the complete
   argument list its base construction carries where its own declaration is read. Putting what a base
-  construction needs on the promise, letting an empty list mean two things, filling a default from
-  the declaring scope, and a call target of LIR's own are rejected. That a construction reads
-  nothing about its constructor, and the first of those rejections, are superseded by
+  construction needs on the promise, letting an empty list mean two things, and a call target of
+  LIR's own are rejected. That a construction reads nothing about its constructor, and the first of
+  those rejections, are superseded by
   [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where a class's
   signature states its constructor as it states a method.
 - [type-associated-storage-is-the-declarers](type-associated-storage-is-the-declarers.md) -- storage

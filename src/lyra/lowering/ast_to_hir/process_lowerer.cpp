@@ -199,6 +199,28 @@ auto ProcessLowerer::AddProceduralVar(
   return id;
 }
 
+auto ProcessLowerer::AddEvaluatorParameter(
+    const WalkFrame& frame, hir::ProceduralBody& body,
+    const slang::ast::VariableSymbol& var, hir::TypeId type)
+    -> hir::ProceduralVarId {
+  const hir::ProceduralVarId id = body.procedural_vars.Declare();
+  const auto [_, inserted] = procedural_var_bindings_.emplace(&var, id);
+  if (!inserted) {
+    throw InternalError(
+        "ProcessLowerer::AddEvaluatorParameter: procedural variable symbol "
+        "already mapped");
+  }
+  frame.OpenScope().declarations.push_back(id);
+  body.procedural_vars.Define(
+      id, hir::ProceduralVarDecl{
+              .name = std::string{var.name},
+              .type = type,
+              .lifetime = hir::VariableLifetime::kAutomatic,
+              .lifetime_extended = false,
+              .init = std::nullopt});
+  return id;
+}
+
 auto ProcessLowerer::DeclarePerObjectConstants(
     const slang::ast::Scope& scope, const WalkFrame& frame)
     -> diag::Result<void> {

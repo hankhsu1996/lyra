@@ -190,19 +190,20 @@ what the construct means.
   new-expression, which allocates storage a pointer or a class handle owns and evaluates its
   initializer into that storage rather than handing it over as an argument -- for an object, its
   construction, which first creates the object whole and then enters its constructor on it, so the
-  object is of its own class while every constructor runs -- and in its placement form evaluates its
-  initializer into storage an allocation function hands out and answers a pointer owning nothing, as
-  C++'s `new (p) T(x)` does, and the borrow, which binds a reference to a place, or to a value it
-  holds to the end of the full-expression as a C++ reference bound to a temporary does. An element
-  of an array is no node. It is a call answering a reference, a read form or a write form, because
-  the language gives a read and a write of an element different outcomes, and the dereference of
-  what it answers is the place. Bits of a packed value are no node either: they are read by the
-  value's `slice` and written through the reference to them its `slice_mut` answers, as a C++
-  library's `bitset::operator[]` answers a reference to a bit. A node's operands run in the order it
-  lists them, an assignment's value before its target and a call's arguments before its callee and
-  the object it is entered on, and a read takes what its storage holds when it runs. The set is
-  closed under what a generic programming-language AST needs to express; it does not grow to model a
-  particular backend's storage realization or runtime library shape.
+  object is of its own class while every constructor runs, or the creation alone, where something is
+  evaluated on the object first and the code then enters its constructor by name -- and in its
+  placement form evaluates its initializer into storage an allocation function hands out and answers
+  a pointer owning nothing, as C++'s `new (p) T(x)` does, and the borrow, which binds a reference to
+  a place, or to a value it holds to the end of the full-expression as a C++ reference bound to a
+  temporary does. An element of an array is no node. It is a call answering a reference, a read form
+  or a write form, because the language gives a read and a write of an element different outcomes,
+  and the dereference of what it answers is the place. Bits of a packed value are no node either:
+  they are read by the value's `slice` and written through the reference to them its `slice_mut`
+  answers, as a C++ library's `bitset::operator[]` answers a reference to a bit. A node's operands
+  run in the order it lists them, an assignment's value before its target and a call's arguments
+  before its callee and the object it is entered on, and a read takes what its storage holds when it
+  runs. The set is closed under what a generic programming-language AST needs to express; it does
+  not grow to model a particular backend's storage realization or runtime library shape.
 - Which values are held through a uniquely owning pointer because a value of their type is too large
   for a frame -- a local, a parameter taken by value wherever its signature is stated, a made value
   and a capture -- or because the values a body keeps before them already take what a frame may keep

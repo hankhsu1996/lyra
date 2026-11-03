@@ -499,6 +499,8 @@ auto ProcessLowerer::LowerSubroutine(
   // locals it just built.
   const mir::TypeId result_type = SubroutineCallTypeOf(*owner_, src);
   result_type_ = result_type;
+  result_passing_ = ResultPassingOf(src.result_direction);
+  declared_result_type_ = owner_->TranslateType(src.result_type);
 
   auto after = after_formals(code, bindings, body_frame, params);
   if (!after) return std::unexpected(std::move(after.error()));
@@ -535,9 +537,13 @@ auto ProcessLowerer::LowerSubroutine(
 
   // Close the body with a trailing return of the fall-through payload, the same
   // completion a body falling off its end carries (LRM 13.3). The completion is
-  // a real body statement, not a backend-appended epilogue.
-  body_frame.Builder().AppendStmt(
-      mir::ReturnStmt{.value = BuildReturnPayload(body_frame, std::nullopt)});
+  // a real body statement, not a backend-appended epilogue. A body passing its
+  // result back by reference is its one return, and has no result variable to
+  // fall through with.
+  if (result_passing_ == Passing::kByValue) {
+    body_frame.Builder().AppendStmt(
+        mir::ReturnStmt{.value = BuildReturnPayload(body_frame, std::nullopt)});
+  }
 
   code.params = std::move(params);
   code.result_type = result_type;
@@ -738,8 +744,11 @@ auto ProcessLowerer::BuildRecordingPrologue(
   // the function states what its text reads and writes, has each function it
   // calls do the same, one level deeper, and hands back the defaults its
   // result and outputs start at. Past the depth bound the functions are ones a
-  // shallower level of the same cycle already stated.
-  if (!reads.unreportable.has_value()) {
+  // shallower level of the same cycle already stated. A result passed back by
+  // reference starts at nothing, there being no reference to nothing, so a body
+  // passing one has no such form: it names a place, which a list reads where
+  // the call binds it.
+  if (!reads.unreportable.has_value() && result_passing_ == Passing::kByValue) {
     mir::Block entered;
     mir::Builder entered_builder = block.Into(entered);
     auto listed = ReportReads(*this, frame.WithBlock(&entered), reads, report);
@@ -837,15 +846,12 @@ auto ProcessLowerer::BuildReturnPayload(
             .owner = block.Add(LowerProceduralVarRefExpr(*this, frame, var)),
             .descent = {}});
   };
-  // LRM 13.4.1, 10.8: a returned value is assigned to the function's result.
-  if (result_var_.has_value()) {
-    components.push_back(
-        explicit_value.has_value()
-            ? ConvertToType(
-                  unit, block, *explicit_value,
-                  owner_->TranslateType(
-                      HirBody().procedural_vars.Get(*result_var_).type))
-            : read(*result_var_));
+  // A return's value is the result, bound as the result is passed; a body
+  // falling off its end completes with its result variable (LRM 13.4.1).
+  if (explicit_value.has_value()) {
+    components.push_back(*explicit_value);
+  } else if (result_var_.has_value()) {
+    components.push_back(read(*result_var_));
   }
   for (const hir::ProceduralVarId output : output_vars_) {
     components.push_back(read(output));

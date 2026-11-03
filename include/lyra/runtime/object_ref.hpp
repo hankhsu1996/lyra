@@ -104,6 +104,20 @@ auto RefToObject(std::shared_ptr<T> owned) -> value::ObjectRef {
 // the last reference to it goes.
 [[nodiscard]] auto AdoptObject(GcObject* object) -> value::ObjectRef;
 
+// An object created and held with no constructor run, for the code that asked
+// for it to enter one once it has evaluated on the object what that constructor
+// is handed (LRM 8.7, 13.5.3). The object ends through the reference from here,
+// which every holder of it shares.
+template <std::derived_from<GcObject> T>
+auto CreateUnconstructedObject(const abi::ObjectDefinition* definition)
+    -> value::ObjectRef {
+  auto created = std::make_unique<T>();
+  created->definition = definition;
+  value::ObjectRef held = AdoptObject(created.get());
+  created.release();
+  return held;
+}
+
 // A SystemVerilog `new` of an object of class `T` (LRM 8.7): the object is
 // created whole -- `T`'s C++ constructor builds every member of every class it
 // extends, and runs none of the design's code, and the object is given its
@@ -116,13 +130,8 @@ template <std::derived_from<GcObject> T, typename... Params, typename... Args>
 auto CreateObject(
     const abi::ObjectDefinition* definition, void (T::*construct)(Params...),
     Args&&... args) -> value::ObjectRef {
-  auto created = std::make_unique<T>();
-  created->definition = definition;
-  value::ObjectRef held = AdoptObject(created.get());
-  // The object ends through the reference from here, which every holder of it
-  // shares.
-  T* object = created.release();
-  (object->*construct)(std::forward<Args>(args)...);
+  value::ObjectRef held = CreateUnconstructedObject<T>(definition);
+  (held.Get<T>()->*construct)(std::forward<Args>(args)...);
   return held;
 }
 

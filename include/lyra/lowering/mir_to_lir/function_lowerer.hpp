@@ -534,6 +534,14 @@ class FunctionLowerer {
   auto LowerPlacementNew(
       const mir::Block& block, const mir::NewExpr& allocation, lir::TypeId held)
       -> diag::Result<lir::Operand>;
+  // An object of `object_type` created whole, which runs none of the design's
+  // code, and held by `owner` from there: where it lies, and the hold.
+  struct CreatedObject {
+    lir::Operand storage;
+    lir::Operand held;
+  };
+  auto EmitObjectCreation(lir::TypeId object_type, mir::TypeId owner)
+      -> diag::Result<CreatedObject>;
   // A new-expression of an object: its construction's arguments, then the
   // object created whole and held by `owner`, then its constructor entered on
   // it (LRM 8.7, 8.29).

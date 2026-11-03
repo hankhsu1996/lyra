@@ -141,6 +141,25 @@ auto ClassBodyConstructorPrototype(
   return ConstructionPrototype(unit_lowerer, cls, std::move(leading));
 }
 
+auto CallableFormOf(const hir::MethodDispatch& dispatch) -> CallableForm {
+  return std::visit(
+      Overloaded{
+          [](const hir::TypeAssociated&) {
+            return CallableForm::kTypeAssociated;
+          },
+          [](const hir::OnObjectBeingBuilt&) {
+            return CallableForm::kConstructor;
+          },
+          [](const hir::NotVirtual&) { return CallableForm::kInstanceMember; },
+          [](const hir::IntroducesVirtual&) {
+            return CallableForm::kInstanceMember;
+          },
+          [](const hir::OverridesVirtual&) {
+            return CallableForm::kInstanceMember;
+          }},
+      dispatch);
+}
+
 auto ClassMethodPrototype(
     UnitLowerer& unit_lowerer, hir::ClassId cls, hir::MethodId method)
     -> mir::CallableCode {
@@ -150,26 +169,25 @@ auto ClassMethodPrototype(
       unit_lowerer.SelfPointerTo(unit_lowerer.ClassIdentity(cls));
   const mir::CallableCode taken =
       PrototypeOf(unit_lowerer, stated.prototype, object);
-  const bool on_object = std::visit(
-      Overloaded{
-          [](const hir::TypeAssociated&) { return false; },
-          [](const hir::NotVirtual&) { return true; },
-          [](const hir::IntroducesVirtual&) { return true; },
-          [](const hir::OverridesVirtual&) { return true; }},
-      stated.dispatch);
+  const mir::TypeId scope = unit_lowerer.Unit().builtins.scope_ptr;
+  const CallableForm form = CallableFormOf(stated.dispatch);
   std::vector<mir::TypeId> params;
-  if (on_object) {
-    params.push_back(object);
-  } else if (unit_lowerer.Hir()
-                 .classes.Declaration(cls)
-                 .instance_scope.has_value()) {
-    params.push_back(unit_lowerer.Unit().builtins.scope_ptr);
+  switch (form) {
+    case CallableForm::kInstanceMember:
+      params = {object};
+      break;
+    case CallableForm::kTypeAssociated:
+      params = {scope};
+      break;
+    case CallableForm::kConstructor:
+      params = {object, scope};
+      break;
   }
   for (const mir::LocalId param : taken.ParamsAfterReceiver()) {
     params.push_back(taken.locals.Get(param).type);
   }
-  mir::CallableCode prototype =
-      ClassOperation(params, taken.result_type, on_object);
+  mir::CallableCode prototype = ClassOperation(
+      params, taken.result_type, form != CallableForm::kTypeAssociated);
   // The method reports where it was called exactly where its declaration
   // does, and is handed that location in the same position.
   if (taken.caller_location.has_value()) {
@@ -229,7 +247,7 @@ auto SlotPrototype(const mir::CallableCode& operation, mir::TypeId self)
 auto EntryOf(
     UnitLowerer& unit_lowerer, mir::ClassId id,
     const DeclaringInstance& instance, const ClassCodePoint& point,
-    mir::ClassId published) -> mir::CallableCode {
+    CallableForm form, mir::ClassId published) -> mir::CallableCode {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::CallableCode& operation =
       unit_lowerer.ClassCodePrototypeOf(published, id, point);
@@ -251,22 +269,25 @@ auto EntryOf(
   const auto read = [&](mir::LocalId param) {
     return block.ReadLocal(param, entry.locals.Get(param).type);
   };
-  // The construction has written the instance into the object by the time any
-  // other operation runs on it.
-  const mir::ExprId handed = std::visit(
-      Overloaded{
-          [&](const ClassConstructorCode&) { return read(entry.params[1]); },
-          [&](const ClassCallableCode&) {
-            if (!entry.receiver.has_value()) {
-              return read(entry.params.front());
-            }
-            return block.Read(block.Add(
-                mir::MakeFieldAccessExpr(
-                    BuildObjectDeref(unit, block, read(*entry.receiver)),
-                    mir::ClassFieldTarget{.owner = id, .slot = instance.member},
-                    instance.type)));
-          }},
-      point);
+  // Whatever runs on an object once it is built reads the instance the
+  // construction wrote into it; a body entered by a construction is handed it
+  // after the object, and one on no object first.
+  const auto instance_of = [&]() -> mir::ExprId {
+    switch (form) {
+      case CallableForm::kConstructor:
+        return read(entry.params[1]);
+      case CallableForm::kTypeAssociated:
+        return read(entry.params.front());
+      case CallableForm::kInstanceMember:
+        return block.Read(block.Add(
+            mir::MakeFieldAccessExpr(
+                BuildObjectDeref(unit, block, read(*entry.receiver)),
+                mir::ClassFieldTarget{.owner = id, .slot = instance.member},
+                instance.type)));
+    }
+    throw InternalError("EntryOf: unknown CallableForm");
+  };
+  const mir::ExprId handed = instance_of();
   std::vector<mir::ExprId> arguments;
   arguments.reserve(entry.params.size());
   for (const mir::LocalId param : entry.params) {
@@ -308,9 +329,9 @@ auto StateClassFromDeclaration(UnitLowerer& unit_lowerer, hir::ClassId cls)
   stated.conforming = unit_lowerer.ConformanceOf(cls);
   // Only a class belonging to an instance has code in the body realizing its
   // scope; an interface class has none (LRM 8.26).
-  const auto entry = [&](const ClassCodePoint& point) {
+  const auto entry = [&](const ClassCodePoint& point, CallableForm form) {
     return EntryOf(
-        unit_lowerer, id, *instance, point,
+        unit_lowerer, id, *instance, point, form,
         unit_lowerer.PublishedClassOf(*declared.instance_scope));
   };
 
@@ -336,7 +357,7 @@ auto StateClassFromDeclaration(UnitLowerer& unit_lowerer, hir::ClassId cls)
                         ? PrototypeOf(
                               unit_lowerer, stated_method.prototype,
                               stated.self_pointer_type)
-                        : entry(point),
+                        : entry(point, CallableFormOf(stated_method.dispatch)),
             .foreign = std::nullopt,
             .virtual_dispatch = unit_lowerer.DispatchRoleOf(
                 hir::ClassMethodTarget{.owner = cls, .method = method}),
@@ -345,10 +366,10 @@ auto StateClassFromDeclaration(UnitLowerer& unit_lowerer, hir::ClassId cls)
   // What `randomize()` asks of the class (LRM 18.6), and the form a waited
   // evaluation calls of each function (LRM 9.4.2), each at the identity the
   // class took for it.
-  const auto add_entry = [&](mir::CallableId callable) {
+  const auto add_entry = [&](mir::CallableId callable, CallableForm form) {
     const mir::CallableId added = stated.callables.Add(
         mir::CallableDecl{
-            .code = entry(ClassCallableCode{.callable = callable}),
+            .code = entry(ClassCallableCode{.callable = callable}, form),
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt,
             .defining_unit = std::nullopt});
@@ -364,15 +385,15 @@ auto StateClassFromDeclaration(UnitLowerer& unit_lowerer, hir::ClassId cls)
     for (const auto& [body, callback] : hooks->Callbacks()) {
       stated.library_callbacks.push_back(
           mir::LibraryCallbackBody{.callback = callback, .body = body});
-      add_entry(body);
+      add_entry(body, CallableForm::kInstanceMember);
     }
   }
-  for (const auto& [_, form] : unit_lowerer.ReportingFormsOf(cls)) {
-    add_entry(form);
+  for (const auto& [method, form] : unit_lowerer.ReportingFormsOf(cls)) {
+    add_entry(form, CallableFormOf(declared.methods.Get(method).dispatch));
   }
   if (!declared.is_interface_class) {
-    stated.constructor =
-        mir::ConstructorDecl{.code = entry(ClassConstructorCode{})};
+    stated.constructor = mir::ConstructorDecl{
+        .code = entry(ClassConstructorCode{}, CallableForm::kConstructor)};
   }
   return stated;
 }

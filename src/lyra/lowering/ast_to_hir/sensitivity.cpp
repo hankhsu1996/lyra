@@ -30,6 +30,7 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/lowering/ast_to_hir/expression/query_reads_its_operand.hpp"
+#include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -99,7 +100,8 @@ class NameCollector : public slang::ast::ASTVisitor<
     const bool written = writing_ && !through_a_handle;
     const slang::ast::Expression* prefix =
         PrefixAsWritten(path, *eval_context_);
-    if (prefix != nullptr && (written || !in_action_)) {
+    if (prefix != nullptr && (written || !in_action_) &&
+        !NamesFormalOfOmittingCallee(path.rootSymbol())) {
       names_->push_back(
           NameInText{
               .symbol = path.rootSymbol(),
@@ -169,13 +171,13 @@ class NameCollector : public slang::ast::ASTVisitor<
       }
       return;
     }
-    const auto formals =
-        std::get<const slang::ast::SubroutineSymbol*>(call.subroutine)
-            ->getArguments();
+    const slang::ast::SubroutineSymbol* callee =
+        std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
+    const auto formals = callee->getArguments();
     for (std::size_t i = 0; i < args.size(); ++i) {
-      // An omitted argument's default is the callee's text, which reads the
-      // callee's own declarations, and the callee states what it reads.
-      if (OmitsArgument(call, i)) continue;
+      if (ListFollowsDefaultOf(call, i)) continue;
+      const auto* outer_callee = std::exchange(
+          omitting_callee_, OmitsArgument(call, i) ? callee : omitting_callee_);
       const auto& formal = *formals[i];
       if (formal.direction == slang::ast::ArgumentDirection::Ref &&
           !formal.flags.has(slang::ast::VariableFlags::Const)) {
@@ -183,6 +185,7 @@ class NameCollector : public slang::ast::ASTVisitor<
       } else {
         args[i]->visit(*this);
       }
+      omitting_callee_ = outer_callee;
     }
   }
 
@@ -305,10 +308,20 @@ class NameCollector : public slang::ast::ASTVisitor<
     return path.rootSymbol() == nullptr ? nullptr : prefix;
   }
 
+  // A default names a formal before it to read what the call binds that formal,
+  // which this walk read where the call states it.
+  [[nodiscard]] auto NamesFormalOfOmittingCallee(
+      const slang::ast::Symbol* symbol) const -> bool {
+    return omitting_callee_ != nullptr && symbol != nullptr &&
+           std::ranges::contains(
+               FormalsNamedByDefaults(*omitting_callee_), symbol);
+  }
+
   slang::ast::EvalContext* eval_context_;
   std::vector<NameInText>* names_;
   bool writing_ = false;
   bool in_action_ = false;
+  const slang::ast::SubroutineSymbol* omitting_callee_ = nullptr;
 };
 
 // What a node brings into being itself: the scopes it opens, whose
