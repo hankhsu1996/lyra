@@ -405,8 +405,9 @@ struct SettledPath {
 // -- a loop's body, a sequence of steps -- names the path's nodes afresh to
 // read through it; they evaluate nothing, so the path named again reaches the
 // same part.
-[[nodiscard]] auto NamedIn(const SettledPath& settled, mir::Builder to)
-    -> AccessPath;
+[[nodiscard]] auto NamedIn(
+    const mir::CompilationUnit& unit, const SettledPath& settled,
+    mir::Builder to) -> AccessPath;
 
 // Whether `path` reaches its part through a member of an untagged union, so the
 // part lies where another member's bits may lie (LRM 7.3.2) and is changed in

@@ -219,7 +219,7 @@ auto IteratedValue(const Nest& nest, const WalkFrame& frame, std::size_t depth)
         "dimension the foreach skips, which leaves no index to reach it by "
         "and which the front end rejects (LRM 12.7.3)");
   }
-  AccessPath reached = NamedIn(*nest.array, block);
+  AccessPath reached = NamedIn(unit, *nest.array, block);
   for (std::size_t outer = 0; outer < depth; ++outer) {
     const Level& enclosing = nest.levels[outer];
     if (!enclosing.element_type.has_value()) {

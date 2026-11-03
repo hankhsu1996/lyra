@@ -25,7 +25,6 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
-#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
@@ -480,15 +479,6 @@ auto PlanSubroutineCall(
       call.callee);
 }
 
-// A component landing in an actual is what gives a call something to sequence
-// once it completes; with none, the call stands on its own.
-auto WritesBack(const SubroutineCallee& plan) -> bool {
-  return std::ranges::any_of(
-      plan.completion.formals, [](const CompletionLayout::Formal& formal) {
-        return formal.component.has_value();
-      });
-}
-
 // The call itself, still unowned, alongside what a caller needs to consume its
 // completion: the payload's shape and the actual places its written-back
 // components land in.
@@ -554,19 +544,69 @@ auto BuildAmbientHandle(
       handle);
 }
 
-// The value the handle of `form` names, evaluated in the block `frame` is
-// writing, or nothing for a callee taking none.
-template <ExprLowerer Lowerer>
-auto EvaluateHandle(
-    Lowerer& lowerer, const WalkFrame& frame, const CalleeForm& form)
-    -> diag::Result<std::optional<mir::ExprId>> {
-  const std::optional<AmbientHandle> handle = std::visit(
+// Where the first parameter of the callee `form` names comes from, or nothing
+// for a callee taking none.
+auto AmbientHandleOf(const CalleeForm& form) -> std::optional<AmbientHandle> {
+  return std::visit(
       Overloaded{
           [](const NamedCallee& named) { return named.handle; },
           [](const DispatchedCallee& dispatched) {
             return std::optional{dispatched.receiver};
           }},
       form);
+}
+
+// The class handle the source named the object of the call `form` names
+// through, where it named one (LRM 8.4).
+auto ClassHandleOf(const CalleeForm& form) -> std::optional<hir::ExprId> {
+  const std::optional<AmbientHandle> handle = AmbientHandleOf(form);
+  const auto* called =
+      handle.has_value() ? std::get_if<CalledObject>(&*handle) : nullptr;
+  const auto* through = called == nullptr
+                            ? nullptr
+                            : std::get_if<hir::HandleReceiver>(&called->source);
+  if (through == nullptr) return std::nullopt;
+  return through->expr;
+}
+
+// The class handle a call holds the object it is made on through, where it
+// holds one: the one the source named the object by, where the call leaves a
+// formal to a default, `omits_any`, whose evaluation the object has to outlive.
+auto HeldHandleOf(const CalleeForm& form, bool omits_any)
+    -> std::optional<hir::ExprId> {
+  if (!omits_any) return std::nullopt;
+  return ClassHandleOf(form);
+}
+
+// A component landing in an actual is what gives a call something to sequence
+// once it completes.
+auto WritesBack(const SubroutineCallee& plan) -> bool {
+  return std::ranges::any_of(
+      plan.completion.formals, [](const CompletionLayout::Formal& formal) {
+        return formal.component.has_value();
+      });
+}
+
+// Whether the call `call` of the callee `plan` takes steps of its own around
+// the call it makes, which then lives in a scope of its own: it writes values
+// back once the callee completes, or it holds the object it is made on while
+// the defaults it leaves are evaluated and the callee runs. With neither, the
+// call stands on its own.
+auto TakesSteps(
+    const base::Arena<hir::Expr, hir::ExprId>& exprs, const hir::CallExpr& call,
+    const SubroutineCallee& plan) -> bool {
+  return WritesBack(plan) ||
+         HeldHandleOf(plan.form, OmitsAny(exprs, RequiredOperands(call)))
+             .has_value();
+}
+
+// The value the handle of `form` names, evaluated in the block `frame` is
+// writing, or nothing for a callee taking none.
+template <ExprLowerer Lowerer>
+auto EvaluateHandle(
+    Lowerer& lowerer, const WalkFrame& frame, const CalleeForm& form)
+    -> diag::Result<std::optional<mir::ExprId>> {
+  const std::optional<AmbientHandle> handle = AmbientHandleOf(form);
   if (!handle.has_value()) return std::nullopt;
   auto value = BuildAmbientHandle(lowerer, frame, *handle);
   if (!value) return std::unexpected(std::move(value.error()));
@@ -605,19 +645,35 @@ auto ResolveCalleeOn(
       form);
 }
 
-// What the handle of `form` names, evaluated once where the call omits an
-// argument: a default is evaluated on the object the callee is made on, so
-// the one value stands at both.
+// What the handle of `form` names, evaluated once for a call that leaves a
+// formal to a default: a default is evaluated on the object the callee is made
+// on, so the one value stands at both. Where the call holds its object through
+// `held`, the class handle the source named it by, the call keeps a share of
+// the handle for as long as it runs, in the scope of its own `frame` writes,
+// and opens it once on it: a default may let go of every other handle to the
+// object, or point the one the source named at another, and the call is still
+// made on the object it began with (LRM 8.4, 13.5.3).
 template <ExprLowerer Lowerer>
 auto EvaluateSharedHandle(
     Lowerer& lowerer, const WalkFrame& frame, const CalleeForm& form,
-    bool omits_any) -> diag::Result<std::optional<mir::ExprId>> {
+    std::optional<hir::ExprId> held)
+    -> diag::Result<std::optional<mir::ExprId>> {
+  if (held.has_value()) {
+    auto value = lowerer.LowerExpr(lowerer.HirExprs().Get(*held), frame);
+    if (!value) return std::unexpected(std::move(value.error()));
+    mir::Builder block = frame.Builder();
+    const mir::ExprId held = block.Add(*std::move(value));
+    const mir::TypeId type = block.Get(held).type;
+    const mir::LocalId share = DeclareLocal(frame, held);
+    return std::optional{EvaluatedOnce(
+        frame,
+        BuildObjectPointer(
+            lowerer.Owner().Unit(), block, block.ReadLocal(share, type)))};
+  }
   auto handle = EvaluateHandle(lowerer, frame, form);
   if (!handle) return std::unexpected(std::move(handle.error()));
-  if (omits_any && handle->has_value()) {
-    return std::optional{EvaluatedOnce(frame, **handle)};
-  }
-  return handle;
+  return handle->transform(
+      [&](mir::ExprId value) { return EvaluatedOnce(frame, value); });
 }
 
 // What a function evaluating a default answers, of the function `form` names
@@ -974,8 +1030,8 @@ auto BindFormals(
     Lowerer& lowerer, const WalkFrame& frame,
     std::span<const CompletionLayout::Formal> formals,
     std::span<const hir::ExprId> operands,
-    const std::function<
-        EvaluatedDefault(std::size_t, std::span<const mir::ExprId>)>& answered)
+    const std::function<diag::Result<EvaluatedDefault>(
+        std::size_t, std::span<const mir::ExprId>)>& answered)
     -> diag::Result<BoundFormals> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& hir_exprs = lowerer.HirExprs();
@@ -993,8 +1049,9 @@ auto BindFormals(
     // of a formal it omitted names (LRM 13.5.3).
     const auto written_place = [&]() -> diag::Result<Lvalue> {
       if (!omitted) return LowerLvalue(lowerer, hir_arg, frame);
-      const EvaluatedDefault place = answered(i, held.Before(i));
-      return PlaceAnswered(frame, place.answer, place.type, hir_arg);
+      auto place = answered(i, held.Before(i));
+      if (!place) return std::unexpected(std::move(place.error()));
+      return PlaceAnswered(frame, place->answer, place->type, hir_arg);
     };
 
     // Exhaustive over the directions, so one added to the language is bound
@@ -1034,10 +1091,12 @@ auto BindFormals(
       case hir::ParamDirection::kRef:
       case hir::ParamDirection::kConstRef: {
         if (omitted) {
+          auto reference = answered(i, held.Before(i));
+          if (!reference) return std::unexpected(std::move(reference.error()));
           arguments[i] = held.HoldReference(
               frame, i,
               AtType(
-                  unit, block, answered(i, held.Before(i)).answer,
+                  unit, block, reference->answer,
                   *ParamTypeOf(unit, formal.type, formal.direction)));
           return {};
         }
@@ -1052,11 +1111,10 @@ auto BindFormals(
       // An omitted input is the value the callee's default evaluates to.
       case hir::ParamDirection::kInput: {
         if (omitted) {
+          auto value = answered(i, held.Before(i));
+          if (!value) return std::unexpected(std::move(value.error()));
           arguments[i] = held.HoldValue(
-              frame, i,
-              AtType(
-                  unit, block, answered(i, held.Before(i)).answer,
-                  formal.type));
+              frame, i, AtType(unit, block, value->answer, formal.type));
           return {};
         }
         auto bound = EmitBoundActual(
@@ -1105,10 +1163,32 @@ auto EmitSubroutineCall(
   const mir::TypeId call_result_type =
       SubroutineCallType(unit, plan.kind, payload_type);
 
+  // The object the call is made on is formed after the arguments the source
+  // wrote, as in any call, unless a default needs it first: then it is formed
+  // as the first default is reached, once, and every default and the callee
+  // are made on it, as a construction creates its object there (LRM 13.5).
   const std::vector<hir::ExprId> operands = RequiredOperands(call);
-  const bool omits_any = OmitsAny(hir_exprs, operands);
-  auto handle = EvaluateSharedHandle(lowerer, frame, plan.form, omits_any);
-  if (!handle) return std::unexpected(std::move(handle.error()));
+  const std::optional<hir::ExprId> held =
+      HeldHandleOf(plan.form, OmitsAny(hir_exprs, operands));
+  std::optional<std::optional<mir::ExprId>> handle;
+  auto bound = BindFormals(
+      lowerer, frame, plan.completion.formals, operands,
+      [&](std::size_t position, std::span<const mir::ExprId> earlier)
+          -> diag::Result<EvaluatedDefault> {
+        if (!handle.has_value()) {
+          auto shared = EvaluateSharedHandle(lowerer, frame, plan.form, held);
+          if (!shared) return std::unexpected(std::move(shared.error()));
+          handle = *shared;
+        }
+        return EvaluateOmitted(
+            lowerer.Owner(), frame, plan, position, *handle, earlier);
+      });
+  if (!bound) return std::unexpected(std::move(bound.error()));
+  if (!handle.has_value()) {
+    auto evaluated = EvaluateHandle(lowerer, frame, plan.form);
+    if (!evaluated) return std::unexpected(std::move(evaluated.error()));
+    handle = *evaluated;
+  }
   ResolvedCallee resolved =
       ResolveCalleeOn(lowerer.Owner(), block, plan.form, *handle);
 
@@ -1117,14 +1197,6 @@ auto EmitSubroutineCall(
   if (resolved.leading.has_value()) {
     call_args.push_back(*resolved.leading);
   }
-
-  auto bound = BindFormals(
-      lowerer, frame, plan.completion.formals, operands,
-      [&](std::size_t position, std::span<const mir::ExprId> earlier) {
-        return EvaluateOmitted(
-            lowerer.Owner(), frame, plan, position, *handle, earlier);
-      });
-  if (!bound) return std::unexpected(std::move(bound.error()));
   call_args.insert(
       call_args.end(), bound->arguments.begin(), bound->arguments.end());
 
@@ -1147,17 +1219,18 @@ auto EmitSubroutineCall(
       .writebacks = std::move(bound->writebacks)};
 }
 
-// Where a written-back call left its completion: the local it is bound to and
-// the payload type to project components out of it by.
+// Where a call taking steps of its own left its completion: the local it is
+// bound to and the payload type to project components out of it by.
 struct BoundCompletion {
   mir::LocalId completion;
   mir::TypeId payload_type;
 };
 
 // Emits the call, binds its completion, and writes each output component back
-// to its actual, into whichever body `frame` is currently writing.
+// to its actual, into whichever body `frame` is currently writing, which is
+// the scope of the call's own: what the call holds ends with it.
 template <ExprLowerer Lowerer>
-auto EmitWritingBackSteps(
+auto EmitCallSteps(
     Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call,
     const SubroutineCallee& plan) -> diag::Result<BoundCompletion> {
   auto emitted = EmitSubroutineCall(lowerer, frame, call, plan);
@@ -1173,7 +1246,7 @@ auto EmitWritingBackSteps(
 }
 
 template <ExprLowerer Lowerer>
-auto LowerWritingBackCall(
+auto LowerCallInItsOwnScope(
     Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call,
     const SubroutineCallee& plan) -> diag::Result<mir::Expr> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
@@ -1185,21 +1258,23 @@ auto LowerWritingBackCall(
   // from the sequencing below.
   if (plan.kind == hir::SubroutineKind::kTask) {
     ClosureBuilder closure(unit, frame, support::ClosureKind::kFnOnce);
-    auto bound = EmitWritingBackSteps(lowerer, closure.Frame(), call, plan);
+    auto bound = EmitCallSteps(lowerer, closure.Frame(), call, plan);
     if (!bound) return std::unexpected(std::move(bound.error()));
     return closure.BuildCallOnce();
   }
 
   // A function's completion is bound and written back here and now, so the
   // steps are one block expression and the call stays where it was written.
-  if (!plan.result_type.has_value()) {
-    throw InternalError(
-        "LowerWritingBackCall: a call that settles no value has no expression "
-        "to stand as -- please report this as a bug");
-  }
+  // It yields the function's result, or, for one settling none -- a loop's
+  // step may be such a call (LRM 12.7.1) -- the completion itself, as such a
+  // call standing on its own does.
   BlockBuilder steps(frame);
-  auto bound = EmitWritingBackSteps(lowerer, steps.Frame(), call, plan);
+  auto bound = EmitCallSteps(lowerer, steps.Frame(), call, plan);
   if (!bound) return std::unexpected(std::move(bound.error()));
+  if (!plan.result_type.has_value()) {
+    return steps.Build(
+        steps.Body().ReadLocal(bound->completion, bound->payload_type));
+  }
   return steps.Build(ProjectCompletionComponent(
       steps.Body(), bound->completion, bound->payload_type, kCompletionResult,
       *plan.result_type));
@@ -1275,16 +1350,16 @@ auto LowerSubroutineCallStmtForm(
   if (!planned.has_value()) return std::nullopt;
   const SubroutineCallee& callee = *planned;
 
-  // Only a function that writes back and settles no value of its own. A task
+  // Only a function that takes steps of its own and settles no value. A task
   // hands its caller a coroutine to await, and a valued function hands it the
   // component it read, so both are expressions the caller consumes.
-  const bool writes_back_only = WritesBack(callee) &&
-                                callee.kind != hir::SubroutineKind::kTask &&
-                                !callee.result_type.has_value();
-  if (!writes_back_only) return std::nullopt;
+  const bool steps_only = TakesSteps(lowerer.HirExprs(), call, callee) &&
+                          callee.kind != hir::SubroutineKind::kTask &&
+                          !callee.result_type.has_value();
+  if (!steps_only) return std::nullopt;
 
   BlockBuilder steps(frame);
-  auto bound = EmitWritingBackSteps(lowerer, steps.Frame(), call, callee);
+  auto bound = EmitCallSteps(lowerer, steps.Frame(), call, callee);
   if (!bound) {
     return diag::Result<mir::Stmt>{std::unexpected(std::move(bound.error()))};
   }
@@ -1302,18 +1377,19 @@ auto LowerSubroutineCall(
   if (!planned.has_value()) return std::nullopt;
   const SubroutineCallee& callee = *planned;
 
-  if (WritesBack(callee)) {
+  if (TakesSteps(lowerer.HirExprs(), call, callee)) {
     // Writing a value back reaches a caller's storage, which only a procedural
     // statement does; the frontend rejects an output / inout call outside
     // procedural code (LRM 13.4), so one arriving in a structural context is a
     // compiler-invariant violation rather than a user-diagnosable form.
-    if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
-      return LowerWritingBackCall(lowerer, frame, call, callee);
-    } else {
-      throw InternalError(
-          "LowerSubroutineCall: a structural subroutine call carries an "
-          "output or inout argument");
+    if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
+      if (WritesBack(callee)) {
+        throw InternalError(
+            "LowerSubroutineCall: a structural subroutine call carries an "
+            "output or inout argument");
+      }
     }
+    return LowerCallInItsOwnScope(lowerer, frame, call, callee);
   }
 
   // With nothing to sequence, the call is the expression, and its result is
@@ -1363,7 +1439,12 @@ auto EmitReportingCall(
       SubroutineCallType(unit, plan.kind, payload_type);
   const std::vector<hir::ExprId> operands = RequiredOperands(*call);
   const bool omits_any = OmitsAny(lowerer.HirExprs(), operands);
-  auto handle = EvaluateSharedHandle(lowerer, frame, plan.form, omits_any);
+  // What the function reads is fixed by its text, so the order the call's
+  // operands run in decides nothing here, and the object is formed first.
+  auto handle = omits_any ? EvaluateSharedHandle(
+                                lowerer, frame, plan.form,
+                                HeldHandleOf(plan.form, omits_any))
+                          : EvaluateHandle(lowerer, frame, plan.form);
   if (!handle) return std::unexpected(std::move(handle.error()));
   ResolvedCallee resolved =
       ResolveCalleeOn(lowerer.Owner(), block, plan.form, *handle);
@@ -1482,8 +1563,8 @@ auto EmitConstructionActuals(
       unit_lowerer.Hir().classes.Declaration(cls);
   auto bound = BindFormals(
       lowerer, frame, layout.formals, actuals,
-      [&](std::size_t position,
-          std::span<const mir::ExprId> earlier) -> EvaluatedDefault {
+      [&](std::size_t position, std::span<const mir::ExprId> earlier)
+          -> diag::Result<EvaluatedDefault> {
         const std::optional<hir::DefaultEvaluator>& value =
             declaration.constructor->params[position].default_evaluator;
         const std::optional<hir::MethodId> method =

@@ -33,14 +33,14 @@ namespace lyra::lowering::hir_to_mir {
 class ProcessLowerer;
 class UnitLowerer;
 
-// What a call holds, position by position, for the functions evaluating the
-// defaults it leaves to the callee: the place of what it binds each formal, for
-// as long as the call runs, which each of those functions takes by reference,
-// so a default answering a place may answer one of these. A formal handed a
-// value holds it in a local of the call, read for the callee; a formal bound by
-// reference is held as that reference; and a formal the call hands nothing
-// holds what it starts as, an `output`'s starting value (LRM 13.3.2). A call
-// that leaves nothing to a default holds nothing.
+// What a call holds of its formals, position by position, for the functions
+// evaluating the defaults it leaves to the callee: the place of what it binds
+// each formal, for as long as the call runs, which each of those functions
+// takes by reference, so a default answering a place may answer one of these.
+// A formal handed a value holds it in a local of the call, read for the
+// callee; a formal bound by reference is held as that reference; and a formal
+// the call hands nothing holds what it starts as, an `output`'s starting value
+// (LRM 13.3.2). A call that leaves nothing to a default holds nothing.
 class HeldActuals {
  public:
   HeldActuals(
@@ -141,11 +141,13 @@ auto BuildMethodCall(
 //
 // The expression binds the actuals and calls the callee, typed with the
 // protocol the callee states: a task's completion is a coroutine its caller
-// awaits, a function's is its payload outright. A callee that writes values
-// back needs those writes sequenced after completion, so the call, the writes,
-// and the yield become one block expression -- or, where the callee is a task,
-// a coroutine the enabler awaits. One that writes nothing back has nothing to
-// sequence and is the call itself.
+// awaits, a function's is its payload outright. A call that takes steps of its
+// own -- one writing values back once the callee completes, or one holding the
+// object it is made on through a class handle while the defaults it leaves are
+// evaluated -- is one block expression of the call, those steps and the yield,
+// or, where the callee is a task, a coroutine the enabler awaits; what it
+// holds ends with that scope. Any other call has nothing to sequence and is
+// the call itself.
 //
 // Returns nullopt for a callee that is not a user subroutine -- a system,
 // builtin, imported, or foreign one -- each of which has its own boundary.
@@ -157,12 +159,12 @@ auto LowerSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     mir::TypeId result_type) -> std::optional<diag::Result<mir::Expr>>;
 
-// The one call above that is not an expression: a function that writes back to
-// its actuals and settles no value of its own. The writes are the whole of what
-// it does, so what the source wrote lowers to a sequence of statements, and
-// there is no value for an enclosing expression to have wanted -- the frontend
-// admits such a call in statement position alone. Returns nullopt for every
-// other call, which the expression form lowers.
+// The call above written as a statement, where it is a function that takes
+// steps of its own and settles no value: the steps and the call are the whole
+// of what it does, so what the source wrote lowers to a sequence of
+// statements. Returns nullopt for every other call, which the expression form
+// lowers, as it lowers such a call standing anywhere else a call settling no
+// value may -- a loop's step (LRM 12.7.1).
 auto LowerSubroutineCallStmtForm(
     ProcessLowerer& lowerer, WalkFrame frame,
     const std::optional<std::string>& label, const hir::CallExpr& call,

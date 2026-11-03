@@ -688,7 +688,7 @@ auto LowerStreamWindowRun(
   if (!window) return std::unexpected(std::move(window.error()));
   return mir::MakeBuiltinCall(
       unit, block.Body(), support::BuiltinFn::kWindowToBitVec,
-      PathAsPlace(unit, block, NamedIn(base->path, block)),
+      PathAsPlace(unit, block, NamedIn(unit, base->path, block)),
       {window->start, window->count}, unit.builtins.bit_vec);
 }
 
@@ -831,8 +831,9 @@ auto LowerHirElementSelectExpr(
     mir::Builder body = steps.Body();
     auto queue = EvaluateSelectedBase(lowerer, steps.Frame(), base_expr);
     if (!queue) return std::unexpected(std::move(queue.error()));
-    const mir::ExprId queue_id =
-        PathAsPlace(unit_lowerer.Unit(), body, NamedIn(queue->path, body));
+    const mir::ExprId queue_id = PathAsPlace(
+        unit_lowerer.Unit(), body,
+        NamedIn(unit_lowerer.Unit(), queue->path, body));
     const hir::Expr& index_expr = exprs.Get(sel.index);
     const WalkFrame index_frame = steps.Frame().WithSelectedQueue(&queue->path);
     auto index = lowerer.LowerExpr(index_expr, index_frame);
@@ -880,7 +881,7 @@ auto LowerHirRangeSelectExpr(
     auto queue = EvaluateSelectedBase(lowerer, steps.Frame(), base_expr);
     if (!queue) return std::unexpected(std::move(queue.error()));
     const mir::ExprId queue_id =
-        PathAsPlace(unit, body, NamedIn(queue->path, body));
+        PathAsPlace(unit, body, NamedIn(unit, queue->path, body));
     auto step = RangeStep(
         lowerer, steps.Frame().WithSelectedQueue(&queue->path), sel.bounds,
         base_expr.type, result_type);
@@ -1087,7 +1088,7 @@ auto LowerTagCheckedUse(
   if (!path) return std::unexpected(std::move(path.error()));
   const SettledPath settled =
       SettledForRead(lowerer.Owner().Unit(), steps.Frame(), *std::move(path));
-  auto value = use(steps, NamedIn(settled, body));
+  auto value = use(steps, NamedIn(lowerer.Owner().Unit(), settled, body));
   if (!value) return std::unexpected(std::move(value.error()));
   return steps.Build(*value);
 }

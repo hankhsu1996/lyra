@@ -6,6 +6,7 @@
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/phase.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::mir {
 
@@ -43,10 +44,12 @@ void VerifyBody(
 void RequireLegalized(const CompilationUnit& unit, std::string_view reader);
 
 // Whether evaluating the node `id` names in `block` computes nothing: it names
-// a declared thing, spells a constant, or forms a place over nodes of which the
-// same holds. Such a node may be reached from any number of places, so a
-// lowering that needs a value at several asks this before binding it to a
-// local.
-[[nodiscard]] auto EvaluatesNothing(const Block& block, ExprId id) -> bool;
+// a declared thing, spells a constant, reads a variable it names, or forms a
+// place over nodes of which the same holds -- a place reached through a class
+// handle excepted, since opening the handle can fail the design. Such a node
+// may be reached from any number of places, so a lowering that needs a value
+// at several asks this before binding it to a local.
+[[nodiscard]] auto EvaluatesNothing(
+    const TypePool& types, const Block& block, ExprId id) -> bool;
 
 }  // namespace lyra::mir
