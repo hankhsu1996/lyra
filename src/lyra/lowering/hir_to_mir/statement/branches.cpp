@@ -63,10 +63,9 @@ auto LowerCatchAll(
 // arm that holds.
 auto BuildWrappedBranching(
     ProcessLowerer& process, const WalkFrame& frame, mir::Builder wrapper,
-    std::optional<std::string> label,
-    std::optional<hir::UniquePriorityCheck> check, QualifiedArmKind arm_kind,
-    std::vector<SearchedArm> arms, std::optional<hir::StmtId> catch_all)
-    -> diag::Result<mir::Stmt> {
+    std::optional<std::string> label, std::optional<hir::QualifiedCheck> check,
+    QualifiedArmKind arm_kind, std::vector<SearchedArm> arms,
+    std::optional<hir::StmtId> catch_all) -> diag::Result<mir::Stmt> {
   UnitLowerer& owner = process.Owner();
   const mir::CompilationUnit& unit = owner.Unit();
   const WalkFrame wrapper_frame = frame.WithBlock(&wrapper.Body());
@@ -76,7 +75,7 @@ auto BuildWrappedBranching(
   const bool asserts_uniqueness =
       AssertionsOf(check, catch_all_or->has_value()).uniqueness;
   std::optional<mir::Block> fall_through = BuildFallThrough(
-      owner, wrapper_frame, std::move(*catch_all_or), check, arm_kind);
+      process, wrapper_frame, std::move(*catch_all_or), check, arm_kind);
 
   if (asserts_uniqueness) {
     std::vector<mir::ExprId> held;
@@ -92,7 +91,7 @@ auto BuildWrappedBranching(
       held.push_back(wrapper.ReadLocal(any, unit.builtins.machine_bool));
     }
     const std::vector<mir::LocalId> kept =
-        BuildUniquenessCheck(owner, wrapper_frame, held, *check, arm_kind);
+        BuildUniquenessCheck(process, wrapper_frame, held, *check, arm_kind);
     for (std::size_t arm = 0; arm < arms.size(); ++arm) {
       arms[arm].conditions = {
           [local = kept[arm], bit = unit.builtins.bit1](
@@ -167,7 +166,7 @@ auto SnapshotCaseSubject(
 // out, LRM 12.5.1) and no qualifier asks about the items together (LRM
 // 12.5.3).
 auto TakenByValue(
-    hir::CaseKeyword keyword, std::optional<hir::UniquePriorityCheck> check)
+    hir::CaseKeyword keyword, std::optional<hir::QualifiedCheck> check)
     -> bool {
   switch (keyword) {
     case hir::CaseKeyword::kCase:
@@ -332,7 +331,7 @@ auto LowerIfStmt(
   auto else_or = LowerCatchAll(process, frame, series.else_arm);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   std::optional<mir::Block> rest = BuildFallThrough(
-      process.Owner(), frame, std::move(*else_or), i.check,
+      process, frame, std::move(*else_or), i.check,
       QualifiedArmKind::kCondition);
   for (std::size_t arm = series.arms.size(); arm-- > 1;) {
     mir::Block level;

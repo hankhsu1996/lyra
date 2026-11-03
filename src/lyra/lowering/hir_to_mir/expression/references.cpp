@@ -5,6 +5,8 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
@@ -17,7 +19,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/real_literal.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
@@ -35,6 +37,14 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
+
+// A scope named as an argument of an assertion control task is read only by
+// that task's own lowering (LRM 20.11), which never asks it for a value.
+auto ScopeIsNoValue() -> diag::Result<mir::Expr> {
+  throw InternalError(
+      "a scope an assertion control task names was lowered as a value, which "
+      "only that task's own lowering reads");
+}
 
 auto LowerHirIntegerLiteral(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame,
@@ -183,7 +193,7 @@ auto LowerProceduralVarRefExpr(
           // Storage that outlives every activation (LRM 6.21) sits wherever the
           // declaration belongs, which the binding settled; the read is that
           // one access.
-          [&](const StaticVarBinding& binding) {
+          [&](const StaticCellBinding& binding) {
             return BuildStaticStorageAccess(
                 process.Owner().Unit(), frame, binding.home, binding.cell_type,
                 mir::EnclosingHops{});
@@ -330,6 +340,9 @@ auto LowerHirPrimaryExprProc(
             return LowerRoutedObjectRefExpr(
                 process.EnclosingScopeLowerer(), frame, o, result_type);
           },
+          [&](const hir::ScopeArgumentRef&) -> diag::Result<mir::Expr> {
+            return ScopeIsNoValue();
+          },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);
           },
@@ -403,6 +416,9 @@ auto LowerHirPrimaryExprStructural(
           },
           [&](const hir::RoutedObjectRef& o) -> mir::Expr {
             return LowerRoutedObjectRefExpr(lowerer, frame, o, result_type);
+          },
+          [&](const hir::ScopeArgumentRef&) -> diag::Result<mir::Expr> {
+            return ScopeIsNoValue();
           },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);

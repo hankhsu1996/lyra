@@ -226,9 +226,10 @@ enum class BuiltinFn : std::uint16_t {
   kSampledHistoryAt,
   // LRM 16.14.1 concurrent assertion evaluation, all reached through the
   // storage that holds one property's attempts. `Install` fixes how wide a
-  // position set is and the statements an outcome selects. `OpenAttempt` opens
-  // an attempt on the staged seed, and `BeginTick` makes every evaluation one
-  // the tick has not stepped; `DisableTick` is the tick with the disable
+  // position set is, the statements an outcome selects and the assertion's
+  // control (LRM 20.11). `OpenAttempt` opens an attempt on the staged seed,
+  // where its control lets one begin, and `BeginTick` makes every evaluation
+  // one the tick has not stepped; `DisableTick` is the tick with the disable
   // condition true, which discards every attempt (LRM 16.12). `LiveWord`
   // bounds the Boolean expressions the tick has to read, `NextUnstepped` walks
   // the evaluations the tick still owes a step, and `BitsAt` / `SetWord` /
@@ -236,12 +237,14 @@ enum class BuiltinFn : std::uint16_t {
   // stepped. `Seed` starts an instance of what an implication, a followed-by or
   // a selection asks, as an instance of one implication of the evaluation
   // whose antecedent matched. `Count` / `PartOf` / `ImplicationAnswer` /
-  // `Resolve` answer every evaluation from the last back: how many there are,
-  // which part of the property one answers for, the least answer an
-  // implication's instances reached, and its own answer. `Settle` answers every
-  // attempt the tick resolved, submitting an installed assertion's statements
-  // to Reactive, and `Answer` reads what the one attempt an expect statement
-  // holds came to.
+  // `ImplicationNonvacuous` / `Resolve` answer every evaluation from the last
+  // back: how many there are, which part of the property one answers for, the
+  // least answer an implication's instances reached and whether any was
+  // nonvacuous (LRM 16.14.8), and its own answer and vacuity. `Settle` answers
+  // every attempt the tick resolved, submitting an installed assertion's
+  // statements to Reactive where its control allowed them, and `Answer` and
+  // `ActionRuns` read what the one attempt an expect statement holds came to,
+  // and whether the arm that answer selects may run.
   kEvaluationAttemptsInstall,
   kEvaluationAttemptsSeedWord,
   kEvaluationAttemptsOpenAttempt,
@@ -256,9 +259,11 @@ enum class BuiltinFn : std::uint16_t {
   kEvaluationAttemptsCount,
   kEvaluationAttemptsPartOf,
   kEvaluationAttemptsImplicationAnswer,
+  kEvaluationAttemptsImplicationNonvacuous,
   kEvaluationAttemptsResolve,
   kEvaluationAttemptsSettle,
   kEvaluationAttemptsAnswer,
+  kEvaluationAttemptsActionRuns,
   // LRM 16.17 the wait an expect statement stops at, which watches the clock
   // and the disable condition and holds the one attempt the statement began;
   // that attempt, reached through the wait; the tick and the disable test the
@@ -567,27 +572,38 @@ enum class BuiltinFn : std::uint16_t {
   // where a concurrent assertion's tick is evaluated and a violation report
   // matures.
   kObservedEffects,
-  // LRM 12.4.2.1: where a `unique` / `unique0` / `priority` violation report
-  // is kept, which matures in the Observed region unless the process that
-  // raised it reaches a flush point first; that process is the executing one,
-  // which the runtime reads ambiently.
-  kViolationReports,
   // What each keeper of deferred effects implements keeping by: the
   // allocation function a placement new-expression on the keeper names, which
   // hands out storage for one effect, and the commit of the effect made in it,
-  // which takes it over. Each keeper type has its own pair.
+  // which takes it over. Each keeper type has its own pair. A statement's
+  // assertion control keeps its violation reports (LRM 12.4.2.1, 20.11).
   kDeferredEffectsAllocate,
   kDeferredEffectsCommit,
-  kViolationReportsAllocate,
-  kViolationReportsCommit,
-  // LRM 16.4 deferred immediate assertion action commits, each a
-  // `RuntimeEffects` method taking the coroutine the action runs as. The
-  // observed (`#0`) form matures in Observed and runs its action in Reactive;
-  // the final form matures and runs in Postponed. Both ride the executing
-  // process's deferred report queue, which the runtime reads ambiently, so the
-  // call carries only the coroutine.
-  kSubmitDeferredObserved,
-  kSubmitDeferredFinal,
+  kAssertionControlAllocate,
+  kAssertionControlCommit,
+  // LRM 20.11 what the assertion control tasks set for one statement.
+  // `RegisterIn` and `Register` make it one the tasks select, held by an
+  // instance or by none, `RegisterWithin` one a task naming a block it stands
+  // in selects; `Allowed` is what an execution beginning now may do, as
+  // `support::kAssertion*` bits. `SubmitObserved` and `SubmitFinal` queue a
+  // deferred immediate assertion's action (LRM 16.4), taking the coroutine the
+  // action runs as: the observed (`#0`) form matures in Observed and runs its
+  // action in Reactive, the final form matures and runs in Postponed, and both
+  // ride the executing process's deferred report queue, which the runtime
+  // reads ambiently.
+  kAssertionControlRegisterIn,
+  kAssertionControlRegister,
+  kAssertionControlRegisterWithin,
+  kAssertionControlAllowed,
+  kAssertionControlSubmitObserved,
+  kAssertionControlSubmitFinal,
+  // LRM 20.11 an assertion control task, applied to the whole design, to an
+  // instance or a generate block, to a named block or a subroutine, or to
+  // every block a loop generate construct built.
+  kAssertControlOfDesign,
+  kAssertControlOfScope,
+  kAssertControlOfBlock,
+  kAssertControlOfLoop,
   // File-IO subsystem accessor and cancellation token operations. `Files`
   // is a `RuntimeEffects` method returning the `FileTable` broker.
   // `CancellationFor` is a `FileTable` method taking a file descriptor and

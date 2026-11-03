@@ -638,6 +638,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "evaluation_attempts_implication_answer",
           .declaration = Method{"ImplicationAnswer"},
           .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptsImplicationNonvacuous:
+      return {
+          .name = "evaluation_attempts_implication_nonvacuous",
+          .declaration = Method{"ImplicationNonvacuous"},
+          .takes_the_location = false};
     case BuiltinFn::kEvaluationAttemptsResolve:
       return {
           .name = "evaluation_attempts_resolve",
@@ -652,6 +657,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "evaluation_attempts_answer",
           .declaration = Method{"Answer"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptsActionRuns:
+      return {
+          .name = "evaluation_attempts_action_runs",
+          .declaration = Method{"ActionRuns"},
           .takes_the_location = false};
     case BuiltinFn::kWaitOnPropertyEvaluation:
       return {
@@ -1181,12 +1191,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"ObservedEffects"},
           .takes_the_runtime_handle = true,
           .takes_the_location = false};
-    case BuiltinFn::kViolationReports:
-      return {
-          .name = "violation_reports",
-          .declaration = Method{"ViolationReports"},
-          .takes_the_runtime_handle = true,
-          .takes_the_location = false};
     case BuiltinFn::kDeferredEffectsAllocate:
       return {
           .name = "deferred_effects_allocate",
@@ -1198,29 +1202,67 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"Commit"},
           .takes_the_location = false,
           .callables = {kEffectFnOncePastTheCaller}};
-    case BuiltinFn::kViolationReportsAllocate:
+    case BuiltinFn::kAssertionControlAllocate:
       return {
-          .name = "violation_reports_allocate",
+          .name = "assertion_control_allocate",
           .declaration = AllocationFunction{},
           .takes_the_location = false};
-    case BuiltinFn::kViolationReportsCommit:
+    case BuiltinFn::kAssertionControlCommit:
       return {
-          .name = "violation_reports_commit",
+          .name = "assertion_control_commit",
           .declaration = Method{"Commit"},
           .takes_the_location = false,
           .callables = {kEffectFnOncePastTheCaller}};
-    case BuiltinFn::kSubmitDeferredObserved:
+    case BuiltinFn::kAssertionControlRegisterIn:
       return {
-          .name = "submit_deferred_observed",
-          .declaration = Method{"SubmitDeferredObserved"},
-          .takes_the_runtime_handle = true,
+          .name = "assertion_control_register_in",
+          .declaration = Method{"RegisterIn"},
+          .takes_the_location = false};
+    case BuiltinFn::kAssertionControlRegister:
+      return {
+          .name = "assertion_control_register",
+          .declaration = Method{"Register"},
+          .takes_the_location = false};
+    case BuiltinFn::kAssertionControlRegisterWithin:
+      return {
+          .name = "assertion_control_register_within",
+          .declaration = Method{"RegisterWithin"},
+          .takes_the_location = false};
+    case BuiltinFn::kAssertionControlAllowed:
+      return {
+          .name = "assertion_control_allowed",
+          .declaration = Method{"Allowed"},
+          .takes_the_location = false};
+    case BuiltinFn::kAssertControlOfDesign:
+      return {
+          .name = "assert_control_of_design",
+          .declaration = Method{"AssertControlOfDesign"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kAssertControlOfScope:
+      return {
+          .name = "assert_control_of_scope",
+          .declaration = Method{"AssertControlOfScope"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kAssertControlOfBlock:
+      return {
+          .name = "assert_control_of_block",
+          .declaration = Method{"AssertControlOfBlock"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kAssertControlOfLoop:
+      return {
+          .name = "assert_control_of_loop",
+          .declaration = Method{"AssertControlOfLoop"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kAssertionControlSubmitObserved:
+      return {
+          .name = "assertion_control_submit_observed",
+          .declaration = Method{"SubmitObserved"},
           .takes_the_location = false,
           .callables = {kStartedPastTheCaller}};
-    case BuiltinFn::kSubmitDeferredFinal:
+    case BuiltinFn::kAssertionControlSubmitFinal:
       return {
-          .name = "submit_deferred_final",
-          .declaration = Method{"SubmitDeferredFinal"},
-          .takes_the_runtime_handle = true,
+          .name = "assertion_control_submit_final",
+          .declaration = Method{"SubmitFinal"},
           .takes_the_location = false,
           .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kFiles:

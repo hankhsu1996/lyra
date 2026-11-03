@@ -20,9 +20,10 @@ namespace lyra::runtime {
 
 PropertyEvaluation::PropertyEvaluation(
     RuntimeEffects& effects, std::span<const Trigger* const> clock,
-    std::span<const Trigger* const> disable_reads, std::uint64_t words)
+    std::span<const Trigger* const> disable_reads, std::uint64_t words,
+    const AssertionControl* control)
     : effects_(&effects), memberships_(clock.size() + disable_reads.size()) {
-  attempts_.Hold(words);
+  attempts_.Hold(words, control);
   for (const Trigger* trigger : clock) {
     Watch(*trigger);
   }
@@ -100,8 +101,10 @@ class PropertyEvaluationAwaiter final : public StateAwaiter {
  public:
   PropertyEvaluationAwaiter(
       RuntimeEffects& effects, std::span<const Trigger* const> clock,
-      std::span<const Trigger* const> disable_reads, std::uint64_t words)
-      : StateAwaiter(1), evaluation_(effects, clock, disable_reads, words) {
+      std::span<const Trigger* const> disable_reads, std::uint64_t words,
+      const AssertionControl* control)
+      : StateAwaiter(1),
+        evaluation_(effects, clock, disable_reads, words, control) {
     EnrolOn(evaluation_.Answers());
   }
 
@@ -135,7 +138,8 @@ auto EvaluationOf(Wait* wait) -> PropertyEvaluation& {
 
 auto WaitOnPropertyEvaluation(
     RuntimeEffects& effects, std::span<const Trigger> clock,
-    std::span<const Trigger> disable_reads, std::uint64_t words) -> Wait {
+    std::span<const Trigger> disable_reads, std::uint64_t words,
+    const AssertionControl* control) -> Wait {
   std::vector<const Trigger*> clock_leaves;
   for (const Trigger& trigger : clock) {
     clock_leaves.push_back(&trigger);
@@ -144,15 +148,16 @@ auto WaitOnPropertyEvaluation(
   for (const Trigger& trigger : disable_reads) {
     disable_leaves.push_back(&trigger);
   }
-  return WaitOnPropertyEvaluation(effects, clock_leaves, disable_leaves, words);
+  return WaitOnPropertyEvaluation(
+      effects, clock_leaves, disable_leaves, words, control);
 }
 
 auto WaitOnPropertyEvaluation(
     RuntimeEffects& effects, std::span<const Trigger* const> clock,
-    std::span<const Trigger* const> disable_reads, std::uint64_t words)
-    -> Wait {
+    std::span<const Trigger* const> disable_reads, std::uint64_t words,
+    const AssertionControl* control) -> Wait {
   return MakeWait<PropertyEvaluationAwaiter>(
-      effects, clock, disable_reads, words);
+      effects, clock, disable_reads, words, control);
 }
 
 auto AttemptsOf(Wait* wait) -> EvaluationAttempts* {

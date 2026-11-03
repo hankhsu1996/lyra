@@ -29,33 +29,52 @@ struct AssertionPosition {
 
 // What an evaluation answers, as Annex F.5.3.2's four answers in their order,
 // computed from the positions it is live at and what its implications'
-// instances answered. Each term names earlier terms of the same part by their
-// index there, so a part's answer is its last term and computing the terms in
-// order computes it.
+// instances answered, together with whether the evaluation so far is
+// nonvacuous (LRM 16.14.8). Each term names earlier terms of the same part by
+// their index there, so a part's answer is its last term and computing the
+// terms in order computes it. Vacuity is defined operator by operator, so each
+// kind of term states both: two operators answering alike can differ in
+// vacuity, which is why `implies` and `iff` are terms of their own rather than
+// what Annex F.3.4.3.2 writes them as.
 //
 // A sequence matched at some tick holds strongly from then on; one with a path
 // still live holds where it is weak, since the trace so far has not shown it
 // unable to match, and is pending where it is strong; one with no path left
-// fails (LRM 16.12.2).
+// fails (LRM 16.12.2). It is always nonvacuous.
 struct SequenceTerm {
   PositionSet live;
   PositionSet kept;
   hir::SequenceStrength strength;
 };
 
-// The order reversed (LRM 16.12.3).
+// The order reversed (LRM 16.12.3), nonvacuous where its operand is.
 struct NegatedTerm {
   std::uint32_t operand;
 };
 
-// A conjunction (LRM 16.12.5).
+// A conjunction (LRM 16.12.5), nonvacuous where either operand is.
 struct LeastTerm {
   std::uint32_t lhs;
   std::uint32_t rhs;
 };
 
-// A disjunction (LRM 16.12.4).
+// A disjunction (LRM 16.12.4), nonvacuous where either operand is.
 struct GreatestTerm {
+  std::uint32_t lhs;
+  std::uint32_t rhs;
+};
+
+// `p1 implies p2` answers as `not p1 or p2` (Annex F.3.4.3.2), and is
+// nonvacuous only where `p1` holds and both operands are nonvacuous (LRM
+// 16.14.8 z).
+struct ImpliesTerm {
+  std::uint32_t from;
+  std::uint32_t to;
+};
+
+// `p1 iff p2` answers as both directions of `implies` together, and is
+// nonvacuous where either operand is (LRM 16.14.8 aa).
+struct IffTerm {
   std::uint32_t lhs;
   std::uint32_t rhs;
 };
@@ -65,14 +84,17 @@ struct GreatestTerm {
 // match. An antecedent still live may match again, so it holds without holding
 // strongly. Annex F.3.4.3 writes `|=>`, the followed-by operators, and the
 // if-else and case properties in terms of `|->`, so each of them is numbered
-// as an implication too.
+// as an implication too. It is nonvacuous where some instance is, and an
+// instance exists only for a match of the antecedent or for the arm a
+// selection took (LRM 16.14.8 g, h, j, k, af).
 struct ImplicationTerm {
   PositionSet antecedent;
   std::uint32_t implication;
 };
 
 using AnswerTerm = std::variant<
-    SequenceTerm, NegatedTerm, LeastTerm, GreatestTerm, ImplicationTerm>;
+    SequenceTerm, NegatedTerm, LeastTerm, GreatestTerm, ImpliesTerm, IffTerm,
+    ImplicationTerm>;
 
 // A part of the property an evaluation answers for: the whole of it, or what
 // an implication asks of each match of its antecedent, or an arm a selection

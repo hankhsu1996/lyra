@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/expression/system/assertion_control.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/mem_file.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
@@ -143,6 +144,12 @@ auto LowerSystemSubroutineCallStmtForm(
           [](const support::CoverageDatabaseSystemSubroutineInfo&)
               -> std::optional<diag::Result<mir::Stmt>> {
             return std::nullopt;
+          },
+          [&](const support::AssertionControlSystemSubroutineInfo& control)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            // A task of LRM 20.11: its only form is a statement.
+            return LowerAssertionControlSystemSubroutineCallStmt(
+                process, frame, label, call, control);
           },
           [&](const support::MemFileSystemSubroutineInfo& mem_file)
               -> std::optional<diag::Result<mir::Stmt>> {

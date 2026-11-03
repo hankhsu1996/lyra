@@ -3,18 +3,23 @@
 #include <cstdint>
 #include <exception>
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/source_location.hpp"
+#include "lyra/runtime/assertion_control.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
+#include "lyra/runtime/diagnostic.hpp"
+#include "lyra/runtime/loop_blocks.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/program_threads.hpp"
 #include "lyra/runtime/property_wait.hpp"
@@ -25,6 +30,7 @@
 #include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/value_dump.hpp"
 #include "lyra/runtime/wait.hpp"
+#include "lyra/support/assertion_control.hpp"
 #include "lyra/value/format.hpp"
 
 namespace lyra::runtime {
@@ -225,67 +231,79 @@ auto RuntimeEffects::ObservedEffects() -> DeferredEffects* {
   return &EffectsAt(Now(), Region::kObserved);
 }
 
-auto RuntimeEffects::ViolationReports() -> ViolationReportKeeper* {
-  return &AsRuntime(*this).violation_reports_;
-}
-
-auto ViolationReportKeeper::Allocate(std::size_t size, std::size_t alignment)
-    -> void* {
-  return effects_->ObservedEffects()->Allocate(size, alignment);
-}
-
-void ViolationReportKeeper::Commit(void* made) {
-  DeferredEffects& observed = *effects_->ObservedEffects();
-  RuntimeProcess* process = effects_->TryCurrentProcess();
+void RuntimeEffects::KeepViolationReport(
+    void* made, const AssertionControl& control) {
+  DeferredEffects& observed = *ObservedEffects();
+  const CapturedControl queued_under{
+      .control = &control, .generation = control.Generation()};
+  RuntimeProcess* process = TryCurrentProcess();
+  // The condition kept on the report holds it, so the two end together,
+  // whether or not the condition lets it run; the report's own place in the
+  // order is never committed, since the condition stands in it.
   if (process == nullptr) {
     // A check that fires with no process running -- in a static variable's
     // initializer (LRM 6.8), or in a function a deferred effect calls, as a
     // `$strobe` argument does -- belongs to no deferred report queue, so no
-    // flush point clears it and it is kept on no condition (LRM 12.4.2.1).
-    observed.Commit(made);
+    // flush point clears it, and only a Kill of its control withdraws it
+    // (LRM 12.4.2.1, 20.11).
+    observed.Emplace([queued_under, report = observed.Take(made)] {
+      if (queued_under.Holds()) report.Call();
+    });
     return;
   }
-  // The condition kept on the report holds it, so the two end together,
-  // whether or not the condition lets it run; the report's own place in the
-  // order is never committed, since the condition stands in it.
-  observed.Emplace([validity = ViolationReportValidity(*process),
+  observed.Emplace([validity = ViolationReportValidity(*process), queued_under,
                     report = observed.Take(made)] {
     // LRM 12.4.2.1: a pass that no longer stands is a flush point the
     // process reached before this report could mature.
-    if (validity.Holds()) {
+    if (validity.Holds() && queued_under.Holds()) {
       report.Call();
     }
   });
 }
 
-void RuntimeEffects::SubmitDeferredObserved(Coroutine<void> body) {
+void RuntimeEffects::SubmitDeferredObserved(
+    Coroutine<void> body, const AssertionControl& control) {
   auto action = StartWhenDue(*this, std::move(body));
+  const CapturedControl queued_under{
+      .control = &control, .generation = control.Generation()};
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     // A deferred assertion outside any process (a static variable's
     // initializer, LRM 6.8) belongs to no deferred report queue, so no flush
-    // point can clear it and it is submitted on no condition.
-    Submit(Now(), Region::kReactive, std::move(action));
+    // point can clear it, and only a Kill of its control withdraws it.
+    Submit(
+        Now(), Region::kObserved,
+        [this, queued_under, action = std::move(action)]() mutable {
+          if (!queued_under.Holds()) return;
+          Submit(Now(), Region::kReactive, std::move(action));
+        });
     return;
   }
   // LRM 16.4.1: the report is queued now and matures in Observed only if every
   // source it recorded still stands, then runs its action in the Reactive
   // region. Maturing discards the record, so the committed Reactive effect is
-  // beyond the reach of any later flush or `disable`.
+  // beyond the reach of any later flush, `disable` or Kill.
   Submit(
       Now(), Region::kObserved,
-      [this, validity = AssertionReportValidity(*process),
+      [this, validity = AssertionReportValidity(*process), queued_under,
        action = std::move(action)]() mutable {
-        if (!validity.Holds()) return;
+        if (!validity.Holds() || !queued_under.Holds()) return;
         Submit(Now(), Region::kReactive, std::move(action));
       });
 }
 
-void RuntimeEffects::SubmitDeferredFinal(Coroutine<void> body) {
+void RuntimeEffects::SubmitDeferredFinal(
+    Coroutine<void> body, const AssertionControl& control) {
   auto action = StartWhenDue(*this, std::move(body));
+  const CapturedControl queued_under{
+      .control = &control, .generation = control.Generation()};
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
-    Submit(Now(), Region::kPostponed, std::move(action));
+    Submit(
+        Now(), Region::kPostponed,
+        [queued_under, action = std::move(action)]() mutable {
+          if (queued_under.Holds()) action();
+        });
     return;
   }
   // LRM 16.4.1: a final deferred assertion matures and runs in the Postponed
@@ -294,10 +312,87 @@ void RuntimeEffects::SubmitDeferredFinal(Coroutine<void> body) {
   // one region.
   Submit(
       Now(), Region::kPostponed,
-      [validity = AssertionReportValidity(*process),
+      [validity = AssertionReportValidity(*process), queued_under,
        action = std::move(action)]() mutable {
-        if (validity.Holds()) action();
+        if (validity.Holds() && queued_under.Holds()) action();
       });
+}
+
+namespace {
+
+// The control a task's `control_type` asks for (LRM Table 20-5), none where
+// the table gives none, which the run is told of and goes on past.
+auto ControlTypeOf(RuntimeEffects& effects, std::int64_t control_type)
+    -> std::optional<support::AssertionControlType> {
+  if (control_type <
+          static_cast<std::int64_t>(support::AssertionControlType::kLock) ||
+      control_type > static_cast<std::int64_t>(
+                         support::AssertionControlType::kVacuousOff)) {
+    effects.Diagnostic().Report(
+        Severity::kWarning,
+        base::DiagMessage(
+            "the assertion control type {} is none the standard defines; the "
+            "call is ignored",
+            control_type));
+    return std::nullopt;
+  }
+  return static_cast<support::AssertionControlType>(control_type);
+}
+
+// A selection mask, as the bits of its low byte: Tables 20-6 and 20-7 give no
+// meaning to a higher one.
+auto MaskOf(std::int64_t mask) -> std::uint64_t {
+  return static_cast<std::uint64_t>(mask) & 0xFFU;
+}
+
+}  // namespace
+
+auto RuntimeEffects::AssertionControlsOfTheRun() -> AssertionControls& {
+  return AsRuntime(*this).assertion_controls_;
+}
+
+void RuntimeEffects::AssertControlOfDesign(
+    std::int64_t control_type, std::int64_t types, std::int64_t directives,
+    std::int64_t levels, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
+  const auto control = ControlTypeOf(*this, control_type);
+  if (!control.has_value()) return;
+  Runtime& rt = AsRuntime(*this);
+  rt.assertion_controls_.ApplyToDesign(
+      rt.DesignRoot(), *control, MaskOf(types), MaskOf(directives), levels);
+}
+
+void RuntimeEffects::AssertControlOfScope(
+    Scope* scope, std::int64_t control_type, std::int64_t types,
+    std::int64_t directives, std::int64_t levels, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
+  const auto control = ControlTypeOf(*this, control_type);
+  if (!control.has_value()) return;
+  AsRuntime(*this).assertion_controls_.ApplyToScope(
+      *scope, *control, MaskOf(types), MaskOf(directives), levels);
+}
+
+void RuntimeEffects::AssertControlOfBlock(
+    const CancellationTarget* block, std::int64_t control_type,
+    std::int64_t types, std::int64_t directives, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
+  const auto control = ControlTypeOf(*this, control_type);
+  if (!control.has_value()) return;
+  AsRuntime(*this).assertion_controls_.ApplyToBlock(
+      *block, *control, MaskOf(types), MaskOf(directives));
+}
+
+void RuntimeEffects::AssertControlOfLoop(
+    const LoopBlocks* blocks, std::int64_t control_type, std::int64_t types,
+    std::int64_t directives, std::int64_t levels, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
+  const auto control = ControlTypeOf(*this, control_type);
+  if (!control.has_value()) return;
+  AssertionControls& controls = AsRuntime(*this).assertion_controls_;
+  blocks->ForEach([&](Scope& block) {
+    controls.ApplyToScope(
+        block, *control, MaskOf(types), MaskOf(directives), levels);
+  });
 }
 
 void RuntimeEffects::RunWokenAtTheOccurrence() {
@@ -577,14 +672,3 @@ void RuntimeEffects::ResetTimeFormat() {
 }
 
 }  // namespace lyra::runtime
-
-auto operator new(
-    std::size_t size, lyra::runtime::ViolationReportKeeper* keeper) -> void* {
-  return keeper->Allocate(size, __STDCPP_DEFAULT_NEW_ALIGNMENT__);
-}
-
-auto operator new(
-    std::size_t size, std::align_val_t alignment,
-    lyra::runtime::ViolationReportKeeper* keeper) -> void* {
-  return keeper->Allocate(size, static_cast<std::size_t>(alignment));
-}

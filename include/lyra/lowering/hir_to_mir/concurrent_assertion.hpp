@@ -9,7 +9,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
@@ -43,6 +43,9 @@ struct InstalledConcurrentAssertion {
   // Where the source writes the assertion, which each action it runs reports
   // from.
   diag::SourceSpan written_at;
+  // The cell of the assertion's control (LRM 20.11), which decides whether an
+  // attempt begins and which statement its outcome runs.
+  StaticCellBinding control;
 };
 
 // Lowers one concurrent assertion the scope declares into the callables it
@@ -53,7 +56,7 @@ struct InstalledConcurrentAssertion {
 [[nodiscard]] auto LowerConcurrentAssertion(
     StructuralScopeLowerer& lowerer, mir::Class& mir_class,
     const WalkFrame& ctor_frame, const StorageBringUp& bring_up,
-    const DeclaredScopes& scopes, const StaticVarBindings& statics,
+    const DeclaredScopes& scopes, const StaticCellBindings& statics,
     hir::ConcurrentAssertionId id, const hir::ConcurrentAssertionDecl& decl)
     -> diag::Result<InstalledConcurrentAssertion>;
 

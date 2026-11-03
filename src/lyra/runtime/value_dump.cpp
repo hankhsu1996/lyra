@@ -6,7 +6,6 @@
 #include <deque>
 #include <exception>
 #include <future>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -24,6 +23,7 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/dump_writer.hpp"
 #include "lyra/runtime/file.hpp"
+#include "lyra/runtime/hierarchy_levels.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/region.hpp"
@@ -415,10 +415,6 @@ class DumpOutput {
 
 namespace {
 
-auto UnboundedLevels() -> std::int64_t {
-  return std::numeric_limits<std::int64_t>::max();
-}
-
 // LRM 21.7.1.3: the checkpoint `$dumpoff` makes records every thing as
 // unknown; every other one records each as it stands.
 auto RecordsUnknown(DumpCheckpoint checkpoint) -> bool {
@@ -450,15 +446,14 @@ class SelectionDescriber final : public Describer {
         selection.instances.empty() && selection.variables.empty();
     for (const DumpSelection::Instances& named : selection.instances) {
       std::int64_t& levels = levels_[named.scope];
-      levels = std::max(
-          levels, named.levels == 0 ? UnboundedLevels() : named.levels);
+      levels = std::max(levels, LevelsNamed(named.levels));
     }
     variables_ = selection.variables;
     // A top's own scope is the outermost a dump declares: the root above the
     // tops is no scope of the design (LRM 23.3.1).
     for (Scope* root : roots) {
       root->ForEachChild(
-          [&](Scope& top) { WalkScope(top, whole ? UnboundedLevels() : 0); });
+          [&](Scope& top) { WalkScope(top, whole ? kEveryLevel : 0); });
     }
   }
 
@@ -492,9 +487,7 @@ class SelectionDescriber final : public Describer {
   }
 
   // `remaining` is how many levels of instances from this scope down are
-  // recorded whole. A level is an instance (LRM 21.7.1.2): a block a scope
-  // holds is part of the instance holding it, and counts as no level of its
-  // own.
+  // recorded whole (LRM 21.7.1.2).
   void WalkScope(Scope& scope, std::int64_t remaining) {
     if (const auto named = levels_.find(&scope); named != levels_.end()) {
       remaining = std::max(remaining, named->second);
@@ -513,24 +506,6 @@ class SelectionDescriber final : public Describer {
     if (addressable) {
       CloseScope();
     }
-  }
-
-  // The levels left once the walk enters `child` from a scope with
-  // `remaining`.
-  static auto LevelsBelow(const Scope& child, std::int64_t remaining)
-      -> std::int64_t {
-    switch (child.Info().metadata.DumpedAs()) {
-      case support::DumpScopeKind::kModule:
-        return remaining == UnboundedLevels()
-                   ? remaining
-                   : std::max<std::int64_t>(remaining - 1, 0);
-      case support::DumpScopeKind::kTask:
-      case support::DumpScopeKind::kFunction:
-      case support::DumpScopeKind::kBegin:
-      case support::DumpScopeKind::kFork:
-        return remaining;
-    }
-    throw InternalError("LevelsBelow: unknown scope kind");
   }
 
   [[nodiscard]] auto Records(const void* member) const -> bool {

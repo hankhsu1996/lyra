@@ -162,13 +162,6 @@ auto BuildRegionEffectsCallExpr(
       unit_lowerer.Unit().builtins.deferred_effects_ptr);
 }
 
-auto BuildViolationReportsCallExpr(
-    const UnitLowerer& unit_lowerer, mir::Builder block) -> mir::Expr {
-  return BuildKeeperCallExpr(
-      unit_lowerer, block, support::BuiltinFn::kViolationReports, {},
-      unit_lowerer.Unit().builtins.violation_report_keeper_ptr);
-}
-
 auto BuildDiagnosticCallExpr(
     const mir::CompilationUnit& unit, mir::Builder block) -> mir::Expr {
   return mir::Expr{

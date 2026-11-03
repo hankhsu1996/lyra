@@ -18,6 +18,7 @@
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/assertion_control.hpp"
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
@@ -356,8 +357,8 @@ class Runtime final : public RuntimeEffects {
   // What a region pass is working through, held apart from the region it came
   // out of, which meanwhile collects the next pass's work (LRM 9.3.2).
   RegionQueue draining_{effect_storage_};
-  // Where a violation report raised now is kept.
-  ViolationReportKeeper violation_reports_{*this};
+  // Every assertion control the design registered (LRM 20.11).
+  AssertionControls assertion_controls_;
   BoundMembers bound_members_;
   std::unordered_set<const VariableCell*> driven_continuously_;
   // Every execution no process started and no program keeps. Released before

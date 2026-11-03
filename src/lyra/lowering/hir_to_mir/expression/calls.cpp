@@ -265,6 +265,15 @@ auto LowerSystemSubroutineCall(
               return RejectStructuralEffect(span);
             }
           },
+          [&](const support::AssertionControlSystemSubroutineInfo&)
+              -> diag::Result<mir::Expr> {
+            // A task of LRM 20.11 has no value, so the front end refuses it
+            // in any value position, and a statement-position call is lowered
+            // by the statement-form dispatch.
+            throw InternalError(
+                "an assertion control task reached expression lowering; a "
+                "task only lowers through the statement-form dispatch");
+          },
           [&](const support::MemFileSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
             // A void task (LRM 21.4 / 21.5) has no value, so the frontend

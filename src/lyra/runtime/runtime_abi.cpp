@@ -24,6 +24,7 @@
 #include "lyra/base/source_location.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/any.hpp"
+#include "lyra/runtime/assertion_control.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/class_object.hpp"
 #include "lyra/runtime/closure.hpp"
@@ -1987,6 +1988,7 @@ using lyra::runtime::AnyReference;
 using lyra::runtime::ArmWholeVariable;
 using lyra::runtime::ArrayAt;
 using lyra::runtime::ArrayTypeAt;
+using lyra::runtime::AssertionControl;
 using lyra::runtime::AssignDesignatedArraySlice;
 using lyra::runtime::AssignDesignatedSlice;
 using lyra::runtime::AttemptsOf;
@@ -2159,7 +2161,6 @@ using lyra::runtime::Var;
 using lyra::runtime::VariableAt;
 using lyra::runtime::VariableOf;
 using lyra::runtime::VectorPropagationDelay;
-using lyra::runtime::ViolationReportKeeper;
 using lyra::runtime::Wait;
 using lyra::runtime::WaitFork;
 using lyra::runtime::WaitOn;
@@ -3072,27 +3073,79 @@ auto lyra_rt_observed_effects(void* runtime) -> void* {
   return static_cast<RuntimeEffects*>(runtime)->ObservedEffects();
 }
 
-auto lyra_rt_violation_reports(void* runtime) -> void* {
-  return static_cast<RuntimeEffects*>(runtime)->ViolationReports();
+auto lyra_rt_assertion_control_allocate(
+    void* control, std::uint64_t size, std::uint64_t alignment) -> void* {
+  return static_cast<AssertionControl*>(control)->Allocate(size, alignment);
 }
 
-auto lyra_rt_violation_reports_allocate(
-    void* keeper, std::uint64_t size, std::uint64_t alignment) -> void* {
-  return static_cast<ViolationReportKeeper*>(keeper)->Allocate(size, alignment);
+void lyra_rt_assertion_control_commit(void* control, void* made) {
+  static_cast<AssertionControl*>(control)->Commit(made);
 }
 
-void lyra_rt_violation_reports_commit(void* keeper, void* made) {
-  static_cast<ViolationReportKeeper*>(keeper)->Commit(made);
+void lyra_rt_assertion_control_register_in(
+    void* control, void* effects, void* scope, std::uint64_t type,
+    std::uint64_t directive) {
+  static_cast<AssertionControl*>(control)->RegisterIn(
+      *static_cast<RuntimeEffects*>(effects), static_cast<Scope*>(scope), type,
+      directive);
 }
 
-void lyra_rt_submit_deferred_observed(void* runtime, void* body) {
-  static_cast<RuntimeEffects*>(runtime)->SubmitDeferredObserved(
+void lyra_rt_assertion_control_register(
+    void* control, void* effects, std::uint64_t type, std::uint64_t directive) {
+  static_cast<AssertionControl*>(control)->Register(
+      *static_cast<RuntimeEffects*>(effects), type, directive);
+}
+
+void lyra_rt_assertion_control_register_within(
+    void* control, const void* block) {
+  static_cast<AssertionControl*>(control)->RegisterWithin(
+      static_cast<const CancellationTarget*>(block));
+}
+
+auto lyra_rt_assertion_control_allowed(const void* control) -> std::uint64_t {
+  return static_cast<const AssertionControl*>(control)->Allowed();
+}
+
+void lyra_rt_assertion_control_submit_observed(void* control, void* body) {
+  static_cast<AssertionControl*>(control)->SubmitObserved(
       std::move(*static_cast<Coroutine<void>*>(body)));
 }
 
-void lyra_rt_submit_deferred_final(void* runtime, void* body) {
-  static_cast<RuntimeEffects*>(runtime)->SubmitDeferredFinal(
+void lyra_rt_assertion_control_submit_final(void* control, void* body) {
+  static_cast<AssertionControl*>(control)->SubmitFinal(
       std::move(*static_cast<Coroutine<void>*>(body)));
+}
+
+void lyra_rt_assert_control_of_design(
+    void* runtime, std::int64_t control_type, std::int64_t types,
+    std::int64_t directives, std::int64_t levels, const void* location) {
+  static_cast<RuntimeEffects*>(runtime)->AssertControlOfDesign(
+      control_type, types, directives, levels, SourceLocationAt(location));
+}
+
+void lyra_rt_assert_control_of_scope(
+    void* runtime, void* scope, std::int64_t control_type, std::int64_t types,
+    std::int64_t directives, std::int64_t levels, const void* location) {
+  static_cast<RuntimeEffects*>(runtime)->AssertControlOfScope(
+      static_cast<Scope*>(scope), control_type, types, directives, levels,
+      SourceLocationAt(location));
+}
+
+void lyra_rt_assert_control_of_block(
+    void* runtime, const void* block, std::int64_t control_type,
+    std::int64_t types, std::int64_t directives, const void* location) {
+  static_cast<RuntimeEffects*>(runtime)->AssertControlOfBlock(
+      static_cast<const CancellationTarget*>(block), control_type, types,
+      directives, SourceLocationAt(location));
+}
+
+void lyra_rt_assert_control_of_loop(
+    void* runtime, const void* blocks, std::int64_t control_type,
+    std::int64_t types, std::int64_t directives, std::int64_t levels,
+    const void* location) {
+  static_cast<RuntimeEffects*>(runtime)->AssertControlOfLoop(
+      static_cast<const LoopBlocks*>(blocks), control_type, types, directives,
+      levels, SourceLocationAt(location));
 }
 
 auto lyra_rt_delay(
@@ -3226,11 +3279,12 @@ auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void* {
 
 auto lyra_rt_wait_on_property_evaluation(
     void* runtime, LyraSpan clock, LyraSpan disable_reads, std::uint64_t words,
-    void* out) -> void* {
+    const void* control, void* out) -> void* {
   return Emplace(
       out, WaitOnPropertyEvaluation(
                *static_cast<RuntimeEffects*>(runtime), TriggerHandles(clock),
-               TriggerHandles(disable_reads), words));
+               TriggerHandles(disable_reads), words,
+               static_cast<const AssertionControl*>(control)));
 }
 
 auto lyra_rt_attempts_of(void* wait) -> void* {
@@ -4788,11 +4842,12 @@ auto lyra_rt_managedref_sampled_history_at(
 
 void lyra_rt_evaluation_attempts_install(
     void* attempts, void* effects, std::uint64_t words, void* pass_action,
-    void* fail_action) {
+    void* fail_action, void* control) {
   static_cast<EvaluationAttempts*>(attempts)->Install(
       *static_cast<RuntimeEffects*>(effects), words,
       AdoptClosure<lyra::support::EffectSignature>(pass_action),
-      AdoptClosure<lyra::support::EffectSignature>(fail_action));
+      AdoptClosure<lyra::support::EffectSignature>(fail_action),
+      static_cast<AssertionControl*>(control));
 }
 
 void lyra_rt_evaluation_attempts_seed_word(
@@ -4860,9 +4915,18 @@ auto lyra_rt_evaluation_attempts_implication_answer(
       index, implication);
 }
 
+auto lyra_rt_evaluation_attempts_implication_nonvacuous(
+    const void* attempts, std::int64_t index, std::uint64_t implication)
+    -> std::uint64_t {
+  return static_cast<const EvaluationAttempts*>(attempts)
+      ->ImplicationNonvacuous(index, implication);
+}
+
 void lyra_rt_evaluation_attempts_resolve(
-    void* attempts, std::int64_t index, std::uint64_t answer) {
-  static_cast<EvaluationAttempts*>(attempts)->Resolve(index, answer);
+    void* attempts, std::int64_t index, std::uint64_t answer,
+    std::uint64_t nonvacuous) {
+  static_cast<EvaluationAttempts*>(attempts)->Resolve(
+      index, answer, nonvacuous);
 }
 
 void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects) {
@@ -4872,6 +4936,10 @@ void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects) {
 
 auto lyra_rt_evaluation_attempts_answer(const void* attempts) -> std::uint64_t {
   return static_cast<const EvaluationAttempts*>(attempts)->Answer();
+}
+
+auto lyra_rt_evaluation_attempts_action_runs(const void* attempts) -> bool {
+  return static_cast<const EvaluationAttempts*>(attempts)->ActionRuns();
 }
 
 // What a body that awaits a call holds of its answer across the suspension. The
@@ -7981,6 +8049,9 @@ void lyra_rt_cancellation_target_construct(void* storage) {
 void lyra_rt_evaluation_attempts_construct(void* storage) {
   BuildAt<EvaluationAttempts>(storage);
 }
+void lyra_rt_assertion_control_construct(void* storage) {
+  BuildAt<AssertionControl>(storage);
+}
 void lyra_rt_timer_construct(void* storage) {
   BuildAt<Timer>(storage);
 }
@@ -8082,6 +8153,9 @@ void lyra_rt_cancellation_target_destroy(void* storage) {
 }
 void lyra_rt_evaluation_attempts_destroy(void* storage) {
   std::destroy_at(static_cast<EvaluationAttempts*>(storage));
+}
+void lyra_rt_assertion_control_destroy(void* storage) {
+  std::destroy_at(static_cast<AssertionControl*>(storage));
 }
 void lyra_rt_timer_destroy(void* storage) {
   std::destroy_at(static_cast<Timer*>(storage));

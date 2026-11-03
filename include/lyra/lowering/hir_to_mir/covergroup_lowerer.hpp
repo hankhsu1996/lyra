@@ -17,7 +17,7 @@
 #include "lyra/lowering/hir_to_mir/coverage_library.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"

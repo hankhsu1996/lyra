@@ -23,8 +23,10 @@ class UnitLowerer;
 struct WalkFrame;
 struct ClassShape;
 
-// Where a static-lifetime variable keeps its one cell (LRM 6.21). What decides
-// it is what the declaration belongs to, never what reaches it. A body in the
+// Where a static-lifetime cell of a body lives: a variable's (LRM 6.21), and
+// the control of a statement the assertion control tasks select, which lives
+// as the statement's other static storage does. What decides it is what the
+// declaration belongs to, never what reaches it. A body in the
 // design hierarchy is replicated with its instance, so its cell is a field of
 // that instance's class and every instance has its own. A class method's
 // declaration belongs to the class: the standard makes such a variable "roughly
@@ -104,23 +106,34 @@ struct UnitStorage {
 using StaticStorageOwner =
     std::variant<InstanceStorage, ClassStorage, UnitStorage>;
 
-// The cell one static-lifetime body variable became. `cell_type` is the type
-// the home was declared with -- an observable cell where something outside the
-// body can reach it, the plain value type where nothing can -- settled once
-// here so no reader recomputes it. `scope` is the scope declaring the
-// variable, which its initializer is written in though it runs apart from
-// every activation of that scope (LRM 6.21).
-struct StaticVarBinding {
-  hir::ProceduralVarId var;
+// The control the assertion control tasks set for one statement a body holds
+// (LRM 20.11), which lives as long as the statement's other static storage:
+// one per instance of the declaring scope, or one for the class or the
+// program. `within` is every scope it stands in, since a task naming a block or
+// a task it stands in selects it.
+struct AssertionControlCell {
+  hir::ControlledAssertionId assertion;
+  std::vector<hir::ProceduralScopeId> within;
+};
+
+// The cell one static-lifetime body variable, or one statement's assertion
+// control, became. `cell_type` is the type the home was declared with -- for a
+// variable an observable cell where something outside the body can reach it,
+// the plain value type where nothing can -- settled once here so no reader
+// recomputes it. `scope` is the scope declaring it, which a variable's
+// initializer is written in though it runs apart from every activation of that
+// scope (LRM 6.21).
+struct StaticCellBinding {
+  std::variant<hir::ProceduralVarId, AssertionControlCell> of;
   hir::ProceduralScopeId scope;
   StaticStorageHome home;
   mir::TypeId cell_type;
 };
 
-// One entry per static-lifetime variable a body declares. A body that declares
+// One entry per static-lifetime cell a body declares. A body that declares
 // none has an empty one; nothing about the shape tells that apart from a body
 // that declares one or many, and no reader has to.
-using StaticVarBindings = std::vector<StaticVarBinding>;
+using StaticCellBindings = std::vector<StaticCellBinding>;
 
 // Declares one static-lifetime cell in `owner` and answers with the home a body
 // reaches it through. Every cell that outlives an activation is declared here,
@@ -131,9 +144,10 @@ using StaticVarBindings = std::vector<StaticVarBinding>;
     const StaticStorageOwner& owner, mir::TypeId cell_type)
     -> StaticStorageHome;
 
-// Gives every static-lifetime variable one body declares its cell in `owner`.
-// The walk descends the body's scope tree because that is where the
-// declarations are -- a scope lists what it declares.
+// Gives every static-lifetime variable one body declares, and every statement
+// of it the assertion control tasks select, its cell in `owner`. The walk
+// descends the body's scope tree because that is where the declarations are --
+// a scope lists what it declares.
 //
 // Sibling callables sharing a source identifier, and nested blocks repeating
 // one, need nothing done to stay distinct: each cell is a position in the pool
@@ -143,7 +157,7 @@ auto BindBodyStatics(
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
     const StaticStorageOwner& owner, const hir::ProceduralBody& body)
-    -> StaticVarBindings;
+    -> StaticCellBindings;
 
 // The expression a body reaches one of these cells through. Each home is one
 // access from where the body stands: a field off the instance `hops` out from
@@ -159,7 +173,7 @@ auto BindBodyStatics(
 // The field a static of a body in the design hierarchy took. Such a body is
 // replicated with its instance, so its cells are that instance's fields and no
 // other home arises there. Asked by a route that already holds the object.
-[[nodiscard]] auto InstanceFieldOf(const StaticVarBinding& binding)
+[[nodiscard]] auto InstanceFieldOf(const StaticCellBinding& binding)
     -> mir::ClassFieldTarget;
 
 }  // namespace lyra::lowering::hir_to_mir

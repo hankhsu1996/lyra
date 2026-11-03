@@ -934,7 +934,6 @@ A020_STANDING = frozenset({
      "slang::ast::UnaryOperator"),
     ("src/lyra/lowering/ast_to_hir/expression/slang_atoms.cpp",
      "KnownSystemName"),
-    ("src/lyra/lowering/ast_to_hir/statement/lower.cpp", "KnownSystemName"),
     ("src/lyra/lowering/ast_to_hir/statement/timing.cpp",
      "slang::ast::TimingControlKind"),
     ("src/lyra/lowering/ast_to_hir/type.cpp", "slang::ast::SymbolKind"),

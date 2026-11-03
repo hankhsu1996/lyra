@@ -45,6 +45,13 @@ auto StepThroughPublished(
     const hir::PublishedScopeRef& names, std::span<const std::uint32_t> selects,
     const SelectEvaluator& evaluate_select) -> diag::Result<mir::ExprId>;
 
+// The blocks of the loop generate construct `loop` the scope class
+// `scope_class` records (LRM 27.4), on the object `object` points at, as a
+// borrowed pointer to what holds them.
+auto ReachPublishedLoop(
+    UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId object,
+    hir::ScopeClassId scope_class, hir::PublishedLoopId loop) -> mir::ExprId;
+
 // What a `disable` of a block or task another unit published terminates (LRM
 // 9.6.2), on the object `object` points at, as a borrowed pointer.
 auto ReachPublishedDisableTarget(

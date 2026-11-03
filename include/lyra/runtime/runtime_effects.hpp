@@ -1,10 +1,8 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <memory>
-#include <new>
 #include <string_view>
 #include <utility>
 
@@ -26,36 +24,23 @@
 
 namespace lyra::runtime {
 
+class AssertionControl;
+class AssertionControls;
+class CancellationTarget;
 class DiagnosticDispatcher;
 class FileTable;
+class LoopBlocks;
 class PlusArgsSource;
 class BoundMembers;
 class VariableCell;
 class EvaluationAttempts;
 class Observable;
 class RuntimeProcess;
+class Scope;
 class Timer;
 class ValueDumps;
 class RandomizeSettings;
 class RuntimeEffects;
-
-// Where a violation report is kept (LRM 12.4.2.1): made where the Observed
-// region's effects say, and kept there on the condition that the process
-// raising it reaches no flush point before it matures. It keeps by the same two
-// operations a region's deferred effects keep by, so a report is made and
-// committed as every effect is.
-class ViolationReportKeeper {
- public:
-  explicit ViolationReportKeeper(RuntimeEffects& effects) : effects_(&effects) {
-  }
-
-  [[nodiscard]] auto Allocate(std::size_t size, std::size_t alignment) -> void*;
-  // Keeps the report made at `made`, an address `Allocate` handed out.
-  void Commit(void* made);
-
- private:
-  RuntimeEffects* effects_;
-};
 
 // The runtime capability surface reachable from generated code. Every side
 // effect an emitted body performs -- I/O, scheduler verbs, time queries,
@@ -176,22 +161,51 @@ class RuntimeEffects {
   // in which that step settles the values it reads has run, and where a
   // violation report matures.
   [[nodiscard]] auto ObservedEffects() -> DeferredEffects*;
-  // LRM 12.4.2.1: where a violation report is kept, which matures in the
-  // Observed region unless the process that raised it reaches a flush point
-  // first.
-  [[nodiscard]] auto ViolationReports() -> ViolationReportKeeper*;
+  // LRM 12.4.2.1: keeps the violation report made at `made` in the Observed
+  // region's effects, where it matures unless the process that raised it
+  // reaches a flush point, or `control` is killed, first (LRM 20.11).
+  void KeepViolationReport(void* made, const AssertionControl& control);
   // LRM 16.4: a deferred immediate assertion's action is queued where the
   // statement is reached and acts later only if every source that could
-  // withdraw it still stands -- the executing process's pass, and the disable
-  // targets that can name the assertion or flush its queue (16.4.2, 16.4.4). An
-  // observed (`#0`) report matures in the Observed region and acts in Reactive;
-  // a final one matures and acts in Postponed. Maturing discards what it
-  // validated, which is why a matured report can no longer be withdrawn
-  // (16.4.1). The action is a subroutine call, which can be a task (16.4), so
-  // `body` is what it runs as, built where the statement is with the
-  // arguments it was handed there.
-  void SubmitDeferredObserved(Coroutine<void> body);
-  void SubmitDeferredFinal(Coroutine<void> body);
+  // withdraw it still stands -- the executing process's pass, the disable
+  // targets that can name the assertion or flush its queue (16.4.2, 16.4.4),
+  // and the assertion's own control, which a Kill withdraws it through (LRM
+  // 20.11). An observed (`#0`) report matures in the Observed region and acts
+  // in Reactive; a final one matures and acts in Postponed. Maturing discards
+  // what it validated, which is why a matured report can no longer be
+  // withdrawn (16.4.1). The action is a subroutine call, which can be a task
+  // (16.4), so `body` is what it runs as, built where the statement is with
+  // the arguments it was handed there.
+  void SubmitDeferredObserved(
+      Coroutine<void> body, const AssertionControl& control);
+  void SubmitDeferredFinal(
+      Coroutine<void> body, const AssertionControl& control);
+
+  // LRM 20.11: every control the design registered, which a task selects
+  // from.
+  [[nodiscard]] auto AssertionControlsOfTheRun() -> AssertionControls&;
+  // LRM 20.11: an assertion control task, its `control_type`,
+  // `assertion_type`, `directive_type` and `levels` as the arguments evaluated
+  // to, applied to what it names -- nothing, which is the whole design; an
+  // instance or a generate block, `levels` from it down; or a block or a task,
+  // an assertion's label among the blocks. A call naming several applies once
+  // for each, which is the same as once for all, since applying any control
+  // twice leaves a statement as applying it once does. A control type Table
+  // 20-5 does not give selects nothing, and the call is ignored with a
+  // warning placed at `at`, where the task was written, as a dump task's
+  // argument it cannot use is.
+  void AssertControlOfDesign(
+      std::int64_t control_type, std::int64_t types, std::int64_t directives,
+      std::int64_t levels, base::SourceLocation at);
+  void AssertControlOfScope(
+      Scope* scope, std::int64_t control_type, std::int64_t types,
+      std::int64_t directives, std::int64_t levels, base::SourceLocation at);
+  void AssertControlOfBlock(
+      const CancellationTarget* block, std::int64_t control_type,
+      std::int64_t types, std::int64_t directives, base::SourceLocation at);
+  void AssertControlOfLoop(
+      const LoopBlocks* blocks, std::int64_t control_type, std::int64_t types,
+      std::int64_t directives, std::int64_t levels, base::SourceLocation at);
 
   // LRM 16.14.5: a concurrent assertion's attempts outlive the tick that
   // started them, so an attempt can still be in flight when the run ends. What
@@ -371,11 +385,3 @@ class ProcessExecutionGuard {
 };
 
 }  // namespace lyra::runtime
-
-// The allocation functions a placement new-expression naming the violation
-// report keeper calls, as a region's deferred effects have theirs.
-[[nodiscard]] auto operator new(
-    std::size_t size, lyra::runtime::ViolationReportKeeper* keeper) -> void*;
-[[nodiscard]] auto operator new(
-    std::size_t size, std::align_val_t alignment,
-    lyra::runtime::ViolationReportKeeper* keeper) -> void*;

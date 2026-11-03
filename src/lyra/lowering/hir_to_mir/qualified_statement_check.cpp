@@ -9,6 +9,7 @@
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/stmt.hpp"
+#include "lyra/lowering/hir_to_mir/assertion_control.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
@@ -26,6 +27,7 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 
@@ -87,15 +89,19 @@ void AppendReportEmit(
 // A pending violation report is scheduled where the check was decided and
 // matures a region later (LRM 12.4.2.1), so every report is reached through a
 // body the region runs rather than emitted in place. It is made where the
-// keeper of violation reports says, which keeps it in the Observed region on
-// the condition that the process raising it reaches no flush point first.
-// `frame`'s block is the one the report's captures were read in.
+// statement's assertion control keeps it, which queues it only while checking
+// is on and keeps it in the Observed region on the condition that the process
+// raising it reaches no flush point, and the control no Kill, first (LRM
+// 20.11). `frame`'s block is the one the report's captures were read in.
 void KeepInObservedRegion(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Expr body) {
+    ProcessLowerer& process, const WalkFrame& frame,
+    hir::ControlledAssertionId control, mir::Expr body) {
+  mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Builder block = frame.Builder();
-  mir::Expr keeper = BuildViolationReportsCallExpr(unit_lowerer, block);
-  const mir::ExprId kept = block.Add(BuildEmplacedClosure(
-      unit_lowerer.Unit(), frame, std::move(keeper), std::move(body)));
+  mir::Expr keeper =
+      ControlAddress(unit, block, frame, process.ControlCellOf(control));
+  const mir::ExprId kept = block.Add(
+      BuildEmplacedClosure(unit, frame, std::move(keeper), std::move(body)));
   block.AppendStmt(mir::ExprStmt{.expr = kept});
 }
 
@@ -177,8 +183,9 @@ auto BuildUniquenessReportBody(
 // The arm a statement asserting totality runs when none of its own held. The
 // body it submits reads nothing the statement computed.
 auto BuildTotalityReportScope(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    hir::UniquePriorityCheck check, QualifiedArmKind arm_kind) -> mir::Block {
+    ProcessLowerer& process, const WalkFrame& frame,
+    const hir::QualifiedCheck& check, QualifiedArmKind arm_kind) -> mir::Block {
+  UnitLowerer& unit_lowerer = process.Owner();
   mir::Block scope;
   ClosureBuilder closure(
       unit_lowerer.Unit(), frame.WithBlock(&scope), support::ClosureKind::kFn);
@@ -186,24 +193,24 @@ auto BuildTotalityReportScope(
   items.emplace_back(
       RuntimePrintLiteral{
           .text = base::DiagMessage(
-                      "'{}' violation; no {} matched", KeywordOf(check),
+                      "'{}' violation; no {} matched", KeywordOf(check.keyword),
                       NounFor(arm_kind).one)
                       .TakeText()});
   AppendReportEmit(unit_lowerer.Unit(), closure.Body(), std::move(items));
   const WalkFrame scope_frame = frame.WithBlock(&scope);
-  KeepInObservedRegion(unit_lowerer, scope_frame, closure.BuildVoid());
+  KeepInObservedRegion(
+      process, scope_frame, check.control, closure.BuildVoid());
   return scope;
 }
 
 }  // namespace
 
-auto AssertionsOf(
-    std::optional<hir::UniquePriorityCheck> check, bool has_catch_all)
+auto AssertionsOf(std::optional<hir::QualifiedCheck> check, bool has_catch_all)
     -> QualifiedAssertions {
   if (!check.has_value()) {
     return {.uniqueness = false, .totality = false};
   }
-  switch (*check) {
+  switch (check->keyword) {
     case hir::UniquePriorityCheck::kUnique:
       return {.uniqueness = true, .totality = !has_catch_all};
     case hir::UniquePriorityCheck::kUnique0:
@@ -215,20 +222,21 @@ auto AssertionsOf(
 }
 
 auto BuildFallThrough(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    ProcessLowerer& process, const WalkFrame& frame,
     std::optional<mir::Block> catch_all,
-    std::optional<hir::UniquePriorityCheck> check, QualifiedArmKind arm_kind)
+    std::optional<hir::QualifiedCheck> check, QualifiedArmKind arm_kind)
     -> std::optional<mir::Block> {
   if (AssertionsOf(check, catch_all.has_value()).totality) {
-    return BuildTotalityReportScope(unit_lowerer, frame, *check, arm_kind);
+    return BuildTotalityReportScope(process, frame, *check, arm_kind);
   }
   return catch_all;
 }
 
 auto BuildUniquenessCheck(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    std::span<const mir::ExprId> held, hir::UniquePriorityCheck check,
+    ProcessLowerer& process, const WalkFrame& frame,
+    std::span<const mir::ExprId> held, const hir::QualifiedCheck& check,
     QualifiedArmKind arm_kind) -> std::vector<mir::LocalId> {
+  UnitLowerer& unit_lowerer = process.Owner();
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
 
@@ -246,8 +254,9 @@ auto BuildUniquenessCheck(
     locals.push_back(local);
   }
   KeepInObservedRegion(
-      unit_lowerer, frame,
-      BuildUniquenessReportBody(unit_lowerer, frame, check, arm_kind, arms));
+      process, frame, check.control,
+      BuildUniquenessReportBody(
+          unit_lowerer, frame, check.keyword, arm_kind, arms));
   return locals;
 }
 

@@ -192,7 +192,10 @@ second flag but the absence of anything left to invalidate.
 **D6. What a report records is per construct, which is how one queue serves two clauses.** A
 deferred assertion report records all three sources; a violation report records the process
 execution pass alone, which is the set LRM 12.4.2.1 lists. R4's mismatch between the clauses is
-expressed as what each report captures, never as a second queue or a second flush path.
+expressed as what each report captures, never as a second queue or a second flush path. Both also
+record the generation of the statement's assertion control, which a Kill advances (LRM 20.11): the
+same validation, for a source of withdrawal LRM 20.11 adds
+([assertion-control-is-state-of-the-statement](assertion-control-is-state-of-the-statement.md) D4).
 
 **D7. MIR states the deferred action and where it matures, and nothing else.** No source, version,
 or queue appears at that layer; every part of this decision is the runtime's.
@@ -219,8 +222,9 @@ nothing.
 - Nothing enumerates processes, and no registry of the processes holding a pending report exists to
   keep in step with queuing, flushing, and termination.
 - A pending report cannot be inspected. There is no way to ask a process what it currently holds,
-  because the set is implicit in which records still validate. Should assertion control (LRM 20.11)
-  ever need that enumeration, this is the decision it reopens.
+  because the set is implicit in which records still validate. Assertion control (LRM 20.11) needed
+  no enumeration: a Kill withdraws a report by the generation it recorded, as every other source
+  does.
 - The observed form's residual glitch (R8) is reproduced rather than removed: a matured report is
   committed, and a later execution in the same time step creates its own. That is what the standard
   describes, and removing it would be divergence.

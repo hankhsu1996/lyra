@@ -48,6 +48,21 @@ auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::BlockStmt& b) -> diag::Result<mir::Stmt>;
 
+// The address of the target a region claims and a `disable` invalidates (LRM
+// 9.6.2), as a cell of `target`'s home reached where it sits. A target is
+// storage rather than a value, so what every operation on one takes is its
+// address.
+[[nodiscard]] auto CancellationTarget(
+    ProcessLowerer& process, const WalkFrame& frame,
+    const StaticStorageHome& target) -> mir::ExprId;
+
+// The address of the target a name of a block or a task reaches: a scope of
+// this body's own declaration scope is a cell reached where it sits, one
+// anywhere else is reached through the route to it.
+[[nodiscard]] auto NamedTarget(
+    ProcessLowerer& process, const WalkFrame& frame,
+    const hir::DisableTarget& target) -> mir::ExprId;
+
 // Lowers `disable <named block or task>` (LRM 9.6.2) to the one call that
 // carries the whole statement: it invalidates the named target, wakes or ends
 // what is inside it, and leaves the disabling execution when that execution is

@@ -4,11 +4,15 @@
 #include <cstdint>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/pool_id.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/pattern_id.hpp"
+#include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
+#include "lyra/hir/published_scope.hpp"
+#include "lyra/hir/scope_class_id.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/with_clause_id.hpp"
@@ -105,6 +109,64 @@ struct RoutedDisableTargetRef {
 
   auto operator<=>(const RoutedDisableTargetRef&) const
       -> std::strong_ordering = default;
+};
+
+// The scope a `disable` or an assertion control task names, when it belongs to
+// the declaration scope the statement's own body does. The identity indexes
+// that scope's registry, so naming it needs no navigation at all -- the zero
+// case of a reach, and the only form available inside a class method or a
+// package subroutine, neither of which stands on the design hierarchy a route
+// walks.
+struct DirectDisableTarget {
+  ProceduralScopeId scope;
+
+  auto operator==(const DirectDisableTarget&) const -> bool = default;
+};
+
+// The scope a `disable` or an assertion control task names elsewhere on the
+// elaborated hierarchy (LRM 23.6): a route to it, walked the way any other
+// name's route is. Which of the two forms a statement carries says where the
+// target lives and nothing about how the source spelled it.
+struct RoutedDisableTarget {
+  RoutedDisableTargetRef target;
+
+  auto operator==(const RoutedDisableTarget&) const -> bool = default;
+};
+
+using DisableTarget = std::variant<DirectDisableTarget, RoutedDisableTarget>;
+
+// Every instance of an array of instances, each reached as a name selecting it
+// would reach it. How many there are and where each stands is what the
+// declaration fixed (LRM 23.3.2).
+struct RoutedObjectsRef {
+  std::vector<RoutedObjectRef> objects;
+
+  auto operator==(const RoutedObjectsRef&) const -> bool = default;
+};
+
+// Every block of a loop generate construct the object `holder` reaches built,
+// which is that object's construction (LRM 27.4), so the loop is named by where
+// the scope holding it published it.
+struct LoopBlocksRef {
+  RoutedObjectRef holder;
+  ScopeClassId scope_class;
+  PublishedLoopId loop;
+
+  auto operator==(const LoopBlocksRef&) const -> bool = default;
+};
+
+// What a scope named as an argument of a task that takes scopes or assertions
+// rather than values stands for (LRM 20.11): one object of the hierarchy, the
+// objects of an array, the blocks of a loop, or the extent of a named block or
+// a subroutine -- a statement label's block among them (LRM 16.3) -- reached as
+// a `disable` naming it would reach it. Only that task reads it.
+using ScopeArgument = std::variant<
+    RoutedObjectRef, RoutedObjectsRef, LoopBlocksRef, DisableTarget>;
+
+struct ScopeArgumentRef {
+  ScopeArgument scope;
+
+  auto operator==(const ScopeArgumentRef&) const -> bool = default;
 };
 
 struct ProceduralVarRef {

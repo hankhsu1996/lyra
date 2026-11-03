@@ -49,6 +49,7 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/constraint_block.hpp"
 #include "lyra/lowering/ast_to_hir/covergroup_access.hpp"
+#include "lyra/lowering/ast_to_hir/expression/assertion_control_target.hpp"
 #include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/expression/operators.hpp"
@@ -1649,6 +1650,7 @@ auto LowerCallExpr(
   WrittenActuals actuals;
   actuals.values.reserve(call.arguments().size());
   std::optional<hir::TypeId> receiver_type;
+  const bool names_controlled_scopes = IsAssertionControlCall(call);
   for (std::size_t i = 0; i < call.arguments().size(); ++i) {
     // LRM 13.5: HIR carries an `output` / `inout` actual as the lvalue it is.
     // What passes between it and the formal follows from the formal's
@@ -1676,6 +1678,20 @@ auto LowerCallExpr(
     if (OmitsArgument(call, i)) {
       actuals.values.emplace_back(std::nullopt);
       actuals.omitted.push_back(i);
+      continue;
+    }
+    // A scope an assertion control task names is no value, and what it
+    // stands for is the control task's own reading (LRM 20.11).
+    if (names_controlled_scopes &&
+        arg->kind == slang::ast::ExpressionKind::ArbitrarySymbol) {
+      auto target = LowerAssertionControlTarget(
+          lowerer.Owner(), frame,
+          arg->as<slang::ast::ArbitrarySymbolExpression>(), span);
+      if (!target) return std::unexpected(std::move(target.error()));
+      actuals.values.emplace_back(
+          target->has_value()
+              ? std::optional{frame.Exprs().Add(**std::move(target))}
+              : std::nullopt);
       continue;
     }
     auto arg_or = lowerer.LowerExpr(*arg, frame);

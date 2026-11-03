@@ -619,6 +619,9 @@ auto KindOf(const Primary& primary) -> std::string_view {
           [](const RoutedObjectRef&) -> std::string_view {
             return "a routed object reference";
           },
+          [](const ScopeArgumentRef&) -> std::string_view {
+            return "a scope argument reference";
+          },
           [](const IterationBindingRef&) -> std::string_view {
             return "an iteration binding reference";
           },

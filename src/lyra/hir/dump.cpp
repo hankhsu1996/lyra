@@ -432,18 +432,21 @@ class HirDumper {
     return out;
   }
 
-  static auto FormatUniquePriorityCheck(
-      std::optional<UniquePriorityCheck> check) -> std::string {
+  static auto FormatQualifiedCheck(std::optional<QualifiedCheck> check)
+      -> std::string {
     if (!check.has_value()) return "";
-    switch (*check) {
-      case UniquePriorityCheck::kUnique:
-        return "[unique]";
-      case UniquePriorityCheck::kUnique0:
-        return "[unique0]";
-      case UniquePriorityCheck::kPriority:
-        return "[priority]";
-    }
-    throw InternalError("HirDumper::FormatUniquePriorityCheck: unknown check");
+    const auto keyword = [&]() -> std::string_view {
+      switch (check->keyword) {
+        case UniquePriorityCheck::kUnique:
+          return "unique";
+        case UniquePriorityCheck::kUnique0:
+          return "unique0";
+        case UniquePriorityCheck::kPriority:
+          return "priority";
+      }
+      throw InternalError("HirDumper::FormatQualifiedCheck: unknown check");
+    };
+    return std::format("[{} control={}]", keyword(), check->control.value);
   }
 
   static auto FormatCaseKeyword(CaseKeyword keyword) -> std::string_view {
@@ -771,6 +774,43 @@ class HirDumper {
             },
             [](const RoutedObjectRef& r) -> std::string {
               return std::format("RoutedObjectRef[{}]", r.id.value);
+            },
+            [](const ScopeArgumentRef& r) -> std::string {
+              return std::visit(
+                  Overloaded{
+                      [](const RoutedObjectRef& o) -> std::string {
+                        return std::format("Scope[object {}]", o.id.value);
+                      },
+                      [](const RoutedObjectsRef& o) -> std::string {
+                        std::string out = "Scope[objects";
+                        for (const RoutedObjectRef& each : o.objects) {
+                          out += std::format(" {}", each.id.value);
+                        }
+                        return out + "]";
+                      },
+                      [](const LoopBlocksRef& l) -> std::string {
+                        return std::format(
+                            "Scope[loop {} of class {} on object {}]",
+                            l.loop.value, l.scope_class.value,
+                            l.holder.id.value);
+                      },
+                      [](const DisableTarget& t) -> std::string {
+                        return std::visit(
+                            Overloaded{
+                                [](const DirectDisableTarget& d)
+                                    -> std::string {
+                                  return std::format(
+                                      "Scope[block {}]", d.scope.value);
+                                },
+                                [](const RoutedDisableTarget& d)
+                                    -> std::string {
+                                  return std::format(
+                                      "Scope[block route {}]",
+                                      d.target.id.value);
+                                }},
+                            t);
+                      }},
+                  r.scope);
             },
             [](const IterationBindingRef& r) -> std::string {
               const char* role = r.role == IterationBindingRole::kElement
@@ -2729,6 +2769,12 @@ class HirDumper {
       declares += std::format("ProceduralVar[{}]", s.declarations[i].value);
     }
     if (!s.declarations.empty()) declares += ")";
+    for (std::size_t i = 0; i < s.controlled_assertions.size(); ++i) {
+      declares += i == 0 ? " controls=(" : ", ";
+      declares += std::format(
+          "ControlledAssertion[{}]", s.controlled_assertions[i].value);
+    }
+    if (!s.controlled_assertions.empty()) declares += ")";
     Line(
         std::format(
             "ProceduralScope[{}] {}{}{}", id.value,
@@ -2739,6 +2785,56 @@ class HirDumper {
       DumpProceduralScope(scopes, child);
     }
     Dedent();
+  }
+
+  // What an assertion control task selects a statement by (LRM 20.11, Tables
+  // 20-6 and 20-7).
+  static auto AssertionTypeLabel(support::AssertionType type)
+      -> std::string_view {
+    switch (type) {
+      case support::AssertionType::kConcurrent:
+        return "concurrent";
+      case support::AssertionType::kSimpleImmediate:
+        return "simple-immediate";
+      case support::AssertionType::kObservedDeferredImmediate:
+        return "observed-deferred";
+      case support::AssertionType::kFinalDeferredImmediate:
+        return "final-deferred";
+      case support::AssertionType::kExpect:
+        return "expect";
+      case support::AssertionType::kUnique:
+        return "unique";
+      case support::AssertionType::kUnique0:
+        return "unique0";
+      case support::AssertionType::kPriority:
+        return "priority";
+    }
+    throw InternalError("HirDumper::AssertionTypeLabel: unknown type");
+  }
+
+  static auto DirectiveLabel(
+      std::optional<support::AssertionDirectiveType> directive)
+      -> std::string_view {
+    if (!directive.has_value()) return "";
+    switch (*directive) {
+      case support::AssertionDirectiveType::kAssert:
+        return " assert";
+      case support::AssertionDirectiveType::kCover:
+        return " cover";
+      case support::AssertionDirectiveType::kAssume:
+        return " assume";
+    }
+    throw InternalError("HirDumper::DirectiveLabel: unknown directive");
+  }
+
+  void DumpControlledAssertions(const ProceduralBody& body) {
+    for (const ControlledAssertionId id : body.controlled_assertions.Ids()) {
+      const ControlledAssertionDecl& decl = body.controlled_assertions.Get(id);
+      Line(
+          std::format(
+              "ControlledAssertion[{}] {}{}", id.value,
+              AssertionTypeLabel(decl.type), DirectiveLabel(decl.directive)));
+    }
   }
 
   void DumpProceduralDeclarations(
@@ -2759,6 +2855,12 @@ class HirDumper {
                     ? std::format(" init=Expr[{}]", lv.init->value)
                     : ""));
       }
+      Dedent();
+    }
+    if (body.controlled_assertions.size() != 0) {
+      Line("ControlledAssertions:");
+      Indent();
+      DumpControlledAssertions(body);
       Dedent();
     }
     Line("ProceduralScopes:");
@@ -2924,7 +3026,7 @@ class HirDumper {
     Line(
         std::format(
             "Stmt[{}] IfStmt{} clauses={}", id.value,
-            FormatUniquePriorityCheck(i.check), i.conditions.size()));
+            FormatQualifiedCheck(i.check), i.conditions.size()));
     Indent();
     DumpConditionClauses(p, i.conditions);
     Line("then:");
@@ -3208,7 +3310,7 @@ class HirDumper {
     Line(
         std::format(
             "Stmt[{}] CaseStmt {}{} cond=Expr[{}] (items={})", id.value,
-            label_test, FormatUniquePriorityCheck(c.check), c.condition.value,
+            label_test, FormatQualifiedCheck(c.check), c.condition.value,
             c.items.size()));
     Indent();
     Line(

@@ -38,7 +38,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -229,7 +229,7 @@ auto BaseHookTarget(
 struct BodyStatics {
   const hir::ProceduralBody* body;
   std::string_view name;
-  std::span<const StaticVarBinding> statics;
+  std::span<const StaticCellBinding> statics;
 };
 
 // Brings up the cells this class owns rather than an object of it (LRM 8.9),
@@ -304,7 +304,7 @@ auto LowerStaticStorageInto(
     ProcessLowerer body_lowerer(
         unit_lowerer, declaring_scope, mir_class.time_resolution, *body.body,
         std::nullopt, frame, scopes, body.statics);
-    for (const StaticVarBinding& binding : body.statics) {
+    for (const StaticCellBinding& binding : body.statics) {
       auto integ = IntegrateStaticInitializer(
           body_lowerer, *body.body, bring_up, binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
@@ -466,7 +466,7 @@ auto ClassDeclLowerer::DeclareShape(
             .virtual_dispatch = unit_lowerer.DispatchRoleOf(
                 hir::ClassMethodTarget{.owner = hir_class_id_, .method = id})});
   }
-  std::vector<StaticVarBindings> method_statics;
+  std::vector<StaticCellBindings> method_statics;
   method_statics.reserve(hir_class.methods.size());
   for (const hir::MethodId id : hir_class.methods.Ids()) {
     method_statics.push_back(bind_statics(hir_class.methods.Get(id)));
@@ -934,7 +934,7 @@ auto ClassDeclLowerer::PopulateBodies(
   const auto lower_method =
       [&](const hir::SubroutineDecl& method, CallableForm form,
           mir::CallableId callable,
-          const StaticVarBindings& statics) -> diag::Result<void> {
+          const StaticCellBindings& statics) -> diag::Result<void> {
     mir_class.named_callables.push_back(
         mir::NamedCallable{.name = method.name, .body = callable});
     const auto method_dispatch =
@@ -980,7 +980,7 @@ auto ClassDeclLowerer::PopulateBodies(
     const hir::SubroutineDecl& method = hir_class.methods.Get(method_id);
     const CallableForm form =
         CallableFormOf(declared.methods.Get(method_id).dispatch);
-    const StaticVarBindings& statics = method_statics_.Get(method_id);
+    const StaticCellBindings& statics = method_statics_.Get(method_id);
     if (auto lowered = lower_method(
             method, form, mir::CallableId{method_id.value}, statics);
         !lowered) {

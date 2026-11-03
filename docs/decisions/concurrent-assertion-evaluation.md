@@ -335,8 +335,11 @@ handle) has nothing to watch it and is refused. A sequence standing as the prope
 - The Reactive region stops being unreachable for the assertion family, and the assertion checking
   policy gains an answer for the concurrent form, which is what ends a design carrying both forms
   having no setting that checks either.
-- Assertion control (LRM 20.11) will need to reach an attempt in flight and an assertion's counters.
-  Neither exists here, and the storage D4 declares is where both would live.
+- Assertion control (LRM 20.11) reaches an attempt where it begins and the attempts in flight
+  through the storage D4 declares: an attempt keeps what its control allowed as it opened, and a
+  Kill discards the attempts held there. What an attempt answers carries whether it was vacuous
+  beside it (LRM 16.14.8), computed by the same generated terms
+  ([assertion-control-is-state-of-the-statement](assertion-control-is-state-of-the-statement.md)).
 
 ## Rejected alternatives
 

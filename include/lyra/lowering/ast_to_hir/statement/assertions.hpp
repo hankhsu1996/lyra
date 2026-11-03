@@ -10,6 +10,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+#include "lyra/support/assertion_control.hpp"
 #include "lyra/support/assertion_policy.hpp"
 
 namespace slang::ast {
@@ -58,6 +59,13 @@ struct StaticConcurrentAssertion {
 [[nodiscard]] auto EvaluatedInSimulation(
     const slang::ast::ConcurrentAssertionStatement& assertion,
     support::AssertionPolicy policy) -> bool;
+
+// Declares the statement being lowered as one the assertion control tasks
+// select (LRM 20.11), in the scope it stands in.
+[[nodiscard]] auto DeclareControlledAssertion(
+    const WalkFrame& frame, support::AssertionType type,
+    std::optional<support::AssertionDirectiveType> directive)
+    -> hir::ControlledAssertionId;
 
 auto LowerImmediateAssertionStmt(
     ProcessLowerer& proc, WalkFrame frame,

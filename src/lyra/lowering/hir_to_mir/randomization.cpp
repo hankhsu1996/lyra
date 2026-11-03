@@ -265,6 +265,7 @@ auto NamesVariable(const ConstraintWriter& w, hir::ExprId id) -> bool {
                     },
                     [](const hir::RoutedViewValueRef&) { return false; },
                     [](const hir::RoutedObjectRef&) { return false; },
+                    [](const hir::ScopeArgumentRef&) { return false; },
                     [](const hir::IterationBindingRef&) { return false; },
                     [](const hir::PatternVarRef&) { return false; },
                     [](const hir::NamespaceValueRef&) { return true; }},

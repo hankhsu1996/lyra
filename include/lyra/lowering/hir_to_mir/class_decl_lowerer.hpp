@@ -9,7 +9,7 @@
 #include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -115,8 +115,8 @@ class ClassDeclLowerer {
 
   // The cells each method's static-lifetime variables took, in the order the
   // class lists them.
-  base::Translation<hir::MethodId, StaticVarBindings> method_statics_;
-  StaticVarBindings ctor_static_bindings_;
+  base::Translation<hir::MethodId, StaticCellBindings> method_statics_;
+  StaticCellBindings ctor_static_bindings_;
   DeclaredScopes scopes_;
 };
 

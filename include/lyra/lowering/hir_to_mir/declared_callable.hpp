@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/mir/callable_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -18,7 +18,7 @@ namespace lyra::lowering::hir_to_mir {
 // together, so they are one entry rather than two sequences kept in step.
 struct DeclaredCallable {
   mir::CallableId callable;
-  StaticVarBindings statics;
+  StaticCellBindings statics;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

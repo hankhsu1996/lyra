@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/symbol_table.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -26,7 +27,7 @@
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/passing.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
-#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -72,7 +73,7 @@ struct PromotedVarBinding {
 // one of these, so a reader visits the answer rather than probing one registry
 // and falling back to another.
 using ProceduralVarBinding =
-    std::variant<AutomaticVarBinding, PromotedVarBinding, StaticVarBinding>;
+    std::variant<AutomaticVarBinding, PromotedVarBinding, StaticCellBinding>;
 
 // Lowers one procedural body -- a process, a method, a subroutine, a
 // constructor -- into its callable code. What holds for the whole body sits
@@ -101,14 +102,14 @@ class ProcessLowerer {
   // declaration. `owner_ctor_frame` carries the owner class into the body --
   // a frame naming no class is a namespace context, whose body has no `self`.
   // `scopes` is what each procedural scope of the declaration scope owns at run
-  // time, and `statics` the storage this body's own static variables were
-  // given.
+  // time, and `statics` the static-lifetime cells this body's variables and
+  // controlled statements were given.
   ProcessLowerer(
       UnitLowerer& unit_lowerer,
       const StructuralScopeLowerer* enclosing_scope_lowerer,
       TimeResolution time_resolution, const hir::ProceduralBody& hir_body,
       std::optional<hir::StmtId> hir_root_stmt, WalkFrame owner_ctor_frame,
-      const DeclaredScopes& scopes, std::span<const StaticVarBinding> statics,
+      const DeclaredScopes& scopes, std::span<const StaticCellBinding> statics,
       BodyWriter body_writer = {})
       : owner_(&unit_lowerer),
         enclosing_scope_lowerer_(enclosing_scope_lowerer),
@@ -122,12 +123,18 @@ class ProcessLowerer {
         // replaces it with the one its completion payload states.
         result_type_(unit_lowerer.Unit().builtins.coroutine_void),
         body_writer_(std::move(body_writer)) {
-    // Where every static-lifetime variable of this body keeps its storage is
-    // settled before the body lowers, so each one is bound here. Reaching a
-    // static's declaration statement then binds nothing and emits nothing --
-    // the walk carries no part of the answer.
-    for (const StaticVarBinding& binding : statics) {
-      MapProceduralVar(binding.var, binding);
+    // Where every static-lifetime cell of this body lives is settled before
+    // the body lowers, so each one is bound here. Reaching a static's
+    // declaration, or a statement the assertion control tasks select, then
+    // binds nothing -- the walk carries no part of the answer.
+    for (const StaticCellBinding& binding : statics) {
+      std::visit(
+          Overloaded{
+              [&](hir::ProceduralVarId var) { MapProceduralVar(var, binding); },
+              [&](const AssertionControlCell& control) {
+                controls_.emplace(control.assertion, binding);
+              }},
+          binding.of);
     }
   }
 
@@ -305,6 +312,15 @@ class ProcessLowerer {
     bindings_.Define(hir_id, binding);
   }
 
+  // The cell holding the control the assertion control tasks set for one
+  // statement of this body (LRM 20.11), and that cell as the place a call on
+  // it acts through, built in `frame`'s block.
+  [[nodiscard]] auto ControlCellOf(hir::ControlledAssertionId assertion) const
+      -> const StaticCellBinding&;
+  [[nodiscard]] auto ControlPlace(
+      const WalkFrame& frame, hir::ControlledAssertionId assertion) const
+      -> mir::ExprId;
+
   // A `ref` formal `var`, declared `declared`: it names its actual's storage,
   // which reports its own writes (LRM 13.5.2), so it is the parameter itself,
   // of `type`, in `bindings`.
@@ -457,6 +473,8 @@ class ProcessLowerer {
   // body lowering's lifetime.
   const DeclaredScopes* scopes_;
   base::SymbolTable<hir::ProceduralVarId, ProceduralVarBinding> bindings_;
+  // The cell each controlled statement of the body was given, by its id.
+  std::map<hir::ControlledAssertionId, StaticCellBinding> controls_;
 
   // The result type of the body being lowered, set before its body walks. It
   // is the call protocol, so every return site reads what its completion
