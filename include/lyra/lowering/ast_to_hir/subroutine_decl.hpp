@@ -67,6 +67,13 @@ auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
 // view defines.
 auto ViewDefinesTheName(const slang::ast::Symbol& item) -> bool;
 
+// True when a name a view defines designates storage. LRM 25.5.4 sends a
+// modport expression to LRM 23.3.3, which makes every direction but `input`
+// bound it to an lvalue; one offered only for reading may be any expression
+// the interface computes.
+auto ViewNameDesignatesStorage(const slang::ast::ModportPortSymbol& port)
+    -> bool;
+
 // The expression a view wrote for a name it defines, which is what the name
 // stands for.
 auto ViewExpressionOf(const slang::ast::ModportPortSymbol& port)

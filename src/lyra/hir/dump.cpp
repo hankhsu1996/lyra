@@ -865,7 +865,7 @@ class HirDumper {
         Overloaded{
             [](const WatchedWhole&) -> std::string { return "whole"; },
             [](const WatchedSelect& s) -> std::string {
-              return std::format("Expr[{}]", s.prefix.value);
+              return std::format("Expr[{}].{}", s.prefix.value, s.place.value);
             }},
         part);
   }

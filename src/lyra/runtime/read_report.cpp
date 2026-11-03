@@ -111,9 +111,7 @@ void ReadReport::AddWrite(
       Written{
           .place = place.ReportedTo(),
           .part = place.PathOf(steps),
-          .bits = {
-              .lsb = static_cast<std::uint64_t>(lsb_bit_offset),
-              .width = static_cast<std::uint64_t>(bit_width)}});
+          .bits = PositionsInPart(lsb_bit_offset, bit_width)});
 }
 
 void ReadReport::SettleAsImplicitList() {

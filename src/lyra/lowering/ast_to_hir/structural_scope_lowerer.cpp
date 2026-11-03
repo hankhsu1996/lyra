@@ -1024,7 +1024,7 @@ auto StructuralScopeLowerer::PopulateModportMember(
   for (const auto& item : modport.members()) {
     const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
     if (port == nullptr || !ViewDefinesTheName(*port)) continue;
-    if (port->direction != slang::ast::ArgumentDirection::In) continue;
+    if (ViewNameDesignatesStorage(*port)) continue;
     auto type = owner_->InternDeclaredType(*port);
     if (!type) return std::unexpected(std::move(type.error()));
     auto defined = DefineEvaluator(

@@ -673,9 +673,7 @@ void UnitLowerer::DeclareExternSubroutine(
 // this unit evaluates (LRM 25.5.4), which is a subroutine of this scope and
 // takes its identity here with every other, so the signature can name it
 // before any body is lowered. Every other name a view offers designates
-// storage -- an item the view wrote no expression for is the interface's own,
-// and every direction but `input` bounds the expression to an lvalue -- and
-// storage is reached rather than asked for.
+// storage, which is reached rather than asked for.
 //
 // What a view publishes is only the names it defines: an item written as a
 // plain identifier is the interface's own item serving twice (LRM 25.5.4),
@@ -687,7 +685,7 @@ void UnitLowerer::DeclareModportEvaluators(
   for (const auto& item : modport.members()) {
     const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
     if (port == nullptr || !ViewDefinesTheName(*port)) continue;
-    if (port->direction != slang::ast::ArgumentDirection::In) {
+    if (ViewNameDesignatesStorage(*port)) {
       view.names.emplace_back(ScopePublicationRecord::ViewPlace{.port = port});
       continue;
     }
