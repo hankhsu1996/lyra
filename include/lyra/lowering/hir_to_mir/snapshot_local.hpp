@@ -1,8 +1,5 @@
 #pragma once
 
-#include <optional>
-
-#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -21,13 +18,10 @@ namespace lyra::lowering::hir_to_mir {
 // var-decl-with-init) so the cpp backend's packed-init gap does not bite when
 // the type unifies to a packed-explicit form. Snapshotting a case's selector
 // once is what lets each label be compared with one evaluation of it (LRM
-// 12.5). With an `origin` the local gets a cross-body identity so a
-// closure can forward it; without one it is anonymous (used only within
-// `wrapper`).
+// 12.5).
 auto SnapshotExprToLocal(
     const UnitLowerer& unit_lowerer, WalkFrame frame, mir::Builder wrapper,
-    mir::TypeId type, mir::ExprId expr_id,
-    std::optional<BindingOriginId> origin = std::nullopt) -> mir::LocalId;
+    mir::TypeId type, mir::ExprId expr_id) -> mir::LocalId;
 
 // A local of the body `frame` is lowering, declared in its block and starting
 // out as `init`.

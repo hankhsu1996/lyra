@@ -1612,13 +1612,13 @@ the detail lives in the entry itself.
   are rejected.
 - [assertion-control-is-state-of-the-statement](assertion-control-is-state-of-the-statement.md) --
   every statement LRM 20.11's tasks select owns a control, static storage of the statement,
-  registered where the design is built under its instance and the named blocks it stands in, which a
-  task walks by scope, levels, name, type and directive. What an execution may do is read once where
-  it begins, so a change reaches no execution under way; Kill reaches attempts the control holds
-  directly and pending reports by a generation they recorded. Vacuity is computed beside each answer
-  term, so `implies` and `iff` are terms of their own. One state per type for the run, a control per
-  scope, walking bodies at run time, re-reading the control during an execution, and a Kill that
-  searches the region's lists are rejected.
+  registered where its scope's storage is brought up, under its instance and the named blocks it
+  stands in, which a task walks by scope, levels, name, type and directive. What an execution may do
+  is read once where it begins, so a change reaches no execution under way; Kill reaches attempts
+  the control holds directly and pending reports by a generation they recorded. Vacuity is computed
+  beside each answer term, so `implies` and `iff` are terms of their own. One state per type for the
+  run, a control per scope, walking bodies at run time, re-reading the control during an execution,
+  and a Kill that searches the region's lists are rejected.
 - [concurrent-assertion-evaluation](concurrent-assertion-evaluation.md) -- derived from Annex F's
   formal semantics. One start rule covers both placements: an attempt begins where the clock ticks
   and the enabling condition holds, which is 1 for a declarative assertion and "control reached this

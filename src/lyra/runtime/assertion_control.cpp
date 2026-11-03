@@ -78,25 +78,24 @@ AssertionControl::~AssertionControl() = default;
 void AssertionControl::RegisterIn(
     RuntimeEffects& effects, Scope* in, std::uint64_t type,
     std::uint64_t directive) {
-  Describe(effects, type, directive);
+  Describe(type, directive);
   effects.AssertionControlsOfTheRun().AddIn(*this, *in);
 }
 
 void AssertionControl::Register(
     RuntimeEffects& effects, std::uint64_t type, std::uint64_t directive) {
-  Describe(effects, type, directive);
+  Describe(type, directive);
   effects.AssertionControlsOfTheRun().Add(*this);
 }
 
-void AssertionControl::Describe(
-    RuntimeEffects& effects, std::uint64_t type, std::uint64_t directive) {
-  effects_ = &effects;
+void AssertionControl::Describe(std::uint64_t type, std::uint64_t directive) {
   type_ = static_cast<support::AssertionType>(type);
   directive_ = directive;
 }
 
-void AssertionControl::RegisterWithin(const CancellationTarget* block) {
-  Effects().AssertionControlsOfTheRun().AddWithin(*this, *block);
+void AssertionControl::RegisterWithin(
+    RuntimeEffects& effects, const CancellationTarget* block) {
+  effects.AssertionControlsOfTheRun().AddWithin(*this, *block);
 }
 
 void AssertionControl::Watch(EvaluationAttempts& attempts) {
@@ -170,35 +169,26 @@ void AssertionControl::Apply(support::AssertionControlType control) {
 }
 
 void AssertionControl::SubmitObserved(Coroutine<void> body) {
-  Effects().SubmitDeferredObserved(std::move(body), *this);
+  current_runtime().SubmitDeferredObserved(std::move(body), *this);
 }
 
 void AssertionControl::SubmitFinal(Coroutine<void> body) {
-  Effects().SubmitDeferredFinal(std::move(body), *this);
+  current_runtime().SubmitDeferredFinal(std::move(body), *this);
 }
 
 auto AssertionControl::Allocate(std::size_t size, std::size_t alignment)
     -> void* {
-  return Effects().ObservedEffects()->Allocate(size, alignment);
+  return current_runtime().ObservedEffects()->Allocate(size, alignment);
 }
 
 void AssertionControl::Commit(void* made) {
   // LRM 20.11: with checking off no new violation report is queued, so the one
   // just made is ended unqueued.
   if ((allowed_ & support::kAssertionChecks) == 0) {
-    const OwnedEffect dropped = Effects().ObservedEffects()->Take(made);
+    const OwnedEffect dropped = current_runtime().ObservedEffects()->Take(made);
     return;
   }
-  Effects().KeepViolationReport(made, *this);
-}
-
-auto AssertionControl::Effects() const -> RuntimeEffects& {
-  if (effects_ == nullptr) {
-    throw InternalError(
-        "AssertionControl: a statement was reached before the design "
-        "registered its control");
-  }
-  return *effects_;
+  current_runtime().KeepViolationReport(made, *this);
 }
 
 void AssertionControls::AddIn(AssertionControl& control, const Scope& in) {

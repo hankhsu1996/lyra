@@ -36,7 +36,6 @@
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/published_clocking.hpp"
 #include "lyra/hir/published_modport.hpp"
-#include "lyra/hir/stmt.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/climb.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"

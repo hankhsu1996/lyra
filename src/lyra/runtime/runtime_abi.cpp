@@ -3097,8 +3097,9 @@ void lyra_rt_assertion_control_register(
 }
 
 void lyra_rt_assertion_control_register_within(
-    void* control, const void* block) {
+    void* control, void* effects, const void* block) {
   static_cast<AssertionControl*>(control)->RegisterWithin(
+      *static_cast<RuntimeEffects*>(effects),
       static_cast<const CancellationTarget*>(block));
 }
 

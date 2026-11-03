@@ -33,6 +33,11 @@ class Scope;
 // It is also where the statement's pending reports are queued -- a deferred
 // assertion's action (LRM 16.4) and a violation report (LRM 12.4.2.1) -- since
 // this control's Kill withdraws both before they mature.
+//
+// It is usable from the moment its storage exists. A statement can run before
+// the design's storage is brought up -- a function a parameter is computed
+// with runs while the design is built -- and registering only makes the
+// control one a task can find.
 class AssertionControl {
  public:
   AssertionControl();
@@ -54,7 +59,7 @@ class AssertionControl {
       RuntimeEffects& effects, std::uint64_t type, std::uint64_t directive);
   // Makes it one a task naming `block` selects: a named block it stands in,
   // its own label's included (LRM 16.3).
-  void RegisterWithin(const CancellationTarget* block);
+  void RegisterWithin(RuntimeEffects& effects, const CancellationTarget* block);
   // The attempts a Kill aborts.
   void Watch(EvaluationAttempts& attempts);
 
@@ -88,11 +93,8 @@ class AssertionControl {
   }
 
  private:
-  void Describe(
-      RuntimeEffects& effects, std::uint64_t type, std::uint64_t directive);
-  [[nodiscard]] auto Effects() const -> RuntimeEffects&;
+  void Describe(std::uint64_t type, std::uint64_t directive);
 
-  RuntimeEffects* effects_ = nullptr;
   EvaluationAttempts* attempts_ = nullptr;
   support::AssertionType type_ = support::AssertionType::kConcurrent;
   std::uint64_t directive_ = 0;

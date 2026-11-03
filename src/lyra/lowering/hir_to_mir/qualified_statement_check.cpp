@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -10,8 +11,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/assertion_control.hpp"
-#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
-#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
@@ -27,7 +26,7 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
+#include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 
@@ -92,7 +91,7 @@ void AppendReportEmit(
 // statement's assertion control keeps it, which queues it only while checking
 // is on and keeps it in the Observed region on the condition that the process
 // raising it reaches no flush point, and the control no Kill, first (LRM
-// 20.11). `frame`'s block is the one the report's captures were read in.
+// 20.11).
 void KeepInObservedRegion(
     ProcessLowerer& process, const WalkFrame& frame,
     hir::ControlledAssertionId control, mir::Expr body) {
@@ -105,101 +104,20 @@ void KeepInObservedRegion(
   block.AppendStmt(mir::ExprStmt{.expr = kept});
 }
 
-// Whether one arm held, frozen at check time as a bit: the local holding it,
-// and the synthesized origin a deferred body forwards it through.
-struct HeldArm {
-  mir::LocalId local;
-  BindingOriginId origin;
-};
-
-// The body the Observed region runs: counts the arms that held and reports
-// where more than one did. A uniqueness violation is exactly that count
-// exceeding one, for `unique` and `unique0` alike; the two differ in whether
-// totality is also asserted, which this body does not decide (LRM 12.4.2,
-// 12.5.3).
-auto BuildUniquenessReportBody(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    hir::UniquePriorityCheck check, QualifiedArmKind arm_kind,
-    std::span<const HeldArm> arms) -> mir::Expr {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const mir::TypeId int_type = unit.builtins.int_type;
-  ClosureBuilder closure(unit, frame, support::ClosureKind::kFn);
-  mir::Builder body = closure.Body();
-
-  const mir::LocalId count = closure.Bindings().DeclareAnonymous(int_type);
-  const auto count_place = [&](mir::Builder block) {
-    return block.LocalPlace(count, int_type);
-  };
-  body.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = count, .init = mir::BuildIntLiteral(unit, body, 0)});
-  for (const HeldArm& arm : arms) {
-    const mir::ExprId held =
-        body.Read(body.Add(closure.Bindings().MakeBindingPlace(
-            closure.Bindings().EnsureCarrier(arm.origin), body)));
-    const mir::ExprId one_if_held = body.Add(
-        mir::Expr{
-            .data =
-                mir::ConditionalExpr{
-                    .condition = ReduceToCondition(unit, body, held),
-                    .then_value = mir::BuildIntLiteral(unit, body, 1),
-                    .else_value = mir::BuildIntLiteral(unit, body, 0)},
-            .type = int_type});
-    const mir::ExprId counted = body.Add(
-        mir::MakeBinary(
-            unit, body.Body(), mir::BinaryOp::kAdd,
-            body.ReadLocal(count, int_type), one_if_held, int_type));
-    body.AppendStmt(
-        mir::ExprStmt{
-            .expr = body.Add(
-                mir::MakeAssignExpr(
-                    unit.builtins, count_place(body), counted))});
-  }
-
-  mir::Block report;
-  std::vector<RuntimePrintItem> items;
-  items.emplace_back(
-      RuntimePrintLiteral{
-          .text = base::DiagMessage(
-                      "'{}' violation; more than one of the {} {} matched",
-                      KeywordOf(check), arms.size(), NounFor(arm_kind).many)
-                      .TakeText()});
-  AppendReportEmit(unit, body.Into(report), std::move(items));
-
-  const mir::ExprId lhs = body.ReadLocal(count, int_type);
-  const mir::ExprId rhs = mir::BuildIntLiteral(unit, body, 1);
-  const mir::ExprId violated = body.Add(
-      mir::MakeBinary(
-          unit, body.Body(), mir::BinaryOp::kGreaterThan, lhs, rhs,
-          unit.builtins.bit1));
-  body.AppendStmt(
-      mir::IfStmt{
-          .condition = ReduceToCondition(unit, body, violated),
-          .then_scope = body.AddScope(std::move(report)),
-          .else_scope = std::nullopt});
-  return closure.BuildVoid();
-}
-
-// The arm a statement asserting totality runs when none of its own held. The
-// body it submits reads nothing the statement computed.
-auto BuildTotalityReportScope(
+// The scope a statement runs where it found a violation: it keeps `text` as a
+// report to the Observed region, and the body it submits reads nothing the
+// statement computed.
+auto BuildReportScope(
     ProcessLowerer& process, const WalkFrame& frame,
-    const hir::QualifiedCheck& check, QualifiedArmKind arm_kind) -> mir::Block {
-  UnitLowerer& unit_lowerer = process.Owner();
+    hir::ControlledAssertionId control, std::string text) -> mir::Block {
+  mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Block scope;
-  ClosureBuilder closure(
-      unit_lowerer.Unit(), frame.WithBlock(&scope), support::ClosureKind::kFn);
-  std::vector<RuntimePrintItem> items;
-  items.emplace_back(
-      RuntimePrintLiteral{
-          .text = base::DiagMessage(
-                      "'{}' violation; no {} matched", KeywordOf(check.keyword),
-                      NounFor(arm_kind).one)
-                      .TakeText()});
-  AppendReportEmit(unit_lowerer.Unit(), closure.Body(), std::move(items));
   const WalkFrame scope_frame = frame.WithBlock(&scope);
-  KeepInObservedRegion(
-      process, scope_frame, check.control, closure.BuildVoid());
+  ClosureBuilder closure(unit, scope_frame, support::ClosureKind::kFn);
+  std::vector<RuntimePrintItem> items;
+  items.emplace_back(RuntimePrintLiteral{.text = std::move(text)});
+  AppendReportEmit(unit, closure.Body(), std::move(items));
+  KeepInObservedRegion(process, scope_frame, control, closure.BuildVoid());
   return scope;
 }
 
@@ -227,37 +145,58 @@ auto BuildFallThrough(
     std::optional<hir::QualifiedCheck> check, QualifiedArmKind arm_kind)
     -> std::optional<mir::Block> {
   if (AssertionsOf(check, catch_all.has_value()).totality) {
-    return BuildTotalityReportScope(process, frame, *check, arm_kind);
+    return BuildReportScope(
+        process, frame, check->control,
+        base::DiagMessage(
+            "'{}' violation; no {} matched", KeywordOf(check->keyword),
+            NounFor(arm_kind).one)
+            .TakeText());
   }
   return catch_all;
 }
 
-auto BuildUniquenessCheck(
+void BuildUniquenessCheck(
     ProcessLowerer& process, const WalkFrame& frame,
-    std::span<const mir::ExprId> held, const hir::QualifiedCheck& check,
-    QualifiedArmKind arm_kind) -> std::vector<mir::LocalId> {
-  UnitLowerer& unit_lowerer = process.Owner();
-  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+    std::span<const mir::LocalId> held, const hir::QualifiedCheck& check,
+    QualifiedArmKind arm_kind) {
+  const mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Builder block = frame.Builder();
+  const mir::TypeId int_type = unit.builtins.int_type;
 
-  std::vector<HeldArm> arms;
-  std::vector<mir::LocalId> locals;
-  arms.reserve(held.size());
-  locals.reserve(held.size());
-  for (const mir::ExprId arm_held : held) {
-    const BindingOriginId origin = SynthesizedOrigin{
-        .owner_site = unit_lowerer.NextSynthesizedSite(), .ordinal = 0};
-    const mir::LocalId local = SnapshotExprToLocal(
-        unit_lowerer, frame, block, unit.builtins.bit1,
-        ConditionAsBit(unit, block, arm_held), origin);
-    arms.push_back({.local = local, .origin = origin});
-    locals.push_back(local);
+  const mir::LocalId count =
+      DeclareLocal(frame, mir::BuildIntLiteral(unit, block, 0));
+  for (const mir::LocalId arm_held : held) {
+    const mir::ExprId one_if_held = block.Add(
+        mir::Expr{
+            .data =
+                mir::ConditionalExpr{
+                    .condition =
+                        block.ReadLocal(arm_held, unit.builtins.machine_bool),
+                    .then_value = mir::BuildIntLiteral(unit, block, 1),
+                    .else_value = mir::BuildIntLiteral(unit, block, 0)},
+            .type = int_type});
+    AssignLocal(
+        unit, block, count,
+        block.Add(
+            mir::MakeBinary(
+                unit, block.Body(), mir::BinaryOp::kAdd,
+                block.ReadLocal(count, int_type), one_if_held, int_type)));
   }
-  KeepInObservedRegion(
-      process, frame, check.control,
-      BuildUniquenessReportBody(
-          unit_lowerer, frame, check.keyword, arm_kind, arms));
-  return locals;
+  const mir::ExprId violated = block.Add(
+      mir::MakeBinary(
+          unit, block.Body(), mir::BinaryOp::kGreaterThan,
+          block.ReadLocal(count, int_type),
+          mir::BuildIntLiteral(unit, block, 1), unit.builtins.bit1));
+  block.AppendStmt(
+      mir::IfStmt{
+          .condition = ReduceToCondition(unit, block, violated),
+          .then_scope = block.AddScope(BuildReportScope(
+              process, frame, check.control,
+              base::DiagMessage(
+                  "'{}' violation; more than one of the {} {} matched",
+                  KeywordOf(check.keyword), held.size(), NounFor(arm_kind).many)
+                  .TakeText())),
+          .else_scope = std::nullopt});
 }
 
 }  // namespace lyra::lowering::hir_to_mir
