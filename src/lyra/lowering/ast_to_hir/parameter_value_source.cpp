@@ -208,12 +208,11 @@ auto HeldAsSettled(
 auto IsBuiltByTheRoot(const slang::ast::InstanceSymbol& inst) -> bool {
   return inst.isTopLevel() &&
          std::ranges::any_of(
-             inst.body.getParameters(),
-             [&](const slang::ast::ParameterSymbolBase* param) {
+             InstantiationArguments(inst.body),
+             [&](const slang::ast::ParameterSymbolBase* argument) {
                const auto* value =
-                   param->symbol.as_if<slang::ast::ParameterSymbol>();
-               return value != nullptr && !value->isLocalParam() &&
-                      GivenAValue(inst.body, *value);
+                   argument->symbol.as_if<slang::ast::ParameterSymbol>();
+               return value != nullptr && GivenAValue(inst.body, *value);
              });
 }
 
