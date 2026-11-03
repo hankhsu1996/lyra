@@ -305,6 +305,28 @@ The front end accepts it with no diagnostic and evaluates it as `==`, and Lyra k
 so `+0.0 === -0.0` is 1 and a NaN equals nothing. The choice changes what the program computes,
 since a bit-by-bit match (12.5) would answer both the other way. Write `==`.
 
+#### A `-` before the width of an integer or string conversion
+
+```systemverilog
+$display("[%-6d][%-4s][%-6h]", 5, "a", 8'h1);
+```
+
+21.2.1.1 gives the real conversions of Table 21-2 "the full formatting capabilities available in the
+C language", and with them C's `-`, and it says "It shall be an error if an undefined format
+specifier appears in a string literal argument". 21.2.1.2 gives every other conversion only "a
+non-negative decimal integer constant" as its field width, which no `-` can begin. Forbidden.
+
+The front end accepts it with no diagnostic on every conversion that takes a width, and its own
+tests left-justify a decimal field. What it means there the standard does not say, and the choice
+changes the text the program writes, so Lyra rules on it: a field's spaces go on the right, and the
+leading zeros of a hexadecimal, octal or binary field stay on its left. Spaces are padding, while
+each digit of those radices stands for bits of the value, which is why 21.2.1.2 says "In other
+radices, leading zeros are always displayed". 21.2.1.3 says "Decimal numerals always appear
+right-justified in a fixed-width field", which states where a decimal field puts its numeral when no
+`-` is written; a `-` asks otherwise, and moving spaces loses nothing of the value, so Lyra follows
+the front end there. The example writes `[5     ][a   ][000001]`. A string the front end formats
+while it elaborates the design reads the same, so the two never disagree.
+
 #### An input port of a 2-state or non-integral type with no port kind
 
 ```systemverilog

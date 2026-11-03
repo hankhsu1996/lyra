@@ -57,24 +57,36 @@ auto TimeUnitText(std::int8_t power) -> std::string {
 
 namespace {
 
-auto FieldFill(const FormatSpec& spec) -> char {
+// LRM 21.2.1.2 pads a short field on the left: a hexadecimal, octal or binary
+// value with zeros, which "are always displayed" since each digit stands for
+// bits of the value, and every other value with spaces, or with zeros where a
+// real conversion asks for them (Table 21-2). A `-` moves the padding to the
+// right as spaces, as C does when it is given both `-` and `0`, and leaves a
+// radix's zeros where they are.
+struct FieldPadding {
+  char fill;
+  bool on_right;
+};
+
+auto PaddingOf(const FormatSpec& spec) -> FieldPadding {
   switch (spec.kind) {
     case FormatKind::kHex:
     case FormatKind::kBinary:
     case FormatKind::kOctal:
-      return '0';
+      return {.fill = '0', .on_right = false};
     case FormatKind::kRealDecimal:
     case FormatKind::kRealExponential:
     case FormatKind::kRealGeneral:
-      return spec.zero_pad ? '0' : ' ';
+      if (spec.left_align) return {.fill = ' ', .on_right = true};
+      return {.fill = spec.zero_pad ? '0' : ' ', .on_right = false};
     case FormatKind::kDecimal:
     case FormatKind::kString:
     case FormatKind::kChar:
     case FormatKind::kAssignmentPattern:
     case FormatKind::kTime:
-      return ' ';
+      return {.fill = ' ', .on_right = spec.left_align};
   }
-  throw InternalError("FieldFill: unknown format kind");
+  throw InternalError("PaddingOf: unknown format kind");
 }
 
 auto FormatRealBody(const FormatSpec& spec, double v) -> std::string {
@@ -99,11 +111,12 @@ auto ApplyFieldWidth(std::string body, const FormatSpec& spec) -> std::string {
   const auto target = static_cast<std::size_t>(spec.width);
   if (body.size() >= target) return body;
   const std::size_t pad = target - body.size();
-  if (spec.left_align) {
-    body.append(pad, ' ');
+  const FieldPadding padding = PaddingOf(spec);
+  if (padding.on_right) {
+    body.append(pad, padding.fill);
     return body;
   }
-  return std::string(pad, FieldFill(spec)) + std::move(body);
+  return std::string(pad, padding.fill) + std::move(body);
 }
 
 auto Format(const FormatSpec& spec, FormatArg arg, const FormatContext& ctx)
@@ -282,7 +295,7 @@ auto Formatter<double>::Format(
     const FormatSpec& spec, double value, const FormatContext& ctx)
     -> std::string {
   if (spec.kind == FormatKind::kTime) {
-    return FormatRealTime(spec, value, ctx.time_format);
+    return FormatRealTime(spec, value, ctx.time_format.get());
   }
   return ApplyFieldWidth(FormatRealBody(spec, value), spec);
 }
@@ -291,7 +304,8 @@ auto Formatter<float>::Format(
     const FormatSpec& spec, float value, const FormatContext& ctx)
     -> std::string {
   if (spec.kind == FormatKind::kTime) {
-    return FormatRealTime(spec, static_cast<double>(value), ctx.time_format);
+    return FormatRealTime(
+        spec, static_cast<double>(value), ctx.time_format.get());
   }
   return ApplyFieldWidth(
       FormatRealBody(spec, static_cast<double>(value)), spec);

@@ -15,9 +15,8 @@ namespace lyra::value {
 // formatting LRM 21.2.1.1 Table 21-2 grants the real conversions, so a
 // precision and a fill reach only those. The front end also accepts a
 // justification on every conversion that fills a field, where LRM 21.2.1.2
-// defines none, and the field is then padded on the right. `-1` on width or
-// precision means the directive left it unset, so the formatter uses its
-// per-kind default.
+// defines none. `-1` on width or precision means the directive left it unset,
+// so the formatter uses its per-kind default.
 struct FormatModifiers {
   std::int32_t width = -1;
   std::int32_t precision = -1;
