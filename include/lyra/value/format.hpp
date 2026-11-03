@@ -2,6 +2,7 @@
 
 #include <concepts>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -60,11 +61,12 @@ struct FormatSpec {
 // LRM 21.2.1.2: a rendering narrower than its field is padded to reach it and
 // one wider expands the field rather than being truncated. What fills the field
 // are the conversion's own properties -- spaces for a decimal or string value,
-// zeros for the other radices -- and it goes on the left unless the directive
-// asks for justification, which then fills the right with spaces. `spec.width`
-// is the field this rendering is to occupy, which for a conversion sized from
-// its operand's type means the caller has resolved that size into the spec
-// first; a width still negative asks for no field at all.
+// zeros for the other radices -- and it goes on the left. A directive asking
+// for justification fills the right with spaces instead, except where the fill
+// is a radix's zeros, which are always displayed. `spec.width` is the field
+// this rendering is to occupy, which for a conversion sized from its operand's
+// type means the caller has resolved that size into the spec first; a width
+// still negative asks for no field at all.
 [[nodiscard]] auto ApplyFieldWidth(std::string body, const FormatSpec& spec)
     -> std::string;
 
@@ -96,7 +98,7 @@ struct TimeUnitSpelling {
 // spec is closed and shared across call sites): the design-wide bits `%t`
 // reads.
 struct FormatContext {
-  const TimeFormat& time_format;
+  std::reference_wrapper<const TimeFormat> time_format;
 };
 
 // Per-type formatter trait. Mirrors `std::formatter<T>` -- each SV type owns
@@ -234,7 +236,7 @@ struct Formatter<Integral<kWidth, kSignedness, kDomain>> {
       const Integral<kWidth, kSignedness, kDomain>& value,
       const FormatContext& ctx) -> std::string {
     return FormatIntegralOperand(
-        spec, value.AsWords().View(), &ctx.time_format);
+        spec, value.AsWords().View(), &ctx.time_format.get());
   }
 };
 

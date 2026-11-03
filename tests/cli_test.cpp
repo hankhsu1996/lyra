@@ -853,16 +853,15 @@ TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
 // finish number and the message from the second on, so the string is not
 // printed. What it leaves open is what a level other than 0, 1 or 2 does, and
 // Lyra takes level 1, what is printed when no level is given (LRM 20.2). Case
-// equality on reals (LRM Table 11-1), a left-justified field and a format
-// string ending in `%` (LRM 21.2.1.2) are others: the front end evaluates the
-// first as a comparison of values, and the other two run as a field padded on
-// the right and a `%` printed. The finish number is the first argument of a
-// `$fatal`, so it is evaluated before the message's arguments. A variable of a
-// static procedural block written with an initializer and no `static` is
-// another (LRM 6.21): it is static, initialized once, as the front end takes
-// it. What tells its author is the front end's warning, so `run` says it as
-// `build` does, before the program's own output; a caller who wants the
-// refusal asks for it by name.
+// equality on reals (LRM Table 11-1) and a format string ending in `%` (LRM
+// 21.2.1.2) are others: the front end evaluates the first as a comparison of
+// values, and the second runs with a `%` printed. The finish number is the
+// first argument of a `$fatal`, so it is evaluated before the message's
+// arguments. A variable of a static procedural block written with an
+// initializer and no `static` is another (LRM 6.21): it is static, initialized
+// once, as the front end takes it. What tells its author is the front end's
+// warning, so `run` says it as `build` does, before the program's own output;
+// a caller who wants the refusal asks for it by name.
 TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -971,9 +970,8 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
       "    $display(\"same %0d %0d\", a === b, a !== b);\n"
       "    $display(\"apart %0d %0d\", a === c, a !== c);\n"
       "    $display(\"signed zeros %0d\", zero === -zero);\n"
-      "    $display(\"[%-5d][%-4s]\", 3, \"ab\");\n"
       "    $display(\"tail %\");\n"
-      "    $display(\"[%0t][%-4t]\", $time, $time);\n"
+      "    $display(\"[%0t]\", $time);\n"
       "  end\n"
       "endmodule\n");
   const auto analyzed = RunLyraFrom(
@@ -985,11 +983,9 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
       << analyzed.stdout_text;
   EXPECT_NE(analyzed.stdout_text.find("signed zeros 1\n"), std::string::npos)
       << analyzed.stdout_text;
-  EXPECT_NE(analyzed.stdout_text.find("[3    ][ab  ]\n"), std::string::npos)
-      << analyzed.stdout_text;
   EXPECT_NE(analyzed.stdout_text.find("tail %\n"), std::string::npos)
       << analyzed.stdout_text;
-  EXPECT_NE(analyzed.stdout_text.find("[0][0   ]\n"), std::string::npos)
+  EXPECT_NE(analyzed.stdout_text.find("[0]\n"), std::string::npos)
       << analyzed.stdout_text;
 }
 

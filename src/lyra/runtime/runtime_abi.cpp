@@ -1306,7 +1306,8 @@ auto IntegralFormatArg(const void* value, value::IntegralShape shape)
                      const value::FormatContext& ctx) -> std::string {
     const value::LoadedWords words =
         value::LoadedWords::Load(operand.ptr, operand.read_as);
-    return value::FormatIntegralOperand(spec, words.View(), &ctx.time_format);
+    return value::FormatIntegralOperand(
+        spec, words.View(), &ctx.time_format.get());
   };
   return arg;
 }
