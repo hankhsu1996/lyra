@@ -253,8 +253,7 @@ void RenderReferenceExpr(
       Overloaded{
           [&](const mir::LocalRef& l) { Write(out, LookupLocalName(view, l)); },
           [&](const mir::DefinitionRef& r) {
-            Write(
-                out, CppClassRef(view.Unit(), r.of), "::", CppDefinitionName());
+            Write(out, CppDefinitionOf{.of = CppClassRef(view.Unit(), r.of)});
           },
           [&](const mir::EnumTableRef& r) {
             view.NameEnumTable(r.table);
@@ -279,12 +278,20 @@ void RenderReferenceExpr(
             }
             throw InternalError("backend::cpp: unknown linkage");
           },
+          // A property the source declared is a member of its class (LRM
+          // 8.9); a cell the class keeps for its own bodies is a member of the
+          // class's own part, which only its unit's code reads.
           [&](const mir::StaticPropertyRef& r) {
             const mir::Class& owner_cls = view.Unit().GetClass(r.owner);
+            const ClassPath owner = CppClassPath(view.Unit(), r.owner);
+            if (IsKeptForItsBodies(owner_cls.named_static_properties, r.prop)) {
+              Write(out, ClassDetailPath{.of = owner}, "::");
+            } else {
+              Write(out, owner, "::");
+            }
             Write(
-                out, CppClassPath(view.Unit(), r.owner), "::",
-                CppStaticPropertyName(
-                    owner_cls.named_static_properties, r.prop));
+                out, CppStaticPropertyName(
+                         owner_cls.named_static_properties, r.prop));
           },
           // Qualified by the unit's namespace even inside that unit, because
           // inside a class a member of the same name would be found first.
@@ -292,7 +299,7 @@ void RenderReferenceExpr(
             const mir::CompilationUnit& unit = view.Unit();
             Write(
                 out,
-                CppUnitScope(
+                CppNamespaceMemberScope(
                     mir::DefiningUnitOf(
                         unit,
                         unit.static_variables.Get(r.variable).defining_unit)),
@@ -328,7 +335,7 @@ void RenderReferenceExpr(
           },
           [&](const mir::ClassConstantRef& r) {
             Write(
-                out, CppClassPath(view.Unit(), r.owner),
+                out, ClassDetailPath{.of = CppClassPath(view.Unit(), r.owner)},
                 "::", CppClassConstantName(r.constant));
           },
           [&](const mir::FunctionRef& r) {

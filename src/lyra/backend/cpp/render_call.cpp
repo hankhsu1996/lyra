@@ -325,7 +325,8 @@ void WriteDirectCallee(
           [&](const mir::UnitCallableTarget& t) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
-                CppUnitScope(CppUnitCallableOwner(view.Unit(), t.slot)),
+                CppNamespaceMemberScope(
+                    CppUnitCallableOwner(view.Unit(), t.slot)),
                 "::", CppUnitCallableName(view.Unit(), t.slot));
           },
           [&](const support::BuiltinFn& id) {
@@ -381,7 +382,8 @@ void WriteDirectCallee(
           // `::Pkg::sv_initialize_namespace_storage`.
           [&](const mir::ExternalBringUpTarget& t) {
             callee.Named(
-                ReceiverPlacement::kIntoCalleeName, CppUnitScope(t.unit_name),
+                ReceiverPlacement::kIntoCalleeName,
+                CppNamespaceMemberScope(t.unit_name),
                 "::", CppBringUpEntryName(t.entry));
           },
           // A DPI-C symbol is program-global, so it is spelled unqualified

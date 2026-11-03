@@ -123,6 +123,38 @@ void WriteRequiredIncludes(
   }
 }
 
+// Declares, into `file`, each class `text` named without needing it whole,
+// with the definition its objects carry, in the namespace of the unit declaring
+// it: `namespace P { class D; extern const ObjectDefinition sv_definition_D;
+// }`. Each is spelled as that unit spells it, so the file reads nothing of that
+// unit to name it.
+void WriteForwardDeclarations(
+    ProjectFile& file, const TargetText& text,
+    const mir::CompilationUnit& unit) {
+  const CppType definition_type(
+      unit,
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kObjectDefinition));
+  std::optional<std::string_view> open;
+  for (const ForwardDeclaration& declared : text.DeclaredForward()) {
+    const VerbatimName cpp_namespace{.text = declared.cpp_namespace};
+    if (open != declared.cpp_namespace) {
+      if (open.has_value()) {
+        CloseNamespace(file.text, VerbatimName{.text = *open});
+      }
+      open = declared.cpp_namespace;
+      OpenNamespace(file.text, cpp_namespace);
+    }
+    Write(file.text, "class ", VerbatimName{.text = declared.cpp_class}, ";\n");
+    WriteDeclaration(
+        file.text, VariableDeclaration{
+                       .form = VariableForm::kExternDeclaration,
+                       .constness = Constness::kConst,
+                       .type = definition_type,
+                       .name = DefinitionName{.of_class = declared.cpp_class}});
+  }
+  if (open.has_value()) CloseNamespace(file.text, VerbatimName{.text = *open});
+}
+
 // The header for one thing this unit's bodies read of another: the opening
 // header for its namespace, the header defining one class, or the header of
 // the body an object entry makes. A body reaches a member of another unit's
@@ -166,15 +198,17 @@ void AppendToHeader(
 }
 
 // Lays out `text` as the header `relpath`, in the unit's namespace: the
-// runtime, then what the text said it needs ahead of it, then the text.
+// runtime, then what the text said it needs included and declared ahead of it,
+// then the text.
 auto HeaderOf(
-    std::string relpath, SourceName unit_namespace, const TargetText& text)
-    -> CppArtifact {
+    const mir::CompilationUnit& unit, std::string relpath,
+    SourceName unit_namespace, const TargetText& text) -> CppArtifact {
   ProjectFile file;
   file.text += "#pragma once\n";
   WriteInclude(file.text, support::kRuntimePreludeHeader);
   WriteRequiredIncludes(file, text, relpath);
   file.text += "\n";
+  WriteForwardDeclarations(file, text, unit);
   OpenNamespace(file.text, unit_namespace);
   file.text += text.View();
   CloseNamespace(file.text, unit_namespace);
@@ -186,7 +220,6 @@ auto HeaderOf(
 // unit's for the unit's first body:
 //
 //   Top.<Record>.types.hpp  one per struct or union the unit declares
-//   Top.forward.hpp         the classes other units may name, declared
 //   Top.opening.hpp         namespace functions and variables
 //   Body.body.hpp           the entry that makes an object of this body
 //   Top.<Class>.class.hpp   one per class the source declared
@@ -207,12 +240,15 @@ auto HeaderOf(
 // hierarchy.
 //
 // Every file includes what its own text asked for as it named things: the
-// forward header of a class reached through a pointer, the header of a base,
-// the header of a record held by value. A class cannot be its own ancestor and
-// a record cannot hold itself, a forward header includes nothing, and a scope's
-// class holds what it reaches in another unit through the class every scope
-// extends, so two units can include each other's headers without a cycle.
-// Anything other units never name goes into the `.cpp`, so changing it
+// header of a base, the header of a record held by value, the header of a
+// namespace whose function or variable it names. A class it only points at it
+// declares itself, so naming one reads nothing of the unit declaring it. A
+// class cannot be its own ancestor and a record cannot hold itself, and a
+// scope's class holds what it reaches in another unit through the class every
+// scope extends, so two units can include each other's headers without a
+// cycle. Anything other units never read goes into the `.cpp` -- the value of
+// the definition a class's objects carry, and, for a class one code file
+// defines, what the class keeps for its own bodies -- so changing it
 // recompiles no other unit.
 auto RenderUnitFiles(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
@@ -228,7 +264,8 @@ auto RenderUnitFiles(
   UnitRecords records = RenderUnitRecords(unit, report);
   const UnitCallables callables = RenderUnitCallables(unit, report);
   const UnitText variables = RenderUnitStaticVariables(unit);
-  const UnitText forwards = RenderUnitForwardDeclarations(unit);
+  const TargetText internal_forwards =
+      RenderUnitInternalForwardDeclarations(unit);
   UnitClasses classes = RenderUnitClasses(unit, report);
   const UnitClosures closures = RenderUnitClosures(unit, report);
   TargetText foreign_symbols;
@@ -251,16 +288,10 @@ auto RenderUnitFiles(
   std::vector<CppArtifact> declarations;
   for (const UnitRecord& declared : records.declared) {
     declarations.push_back(HeaderOf(
+        unit,
         UnitRecordFileOf(unit.name, CppRecordName(unit.GetRecord(declared.id))),
         unit_namespace, declared.declaration));
   }
-
-  ProjectFile forward;
-  forward.text += "#pragma once\n\n";
-  OpenNamespace(forward.text, unit_namespace);
-  forward.text += forwards.signature.View();
-  CloseNamespace(forward.text, unit_namespace);
-  declarations.push_back(std::move(forward).Into(UnitForwardFileOf(unit.name)));
 
   // What the unit's namespace offers another unit opens its own header, which
   // every body writes alike; the entries that make an object of this body are
@@ -271,10 +302,11 @@ auto RenderUnitFiles(
   TargetText opened;
   AppendSection(opened, callables.of_unit.signature);
   AppendSection(opened, variables.signature);
-  declarations.push_back(HeaderOf(opening_file, unit_namespace, opened));
+  declarations.push_back(HeaderOf(unit, opening_file, unit_namespace, opened));
   TargetText opened_by_body = in_body(callables.of_body.signature);
   opened_by_body.Require(opening_file);
-  declarations.push_back(HeaderOf(body_file, unit_namespace, opened_by_body));
+  declarations.push_back(
+      HeaderOf(unit, body_file, unit_namespace, opened_by_body));
 
   // Each class other units may name is written into the file that defines it,
   // after whatever that file already holds. The unit's own header comes first
@@ -288,10 +320,9 @@ auto RenderUnitFiles(
             unit.name, *support::PathOf(unit.GetClass(published.id).identity)),
         published.text);
   }
-  for (HeaderFile& class_file : class_files) {
-    class_file.text.Require(opening_file);
+  for (const HeaderFile& class_file : class_files) {
     declarations.push_back(
-        HeaderOf(class_file.relpath, unit_namespace, class_file.text));
+        HeaderOf(unit, class_file.relpath, unit_namespace, class_file.text));
   }
 
   // What nothing outside this file names -- the classes realizing the unit's
@@ -301,7 +332,7 @@ auto RenderUnitFiles(
   // the same names is no conflict. Their members are still defined in the
   // unit's namespace, which encloses it.
   TargetText own_declarations;
-  AppendSection(own_declarations, forwards.code);
+  AppendSection(own_declarations, internal_forwards);
   AppendSection(own_declarations, callables.of_artifact.signature);
   AppendSection(own_declarations, constant_tables);
   {
@@ -316,9 +347,13 @@ auto RenderUnitFiles(
   AppendSectionInUnnamedNamespace(realized, own_declarations);
   AppendSection(realized, records.code);
   AppendSectionInUnnamedNamespace(realized, own_classes);
+  AppendSection(realized, classes.details);
   AppendSection(realized, variables.code);
   AppendSection(realized, closures.definitions);
   AppendSection(realized, classes.definitions);
+  AppendSection(realized, classes.object_definitions);
+  AppendSectionInUnnamedNamespace(
+      realized, classes.internal_object_definitions);
   AppendSection(realized, callables.of_unit.code);
   AppendSectionInUnnamedNamespace(realized, callables.of_artifact.code);
   AppendSection(realized, foreign_symbols);
@@ -349,6 +384,10 @@ auto RenderUnitFiles(
     include_once(required);
   }
   code.text += "\n";
+  TargetText named;
+  named += realized;
+  named += callables.of_body.code;
+  WriteForwardDeclarations(code, named, unit);
   OpenNamespace(code.text, unit_namespace);
   code.text += realized.View();
   CloseNamespace(code.text, unit_namespace);

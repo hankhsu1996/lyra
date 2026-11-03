@@ -1,5 +1,6 @@
 #pragma once
 
+#include <compare>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -11,21 +12,39 @@
 
 namespace lyra::backend::cpp {
 
-// An output file, written front to back. It also keeps three things writers
+// A class some text names without needing it complete, which the file holding
+// the text declares forward together with the definition its objects carry:
+// `namespace P { class D; extern const ObjectDefinition sv_definition_D; }`.
+// It holds the namespace and the class as C++ spells them where the unit
+// declaring the class writes them, and the definition's name is made from the
+// class's, so a file declaring them forward and the file defining them name
+// the same entities.
+struct ForwardDeclaration {
+  std::string cpp_namespace;
+  std::string cpp_class;
+
+  auto operator<=>(const ForwardDeclaration&) const = default;
+};
+
+// An output file, written front to back. It also keeps four things writers
 // would otherwise have to pass around: the current indentation, which
 // `OpenLine` applies; the blank lines between sections, which are written only
-// once the next section actually writes something; and the files what was
-// written needs included ahead of it, which whoever lays the text into a file
-// reads once the text is whole.
+// once the next section actually writes something; the files what was written
+// needs included ahead of it; and the classes it names that it only needs
+// declared. Whoever lays the text into a file reads the last two once the text
+// is whole.
 class TargetText {
  public:
   auto operator+=(std::string_view text) -> TargetText&;
 
-  // Lays text written elsewhere into this one, with what it needs included.
+  // Lays text written elsewhere into this one, with what it needs included and
+  // declared.
   auto operator+=(const TargetText& written) -> TargetText& {
     *this += written.View();
     required_files_.insert(
         written.required_files_.begin(), written.required_files_.end());
+    declared_forward_.insert(
+        written.declared_forward_.begin(), written.declared_forward_.end());
     return *this;
   }
 
@@ -37,8 +56,20 @@ class TargetText {
     required_files_.insert(std::move(file));
   }
 
+  // States that what is being written names a class it needs only declared,
+  // which the file holding it then declares itself rather than including
+  // anything of the unit declaring the class.
+  void DeclareForward(ForwardDeclaration declaration) {
+    declared_forward_.insert(std::move(declaration));
+  }
+
   [[nodiscard]] auto RequiredFiles() const -> const std::set<std::string>& {
     return required_files_;
+  }
+
+  [[nodiscard]] auto DeclaredForward() const
+      -> const std::set<ForwardDeclaration>& {
+    return declared_forward_;
   }
 
   // Starts a line at the current indentation; the writer ends it with a
@@ -109,6 +140,7 @@ class TargetText {
   std::size_t depth_ = 0;
   std::size_t owed_blank_lines_ = 0;
   std::set<std::string> required_files_;
+  std::set<ForwardDeclaration> declared_forward_;
 };
 
 // Writes an integer in the given base.

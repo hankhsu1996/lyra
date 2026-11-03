@@ -165,7 +165,7 @@ void WriteOne(TargetText& out, const CppNewOwner& owner);
 // The library function a `new` of an object of the class `built` is, which
 // creates it whole and of its class, makes `of` the owner holding it, and then
 // enters its constructor with the arguments that follow:
-// `lyra::runtime::CreateObject<C>(&C::sv_definition, &C::sv_construct` for a
+// `lyra::runtime::CreateObject<C>(&sv_definition_C, &C::sv_construct` for a
 // class handle, `lyra::runtime::CreateOwned<C>(...` for a uniquely owning
 // pointer.
 struct CppObjectCreation {
@@ -231,15 +231,17 @@ class CppCallSignature {
 
 void WriteOne(TargetText& out, const CppCallSignature& signature);
 
-// A name written into a file needs the file declaring it read first, and how
-// the name is used says whether a declaration is enough or the definition is
-// needed. A class's name says so as it is written, as a struct's does, so a
-// file's includes are what its own text asked for.
+// A name written into a file needs its declaration ahead of it, and how the
+// name is used says whether a declaration is enough or the definition is
+// needed. A class's name says so as it is written, as a struct's does, so what
+// a file includes and declares forward is what its own text asked for.
 
 // A class a reference names, as C++: its own name for a class this unit
 // defines, `::Unit::Name` for one another unit defines, and the runtime's name
 // for a runtime class. An object is reached through a pointer, so the name
-// needs the class declared and no more.
+// needs the class declared and no more, which the text holding it declares
+// itself; a class nested in another is declared only inside that one, so its
+// name needs that one's file.
 class CppClassRef {
  public:
   CppClassRef(const mir::CompilationUnit& unit, mir::ClassRef ref)
@@ -289,6 +291,18 @@ struct CppObjectEnd {
 
 void WriteOne(TargetText& out, const CppObjectEnd& end);
 
+// The definition every object of the class `of` carries (LRM 8.16 asks it
+// whether an object is of a class), named beside the class in the scope that
+// declares it: `::P::sv_definition_D` for a class of a unit's namespace, which
+// the text then needs declared and no more, as it needs the class;
+// `Top::sv_definition_g` for the class of a generate block, declared in the
+// class of the scope holding the block.
+struct CppDefinitionOf {
+  CppClassRef of;
+};
+
+void WriteOne(TargetText& out, const CppDefinitionOf& definition);
+
 // The type of a member of a class's table: a pointer to the entry of a method
 // taking what `code` takes after its receiver, handed the object as the root
 // every object is, `std::add_pointer_t<R(lyra::runtime::GcObject*, A)>`.
@@ -306,7 +320,7 @@ void WriteOne(TargetText& out, const CppEntryPointerType& type);
 // interface did (LRM 8.26.5), its `InterfaceDispatch`, told also the
 // interface's definition, by which the object's class's table for it is
 // found, `lyra::runtime::InterfaceDispatch<I::sv_table, &I::sv_table::f,
-// &I::sv_definition>`.
+// &sv_definition_I>`.
 struct CppDispatchCallee {
   const mir::CompilationUnit* unit = nullptr;
   mir::VirtualSlot behavior;

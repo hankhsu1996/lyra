@@ -26,13 +26,12 @@ struct UnitText {
   TargetText code;
 };
 
-// `class C;` for every class of the unit that C++ can declare ahead of its
-// definition, written ahead of every class so a field or parameter can point
-// at a class defined later: into the forward header for a class other units
-// may name, into the code file otherwise. A class declared inside another is
-// declared where that one is defined, and nowhere else.
-auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
-    -> UnitText;
+// `class C;` for every class of the unit no other unit names, written into the
+// code file ahead of every class, so a field or parameter can point at a class
+// defined later. A class another unit may name is declared by whatever text
+// names it, and one declared inside another where that one is defined.
+auto RenderUnitInternalForwardDeclarations(const mir::CompilationUnit& unit)
+    -> TargetText;
 
 // A class another unit may name, whose text goes into a header.
 struct PublishedClass {
@@ -46,11 +45,19 @@ struct PublishedClass {
 // compiles; every other class goes into the code file. Member function
 // definitions all go into the code file after every class, since one may use
 // any class of the unit: a scope's body reads its parent's members, and the
-// parent's body builds that scope.
+// parent's body builds that scope. So does the definition each class's objects
+// carry, defined after them since it names their bodies: at the unit's
+// namespace for a class others may name, and in the namespace with no name,
+// where the class itself is, for one nothing else names. What a class keeps
+// for its own bodies goes into the code file ahead of every body, for each
+// class whose definitions are there.
 struct UnitClasses {
   std::vector<PublishedClass> published;
   TargetText internal;
+  TargetText details;
   TargetText definitions;
+  TargetText object_definitions;
+  TargetText internal_object_definitions;
 };
 
 // Every render below that writes a body reports into `report` what it has no

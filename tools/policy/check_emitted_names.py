@@ -53,16 +53,14 @@ EMITTERS = [
 # not.
 MAPPERS = [
     "UnitNamespaceOf",
-    "CppUnitScope",
+    "CppNamespaceMemberScope",
     "BodyNamespaceOf",
     "CppBodyScope",
     "UnitSignatureFileOf",
     "UnitOpeningFileOf",
     "BodyHeaderFileOf",
     "BodyCodeFileOf",
-    "UnitForwardFileOf",
     "UnitRecordFileOf",
-    "ClassDeclarationFileOf",
     "ClassDefinitionFileOf",
     "CppRecordName",
     "CppRecordQualifiedName",

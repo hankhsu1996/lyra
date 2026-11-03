@@ -169,6 +169,10 @@ void WriteOne(TargetText& out, const EntryName& name) {
   std::visit([&out](auto method) { WriteOne(out, method); }, name.method);
 }
 
+void WriteOne(TargetText& out, const DefinitionName& name) {
+  Write(out, kMintedPrefix, "definition_", std::string_view{name.of_class});
+}
+
 void WriteOne(TargetText& out, const CppName& name) {
   std::visit(
       Overloaded{
@@ -178,7 +182,8 @@ void WriteOne(TargetText& out, const CppName& name) {
           [&out](VerbatimName n) { WriteOne(out, n); },
           [&out](MintedPathName n) { WriteOne(out, n); },
           [&out](const MintedAppliedName& n) { WriteOne(out, n); },
-          [&out](const EntryName& n) { WriteOne(out, n); }},
+          [&out](const EntryName& n) { WriteOne(out, n); },
+          [&out](const DefinitionName& n) { WriteOne(out, n); }},
       name);
 }
 

@@ -9,6 +9,7 @@
 # only ever shrinks, which makes it the record of what an edit still costs on
 # this path that it should not.
 class_a_referrer_never_named: [made UsesLogger]
+class_and_function_added_beside_a_class_another_unit_uses: [made $root]
 comment_inside_a_module: [made Commented]
 declaration_a_nested_module_reads: [made Top]
 instance_building_other_blocks_added: [made Holder]

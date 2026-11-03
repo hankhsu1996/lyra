@@ -3,11 +3,13 @@
 #include <cstdint>
 #include <optional>
 #include <string_view>
+#include <variant>
 
 #include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -20,6 +22,7 @@ namespace lyra::backend::cpp {
 //   kStaticDataMemberDefinition         T Class::name = value; namespace
 //   kInlineStaticDataMemberDefinition   inline T Class::name = value; namespace
 //   kExternDeclaration                  extern T name; namespace
+//   kExternDefinition                   extern T name = value; namespace
 //   kNamespaceScopeDefinition           T name = value; namespace
 //
 // An inline static data member is defined where the class is, however many
@@ -28,7 +31,8 @@ namespace lyra::backend::cpp {
 // code file declares has to be; or defined outside it inline, after the class
 // in the header, where every file stating the class defines it alike. A
 // variable of the namespace another unit may name is declared `extern` in the
-// header and defined in the code file.
+// header and defined in the code file; a constant one is defined `extern` too,
+// since a namespace-scope `const` is otherwise one of its file's own.
 enum class VariableForm : std::uint8_t {
   kNonStaticDataMember,
   kInlineStaticDataMember,
@@ -36,6 +40,7 @@ enum class VariableForm : std::uint8_t {
   kStaticDataMemberDefinition,
   kInlineStaticDataMemberDefinition,
   kExternDeclaration,
+  kExternDefinition,
   kNamespaceScopeDefinition,
 };
 
@@ -48,17 +53,23 @@ enum class Constness : std::uint8_t {
   kConstexpr,
 };
 
+// What qualifies the name of a definition written outside the class declaring
+// it: the class, or the part of it only its unit's code reads.
+using DefinitionQualifier = std::variant<ClassPath, ClassDetailPath>;
+
 // A variable declaration, described by what the caller knows: which form it
-// takes, whether it may change, its type and name, and for a definition written
-// outside its class the class that qualifies the name. The specifiers and
-// punctuation those imply are chosen in one place, below, so no two sites
-// write the same declaration differently.
+// takes, whether it may change, its type and name, for a definition written
+// outside its class the class that qualifies the name, and how the definition
+// is linked where its linkage is spelled. The specifiers and punctuation those
+// imply are chosen in one place, below, so no two sites write the same
+// declaration differently.
 struct VariableDeclaration {
   VariableForm form = VariableForm::kNonStaticDataMember;
   Constness constness = Constness::kMutable;
   CppType type;
   CppName name;
-  std::optional<ClassPath> qualifier = std::nullopt;
+  std::optional<DefinitionQualifier> qualifier = std::nullopt;
+  std::string_view linkage_specifiers = {};
 };
 
 [[nodiscard]] inline auto StorageSpecifiers(VariableForm form)
@@ -75,6 +86,7 @@ struct VariableDeclaration {
     case VariableForm::kInlineStaticDataMemberDefinition:
       return "inline ";
     case VariableForm::kExternDeclaration:
+    case VariableForm::kExternDefinition:
       return "extern ";
     case VariableForm::kNamespaceScopeDefinition:
       return "";
@@ -85,6 +97,7 @@ struct VariableDeclaration {
 inline void WriteDeclarationUpToTheValue(
     TargetText& out, const VariableDeclaration& variable) {
   out.OpenLine();
+  out += variable.linkage_specifiers;
   out += StorageSpecifiers(variable.form);
   switch (variable.constness) {
     case Constness::kMutable:
@@ -98,7 +111,11 @@ inline void WriteDeclarationUpToTheValue(
   }
   Write(out, variable.type, " ");
   if (variable.qualifier.has_value()) {
-    Write(out, *variable.qualifier, "::");
+    std::visit(
+        Overloaded{
+            [&](const ClassPath& path) { Write(out, path, "::"); },
+            [&](const ClassDetailPath& path) { Write(out, path, "::"); }},
+        *variable.qualifier);
   }
   Write(out, variable.name);
 }
@@ -117,6 +134,7 @@ inline void WriteDeclaration(
     case VariableForm::kInlineStaticDataMember:
     case VariableForm::kStaticDataMemberDefinition:
     case VariableForm::kInlineStaticDataMemberDefinition:
+    case VariableForm::kExternDefinition:
     case VariableForm::kNamespaceScopeDefinition:
       out += "{}";
       break;
