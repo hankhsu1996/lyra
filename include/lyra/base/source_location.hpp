@@ -44,7 +44,8 @@ class SourceLocation {
     return impl_;
   }
 
-  constexpr auto operator<=>(const SourceLocation&) const = default;
+  constexpr auto operator<=>(const SourceLocation&) const
+      -> std::strong_ordering = default;
 
  private:
   const Impl* impl_ = nullptr;
@@ -52,7 +53,11 @@ class SourceLocation {
 
 // Stated by a raise or a report the run makes for no operation of the design,
 // so it reads no place.
-struct NoSourceLocation {};
+struct NoSourceLocation {
+  explicit constexpr operator SourceLocation() const {
+    return SourceLocation{};
+  }
+};
 inline constexpr NoSourceLocation kNoSourceLocation{};
 
 // Binds `at` for the extent of the scope, as the place whatever fails inside it

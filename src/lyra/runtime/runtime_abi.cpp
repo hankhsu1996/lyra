@@ -3078,8 +3078,8 @@ auto lyra_rt_assertion_control_allocate(
   return static_cast<AssertionControl*>(control)->Allocate(size, alignment);
 }
 
-void lyra_rt_assertion_control_commit(void* control, void* made) {
-  static_cast<AssertionControl*>(control)->Commit(made);
+void lyra_rt_assertion_control_commit(const void* control, void* made) {
+  static_cast<const AssertionControl*>(control)->Commit(made);
 }
 
 void lyra_rt_assertion_control_register_in(
@@ -3107,13 +3107,14 @@ auto lyra_rt_assertion_control_allowed(const void* control) -> std::uint64_t {
   return static_cast<const AssertionControl*>(control)->Allowed();
 }
 
-void lyra_rt_assertion_control_submit_observed(void* control, void* body) {
-  static_cast<AssertionControl*>(control)->SubmitObserved(
+void lyra_rt_assertion_control_submit_observed(
+    const void* control, void* body) {
+  static_cast<const AssertionControl*>(control)->SubmitObserved(
       std::move(*static_cast<Coroutine<void>*>(body)));
 }
 
-void lyra_rt_assertion_control_submit_final(void* control, void* body) {
-  static_cast<AssertionControl*>(control)->SubmitFinal(
+void lyra_rt_assertion_control_submit_final(const void* control, void* body) {
+  static_cast<const AssertionControl*>(control)->SubmitFinal(
       std::move(*static_cast<Coroutine<void>*>(body)));
 }
 

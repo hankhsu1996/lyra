@@ -616,7 +616,7 @@ auto lyra_rt_deferred_effects_allocate(
 void lyra_rt_deferred_effects_commit(void* effects, void* made);
 auto lyra_rt_assertion_control_allocate(
     void* control, std::uint64_t size, std::uint64_t alignment) -> void*;
-void lyra_rt_assertion_control_commit(void* control, void* made);
+void lyra_rt_assertion_control_commit(const void* control, void* made);
 
 // Hands a callable to what is owed once the simulation has ended, after the
 // final procedures: writing the coverage database (LRM 19.9). It takes the
@@ -642,8 +642,8 @@ void lyra_rt_assertion_control_register(
 void lyra_rt_assertion_control_register_within(
     void* control, void* effects, const void* block);
 auto lyra_rt_assertion_control_allowed(const void* control) -> std::uint64_t;
-void lyra_rt_assertion_control_submit_observed(void* control, void* body);
-void lyra_rt_assertion_control_submit_final(void* control, void* body);
+void lyra_rt_assertion_control_submit_observed(const void* control, void* body);
+void lyra_rt_assertion_control_submit_final(const void* control, void* body);
 
 // An assertion control task (LRM 20.11): its `control_type`,
 // `assertion_type`, `directive_type` and `levels` as evaluated, applied to the

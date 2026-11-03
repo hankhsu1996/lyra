@@ -639,8 +639,9 @@ void RuntimeEffects::ReportDesignFailure(const base::DiagMessage& message) {
 }
 
 void RuntimeEffects::ReportDesignFailure(
-    base::NoSourceLocation, const base::DiagMessage& message) {
-  AsRuntime(*this).ReportDesignError(base::SourceLocation{}, message);
+    base::NoSourceLocation no_location, const base::DiagMessage& message) {
+  AsRuntime(*this).ReportDesignError(
+      static_cast<base::SourceLocation>(no_location), message);
 }
 
 auto RuntimeEffects::Now() const -> SimTime {

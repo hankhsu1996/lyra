@@ -77,15 +77,15 @@ class AssertionControl {
 
   // A deferred assertion's action, queued as RuntimeEffects queues one and
   // withdrawn by a Kill before it matures (LRM 16.4.1).
-  void SubmitObserved(Coroutine<void> body);
-  void SubmitFinal(Coroutine<void> body);
+  void SubmitObserved(Coroutine<void> body) const;
+  void SubmitFinal(Coroutine<void> body) const;
 
   // Where a violation report raised now is kept (LRM 12.4.2.1): made in the
   // Observed region's effects and matured there unless the raising process
   // reaches a flush point or this control is killed first. One raised while
   // checking is off is ended at once.
   [[nodiscard]] auto Allocate(std::size_t size, std::size_t alignment) -> void*;
-  void Commit(void* made);
+  void Commit(void* made) const;
 
   // The generation work made now holds, which a Kill ends.
   [[nodiscard]] auto Generation() const -> std::uint64_t {
@@ -118,6 +118,11 @@ struct CapturedControl {
 
 // Every control the design registered, by where a task naming a scope or a
 // block finds it.
+//
+// A control an instance holds is recorded at that instance and at every scope
+// above it, with how many levels below each it stands, so a task naming a
+// scope reads the controls under it and nothing of the scopes between: most
+// scopes of a design hold no control.
 class AssertionControls {
  public:
   void AddIn(AssertionControl& control, const Scope& in);
@@ -132,27 +137,30 @@ class AssertionControls {
   // One naming an instance or a generate block: the controls of the instances
   // `levels` from it down.
   void ApplyToScope(
-      Scope& scope, support::AssertionControlType control, std::uint64_t types,
-      std::uint64_t directives, std::int64_t levels);
+      const Scope& scope, support::AssertionControlType control,
+      std::uint64_t types, std::uint64_t directives, std::int64_t levels);
   // One naming a block or an assertion's label: the controls within it.
   void ApplyToBlock(
       const CancellationTarget& block, support::AssertionControlType control,
       std::uint64_t types, std::uint64_t directives);
 
  private:
-  void Walk(
-      Scope& scope, std::int64_t remaining,
-      support::AssertionControlType control, std::uint64_t types,
-      std::uint64_t directives);
+  // A control under a scope, and the levels between: 0 where the scope holds
+  // it, one more for each instance between them, the holding one included.
+  struct Below {
+    AssertionControl* control;
+    std::int64_t levels;
+  };
+
   static void ApplyEach(
       const std::vector<AssertionControl*>& controls,
       support::AssertionControlType control, std::uint64_t types,
       std::uint64_t directives);
 
-  std::unordered_map<const Scope*, std::vector<AssertionControl*>> by_scope_;
+  std::unordered_map<const Scope*, std::vector<Below>> under_;
+  std::vector<AssertionControl*> held_by_none_;
   std::unordered_map<const CancellationTarget*, std::vector<AssertionControl*>>
       by_block_;
-  std::vector<AssertionControl*> unscoped_;
 };
 
 }  // namespace lyra::runtime

@@ -168,11 +168,11 @@ void AssertionControl::Apply(support::AssertionControlType control) {
   throw InternalError("AssertionControl::Apply: unknown control type");
 }
 
-void AssertionControl::SubmitObserved(Coroutine<void> body) {
+void AssertionControl::SubmitObserved(Coroutine<void> body) const {
   current_runtime().SubmitDeferredObserved(std::move(body), *this);
 }
 
-void AssertionControl::SubmitFinal(Coroutine<void> body) {
+void AssertionControl::SubmitFinal(Coroutine<void> body) const {
   current_runtime().SubmitDeferredFinal(std::move(body), *this);
 }
 
@@ -181,7 +181,7 @@ auto AssertionControl::Allocate(std::size_t size, std::size_t alignment)
   return current_runtime().ObservedEffects()->Allocate(size, alignment);
 }
 
-void AssertionControl::Commit(void* made) {
+void AssertionControl::Commit(void* made) const {
   // LRM 20.11: with checking off no new violation report is queued, so the one
   // just made is ended unqueued.
   if ((allowed_ & support::kAssertionChecks) == 0) {
@@ -192,11 +192,17 @@ void AssertionControl::Commit(void* made) {
 }
 
 void AssertionControls::AddIn(AssertionControl& control, const Scope& in) {
-  by_scope_[&in].push_back(&control);
+  // A scope named is the first level (LRM 20.11, 21.7.1.2), and each instance
+  // between it and `in`, `in` included, is one more.
+  std::int64_t levels = 0;
+  for (const Scope* at = &in; at != nullptr; at = at->Parent()) {
+    under_[at].push_back({.control = &control, .levels = levels});
+    if (CountsAsLevel(*at)) ++levels;
+  }
 }
 
 void AssertionControls::Add(AssertionControl& control) {
-  unscoped_.push_back(&control);
+  held_by_none_.push_back(&control);
 }
 
 void AssertionControls::AddWithin(
@@ -207,18 +213,26 @@ void AssertionControls::AddWithin(
 void AssertionControls::ApplyToDesign(
     Scope& root, support::AssertionControlType control, std::uint64_t types,
     std::uint64_t directives, std::int64_t levels) {
-  ApplyEach(unscoped_, control, types, directives);
+  ApplyEach(held_by_none_, control, types, directives);
   // A top's own scope is the outermost the design declares: the root above the
   // tops is no instance of it (LRM 23.3.1).
-  root.ForEachChild([&](Scope& top) {
-    Walk(top, LevelsNamed(levels), control, types, directives);
+  root.ForEachChild([&](const Scope& top) {
+    ApplyToScope(top, control, types, directives, levels);
   });
 }
 
 void AssertionControls::ApplyToScope(
-    Scope& scope, support::AssertionControlType control, std::uint64_t types,
-    std::uint64_t directives, std::int64_t levels) {
-  Walk(scope, LevelsNamed(levels), control, types, directives);
+    const Scope& scope, support::AssertionControlType control,
+    std::uint64_t types, std::uint64_t directives, std::int64_t levels) {
+  const auto found = under_.find(&scope);
+  if (found == under_.end()) return;
+  const std::int64_t allowed = LevelsNamed(levels);
+  for (const Below& below : found->second) {
+    if (below.levels < allowed &&
+        below.control->SelectedBy(types, directives)) {
+      below.control->Apply(control);
+    }
+  }
 }
 
 void AssertionControls::ApplyToBlock(
@@ -227,20 +241,6 @@ void AssertionControls::ApplyToBlock(
   if (const auto found = by_block_.find(&block); found != by_block_.end()) {
     ApplyEach(found->second, control, types, directives);
   }
-}
-
-void AssertionControls::Walk(
-    Scope& scope, std::int64_t remaining, support::AssertionControlType control,
-    std::uint64_t types, std::uint64_t directives) {
-  if (remaining == 0) {
-    return;
-  }
-  if (const auto found = by_scope_.find(&scope); found != by_scope_.end()) {
-    ApplyEach(found->second, control, types, directives);
-  }
-  scope.ForEachChild([&](Scope& child) {
-    Walk(child, LevelsBelow(child, remaining), control, types, directives);
-  });
 }
 
 void AssertionControls::ApplyEach(

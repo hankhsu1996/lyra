@@ -104,11 +104,12 @@ void DiagnosticDispatcher::Report(
 }
 
 void DiagnosticDispatcher::Report(
-    base::NoSourceLocation, Severity severity, const base::DiagMessage& message,
+    base::NoSourceLocation no_location, Severity severity,
+    const base::DiagMessage& message,
     std::span<const base::DiagMessage> notes) {
   Emit(
-      severity, ToolSeverityText(severity), base::SourceLocation{},
-      message.Text(), notes);
+      severity, ToolSeverityText(severity),
+      static_cast<base::SourceLocation>(no_location), message.Text(), notes);
 }
 
 void DiagnosticDispatcher::ReportAt(

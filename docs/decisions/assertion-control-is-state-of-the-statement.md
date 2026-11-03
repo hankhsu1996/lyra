@@ -47,26 +47,34 @@ task runs many times is one control. LRM clause 39 gives each assertion the same
 iterated per design or per instance, with enable, disable, reset and lock callbacks that are the
 tasks' own.
 
-**D2. A control is registered where its scope's storage is brought up, and a task walks the
-registry.** Each control registers under the instance holding it, or under none for a class's or a
-package's, and under every named block and task it stands in, a label's included. A task naming
-nothing walks the instances from the tops and takes every control no instance holds; naming an
-instance or a generate block it walks the instances `levels` from it down, a block counting as no
-level, and a count below 0 asks for none; naming a block or a task it takes what registered within
-it. A name may stand for several scopes: an array of instances is each instance, which the
-declaration fixed (LRM 23.3.2), and a loop generate construct's name is each block the loop built in
-the object holding it, which is that object's construction (LRM 27.4), so the loop's blocks are
-found as the task runs. A name of a loop's block without a path selects it by its own index. A scope
-where no controlled statement can stand -- a clocking block, a declaration of a sequence, a property
-or a type -- selects nothing, and a list whose every name selects nothing is not a call naming no
-list, which is the whole design. Registration happens before any process runs, so a task at time
-zero reaches a statement no process has reached. Applying a control twice leaves what once does, so
-a call naming overlapping scopes needs no deduplication.
+**D2. A control is registered where its scope's storage is brought up, at every scope above it.** A
+control an instance holds is recorded at that instance and at each scope above it, with how many
+levels below each it stands -- each instance between them, the holding one included, is one, a block
+none. One no instance holds -- a class's or a package's -- is recorded with none, and every control
+is also recorded within each named block and task it stands in, a label's included. A task naming an
+instance or a generate block takes the controls recorded at it fewer than `levels` below, a count
+below 0 asking for none; naming nothing, the same at each top and every control no instance holds;
+naming a block or a task, what was recorded within it. Most scopes hold no control, so a task costs
+the controls under the scopes it names and never the scopes of the hierarchy, and registering costs
+each control the depth it stands at. A name may stand for several scopes: an array of instances is
+each instance, which the declaration fixed (LRM 23.3.2), and a loop generate construct's name is
+each block the loop built in the object holding it, which is that object's construction (LRM 27.4),
+so the loop's blocks are found as the task runs. A name of a loop's block without a path selects it
+by its own index. A scope where no controlled statement can stand -- a clocking block, a declaration
+of a sequence, a property or a type -- selects nothing, and a list whose every name selects nothing
+is not a call naming no list, which is the whole design. Registration happens before any process
+runs, so a task at time zero reaches a statement no process has reached. Applying a control twice
+leaves what once does, so a call naming overlapping scopes needs no deduplication.
 
 Registering is how a task finds a control, and nothing a statement does waits on it: a control is
 usable from the moment its storage exists, and reaches the run as every body does. A statement can
 run before the design's storage is brought up, because a function a parameter or a generate
 condition is computed with runs while the design is built.
+
+Revised 2026-11-02, a second time: a task used to walk the hierarchy from the scopes it names,
+derived when no requirement said what a task may cost. A testbench turning assertions off and on
+around each test pays that walk every time, over scopes that mostly hold no control, so a control is
+now recorded where a task finds it.
 
 Revised 2026-11-02: the control used to learn the run at registration, which this decision placed
 after construction, and a `unique case` in a function a `localparam` called ended the run there as
@@ -111,13 +119,16 @@ selects it by, and writes each name of a task's list as what it names: an object
 array, the blocks of a loop, or the extent of a block or a subroutine. HIR-to-MIR gives the control
 a cell, registers it at bring-up, reads it where an execution begins and lowers a task, a statement,
 to one runtime call per scope it names; MIR holds a library type, calls on it and arithmetic on the
-word it answers. The tables' meanings, Lock, the walk and the generation are the runtime's.
+word it answers. The tables' meanings, Lock, which controls a task reaches and the generation are
+the runtime's.
 
 ## Consequences
 
 - A design that calls no task pays one cell and one registration per controlled statement and one
   read where each execution begins.
-- A task's cost follows the part of the hierarchy it selects, not the attempts in flight.
+- A task's cost follows the controls under the scopes it names, not the scopes the hierarchy holds
+  or the attempts in flight. The record of where each control stands costs each control the depth of
+  the hierarchy above it.
 - Under `--assertions skip` the only controlled statements left are violation reports, and a task
   acts on those.
 - A control type Table 20-5 does not give selects nothing: the call is ignored with a warning, as a
@@ -136,6 +147,15 @@ word it answers. The tables' meanings, Lock, the walk and the generation are the
 - **Finding the controls by walking bodies when a task runs.** Nothing at run time holds a body's
   statements, and a scope's controlled statements are a fact the lowering already has, so recording
   them as the design's storage is brought up costs nothing a walk would not.
+- **A task walking the hierarchy from the scopes it names**, looking up each scope's controls. It
+  costs every scope under the names on every call, most of which hold no control.
+- **A task asking each registered control whether it stands under the scope named**, by climbing
+  from its instance. A name standing for several scopes is one call per scope, so naming an array of
+  N instances costs N passes over every control the design holds.
+- **An index of the controls by the tree's pre-order**, which makes "under this scope" one search
+  and a range, as a dominator tree's numbers do, keeping each control once rather than once per
+  scope above it. It adds a number on every scope, a sort, and the question of when the index is
+  current, for a saving in memory proportional to the hierarchy's depth.
 - **Reading the control at each step of an execution.** It would let a change reach an execution
   under way, which R2 and R4 forbid, and Kill, the one control that must, is answered by D4.
 - **A Kill that finds the reports it withdraws.** The region's lists hold every pending effect of
