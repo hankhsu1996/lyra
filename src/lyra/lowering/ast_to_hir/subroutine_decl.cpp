@@ -177,21 +177,23 @@ struct DpiTypeAbi {
 auto ClassifyDpiType(const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<DpiTypeAbi>;
 
-// Classifies one SV value type into its DPI-C carrier (LRM 35.5.6, Annex H.10 /
-// Table H.1). The dispatch is on the declared type shape, not the bit width --
-// WYSIWYG (LRM 35.6.1.1) makes `int` (by-value C `int`) and `bit [31:0]`
-// (canonical `svBitVecVal*`) different DPI ABIs even though both are 32-bit
-// 2-state.
+// Classifies one SV value type into its DPI-C carrier (LRM 35.5.6, Annex H.7.3,
+// H.7.4, Table H.1). The dispatch is on the declared type shape, not the bit
+// width -- WYSIWYG (LRM 35.6.1.1) makes `int` (by-value C `int`) and
+// `bit [31:0]` (canonical `svBitVecVal*`) different DPI ABIs even though both
+// are 32-bit 2-state.
 //
-//   scalar `bit` / `logic` (1 bit)        -> by-value `svBit` / `svLogic`
+//   `void`, `string`, `chandle`, a real    -> by-value C scalar
+//   an enumeration                         -> what its base type crosses as
+//   scalar `bit` / `logic` (1 bit)         -> by-value `svBit` / `svLogic`
 //   predefined `byte`/`shortint`/`int`/`longint` (2-state) -> by-value C int
-//   predefined `integer` / `time` (4-state) -> canonical logic vector
-//   packed `bit [N:0]`                    -> canonical bit vector
-//   packed `logic [N:0]`                  -> canonical logic vector
+//   every other packed type                -> canonical vector of its width
 //
-// `real`, `string`, `chandle`, `void` are by-value scalars. `shortreal` and
-// packed struct / union are a located Unsupported so the gap stays a clean
-// diagnostic.
+// The last arm is the standard's own rule: every packed type is equivalent to
+// a one-dimensional packed array, and that is how the foreign side sees it
+// (LRM 35.5.6) -- a packed array, a packed structure or union, a tagged one
+// with its tag above its members, and `integer` and `time`. The value already
+// is that array here, so crossing it needs nothing a packed array does not.
 auto ClassifyDpiCarrier(const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<support::DpiCarrier> {
   const auto& t = type.getCanonicalType();
@@ -202,56 +204,45 @@ auto ClassifyDpiCarrier(const slang::ast::Type& type, diag::SourceSpan span)
   if (t.isString()) return scalar(support::DpiScalarAbi::kString);
   if (t.isCHandle()) return scalar(support::DpiScalarAbi::kChandle);
   if (t.isFloating()) {
-    if (t.as<slang::ast::FloatingType>().floatKind ==
-        slang::ast::FloatingType::Real) {
-      return scalar(support::DpiScalarAbi::kReal);
+    // A `realtime` is a `real` (LRM 6.12).
+    switch (t.as<slang::ast::FloatingType>().floatKind) {
+      case slang::ast::FloatingType::Real:
+      case slang::ast::FloatingType::RealTime:
+        return scalar(support::DpiScalarAbi::kReal);
+      case slang::ast::FloatingType::ShortReal:
+        return scalar(support::DpiScalarAbi::kShortReal);
     }
+    throw InternalError("ClassifyDpiCarrier: unknown floating type");
+  }
+  if (t.isEnum()) {
+    return ClassifyDpiCarrier(t.as<slang::ast::EnumType>().baseType, span);
+  }
+  if (!t.isIntegral()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedDpi,
-        "passing a 'shortreal' through DPI-C is not yet supported");
+        "passing an unpacked structure through DPI-C is not yet supported");
   }
-  if (t.isIntegral()) {
-    // A 1-bit scalar crosses by value as svBit / svLogic (LRM Table H.1).
-    if (t.isScalar()) {
-      return scalar(
-          t.isFourState() ? support::DpiScalarAbi::kLogicScalar
-                          : support::DpiScalarAbi::kBitScalar);
-    }
-    // A predefined named integer crosses by value if 2-state; the 4-state
-    // `integer` / `time` are canonical logic vectors (LRM H.7.3).
-    if (t.isPredefinedInteger()) {
-      if (t.isFourState()) {
-        return support::VectorCarrier{.four_state = true};
-      }
-      switch (t.getBitWidth()) {
-        case 8:
-          return scalar(support::DpiScalarAbi::kByte);
-        case 16:
-          return scalar(support::DpiScalarAbi::kShortInt);
-        case 32:
-          return scalar(support::DpiScalarAbi::kInt);
-        case 64:
-          return scalar(support::DpiScalarAbi::kLongInt);
-        default:
-          break;
-      }
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedDpi,
-          "passing an integer type of this width through DPI-C is not yet "
-          "supported");
-    }
-    // A packed array of bit / logic crosses by pointer as a canonical vector.
-    if (t.isPackedArray()) {
-      return support::VectorCarrier{.four_state = t.isFourState()};
-    }
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedDpi,
-        "passing a packed structure or union through DPI-C is not yet "
-        "supported");
+  if (t.isScalar()) {
+    return scalar(
+        t.isFourState() ? support::DpiScalarAbi::kLogicScalar
+                        : support::DpiScalarAbi::kBitScalar);
   }
-  return diag::Fail(
-      span, diag::DiagCode::kUnsupportedDpi,
-      "passing a value of this type through DPI-C is not yet supported");
+  if (t.isPredefinedInteger()) {
+    switch (t.as<slang::ast::PredefinedIntegerType>().integerKind) {
+      case slang::ast::PredefinedIntegerType::Byte:
+        return scalar(support::DpiScalarAbi::kByte);
+      case slang::ast::PredefinedIntegerType::ShortInt:
+        return scalar(support::DpiScalarAbi::kShortInt);
+      case slang::ast::PredefinedIntegerType::Int:
+        return scalar(support::DpiScalarAbi::kInt);
+      case slang::ast::PredefinedIntegerType::LongInt:
+        return scalar(support::DpiScalarAbi::kLongInt);
+      case slang::ast::PredefinedIntegerType::Integer:
+      case slang::ast::PredefinedIntegerType::Time:
+        break;
+    }
+  }
+  return support::VectorCarrier{.four_state = t.isFourState()};
 }
 
 // LRM 35.5.6.1: a formal leaving at least one dimension unsized crosses as an

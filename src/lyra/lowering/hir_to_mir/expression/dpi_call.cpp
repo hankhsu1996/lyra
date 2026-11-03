@@ -96,6 +96,9 @@ auto CarrierTypeId(
     case support::DpiScalarAbi::kReal:
       return unit.types.Intern(
           mir::Type{mir::MachineFloatType{.width = support::FloatWidth::k64}});
+    case support::DpiScalarAbi::kShortReal:
+      return unit.types.Intern(
+          mir::Type{mir::MachineFloatType{.width = support::FloatWidth::k32}});
     case support::DpiScalarAbi::kString:
       return unit.builtins.machine_c_string;
     case support::DpiScalarAbi::kChandle:
@@ -120,8 +123,8 @@ enum class ForeignHold : std::uint8_t {
 
 // SV value -> by-value machine carrier (LRM 35.5.6). An integral value yields
 // its widest machine integer, narrowed to the carrier's C width by a machine
-// cast; a real yields its native floating value; a string yields a
-// NUL-terminated C string the foreign side may read for as long as `hold`
+// cast; a real or a shortreal yields its native floating value; a string yields
+// a NUL-terminated C string the foreign side may read for as long as `hold`
 // says; a chandle yields the address it holds. Reuses the ordinary value
 // accessors; the boundary conversion is a plain expression, not a DPI-specific
 // primitive. Feeds an argument that crosses by value, the seed of a scalar
@@ -150,8 +153,10 @@ auto MarshalSvToCarrier(
           mir::Expr{
               .data = mir::CastExpr{.operand = machine_int}, .type = carrier});
     }
-    // A real crosses as the C double it is (LRM 35.5.6).
+    // A real crosses as the C double it is, and a shortreal as the C float it
+    // is (LRM 35.5.6, Table H.1).
     case support::DpiScalarAbi::kReal:
+    case support::DpiScalarAbi::kShortReal:
       return block.Add(
           mir::Expr{.data = mir::CastExpr{.operand = sv_id}, .type = carrier});
     case support::DpiScalarAbi::kString:
@@ -206,9 +211,10 @@ auto MarshalSvToCarrier(
 // Foreign ABI carrier -> SV value into a declared SV type's canonical shape. An
 // integral carrier is landed by the conversion from a machine integer, which is
 // told the declared type so width / signedness / state domain follow it; a
-// string carrier constructs the SV value directly, and a real or a chandle is
-// the carrier read as the SV value. Feeds both a function's marshaled return
-// and the copy-back of an output / inout argument into its actual.
+// string carrier constructs the SV value directly, and a real, a shortreal or a
+// chandle is the carrier read as the SV value. Feeds both a function's
+// marshaled return and the copy-back of an output / inout argument into its
+// actual.
 auto MarshalCarrierToSv(
     UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId call_id,
     const support::DpiCarrier& carrier_desc, mir::TypeId result_type)
@@ -246,9 +252,10 @@ auto MarshalCarrierToSv(
           .data =
               mir::CallExpr{.callee = mir::Construct{}, .arguments = {call_id}},
           .type = result_type};
-    // A real is the C double that crossed, and a chandle holds the address
-    // that crossed (LRM 35.5.6).
+    // A real or a shortreal is the C double or float that crossed, and a
+    // chandle holds the address that crossed (LRM 35.5.6).
     case support::DpiScalarAbi::kReal:
+    case support::DpiScalarAbi::kShortReal:
     case support::DpiScalarAbi::kChandle:
       return mir::Expr{
           .data = mir::CastExpr{.operand = call_id}, .type = result_type};
@@ -1284,6 +1291,7 @@ void ReturnTheFallbackAnswer(
                         .operand = mir::BuildMachineIntLiteral(unit, block, 0)},
                 .type = carrier});
       case support::DpiScalarAbi::kReal:
+      case support::DpiScalarAbi::kShortReal:
         return block.Add(
             mir::Expr{
                 .data = mir::FloatingLiteral{.value = 0.0}, .type = carrier});

@@ -6,8 +6,23 @@
 // H.8.4, H.8.8, H.8.9). The foreign caller allocates whatever an argument
 // passed by reference needs (LRM Annex H.8.5). An inout the function changes
 // comes back changed even where the new value compares equal to the old, as a
-// real's negated zero does.
+// real's negated zero does. A `shortreal` crosses as C's `float` both ways,
+// and a packed structure as the packed array it is equivalent to (Table H.1,
+// Annex H.7.4).
 module Top;
+  typedef struct packed {
+    bit [7:0] tens;
+    bit [7:0] units;
+  } digits_t;
+  typedef struct packed {
+    logic [3:0] high;
+    logic [3:0] low;
+  } halves_t;
+  typedef enum int {
+    kOff = 7,
+    kOn = 11
+  } switch_t;
+
   import "DPI-C" context function int drive();
 
   export "DPI-C" function scale_pair;
@@ -18,6 +33,10 @@ module Top;
   export "DPI-C" function classify;
   export "DPI-C" function step_logic;
   export "DPI-C" function negate;
+  export "DPI-C" function quarter;
+  export "DPI-C" function read_digits;
+  export "DPI-C" function swap_halves;
+  export "DPI-C" function switch_code;
 
   function void scale_pair(input int seed, output int lo, output int hi);
     lo = seed * 2;
@@ -70,6 +89,23 @@ module Top;
     r = -r;
   endfunction
 
+  function shortreal quarter(input shortreal s, output shortreal rest);
+    rest = s - (s / 4.0);
+    return s / 4.0;
+  endfunction
+
+  function int read_digits(input digits_t d);
+    return (d.tens * 10) + d.units;
+  endfunction
+
+  function void swap_halves(inout halves_t h);
+    h = '{high: h.low, low: h.high};
+  endfunction
+
+  function int switch_code(input switch_t s);
+    return s == kOn ? 1 : 2;
+  endfunction
+
   int verdict;
 
   initial verdict = drive();
@@ -77,8 +113,8 @@ module Top;
   final begin
     // One bit per crossing the foreign side checked, so a failure names the
     // argument shape that did not survive.
-    if (verdict !== 1023)
-      $fatal(1, "the foreign side reported %0d of 1023 crossings", verdict);
+    if (verdict !== 32767)
+      $fatal(1, "the foreign side reported %0d of 32767 crossings", verdict);
     $display("All checks passed");
   end
 endmodule

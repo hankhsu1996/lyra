@@ -5,11 +5,21 @@
 // reads them back through the array querying functions, which follow the
 // semantics of the SystemVerilog array querying functions: an unsized unpacked
 // dimension keeps the actual's own declared bounds rather than a normalized
-// form (LRM Annex H.7.6, H.12.1, H.12.2, 20.7).
+// form (LRM Annex H.7.6, H.12.1, H.12.2, 20.7). An element of a packed
+// structure type is a packed element, held in canonical form as a packed
+// array element is (Annex H.7.3, H.7.4).
 module Top;
+  typedef struct packed {
+    bit [3:0] tens;
+    bit [3:0] units;
+  } digits_t;
+
   import "DPI-C" function int weigh(input byte data[]);
   import "DPI-C" function int query(input byte data[], input int which);
+  import "DPI-C" function int weigh_digits(input digits_t data[]);
 
+  digits_t numbers[3];
+  int numbers_weight;
   byte few[4];
   byte many[3:1];
   int few_weight;
@@ -32,6 +42,11 @@ module Top;
     few_weight = weigh(few);
     many_weight = weigh(many);
 
+    numbers[0] = '{tens: 4'd1, units: 4'd2};
+    numbers[1] = '{tens: 4'd3, units: 4'd4};
+    numbers[2] = '{tens: 4'd5, units: 4'd6};
+    numbers_weight = weigh_digits(numbers);
+
     for (int i = 0; i < 7; i++) begin
       few_shape[i] = query(few, i);
       many_shape[i] = query(many, i);
@@ -43,6 +58,8 @@ module Top;
       $fatal(1, "weighing few[0:3] gave %0d, expected 20", few_weight);
     if (many_weight !== 100)
       $fatal(1, "weighing many[3:1] gave %0d, expected 100", many_weight);
+    if (numbers_weight !== 146)
+      $fatal(1, "weighing numbers gave %0d, expected 146", numbers_weight);
 
     if (few_shape[0] !== 1)
       $fatal(1, "few[0:3] reported %0d dimensions, expected 1", few_shape[0]);

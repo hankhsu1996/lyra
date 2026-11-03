@@ -20,9 +20,8 @@ int32_t add(int32_t a, int32_t b) {
 
 int32_t sum_of(const svOpenArrayHandle a, int32_t n) {
   int32_t total = 0;
-  int32_t i;
-  for (i = 0; i < n; i++) {
-    svBitVecVal element;
+  for (int32_t i = 0; i < n; i++) {
+    svBitVecVal element = 0;
     svGetBitArrElem1VecVal(&element, a, svLow(a, 1) + i);
     total += (int32_t)element;
   }

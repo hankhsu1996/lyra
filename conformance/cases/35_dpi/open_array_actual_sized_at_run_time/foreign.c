@@ -8,11 +8,10 @@
    it is read one chunk at a time (LRM Annex H.7.3, H.12.5). */
 int32_t weigh(const svOpenArrayHandle h) {
   int32_t total = 0;
-  int i;
-  for (i = svLow(h, 1); i <= svHigh(h, 1); i++) {
-    svBitVecVal element;
+  for (int i = svLow(h, 1); i <= svHigh(h, 1); i++) {
+    svBitVecVal element = 0;
     svGetBitArrElem1VecVal(&element, h, i);
-    total += i * (int32_t)(int8_t)(element & 0xFFu);
+    total += i * (int32_t)(int8_t)(element & 0xFFU);
   }
   return total;
 }

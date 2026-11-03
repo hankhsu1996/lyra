@@ -15,6 +15,10 @@ void make_pattern(int32_t, svLogicVecVal*);
 int32_t classify(const svLogicVecVal*);
 void step_logic(svLogic, svLogic*);
 void negate(double*);
+float quarter(float, float*);
+int32_t read_digits(const svBitVecVal*);
+void swap_halves(svLogicVecVal*);
+int32_t switch_code(int32_t);
 
 int32_t drive(void) {
   int32_t verdict = 0;
@@ -61,7 +65,7 @@ int32_t drive(void) {
   pattern.aval = 0;
   pattern.bval = 0;
   make_pattern(1, &pattern);
-  if ((pattern.aval & 0xFFu) == 0xCCu && (pattern.bval & 0xFFu) == 0x55u) {
+  if ((pattern.aval & 0xFFU) == 0xCCU && (pattern.bval & 0xFFU) == 0x55U) {
     verdict |= 32;
   }
   if (classify(&pattern) == 29298) {
@@ -88,6 +92,36 @@ int32_t drive(void) {
   negate(&zero);
   if (signbit(zero)) {
     verdict |= 512;
+  }
+
+  /* A `float` in, a `float` out and a `float` result, each a different
+     number, so one read at the wrong precision shows. */
+  float rest = -1.0F;
+  if (quarter(10.0F, &rest) == 2.5F) {
+    verdict |= 1024;
+  }
+  if (rest == 7.5F) {
+    verdict |= 2048;
+  }
+
+  /* A structure of two bytes, its first member in the high one. */
+  svBitVecVal digits = (4U << 8) | 2U;
+  if (read_digits(&digits) == 42) {
+    verdict |= 4096;
+  }
+
+  /* A four-state structure the export swaps the members of, each member
+     taking its unknown bits with it: high is 1x0z and low is 0110. */
+  svLogicVecVal halves = {.aval = 0xC6U, .bval = 0x50U};
+  swap_halves(&halves);
+  if ((halves.aval & 0xFFU) == 0x6CU && (halves.bval & 0xFFU) == 0x05U) {
+    verdict |= 8192;
+  }
+
+  /* An enumeration over `int` is an `int` here, so its value crosses and its
+     name does not. */
+  if (switch_code(11) == 1 && switch_code(7) == 2) {
+    verdict |= 16384;
   }
 
   return verdict;
