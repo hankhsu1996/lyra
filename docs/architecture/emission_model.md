@@ -234,13 +234,11 @@ flowchart TB
     HU["high"]
     HC["high code"]
   end
-  LT --> LO
-  LU --> LO
+  LC --> LO
   LC --> LU
   LC --> LT
-  HD --> HO
   HD --> LT
-  HU --> HO
+  HC --> HO
   HC --> HU
   HC --> HD
   HC --> LT
@@ -262,24 +260,34 @@ brought.** `high`'s code reads `low.Thing` although `high.Derived` did too. The 
 point: what a unit depends on is stated in one place a reader can open, rather than being whatever
 the declarations happened to pull in behind them.
 
-**The graph cannot close.** A declaration draws an arrow to another unit in two ways. A class draws
-one to the class it rests on (invariant 1's second paragraph), so those edges have the shape of the
-class-extends graph -- which no program can make circular, since a class may not be its own
-ancestor. A unit's declarations that name another design element's published classes draw an arrow
-to what declares those classes without defining them, and that reads nothing, so it ends every path
+**The graph cannot close.** A declaration draws an arrow to another unit in one way that can chain:
+a class draws one to the class it rests on (invariant 1's second paragraph), so those edges have the
+shape of the class-extends graph -- which no program can make circular, since a class may not be its
+own ancestor. A declaration that only names another design element's published class declares that
+class itself and draws no arrow, and one naming a function or variable of another unit's namespace
+reads that namespace's header, which reads nothing but the records it names, so it ends every path
 it is on. Two units whose names reach each other -- one calling the other's task while the other
 names the first upward -- therefore read each other's declarations without a cycle. The file holding
 a unit's scope classes is read by code files alone, so it starts arrows and never receives one from
 another unit's declarations.
 
-_Current implementation, C++ backend:_ each unit writes a `<Unit>.forward.hpp` holding every class
-other units may name that C++ can declare ahead of its definition, and a unit's opening header
-includes the forward headers of the units whose classes it names. A design element's scope classes
-are nested classes written together in `<Unit>.hpp`, the class of a generate block declared inside
-the class of the scope holding it; a class the source declared has a file of its own, since another
+_Current implementation, C++ backend:_ a file that names a class it only points at declares the
+class itself, together with the definition the class's objects carry, which is declared beside the
+class rather than in it so that naming it needs the class declared and no more -- a cast toward a
+class reads only which class it is (LRM 8.16). So a file reads nothing of a unit whose classes it
+only holds handles to or casts toward, and an edit adding a class or a function to that unit reaches
+none of it. A class's header holds what its declaration states; what the class keeps for its own
+bodies and the constants its definition is made of are a part of it defined with the class's code,
+in the code file wherever one code file defines the class. A design element's scope classes are
+nested classes written together in `<Unit>.hpp`, the class of a generate block declared inside the
+class of the scope holding it; a class the source declared has a file of its own, since another
 unit's class may extend it. A nested class cannot be declared ahead of its definition, so text
 naming another unit's block class reads that unit's `<Unit>.hpp`; only a code file does, because a
-scope's class holds what it reaches in another unit as the class every scope extends.
+scope's class holds what it reaches in another unit as the class every scope extends. A file that
+constructs, extends or reaches a member of another unit's class includes that class's header, so a
+change to what the class declares recompiles it: the host compiler lays the object out and resolves
+its members, which the execution backend instead reads off the published layout where the referrer
+is compiled.
 
 **Same-unit sibling reference.** `always_comb from_b = b.bx;` inside generate block `a` of `Top`.
 The route has two steps: `a -> Top` (typed; the parent edge whose target class lives in Top's

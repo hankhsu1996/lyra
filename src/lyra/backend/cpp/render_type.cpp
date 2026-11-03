@@ -727,19 +727,54 @@ void WriteOne(TargetText& out, const CppNewOwner& owner) {
       "by a unique pointer -- please report this as a bug");
 }
 
+namespace {
+
+// The class an object of the type `built` is of.
+auto ClassOfObject(const CppType& built) -> CppClassRef {
+  const auto* object =
+      built.Unit().types.Get(built.Type()).As<mir::ObjectType>();
+  if (object == nullptr) {
+    throw InternalError(
+        "backend::cpp: a creation builds a value that is no object -- please "
+        "report this as a bug");
+  }
+  return {built.Unit(), object->of};
+}
+
+// What text naming the class `id` needs to have the class declared. A class
+// some other unit may name is declared forward by the text naming it, class and
+// definition both, as the unit declaring it spells them; one nested in another
+// is declared only inside that one, so the text includes the file defining that
+// one; one no other unit names is declared in the unit's code file, the one
+// file that names it.
+void DeclareClass(
+    TargetText& out, const mir::CompilationUnit& unit, mir::ClassId id) {
+  const mir::Class& cls = unit.GetClass(id);
+  const support::DefPath* path = support::PathOf(cls.identity);
+  if (path == nullptr) return;
+  if (IsNestedClass(*path)) {
+    out.Require(ClassDefinitionFileOf(
+        mir::DefiningUnitOf(unit, cls.defining_unit), *path));
+    return;
+  }
+  out.DeclareForward(CppForwardDeclarationOf(unit, id));
+}
+
+}  // namespace
+
 void WriteOne(TargetText& out, const CppUnconstructedObject& creation) {
   Write(
       out, "lyra::runtime::CreateUnconstructedObject<", creation.built, ">(&",
-      creation.built, "::", CppDefinitionName(), ")");
+      CppDefinitionOf{.of = ClassOfObject(creation.built)}, ")");
 }
 
 void WriteOne(TargetText& out, const CppObjectCreation& creation) {
   const mir::Type& type = creation.of.Unit().types.Get(creation.of.Type());
   const auto head = [&](std::string_view function) {
     Write(
-        out, function, "<", creation.built, ">(&", creation.built,
-        "::", CppDefinitionName(), ", &", creation.built,
-        "::", CppConstructorMemberName());
+        out, function, "<", creation.built, ">(&",
+        CppDefinitionOf{.of = ClassOfObject(creation.built)}, ", &",
+        creation.built, "::", CppConstructorMemberName());
   };
   if (type.Is<mir::ManagedRefType>()) {
     head("lyra::runtime::CreateObject");
@@ -762,6 +797,25 @@ void WriteOne(TargetText& out, const CppObjectCreation& creation) {
 
 void WriteOne(TargetText& out, const CppObjectEnd& end) {
   Write(out, "lyra::runtime::EndObjectOf<", end.of, ">");
+}
+
+void WriteOne(TargetText& out, const CppDefinitionOf& definition) {
+  const mir::CompilationUnit& unit = definition.of.Unit();
+  const auto no_definition = [] {
+    throw InternalError(
+        "backend::cpp: a definition of a root every object or scope extends is "
+        "named, which no unit declares -- please report this as a bug");
+  };
+  std::visit(
+      Overloaded{
+          [&](const mir::ClassId& id) {
+            DeclareClass(out, unit, id);
+            Write(out, DefinitionPath{.unit = &unit, .id = id});
+          },
+          [&](const mir::ObjectTreeRootRef&) { no_definition(); },
+          [&](const mir::ClassObjectRootRef&) { no_definition(); },
+          [&](const mir::ObjectRootRef&) { no_definition(); }},
+      definition.of.Ref());
 }
 
 void WriteOne(TargetText& out, const CppEntryPointerType& type) {
@@ -802,8 +856,10 @@ void WriteOne(TargetText& out, const CppInterfaceDispatchCallee& callee) {
   WriteTableAndMember(out, *callee.unit, callee.requirement);
   Write(
       out, ", &",
-      CppClassRef(*callee.unit, mir::ClassRef{callee.requirement.owner_class}),
-      "::", CppDefinitionName(), ">");
+      CppDefinitionOf{
+          .of = CppClassRef(
+              *callee.unit, mir::ClassRef{callee.requirement.owner_class})},
+      ">");
 }
 
 void WriteOne(TargetText& out, const CppTupleComponents& components) {
@@ -854,15 +910,8 @@ void WriteOne(TargetText& out, const CppClassRef& ref) {
   const mir::CompilationUnit& unit = ref.Unit();
   std::visit(
       Overloaded{
-          // A class with a path is declared in a file of the unit defining it,
-          // which the text naming it includes; one no other unit names is
-          // declared in the unit's code file, the one file that names it.
           [&](const mir::ClassId& id) {
-            const mir::Class& cls = unit.GetClass(id);
-            if (const support::DefPath* path = support::PathOf(cls.identity)) {
-              out.Require(ClassDeclarationFileOf(
-                  cls.defining_unit.value_or(unit.name), *path));
-            }
+            DeclareClass(out, unit, id);
             Write(out, CppClassPath(unit, id));
           },
           // The tree's root is the library's scope class, spelled as a value

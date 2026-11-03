@@ -205,10 +205,16 @@ void RenderFieldList(
 
 // A class's static properties (LRM 8.9), one cell per class. Like a field, the
 // declaration holds no value; code run when the class's owner is set up gives
-// it one.
+// it one. A property the source declared is a member of the class, which
+// another unit names it as; a cell the class keeps for its own bodies is a
+// member of the class's own part, since only those bodies read it and what
+// they keep follows their code.
 void RenderClassStaticProperties(
-    const mir::CompilationUnit& unit, const mir::Class& s, TargetText& out) {
+    const mir::CompilationUnit& unit, const mir::Class& s, TargetText& declared,
+    TargetText& own) {
   for (const mir::StaticPropertyId slot : s.static_properties.Ids()) {
+    TargetText& out =
+        IsKeptForItsBodies(s.named_static_properties, slot) ? own : declared;
     WriteDeclaration(
         out,
         VariableDeclaration{
@@ -440,32 +446,80 @@ auto DefinitionFormIn(WrittenIn in) -> VariableForm {
   throw InternalError("backend::cpp: unknown place a definition is written");
 }
 
-// A constant class `s` holds, announced in the class as `static const T name;`
-// and defined outside it as `const T Class::name = value;`, inline where the
-// header defines it. Another unit only ever needs its address, which the
-// announcement is enough for. The caller passes the name, since the
-// definition's is fixed and the others are positions.
-void RenderClassConstant(
+// A constant class `id` holds, which only its unit's code names -- the
+// definition its objects carry, and the bodies creating them -- announced in
+// the class's own part as `static const T sv_data_<n>;` and defined outside it
+// as `const T C::sv_detail::sv_data_<n> = value;`, inline where the header
+// defines the class.
+void RenderClassConstantDefinition(
     const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
-    mir::TypeId type, const CppName& name, const mir::ValueBuild& build,
-    DefinedAs defined_as, TargetText& announced, TargetText& defined) {
-  WriteDeclaration(
-      announced, VariableDeclaration{
-                     .form = VariableForm::kStaticDataMemberDeclaration,
-                     .constness = Constness::kConst,
-                     .type = CppType(unit, type),
-                     .name = name});
-  const ScopeView view =
-      ScopeView::ForConstant(unit, build.body, defined_as.linkage, report);
+    mir::ClassConstantId constant, DefinedAs defined_as, TargetText& defined) {
+  const mir::ClassConstantDecl& decl =
+      unit.GetClass(id).constants.Get(constant);
+  const CppName name = CppClassConstantName(constant);
+  const ScopeView view = ScopeView::ForConstant(
+      unit, decl.initializer.body, defined_as.linkage, report);
   WriteDeclaration(
       defined,
       VariableDeclaration{
           .form = DefinitionFormIn(defined_as.in),
           .constness = Constness::kConst,
-          .type = CppType(unit, type),
+          .type = CppType(unit, decl.type),
           .name = name,
-          .qualifier = CppClassPath(unit, id)},
-      [&](TargetText& value) { Write(view, value, build.value); });
+          .qualifier = ClassDetailPath{.of = CppClassPath(unit, id)}},
+      [&](TargetText& value) { Write(view, value, decl.initializer.value); });
+}
+
+// The definition every object of class `id` carries (LRM 8.16 reads it), which
+// text naming the class by its name alone reaches: declared beside the class,
+// in the scope declaring it -- the unit's namespace, or for the class of a
+// generate block the class of the scope holding it -- and defined in the code
+// file, after every body it names. Where every body states the class, each
+// code file defines it alike and the link keeps one.
+void RenderObjectDefinition(
+    const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
+    std::optional<mir::ClassId> declared_inside, TargetText& announced,
+    TargetText& defined) {
+  const mir::Class& cls = unit.GetClass(id);
+  const CppType type(
+      unit,
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kObjectDefinition));
+  const support::Linkage linkage = mir::LinkageOf(unit, id);
+  const ScopeView view = ScopeView::ForConstant(
+      unit, cls.object_definition_initializer.body, linkage, report);
+  const auto write_value = [&](TargetText& value) {
+    Write(view, value, cls.object_definition_initializer.value);
+  };
+  const std::string_view specifiers =
+      SpecifiersOf(DefinedAs{.linkage = linkage, .in = WrittenIn::kCodeFile});
+  if (declared_inside.has_value()) {
+    WriteDeclaration(
+        defined,
+        VariableDeclaration{
+            .form = VariableForm::kStaticDataMemberDefinition,
+            .constness = Constness::kConst,
+            .type = type,
+            .name = CppDefinitionName(unit, id),
+            .qualifier = CppClassPath(unit, *declared_inside),
+            .linkage_specifiers = specifiers},
+        write_value);
+    return;
+  }
+  WriteDeclaration(
+      announced, VariableDeclaration{
+                     .form = VariableForm::kExternDeclaration,
+                     .constness = Constness::kConst,
+                     .type = type,
+                     .name = CppDefinitionName(unit, id)});
+  WriteDeclaration(
+      defined,
+      VariableDeclaration{
+          .form = VariableForm::kExternDefinition,
+          .constness = Constness::kConst,
+          .type = type,
+          .name = CppDefinitionName(unit, id),
+          .linkage_specifiers = specifiers},
+      write_value);
 }
 
 // Which classes of a unit C++ declares inside another, by each class's
@@ -510,10 +564,21 @@ auto NestingOf(const mir::CompilationUnit& unit) -> ClassNesting {
   return nesting;
 }
 
+// Where the text of one class goes: its declaration; its own part, which
+// comes before any body of the unit; the definitions of what it declares,
+// beside the declaration or in the code file as the class is linked; and the
+// definition its objects carry, which goes into the code file.
+struct ClassText {
+  TargetText* declaration;
+  TargetText* detail;
+  TargetText* definitions;
+  TargetText* object_definition;
+};
+
 void RenderClass(
     const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
-    const mir::Class& s, std::span<const mir::ClassId> declares_inside,
-    DefinedAs defined, TargetText& signature, TargetText& code);
+    const mir::Class& s, const ClassNesting& nesting, DefinedAs defined,
+    ClassText text);
 
 // Writes a class after every class of this unit it derives from or is
 // declared inside, which the unit's class list does not guarantee, marking
@@ -536,39 +601,54 @@ void AppendClassInDependencyOrder(
     AppendClassInDependencyOrder(
         unit, report, nesting, rests_on, emitted, text);
   }
-  const std::span<const mir::ClassId> declares_inside =
-      nesting.declares_inside[id.value];
   const TargetText::Section defined(text.definitions);
+  const TargetText::Section detailed(text.details);
   const support::Linkage linkage = mir::LinkageOf(unit, id);
   switch (linkage) {
     // A class every body states alike is defined beside its declaration, in
     // the header every body reads, since a referrer reads its definition too.
     case support::Linkage::kShared: {
+      const TargetText::Section object_defined(text.object_definitions);
       PublishedClass published{.id = id, .text = TargetText{}};
       TargetText definitions;
       RenderClass(
-          unit, report, id, cls, declares_inside,
+          unit, report, id, cls, nesting,
           DefinedAs{.linkage = linkage, .in = WrittenIn::kHeader},
-          published.text, definitions);
+          ClassText{
+              .declaration = &published.text,
+              .detail = &definitions,
+              .definitions = &definitions,
+              .object_definition = &text.object_definitions});
       AppendSection(published.text, definitions);
       text.published.push_back(std::move(published));
       return;
     }
     case support::Linkage::kExternal: {
+      const TargetText::Section object_defined(text.object_definitions);
       PublishedClass published{.id = id, .text = TargetText{}};
       RenderClass(
-          unit, report, id, cls, declares_inside,
+          unit, report, id, cls, nesting,
           DefinedAs{.linkage = linkage, .in = WrittenIn::kCodeFile},
-          published.text, text.definitions);
+          ClassText{
+              .declaration = &published.text,
+              .detail = &text.details,
+              .definitions = &text.definitions,
+              .object_definition = &text.object_definitions});
       text.published.push_back(std::move(published));
       return;
     }
     case support::Linkage::kInternal: {
       const TargetText::Section declared(text.internal);
+      const TargetText::Section object_defined(
+          text.internal_object_definitions);
       RenderClass(
-          unit, report, id, cls, declares_inside,
+          unit, report, id, cls, nesting,
           DefinedAs{.linkage = linkage, .in = WrittenIn::kCodeFile},
-          text.internal, text.definitions);
+          ClassText{
+              .declaration = &text.internal,
+              .detail = &text.details,
+              .definitions = &text.definitions,
+              .object_definition = &text.internal_object_definitions});
       return;
     }
   }
@@ -577,9 +657,16 @@ void AppendClassInDependencyOrder(
 
 void RenderClass(
     const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
-    const mir::Class& s, std::span<const mir::ClassId> declares_inside,
-    DefinedAs defined, TargetText& signature, TargetText& code) {
-  TargetText& out = signature;
+    const mir::Class& s, const ClassNesting& nesting, DefinedAs defined,
+    ClassText text) {
+  TargetText& out = *text.declaration;
+  TargetText& detail = *text.detail;
+  TargetText& code = *text.definitions;
+  const std::span<const mir::ClassId> declares_inside =
+      nesting.declares_inside[id.value];
+  const CppType object_definition_type(
+      unit,
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kObjectDefinition));
   Write(out, "class ", CppClassPath(unit, id));
   if (s.is_final) {
     out += " final";
@@ -595,19 +682,61 @@ void RenderClass(
   out += " public:\n";
   out.Indent();
 
-  // A class declared inside this one is declared here and defined after it,
-  // outside, so each reads as a class of its own.
+  // A class declared inside this one is declared here, with the definition its
+  // objects carry beside it, and defined after it, outside, so each reads as a
+  // class of its own. So is the class's own part.
   {
     const TargetText::Section nested(out);
     for (const mir::ClassId inside : declares_inside) {
       out.OpenLine();
       Write(out, "class ", CppClassName(unit, inside), ";\n");
+      WriteDeclaration(
+          out, VariableDeclaration{
+                   .form = VariableForm::kStaticDataMemberDeclaration,
+                   .constness = Constness::kConst,
+                   .type = object_definition_type,
+                   .name = CppDefinitionName(unit, inside)});
     }
+    out.OpenLine();
+    Write(out, "struct ", CppClassDetailName(), ";\n");
   }
 
   {
     const TargetText::Section table_type(out);
     RenderDispatchTableType(unit, s, out);
+  }
+
+  // The class's own part is defined ahead of every body of the unit, a closure
+  // built in one of the class's bodies included, since each may read what the
+  // class keeps for it.
+  TargetText declared_properties;
+  declared_properties.Indent();
+  TargetText own;
+  own.Indent();
+  {
+    const TargetText::Section own_properties(own);
+    RenderClassStaticProperties(unit, s, declared_properties, own);
+  }
+  {
+    const TargetText::Section constants(own);
+    for (const mir::ClassConstantId constant : s.constants.Ids()) {
+      const mir::ClassConstantDecl& decl = s.constants.Get(constant);
+      WriteDeclaration(
+          own, VariableDeclaration{
+                   .form = VariableForm::kStaticDataMemberDeclaration,
+                   .constness = Constness::kConst,
+                   .type = CppType(unit, decl.type),
+                   .name = CppClassConstantName(constant)});
+    }
+  }
+  own.Outdent();
+  {
+    const TargetText::Section own_defined(detail);
+    Write(
+        detail, "struct ", ClassDetailPath{.of = CppClassPath(unit, id)},
+        " {\n");
+    detail += own;
+    detail += "};\n";
   }
 
   if (s.constructor.has_value()) {
@@ -624,7 +753,7 @@ void RenderClass(
 
   {
     const TargetText::Section properties(out);
-    RenderClassStaticProperties(unit, s, out);
+    out += declared_properties;
   }
 
   // Every function the class owns except the constructor, written above.
@@ -645,26 +774,20 @@ void RenderClass(
     RenderDispatchTables(unit, id, s, defined, out, code);
   }
 
-  // The constants the class holds and then its definition, which names them:
-  // each defined beside the bodies it names.
+  // The constants the class holds, each defined beside the bodies it names.
   {
-    const TargetText::Section constants(out);
     const TargetText::Section constants_defined(code);
     for (const mir::ClassConstantId constant : s.constants.Ids()) {
-      const mir::ClassConstantDecl& decl = s.constants.Get(constant);
-      RenderClassConstant(
-          unit, report, id, decl.type, CppClassConstantName(constant),
-          decl.initializer, defined, out, code);
+      RenderClassConstantDefinition(unit, report, id, constant, defined, code);
     }
-    RenderClassConstant(
-        unit, report, id,
-        mir::LibraryTypeOf(unit.types, support::LibraryDecl::kObjectDefinition),
-        CppDefinitionName(), s.object_definition_initializer, defined, out,
-        code);
   }
 
   out.Outdent();
   out += "};\n";
+
+  RenderObjectDefinition(
+      unit, report, id, nesting.declared_inside[id.value], out,
+      *text.object_definition);
 }
 
 // `extern "C" ` for a body reached by its DPI-C linkage name, whose symbol is
@@ -769,27 +892,20 @@ void RenderRecord(
 
 }  // namespace
 
-auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
-    -> UnitText {
-  UnitText text;
+auto RenderUnitInternalForwardDeclarations(const mir::CompilationUnit& unit)
+    -> TargetText {
+  TargetText text;
   for (const mir::ClassId id : unit.classes.Ids()) {
     if (mir::IsDefinedElsewhere(unit, id)) continue;
-    const mir::Class& cls = unit.GetClass(id);
-    if (const support::DefPath* path = support::PathOf(cls.identity);
-        path != nullptr && IsNestedClass(*path)) {
-      continue;
+    switch (mir::LinkageOf(unit, id)) {
+      case support::Linkage::kShared:
+      case support::Linkage::kExternal:
+        continue;
+      case support::Linkage::kInternal:
+        Write(text, "class ", CppClassName(unit, id), ";\n");
+        continue;
     }
-    TargetText& out = [&]() -> TargetText& {
-      switch (mir::LinkageOf(unit, id)) {
-        case support::Linkage::kShared:
-        case support::Linkage::kExternal:
-          return text.signature;
-        case support::Linkage::kInternal:
-          return text.code;
-      }
-      throw InternalError("backend::cpp: unknown linkage");
-    }();
-    Write(out, "class ", CppClassName(unit, id), ";\n");
+    throw InternalError("backend::cpp: unknown linkage");
   }
   return text;
 }

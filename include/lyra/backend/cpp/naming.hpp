@@ -233,10 +233,17 @@ struct EntryName {
   std::variant<SourceName, VerbatimName> method;
 };
 
+// The name of the definition the objects of a class carry, made from the
+// class's name as C++ spells it: `sv_definition_D` for class `D`. Every unit
+// spells a class's name alike, so every unit spells this one alike.
+struct DefinitionName {
+  std::string of_class;
+};
+
 // Any of the above, for a declaration whose kind decides which.
 using CppName = std::variant<
     SourceName, MintedName, MintedWord, VerbatimName, MintedPathName,
-    MintedAppliedName, EntryName>;
+    MintedAppliedName, EntryName, DefinitionName>;
 
 void WriteOne(TargetText& out, SourceName name);
 void WriteOne(TargetText& out, const MintedName& name);
@@ -245,6 +252,7 @@ void WriteOne(TargetText& out, VerbatimName name);
 void WriteOne(TargetText& out, MintedPathName name);
 void WriteOne(TargetText& out, const MintedAppliedName& name);
 void WriteOne(TargetText& out, const EntryName& name);
+void WriteOne(TargetText& out, const DefinitionName& name);
 void WriteOne(TargetText& out, const CppName& name);
 
 [[nodiscard]] inline auto ToCppName(std::string_view name) -> SourceName {
@@ -333,12 +341,30 @@ void WriteOne(TargetText& out, BodyScope scope);
 }
 
 // `Top.opening.hpp`: the cells and functions the unit's namespace declares. Of
-// the program it includes only forward files and the files of the types its
-// declarations name, so any class file, of this unit or another, can include
-// it first.
+// the program it includes only the files of the types its declarations name,
+// and declares itself the classes they only point at, so any class file, of
+// this unit or another, can include it first.
 [[nodiscard]] inline auto UnitOpeningFileOf(std::string_view unit_name)
     -> std::string {
   return TextOf(ToCppName(unit_name), ".opening.hpp");
+}
+
+// The scope a member of a unit's namespace is named from, `::P`, where text
+// names a function, a variable or a bring-up entry the namespace declares:
+// the text then needs those declarations, so it includes the namespace's
+// header as it names one.
+struct NamespaceMemberScope {
+  std::string_view unit_name;
+};
+
+inline void WriteOne(TargetText& out, NamespaceMemberScope scope) {
+  out.Require(UnitOpeningFileOf(scope.unit_name));
+  Write(out, CppUnitScope(scope.unit_name));
+}
+
+[[nodiscard]] inline auto CppNamespaceMemberScope(std::string_view unit_name)
+    -> NamespaceMemberScope {
+  return NamespaceMemberScope{.unit_name = unit_name};
 }
 
 // `Body.body.hpp`: the entry that makes an object of one body, which only that
@@ -354,15 +380,6 @@ void WriteOne(TargetText& out, BodyScope scope);
 [[nodiscard]] inline auto BodyCodeFileOf(std::string_view body_name)
     -> std::string {
   return TextOf(ToCppName(body_name), ".cpp");
-}
-
-// `Top.forward.hpp`: every class another unit may name that is declared in no
-// other class, declared and not defined. It includes nothing, so any file can
-// include it first, and a unit holding another's class by pointer takes its
-// name from here rather than declaring it again.
-[[nodiscard]] inline auto UnitForwardFileOf(std::string_view unit_name)
-    -> std::string {
-  return TextOf(ToCppName(unit_name), ".forward.hpp");
 }
 
 // `Top.Pair.types.hpp`: one struct or union a unit declares, alone in its
@@ -741,25 +758,16 @@ inline void WriteOne(TargetText& out, const ClassPath& path) {
   Write(out, CppClassName(path.Unit(), path.Id()));
 }
 
-// The file that declares a class another unit may name, for text that only
-// points at it, and the file that defines it, for text that needs it complete.
-// Every party asks here with the unit and the class's path in it, so the unit
-// writing a class and a unit including it reach the same file.
+// The file that defines a class another unit may name, for text that needs it
+// complete; text that only points at it declares it itself. Every party asks
+// here with the unit and the class's path in it, so the unit writing a class
+// and a unit including it reach the same file. A class nested in another is
+// declared nowhere but inside that one, so text naming it at all includes this.
 //
-// A class nested in another is declared nowhere but where that one is
-// defined, in the unit's header; every other is declared in the forward
-// header. What a unit published of a scope of the design hierarchy (LRM 23.6)
-// stands in the runtime's tree, and no class outside its unit extends it, so
-// those are defined together in the unit's header; a class the source declared
-// (LRM 8.3) is defined in a file of its own, which a class extending it
-// includes.
-[[nodiscard]] inline auto ClassDeclarationFileOf(
-    std::string_view unit_name, const support::DefPath& class_path)
-    -> std::string {
-  return IsNestedClass(class_path) ? UnitSignatureFileOf(unit_name)
-                                   : UnitForwardFileOf(unit_name);
-}
-
+// What a unit published of a scope of the design hierarchy (LRM 23.6) stands
+// in the runtime's tree, and no class outside its unit extends it, so those are
+// defined together in the unit's header; a class the source declared (LRM 8.3)
+// is defined in a file of its own, which a class extending it includes.
 [[nodiscard]] inline auto ClassDefinitionFileOf(
     std::string_view unit_name, const support::DefPath& class_path)
     -> std::string {
@@ -975,11 +983,83 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
       operation);
 }
 
-// The name of a class's definition, `sv_definition`. Another unit names it as
-// `Class::sv_definition` for a class it only knows by name, so it is a fixed
-// word rather than a position.
-[[nodiscard]] inline auto CppDefinitionName() -> MintedWord {
-  return MintedWord{.word = "definition"};
+// The name of a class's definition, `sv_definition_D` for class `D`. It is
+// declared beside the class, in the scope declaring it, rather than as a member
+// of it, because C++ names a member only of a class it has whole
+// ([basic.lookup.qual]) and a definition is named by text that knows the class
+// by its name alone: a cast toward it (LRM 8.16).
+[[nodiscard]] inline auto CppDefinitionName(
+    const mir::CompilationUnit& unit, mir::ClassId id) -> CppName {
+  return DefinitionName{.of_class = TextOf(CppClassName(unit, id))};
+}
+
+// The name of the part of a class only its own unit's code reads,
+// `sv_detail`: a class nested in it and declared there, defined with the
+// class's code. It holds what the class keeps for its bodies and the constants
+// its definition and its creation name, which follow the class's code rather
+// than what it declares, so text that only reads the declaration never has it
+// whole.
+[[nodiscard]] inline auto CppClassDetailName() -> MintedWord {
+  return MintedWord{.word = "detail"};
+}
+
+// That part of the class `of`, as text naming a member of it: `C::sv_detail`.
+struct ClassDetailPath {
+  ClassPath of;
+};
+
+inline void WriteOne(TargetText& out, const ClassDetailPath& path) {
+  Write(out, path.of, "::", CppClassDetailName());
+}
+
+// Whether a static property of a class is a cell the class keeps for its own
+// bodies, rather than one the source declared (LRM 8.9): only a declared one
+// is named by text outside the class's unit, so only it is a member of the
+// class, and every other is a member of the class's own part.
+[[nodiscard]] inline auto IsKeptForItsBodies(
+    std::span<const mir::NamedStaticProperty> named, mir::StaticPropertyId slot)
+    -> bool {
+  return !mir::NameOf(named, slot).has_value();
+}
+
+// The forward declaration of class `id` that text naming it without needing
+// it whole is handed: the namespace of the unit declaring it and the class, as
+// that unit spells them.
+[[nodiscard]] inline auto CppForwardDeclarationOf(
+    const mir::CompilationUnit& unit, mir::ClassId id) -> ForwardDeclaration {
+  return ForwardDeclaration{
+      .cpp_namespace = TextOf(UnitNamespaceOf(
+          mir::DefiningUnitOf(unit, unit.GetClass(id).defining_unit))),
+      .cpp_class = TextOf(CppClassName(unit, id))};
+}
+
+// The definition the objects of class `id` carry, as text anywhere in the
+// unit's namespace names it: beside the class in the scope declaring it,
+// qualified from the root where another unit declares the class --
+// `::P::sv_definition_D` -- and, for the class of a generate block, as a
+// member of the class of the scope holding the block, `Top::sv_definition_g`.
+struct DefinitionPath {
+  const mir::CompilationUnit* unit = nullptr;
+  mir::ClassId id;
+};
+
+inline void WriteOne(TargetText& out, const DefinitionPath& definition) {
+  const mir::CompilationUnit& unit = *definition.unit;
+  const mir::Class& cls = unit.GetClass(definition.id);
+  const std::string& defining_unit =
+      mir::DefiningUnitOf(unit, cls.defining_unit);
+  if (cls.defining_unit.has_value()) {
+    Write(out, CppUnitScope(defining_unit), "::");
+  }
+  if (const support::DefPath* path = support::PathOf(cls.identity);
+      path != nullptr && IsNestedClass(*path)) {
+    const support::DefPath enclosing = support::EnclosingPath(*path);
+    Write(
+        out,
+        ClassPathInUnit{.unit_name = defining_unit, .class_path = &enclosing},
+        "::");
+  }
+  Write(out, CppDefinitionName(unit, definition.id));
 }
 
 // The name of a constant a class holds, `sv_data_<n>`: a position in the
