@@ -314,6 +314,15 @@ auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
   return *body.parentInstance;
 }
 
+auto InstantiationArguments(const slang::ast::InstanceBodySymbol& body)
+    -> std::vector<const slang::ast::ParameterSymbolBase*> {
+  std::vector<const slang::ast::ParameterSymbolBase*> arguments;
+  for (const auto* parameter : body.getParameters()) {
+    if (!parameter->isLocalParam()) arguments.push_back(parameter);
+  }
+  return arguments;
+}
+
 namespace {
 
 // The body `scope` is or stands in.
@@ -471,8 +480,8 @@ auto InterfaceIdentity(
         " in {}", names.NameOf(InstantiationOf(BodyDeclaring(definition))));
   }
   std::vector<ClassKeyInput> inputs;
-  for (const auto* parameter : iface.body.getParameters()) {
-    inputs.push_back(ParameterInput(parameter->symbol, names));
+  for (const auto* argument : InstantiationArguments(iface.body)) {
+    inputs.push_back(ParameterInput(argument->symbol, names));
   }
   return std::format("{}({})", identity, InputBytes(inputs));
 }

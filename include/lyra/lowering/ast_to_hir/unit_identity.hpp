@@ -33,6 +33,7 @@ class GenerateBlockSymbol;
 class InstanceBodySymbol;
 class InstanceSymbol;
 class ParameterSymbol;
+class ParameterSymbolBase;
 class Scope;
 class SubroutineSymbol;
 class Symbol;
@@ -47,6 +48,15 @@ namespace lyra::lowering::ast_to_hir {
 // of on its own.
 [[nodiscard]] auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
     -> const slang::ast::InstanceSymbol&;
+
+// The parameters an instantiation hands the instance `body` is the body of
+// (LRM 23.10), in the order the definition declares them: what tells one
+// specialization of a definition from another, as a class specialization's
+// parameters do (LRM 8.25). A localparam is none of them, being written from
+// these by the body's own text (LRM 6.20.4).
+[[nodiscard]] auto InstantiationArguments(
+    const slang::ast::InstanceBodySymbol& body)
+    -> std::vector<const slang::ast::ParameterSymbolBase*>;
 
 // The instance `scope` is the body of or stands in: an instance's body, or a
 // scope declared somewhere inside one.
@@ -195,10 +205,10 @@ auto UnitName(const slang::ast::ClassType& cls, const InstanceNames& names)
     -> std::string;
 
 // What a virtual interface type naming `iface` names (LRM 25.9): the
-// interface's definition and the value or type each of its parameters was
-// fixed to. Nothing else shapes an instance a virtual interface may hold, since
-// the front end refuses one whose body reaches upward or takes an interface
-// port.
+// interface's definition and the value or type each of the parameters its
+// instantiation hands it was fixed to. Nothing else shapes an instance a
+// virtual interface may hold, since the front end refuses one whose body
+// reaches upward or takes an interface port.
 [[nodiscard]] auto InterfaceIdentity(
     const slang::ast::InstanceSymbol& iface, const InstanceNames& names)
     -> std::string;

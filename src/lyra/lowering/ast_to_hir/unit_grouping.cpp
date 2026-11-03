@@ -32,6 +32,7 @@
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
 #include "lyra/lowering/ast_to_hir/outside_reach.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -358,9 +359,9 @@ class Grouping {
   auto ReachedFrom(const slang::ast::InstanceSymbol& inst)
       -> std::vector<const slang::ast::InstanceSymbol*> {
     std::vector<const slang::ast::InstanceSymbol*> found;
-    for (const auto* param : inst.body.getParameters()) {
+    for (const auto* argument : InstantiationArguments(inst.body)) {
       if (const auto* type =
-              param->symbol.as_if<slang::ast::TypeParameterSymbol>()) {
+              argument->symbol.as_if<slang::ast::TypeParameterSymbol>()) {
         InstancesDeclaring(type->targetType.getType(), found);
       }
     }

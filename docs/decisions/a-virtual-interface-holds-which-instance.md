@@ -17,7 +17,10 @@ through a handle is among what runs; it had been refused by a lifetime check of 
 which judged a rule the front end enforces (LRM 10.4.2) and the verifier states once for every
 closure the runtime keeps. Revised 2026-11-01: a name a view defines stays one access in HIR, whose
 handle has one holder, and D3's "evaluated once" holds of a name joining several declarations, which
-had stopped at an internal error when each part held the handle.
+had stopped at an internal error when each part held the handle. Revised 2026-11-02: D1's parameters
+are those the instantiation hands the instance, which is what a class specialization is told apart
+by; a type was named from every parameter of the body, so a localparam naming a virtual interface of
+its own interface named it from itself without end.
 
 ## Why this decision matters
 
@@ -49,12 +52,15 @@ and no place in a container.
 
 A member, a subroutine, a name a modport defines, and a component of an interface the instance
 itself instantiates are all found in what the interface's unit published, at the positions its
-signature gave them, where the referring unit compiles. The unit is found from the interface and its
-parameters alone, so a type naming it is the same type wherever it is written -- in a module, in a
-class, in another interface, or in that interface itself -- and an instance of the interface is
-assignable to it wherever both appear. That is the lookup slang performs against the type's own
-interface body, and what C++ does with `p->m` on a `T*`. An access evaluates the handle, and then
-reaches through it the way an interface port reaches through the instance it is bound to.
+signature gave them, where the referring unit compiles. The unit is found from the interface and the
+parameters its instantiation hands it alone, as a class specialization is found from its generic and
+its parameters (LRM 8.25); a localparam is written from those by the body's own text (LRM 6.20.4),
+so it is none of them, and one naming a virtual interface of the same interface names the type being
+found. So a type naming it is the same type wherever it is written -- in a module, in a class, in
+another interface, or in that interface itself -- and an instance of the interface is assignable to
+it wherever both appear. That is the lookup slang performs against the type's own interface body,
+and what C++ does with `p->m` on a `T*`. An access evaluates the handle, and then reaches through it
+the way an interface port reaches through the instance it is bound to.
 
 ### D2. The value is a reference to the instance, which owns nothing
 
