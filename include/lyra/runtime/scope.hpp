@@ -45,6 +45,11 @@ class Scope : public GcObject {
   // placeless. The parent given here is the one the scope is attached under.
   void SetPlace(Scope* parent, HierarchySegment segment);
 
+  // The scope this one is attached under, or null for the implicit `$root`.
+  [[nodiscard]] auto Parent() const -> const Scope* {
+    return parent_;
+  }
+
   // The scope's structural identity at this level: the parent-side label
   // plus per-dimension indices (empty for a scalar, `{i}` for a generate-for
   // iteration, `{i, j}` for a multi-dim instance array). Fixed at

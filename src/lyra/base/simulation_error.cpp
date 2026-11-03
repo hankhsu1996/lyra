@@ -32,8 +32,9 @@ SimulationError::SimulationError(base::DiagMessage message)
 }
 
 SimulationError::SimulationError(
-    base::NoSourceLocation, base::DiagMessage message)
-    : std::runtime_error(std::move(message).TakeText()) {
+    base::NoSourceLocation no_location, base::DiagMessage message)
+    : std::runtime_error(std::move(message).TakeText()),
+      at_(static_cast<base::SourceLocation>(no_location)) {
 }
 
 SimulationError::~SimulationError() = default;
