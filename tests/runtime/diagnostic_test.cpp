@@ -55,4 +55,24 @@ TEST(
   EXPECT_EQ(testing::internal::GetCapturedStderr(), "warning: a warning\n");
 }
 
+// LRM 20.10: each call of a severity task generates its report, so a call
+// reached many times reports each time.
+TEST(DiagnosticDispatcherTest, EveryReportFromOnePlaceIsWritten) {
+  constexpr int kReports = 12;
+  testing::internal::CaptureStderr();
+  {
+    FileTable files;
+    DiagnosticDispatcher diagnostic(files);
+    const SourceLocationScope bound(kWrittenAt);
+    for (int i = 0; i < kReports; ++i) {
+      diagnostic.Report(Severity::kError, DiagMessage("an error"));
+    }
+  }
+  std::string expected;
+  for (int i = 0; i < kReports; ++i) {
+    expected += "test.sv:1:1: error: an error\n";
+  }
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), expected);
+}
+
 }  // namespace
