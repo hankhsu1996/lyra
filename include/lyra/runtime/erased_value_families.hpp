@@ -41,16 +41,15 @@ extern template class Cell<ValueStorageCore<value::RuntimeAssociativeArray>>;
 extern template class TailCell<WordsStorage<value::StateDomain::kTwoState>>;
 extern template class TailCell<WordsStorage<value::StateDomain::kFourState>>;
 extern template class TailCell<LaidOutStorage>;
-// A variable of a container is built only from the container's type, so of
-// its members the ones stated here are those every such variable has: its end
-// and its write.
-extern template Var<value::RuntimeDynamicArray>::~Var();
+// A variable of a container is built only from the container's type, so it is
+// stated one member at a time rather than as a family, and only its write is:
+// GCC instantiates a member defaulted outside its class only with the whole
+// class, so its end, which ends the cell the family above compiles, is made
+// wherever one is ended.
 extern template auto Var<value::RuntimeDynamicArray>::Mutate()
     -> ScopedMutation<VariableRef<value::RuntimeDynamicArray>>;
-extern template Var<value::RuntimeQueue>::~Var();
 extern template auto Var<value::RuntimeQueue>::Mutate()
     -> ScopedMutation<VariableRef<value::RuntimeQueue>>;
-extern template Var<value::RuntimeAssociativeArray>::~Var();
 extern template auto Var<value::RuntimeAssociativeArray>::Mutate()
     -> ScopedMutation<VariableRef<value::RuntimeAssociativeArray>>;
 

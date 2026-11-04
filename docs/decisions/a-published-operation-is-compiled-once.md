@@ -80,15 +80,16 @@ that leaves it out does not compile. A member some types of a family cannot have
 every type and left out where it cannot be built, as `std::vector`'s count constructor is declared
 for an element type with no default: a variable of a container the library holds is built only from
 the container's type, so its constructor from nothing is never instantiated for one, and the
-families of variables over the three containers state their other members one by one, since an
-explicit instantiation of the whole class instantiates every member whose constraints hold
-([temp.explicit]). libc++ states `basic_string` as compiled the same way, one member at a time from
-a list (`libcxx/include/__string/extern_template_lists.h`, defined in `libcxx/src/string.cpp`), and
-elsewhere marks each member outside its library's ABI with an attribute leaving it out of the
-explicit instantiation, which GCC does not have; libstdc++ 13 states the whole class, and no member
-of it carries a requires-clause. A function template stated once takes no concept in its head, for
-the same reason. A unit of the design's own family is free of this, since it compiles those members
-itself.
+families of variables over the three containers state their write alone, since an explicit
+instantiation of the whole class instantiates every member whose constraints hold ([temp.explicit]),
+and GCC 13 instantiates a member defaulted outside its class only with the whole class, so a
+container variable's end is made wherever one is ended. libc++ states `basic_string` as compiled the
+same way, one member at a time from a list (`libcxx/include/__string/extern_template_lists.h`,
+defined in `libcxx/src/string.cpp`), and elsewhere marks each member outside its library's ABI with
+an attribute leaving it out of the explicit instantiation, which GCC does not have; libstdc++ 13
+states the whole class, and no member of it carries a requires-clause. A function template stated
+once takes no concept in its head, for the same reason. A unit of the design's own family is free of
+this, since it compiles those members itself.
 
 **What only the library reaches stays in the header.** The engine asks an event control whether a
 change was an event on every change it reaches; moved into a source file of its own, that question
