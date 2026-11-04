@@ -78,13 +78,9 @@ constinit const IndexOrder lyra_rt_wildcard_index_index_order{
     .before = &WildcardBefore, .names_no_entry = &IntegralNamesNoEntry};
 }
 
-RuntimeAssociativeArray::RuntimeAssociativeArray() = default;
-
 RuntimeAssociativeArray::RuntimeAssociativeArray(
     const value::IndexOrder& index_order, const value::ElementType& element)
-    : core_(
-          std::in_place, WitnessedKey{.order = &index_order},
-          WitnessedElem(element)) {
+    : core_(WitnessedKey{.order = &index_order}, WitnessedElem(element)) {
 }
 
 RuntimeAssociativeArray::RuntimeAssociativeArray(Core core)
@@ -101,45 +97,25 @@ auto RuntimeAssociativeArray::operator=(RuntimeAssociativeArray&&) noexcept
     -> RuntimeAssociativeArray& = default;
 RuntimeAssociativeArray::~RuntimeAssociativeArray() = default;
 
-// An array whose declaration has not installed its element type has no
-// entries to act on, so being asked to act on one is a lowering defect.
-void RuntimeAssociativeArray::RequireInstalled() const {
-  if (!core_.has_value()) {
-    throw InternalError(
-        "RuntimeAssociativeArray: an array is used before its declaration "
-        "installs its element type -- please report this as a bug");
-  }
-}
-
-auto RuntimeAssociativeArray::Installed() const -> const Core& {
-  RequireInstalled();
-  return *core_;
-}
-
-auto RuntimeAssociativeArray::Installed() -> Core& {
-  RequireInstalled();
-  return *core_;
-}
-
 auto RuntimeAssociativeArray::ElementType() const -> const value::ElementType& {
-  return Installed().Element().ElementType();
+  return core_.Element().ElementType();
 }
 
 auto RuntimeAssociativeArray::WithDefault(const void* stated_default) const
     -> RuntimeAssociativeArray {
-  return RuntimeAssociativeArray(Installed().WithDefault(stated_default));
+  return RuntimeAssociativeArray(core_.WithDefault(stated_default));
 }
 
 auto RuntimeAssociativeArray::HasStatedDefault() const -> bool {
-  return Installed().HasStatedDefault();
+  return core_.HasStatedDefault();
 }
 
 void RuntimeAssociativeArray::AbsentValue(void* out) const {
-  Installed().AbsentValue(out);
+  core_.AbsentValue(out);
 }
 
 auto RuntimeAssociativeArray::Count() const -> std::size_t {
-  return core_.has_value() ? core_->Count() : 0;
+  return core_.Count();
 }
 
 auto RuntimeAssociativeArray::Size() const -> Int {
@@ -147,120 +123,100 @@ auto RuntimeAssociativeArray::Size() const -> Int {
 }
 
 auto RuntimeAssociativeArray::Exists(IndexView index) const -> Int {
-  return Int::FromInt(Installed().Exists(index) ? 1 : 0);
+  return Int::FromInt(core_.Exists(index) ? 1 : 0);
 }
 
 auto RuntimeAssociativeArray::Element(IndexView index) const -> const void* {
-  return Installed().ElementAt(index);
+  return core_.ElementAt(index);
 }
 
 auto RuntimeAssociativeArray::ElementMut(IndexView index, Formation& formed)
     -> void* {
-  return Installed().ElementMut(index, formed);
+  return core_.ElementMut(index, formed);
 }
 
 auto RuntimeAssociativeArray::Lease(void* element) const -> ContainerLease {
-  return Installed().Lease(element);
+  return core_.Lease(element);
 }
 
 void RuntimeAssociativeArray::Store(IndexView index, const void* value) {
-  Installed().Store(index, value);
+  core_.Store(index, value);
 }
 
 void RuntimeAssociativeArray::Delete() {
-  Installed().Clear();
+  core_.Clear();
 }
 
 void RuntimeAssociativeArray::DeleteIndex(IndexView index) {
-  Installed().Erase(index);
+  core_.Erase(index);
 }
 
 auto RuntimeAssociativeArray::FirstIndex() const -> const AnyValue* {
-  return core_.has_value() ? core_->FirstKey() : nullptr;
+  return core_.FirstKey();
 }
 
 auto RuntimeAssociativeArray::LastIndex() const -> const AnyValue* {
-  return core_.has_value() ? core_->LastKey() : nullptr;
+  return core_.LastKey();
 }
 
 auto RuntimeAssociativeArray::NextIndex(IndexView probe) const
     -> const AnyValue* {
-  return core_.has_value() ? core_->KeyAfter(probe) : nullptr;
+  return core_.KeyAfter(probe);
 }
 
 auto RuntimeAssociativeArray::PrevIndex(IndexView probe) const
     -> const AnyValue* {
-  return core_.has_value() ? core_->KeyBefore(probe) : nullptr;
+  return core_.KeyBefore(probe);
 }
 
 auto RuntimeAssociativeArray::Entries() const
     -> std::vector<std::pair<const AnyValue*, const void*>> {
   std::vector<std::pair<const AnyValue*, const void*>> entries;
-  if (!core_.has_value()) {
-    return entries;
-  }
-  entries.reserve(core_->Count());
-  for (const auto& [index, element] : core_->Entries()) {
+  entries.reserve(core_.Count());
+  for (const auto& [index, element] : core_.Entries()) {
     entries.emplace_back(&index, element);
   }
   return entries;
 }
 
-// An array with no element type yet holds no entries, which is all a
-// comparison with one can read.
 auto RuntimeAssociativeArray::Equal(
     const RuntimeAssociativeArray& other, const ValueOperations& element) const
     -> FourStateBit {
-  if (!core_.has_value() || !other.core_.has_value()) {
-    return detail::ScalarOf(Count() == other.Count());
-  }
-  return core_->Equal(*other.core_, WitnessedOperations(element));
+  return core_.Equal(other.core_, WitnessedOperations(element));
 }
 
 auto RuntimeAssociativeArray::CaseEqual(
     const RuntimeAssociativeArray& other, const ValueOperations& element) const
     -> Bit {
-  if (!core_.has_value() || !other.core_.has_value()) {
-    return Bit::FromBool(Count() == other.Count());
-  }
-  return core_->CaseEqual(*other.core_, WitnessedOperations(element));
+  return core_.CaseEqual(other.core_, WitnessedOperations(element));
 }
 
 auto RuntimeAssociativeArray::IsBitIdentical(
     const RuntimeAssociativeArray& other) const -> bool {
-  if (!core_.has_value() || !other.core_.has_value()) {
-    return Count() == other.Count();
-  }
-  return core_->IsBitIdentical(*other.core_);
+  return core_.IsBitIdentical(other.core_);
 }
 
 auto RuntimeAssociativeArray::HasUnknown(const ValueOperations& element) const
     -> bool {
-  return core_.has_value() && core_->HasUnknown(WitnessedOperations(element));
+  return core_.HasUnknown(WitnessedOperations(element));
 }
 
 auto RuntimeAssociativeArray::BitstreamWidth(
     const ValueOperations& element) const -> Int {
-  return Int::FromInt(
-      core_.has_value() ? core_->BitstreamWidth(WitnessedOperations(element))
-                        : 0);
+  return Int::FromInt(core_.BitstreamWidth(WitnessedOperations(element)));
 }
 
 auto RuntimeAssociativeArray::CountBits(
     const LogicVector<4>& control_bits, const ValueOperations& element) const
     -> Int {
   return Int::FromInt(
-      core_.has_value()
-          ? core_->CountBits(control_bits, WitnessedOperations(element))
-          : 0);
+      core_.CountBits(control_bits, WitnessedOperations(element)));
 }
 
 auto RuntimeAssociativeArray::WriteToStream(
     const IntegralView& stream, std::uint64_t filled,
     const ValueOperations& element) const -> std::uint64_t {
-  return core_.has_value() ? core_->WriteToStream(
-                                 stream, filled, WitnessedOperations(element))
-                           : filled;
+  return core_.WriteToStream(stream, filled, WitnessedOperations(element));
 }
 
 auto RuntimeAssociativeArray::ToBitVec(const ValueOperations& element) const

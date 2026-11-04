@@ -140,6 +140,10 @@ class CodeGenModule {
   auto BuildCallArgs(
       const LlvmFnAbi& abi, std::span<llvm::Value* const> operands)
       -> diag::Result<std::vector<llvm::Value*>>;
+  // What a callee is told of a type, as the arguments it crosses as, appended
+  // to `args`.
+  auto AppendTypeArg(const TypeArg& told, std::vector<llvm::Value*>& args)
+      -> diag::Result<void>;
   // The arguments the operand `value` crosses as, appended to `args`.
   auto BuildCallArg(
       const PassMode& mode, llvm::Value* value, std::vector<llvm::Value*>& args)

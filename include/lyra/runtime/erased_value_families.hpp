@@ -41,9 +41,18 @@ extern template class Cell<ValueStorageCore<value::RuntimeAssociativeArray>>;
 extern template class TailCell<WordsStorage<value::StateDomain::kTwoState>>;
 extern template class TailCell<WordsStorage<value::StateDomain::kFourState>>;
 extern template class TailCell<LaidOutStorage>;
-extern template class Var<value::RuntimeDynamicArray>;
-extern template class Var<value::RuntimeQueue>;
-extern template class Var<value::RuntimeAssociativeArray>;
+// A variable of a container is built only from the container's type, so of
+// its members the ones stated here are those every such variable has: its end
+// and its write.
+extern template Var<value::RuntimeDynamicArray>::~Var();
+extern template auto Var<value::RuntimeDynamicArray>::Mutate()
+    -> ScopedMutation<VariableRef<value::RuntimeDynamicArray>>;
+extern template Var<value::RuntimeQueue>::~Var();
+extern template auto Var<value::RuntimeQueue>::Mutate()
+    -> ScopedMutation<VariableRef<value::RuntimeQueue>>;
+extern template Var<value::RuntimeAssociativeArray>::~Var();
+extern template auto Var<value::RuntimeAssociativeArray>::Mutate()
+    -> ScopedMutation<VariableRef<value::RuntimeAssociativeArray>>;
 
 extern template class CellRareState<
     WordsStorage<value::StateDomain::kTwoState>>;

@@ -41,11 +41,8 @@ class WitnessedBound {
 // (LRM 7.10.1).
 class RuntimeQueue {
  public:
-  // The empty queue before its declared type is known: the declared default
-  // state of a cell, which the cell's first initialization overwrites.
-  RuntimeQueue();
-
-  // An empty queue of `type`.
+  // An empty queue of `type` (LRM 7.10), which is what a holder of one is
+  // built holding.
   explicit RuntimeQueue(const QueueType& type);
 
   RuntimeQueue(const RuntimeQueue&);
@@ -170,11 +167,7 @@ class RuntimeQueue {
 
   explicit RuntimeQueue(Held core);
 
-  void RequireInstalled() const;
-  [[nodiscard]] auto Core() const -> const Held&;
-  [[nodiscard]] auto Core() -> Held&;
-
-  std::optional<Held> core_;
+  Held core_;
 };
 
 static_assert(LyraValue<RuntimeQueue>);

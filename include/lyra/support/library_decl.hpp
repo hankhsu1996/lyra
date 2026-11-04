@@ -598,7 +598,7 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       static constexpr LibraryDeclData kDynamicArray = kBuiltBy(
           kDesignValue(
               "dynamic array", kElements, ValueDomain::kDynArray,
-              kWordsNeedingEnd(40), "lyra::value::DynamicArray",
+              kWordsNeedingEnd(32), "lyra::value::DynamicArray",
               BuiltinFn::kContainerDefault),
           LibraryConstructor{.entry = BuiltinFn::kSequenceFromList});
       return &kDynamicArray;
@@ -607,7 +607,7 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       static constexpr LibraryDeclData kQueue = kBuiltBy(
           kDesignValue(
               "queue", kElementsUpToABound, ValueDomain::kQueue,
-              kWordsNeedingEnd(64), "lyra::value::Queue",
+              kWordsNeedingEnd(56), "lyra::value::Queue",
               BuiltinFn::kContainerDefault),
           LibraryConstructor{.entry = BuiltinFn::kSequenceFromList});
       return &kQueue;
@@ -616,7 +616,7 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       static constexpr LibraryDeclData kAssociativeArray = kBuiltBy(
           kDesignValue(
               "associative array", kElementsByIndex, ValueDomain::kAssocArray,
-              kWordsNeedingEnd(80), "lyra::value::AssociativeArray",
+              kWordsNeedingEnd(72), "lyra::value::AssociativeArray",
               BuiltinFn::kContainerDefault),
           LibraryConstructor{.entry = BuiltinFn::kAssociativeArrayFromEntries});
       return &kAssociativeArray;

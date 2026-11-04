@@ -33,8 +33,8 @@ struct DeclaredVariable {
 };
 
 // Declares the variable in `block`. A cell is built where the declaration is
-// reached and holds nothing until it is initialized; a value comes into being
-// with its first value.
+// reached, holding a value of its type until it is initialized; a value comes
+// into being with its first value.
 auto DeclareVariable(
     mir::CompilationUnit& unit, CallableBindings& bindings, mir::Builder block,
     BindingOriginId origin, const std::optional<std::string>& name,

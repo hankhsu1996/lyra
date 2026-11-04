@@ -19,14 +19,16 @@
 
 namespace lyra::value {
 
-RuntimeDynamicArray::RuntimeDynamicArray() = default;
+RuntimeDynamicArray::RuntimeDynamicArray(const value::ElementType& element)
+    : core_(WitnessedElem(element)) {
+}
 
 RuntimeDynamicArray::RuntimeDynamicArray(
     const value::ElementType& element, std::size_t count,
     const RuntimeDynamicArray* from)
     : core_(
-          std::in_place, WitnessedElem(element), count,
-          from == nullptr ? nullptr : &from->Core()) {
+          WitnessedElem(element), count,
+          from == nullptr ? nullptr : &from->core_) {
 }
 
 RuntimeDynamicArray::RuntimeDynamicArray(BasicDynamicArray<WitnessedElem> core)
@@ -42,27 +44,6 @@ auto RuntimeDynamicArray::operator=(RuntimeDynamicArray&&) noexcept
     -> RuntimeDynamicArray& = default;
 RuntimeDynamicArray::~RuntimeDynamicArray() = default;
 
-// An array whose declaration has not installed its element type has no
-// elements to act on, so being asked to act on one is a lowering defect.
-void RuntimeDynamicArray::RequireInstalled() const {
-  if (!core_.has_value()) {
-    throw InternalError(
-        "RuntimeDynamicArray: an array is used before its declaration "
-        "installs its element type -- please report this as a bug");
-  }
-}
-
-auto RuntimeDynamicArray::Core() const
-    -> const BasicDynamicArray<WitnessedElem>& {
-  RequireInstalled();
-  return *core_;
-}
-
-auto RuntimeDynamicArray::Core() -> BasicDynamicArray<WitnessedElem>& {
-  RequireInstalled();
-  return *core_;
-}
-
 auto RuntimeDynamicArray::FromElements(
     const value::ElementType& element, std::span<const void* const> items)
     -> RuntimeDynamicArray {
@@ -71,11 +52,11 @@ auto RuntimeDynamicArray::FromElements(
 }
 
 auto RuntimeDynamicArray::ElementType() const -> const value::ElementType& {
-  return Core().Element().ElementType();
+  return core_.Element().ElementType();
 }
 
 auto RuntimeDynamicArray::Count() const -> std::size_t {
-  return core_.has_value() ? core_->Count() : 0;
+  return core_.Count();
 }
 
 auto RuntimeDynamicArray::Size() const -> Int {
@@ -87,7 +68,7 @@ auto RuntimeDynamicArray::ElementAt(std::size_t position) const -> const void* {
     throw InternalError(
         "RuntimeDynamicArray::ElementAt: the position is past the last");
   }
-  return Core().At(position);
+  return core_.At(position);
 }
 
 auto RuntimeDynamicArray::ElementAt(std::size_t position) -> void* {
@@ -95,116 +76,98 @@ auto RuntimeDynamicArray::ElementAt(std::size_t position) -> void* {
     throw InternalError(
         "RuntimeDynamicArray::ElementAt: the position is past the last");
   }
-  return Core().At(position);
+  return core_.At(position);
 }
 
 auto RuntimeDynamicArray::Element(std::optional<std::int64_t> position) const
     -> const void* {
-  return Core().ElementAt(position);
+  return core_.ElementAt(position);
 }
 
 auto RuntimeDynamicArray::ElementMut(
     std::optional<std::int64_t> position, Formation& formed) -> void* {
-  return Core().ElementMut(position, formed);
+  return core_.ElementMut(position, formed);
 }
 
 auto RuntimeDynamicArray::Lease(void* element) const -> ContainerLease {
-  return Core().Lease(element);
+  return core_.Lease(element);
 }
 
 void RuntimeDynamicArray::Delete() {
-  Core().Delete();
+  core_.Delete();
 }
 
 auto RuntimeDynamicArray::SliceElements(
     std::optional<std::int64_t> start, std::int64_t count) const
     -> std::vector<const void*> {
-  return Core().SliceElements(start, SliceCount(count));
+  return core_.SliceElements(start, SliceCount(count));
 }
 
 auto RuntimeDynamicArray::AssignSlice(
     std::optional<std::int64_t> start, std::int64_t count,
     std::span<const void* const> replacement) -> bool {
-  return Core().AssignSlice(start, SliceCount(count), replacement);
+  return core_.AssignSlice(start, SliceCount(count), replacement);
 }
 
 void RuntimeDynamicArray::Permute(std::span<const std::size_t> order) {
-  Core().Permute(order);
+  core_.Permute(order);
 }
 
-// An array with no element type yet holds no elements, which is all a
-// comparison with one can read.
 auto RuntimeDynamicArray::Equal(
     const RuntimeDynamicArray& other, const ValueOperations& element) const
     -> FourStateBit {
-  if (!core_.has_value() || !other.core_.has_value()) {
-    return detail::ScalarOf(Count() == other.Count());
-  }
   return detail::SequenceEqual(
-      *core_, *other.core_, WitnessedOperations(element));
+      core_, other.core_, WitnessedOperations(element));
 }
 
 auto RuntimeDynamicArray::CaseEqual(
     const RuntimeDynamicArray& other, const ValueOperations& element) const
     -> Bit {
-  if (!core_.has_value() || !other.core_.has_value()) {
-    return Bit::FromBool(Count() == other.Count());
-  }
   return detail::SequenceCaseEqual(
-      *core_, *other.core_, WitnessedOperations(element));
+      core_, other.core_, WitnessedOperations(element));
 }
 
 auto RuntimeDynamicArray::MergeConditional(
     const RuntimeDynamicArray& other, const ValueOperations& element) const
     -> RuntimeDynamicArray {
   return RuntimeDynamicArray(
-      Core().MergeConditional(other.Core(), WitnessedOperations(element)));
+      core_.MergeConditional(other.core_, WitnessedOperations(element)));
 }
 
 auto RuntimeDynamicArray::IsBitIdentical(const RuntimeDynamicArray& other) const
     -> bool {
-  if (!core_.has_value() || !other.core_.has_value()) {
-    return Count() == other.Count();
-  }
-  return detail::SequenceBitIdentical(*core_, *other.core_);
+  return detail::SequenceBitIdentical(core_, other.core_);
 }
 
 auto RuntimeDynamicArray::HasUnknown(const ValueOperations& element) const
     -> bool {
-  return core_.has_value() &&
-         detail::SequenceHasUnknown(*core_, WitnessedOperations(element));
+  return detail::SequenceHasUnknown(core_, WitnessedOperations(element));
 }
 
 auto RuntimeDynamicArray::BitstreamWidth(const ValueOperations& element) const
     -> Int {
   return Int::FromInt(
-      core_.has_value()
-          ? detail::SequenceBitstreamWidth(*core_, WitnessedOperations(element))
-          : 0);
+      detail::SequenceBitstreamWidth(core_, WitnessedOperations(element)));
 }
 
 auto RuntimeDynamicArray::CountBits(
     const LogicVector<4>& control_bits, const ValueOperations& element) const
     -> Int {
   return Int::FromInt(
-      core_.has_value()
-          ? detail::SequenceCountBits(
-                *core_, control_bits, WitnessedOperations(element))
-          : 0);
+      detail::SequenceCountBits(
+          core_, control_bits, WitnessedOperations(element)));
 }
 
 auto RuntimeDynamicArray::WriteToStream(
     const IntegralView& stream, std::uint64_t filled,
     const ValueOperations& element) const -> std::uint64_t {
-  return core_.has_value() ? core_->WriteToStream(
-                                 stream, filled, WitnessedOperations(element))
-                           : filled;
+  return core_.WriteToStream(stream, filled, WitnessedOperations(element));
 }
 
 auto RuntimeDynamicArray::ReadFromStream(
     const ConstIntegralView& stream, std::uint64_t taken, std::uint64_t until,
     const ValueOperations& element) -> std::uint64_t {
-  return Core().ReadFromStream(
+  return core_.ReadFromStream(
       stream, taken, until, WitnessedOperations(element));
 }
 
@@ -224,13 +187,13 @@ auto RuntimeDynamicArray::FromBitVec(
 auto RuntimeDynamicArray::WindowToBitVec(
     std::optional<std::int64_t> start, std::size_t count,
     const ValueOperations& element) const -> BitVec {
-  return Core().WindowToBitVec(start, count, WitnessedOperations(element));
+  return core_.WindowToBitVec(start, count, WitnessedOperations(element));
 }
 
 auto RuntimeDynamicArray::WithWindow(
     std::optional<std::int64_t> start, std::size_t count,
     std::span<const void* const> values) const -> RuntimeDynamicArray {
-  return RuntimeDynamicArray(Core().WithWindow(start, count, values));
+  return RuntimeDynamicArray(core_.WithWindow(start, count, values));
 }
 
 }  // namespace lyra::value

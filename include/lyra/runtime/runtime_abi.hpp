@@ -530,7 +530,9 @@ auto lyra_rt_object_adopt(void* object, void* out) -> void*;
 // A counted hold on a new, empty cell of the named domain -- what a block's
 // local lives in when a branch the block spawns can outlive it (LRM 6.21). The
 // hold is built in storage the frame that names it gives, and the cell ends
-// with the last hold on it.
+// with the last hold on it. A cell of a value laid out by its type is told the
+// type, and one of a container the type of the container, as an entry building
+// the empty container is told it.
 auto lyra_rt_string_shared_cell_make(void* out) -> void*;
 auto lyra_rt_real_shared_cell_make(void* out) -> void*;
 auto lyra_rt_shortreal_shared_cell_make(void* out) -> void*;
@@ -538,9 +540,11 @@ auto lyra_rt_unmanagedref_shared_cell_make(void* out) -> void*;
 auto lyra_rt_managedref_shared_cell_make(void* out) -> void*;
 auto lyra_rt_laidout_shared_cell_make(const void* held_type, void* out)
     -> void*;
-auto lyra_rt_dynarray_shared_cell_make(void* out) -> void*;
-auto lyra_rt_queue_shared_cell_make(void* out) -> void*;
-auto lyra_rt_assocarray_shared_cell_make(void* out) -> void*;
+auto lyra_rt_dynarray_shared_cell_make(const void* element_type, void* out)
+    -> void*;
+auto lyra_rt_queue_shared_cell_make(const void* queue_type, void* out) -> void*;
+auto lyra_rt_assocarray_shared_cell_make(
+    const void* key_index_order, const void* element_type, void* out) -> void*;
 
 // Where the cell a hold names lies. A hold is a value rather than the address
 // of what it names, exactly as a class handle is, so reaching the storage
@@ -1800,7 +1804,8 @@ void lyra_rt_dynarray_cell_set(void* cell, const void* value);
 void lyra_rt_dynarray_cell_arm_sampling(void* cell);
 auto lyra_rt_dynarray_cell_sampled_get(void* cell, const void* location)
     -> const void*;
-auto lyra_rt_dynarray_value_cell_alloc() noexcept -> void*;
+auto lyra_rt_dynarray_value_cell_alloc(const void* element_type) noexcept
+    -> void*;
 void lyra_rt_dynarray_value_cell_store(void* cell, const void* value) noexcept;
 auto lyra_rt_dynarray_value_cell_load(void* cell) noexcept -> void*;
 
@@ -1979,7 +1984,7 @@ void lyra_rt_queue_cell_set(void* cell, const void* value);
 void lyra_rt_queue_cell_arm_sampling(void* cell);
 auto lyra_rt_queue_cell_sampled_get(void* cell, const void* location) -> const
     void*;
-auto lyra_rt_queue_value_cell_alloc() noexcept -> void*;
+auto lyra_rt_queue_value_cell_alloc(const void* queue_type) noexcept -> void*;
 void lyra_rt_queue_value_cell_store(void* cell, const void* value) noexcept;
 auto lyra_rt_queue_value_cell_load(void* cell) noexcept -> void*;
 
@@ -2071,7 +2076,8 @@ void lyra_rt_assocarray_cell_set(void* cell, const void* value);
 void lyra_rt_assocarray_cell_arm_sampling(void* cell);
 auto lyra_rt_assocarray_cell_sampled_get(void* cell, const void* location)
     -> const void*;
-auto lyra_rt_assocarray_value_cell_alloc() noexcept -> void*;
+auto lyra_rt_assocarray_value_cell_alloc(
+    const void* key_index_order, const void* element_type) noexcept -> void*;
 void lyra_rt_assocarray_value_cell_store(
     void* cell, const void* value) noexcept;
 auto lyra_rt_assocarray_value_cell_load(void* cell) noexcept -> void*;
@@ -2791,9 +2797,10 @@ void lyra_rt_real_cell_construct(void* storage);
 void lyra_rt_shortreal_cell_construct(void* storage);
 void lyra_rt_unmanagedref_cell_construct(void* storage);
 void lyra_rt_laidout_cell_construct(const void* held_type, void* storage);
-void lyra_rt_dynarray_cell_construct(void* storage);
-void lyra_rt_queue_cell_construct(void* storage);
-void lyra_rt_assocarray_cell_construct(void* storage);
+void lyra_rt_dynarray_cell_construct(const void* element_type, void* storage);
+void lyra_rt_queue_cell_construct(const void* queue_type, void* storage);
+void lyra_rt_assocarray_cell_construct(
+    const void* key_index_order, const void* element_type, void* storage);
 void lyra_rt_managedref_cell_construct(void* storage);
 void lyra_rt_string_value_cell_construct(void* storage);
 void lyra_rt_bitvec_value_cell_construct(void* storage);
@@ -2801,9 +2808,11 @@ void lyra_rt_real_value_cell_construct(void* storage);
 void lyra_rt_shortreal_value_cell_construct(void* storage);
 void lyra_rt_unmanagedref_value_cell_construct(void* storage);
 void lyra_rt_laidout_value_cell_construct(const void* held_type, void* storage);
-void lyra_rt_dynarray_value_cell_construct(void* storage);
-void lyra_rt_queue_value_cell_construct(void* storage);
-void lyra_rt_assocarray_value_cell_construct(void* storage);
+void lyra_rt_dynarray_value_cell_construct(
+    const void* element_type, void* storage);
+void lyra_rt_queue_value_cell_construct(const void* queue_type, void* storage);
+void lyra_rt_assocarray_value_cell_construct(
+    const void* key_index_order, const void* element_type, void* storage);
 void lyra_rt_managedref_value_cell_construct(void* storage);
 void lyra_rt_laidout_net_construct(
     const void* held_type, const void* held_net_folds, void* storage);

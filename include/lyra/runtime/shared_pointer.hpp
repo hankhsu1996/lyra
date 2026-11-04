@@ -24,12 +24,11 @@ class SharedPointer {
   SharedPointer() = default;
 
   // The first hold and the cell come into existence together, so there is no
-  // moment at which one of them is reachable without the other. A cell of a
-  // value of the library's own holds nothing until the local's declaration
-  // initializes it.
-  template <value::LyraValue T>
-  [[nodiscard]] static auto MakeCell() -> SharedPointer {
-    return SharedPointer(std::make_shared<Var<T>>());
+  // moment at which one of them is reachable without the other. The cell holds
+  // the value its type builds from `args`.
+  template <value::LyraValue T, class... Args>
+  [[nodiscard]] static auto MakeCell(const Args&... args) -> SharedPointer {
+    return SharedPointer(std::make_shared<Var<T>>(args...));
   }
 
   // The same of a variable whose value lies at its cell's tail, held as

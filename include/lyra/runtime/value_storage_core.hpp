@@ -3,7 +3,6 @@
 #include <concepts>
 #include <utility>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/small_box.hpp"
@@ -12,9 +11,7 @@ namespace lyra::runtime {
 
 // A value whose representation is a run-time fact rather than its type's: it
 // starts with none, takes one at its first write, and can be asked whether
-// another value has the same one. A value of any other type has its
-// representation from its type, so a cell holding one is installed from the
-// start and every value of the type fits it.
+// another value has the same one.
 template <typename T>
 concept RepresentedAtRunTime = requires(const T& value, const T& other) {
   { value.IsUninitialized() } -> std::same_as<bool>;
@@ -36,7 +33,14 @@ class ValueStorageCore {
  public:
   using Owned = T;
 
-  ValueStorageCore() = default;
+  // Holds the value `T` builds from `args`, so the storage holds a value of
+  // its type from the moment it is built: from nothing where the library is
+  // compiled with the type, from a container's type for a container it holds
+  // for every element type alike, or as a copy of a value.
+  template <class... Args>
+    requires std::constructible_from<T, const Args&...>
+  explicit ValueStorageCore(const Args&... args) : held_(args...) {
+  }
   ValueStorageCore(const ValueStorageCore&) = delete;
   auto operator=(const ValueStorageCore&) -> ValueStorageCore& = delete;
   ValueStorageCore(ValueStorageCore&&) = delete;
@@ -56,58 +60,20 @@ class ValueStorageCore {
     return *held_;
   }
 
-  // True once the cell carries its declared representation, which a value
-  // represented at run time takes at its first write.
-  [[nodiscard]] auto IsInstalled() const noexcept -> bool {
-    if constexpr (RepresentedAtRunTime<T>) {
-      return !held_->IsUninitialized();
-    } else {
-      return true;
-    }
-  }
-
-  // Installs the declared representation and initial contents from a prototype
-  // -- the one-time write that fixes the cell's type. Only the prototype's
-  // representation is load-bearing; its contents become the initial contents.
-  void Install(const T& prototype) {
-    *held_ = prototype;
-  }
-  void Install(T&& prototype) {
-    *held_ = std::move(prototype);
-  }
-
-  // Overwrites the contents with a value already at the declared
-  // representation. A value represented at run time whose representation does
-  // not match the cell's is a missing upstream conversion, surfaced as a
-  // compiler bug rather than silently reshaping the cell. Whether the contents
-  // moved is not answered here: only whoever is armed to read that answer
-  // should pay for it, and this is the one path a write takes whether or not
-  // anything is.
-  void Overwrite(const T& value) {
-    if constexpr (RepresentedAtRunTime<T>) {
-      if (!held_->SameRepresentation(value)) {
-        throw InternalError(
-            "ValueStorageCore::Overwrite: stored value's representation does "
-            "not match the cell's declared type; a required conversion was not "
-            "emitted");
-      }
-    }
-    *held_ = value;
-  }
-
   // What a holder's protocol asks of how it holds its value: whether it holds
   // `value`'s bits, assigning them, and what it holds as its owned type, which
-  // this holder keeps and so answers where it lies. The first value assigned
-  // installs the representation.
+  // this holder keeps and so answers where it lies. Whether an assignment
+  // moved the contents is not answered here: only whoever is armed to read
+  // that answer should pay for it, and this is the one path a write takes
+  // whether or not anything is.
   [[nodiscard]] auto IsBitIdentical(const T& value) const -> bool {
     return held_->IsBitIdentical(value);
   }
   void Assign(const T& value) {
-    if (!IsInstalled()) {
-      Install(value);
-      return;
-    }
-    Overwrite(value);
+    *held_ = value;
+  }
+  void Assign(T&& value) {
+    *held_ = std::move(value);
   }
   [[nodiscard]] auto IsBitIdentical(const ValueStorageCore& other) const
       -> bool {

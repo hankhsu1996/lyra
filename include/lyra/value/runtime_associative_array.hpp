@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <utility>
 #include <vector>
 
@@ -101,12 +100,8 @@ struct WitnessedKey {
 // where it lies in the array; a key, by the value it is.
 class RuntimeAssociativeArray {
  public:
-  // The empty array before its declared element type is known: the declared
-  // default state of a cell, which the cell's first initialization overwrites.
-  RuntimeAssociativeArray();
-
-  // An empty array of `element`, whose absent keys read the element type's
-  // default (LRM 7.8.6).
+  // An empty array of `element`, which is what a holder of one is built
+  // holding; its absent keys read the element type's default (LRM 7.8.6).
   RuntimeAssociativeArray(
       const value::IndexOrder& index_order, const value::ElementType& element);
 
@@ -200,11 +195,7 @@ class RuntimeAssociativeArray {
 
   explicit RuntimeAssociativeArray(Core core);
 
-  void RequireInstalled() const;
-  [[nodiscard]] auto Installed() const -> const Core&;
-  [[nodiscard]] auto Installed() -> Core&;
-
-  std::optional<Core> core_;
+  Core core_;
 };
 
 static_assert(LyraValue<RuntimeAssociativeArray>);

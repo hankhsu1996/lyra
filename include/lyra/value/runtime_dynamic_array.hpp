@@ -26,9 +26,9 @@ namespace lyra::value {
 // array.
 class RuntimeDynamicArray {
  public:
-  // The empty array before its declared element type is known: the declared
-  // default state of a cell, which the cell's first initialization overwrites.
-  RuntimeDynamicArray();
+  // An empty array of `element` (LRM 7.5), which is what a holder of one is
+  // built holding.
+  explicit RuntimeDynamicArray(const value::ElementType& element);
 
   // LRM 7.5.1: an array of `element` holding `count` elements, the first of
   // them copies of `from`'s first elements where it is given and the rest the
@@ -144,11 +144,7 @@ class RuntimeDynamicArray {
  private:
   explicit RuntimeDynamicArray(BasicDynamicArray<WitnessedElem> core);
 
-  void RequireInstalled() const;
-  [[nodiscard]] auto Core() const -> const BasicDynamicArray<WitnessedElem>&;
-  [[nodiscard]] auto Core() -> BasicDynamicArray<WitnessedElem>&;
-
-  std::optional<BasicDynamicArray<WitnessedElem>> core_;
+  BasicDynamicArray<WitnessedElem> core_;
 };
 
 static_assert(LyraValue<RuntimeDynamicArray>);

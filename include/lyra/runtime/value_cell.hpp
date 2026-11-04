@@ -12,7 +12,10 @@ namespace lyra::runtime {
 // and wakes no subscriber, so the cell is its value's storage and nothing
 // more, which is the whole difference from a variable's cell.
 template <value::LyraValue T>
-class ValueCell : public ValueStorageCore<T> {};
+class ValueCell : public ValueStorageCore<T> {
+ public:
+  using ValueStorageCore<T>::ValueStorageCore;
+};
 
 // The same of a value lying after the cell, held as `HeldAs` holds it -- the
 // words of an integral value wider than a word, or a tuple, a union or a

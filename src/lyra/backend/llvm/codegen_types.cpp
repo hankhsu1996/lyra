@@ -152,14 +152,33 @@ auto CodeGenTypes::GetFunctionType(const LlvmFnAbi& abi)
   llvm::Type* const count = llvm::Type::getInt64Ty(*ctx_);
   llvm::Type* const flag = llvm::Type::getInt1Ty(*ctx_);
   std::vector<llvm::Type*> params;
+  const auto type_arg = [&](const TypeArg& told) {
+    std::visit(
+        Overloaded{
+            [&](const TypeConstantArg&) { params.push_back(ptr_ty_); },
+            [&](const TypeExtentArg&) {
+              params.push_back(count);
+              params.push_back(flag);
+            },
+            [&](const ElementTypeArg&) { params.push_back(ptr_ty_); },
+            [&](const QueueTypeArg&) { params.push_back(ptr_ty_); },
+            [&](const TakePositionsArg&) { params.push_back(ptr_ty_); },
+            [&](const IndexOrderArg&) { params.push_back(ptr_ty_); },
+            [&](const OperationsArg&) { params.push_back(ptr_ty_); }},
+        told);
+  };
   std::visit(
       Overloaded{
           [](const NoImplicitArg&) {},
           [&](const WidthMetadataArg&) { params.push_back(count); },
-          [&](const TypeMetadataArg&) { params.push_back(ptr_ty_); },
           [&](const TypeAndNetFoldsArg&) {
             params.push_back(ptr_ty_);
             params.push_back(ptr_ty_);
+          },
+          [&](const TypeMetadataArg& held) {
+            for (const TypeArg& told : held.args) {
+              type_arg(told);
+            }
           }},
       abi.implicit_arg);
   for (std::size_t i = 0; i <= abi.args.size(); ++i) {
@@ -187,19 +206,7 @@ auto CodeGenTypes::GetFunctionType(const LlvmFnAbi& abi)
         abi.args[i].mode);
   }
   for (const TypeArg& told : abi.type_args) {
-    std::visit(
-        Overloaded{
-            [&](const TypeConstantArg&) { params.push_back(ptr_ty_); },
-            [&](const TypeExtentArg&) {
-              params.push_back(count);
-              params.push_back(flag);
-            },
-            [&](const ElementTypeArg&) { params.push_back(ptr_ty_); },
-            [&](const QueueTypeArg&) { params.push_back(ptr_ty_); },
-            [&](const TakePositionsArg&) { params.push_back(ptr_ty_); },
-            [&](const IndexOrderArg&) { params.push_back(ptr_ty_); },
-            [&](const OperationsArg&) { params.push_back(ptr_ty_); }},
-        told);
+    type_arg(told);
   }
   return std::visit(
       Overloaded{

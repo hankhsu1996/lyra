@@ -65,6 +65,11 @@ struct ToldWidthMetadataAhead {};
 // made, and an entry acting on such storage once it is made is told nothing of
 // the values it is handed, which the storage keeps the type of.
 struct ToldTypeMetadataAhead {};
+// Storage holding a container the library holds for every element type alike
+// is told the type of the container, ahead of whatever it takes where it is
+// made, as an entry building the empty container of that type is told it, so
+// it holds one from then on (LRM 7.5, 7.8, 7.10).
+struct ToldContainerTypeAhead {};
 // A net of a value laid out by its type is told that type and how a net folds
 // values of it, ahead of whatever it takes where it is made, since the net is
 // the one holder that folds one value into another (LRM 6.6).
@@ -94,8 +99,9 @@ struct ToldTakePositions {};
 struct ToldOperations {};
 using Told = std::variant<
     ToldNothing, ToldWidthMetadata, ToldWidthMetadataAhead,
-    ToldTypeMetadataAhead, ToldTypeAndNetFoldsAhead, ToldLaidOutType,
-    ToldKeyType, ToldEntryType, ToldTakePositions, ToldOperations>;
+    ToldTypeMetadataAhead, ToldContainerTypeAhead, ToldTypeAndNetFoldsAhead,
+    ToldLaidOutType, ToldKeyType, ToldEntryType, ToldTakePositions,
+    ToldOperations>;
 
 // The domains the library realizes an entry for that are told the same thing.
 // An entry states one of these per thing its realizations are told, and a
@@ -224,11 +230,12 @@ auto ToldOfAnOperator(support::ValueDomain domain) -> Told;
 // What the entry building a member's storage is told of the values held there,
 // ahead of the storage it is built in, as a cell the library makes is. Storage
 // laying the words of a value wider than a word out after itself is built at
-// their width, and storage laying a value out after itself by the value's
-// type with that type, so the value has its place from the moment the
-// storage exists; and a net of any integral type is built at its width, which
-// is how many positions it has and which a layout of a narrower type does not
-// say.
+// their width, storage laying a value out after itself by the value's type
+// with that type, so the value has its place from the moment the storage
+// exists, and storage of a container the library holds with the container's
+// type, so it holds the empty container of that type from then on; and a net
+// of any integral type is built at its width, which is how many positions it
+// has and which a layout of a narrower type does not say.
 auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told;
 
 // Whether the library states the type of a value held in `domain`, which a

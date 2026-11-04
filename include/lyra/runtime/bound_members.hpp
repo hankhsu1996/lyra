@@ -252,9 +252,7 @@ auto VariableRef<T>::BeginTakeover(
   return BeginTakeoverThrough<Var<T>>(
       erased_, level, first, count, at, take_positions,
       [](const Var<T>& showing) {
-        auto forced = std::make_shared<Var<T>>();
-        forced->Initialize(showing.Get());
-        return forced;
+        return std::make_shared<Var<T>>(showing.Get());
       },
       [](Var<T>& forced) { return VariableRef<T>{forced}.Erased(); });
 }

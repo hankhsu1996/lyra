@@ -30,7 +30,6 @@
 #include "lyra/value/container_lease.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
-#include "lyra/value/object_ref.hpp"
 #include "lyra/value/small_box.hpp"
 #include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
@@ -501,9 +500,9 @@ class Cell : public VariableCell {
  protected:
   Cell()
     requires std::default_initializable<HeldAs>;
-  // A storage told what it holds where it is built.
-  template <class Told>
-  explicit Cell(const Told& told) : storage_(told) {
+  // A storage built from `args`: told what it holds, or given the value.
+  template <class... Args>
+  explicit Cell(const Args&... args) : storage_(args...) {
   }
   ~Cell();
 
@@ -534,11 +533,6 @@ class Cell : public VariableCell {
   // holds.
   template <class AlreadyHeld, class Overwrite>
   void StoreBy(AlreadyHeld already_held, Overwrite overwrite) {
-    if (!storage_.IsInstalled()) {
-      throw InternalError(
-          "Cell: a store reached a cell that was never initialized -- please "
-          "report this as a bug");
-    }
     if (!this->HasMembers()) {
       overwrite();
       return;
@@ -582,7 +576,15 @@ class Cell : public VariableCell {
 template <value::LyraValue T>
 class Var final : public Cell<ValueStorageCore<T>> {
  public:
+  // A variable of a value its type builds from nothing; a container's is
+  // built only from its type, below. Generated code compiled apart from the
+  // library calls this one by the name its own compiler gives it, so it
+  // carries no constraint, which some compilers make part of that name.
   Var();
+  // A variable holding the value `T` builds from `args` from the moment it
+  // exists: a container's type, or a value to begin as.
+  template <class... Args>
+  explicit Var(const Args&... args);
   Var(const Var&) = delete;
   auto operator=(const Var&) -> Var& = delete;
   Var(Var&&) = delete;
@@ -595,32 +597,14 @@ class Var final : public Cell<ValueStorageCore<T>> {
   [[nodiscard]] auto Storage() noexcept -> T& {
     return this->Held().Storage();
   }
-  [[nodiscard]] auto IsInstalled() const noexcept -> bool {
-    return this->Held().IsInstalled();
-  }
-
   // The write a declaration makes, which may run more than once: a declaration
-  // reached again begins a fresh variable in the one storage. A value whose
-  // type states its representation is overwritten every time. A value
-  // represented at run time takes its representation from the first such
-  // write and is overwritten at it by each later one, so what is fixed is the
-  // representation, not the number of times a declaration runs: a value that
-  // does not match the installed one is the lowering defect and is what
-  // refuses, and so is a store into such a cell before any declaration ran,
-  // which the store path refuses.
+  // reached again begins a fresh variable in the one storage, over the value
+  // the storage has held since it was built.
   void Initialize(const T& prototype) {
-    if (!this->Held().IsInstalled()) {
-      this->Held().Install(prototype);
-      return;
-    }
-    this->Held().Overwrite(prototype);
+    this->Held().Assign(prototype);
   }
   void Initialize(T&& prototype) {
-    if (!this->Held().IsInstalled()) {
-      this->Held().Install(std::move(prototype));
-      return;
-    }
-    this->Held().Overwrite(prototype);
+    this->Held().Assign(std::move(prototype));
   }
 
   // Opens a write into the cell for the full-expression that writes. The cell's
@@ -1250,6 +1234,11 @@ Cell<HeldAs>::~Cell() = default;
 
 template <value::LyraValue T>
 Var<T>::Var() = default;
+
+template <value::LyraValue T>
+template <class... Args>
+Var<T>::Var(const Args&... args) : Cell<ValueStorageCore<T>>(args...) {
+}
 
 template <value::LyraValue T>
 Var<T>::~Var() = default;

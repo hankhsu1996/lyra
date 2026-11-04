@@ -59,9 +59,15 @@ template class Cell<ValueStorageCore<value::RuntimeAssociativeArray>>;
 template class TailCell<WordsStorage<value::StateDomain::kTwoState>>;
 template class TailCell<WordsStorage<value::StateDomain::kFourState>>;
 template class TailCell<LaidOutStorage>;
-template class Var<value::RuntimeDynamicArray>;
-template class Var<value::RuntimeQueue>;
-template class Var<value::RuntimeAssociativeArray>;
+template Var<value::RuntimeDynamicArray>::~Var();
+template auto Var<value::RuntimeDynamicArray>::Mutate()
+    -> ScopedMutation<VariableRef<value::RuntimeDynamicArray>>;
+template Var<value::RuntimeQueue>::~Var();
+template auto Var<value::RuntimeQueue>::Mutate()
+    -> ScopedMutation<VariableRef<value::RuntimeQueue>>;
+template Var<value::RuntimeAssociativeArray>::~Var();
+template auto Var<value::RuntimeAssociativeArray>::Mutate()
+    -> ScopedMutation<VariableRef<value::RuntimeAssociativeArray>>;
 
 template class CellRareState<WordsStorage<value::StateDomain::kTwoState>>;
 template class CellRareState<WordsStorage<value::StateDomain::kFourState>>;

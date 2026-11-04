@@ -80,21 +80,23 @@ using TypeArg = std::variant<
 
 // What a callee takes ahead of the arguments a call states. An entry making
 // storage for the words of a value wider than a word is told how wide the
-// values held there are, one making storage for a value laid out by its type
-// is told that type with how a value of it starts, and one making a net of
-// such values is told how the net folds them as well.
+// values held there are, one making a net of a value laid out by its type is
+// told that type with how a value of it starts and how the net folds such
+// values, and one making storage for any other value laid out by its type, or
+// for a container the library holds, is told of the type what an entry
+// building such a value is told.
 struct NoImplicitArg {};
 struct WidthMetadataArg {
-  lir::TypeId of;
-};
-struct TypeMetadataArg {
   lir::TypeId of;
 };
 struct TypeAndNetFoldsArg {
   lir::TypeId of;
 };
+struct TypeMetadataArg {
+  std::vector<TypeArg> args;
+};
 using ImplicitArg = std::variant<
-    NoImplicitArg, WidthMetadataArg, TypeMetadataArg, TypeAndNetFoldsArg>;
+    NoImplicitArg, WidthMetadataArg, TypeAndNetFoldsArg, TypeMetadataArg>;
 
 // A part the callee names, which is no value the program computed: it crosses
 // as a machine integer, ahead of the argument at `before`.

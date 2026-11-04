@@ -14,6 +14,11 @@
 // (LRM 8.7, whose example this repeats), and so may the extending class's
 // method a base constructor calls -- asking an associative array's least and
 // greatest index among them (LRM 20.7) -- whatever the value it then holds.
+// That value is one of the property's type, so such a method may also write
+// it: grow a queue, give a dynamic array elements and an associative array an
+// entry (LRM 7.5, 7.8, 7.10). Each property is then initialized after the base
+// constructor returns (LRM 8.7), so what the method wrote is replaced by the
+// declaration's value, or by its type's where it states none.
 module Top;
   typedef class Derived;
 
@@ -26,6 +31,7 @@ module Top;
     string named_in_base;
     bit cast_in_base;
     bit indexed_in_base;
+    int filled_in_base = -1;
 
     function new();
       Derived d;
@@ -35,9 +41,14 @@ module Top;
       named_in_base = n.name();
       cast_in_base = $cast(d, this);
       indexed_in_base = indexed();
+      filled_in_base = fill();
     endfunction
 
     virtual function bit indexed();
+      return 0;
+    endfunction
+
+    virtual function int fill();
       return 0;
     endfunction
 
@@ -53,9 +64,31 @@ module Top;
   class Derived extends Base;
     string seen_in_initializer = who();
     int lookup[int];
+    int pending[$];
+    int bounded[$:1];
+    int sized[];
+    string seeded[$] = '{"declared"};
+    int rows[$][$];
 
     function new();
       super.new();
+    endfunction
+
+    virtual function int fill();
+      pending.push_back(4);
+      pending.push_front(3);
+      bounded.push_back(1);
+      bounded.push_back(2);
+      bounded.push_back(5);
+      sized = new[2];
+      sized[1] = 6;
+      lookup[3] = 7;
+      seeded.push_back("pushed");
+      rows.push_back(pending);
+      rows[0].push_back(8);
+      return pending.size() + bounded.size() + sized.size() + lookup.size() +
+             seeded.size() + pending[0] + sized[1] + lookup[3] +
+             rows[0].size();
     endfunction
 
     virtual function string who();
@@ -136,6 +169,24 @@ module Top;
     if (derived.indexed_in_base !== 1)
       $fatal(1, "a base constructor's call reading an index of %s",
              "an associative array did not return");
+    // 2 + 2 + 2 + 1 + 1 elements, then 3 + 6 + 7, then a row of 3 in a queue
+    // of queues, whose element is a queue too: a queue's bound kept out
+    // the push past it (LRM 7.10.5), and the property with an initializer
+    // held no element before it ran.
+    if (derived.filled_in_base !== 27)
+      $fatal(1, "a base constructor's call filling the containers answered %0d, expected 27",
+             derived.filled_in_base);
+    if (derived.pending.size() !== 0 || derived.bounded.size() !== 0 ||
+        derived.sized.size() !== 0 || derived.lookup.size() !== 0)
+      $fatal(1, "after construction the containers held %0d %0d %0d %0d, expected none",
+             derived.pending.size(), derived.bounded.size(),
+             derived.sized.size(), derived.lookup.size());
+    if (derived.rows.size() !== 0)
+      $fatal(1, "after construction the queue of queues held %0d rows",
+             derived.rows.size());
+    if (derived.seeded.size() !== 1 || derived.seeded[0] != "declared")
+      $fatal(1, "after construction the initialized queue held %0d elements",
+             derived.seeded.size());
     if (derived.seen_in_initializer != "Derived")
       $fatal(1, "a property initializer called %s's method, expected Derived's",
              derived.seen_in_initializer);
