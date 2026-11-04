@@ -759,7 +759,7 @@ void lyra_rt_timer_arm(
 // cross as machine integers, like every runtime scalar. The leaf is built in
 // storage the caller gives.
 auto lyra_rt_trigger_make(
-    void* observable, const void* observation, LyraSpan steps,
+    void* place, const void* observation, LyraSpan steps,
     std::int64_t lsb_bit_offset, std::int64_t bit_width, void* out) -> void*;
 
 // What decides whether reaching a wait is an event for it (LRM 9.4.2). Two
@@ -1173,10 +1173,6 @@ auto lyra_rt_block_table(
 // the property's storage.
 auto lyra_rt_refer_storage(void* storage, void* out) -> void*;
 auto lyra_rt_refer_property(void* object, void* storage, void* out) -> void*;
-// What a wait on the storage a reference names enrols on: the variable or
-// the object's event source, and null for storage nothing is told about.
-auto lyra_rt_reference_reports_to(const void* reference) -> void*;
-
 // A member that owns no storage bound to what drives it, and a force on one
 // (LRM 23.3.3, 10.6.2). Each names the member by a reference to it.
 void lyra_rt_bind_member(void* member, const void* bound);
@@ -2613,9 +2609,54 @@ auto lyra_rt_logic32_driver_show_source(void* driver) -> bool;
 auto lyra_rt_logic64_driver_show_source(void* driver) -> bool;
 auto lyra_rt_logic_wide_driver_show_source(void* driver) -> bool;
 auto lyra_rt_laidout_driver_show_source(void* driver) -> bool;
-// What a wait on a net enrols on, as the word a place crosses in: the net's own
-// value or the object its one driver carries, reached through the member the
-// net shows its value by.
+// Where occurrences at the storage a capability wrapper stands for are
+// reported, which a wait enrols on and a read report names, as the word a
+// watched place crosses in: a variable's cell answers itself; a reference what
+// a write through it is told to, by the member it was bound into where it was
+// (LRM 13.5.2, 23.3.3, 10.6.2), and null for storage nothing is told about; a
+// net its own value or the object its one driver carries, reached through the
+// member it shows its value by. One per wrapper and value representation, as
+// every access through a wrapper is.
+auto lyra_rt_bit8_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_bit16_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_bit32_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_bit64_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_bit_wide_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_logic8_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_logic16_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_logic32_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_logic64_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_logic_wide_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_string_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_real_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_shortreal_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_unmanagedref_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_managedref_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_laidout_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_dynarray_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_queue_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_assocarray_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_any_cell_reports_to(void* cell) -> void*;
+auto lyra_rt_bit8_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_bit16_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_bit32_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_bit64_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_bit_wide_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_logic8_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_logic16_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_logic32_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_logic64_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_logic_wide_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_string_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_real_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_shortreal_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_unmanagedref_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_managedref_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_laidout_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_dynarray_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_queue_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_assocarray_ref_reports_to(const void* reference) -> void*;
+auto lyra_rt_any_ref_reports_to(const void* reference) -> void*;
 auto lyra_rt_logic8_net_reports_to(void* net) -> void*;
 auto lyra_rt_logic16_net_reports_to(void* net) -> void*;
 auto lyra_rt_logic32_net_reports_to(void* net) -> void*;

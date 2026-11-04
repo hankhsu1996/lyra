@@ -954,9 +954,20 @@ void DriveFromReference(void* driver, void* reference) {
   DriverOf<T>(driver).DriveFrom(static_cast<ErasedReference*>(reference));
 }
 
+template <class T>
+auto CellReportsTo(void* cell) -> void* {
+  return VariableAt<T>(cell).ReportsTo().Word();
+}
+
+// What any reference reports to is a fact of the reference, whatever it
+// names, so every representation's entry answers alike.
+auto RefReportsTo(const void* reference) -> void* {
+  return WatchedPlace::Through(ErasedAt(reference)).Word();
+}
+
 template <NetValue T>
 auto NetReportsTo(void* net) -> void* {
-  return ReportsTo(NetOf<T>(net)).Word();
+  return NetOf<T>(net).ReportsTo().Word();
 }
 
 template <NetValue T>
@@ -2016,6 +2027,7 @@ using lyra::runtime::CancellationTarget;
 using lyra::runtime::CellBeginTakeover;
 using lyra::runtime::CellDriveTakeover;
 using lyra::runtime::CellEndTakeover;
+using lyra::runtime::CellReportsTo;
 using lyra::runtime::ChannelCancellation;
 using lyra::runtime::ClassObject;
 using lyra::runtime::ClosureValue;
@@ -2136,6 +2148,7 @@ using lyra::runtime::ReferToCell;
 using lyra::runtime::ReferToProperty;
 using lyra::runtime::ReferToStorage;
 using lyra::runtime::RefGet;
+using lyra::runtime::RefReportsTo;
 using lyra::runtime::RefSampledGet;
 using lyra::runtime::RefSet;
 using lyra::runtime::RefuseReport;
@@ -3234,21 +3247,15 @@ void lyra_rt_timer_arm(
       *static_cast<RuntimeEffects*>(runtime), ticks, precision_power);
 }
 
-// What crosses is the place's one word. For a place reached by itself that is
-// the cell's own address -- a variable, a net -- and a `void*`
-// carries no type to adjust by, so it is read as the address of what waits on
-// that cell: every such cell names `Observable` as its first base, which is
-// what makes the two addresses one under the platform ABI. For a place reached
-// through a reference bound into a member it is the word that reference
-// answered, which says so itself.
+// What crosses is the place's one word, which the wrapper the place is reached
+// through answered.
 auto lyra_rt_trigger_make(
-    void* observable, const void* observation, LyraSpan steps,
+    void* place, const void* observation, LyraSpan steps,
     std::int64_t lsb_bit_offset, std::int64_t bit_width, void* out) -> void* {
   return Emplace(
-      out,
-      Trigger(
-          WatchedPlace::FromWord(observable), Read<Observation>(observation),
-          lyra::runtime::StepsAt(steps), lsb_bit_offset, bit_width));
+      out, Trigger(
+               WatchedPlace::FromWord(place), Read<Observation>(observation),
+               lyra::runtime::StepsAt(steps), lsb_bit_offset, bit_width));
 }
 
 auto lyra_rt_observation_on_reaching(void* out) -> void* {
@@ -4247,10 +4254,6 @@ auto lyra_rt_lease_object(const void* reference, void* out) -> void* {
 auto lyra_rt_leased_reference(const void* leased, void* out) -> void* {
   return BuildReference(
       out, static_cast<const LeasedReference*>(leased)->Erased());
-}
-
-auto lyra_rt_reference_reports_to(const void* reference) -> void* {
-  return WatchedPlace::Through(ErasedAt(reference)).Word();
 }
 
 void lyra_rt_bind_member(void* member, const void* bound) {
@@ -7552,6 +7555,126 @@ void lyra_rt_laidout_driver_drive_from_reference(
   DriveFromReference<LaidOutValue>(driver, reference);
 }
 
+auto lyra_rt_bit8_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<Bit8>(cell);
+}
+auto lyra_rt_bit16_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<Bit16>(cell);
+}
+auto lyra_rt_bit32_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<Bit32>(cell);
+}
+auto lyra_rt_bit64_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<Bit64>(cell);
+}
+auto lyra_rt_bit_wide_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<BitWide>(cell);
+}
+auto lyra_rt_logic8_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<Logic8>(cell);
+}
+auto lyra_rt_logic16_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<Logic16>(cell);
+}
+auto lyra_rt_logic32_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<Logic32>(cell);
+}
+auto lyra_rt_logic64_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<Logic64>(cell);
+}
+auto lyra_rt_logic_wide_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<LogicWide>(cell);
+}
+auto lyra_rt_string_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<String>(cell);
+}
+auto lyra_rt_real_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<Real>(cell);
+}
+auto lyra_rt_shortreal_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<ShortReal>(cell);
+}
+auto lyra_rt_unmanagedref_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<UnmanagedRef>(cell);
+}
+auto lyra_rt_managedref_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<ObjectRef>(cell);
+}
+auto lyra_rt_laidout_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<LaidOutValue>(cell);
+}
+auto lyra_rt_dynarray_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<RuntimeDynamicArray>(cell);
+}
+auto lyra_rt_queue_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<RuntimeQueue>(cell);
+}
+auto lyra_rt_assocarray_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<RuntimeAssociativeArray>(cell);
+}
+auto lyra_rt_any_cell_reports_to(void* cell) -> void* {
+  return CellReportsTo<lyra::value::Any>(cell);
+}
+auto lyra_rt_bit8_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_bit16_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_bit32_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_bit64_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_bit_wide_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_logic8_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_logic16_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_logic32_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_logic64_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_logic_wide_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_string_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_real_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_shortreal_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_unmanagedref_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_managedref_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_laidout_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_dynarray_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_queue_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_assocarray_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
+auto lyra_rt_any_ref_reports_to(const void* reference) -> void* {
+  return RefReportsTo(reference);
+}
 auto lyra_rt_logic8_net_reports_to(void* net) -> void* {
   return NetReportsTo<Logic8>(net);
 }

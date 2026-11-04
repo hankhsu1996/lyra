@@ -1056,15 +1056,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"Reference"},
           .takes_a_type_argument = true,
           .takes_the_location = false};
-    case BuiltinFn::kReferenceReportsTo:
-      return {
-          .name = "reference_reports_to",
-          .declaration = RuntimeFunction("ReportsTo"),
-          .takes_the_location = false};
-    case BuiltinFn::kNetReportsTo:
+    case BuiltinFn::kReportsTo:
       return {
           .name = "reports_to",
-          .declaration = RuntimeFunction("ReportsTo"),
+          .declaration = Method{"ReportsTo"},
           .takes_the_location = false};
     case BuiltinFn::kBindMember:
       return {

@@ -5,7 +5,11 @@ Date: 2026-06-23 Status: accepted
 The signal registration this entry reshaped, and the by-name scope lookup its third consequence
 names, no longer exist: since
 [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) no
-scope registers a declaration by name. The decision -- place-to-pointer stated in MIR -- stands.
+scope registers a declaration by name. Its second site, the sensitivity wait leaf, is gone too: a
+leaf carries no pointer, since
+[a-place-answers-where-a-wait-watches](a-place-answers-where-a-wait-watches.md) has it ask the
+wrapper standing for the place where it reports. The decision -- place-to-pointer stated in MIR --
+stands.
 
 ## Context
 
@@ -110,9 +114,8 @@ structural fact explicit.
   canonicalization); the LIR / LLVM backend emits a GEP-style pointer computation. Both reach the
   same emitted shape mechanically.
 
-- The sensitivity-leaf type-kind switch (`RenderSensitivityRefPtr`) is gone. The two
-  observable-pointer shapes (`AddressOf(MemberAccess)`, bare `MemberAccess`) are chosen at lowering,
-  stored as an `ExprId` on `SensitivityRead`, and rendered through the ordinary expression path.
+- The sensitivity-leaf type-kind switch (`RenderSensitivityRefPtr`) is gone, and no lowering chooses
+  a pointer shape for a leaf either: the leaf asks the place's wrapper where it reports.
 
 - The same principle governs the untyped pointer a by-name scope lookup hands back: a `void*` at the
   MIR / runtime boundary forces every backend to work out what it stands for, so the conversion back

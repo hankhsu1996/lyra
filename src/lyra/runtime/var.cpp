@@ -30,6 +30,10 @@ void VariableCell::WritePart(OwnedCall write) {
   rare_->WritePart(std::move(write));
 }
 
+auto VariableCell::ReportsTo() const -> WatchedPlace {
+  return WatchedPlace{this};
+}
+
 namespace {
 
 // The low bit of a place's word says the rest is the address of a member a
@@ -39,7 +43,7 @@ constexpr std::uintptr_t kThroughAMember = 1;
 
 }  // namespace
 
-WatchedPlace::WatchedPlace(Observable* reported_to)
+WatchedPlace::WatchedPlace(const Observable* reported_to)
     : word_(std::bit_cast<std::uintptr_t>(reported_to)) {
 }
 

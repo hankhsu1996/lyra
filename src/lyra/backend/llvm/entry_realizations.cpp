@@ -304,8 +304,16 @@ constexpr std::array kLoads{
 // What a driver is told of the object it carries, and asked at its turn.
 constexpr std::array kDrivesFromAnObject{
     ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues}};
-constexpr std::array kNetsWaitedOn{
-    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues}};
+// Where a wait on what a wrapper stands for enrols: a variable is where its
+// writes are told, a net keeps the member it shows its value through where its
+// value's type puts it, and a reference names the member it was bound into.
+constexpr std::array kWaitedOn{
+    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
+    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kRef,
+        .domains = kVariableValues,
+        .told = ToldNothing{}}};
 // What keeps a sample of what it holds (LRM 16.5.1): armed to take one, and
 // read for the one it took.
 constexpr std::array kSampled{
@@ -961,10 +969,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDriveFromReference:
     case support::BuiltinFn::kShowSource:
       return NamedByWrapper{.realized = kDrivesFromAnObject};
-    // Where a net keeps the member it shows its value through depends on the
-    // value's type, so the net's own representation names the entry.
-    case support::BuiltinFn::kNetReportsTo:
-      return NamedByWrapper{.realized = kNetsWaitedOn};
+    // Each wrapper answers where a wait on it enrols, so the wrapper names the
+    // entry.
+    case support::BuiltinFn::kReportsTo:
+      return NamedByWrapper{.realized = kWaitedOn};
 
     // A driver is attached by the net that issues it, a fold is installed on
     // the net that applies it, and a join takes two nets that resolve in the
@@ -1205,12 +1213,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // A reference to a property holds the property erased, so one function
     // serves every property's type, as one leases the object any such
     // reference names storage of and one answers the reference any leased one
-    // carries; and what any reference reports to is a fact of the reference,
-    // whatever it names.
+    // carries.
     case support::BuiltinFn::kReferProperty:
     case support::BuiltinFn::kLeaseObject:
     case support::BuiltinFn::kLeasedReference:
-    case support::BuiltinFn::kReferenceReportsTo:
     // Binding a reference -- a port's, as a member or as another name, or one
     // an object holds -- and telling one it is driven continuously, act on the
     // reference alone.

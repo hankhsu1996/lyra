@@ -67,11 +67,13 @@ template <typename Lowerer>
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::ExprId object) -> mir::ExprId;
 
-// The same for `place`, a pointer to a variable an evaluation reaches through a
-// virtual interface (LRM 25.9).
+// The same for `pointer`, a pointer to a member an evaluation reaches through a
+// virtual interface (LRM 25.9) -- a variable, a net, or a port standing for
+// what its connection names -- stated in the report as where a wait on the
+// member enrols.
 [[nodiscard]] auto ReportedPlace(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
-    -> mir::ExprId;
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::ExprId pointer) -> mir::ExprId;
 
 // Whether the local `report` holds a report at all, as a machine boolean added
 // to `block`'s expressions: a body is handed one by an evaluation that states
@@ -134,12 +136,6 @@ auto ReportReads(
 // continuous assignment -- differing only in what decides that reaching a leaf
 // is an event for them, and built so a stop reached again stops at the same
 // wait.
-//
-// Lowering picks the observable-pointer expression per leaf so a backend
-// forwards one stored expression rather than re-deriving the shape from the
-// leaf's type: a plain field becomes an `AddressOf(FieldAccess(...))`, and a
-// borrowed-pointer slot (a cross-unit reference sealed in the resolve phase, or
-// another sealed pointer) is the bare `FieldAccess`.
 
 // The block a wait is built in to be reused, where `cells` are what it watches,
 // `evaluated` the expressions of `exprs` its observations evaluate where a

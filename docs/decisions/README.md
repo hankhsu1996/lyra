@@ -561,6 +561,12 @@ the detail lives in the entry itself.
   a chandle on the other for the reason Table 8-1 gives, since a list of the ones somebody
   remembered had already answered wrongly twice. Read it also for what a variable naming an object
   is waited on for.
+- [a-place-answers-where-a-wait-watches](a-place-answers-where-a-wait-watches.md) -- where a wait on
+  a place watches is asked of the wrapper standing for its storage, one entry for a cell, a net and
+  a reference, and the trigger and the read report take only that answer, so a place reached by any
+  path -- a route, a body's variable, a `ref` formal, a port through a virtual interface -- watches
+  the same. Each maker composing its own operand, and a switch over wrapper kinds in the lowering,
+  are rejected.
 - [a-variable-a-body-declares-reports-its-writes](a-variable-a-body-declares-reports-its-writes.md)
   -- every variable a body that can wait declares is a cell reporting its writes, stated in MIR,
   because any process that can reach it may wait on it, while a function's stay values since nothing

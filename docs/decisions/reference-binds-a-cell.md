@@ -1,9 +1,10 @@
 # A reference binds a cell, and every referent is one
 
 Date: 2026-08-27 Status: accepted, reopened 2026-09-03 (see the closing section); its point 2 and
-invariants 1 and 3 no longer hold, as
-[a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md) and
-[a-declared-local-is-storage](a-declared-local-is-storage.md) D2 state
+invariants 1 and 3 and the trigger half of point 3 no longer hold, as
+[a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md),
+[a-declared-local-is-storage](a-declared-local-is-storage.md) D2 and
+[a-place-answers-where-a-wait-watches](a-place-answers-where-a-wait-watches.md) state
 
 ## Context
 
@@ -62,6 +63,13 @@ it is that for every referent.
    Nothing subscribes to a procedural local -- no lowering registers one as a signal -- so the
    update event a write to it raises wakes nobody.
 
+   Revised 2026-11-03: the trigger half of this no longer holds. A cell's address reaching the
+   trigger entry as its observable was one of three forms a watched place took, each maker choosing
+   its own, and the one reaching a port through a virtual interface handed over the reference
+   instead. A wait now enrols where the wrapper standing for the storage says, one entry asked of a
+   cell, a net and a reference alike, and the trigger entry takes only that answer
+   ([a-place-answers-where-a-wait-watches](a-place-answers-where-a-wait-watches.md)).
+
 4. **The cell type is reached from two places and must be one type.** A reference's type is built
    where a declared `ref` is translated, and again where the lowering gives a lent local a cell, and
    a reference built either way has to be the type the formal was declared with. Both spell it
@@ -98,8 +106,8 @@ it is that for every referent.
 - **A polymorphic storage core, so a reference could name either cell kind.** The honest version of
   the previous alternative, and the one that would let a reference bind the non-observable
   procedural cell too. It cannot be reached from a `void*`: the boundary hands a cell's address as
-  one pointer and the trigger entry already reads that pointer as the observable, so a second base
-  at a different offset in the same object has no spelling there.
+  one pointer and every cell entry reads it as one type, so a second base at a different offset in
+  the same object has no spelling there.
 
 - **Giving the lent local the non-observable procedural cell.**
   [cross-suspension-value-storage](cross-suspension-value-storage.md) rejects reusing the signal

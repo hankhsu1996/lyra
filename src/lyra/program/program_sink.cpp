@@ -402,6 +402,51 @@ void BindWriteEntries(const auto& add) {
       &lyra_rt_logic_wide_driver_drive_from_reference);
   add("lyra_rt_laidout_driver_drive_from_reference",
       &lyra_rt_laidout_driver_drive_from_reference);
+  add("lyra_rt_bit8_cell_reports_to", &lyra_rt_bit8_cell_reports_to);
+  add("lyra_rt_bit16_cell_reports_to", &lyra_rt_bit16_cell_reports_to);
+  add("lyra_rt_bit32_cell_reports_to", &lyra_rt_bit32_cell_reports_to);
+  add("lyra_rt_bit64_cell_reports_to", &lyra_rt_bit64_cell_reports_to);
+  add("lyra_rt_bit_wide_cell_reports_to", &lyra_rt_bit_wide_cell_reports_to);
+  add("lyra_rt_logic8_cell_reports_to", &lyra_rt_logic8_cell_reports_to);
+  add("lyra_rt_logic16_cell_reports_to", &lyra_rt_logic16_cell_reports_to);
+  add("lyra_rt_logic32_cell_reports_to", &lyra_rt_logic32_cell_reports_to);
+  add("lyra_rt_logic64_cell_reports_to", &lyra_rt_logic64_cell_reports_to);
+  add("lyra_rt_logic_wide_cell_reports_to",
+      &lyra_rt_logic_wide_cell_reports_to);
+  add("lyra_rt_string_cell_reports_to", &lyra_rt_string_cell_reports_to);
+  add("lyra_rt_real_cell_reports_to", &lyra_rt_real_cell_reports_to);
+  add("lyra_rt_shortreal_cell_reports_to", &lyra_rt_shortreal_cell_reports_to);
+  add("lyra_rt_unmanagedref_cell_reports_to",
+      &lyra_rt_unmanagedref_cell_reports_to);
+  add("lyra_rt_managedref_cell_reports_to",
+      &lyra_rt_managedref_cell_reports_to);
+  add("lyra_rt_laidout_cell_reports_to", &lyra_rt_laidout_cell_reports_to);
+  add("lyra_rt_dynarray_cell_reports_to", &lyra_rt_dynarray_cell_reports_to);
+  add("lyra_rt_queue_cell_reports_to", &lyra_rt_queue_cell_reports_to);
+  add("lyra_rt_assocarray_cell_reports_to",
+      &lyra_rt_assocarray_cell_reports_to);
+  add("lyra_rt_any_cell_reports_to", &lyra_rt_any_cell_reports_to);
+  add("lyra_rt_bit8_ref_reports_to", &lyra_rt_bit8_ref_reports_to);
+  add("lyra_rt_bit16_ref_reports_to", &lyra_rt_bit16_ref_reports_to);
+  add("lyra_rt_bit32_ref_reports_to", &lyra_rt_bit32_ref_reports_to);
+  add("lyra_rt_bit64_ref_reports_to", &lyra_rt_bit64_ref_reports_to);
+  add("lyra_rt_bit_wide_ref_reports_to", &lyra_rt_bit_wide_ref_reports_to);
+  add("lyra_rt_logic8_ref_reports_to", &lyra_rt_logic8_ref_reports_to);
+  add("lyra_rt_logic16_ref_reports_to", &lyra_rt_logic16_ref_reports_to);
+  add("lyra_rt_logic32_ref_reports_to", &lyra_rt_logic32_ref_reports_to);
+  add("lyra_rt_logic64_ref_reports_to", &lyra_rt_logic64_ref_reports_to);
+  add("lyra_rt_logic_wide_ref_reports_to", &lyra_rt_logic_wide_ref_reports_to);
+  add("lyra_rt_string_ref_reports_to", &lyra_rt_string_ref_reports_to);
+  add("lyra_rt_real_ref_reports_to", &lyra_rt_real_ref_reports_to);
+  add("lyra_rt_shortreal_ref_reports_to", &lyra_rt_shortreal_ref_reports_to);
+  add("lyra_rt_unmanagedref_ref_reports_to",
+      &lyra_rt_unmanagedref_ref_reports_to);
+  add("lyra_rt_managedref_ref_reports_to", &lyra_rt_managedref_ref_reports_to);
+  add("lyra_rt_laidout_ref_reports_to", &lyra_rt_laidout_ref_reports_to);
+  add("lyra_rt_dynarray_ref_reports_to", &lyra_rt_dynarray_ref_reports_to);
+  add("lyra_rt_queue_ref_reports_to", &lyra_rt_queue_ref_reports_to);
+  add("lyra_rt_assocarray_ref_reports_to", &lyra_rt_assocarray_ref_reports_to);
+  add("lyra_rt_any_ref_reports_to", &lyra_rt_any_ref_reports_to);
   add("lyra_rt_logic8_net_reports_to", &lyra_rt_logic8_net_reports_to);
   add("lyra_rt_logic16_net_reports_to", &lyra_rt_logic16_net_reports_to);
   add("lyra_rt_logic32_net_reports_to", &lyra_rt_logic32_net_reports_to);
@@ -453,7 +498,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_refer_property", &lyra_rt_refer_property);
   add("lyra_rt_lease_object", &lyra_rt_lease_object);
   add("lyra_rt_leased_reference", &lyra_rt_leased_reference);
-  add("lyra_rt_reference_reports_to", &lyra_rt_reference_reports_to);
   add("lyra_rt_bind_member", &lyra_rt_bind_member);
   add("lyra_rt_bind_alias", &lyra_rt_bind_alias);
   add("lyra_rt_bind_reference", &lyra_rt_bind_reference);

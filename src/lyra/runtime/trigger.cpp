@@ -9,7 +9,6 @@
 
 #include "lyra/base/fixed_array.hpp"
 #include "lyra/runtime/observation.hpp"
-#include "lyra/runtime/part_path.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
@@ -29,16 +28,6 @@ auto PositionsInPart(std::int64_t first, std::int64_t count)
   return {
       .lsb = static_cast<std::uint64_t>(first),
       .width = static_cast<std::uint64_t>(count)};
-}
-
-Trigger::Trigger(
-    Observable* observable, Observation observation,
-    std::span<const std::int64_t> steps, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width)
-    : observable(observable),
-      part(steps),
-      observation(std::move(observation)),
-      reads(PositionsInPart(lsb_bit_offset, bit_width)) {
 }
 
 Trigger::Trigger(

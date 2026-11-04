@@ -471,14 +471,14 @@ enum class BuiltinFn : std::uint16_t {
   kReferElementLeased,
   kAssocReferElementLeased,
   kLeasedReference,
-  // What a wait on the storage a reference names enrols on: whatever a
-  // write through the reference is told to -- the variable, or the object a
-  // property belongs to (LRM 13.5.2, 9.4.2) -- as an erased pointer, the form
-  // an object's event source takes too.
-  kReferenceReportsTo,
-  // The same for a wait on a net: whatever the net shows its value through,
-  // which is its own value or the object its one driver carries.
-  kNetReportsTo,
+  // Where occurrences at the storage a capability wrapper stands for are
+  // reported, which is what a wait on it enrols on and what a read report
+  // names (LRM 9.4.2): a variable answers itself; a net whatever it shows its
+  // value through, its own value or the object its one driver carries; and a
+  // reference whatever a write through it is told to -- the variable, or the
+  // object a property belongs to (LRM 13.5.2, 23.3.3) -- named by the member
+  // it was bound into where it was, so a wait follows a force (LRM 10.6.2).
+  kReportsTo,
   // Binding a member that owns no storage to what its connection drives it
   // with (LRM 23.3.3): the member names that storage from then on, and is
   // recorded as bound from whatever member the bound reference came from.
