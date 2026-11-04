@@ -8,6 +8,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -201,6 +202,48 @@ auto Borrow(const CompilationUnit& unit, Builder block, ExprId operand)
               Type{ReferenceType{
                   .referent = block.Get(object).type,
                   .mutability = Mutability::kReadOnly}})});
+}
+
+auto BaseOfPlace(const TypePool& types, const Block& block, ExprId place)
+    -> std::optional<PlaceBase> {
+  const ExprData& data = block.exprs.Get(place).data;
+  if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
+    if (std::optional<PlaceBase> base =
+            BaseOfPlace(types, block, field->receiver)) {
+      return base;
+    }
+    if (const auto* captured = std::get_if<ClosureFieldTarget>(&field->field)) {
+      return *captured;
+    }
+    return std::nullopt;
+  }
+  if (const auto* deref = std::get_if<DerefExpr>(&data)) {
+    const Expr& pointer = block.exprs.Get(deref->pointer);
+    const auto* box = types.Get(pointer.type).As<PointerType>();
+    if (box == nullptr) {
+      return std::nullopt;
+    }
+    switch (box->ownership) {
+      case PointerOwnership::kUnique:
+        break;
+      case PointerOwnership::kShared:
+      case PointerOwnership::kBorrowed:
+        return std::nullopt;
+    }
+    // The box opened where it lies, or read out of where it lies.
+    const auto* read = std::get_if<CopyExpr>(&pointer.data);
+    return BaseOfPlace(
+        types, block, read != nullptr ? read->place : deref->pointer);
+  }
+  if (const auto* named = std::get_if<ReferenceExpr>(&data)) {
+    if (const auto* local = std::get_if<LocalRef>(&named->target)) {
+      return local->var;
+    }
+    if (const auto* constant = std::get_if<ConstantRef>(&named->target)) {
+      return constant->constant;
+    }
+  }
+  return std::nullopt;
 }
 
 auto ValueLiesInStorage(

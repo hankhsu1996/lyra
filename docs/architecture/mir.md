@@ -431,14 +431,18 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     evaluated twice. A value wanted at several such places is bound to a local, by a statement or
     among a block expression's steps, and named at each. Two places under different arms of one
     conditional expression are not such a pair, because a run takes one arm. A node that names a
-    declared thing, spells a constant, forms a place, or reads a variable it names -- one the body
-    declares or a closure's body captured -- computes nothing itself, so it may stand anywhere, and
-    what it stands for is the evaluations of what it reaches. A read of any other storage computes,
-    since a write between two of them makes them two values, and so does reaching an object through
-    a class handle, which opens the handle and can fail the design, in the unit as it is built as
-    much as once a conversion has made the opening a call. Which computations would be harmless to
-    repeat is not stated and not asked: a call with no effect is a call. The unit's verification
-    refuses a body that breaks this, where the unit is produced.
+    declared thing, spells a constant, forms a place, or reads a value where it lies in storage
+    nothing but a binding of the body or a constant reaches -- a variable the body declares or a
+    closure's body captured, a constant, a field of any of them, or what a box any of them holds
+    owns -- computes nothing itself, so it may stand anywhere, and what it stands for is the
+    evaluations of what it reaches. Which storage a read reaches is a fact of its place, so deciding
+    where a value lies, which holds a large one through a box, changes no node's answer. A read of
+    any other storage computes, since a write between two of them makes them two values; so does a
+    read of overlaid storage, which makes a value of its type out of the bits there (invariant 16),
+    and reaching an object through a class handle, which opens the handle and can fail the design,
+    in the unit as it is built as much as once a conversion has made the opening a call. Which
+    computations would be harmless to repeat is not stated and not asked: a call with no effect is a
+    call. The unit's verification refuses a body that breaks this, where the unit is produced.
 
     _Programming-language consequence: an expression is a tree, and a value used twice has a name.
     This is the relation a compiler's syntax tree has to a value bound once and referred to from

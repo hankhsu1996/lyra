@@ -25,24 +25,25 @@ using conformance::framework::RunChildProcess;
 
 // A design whose every value is twice the stack it is run on: one of each kind
 // a frame would otherwise keep or an operation make whole -- a sum, a shift, a
-// concatenation, a part, an answer and a member of one, a sort, a stream and
-// its inverse, a structure's copy, comparison and stream, a union's copy and
-// comparison, a net of each kind resolving two drivers, a write into a
-// member of an element, a merge under an unknown condition, a task's variable
-// and what it completes with, a variable kept across a wait and captured by
-// what it forks, an update deferred with and without a delay, one whose
-// captures are each small and together large, a parameter left to its
-// default, overridden, and of a structure type, a value named on the command
-// line, a memory loaded from a file as text and as bytes, a change waited on,
-// a value forced and released, its sampled value, and one a loop's step
-// discards -- each checked against what it must hold. A list of arguments
-// longer than a frame keeps is checked beside them, and so are locals each as
-// large as a frame keeps one and together many times the stack: in a
-// function, which hands one by reference and a value made of them by value,
-// in a method, in a process that is done with them before it first waits, in
-// a branch it forks, and in a process that waits on one and forks a branch
-// reading them; beside a function declaring as many as a frame keeps together
-// and one discarding as many values of that size.
+// concatenation, a concatenation's cut of a variable, of an argument, of a
+// local, of a member of one and of what a fork captures, a part, an answer and
+// a member of one, a sort, a stream and its inverse, a structure's copy,
+// comparison and stream, a union's copy and comparison, a net of each kind
+// resolving two drivers, a write into a member of an element, a merge under an
+// unknown condition, a task's variable and what it completes with, a variable
+// kept across a wait and captured by what it forks, an update deferred with
+// and without a delay, one whose captures are each small and together large, a
+// parameter left to its default, overridden, and of a structure type, a value
+// named on the command line, a memory loaded from a file as text and as bytes,
+// a change waited on, a value forced and released, its sampled value, and one
+// a loop's step discards -- each checked against what it must hold. A list of
+// arguments longer than a frame keeps is checked beside them, and so are
+// locals each as large as a frame keeps one and together many times the
+// stack: in a function, which hands one by reference and a value made of them
+// by value, in a method, in a process that is done with them before it first
+// waits, in a branch it forks, and in a process that waits on one and forks a
+// branch reading them; beside a function declaring as many as a frame keeps
+// together and one discarding as many values of that size.
 constexpr int kManyArguments = 200;
 constexpr int kManyLocals = 600;
 constexpr int kLocalsAFrameKeeps = 16;
@@ -88,6 +89,51 @@ module Test;
       begin
         #1;
         kept = v === '1;
+      end
+    join
+  endtask
+
+  // A value past the stack cut into a head past the stack and two narrow parts
+  // a frame holds, which take their bits from one read of the value.
+  typedef logic [8388607:0] joined_t;
+  typedef logic [8388591:0] head_t;
+  typedef struct { joined_t whole; int tag; } holding_t;
+
+  function automatic bit cut_of(joined_t whole);
+    head_t h;
+    logic [7:0] m, t;
+    {h, m, t} = whole;
+    return h === whole[8388607:16] && m === whole[15:8] && t === whole[7:0];
+  endfunction
+
+  function automatic bit cut_of_local(head_t head);
+    joined_t whole = {head, 8'h3C, 8'h5A};
+    head_t h;
+    logic [7:0] m, t;
+    {h, m, t} = whole;
+    return h === head && m === 8'h3C && t === 8'h5A;
+  endfunction
+
+  function automatic bit cut_of_member(head_t head);
+    holding_t holding;
+    head_t h;
+    logic [7:0] m, t;
+    holding.whole = {head, 8'h3C, 8'h5A};
+    holding.tag = 1;
+    {h, m, t} = holding.whole;
+    return h === head && m === 8'h3C && t === 8'h5A;
+  endfunction
+
+  task automatic cut_captured(output bit cut);
+    joined_t whole;
+    whole = {{8388592{1'b1}}, 8'h3C, 8'h5A};
+    fork
+      begin
+        head_t h;
+        logic [7:0] m, t;
+        #1;
+        {h, m, t} = whole;
+        cut = h === '1 && m === 8'h3C && t === 8'h5A;
       end
     join
   endtask
@@ -170,6 +216,8 @@ module Test;
   typedef union { wide_t w; mem_t x; } u_t;
 
   wide_t a, b, nb, late, later;
+  head_t cut_head;
+  logic [7:0] cut_mid, cut_tail;
   logic [4095:0] mid, mid_later;
   logic hp, hq, hs;
   Holder #(.Q({4194304{1'b1}})) h(.p(hp), .q(hq), .s(hs));
@@ -193,7 +241,7 @@ module Test;
   logic c;
   int fd;
   int changes;
-  bit kept;
+  bit kept, cut_kept;
   string text;
 
   always @(a) changes++;
@@ -227,6 +275,13 @@ module Test;
     if (b[101] !== 1'b1 || b[100] !== 1'b0) $fatal(1, "the doubled shift");
     cat = {b, a};
     if (cat[4194304 + 101] !== 1'b1) $fatal(1, "the concatenation");
+    cat[15:0] = 16'h3C5A;
+    {cut_head, cut_mid, cut_tail} = cat;
+    if (cut_head !== cat[8388607:16] || cut_mid !== 8'h3C || cut_tail !== 8'h5A)
+      $fatal(1, "the cut");
+    if (!cut_of(cat)) $fatal(1, "the cut of an argument");
+    if (!cut_of_local(cat[8388607:16])) $fatal(1, "the cut of a local");
+    if (!cut_of_member(cat[8388607:16])) $fatal(1, "the cut of a member");
     a = cat[8388607:4194304];
     if (a !== b) $fatal(1, "the part");
 
@@ -261,6 +316,8 @@ module Test;
     for (int i = 0; i < 2; twice(b)) i++;
     kept_across(kept);
     if (!kept) $fatal(1, "the variable kept across a wait and captured");
+    cut_captured(cut_kept);
+    if (!cut_kept) $fatal(1, "the cut of what a fork captures");
     text = $sformatf("MANY_FORMATS", MANY_ARGUMENTS);
     if (text.len() != MANY_LENGTH) $fatal(1, "the list of many arguments");
     if ($value$plusargs("wide=%h", a)) $fatal(1, "a value named nowhere");

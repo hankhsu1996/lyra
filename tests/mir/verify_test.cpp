@@ -11,6 +11,7 @@
 
 #include "lyra/abi/library_records.hpp"
 #include "lyra/abi/records.hpp"
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -314,11 +315,15 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
       InternalError);
 }
 
-// A node that names a thing, spells a constant, forms a place or reads a
-// variable it names computes nothing itself, so it may stand at two places,
-// and what counts is what it reaches: two reads of a place formed over a
-// computation reach that computation at each. A read of any other storage
-// computes, since a write between two of them would make them two values.
+// A node that names a thing, spells a constant, forms a place or reads a value
+// where it lies in storage only a binding of the body reaches -- a local, a
+// member of one, what a box a local holds owns -- computes nothing itself, so
+// it may stand at two places, and what counts is what it reaches: two reads of
+// a place formed over a computation reach that computation at each. A read of
+// any other storage computes, since a write between two of them would make
+// them two values, such as what a pointer owning nothing reaches; and so does
+// a read of a union's member, which makes a value of its type out of the bits
+// there.
 TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
   EXPECT_NO_THROW(
       Verify(UnitWithBody([](const CompilationUnit& u, Builder body) {
@@ -364,6 +369,55 @@ TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
             ExprStmt{
                 .expr = AddSum(u, body, body.Read(place), body.Read(place))});
       }),
+      "one run evaluates it at two of them"));
+
+  const auto read_through_local = [](PointerOwnership ownership) {
+    return UnitWithCode([ownership](CompilationUnit& u, CallableCode& code) {
+      const TypeId pointer = u.types.Intern(
+          Type{PointerType{
+              .pointee = u.builtins.int_type, .ownership = ownership}});
+      const LocalId local = code.locals.Add(LocalDecl{.type = pointer});
+      Builder body(code.Body(), diag::SourceSpan{});
+      const ExprId read = body.Read(body.Deref(
+          u.types, body.LocalPlace(local, pointer), u.builtins.int_type));
+      body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
+    });
+  };
+  EXPECT_NO_THROW(Verify(read_through_local(PointerOwnership::kUnique)));
+  EXPECT_TRUE(RefusedFor(
+      read_through_local(PointerOwnership::kBorrowed),
+      "one run evaluates it at two of them"));
+
+  const auto member_of_local = [](RecordKind kind) {
+    return UnitWithCode([kind](CompilationUnit& u, CallableCode& code) {
+      const RecordId record = u.records.Add(
+          RecordDecl{
+              .defining_unit = std::nullopt,
+              .path = {},
+              .kind = kind,
+              .elements = {u.builtins.int_type}});
+      u.record_methods.Declare();
+      u.record_methods.Define(record, RecordMethods{});
+      const TypeId type =
+          u.types.Intern(Type{RecordType{.declaration = record}});
+      const LocalId local = code.locals.Add(LocalDecl{.type = type});
+      Builder body(code.Body(), diag::SourceSpan{});
+      const ExprId member = body.Add(
+          Expr{
+              .data =
+                  FieldAccessExpr{
+                      .receiver = body.LocalPlace(local, type),
+                      .field =
+                          ComponentFieldTarget{
+                              .position = base::ComponentIndex{0}}},
+              .type = u.builtins.int_type});
+      const ExprId read = body.Read(member);
+      body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
+    });
+  };
+  EXPECT_NO_THROW(Verify(member_of_local(RecordKind::kStruct)));
+  EXPECT_TRUE(RefusedFor(
+      member_of_local(RecordKind::kUnion),
       "one run evaluates it at two of them"));
 }
 

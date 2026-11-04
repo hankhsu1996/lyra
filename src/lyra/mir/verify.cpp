@@ -140,34 +140,21 @@ void ForEachExpr(const StmtData& data, const auto& reach) {
       data);
 }
 
-// Whether a place names a binding of the body it is in, or a constant: a
-// variable the body declares, or one a closure's body captured, which it
-// reaches as a field of the closure it runs on, as rustc's THIR names a
-// closure's captured variable (`ExprKind::UpvarRef`) the way it names a local.
-// A static variable or property is storage outside the body, which a call the
-// body makes can write.
-auto NamesABinding(const ExprData& place) -> bool {
-  if (const auto* named = std::get_if<ReferenceExpr>(&place)) {
-    return std::holds_alternative<LocalRef>(named->target) ||
-           std::holds_alternative<ConstantRef>(named->target);
-  }
-  const auto* field = std::get_if<FieldAccessExpr>(&place);
-  return field != nullptr &&
-         std::holds_alternative<ClosureFieldTarget>(field->field);
-}
-
 // Whether the node `id` of `block` computes nothing of its own: it names a
 // declared thing, spells a constant, forms a place over what it reaches, or
-// reads a variable it names. What happens where such a node stands is that
-// place's, so one of them reached from two places and two of them are the same
-// program, and the evaluations it stands for are those of what it reaches. A
-// read of any other storage is an evaluation, since a write between two of
-// them makes them two values; and so is reaching an object through a class
-// handle, which opens the handle and can fail the design (LRM 8.4), in the
-// unit as it is built as much as once the conversion has made the opening a
-// call.
-auto ComputesNothingItself(const TypePool& types, const Block& block, ExprId id)
-    -> bool {
+// reads a value where it lies in storage that has a base. What happens where
+// such a node stands is that place's, so one of them reached from two places
+// and two of them are the same program, and the evaluations it stands for are
+// those of what it reaches. A read of storage with no base is an evaluation,
+// since a write between two of them makes them two values -- a static variable
+// or property is storage a call the body makes can write. So is a read of
+// overlaid storage, which makes a value of its type out of the bits there, and
+// reaching an object through a class handle, which opens the handle and can
+// fail the design (LRM 8.4), in the unit as it is built as much as once the
+// conversion has made the opening a call.
+auto ComputesNothingItself(
+    const CompilationUnit& unit, const Block& block, ExprId id) -> bool {
+  const TypePool& types = unit.types;
   const Expr& expr = block.exprs.Get(id);
   return std::visit(
       Overloaded{
@@ -183,7 +170,8 @@ auto ComputesNothingItself(const TypePool& types, const Block& block, ExprId id)
           [](const AddressOfExpr&) { return true; },
           [](const BorrowExpr&) { return true; },
           [&](const CopyExpr& copy) {
-            return NamesABinding(block.exprs.Get(copy.place).data);
+            return ValueLiesInStorage(unit, block, id) &&
+                   BaseOfPlace(types, block, copy.place).has_value();
           },
           [](const DiscriminantExpr&) { return true; },
           [](const FieldAccessExpr&) { return true; },
@@ -315,10 +303,10 @@ struct PlacesReached {
 // is, and every time for one that computes nothing itself, since each place it
 // stands at reaches its operands again.
 void Reach(
-    const TypePool& types, const Block& block, PlacesReached& reached,
+    const CompilationUnit& unit, const Block& block, PlacesReached& reached,
     ExprId id, std::optional<ExprId> from, std::vector<SelectedArm>& under) {
   const ExprData& data = block.exprs.Get(id).data;
-  if (!ComputesNothingItself(types, block, id)) {
+  if (!ComputesNothingItself(unit, block, id)) {
     std::vector<Place>& places = reached.at.at(id.value);
     places.push_back(Place{.from = from, .under = under});
     if (places.size() > 1) {
@@ -329,16 +317,16 @@ void Reach(
     reached.entries.at(steps->scope.value).push_back(steps->value);
   }
   if (const auto* selection = std::get_if<ConditionalExpr>(&data)) {
-    Reach(types, block, reached, selection->condition, id, under);
+    Reach(unit, block, reached, selection->condition, id, under);
     under.push_back(SelectedArm{.conditional = id, .is_then = true});
-    Reach(types, block, reached, selection->then_value, id, under);
+    Reach(unit, block, reached, selection->then_value, id, under);
     under.back().is_then = false;
-    Reach(types, block, reached, selection->else_value, id, under);
+    Reach(unit, block, reached, selection->else_value, id, under);
     under.pop_back();
     return;
   }
   ForEachOperand(data, [&](ExprId operand, OperandUse) {
-    Reach(types, block, reached, operand, id, under);
+    Reach(unit, block, reached, operand, id, under);
   });
 }
 
@@ -370,14 +358,14 @@ auto DescribePlace(const Block& block, const Place& place) -> std::string {
 // `entered_at` is what the enclosing block's block expressions name as their
 // value among this block's nodes.
 void VerifyNoRunEvaluatesTwice(
-    const TypePool& types, const Block& block,
+    const CompilationUnit& unit, const Block& block,
     std::span<const ExprId> entered_at, const auto& describe) {
   PlacesReached reached{
       .at = std::vector<std::vector<Place>>(block.exprs.size()),
       .entries = std::vector<std::vector<ExprId>>(block.child_scopes.size())};
   std::vector<SelectedArm> under;
   const auto reach = [&](ExprId id) {
-    Reach(types, block, reached, id, std::nullopt, under);
+    Reach(unit, block, reached, id, std::nullopt, under);
   };
   for (const StmtId id : block.root_stmts) {
     ForEachExpr(block.stmts.Get(id).data, reach);
@@ -400,7 +388,7 @@ void VerifyNoRunEvaluatesTwice(
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyNoRunEvaluatesTwice(
-        types, block.child_scopes.Get(id), reached.entries.at(id.value),
+        unit, block.child_scopes.Get(id), reached.entries.at(id.value),
         describe);
   }
 }
@@ -2692,7 +2680,7 @@ void VerifyCode(
   if (!code.body.has_value()) {
     return;
   }
-  VerifyNoRunEvaluatesTwice(unit.types, *code.body, {}, describe);
+  VerifyNoRunEvaluatesTwice(unit, *code.body, {}, describe);
   VerifyPlacesAreRead(unit, *code.body, {}, describe);
   std::map<LocalId, int> named;
   CountNamings(*code.body, named);
@@ -3642,14 +3630,14 @@ void VerifySharedCodeNamesNothingInternal(
 
 }  // namespace
 
-auto EvaluatesNothing(const TypePool& types, const Block& block, ExprId id)
-    -> bool {
-  if (!ComputesNothingItself(types, block, id)) {
+auto EvaluatesNothing(
+    const CompilationUnit& unit, const Block& block, ExprId id) -> bool {
+  if (!ComputesNothingItself(unit, block, id)) {
     return false;
   }
   bool nothing = true;
   ForEachOperand(block.exprs.Get(id).data, [&](ExprId operand, OperandUse) {
-    nothing = nothing && EvaluatesNothing(types, block, operand);
+    nothing = nothing && EvaluatesNothing(unit, block, operand);
   });
   return nothing;
 }

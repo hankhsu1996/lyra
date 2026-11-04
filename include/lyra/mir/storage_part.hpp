@@ -2,11 +2,14 @@
 
 #include <cstdint>
 #include <optional>
+#include <variant>
 
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -75,6 +78,22 @@ auto ReadIfOverlaid(const CompilationUnit& unit, Builder block, ExprId object)
 // where it lies and a prvalue in a temporary.
 auto Borrow(const CompilationUnit& unit, Builder block, ExprId operand)
     -> ExprId;
+
+// What a place is based on, as rustc names a place by `Place::local` and its
+// projections: a local the body declares, a constant of the unit, or a field
+// of the closure the body runs on, which the body reaches through its receiver
+// as rustc's THIR names a captured variable (`ExprKind::UpvarRef`) the way it
+// names a local.
+using PlaceBase = std::variant<LocalId, ConstantId, ClosureFieldTarget>;
+
+// What the place `place` of `block` is based on, where nothing but that base
+// reaches it: the base itself, then field steps and dereferences of a uniquely
+// owning pointer, whose pointee nothing reaches but through its owner. A place
+// reached through any other pointer lies wherever the pointer points, and has
+// no base unless it is a field of the closure the body runs on. Storage with a
+// base is changed only by what names that base.
+auto BaseOfPlace(const TypePool& types, const Block& block, ExprId place)
+    -> std::optional<PlaceBase>;
 
 // Whether the value the node `id` of `block` stands for already lies in
 // storage -- a place, a read of one that takes the value as it lies, or what

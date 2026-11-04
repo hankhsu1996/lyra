@@ -23,36 +23,13 @@ namespace lyra::mir {
 
 namespace {
 
-// The local of the frame a place of `block` lies in, where it lies in one: a
-// local, a component of one reached by field steps, or what a box a local holds
-// owns, which nothing reaches but through that local -- the base local of the
-// place, as rustc names a place by `Place::local` and its projections. A place
-// reached through any other pointer lies wherever the pointer points.
+// The local of the frame a place of `block` lies in, where it is based on one.
 auto BaseLocal(const TypePool& types, const Block& block, ExprId place)
     -> std::optional<LocalId> {
-  const ExprData& data = block.exprs.Get(place).data;
-  if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
-    return BaseLocal(types, block, field->receiver);
-  }
-  if (const auto* deref = std::get_if<DerefExpr>(&data)) {
-    const Expr& pointer = block.exprs.Get(deref->pointer);
-    const auto* box = types.Get(pointer.type).As<PointerType>();
-    if (box == nullptr) {
-      return std::nullopt;
-    }
-    switch (box->ownership) {
-      case PointerOwnership::kUnique:
-        break;
-      case PointerOwnership::kShared:
-      case PointerOwnership::kBorrowed:
-        return std::nullopt;
-    }
-    // The box opened where it lies, or read out of where it lies.
-    const auto* read = std::get_if<CopyExpr>(&pointer.data);
-    return BaseLocal(
-        types, block, read != nullptr ? read->place : deref->pointer);
-  }
-  return ReferencedLocal(data);
+  const std::optional<PlaceBase> base = BaseOfPlace(types, block, place);
+  const LocalId* local =
+      base.has_value() ? std::get_if<LocalId>(&*base) : nullptr;
+  return local != nullptr ? std::optional{*local} : std::nullopt;
 }
 
 // Adds to `borrowed` every local of `block`, and of the blocks nested in it,

@@ -580,7 +580,7 @@ class BodyTemporaries {
       BlockRebuild& rebuild, mir::ExprId operand) const -> bool {
     return !MakesAValueItHolds(rebuild.From(), operand) &&
            !mir::ValueLiesInStorage(*unit_, rebuild.From(), operand) &&
-           !mir::EvaluatesNothing(unit_->types, rebuild.From(), operand);
+           !mir::EvaluatesNothing(*unit_, rebuild.From(), operand);
   }
 
   // `operand` carried over as `taken` takes it, `before_a_step` where a later
