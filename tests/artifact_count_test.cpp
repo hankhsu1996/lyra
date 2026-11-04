@@ -1487,6 +1487,55 @@ endmodule
   EXPECT_EQ(BodiesOf(*design, "Holds"), 2U);
 }
 
+TEST(ArtifactCount, InstancesWhosePortsAreBoundDifferentlyAreCompiledOnce) {
+  // A type an interface declares, named through a port, is the bound
+  // instance's (LRM 6.22, 25.10), and which instance that is is a value each
+  // instance is built with rather than a parameter of its code. So two
+  // instances whose ports are bound to different instances, even in swapped
+  // order, are one body -- also where the module writes a name passing
+  // through an object of one of those instances' classes, so that its types
+  // could be reached along that name too.
+  const auto design = LowerDesign(R"(
+interface Bus;
+  class Shape;
+  endclass
+
+  interface class Named;
+  endclass
+
+  Shape probe;
+endinterface
+
+module Two(Bus a, Bus b);
+  typedef a.Shape shape_t;
+  typedef a.Named an_t;
+  typedef b.Named bn_t;
+
+  class Both extends shape_t implements an_t, bn_t;
+  endclass
+
+  function automatic int is_b(Both o);
+    bn_t n;
+    return $cast(n, o);
+  endfunction
+
+  function automatic int probed();
+    return Top.bus1.probe != null;
+  endfunction
+endmodule
+
+module Top;
+  Bus bus1 ();
+  Bus bus2 ();
+  Two two (bus1, bus2);
+  Two swapped (bus2, bus1);
+endmodule
+)");
+  ASSERT_TRUE(design.has_value());
+  EXPECT_EQ(UnitsOf(*design, "Two"), 1U);
+  EXPECT_EQ(BodiesOf(*design, "Two"), 1U);
+}
+
 // Every body the design `source` is compiled to, lowered to MIR, each
 // rewritten as the command line rewrites it.
 auto LowerBodiesToMir(std::string_view source)

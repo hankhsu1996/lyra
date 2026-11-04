@@ -1543,7 +1543,10 @@ auto UnitLowerer::StartThroughPort(
   if (!LowersAnInstance()) return std::nullopt;
   const slang::ast::Scope* holder = target.getContainingInstance();
   // Two ports bound to one instance name one type of it (LRM 6.22), so the
-  // first in declaration order is as good as any.
+  // first in declaration order answers rightly. It is not always the port the
+  // source wrote, which the elaborated type does not keep, so an instance
+  // binding two ports to one instance reads differently from one binding them
+  // to two.
   for (const slang::ast::Symbol* member :
        scope_->asSymbol().as<slang::ast::InstanceBodySymbol>().getPortList()) {
     const auto* port = member->as_if<slang::ast::InterfacePortSymbol>();
@@ -1587,9 +1590,12 @@ auto UnitLowerer::RouteToReplicatingScope(
   // The standard names a type of another design element only through an
   // interface port bound to the instance declaring it (LRM 6.18, 25.10), so
   // where a port of the reader is bound to that instance the route starts
-  // there, and reads alike in every instance bound alike; a type of the
-  // reader's own instance, or of a scope enclosing it, is reached the way a
-  // name written there is.
+  // there, and reads alike in instances whose ports are bound to different
+  // instances. The port comes first because a hierarchical name of the reader
+  // passing through one of that instance's classes lands there too, and a
+  // route starting where it lands would read differently in each instance
+  // bound differently. A type of the reader's own instance, or of a scope
+  // enclosing it, is reached the way a name written there is.
   auto origin = StartThroughPort(frame, scope);
   if (!origin.has_value()) origin = StartReaching(scope);
   if (!origin.has_value()) return std::nullopt;

@@ -76,10 +76,16 @@ names a type of another design element only through an interface port's typedef 
 and a name through an interface port starts at the port, whose binding says which instance it stands
 for at each position (LRM 25.3). So where a port of the reader is bound to the instance declaring a
 base or an interface class, its route starts at that port, at the position the port holds the
-instance, and reads alike in every instance bound alike, which keeps equal code equal; a type of the
-reader's own instance, or of a scope enclosing it, is reached the way a name written there is. The
-elaborated type keeps the instance and not the port, so the port is found from the binding; two
-ports bound to one instance name one type of it, and the first is taken.
+instance, so two instances whose ports are bound to different instances read alike, which keeps
+equal code equal. The port is tried before where the reader's hierarchical names land, because where
+one of them passes through a class of the instance the port is bound to, it lands in that instance
+as well, and a route starting where it lands would differ between two instances bound differently. A
+type of the reader's own instance, or of a scope enclosing it, is reached the way a name written
+there is. The elaborated type keeps the instance and not the port it was written through, so the
+port is found from the binding, and where two ports are bound to that instance the first is taken.
+That is not yet the port the source wrote: an instance binding two ports to one instance reads
+differently from one binding them to two, and the two are compiled apart, though each answers
+rightly.
 
 **One compiled class, not one per instance.** LRM 6.22's "unique type" is a type-identity rule the
 front end enforces -- assigning between two instances' versions is rejected where the design
