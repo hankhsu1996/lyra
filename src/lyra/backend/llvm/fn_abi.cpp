@@ -42,6 +42,33 @@ auto ToldOfType(std::optional<lir::TypeId> stated, std::string_view what)
   return *stated;
 }
 
+// What an entry building an array of `built` is told of it, which no operand
+// states: a fixed-size unpacked array's type, a queue's whole type, or an
+// element type led by an associative array's index order.
+auto BuiltArrayTypeArgs(const lir::TypePool& types, lir::TypeId built)
+    -> std::vector<TypeArg> {
+  const lir::Type& array = types.Get(built);
+  if (array.Is<lir::UnpackedArrayType>()) {
+    return {TypeConstantArg{.type = built}};
+  }
+  // A queue is told its whole type, whose bound is part of it (LRM 7.10).
+  if (array.IsQueue()) {
+    return {QueueTypeArg{.type = built}};
+  }
+  const std::optional<lir::TypeId> element = array.ContainerElementType();
+  if (!element.has_value()) {
+    throw InternalError(
+        "llvm codegen: an entry told of the array it builds builds no array "
+        "-- please report this as a bug");
+  }
+  // An associative array holds its entries in the order its index type
+  // imposes (LRM 7.8), which it is built holding.
+  if (const std::optional<lir::TypeId> key = array.IndexType()) {
+    return {IndexOrderArg{.key = *key}, ElementTypeArg{.type = *element}};
+  }
+  return {ElementTypeArg{.type = *element}};
+}
+
 }  // namespace
 
 auto WrapperOf(const lir::Type& type)
@@ -169,6 +196,7 @@ auto ToldModeOf(
           [](const ToldNothing&) -> Mode { return std::nullopt; },
           [](const ToldWidthMetadataAhead&) -> Mode { return std::nullopt; },
           [](const ToldTypeMetadataAhead&) -> Mode { return std::nullopt; },
+          [](const ToldContainerTypeAhead&) -> Mode { return std::nullopt; },
           [](const ToldTypeAndNetFoldsAhead&) -> Mode { return std::nullopt; },
           [](const ToldTakePositions&) -> Mode { return std::nullopt; },
           [](const ToldOperations&) -> Mode { return std::nullopt; },
@@ -259,6 +287,7 @@ auto TypeArgsOfTheRealization(const std::optional<Realization>& realization)
           [](const ToldWidthMetadata&) -> Args { return {}; },
           [](const ToldWidthMetadataAhead&) -> Args { return {}; },
           [](const ToldTypeMetadataAhead&) -> Args { return {}; },
+          [](const ToldContainerTypeAhead&) -> Args { return {}; },
           [](const ToldTypeAndNetFoldsAhead&) -> Args { return {}; },
           [](const ToldKeyType&) -> Args { return {}; },
           [](const ToldEntryType&) -> Args { return {}; }},
@@ -317,29 +346,8 @@ auto TypeArgsToldAs(
     case support::AnswerTold::kAnswerTypeAndOperations:
       return {
           ElementTypeArg{.type = answered}, OperationsArg{.type = answered}};
-    case support::AnswerTold::kBuiltArray: {
-      const lir::Type& built = types.Get(answered);
-      if (built.Is<lir::UnpackedArrayType>()) {
-        return {TypeConstantArg{.type = answered}};
-      }
-      // A queue is told its whole type, whose bound is part of it (LRM
-      // 7.10).
-      if (built.IsQueue()) {
-        return {QueueTypeArg{.type = answered}};
-      }
-      const std::optional<lir::TypeId> element = built.ContainerElementType();
-      if (!element.has_value()) {
-        throw InternalError(
-            "llvm codegen: an entry told of the array it builds answers with "
-            "no array -- please report this as a bug");
-      }
-      // An associative array holds its entries in the order its index type
-      // imposes (LRM 7.8), which it is built holding.
-      if (const std::optional<lir::TypeId> key = built.IndexType()) {
-        return {IndexOrderArg{.key = *key}, ElementTypeArg{.type = *element}};
-      }
-      return {ElementTypeArg{.type = *element}};
-    }
+    case support::AnswerTold::kBuiltArray:
+      return BuiltArrayTypeArgs(types, answered);
     case support::AnswerTold::kNothing:
     case support::AnswerTold::kElementType:
     case support::AnswerTold::kIntegralExtent:
@@ -351,7 +359,8 @@ auto TypeArgsToldAs(
 
 // What a call through `realization`, none where the library realizes the
 // entry once, hands it ahead of its operands.
-auto ImplicitArgOf(const std::optional<Realization>& realization)
+auto ImplicitArgOf(
+    const lir::TypePool& types, const std::optional<Realization>& realization)
     -> ImplicitArg {
   if (!realization.has_value()) {
     return NoImplicitArg{};
@@ -362,7 +371,12 @@ auto ImplicitArgOf(const std::optional<Realization>& realization)
             return WidthMetadataArg{.of = realization->of};
           },
           [&](const ToldTypeMetadataAhead&) -> ImplicitArg {
-            return TypeMetadataArg{.of = realization->of};
+            return TypeMetadataArg{
+                .args = {ElementTypeArg{.type = realization->of}}};
+          },
+          [&](const ToldContainerTypeAhead&) -> ImplicitArg {
+            return TypeMetadataArg{
+                .args = BuiltArrayTypeArgs(types, realization->of)};
           },
           [&](const ToldTypeAndNetFoldsAhead&) -> ImplicitArg {
             return TypeAndNetFoldsArg{.of = realization->of};
@@ -456,7 +470,7 @@ auto ArrangeCall(
   std::vector<TypeArg> type_args = TypeArgsOfTheRealization(realization);
   std::ranges::move(told_of_the_answer, std::back_inserter(type_args));
   return FnAbi{
-      .implicit_arg = ImplicitArgOf(realization),
+      .implicit_arg = ImplicitArgOf(types, realization),
       .named_part = named_part,
       .args = std::move(args),
       .type_args = std::move(type_args)};

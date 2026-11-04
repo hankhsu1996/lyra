@@ -17,7 +17,7 @@
 #include <vector>
 
 #include "lyra/backend/llvm/entry_realizations.hpp"
-#include "lyra/backend/llvm/llvm_fn_abi.hpp"
+#include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -232,6 +232,17 @@ auto Disagreement(
     return "is declared told the type of the values it holds ahead of its "
            "operands and does not open with a type";
   }
+  // A container the library holds is told what building the empty one of its
+  // type is told: an associative array its index order and its element type,
+  // a sequence the one type. A declaration names no domain, so which of the
+  // two a prototype opens with is not held here.
+  if (std::holds_alternative<ToldContainerTypeAhead>(declared.told)) {
+    take(Hands::kIndexOrder);
+    if (!take(Hands::kTypeConstant)) {
+      return "is declared told the type of the container it holds ahead of "
+             "its operands and does not open with it";
+    }
+  }
   if (std::holds_alternative<ToldTypeAndNetFoldsAhead>(declared.told) &&
       !(take(Hands::kTypeConstant) && take(Hands::kNetFolds))) {
     return "is declared told the type of the values it holds and how a net "
@@ -255,6 +266,7 @@ auto Disagreement(
             [&](const ToldNothing&) { return read; },
             [&](const ToldWidthMetadataAhead&) { return read; },
             [&](const ToldTypeMetadataAhead&) { return read; },
+            [&](const ToldContainerTypeAhead&) { return read; },
             [&](const ToldTypeAndNetFoldsAhead&) { return read; },
             [&](const ToldWidthMetadata& t) {
               return told_at(t.after, PassWithWidth{.type = lir::TypeId{}});
@@ -277,6 +289,7 @@ auto Disagreement(
               [](const ToldNothing&) -> std::size_t { return 0; },
               [](const ToldWidthMetadataAhead&) -> std::size_t { return 0; },
               [](const ToldTypeMetadataAhead&) -> std::size_t { return 0; },
+              [](const ToldContainerTypeAhead&) -> std::size_t { return 0; },
               [](const ToldTypeAndNetFoldsAhead&) -> std::size_t { return 0; },
               [](const ToldWidthMetadata& t) { return t.after + 1; },
               [](const ToldLaidOutType&) -> std::size_t { return 0; },
@@ -862,6 +875,14 @@ TEST(EntryPrototypeTest, WhatStorageIsToldAheadOpensItsPrototype) {
   EXPECT_FALSE(disagrees(ToldTypeAndNetFoldsAhead{}, kTypeAndFoldsFirst));
   EXPECT_TRUE(disagrees(ToldTypeAndNetFoldsAhead{}, kTypeFirst));
   EXPECT_TRUE(disagrees(ToldTypeMetadataAhead{}, kTypeAndFoldsFirst));
+  constexpr std::string_view kOrderAndTypeFirst =
+      "void lyra_rt_probe(const void* key_index_order, "
+      "const void* element_type, void* storage);";
+  EXPECT_FALSE(disagrees(ToldContainerTypeAhead{}, kTypeFirst));
+  EXPECT_FALSE(disagrees(ToldContainerTypeAhead{}, kOrderAndTypeFirst));
+  EXPECT_TRUE(disagrees(ToldContainerTypeAhead{}, kStorageFirst));
+  EXPECT_TRUE(disagrees(ToldContainerTypeAhead{}, kWidthFirst));
+  EXPECT_TRUE(disagrees(ToldNothing{}, kOrderAndTypeFirst));
 }
 
 // What a realization is told after its operands -- the operations of its

@@ -42,11 +42,6 @@ class LaidOutStorage : public TailValue<LaidOutStorage> {
     }
   }
 
-  // Whether the storage holds a value a write may replace, which it does from
-  // the moment it is built.
-  [[nodiscard]] static auto IsInstalled() -> bool {
-    return true;
-  }
   [[nodiscard]] auto Type() const -> const value::ValueType& {
     return held_->Type();
   }

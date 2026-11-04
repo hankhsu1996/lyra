@@ -178,33 +178,41 @@ void TypeOperationCollector::VisitMode(const PassMode& mode) {
   }
 }
 
+void TypeOperationCollector::VisitTypeArg(const TypeArg& told) {
+  std::visit(
+      Overloaded{
+          [&](const TypeConstantArg& of) { VisitValueTypeUse(of.type); },
+          [](const TypeExtentArg&) {},
+          [&](const ElementTypeArg& of) { VisitElementTypeUse(of.type); },
+          [&](const QueueTypeArg& of) {
+            VisitElementTypeUse(
+                *unit_->types.Get(of.type).ContainerElementType());
+          },
+          [&](const TakePositionsArg& of) { VisitTakePositionsUse(of.type); },
+          [](const IndexOrderArg&) {},
+          [&](const OperationsArg& of) { VisitOperationsUse(of.type); }},
+      told);
+}
+
 void TypeOperationCollector::VisitAbi(const FnAbi& abi) {
   std::visit(
       Overloaded{
           [](const NoImplicitArg&) {}, [](const WidthMetadataArg&) {},
-          [&](const TypeMetadataArg& held) { VisitElementTypeUse(held.of); },
           [&](const TypeAndNetFoldsArg& held) {
             VisitElementTypeUse(held.of);
             VisitNetFoldsUse(held.of);
+          },
+          [&](const TypeMetadataArg& held) {
+            for (const TypeArg& told : held.args) {
+              VisitTypeArg(told);
+            }
           }},
       abi.implicit_arg);
   for (const ArgAbi& arg : abi.args) {
     VisitMode(arg.mode);
   }
   for (const TypeArg& told : abi.type_args) {
-    std::visit(
-        Overloaded{
-            [&](const TypeConstantArg& of) { VisitValueTypeUse(of.type); },
-            [](const TypeExtentArg&) {},
-            [&](const ElementTypeArg& of) { VisitElementTypeUse(of.type); },
-            [&](const QueueTypeArg& of) {
-              VisitElementTypeUse(
-                  *unit_->types.Get(of.type).ContainerElementType());
-            },
-            [&](const TakePositionsArg& of) { VisitTakePositionsUse(of.type); },
-            [](const IndexOrderArg&) {},
-            [&](const OperationsArg& of) { VisitOperationsUse(of.type); }},
-        told);
+    VisitTypeArg(told);
   }
 }
 

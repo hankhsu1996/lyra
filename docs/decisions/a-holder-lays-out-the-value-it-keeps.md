@@ -1,10 +1,11 @@
 # A holder lays out the value it keeps, from the type it is told
 
-Date: 2026-10-12 Status: accepted. Supersedes D6 of
-[a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md), and the parts of
-[a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) that put a tuple's type in its
-bytes and hold a tuple in storage of its own; carries out for every holder what D6 of
-[a-packed-value-is-its-words](a-packed-value-is-its-words.md) states of a value wider than a word.
+Date: 2026-10-12, revised 2026-11-03: D2 names the containers the library holds. Status: accepted.
+Supersedes D6 of [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md),
+and the parts of [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) that put a
+tuple's type in its bytes and hold a tuple in storage of its own; carries out for every holder what
+D6 of [a-packed-value-is-its-words](a-packed-value-is-its-words.md) states of a value wider than a
+word.
 
 ## Context
 
@@ -62,8 +63,18 @@ holder followed by a value of that size, as it lays out every other member from 
 
 **D2. The holder is told the value's width or type where it is built.** A width for an integral
 value, the type's constant for a tuple, a union and an array -- the same constant every entry acting
-on such a value is told. Every entry acting on a holder after it is built is told nothing of the
-values it is handed, since the holder keeps the type.
+on such a value is told. A holder of a queue, a dynamic array or an associative array is told what
+an entry building the empty container of that type is told: a queue its whole type, its bound
+included (LRM 7.10.5), a dynamic array its element type, and an associative array its index order
+and its element type. Every entry acting on a holder after it is built is told nothing of the values
+it is handed, since the holder keeps the type.
+
+Revised 2026-11-03: D2 named only the values a holder lays out after itself, so a holder of a
+container was built holding a container of no type, which took its type at the declaration's first
+write. That is the shape D5 and the first rejected alternative below rule out, and it was reachable:
+a method a base constructor calls may write a property of the extending class before that property's
+initializer runs (LRM 8.7, 8.17 NOTE 2), and growing a queue or an associative array there was
+refused as a compiler bug. A container's value now exists only at its type.
 
 **D3. A value past the size a value may lie in what holds it is one address of storage the holder
 owns,** allocated where the holder is built and taken into afterwards. The bound is the one

@@ -259,7 +259,7 @@ auto ValueCellAt(void* cell) -> typename ValueCellFor<T>::Type& {
 }
 
 // A counted hold on a new variable of `T`, told the width or the type of a
-// value it keeps after itself.
+// value it keeps after itself, or the type of a container it holds.
 template <class T, class... Told>
 auto MakeSharedCell(void* out, const Told&... told) -> void* {
   if constexpr (DynamicallySized<T>) {
@@ -268,7 +268,7 @@ auto MakeSharedCell(void* out, const Told&... told) -> void* {
         SharedPointer::MakeTailCell<typename StorageFor<T>::Type>(told...));
   } else {
     return std::construct_at(
-        static_cast<SharedPointer*>(out), SharedPointer::MakeCell<T>());
+        static_cast<SharedPointer*>(out), SharedPointer::MakeCell<T>(told...));
   }
 }
 
@@ -425,6 +425,12 @@ auto TupleTypeAt(const void* type) -> const value::TupleType& {
 // elements and its bound.
 auto QueueTypeAt(const void* type) -> const value::QueueType& {
   return *static_cast<const value::QueueType*>(type);
+}
+
+// How an associative array an entry builds orders its keys (LRM 7.8), which
+// it is built holding.
+auto IndexOrderAt(const void* order) -> const value::IndexOrder& {
+  return *static_cast<const value::IndexOrder*>(order);
 }
 
 // A type with how a value of it starts, as an entry is told one: by one
@@ -1791,7 +1797,8 @@ auto HistoryAt(void* history) -> SampledHistory<T>& {
 }
 
 // A cell the running activation owns, for what an awaited call answers, told
-// the width or the type of a value it keeps after itself.
+// the width or the type of a value it keeps after itself, or the type of a
+// container it holds.
 template <class T, class... Told>
 auto AllocateValueCell(const Told&... told) noexcept -> void* {
   using Cell = typename ValueCellFor<T>::Type;
@@ -1801,7 +1808,7 @@ auto AllocateValueCell(const Told&... told) noexcept -> void* {
     return values.NewWithTail<Cell>(
         StorageFor<T>::Type::ValueLayoutFor(told...), told...);
   } else {
-    return values.New<Cell>();
+    return values.New<Cell>(told...);
   }
 }
 
@@ -3005,16 +3012,22 @@ auto lyra_rt_laidout_shared_cell_make(const void* held_type, void* out)
       out, lyra::runtime::ElementTypeAt(held_type));
 }
 
-auto lyra_rt_dynarray_shared_cell_make(void* out) -> void* {
-  return MakeSharedCell<RuntimeDynamicArray>(out);
+auto lyra_rt_dynarray_shared_cell_make(const void* element_type, void* out)
+    -> void* {
+  return MakeSharedCell<RuntimeDynamicArray>(
+      out, lyra::runtime::ElementTypeAt(element_type));
 }
 
-auto lyra_rt_queue_shared_cell_make(void* out) -> void* {
-  return MakeSharedCell<RuntimeQueue>(out);
+auto lyra_rt_queue_shared_cell_make(const void* queue_type, void* out)
+    -> void* {
+  return MakeSharedCell<RuntimeQueue>(out, QueueTypeAt(queue_type));
 }
 
-auto lyra_rt_assocarray_shared_cell_make(void* out) -> void* {
-  return MakeSharedCell<RuntimeAssociativeArray>(out);
+auto lyra_rt_assocarray_shared_cell_make(
+    const void* key_index_order, const void* element_type, void* out) -> void* {
+  return MakeSharedCell<RuntimeAssociativeArray>(
+      out, lyra::runtime::IndexOrderAt(key_index_order),
+      lyra::runtime::ElementTypeAt(element_type));
 }
 
 auto lyra_rt_shared_pointer_deref(void* handle) -> void* {
@@ -5762,8 +5775,10 @@ auto lyra_rt_dynarray_cell_sampled_get(void* cell, const void* location)
       SourceLocationAt(location));
 }
 
-auto lyra_rt_dynarray_value_cell_alloc() noexcept -> void* {
-  return AllocateValueCell<RuntimeDynamicArray>();
+auto lyra_rt_dynarray_value_cell_alloc(const void* element_type) noexcept
+    -> void* {
+  return AllocateValueCell<RuntimeDynamicArray>(
+      lyra::runtime::ElementTypeAt(element_type));
 }
 
 void lyra_rt_dynarray_value_cell_store(void* cell, const void* value) noexcept {
@@ -6672,8 +6687,8 @@ auto lyra_rt_queue_cell_sampled_get(void* cell, const void* location) -> const
   return &VariableAt<RuntimeQueue>(cell).SampledGet(SourceLocationAt(location));
 }
 
-auto lyra_rt_queue_value_cell_alloc() noexcept -> void* {
-  return AllocateValueCell<RuntimeQueue>();
+auto lyra_rt_queue_value_cell_alloc(const void* queue_type) noexcept -> void* {
+  return AllocateValueCell<RuntimeQueue>(QueueTypeAt(queue_type));
 }
 
 void lyra_rt_queue_value_cell_store(void* cell, const void* value) noexcept {
@@ -6689,7 +6704,7 @@ auto lyra_rt_assocarray_default(
     -> void* {
   return Emplace(
       out, RuntimeAssociativeArray(
-               *static_cast<const lyra::value::IndexOrder*>(key_index_order),
+               lyra::runtime::IndexOrderAt(key_index_order),
                lyra::runtime::ElementTypeAt(answer_element_type)));
 }
 
@@ -6702,7 +6717,7 @@ auto lyra_rt_assocarray_from_entries(
     LyraSpan entries, const void* entry_type, const void* key_index_order,
     const void* answer_element_type, void* out) -> void* {
   RuntimeAssociativeArray array(
-      *static_cast<const lyra::value::IndexOrder*>(key_index_order),
+      lyra::runtime::IndexOrderAt(key_index_order),
       lyra::runtime::ElementTypeAt(answer_element_type));
   lyra::runtime::StoreLiteralEntries(
       array, entries, lyra::runtime::TupleTypeAt(entry_type));
@@ -6881,8 +6896,11 @@ auto lyra_rt_assocarray_cell_sampled_get(void* cell, const void* location)
       SourceLocationAt(location));
 }
 
-auto lyra_rt_assocarray_value_cell_alloc() noexcept -> void* {
-  return AllocateValueCell<RuntimeAssociativeArray>();
+auto lyra_rt_assocarray_value_cell_alloc(
+    const void* key_index_order, const void* element_type) noexcept -> void* {
+  return AllocateValueCell<RuntimeAssociativeArray>(
+      lyra::runtime::IndexOrderAt(key_index_order),
+      lyra::runtime::ElementTypeAt(element_type));
 }
 
 void lyra_rt_assocarray_value_cell_store(
@@ -7969,14 +7987,18 @@ void lyra_rt_laidout_cell_construct(const void* held_type, void* storage) {
       storage, lyra::runtime::ElementTypeAt(held_type));
 }
 
-void lyra_rt_dynarray_cell_construct(void* storage) {
-  BuildAt<Var<RuntimeDynamicArray>>(storage);
+void lyra_rt_dynarray_cell_construct(const void* element_type, void* storage) {
+  BuildAt<Var<RuntimeDynamicArray>>(
+      storage, lyra::runtime::ElementTypeAt(element_type));
 }
-void lyra_rt_queue_cell_construct(void* storage) {
-  BuildAt<Var<RuntimeQueue>>(storage);
+void lyra_rt_queue_cell_construct(const void* queue_type, void* storage) {
+  BuildAt<Var<RuntimeQueue>>(storage, QueueTypeAt(queue_type));
 }
-void lyra_rt_assocarray_cell_construct(void* storage) {
-  BuildAt<Var<RuntimeAssociativeArray>>(storage);
+void lyra_rt_assocarray_cell_construct(
+    const void* key_index_order, const void* element_type, void* storage) {
+  BuildAt<Var<RuntimeAssociativeArray>>(
+      storage, lyra::runtime::IndexOrderAt(key_index_order),
+      lyra::runtime::ElementTypeAt(element_type));
 }
 void lyra_rt_managedref_cell_construct(void* storage) {
   BuildAt<Var<ObjectRef>>(storage);
@@ -8002,14 +8024,19 @@ void lyra_rt_laidout_value_cell_construct(
       storage, lyra::runtime::ElementTypeAt(held_type));
 }
 
-void lyra_rt_dynarray_value_cell_construct(void* storage) {
-  BuildAt<ValueCell<RuntimeDynamicArray>>(storage);
+void lyra_rt_dynarray_value_cell_construct(
+    const void* element_type, void* storage) {
+  BuildAt<ValueCell<RuntimeDynamicArray>>(
+      storage, lyra::runtime::ElementTypeAt(element_type));
 }
-void lyra_rt_queue_value_cell_construct(void* storage) {
-  BuildAt<ValueCell<RuntimeQueue>>(storage);
+void lyra_rt_queue_value_cell_construct(const void* queue_type, void* storage) {
+  BuildAt<ValueCell<RuntimeQueue>>(storage, QueueTypeAt(queue_type));
 }
-void lyra_rt_assocarray_value_cell_construct(void* storage) {
-  BuildAt<ValueCell<RuntimeAssociativeArray>>(storage);
+void lyra_rt_assocarray_value_cell_construct(
+    const void* key_index_order, const void* element_type, void* storage) {
+  BuildAt<ValueCell<RuntimeAssociativeArray>>(
+      storage, lyra::runtime::IndexOrderAt(key_index_order),
+      lyra::runtime::ElementTypeAt(element_type));
 }
 void lyra_rt_managedref_value_cell_construct(void* storage) {
   BuildAt<ValueCell<ObjectRef>>(storage);

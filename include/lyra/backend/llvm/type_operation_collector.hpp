@@ -75,6 +75,7 @@ class TypeOperationCollector {
   void VisitAbi(const std::optional<FnAbi>& abi);
   void VisitAbi(const diag::Result<FnAbi>& abi);
   void VisitMode(const PassMode& mode);
+  void VisitTypeArg(const TypeArg& told);
 
   const lir::CompilationUnit* unit_;
   std::size_t functions_seen_ = 0;

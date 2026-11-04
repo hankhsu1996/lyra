@@ -119,11 +119,16 @@ constexpr DomainSet kNetValues = kFourStateIntegral | kAggregateNets;
 // nothing, whose domain says what they are where they lie; and, among what a
 // variable holds, a tuple, a union and a fixed-size unpacked array, whose
 // bytes do not.
-constexpr DomainSet kHeldThroughEntries =
+// Of those, a holder is built from nothing for all but a container the library
+// holds for every element type alike.
+constexpr DomainSet kHeldThroughEntriesBuiltFromNothing =
     DomainsDeclared([](support::LibraryDecl decl) {
-      return support::DeclarationOf(decl).is_a_data_type;
+      return support::DeclarationOf(decl).is_a_data_type &&
+             !Takes(decl, support::LibraryParam::kElement);
     }) |
     kScalarsBesideIntegral | DomainSet{Domain::kAny, Domain::kManagedRef};
+constexpr DomainSet kHeldThroughEntries =
+    kHeldThroughEntriesBuiltFromNothing | kLibraryContainers;
 constexpr DomainSet kVariableObjects = kHeldThroughEntries | kLaidOutByType;
 constexpr DomainSet kVariableValues = kIntegral | kVariableObjects;
 // What a body's own variable holds: whatever a variable may, and a run of bits,
@@ -356,11 +361,15 @@ constexpr std::array kRealConversions{
 // A cell the library makes -- what a suspending call answers into, or one a
 // counted hold keeps -- is as large as the value it is to hold, so one of
 // words is made at their width, and one of a value laid out by its type with
-// that type.
+// that type; and it holds a value of its type from then on, so one of a
+// container the library holds is made told the container's type.
 constexpr std::array kForCellsMade{
-    RealizedFor{.domains = kOneWordIntegral | kHeldThroughEntries},
+    RealizedFor{
+        .domains = kOneWordIntegral | kHeldThroughEntriesBuiltFromNothing},
     RealizedFor{.domains = kWideIntegral, .told = ToldWidthMetadataAhead{}},
-    RealizedFor{.domains = kLaidOutByType, .told = ToldTypeMetadataAhead{}}};
+    RealizedFor{.domains = kLaidOutByType, .told = ToldTypeMetadataAhead{}},
+    RealizedFor{
+        .domains = kLibraryContainers, .told = ToldContainerTypeAhead{}}};
 // A cell whose value lies where the library states is read and written there,
 // so only an object of the library's own is read and written through an entry.
 constexpr std::array kForCellsReached{
@@ -569,14 +578,13 @@ auto ToldOfAnOperator(support::ValueDomain domain) -> Told {
 }
 
 auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told {
-  // A cell of words, or of a value laid out by its type, lays the value out
-  // after itself, so it has the value's place from the moment it is built.
+  // A member's cell is built told what a cell the library makes is, and a cell
+  // of a value no such cell holds is told nothing.
   const auto cell = [](support::ValueDomain domain) -> Told {
-    if (kWideIntegral.Holds(domain)) {
-      return ToldWidthMetadataAhead{};
-    }
-    if (support::IsLaidOutByItsType(domain)) {
-      return ToldTypeMetadataAhead{};
+    for (const RealizedFor& one : kForCellsMade) {
+      if (one.domains.Holds(domain)) {
+        return ToldOfTheDomain(domain, one.told);
+      }
     }
     return ToldNothing{};
   };

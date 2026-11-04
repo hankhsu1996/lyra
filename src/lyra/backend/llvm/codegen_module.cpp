@@ -271,14 +271,6 @@ auto CodeGenModule::BuildCallArgs(
             args.push_back(WidthArg(types_.RequiredIntegralShapeOf(held.of)));
             return {};
           },
-          [&](const TypeMetadataArg& held) -> diag::Result<void> {
-            auto type_object = value_types_.GetAddrOfElementType(held.of);
-            if (!type_object) {
-              return std::unexpected(std::move(type_object.error()));
-            }
-            args.push_back(*type_object);
-            return {};
-          },
           [&](const TypeAndNetFoldsArg& held) -> diag::Result<void> {
             auto type_object = value_types_.GetAddrOfElementType(held.of);
             if (!type_object) {
@@ -286,6 +278,14 @@ auto CodeGenModule::BuildCallArgs(
             }
             args.push_back(*type_object);
             args.push_back(value_types_.GetAddrOfNetFolds(held.of));
+            return {};
+          },
+          [&](const TypeMetadataArg& held) -> diag::Result<void> {
+            for (const TypeArg& told : held.args) {
+              if (auto crossed = AppendTypeArg(told, args); !crossed) {
+                return std::unexpected(std::move(crossed.error()));
+              }
+            }
             return {};
           }},
       abi.implicit_arg);
@@ -305,65 +305,70 @@ auto CodeGenModule::BuildCallArgs(
     }
   }
   for (const TypeArg& told : abi.type_args) {
-    auto crossed = std::visit(
-        Overloaded{
-            [&](const TypeConstantArg& of) -> diag::Result<void> {
-              auto type_object = value_types_.GetAddrOfValueType(of.type);
-              if (!type_object) {
-                return std::unexpected(std::move(type_object.error()));
-              }
-              args.push_back(*type_object);
-              return {};
-            },
-            [&](const TypeExtentArg& of) -> diag::Result<void> {
-              const value::IntegralShape shape =
-                  types_.RequiredIntegralShapeOf(of.type);
-              args.push_back(WidthArg(shape));
-              args.push_back(FourStateArg(shape));
-              return {};
-            },
-            [&](const ElementTypeArg& of) -> diag::Result<void> {
-              auto element_type = value_types_.GetAddrOfElementType(of.type);
-              if (!element_type) {
-                return std::unexpected(std::move(element_type.error()));
-              }
-              args.push_back(*element_type);
-              return {};
-            },
-            [&](const QueueTypeArg& of) -> diag::Result<void> {
-              auto queue_type = value_types_.GetAddrOfQueueType(of.type);
-              if (!queue_type) {
-                return std::unexpected(std::move(queue_type.error()));
-              }
-              args.push_back(*queue_type);
-              return {};
-            },
-            [&](const TakePositionsArg& of) -> diag::Result<void> {
-              args.push_back(value_types_.GetAddrOfTakePositions(of.type));
-              return {};
-            },
-            [&](const IndexOrderArg& of) -> diag::Result<void> {
-              auto domain = DomainOf(of.key);
-              if (!domain) {
-                return std::unexpected(std::move(domain.error()));
-              }
-              args.push_back(LibraryData(IndexOrderSymbol(*domain)));
-              return {};
-            },
-            [&](const OperationsArg& of) -> diag::Result<void> {
-              auto operations = value_types_.GetAddrOfOperations(of.type);
-              if (!operations) {
-                return std::unexpected(std::move(operations.error()));
-              }
-              args.push_back(*operations);
-              return {};
-            }},
-        told);
-    if (!crossed) {
+    if (auto crossed = AppendTypeArg(told, args); !crossed) {
       return std::unexpected(std::move(crossed.error()));
     }
   }
   return args;
+}
+
+auto CodeGenModule::AppendTypeArg(
+    const TypeArg& told, std::vector<llvm::Value*>& args)
+    -> diag::Result<void> {
+  return std::visit(
+      Overloaded{
+          [&](const TypeConstantArg& of) -> diag::Result<void> {
+            auto type_object = value_types_.GetAddrOfValueType(of.type);
+            if (!type_object) {
+              return std::unexpected(std::move(type_object.error()));
+            }
+            args.push_back(*type_object);
+            return {};
+          },
+          [&](const TypeExtentArg& of) -> diag::Result<void> {
+            const value::IntegralShape shape =
+                types_.RequiredIntegralShapeOf(of.type);
+            args.push_back(WidthArg(shape));
+            args.push_back(FourStateArg(shape));
+            return {};
+          },
+          [&](const ElementTypeArg& of) -> diag::Result<void> {
+            auto element_type = value_types_.GetAddrOfElementType(of.type);
+            if (!element_type) {
+              return std::unexpected(std::move(element_type.error()));
+            }
+            args.push_back(*element_type);
+            return {};
+          },
+          [&](const QueueTypeArg& of) -> diag::Result<void> {
+            auto queue_type = value_types_.GetAddrOfQueueType(of.type);
+            if (!queue_type) {
+              return std::unexpected(std::move(queue_type.error()));
+            }
+            args.push_back(*queue_type);
+            return {};
+          },
+          [&](const TakePositionsArg& of) -> diag::Result<void> {
+            args.push_back(value_types_.GetAddrOfTakePositions(of.type));
+            return {};
+          },
+          [&](const IndexOrderArg& of) -> diag::Result<void> {
+            auto domain = DomainOf(of.key);
+            if (!domain) {
+              return std::unexpected(std::move(domain.error()));
+            }
+            args.push_back(LibraryData(IndexOrderSymbol(*domain)));
+            return {};
+          },
+          [&](const OperationsArg& of) -> diag::Result<void> {
+            auto operations = value_types_.GetAddrOfOperations(of.type);
+            if (!operations) {
+              return std::unexpected(std::move(operations.error()));
+            }
+            args.push_back(*operations);
+            return {};
+          }},
+      told);
 }
 
 auto CodeGenModule::BuildCallArg(
