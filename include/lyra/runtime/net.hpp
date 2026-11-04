@@ -790,6 +790,11 @@ class ResolvedNet<T> : public ConnectableNet {
   [[nodiscard]] auto Member() const noexcept -> const ErasedReference& {
     return showing_.Member();
   }
+  // Where a wait on the net enrols: whatever its member names, reached through
+  // the member, so the wait follows it as it is bound and forced.
+  [[nodiscard]] auto ReportsTo() const -> WatchedPlace {
+    return WatchedPlace::Through(Member());
+  }
 
   // Arms the net to answer for its sampled value (LRM 16.5.1), whose default
   // is the type's default (LRM 6.8 Table 6-7) rather than anything the net
@@ -1296,6 +1301,11 @@ class ResolvedNet<T> : public Observable {
   }
   [[nodiscard]] auto Member() const noexcept -> const ErasedReference& {
     return showing_.Member();
+  }
+  // Where a wait on the net enrols: whatever its member names, reached through
+  // the member, so the wait follows it as it is bound and forced.
+  [[nodiscard]] auto ReportsTo() const -> WatchedPlace {
+    return WatchedPlace::Through(Member());
   }
 
   // Arms the net to answer for its sampled value (LRM 16.5.1), whose default
@@ -1910,12 +1920,5 @@ auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
 }
 
 static_assert(MutationSink<Driver<value::Logic>>);
-
-// What a wait on a net enrols on: whatever the net's member names, reached
-// through the member, so the wait follows it as it is bound and forced.
-template <NetValue T>
-auto ReportsTo(const ResolvedNet<T>& net) -> WatchedPlace {
-  return WatchedPlace::Through(net.Member());
-}
 
 }  // namespace lyra::runtime

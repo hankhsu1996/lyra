@@ -93,14 +93,23 @@ class handle indeterminate. Every access therefore guards the evaluated handle a
 simulation error when it holds nothing. The handle is evaluated once, whatever the access then does
 with it.
 
-### D4. A wait watches the variable in the instance the handle holds
+### D4. A wait watches the member in the instance the handle holds
 
-A wait whose expression reaches a variable through a virtual interface cannot name that variable's
-cell ahead of time. The wait evaluates the handle and registers on the cell it reaches, alongside
-the cells the expression names directly -- the handle's own variable among them, since which
-instance it holds is a value it is compared by. The member is an interface's variable and is
-observable like any other; what the wait did not know in advance is only which instance, and
-assigning the handle while the wait is under way moves it onto the instance now held (LRM 9.4.2).
+A wait whose expression reaches a member through a virtual interface cannot name that member ahead
+of time. The wait evaluates the handle and registers where the member it reaches says a write to it
+is told, alongside the storage the expression names directly -- the handle's own variable among
+them, since which instance it holds is a value it is compared by. The member answers as it would
+reached any other way: a variable is where its writes are told, a net is where it shows its value,
+and a port is the storage its connection names (LRM 23.3.3), followed through a force (LRM 10.6.2).
+What the wait did not know in advance is only which instance, and assigning the handle while the
+wait is under way moves it onto the instance now held (LRM 9.4.2).
+
+Revised 2026-11-03. D4 had said the member "is an interface's variable and is observable like any
+other", which held for a variable and not for a port: a port of the instance is a reference, and a
+wait through the handle registered on the reference itself, so it ended by a signal at the first
+write on the execution backend and did not compile on the C++ one. The member is now asked where it
+reports, as every place a wait watches is
+([a-place-answers-where-a-wait-watches](a-place-answers-where-a-wait-watches.md)).
 
 ### D5. An interface a type names is compiled whether or not it is instantiated
 

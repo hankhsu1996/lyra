@@ -11,37 +11,17 @@
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_builders.hpp"
-#include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The endpoint a member gives wherever it is. A port's member that owns no cell
-// names the storage its connection binds it to (LRM 23.3.3). Every other member
-// is the cell.
-auto EndpointAt(const mir::CompilationUnit& unit, MemberPlace place)
-    -> BoundEndpoint {
-  const mir::TypeId member_type = std::visit(
-      Overloaded{
-          [](const MemberAtHops& at) { return at.member_type; },
-          [](const MemberThroughSlot& through) { return through.member_type; }},
-      place);
-  return BoundEndpoint{
-      .place = place,
-      .kind = unit.types.Get(member_type).IsVariableRef()
-                  ? MemberKind::kReference
-                  : MemberKind::kCell};
-}
-
-// The endpoint a route of parent edges gives: the member it ends at, reached
-// on the object it climbed to -- the reader's own declaration where it climbs
-// nothing, and otherwise the member the scope it climbed to published.
+// The member a route of parent edges ends at, reached on the object it climbed
+// to -- the reader's own declaration where it climbs nothing, and otherwise the
+// member the scope it climbed to published.
 auto ClimbedEndpoint(
     const StructuralScopeLowerer& lowerer, const ClimbedRoute& climbed,
-    const hir::DataLeaf& leaf) -> BoundEndpoint {
+    const hir::DataLeaf& leaf) -> MemberPlace {
   // A declaration of the reader's own scope is named by its layout, which no
   // scope above it shares.
   const auto own = [&](const char* what) -> const StructuralScopeLowerer& {
@@ -71,35 +51,10 @@ auto ClimbedEndpoint(
                 .slot = record.published.members.Get(l.member)};
           }},
       leaf);
-  return EndpointAt(
-      lowerer.Owner().Unit(),
-      MemberAtHops{
-          .hops = mir::EnclosingHops{climbed.hops.value},
-          .field = field,
-          .member_type = FieldTypeOf(lowerer.Owner(), field)});
-}
-
-// The member itself, as an lvalue: named where it sits, or reached by opening
-// the slot that points at it. Appends any sub-expressions to the frame's block
-// and returns the top expression unadded.
-auto MemberExpr(
-    const WalkFrame& frame, const mir::CompilationUnit& unit,
-    const MemberPlace& place) -> mir::Expr {
-  return std::visit(
-      Overloaded{
-          [&](const MemberAtHops& at) {
-            return BuildStructuralFieldAccessExpr(
-                frame, unit, at.hops, at.field, at.member_type);
-          },
-          [&](const MemberThroughSlot& through) {
-            const mir::ExprId pointer =
-                frame.Builder().Add(BuildStructuralFieldAccessExpr(
-                    frame, unit, mir::EnclosingHops{0}, through.slot));
-            return mir::MakeDerefExpr(
-                frame.Builder().DerefOperand(unit.types, pointer),
-                through.member_type);
-          }},
-      place);
+  return MemberAtHops{
+      .hops = mir::EnclosingHops{climbed.hops.value},
+      .field = field,
+      .member_type = FieldTypeOf(lowerer.Owner(), field)};
 }
 
 }  // namespace
@@ -127,90 +82,52 @@ auto WholeRoutedTarget(
 
 auto BindEndpoint(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::RoutedValueRef& reference) -> BoundEndpoint {
+    const hir::RoutedValueRef& reference) -> MemberPlace {
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const RouteReach& reach = lowerer.ReachOf(reference.id);
   return std::visit(
       Overloaded{
-          [&](const ClimbedRoute& climbed) -> BoundEndpoint {
+          [&](const ClimbedRoute& climbed) -> MemberPlace {
             return ClimbedEndpoint(
                 lowerer, climbed,
                 lowerer.HirScope().routes.values.Get(reference.id).leaf);
           },
           // The slot is a pointer to the member, so what its type points at
           // is the member's.
-          [&](const StoredRoute& stored) -> BoundEndpoint {
+          [&](const StoredRoute& stored) -> MemberPlace {
             const mir::TypeId slot_type =
                 frame.EnclosingClassAtHops(mir::EnclosingHops{0})
                     .cls->fields.Get(stored.slot)
                     .type;
-            return EndpointAt(
-                unit, MemberThroughSlot{
-                          .slot = stored.slot,
-                          .member_type = unit.types.Get(slot_type)
-                                             .Get<mir::PointerType>()
-                                             .pointee});
+            return MemberThroughSlot{
+                .slot = stored.slot,
+                .member_type =
+                    unit.types.Get(slot_type).Get<mir::PointerType>().pointee};
           }},
       reach);
 }
 
 auto EndpointCellExpr(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
-    const BoundEndpoint& endpoint) -> mir::Expr {
+    const MemberPlace& endpoint) -> mir::Expr {
   // A reference answers for the operations on the storage it binds -- a read,
-  // a write, a sampled read -- so naming it is naming that storage, and no step
-  // stands between them here. Only a wait asks something else of it, what a
-  // write through it is told to, which is where the two part company.
-  return MemberExpr(frame, unit, endpoint.place);
-}
-
-auto EndpointObservablePtr(
-    mir::Builder block, const WalkFrame& frame,
-    const mir::CompilationUnit& unit, const BoundEndpoint& endpoint)
-    -> mir::ExprId {
-  const auto address_of = [&](mir::ExprId cell) {
-    const mir::TypeId ptr_type = unit.types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = block.Get(cell).type,
-            .ownership = mir::PointerOwnership::kBorrowed,
-            .mutability = mir::Mutability::kMutable}});
-    return block.Add(mir::MakeAddressOfExpr(cell, ptr_type));
-  };
-  const WalkFrame at_block = frame.WithBlock(&block.Body());
-  switch (endpoint.kind) {
-    case MemberKind::kCell:
-      return std::visit(
-          Overloaded{
-              [&](const MemberAtHops&) {
-                return address_of(
-                    block.Add(MemberExpr(at_block, unit, endpoint.place)));
-              },
-              // The slot already holds the cell's address.
-              [&](const MemberThroughSlot& through) {
-                return block.Add(BuildStructuralFieldAccessExpr(
-                    at_block, unit, mir::EnclosingHops{0}, through.slot));
-              }},
-          endpoint.place);
-    case MemberKind::kReference:
-      return ReferenceReportsTo(
-          unit, block, block.Add(MemberExpr(at_block, unit, endpoint.place)));
-  }
-  throw InternalError("EndpointObservablePtr: unknown member kind");
-}
-
-auto ReferenceReportsTo(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId reference)
-    -> mir::ExprId {
-  return block.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kReferenceReportsTo},
-                  .arguments = {block.AsValue(unit.types, reference)}},
-          .type = mir::LibraryTypeOf(
-              unit.types, support::LibraryDecl::kWatchedPlace)});
+  // a write, a sampled read, where a wait on it enrols -- so naming it is
+  // naming that storage, and no step stands between them here.
+  return std::visit(
+      Overloaded{
+          [&](const MemberAtHops& at) {
+            return BuildStructuralFieldAccessExpr(
+                frame, unit, at.hops, at.field, at.member_type);
+          },
+          [&](const MemberThroughSlot& through) {
+            const mir::ExprId pointer =
+                frame.Builder().Add(BuildStructuralFieldAccessExpr(
+                    frame, unit, mir::EnclosingHops{0}, through.slot));
+            return mir::MakeDerefExpr(
+                frame.Builder().DerefOperand(unit.types, pointer),
+                through.member_type);
+          }},
+      endpoint);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

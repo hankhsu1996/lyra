@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -156,7 +155,7 @@ void BoundMembers::Force(
   // What drives the member is watched through its driver, so that a force on
   // what is bound above it, which renames that driver, moves the watch too.
   const ErasedReference& driver = *state.driver;
-  Trigger source(driver.ReportsTo(), Observation{}, {}, 0, 0);
+  Trigger source(WatchedPlace{driver.ReportsTo()}, Observation{}, {}, 0, 0);
   source.through = &driver;
   source.part = driver.part;
   state.follower = std::make_unique<SourceFollower>(source, follow(driver));

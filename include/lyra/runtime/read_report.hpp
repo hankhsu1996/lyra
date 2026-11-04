@@ -11,7 +11,6 @@
 #include "lyra/runtime/part_path.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/integral_words.hpp"
-#include "lyra/value/object_ref.hpp"
 
 namespace lyra::runtime {
 
@@ -63,10 +62,7 @@ class ReadReport {
 
   // A place the expression reads: which part of it, by the steps that reach
   // the part, and which positions of that part, as a trigger reads them. A
-  // variable of the instance a virtual interface holds is stated whole.
-  void Add(
-      Observable* place, std::span<const std::int64_t> steps,
-      std::int64_t lsb_bit_offset, std::int64_t bit_width);
+  // member of the instance a virtual interface holds is stated whole.
   void Add(
       WatchedPlace place, std::span<const std::int64_t> steps,
       std::int64_t lsb_bit_offset, std::int64_t bit_width);
@@ -85,9 +81,6 @@ class ReadReport {
   // A place the evaluation writes: which part of it and which bits of that
   // part, as a read names them. Only an implicit list reads these, and it
   // leaves them out.
-  void AddWrite(
-      Observable* place, std::span<const std::int64_t> steps,
-      std::int64_t lsb_bit_offset, std::int64_t bit_width);
   void AddWrite(
       WatchedPlace place, std::span<const std::int64_t> steps,
       std::int64_t lsb_bit_offset, std::int64_t bit_width);

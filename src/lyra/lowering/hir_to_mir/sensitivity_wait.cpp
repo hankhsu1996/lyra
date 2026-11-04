@@ -43,33 +43,55 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Where a routed leaf's cell is, reached from the scope the route is counted
+// The member a routed leaf ends at, reached from the scope the route is counted
 // from: a scope's own lowering is that scope, and a procedural body's is the
 // scope enclosing the body. Only a route asks.
 auto BindRouted(
     const StructuralScopeLowerer& scope, const WalkFrame& frame,
-    const hir::RoutedValueRef& reference) -> BoundEndpoint {
+    const hir::RoutedValueRef& reference) -> MemberPlace {
   return BindEndpoint(scope, frame, reference);
 }
 auto BindRouted(
     const ProcessLowerer& process, const WalkFrame& frame,
-    const hir::RoutedValueRef& reference) -> BoundEndpoint {
+    const hir::RoutedValueRef& reference) -> MemberPlace {
   return BindEndpoint(process.EnclosingScopeLowerer(), frame, reference);
 }
 
-// What a wait on a variable the running body declares enrols on: its cell,
-// or, for a `ref` formal, whatever a write through it is told to (LRM 13.5.2).
-// Only a procedural body declares one.
+// Where a wait on the storage `place` names enrols, and what a report names
+// it by: the wrapper standing for that storage answers (LRM 9.4.2), so the
+// same storage is watched the same however the place was reached -- by its
+// route, as a body's own variable, through a reference, through a virtual
+// interface. Appends to `block` and returns the watched place's id.
+auto WatchedPlaceOf(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId place)
+    -> mir::ExprId {
+  const mir::Type& storage = unit.types.Get(block.Get(place).type);
+  if (!storage.Is<mir::ObservableType>() && !storage.Is<mir::ResolvedType>() &&
+      !storage.IsVariableRef()) {
+    throw InternalError(
+        "WatchedPlaceOf: a wait names no variable, net or reference, so no "
+        "write to it is ever told");
+  }
+  return block.Add(
+      mir::MakeCallExpr(
+          mir::Direct{
+              .target = support::BuiltinFn::kReportsTo, .receiver = place},
+          {},
+          mir::LibraryTypeOf(unit.types, support::LibraryDecl::kWatchedPlace)));
+}
+
+// The storage of a variable the running body declares, as the place a wait on
+// it watches: its cell, or for a `ref` formal the reference (LRM 13.5.2). Only
+// a procedural body declares one.
 template <typename Lowerer>
-auto BodyVariableSource(
+auto BodyVariablePlace(
     Lowerer& lowerer, const WalkFrame& frame, mir::Builder block,
     const hir::ProceduralVarRef& var) -> mir::ExprId {
   if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
     throw InternalError(
-        "BodyVariableSource: a wait outside a procedural body named a variable "
+        "BodyVariablePlace: a wait outside a procedural body named a variable "
         "of one");
   } else {
-    const mir::CompilationUnit& unit = lowerer.Owner().Unit();
     const hir::ProceduralVarDecl& decl =
         lowerer.HirBody().procedural_vars.Get(var.var);
     const WalkFrame block_frame = frame.WithBlock(&block.Body());
@@ -78,30 +100,10 @@ auto BodyVariableSource(
         lowerer.Owner().TranslateType(decl.type));
     if (!lowered) {
       throw InternalError(
-          "BodyVariableSource: a variable the body declares failed to lower as "
+          "BodyVariablePlace: a variable the body declares failed to lower as "
           "the storage a wait enrols on");
     }
-    const mir::ExprId storage = block.Add(*std::move(lowered));
-    const mir::TypeId storage_type = block.Get(storage).type;
-    const mir::Type& storage_form = unit.types.Get(storage_type);
-    if (storage_form.IsVariableRef()) {
-      return ReferenceReportsTo(unit, block, storage);
-    }
-    // A closure's snapshot of a variable is the closure's own copy, which no
-    // other process reaches, so nothing that could change it is ever told.
-    if (!storage_form.Is<mir::ObservableType>()) {
-      return block.Add(
-          mir::Expr{
-              .data = mir::NullLiteral{},
-              .type = mir::ErasedPointer(unit.types)});
-    }
-    return block.Add(
-        mir::MakeAddressOfExpr(
-            storage, unit.types.Intern(
-                         mir::Type{mir::PointerType{
-                             .pointee = storage_type,
-                             .ownership = mir::PointerOwnership::kBorrowed,
-                             .mutability = mir::Mutability::kMutable}})));
+    return block.Add(*std::move(lowered));
   }
 }
 
@@ -149,72 +151,23 @@ auto BuildReportCall(
 
 namespace {
 
-// What a wait's trigger hands the runtime: a borrowed pointer to what reports a
-// write there. A route answers for this form itself, because an endpoint that
-// reached out of the unit already holds a pointer and composing one from the
-// cell would send that case through a dereference and back; so does whatever
-// is found through a handle or a reference. A cell reached as itself answers
-// with its address, and a net with what it shows its value through.
+// Where a wait on the storage one leaf names enrols, and what a report names it
+// by: a cell elaboration sealed, or a variable the running body declares.
 template <typename Lowerer>
-auto BuildObservablePtrExpr(
+auto BuildWatchedPlaceExpr(
     mir::Builder block, const WalkFrame& frame,
     const mir::CompilationUnit& unit, Lowerer& lowerer,
     const hir::SensitivityEntry& entry) -> mir::ExprId {
-  const auto address_of_cell =
-      [&](const hir::ValueTarget& sealed) -> mir::ExprId {
-    const mir::ExprId cell =
-        BuildObservableCellExpr(block, frame, unit, lowerer, sealed);
-    const mir::TypeId ptr_type = unit.types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = block.Get(cell).type,
-            .ownership = mir::PointerOwnership::kBorrowed,
-            .mutability = mir::Mutability::kMutable}});
-    return block.Add(mir::MakeAddressOfExpr(cell, ptr_type));
-  };
-  const auto sealed_cell = [&](const hir::ValueTarget& sealed) -> mir::ExprId {
-    return std::visit(
-        Overloaded{
-            [&](const hir::RoutedValueRef& reference) -> mir::ExprId {
-              return EndpointObservablePtr(
-                  block, frame, unit, BindRouted(lowerer, frame, reference));
-            },
-            [&](const hir::NamespaceValueRef&) -> mir::ExprId {
-              return address_of_cell(sealed);
-            },
-            [&](const hir::StaticPropertyRef&) -> mir::ExprId {
-              return address_of_cell(sealed);
-            },
-        },
-        sealed);
-  };
-  const mir::ExprId reached = std::visit(
+  const mir::ExprId place = std::visit(
       Overloaded{
           [&](const hir::ValueTarget& sealed) -> mir::ExprId {
-            return sealed_cell(sealed);
+            return BuildObservableCellExpr(block, frame, unit, lowerer, sealed);
           },
           [&](const hir::ProceduralVarRef& var) -> mir::ExprId {
-            return BodyVariableSource(lowerer, frame, block, var);
+            return BodyVariablePlace(lowerer, frame, block, var);
           }},
       entry.cell);
-  // A net shows its own value or the object its one driver carries, which
-  // only the built design says, so a wait on it is enrolled through what it
-  // shows its value by, as a wait through a reference is.
-  const auto* pointer =
-      unit.types.Get(block.Get(reached).type).As<mir::PointerType>();
-  if (pointer == nullptr ||
-      !unit.types.Get(pointer->pointee).Is<mir::ResolvedType>()) {
-    return reached;
-  }
-  const mir::ExprId net = block.Deref(unit.types, reached, pointer->pointee);
-  return block.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = support::BuiltinFn::kNetReportsTo},
-                  .arguments = {net}},
-          .type = mir::LibraryTypeOf(
-              unit.types, support::LibraryDecl::kWatchedPlace)});
+  return WatchedPlaceOf(unit, block, place);
 }
 
 // Which part of a place a leaf watches, as a wait's trigger and a report take
@@ -299,8 +252,8 @@ auto BuildTriggerExpr(
     const mir::CompilationUnit& unit, Lowerer& lowerer,
     const hir::SensitivityEntry& entry, mir::LocalId observation)
     -> diag::Result<mir::ExprId> {
-  const mir::ExprId observable_ptr = block.AsValue(
-      unit.types, BuildObservablePtrExpr(block, frame, unit, lowerer, entry));
+  const mir::ExprId place =
+      BuildWatchedPlaceExpr(block, frame, unit, lowerer, entry);
   auto watched = LeafPartOf(block, frame, unit, lowerer, entry.part);
   if (!watched) return std::unexpected(std::move(watched.error()));
   return block.Add(
@@ -309,7 +262,7 @@ auto BuildTriggerExpr(
               mir::CallExpr{
                   .callee = mir::Construct{},
                   .arguments =
-                      {observable_ptr,
+                      {place,
                        block.ReadLocal(observation, unit.builtins.observation),
                        watched->steps, watched->first, watched->width}},
           .type = unit.builtins.trigger});
@@ -352,8 +305,8 @@ void ActOnReport(
               unit.builtins.void_type)});
 }
 
-// The cell `cell` names as a report is told of it: what a write there reports
-// to, and which part of it.
+// The cell `cell` names as a report is told of it: where a write there is
+// reported, and which part of it.
 struct ReportedCell {
   mir::ExprId place;
   LeafPart part;
@@ -366,7 +319,7 @@ auto ReportedCellOf(
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Builder block = frame.Builder();
   const mir::ExprId place =
-      BuildObservablePtrExpr(block, frame, unit, lowerer, cell);
+      BuildWatchedPlaceExpr(block, frame, unit, lowerer, cell);
   auto part = LeafPartOf(block, frame, unit, lowerer, cell.part);
   if (!part) return std::unexpected(std::move(part.error()));
   return ReportedCell{.place = place, .part = *part};
@@ -482,15 +435,19 @@ auto ReportedObject(
 }
 
 auto ReportedPlace(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
-    -> mir::ExprId {
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::ExprId pointer) -> mir::ExprId {
   return Reported(
-      unit, frame, place,
+      unit, frame, pointer,
       [&](mir::Builder at, mir::LocalId report, mir::ExprId held) {
+        const mir::ExprId storage = at.Deref(
+            unit.types, held,
+            unit.types.Get(at.Get(held).type).Get<mir::PointerType>().pointee);
+        const mir::ExprId watched = WatchedPlaceOf(unit, at, storage);
         const LeafPart whole = WholePlace(unit, at);
         ActOnReport(
             unit, at, report, support::BuiltinFn::kReadReportAdd,
-            {held, whole.steps, whole.first, whole.width});
+            {watched, whole.steps, whole.first, whole.width});
       });
 }
 

@@ -246,6 +246,9 @@ class VariableCell : public Observable {
   [[nodiscard]] auto Watched() const -> bool {
     return HasMembers() && !OverridesWrites();
   }
+  // Where a wait on the variable enrols: here, where every write to it is
+  // told (LRM 9.4.2).
+  [[nodiscard]] auto ReportsTo() const -> WatchedPlace;
 
  protected:
   VariableCell();
@@ -301,7 +304,7 @@ class CellRareState final : public RareWriteState {
     }
     sampled_ = std::make_unique<SampledValueOf<TakenHeld>>(
         TakenHeld(*this), [&] -> Owned { return cell_->Held().AsOwned(); },
-        Trigger(cell_, Observation{}, {}, 0, 0));
+        Trigger(cell_->ReportsTo(), Observation{}, {}, 0, 0));
   }
   [[nodiscard]] auto Sampled() const -> const SampledValueOf<TakenHeld>* {
     return sampled_.get();
@@ -1007,6 +1010,12 @@ class VariableRef {
     return erased_;
   }
 
+  // Where a wait on the storage this names enrols (LRM 13.5.2): what a write
+  // through it is told to, never the reference itself.
+  [[nodiscard]] auto ReportsTo() const -> WatchedPlace {
+    return WatchedPlace::Through(erased_);
+  }
+
   // The reference as a member something is bound into (LRM 23.3.3), which is
   // what binding rewrites.
   [[nodiscard]] auto AsMember() -> ErasedReference& {
@@ -1204,13 +1213,6 @@ auto LeaseObject(const ErasedReference& reference) -> LeasedReference;
 template <value::LyraValue T>
 auto LeaseObject(const VariableRef<T>& reference) -> LeasedReference {
   return LeaseObject(reference.Erased());
-}
-
-// What a wait on the storage `reference` names enrols on (LRM 13.5.2): what
-// a write through the reference is told to, never the reference itself.
-template <value::LyraValue T>
-auto ReportsTo(const VariableRef<T>& reference) -> WatchedPlace {
-  return WatchedPlace::Through(reference.Erased());
 }
 
 // States that a continuous assignment drives the storage `reference` names

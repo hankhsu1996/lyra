@@ -71,12 +71,6 @@ ReadReport::~ReadReport() = default;
 // evaluation, so nothing is asked where the change happens, and an implicit
 // list wakes on any change to what it lists.
 void ReadReport::Add(
-    Observable* place, std::span<const std::int64_t> steps,
-    std::int64_t lsb_bit_offset, std::int64_t bit_width) {
-  Add(WatchedPlace{place}, steps, lsb_bit_offset, bit_width);
-}
-
-void ReadReport::Add(
     WatchedPlace place, std::span<const std::int64_t> steps,
     std::int64_t lsb_bit_offset, std::int64_t bit_width) {
   reached_.emplace_back(
@@ -96,12 +90,6 @@ void ReadReport::AddExpiry(
     IntrusiveList<WaitMembership>& expiry, std::shared_ptr<void> referent) {
   expiries_.push_back(&expiry);
   held_.push_back(std::move(referent));
-}
-
-void ReadReport::AddWrite(
-    Observable* place, std::span<const std::int64_t> steps,
-    std::int64_t lsb_bit_offset, std::int64_t bit_width) {
-  AddWrite(WatchedPlace{place}, steps, lsb_bit_offset, bit_width);
 }
 
 void ReadReport::AddWrite(

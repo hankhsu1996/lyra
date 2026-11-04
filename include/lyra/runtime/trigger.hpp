@@ -22,7 +22,7 @@ struct ErasedReference;
 class WatchedPlace {
  public:
   WatchedPlace() = default;
-  explicit WatchedPlace(Observable* reported_to);
+  explicit WatchedPlace(const Observable* reported_to);
 
   [[nodiscard]] static auto Through(const ErasedReference& reference)
       -> WatchedPlace;
@@ -92,10 +92,6 @@ struct Trigger {
 
   // `steps` lead from the place to the part watched, in order: an element's
   // ordinal, a member's index.
-  Trigger(
-      Observable* observable, Observation observation,
-      std::span<const std::int64_t> steps, std::int64_t lsb_bit_offset,
-      std::int64_t bit_width);
   Trigger(
       WatchedPlace place, Observation observation,
       std::span<const std::int64_t> steps, std::int64_t lsb_bit_offset,
