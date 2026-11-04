@@ -1062,12 +1062,14 @@ auto LowerBuiltinClassMethodCall(
       LowerRandomizationHookName(sym.name);
   // A hook is a method of the class whether or not the class declares it (LRM
   // 18.6.2), so a call naming one is a method call like any other, whose body
-  // is the one the nearest class of the lineage declaring it gives. A class the
-  // runtime library defines has no lineage of the source's and is extended by
-  // none, so the body is the one every object starts with, which does nothing.
+  // is the one the nearest class of the lineage declaring it gives. That makes
+  // the call read the class, not only name it. A class the runtime library
+  // defines has no lineage of the source's and is extended by none, so the
+  // body is the one every object starts with, which does nothing.
   if (hook.has_value() && !ImportedRuntimeClassOf(declaring).has_value()) {
     auto cls = lowerer.Owner().ResolveClass(declaring, span);
     if (!cls) return std::unexpected(std::move(cls.error()));
+    lowerer.Owner().DeclarationOf(*cls);
     auto receiver = ClassifyMethodReceiver(lowerer, frame, call);
     if (!receiver) return std::unexpected(std::move(receiver.error()));
     return expr(

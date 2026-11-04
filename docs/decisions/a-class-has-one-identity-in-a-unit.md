@@ -9,6 +9,8 @@
 Accepted. Revised 2026-10-23: D3 says where a virtual behavior of this unit's class, reached through
 another unit's lineage, is named as its own. Revised 2026-10-24: one identity and one answer for a
 class of this unit and another unit's alike (D1, D2), every member in one coordinate space (D3).
+Revised 2026-11-04: D2 tells what a unit holds a declaration of from what its MIR depends on, and
+says HIR's verification holds a unit to the first.
 
 ## Why this decision matters
 
@@ -72,7 +74,15 @@ pointer to an incomplete type does not, and neither does a `$cast` to it, which 
 definition's address, as Itanium C++ names a class's type information by its mangled name alone. The
 set is derived by one walk over that MIR once lowering is done, as a C++ compiler writes out the
 headers a translation unit read (`-MD`), so the lowering records nothing and no read it adds can go
-unrecorded. A class of this unit is never a dependency of it.
+unrecorded.
+
+What the unit holds a declaration of is a wider set: whatever its lowering reads to decide what a
+construct means, whether or not the MIR it writes names the class afterwards. A call of a hook a
+class has without declaring it reads the class's lineage to find which body runs (LRM 18.6.2), and a
+cast to a class of an instance reads whether that class is an interface class (LRM 8.26.5), though
+each may lower to a library entry that names no class. Which HIR constructs read a class is stated
+once, by HIR's verification, which refuses a unit holding no declaration of a class one of its
+constructs reads. A class of this unit is never a dependency of it.
 
 ### D3. Every member is named in one coordinate space
 
