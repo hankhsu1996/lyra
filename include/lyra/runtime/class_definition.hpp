@@ -6,6 +6,7 @@
 namespace lyra::runtime {
 
 class GcObject;
+class Scope;
 
 // What every object starts with: the definition of the class it is an object
 // of, written when the object is created whole and never changed after (LRM
@@ -32,6 +33,16 @@ struct ObjectHeader {
 [[nodiscard]] auto DynamicCast(
     const value::ObjectRef& ref, const abi::ObjectDefinition* cls)
     -> value::ObjectRef;
+
+// Whether the object `ref` names is a value of the copy of the interface class
+// `iface` that belongs to `instance` (LRM 6.22, 8.26.5): whether some class of
+// its lineage names that copy, by its own declaration or through what the
+// interface classes it names extend, each name reached from the instance the
+// declaration writing it belongs to. One object may be a value of several
+// instances' copies of one interface class.
+[[nodiscard]] auto IsOfInterfaceOf(
+    const value::ObjectRef& ref, const abi::ObjectDefinition* iface,
+    const Scope* instance) -> bool;
 
 // The table of the bodies answering what the interface class `iface` declares
 // itself, on an object of the class `object_class` defines, which implements

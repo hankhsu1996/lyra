@@ -101,6 +101,17 @@ struct LibraryCallbackBody {
   CallableId body;
 };
 
+// An interface class the class's own declaration names (LRM 8.26.2) that is a
+// type of an instance (LRM 6.22), and the callable of the class answering,
+// handed the instance the class belongs to, the instance that name reaches.
+// It takes no object: an interface class has none, and the name reaches the
+// same instance whatever object asks. The library follows these through the
+// definitions for a cast toward an interface class (LRM 8.26.5).
+struct InterfaceReach {
+  ClassId of;
+  CallableId reach;
+};
+
 // A method the class defines that something reaches without knowing the
 // object's class, and the body of the class through which it is entered on an
 // object handed over as the root every object is.
@@ -235,6 +246,14 @@ struct Class {
   // The bodies of this class the runtime library calls on its objects, each
   // under the callback it answers.
   std::vector<LibraryCallbackBody> library_callbacks;
+  // The body answering, of an object, the instance the class belongs to (LRM
+  // 6.22), as the object keeps it; none where the class belongs to none, and
+  // for an interface class, which keeps nothing.
+  std::optional<CallableId> declaring_instance;
+  // One for each name of an interface class of an instance the class's own
+  // declaration writes, in the order written; what the class it extends names
+  // is that class's.
+  std::vector<InterfaceReach> interface_reaches;
   // The DPI-C exports an instance of the class answers (LRM 35.5.3): the C
   // identifier the foreign side calls each by, and the body it reaches. Only a
   // class an instance of the design hierarchy is built of has any.

@@ -71,7 +71,12 @@ the definition the object starts with: the class itself, the classes it extends 
 definition's base, and the interface classes the object's own definition lists, every one it is a
 value of. `$cast` toward a class asks that, on both backends, and answers the handle it was handed
 or one naming no object; nothing is converted, because every class the object is of starts where it
-does.
+does. Where the interface class is a type of an instance (LRM 6.22), the cast also asks whether the
+object is a value of that instance's copy: the definition of each class belonging to an instance
+holds the body answering the instance an object keeps for that class, and for each interface class
+of an instance its declaration names, a body taking that instance and answering the one the name
+reaches, which the library follows through the lineage and through what each named interface class
+names in turn (`a-dynamic-cast-asks-the-type-or-the-object.md` D3b).
 
 **D4. What the library reads by name comes from one constant per class, which the declaring unit
 emits.** The constant is a structure the library defines, holding the tables a name is answered

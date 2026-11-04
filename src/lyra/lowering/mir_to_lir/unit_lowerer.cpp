@@ -414,6 +414,9 @@ auto DispatchNamePart(const mir::DispatchName& name) -> lir::SymbolPart {
           [](std::string_view source) { return lir::SymbolPart::Name(source); },
           [](support::LibraryCallback function) {
             return lir::SymbolPart::LibraryCallback(function);
+          },
+          [](mir::DeclaringInstanceName) {
+            return lir::SymbolPart::DeclaringInstance();
           }},
       name);
 }

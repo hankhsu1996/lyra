@@ -4,6 +4,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -49,6 +50,7 @@ struct ReachedOutside
   std::vector<NameUse> uses;
   std::vector<const slang::ast::Scope*> class_scopes;
   std::vector<const slang::ast::ParameterSymbol*> parameters;
+  std::unordered_set<const slang::ast::ClassType*> classes_noted;
 
   // What the instantiation writes for a child is this body's text: its
   // connections, and the values it assigns the child's parameters, which the
@@ -79,6 +81,13 @@ struct ReachedOutside
       if (scheme != nullptr) scheme->visit(*this);
     }
     visitDefault(loop);
+  }
+
+  // A class the body declares reaches what its declaration names, whether or
+  // not anything in the body names the class (LRM 8.13, 8.26.2).
+  void handle(const slang::ast::ClassType& cls) {
+    NoteType(cls);
+    visitDefault(cls);
   }
 
   // A name a view defines with an expression of its own (LRM 25.5.4) is
@@ -192,9 +201,17 @@ struct ReachedOutside
           !std::ranges::contains(class_scopes, &scope)) {
         class_scopes.push_back(&scope);
       }
-      if (const auto* cls = canonical.as_if<slang::ast::ClassType>()) {
+      // A class reaches the instance of what it extends and of each interface
+      // class it names (LRM 6.22, 8.26.2), which may be another's. Interface
+      // classes may extend one another along many paths to one (LRM
+      // 8.26.6.3), so each class is gone into once.
+      if (const auto* cls = canonical.as_if<slang::ast::ClassType>();
+          cls != nullptr && classes_noted.insert(cls).second) {
         if (const slang::ast::Type* base = cls->getBaseClass()) {
           NoteType(*base);
+        }
+        for (const slang::ast::Type* iface : cls->getDeclaredInterfaces()) {
+          NoteType(*iface);
         }
       }
       return;

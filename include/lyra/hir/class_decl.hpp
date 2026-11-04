@@ -1,22 +1,18 @@
 #pragma once
 
 #include <optional>
-#include <string>
 #include <vector>
 
-#include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/random_qualifier.hpp"
 #include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/subroutine.hpp"
-#include "lyra/hir/type_id.hpp"
 #include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
@@ -74,6 +70,19 @@ struct BaseCall {
   auto operator==(const BaseCall&) const -> bool = default;
 };
 
+// One name of an interface class a declaration writes -- what a class
+// implements, or what an interface class extends (LRM 8.26.2) -- whose class
+// is a type of an instance (LRM 6.22): the interface class, and how the
+// declaring scope of the class writing the name reaches the instance whose
+// copy it means, as a `new` written there reaches the instance of a class it
+// names.
+struct InterfaceReach {
+  ClassId of;
+  DeclaringInstanceReach reach;
+
+  auto operator==(const InterfaceReach&) const -> bool = default;
+};
+
 // The bodies of a class this unit declares (LRM 8): what lowering the class
 // compiles, beside what the class declares, which every unit reading it asks
 // about and which the class's declaration states -- what it extends and
@@ -106,6 +115,12 @@ struct BaseCall {
 // another, and is complete there: a class that extends another enters that
 // base's construction, so "nobody computed the arguments" is not a state this
 // reaches.
+//
+// `interface_reaches` holds one entry for each name of an interface class of
+// an instance the declaration writes, in the order written; a name of one that
+// belongs to no instance has none. A value of the class is a value of the copy
+// each name reaches, and two names of one interface class may reach two
+// copies.
 //
 // `field_inits` peers with `constructor` for the same reason: an initializer
 // executes as part of the class's construction protocol before the user
@@ -140,6 +155,7 @@ struct ClassDecl {
   base::Registry<SubroutineDecl, MethodId> methods;
   SubroutineDecl constructor;
   BaseCall base_call;
+  std::vector<InterfaceReach> interface_reaches;
   std::vector<FieldInit> field_inits;
   ProceduralBody static_init;
   std::vector<StaticPropertyInit> static_property_inits;

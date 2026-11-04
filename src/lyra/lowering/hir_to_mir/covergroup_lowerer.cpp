@@ -2120,7 +2120,7 @@ auto CovergroupLowerer::PopulateBodies(
   owner =
       shape.declaring_instance.has_value()
           ? owner.WithStructuralBase(
-                ScopeThroughMember{.member = shape.declaring_instance->member})
+                ScopeThroughMember{.member = *shape.declaring_instance->member})
           : owner.WithStructuralBase(NoScope{});
 
   // The event kept for the type names a synchronization object of its own from

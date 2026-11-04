@@ -563,6 +563,12 @@ auto lyra_rt_self_handle(void* self, void* out) -> void*;
 auto lyra_rt_dynamic_cast(const void* handle, const void* definition, void* out)
     -> void*;
 
+// Whether the object `handle` refers to is a value of the copy of the interface
+// class whose definition is at `iface` that belongs to `instance` (LRM 6.22,
+// 8.26.5).
+auto lyra_rt_is_of_interface_of(
+    const void* handle, const void* iface, const void* instance) -> bool;
+
 // The table of the bodies the class of the object at `object` answers what the
 // interface class whose definition is at `iface` declares itself with (LRM
 // 8.26.5).

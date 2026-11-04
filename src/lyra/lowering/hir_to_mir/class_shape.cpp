@@ -84,6 +84,8 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .named_static_properties = named_static_properties,
       .named_callables = {},
       .library_callbacks = library_callbacks,
+      .declaring_instance = std::nullopt,
+      .interface_reaches = {},
       .exports = {},
       .definition = std::nullopt};
   for (std::size_t i = 0; i < callable_signatures.size(); ++i) {

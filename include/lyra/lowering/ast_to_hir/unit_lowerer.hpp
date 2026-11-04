@@ -1370,9 +1370,10 @@ class UnitLowerer {
   [[nodiscard]] auto HeldByAnotherDesignElement(
       const slang::ast::Symbol& type) const -> bool;
 
-  // Whether a construction of `cls` and a call of a method of the class itself
-  // are handed the instance it belongs to, as the class's declaration states
-  // it.
+  // Whether `cls` belongs to an instance (LRM 6.22), as its declaration states:
+  // where it does, a construction of it and a call of a method of the class
+  // itself are handed that instance, and an object is a value of that
+  // instance's copy of it.
   auto TakesDeclaringInstance(
       const slang::ast::ClassType& cls, diag::SourceSpan span)
       -> diag::Result<bool>;
@@ -1384,11 +1385,11 @@ class UnitLowerer {
       const slang::ast::Symbol& type, const WalkFrame& frame,
       diag::SourceSpan span) const -> diag::Result<hir::StructuralHops>;
 
-  // How a body at `frame` reaches the instance an object of `cls` belongs to,
-  // for a construction or a call of a method of the class itself written
-  // there, or nothing where the class takes no such instance: as above where
-  // this unit holds the class, and by a route to the replicating scope's
-  // object where another design element does (LRM 6.22).
+  // How a body at `frame` reaches the instance `cls` belongs to, for a
+  // construction, a call of a method of the class itself, a cast toward it, or
+  // a class declared there naming it, or nothing where it belongs to no
+  // instance: as above where this unit holds the class, and by a route to the
+  // replicating scope's object where another design element does (LRM 6.22).
   [[nodiscard]] auto DeclaringInstanceFrom(
       const slang::ast::ClassType& cls, const WalkFrame& frame,
       diag::SourceSpan span)
@@ -1686,6 +1687,15 @@ class UnitLowerer {
   // the unit apart is where those names land. Nothing where none of these
   // applies, which leaves no route to the scope.
   [[nodiscard]] auto StartReaching(const slang::ast::Scope& target)
+      -> std::optional<RouteOrigin>;
+
+  // Where this reader at `frame` starts reaching `target` through an interface
+  // port of its instance bound to the instance `target` stands in: at the port,
+  // at the position it holds that instance, as a name through it starts, since
+  // a type that instance declares is named through the port (LRM 6.18, 25.3,
+  // 25.10). Nothing where no port of the reader is bound to that instance.
+  [[nodiscard]] auto StartThroughPort(
+      const WalkFrame& frame, const slang::ast::Scope& target)
       -> std::optional<RouteOrigin>;
 
   // The class the unit of the instance holding `scope` published that scope

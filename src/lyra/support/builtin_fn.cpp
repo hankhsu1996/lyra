@@ -1938,6 +1938,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "dynamic_cast",
           .declaration = RuntimeFunction("DynamicCast"),
           .takes_the_location = false};
+    case BuiltinFn::kIsOfInterfaceOf:
+      return {
+          .name = "is_of_interface_of",
+          .declaration = RuntimeFunction("IsOfInterfaceOf"),
+          .takes_the_location = false};
     case BuiltinFn::kUnsize:
       return {
           .name = "unsize",

@@ -153,8 +153,10 @@ struct ClassDeclaration {
   // (LRM 6.22): the one declaring it, or for a specialization of a generic
   // class on a type of such a scope, that scope (LRM 8.25). A construction of
   // the class and a call of a method of the class itself are handed that
-  // instance, and its code is the code of the body realizing the scope. Absent
-  // where the class belongs to no instance.
+  // instance, and its code is the code of the body realizing the scope. An
+  // interface class belongs to one as any class does, and has neither a
+  // construction nor code (LRM 8.26). Absent where the class belongs to no
+  // instance.
   std::optional<support::DefPath> instance_scope;
   // Which behavior answers each behavior of every interface class a value of
   // the class is also a value of; none for an interface class.

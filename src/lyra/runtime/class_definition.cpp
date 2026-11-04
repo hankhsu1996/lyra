@@ -1,5 +1,8 @@
 #include "lyra/runtime/class_definition.hpp"
 
+#include <algorithm>
+#include <vector>
+
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
@@ -33,6 +36,35 @@ auto RowOf(
   return nullptr;
 }
 
+// One interface class at the instance whose copy of it a walk stands on.
+struct InterfaceCopy {
+  const abi::ObjectDefinition* of;
+  Scope* instance;
+
+  auto operator==(const InterfaceCopy&) const -> bool = default;
+};
+
+// Whether a declaration whose definition is `declaring`, belonging to the
+// instance `from`, names `iface` as `instance`'s copy: by a name of its own, or
+// through what one of the interface classes it names extends, each reached
+// from the instance the name before it landed on. Interface classes may extend
+// one another along many paths to one copy (LRM 8.26.6.3), so each copy is
+// gone on from once, kept in `seen`.
+auto Reaches(
+    const abi::ObjectDefinition* declaring, Scope* from,
+    const abi::ObjectDefinition* iface, const Scope* instance,
+    std::vector<InterfaceCopy>& seen) -> bool {
+  for (const abi::InterfaceReach& named :
+       declaring->interface_reaches.Entries()) {
+    const InterfaceCopy copy{.of = named.of, .instance = named.reach(from)};
+    if (copy.of == iface && copy.instance == instance) return true;
+    if (std::ranges::contains(seen, copy)) continue;
+    seen.push_back(copy);
+    if (Reaches(copy.of, copy.instance, iface, instance, seen)) return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 auto IsOfClass(
@@ -54,6 +86,22 @@ auto DynamicCast(const value::ObjectRef& ref, const abi::ObjectDefinition* cls)
     return value::ObjectRef{};
   }
   return ref;
+}
+
+auto IsOfInterfaceOf(
+    const value::ObjectRef& ref, const abi::ObjectDefinition* iface,
+    const Scope* instance) -> bool {
+  GcObject* object = ObjectRootOf(ref);
+  if (object == nullptr) return false;
+  std::vector<InterfaceCopy> seen;
+  for (const abi::ObjectDefinition* at = RequireDefinition(object->definition);
+       at != nullptr; at = at->base) {
+    if (at->declaring_instance != nullptr &&
+        Reaches(at, at->declaring_instance(object), iface, instance, seen)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 auto InterfaceTableOf(

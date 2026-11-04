@@ -151,29 +151,51 @@ auto LowerHirDynamicCastExpr(
         // An object of the class is of this instance's type only where it
         // belongs to this instance (LRM 6.22): the instance its construction
         // was handed as the class's own, which the object keeps. A JVM class
-        // is likewise its name together with the loader that defined it.
+        // is likewise its name together with the loader that defined it. An
+        // interface class holds nothing, and an object may be a value of
+        // several instances' copies of one, so the library is asked whether
+        // this instance's copy is among them (LRM 8.26.5).
         const mir::ExprId is_of_class =
             ReduceToCondition(unit, body, read_value(body));
         mir::Block belongs;
         mir::Builder belongs_builder = body.Into(belongs);
-        const mir::ExprId object = BuildObjectDeref(
-            unit, belongs_builder,
-            BuildObjectPointer(
-                unit, belongs_builder, read_value(belongs_builder)));
-        const mir::FieldId slot =
-            owner.DeclaringInstanceFieldOf(destination_class);
-        const mir::ExprId kept = belongs_builder.Read(belongs_builder.Add(
-            mir::MakeFieldAccessExpr(
-                object,
-                mir::ClassFieldTarget{.owner = destination_class, .slot = slot},
-                unit.builtins.scope_ptr)));
         const mir::ExprId expected = BuildImplicitInstanceArgument(
             lowerer, steps.Frame().WithBlock(&belongs),
             *c.destination_instance);
-        const mir::ExprId same = belongs_builder.Add(
-            mir::MakeBinary(
-                unit, belongs_builder.Body(), mir::BinaryOp::kEquality, kept,
-                expected, unit.builtins.machine_bool));
+        const hir::ClassId declared_class = owner.Hir()
+                                                .types.Get(declared)
+                                                .As<hir::ClassHandleType>()
+                                                ->class_id;
+        const mir::ExprId same = [&] {
+          if (owner.Hir()
+                  .classes.Declaration(declared_class)
+                  .is_interface_class) {
+            return belongs_builder.Add(
+                mir::MakeCallExpr(
+                    mir::Direct{.target = support::BuiltinFn::kIsOfInterfaceOf},
+                    {read_value(belongs_builder),
+                     BuildDefinitionRead(
+                         unit, belongs_builder, destination_class),
+                     expected},
+                    unit.builtins.machine_bool));
+          }
+          const mir::ExprId object = BuildObjectDeref(
+              unit, belongs_builder,
+              BuildObjectPointer(
+                  unit, belongs_builder, read_value(belongs_builder)));
+          const mir::ExprId kept = belongs_builder.Read(belongs_builder.Add(
+              mir::MakeFieldAccessExpr(
+                  object,
+                  mir::ClassFieldTarget{
+                      .owner = destination_class,
+                      .slot =
+                          owner.DeclaringInstanceFieldOf(destination_class)},
+                  unit.builtins.scope_ptr)));
+          return belongs_builder.Add(
+              mir::MakeBinary(
+                  unit, belongs_builder.Body(), mir::BinaryOp::kEquality, kept,
+                  expected, unit.builtins.machine_bool));
+        }();
         const mir::ExprId belongs_answer = body.Add(
             mir::Expr{
                 .data =

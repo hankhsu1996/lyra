@@ -2211,6 +2211,13 @@ TEST(MirVerifyTest, WhatEveryBodyStatesReachesNoClassOneBodyHas) {
               LibraryTypeOf(u.types, abi::LibraryDeclOf<abi::InterfaceRow>()),
               std::move(rows)));
       definition.Set(&abi::ObjectDefinition::methods, null);
+      definition.Set(&abi::ObjectDefinition::declaring_instance, null);
+      definition.Set(
+          &abi::ObjectDefinition::interface_reaches,
+          ViewOf(
+              u,
+              LibraryTypeOf(u.types, abi::LibraryDeclOf<abi::InterfaceReach>()),
+              {}));
       stated.definition = std::move(definition).Build();
       u.DefineClass(shared, std::move(stated));
     });

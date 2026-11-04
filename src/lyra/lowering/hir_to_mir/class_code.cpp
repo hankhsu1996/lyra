@@ -28,10 +28,8 @@
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/support/def_path.hpp"
 #include "lyra/support/library_callback.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -225,6 +223,57 @@ auto ClassHookPrototype(
       "-- please report this as a bug");
 }
 
+auto ClassInterfaceReachPrototype(UnitLowerer& unit_lowerer)
+    -> mir::CallableCode {
+  const mir::TypeId instance = unit_lowerer.Unit().builtins.scope_ptr;
+  return ClassOperation(std::array{instance}, instance, false);
+}
+
+auto ClassDeclaringInstancePrototype(
+    mir::TypeId self_pointer_type, mir::TypeId instance) -> mir::CallableCode {
+  return ClassOperation(std::array{self_pointer_type}, instance, true);
+}
+
+namespace {
+
+// The instance an object of class `id`, at the pointer `object`, keeps for the
+// class (LRM 6.22).
+auto ReadDeclaringInstance(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ClassId id,
+    const DeclaringInstance& instance, mir::ExprId object) -> mir::ExprId {
+  if (!instance.member.has_value()) {
+    throw InternalError(
+        "ReadDeclaringInstance: an object is read for the instance of a class "
+        "that keeps none -- please report this as a bug");
+  }
+  return block.Read(block.Add(
+      mir::MakeFieldAccessExpr(
+          BuildObjectDeref(unit, block, object),
+          mir::ClassFieldTarget{.owner = id, .slot = *instance.member},
+          instance.type)));
+}
+
+// The body answering, of an object of class `id`, stated as `cls`, the
+// instance the object keeps for it. It reads the class's own layout and
+// nothing a body compiled, so the class states it whole.
+auto DeclaringInstanceBody(
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
+    const DeclaringInstance& instance) -> mir::CallableCode {
+  mir::CallableCode code =
+      ClassDeclaringInstancePrototype(cls.self_pointer_type, instance.type);
+  code.body.emplace();
+  const mir::LocalId self = *code.receiver;
+  mir::Builder block(code.Body(), diag::SourceSpan{});
+  block.AppendStmt(
+      mir::ReturnStmt{
+          .value = ReadDeclaringInstance(
+              unit, block, id, instance,
+              block.ReadLocal(self, cls.self_pointer_type))});
+  return code;
+}
+
+}  // namespace
+
 auto SlotPrototype(const mir::CallableCode& operation, mir::TypeId self)
     -> mir::CallableCode {
   mir::CallableCode prototype;
@@ -279,11 +328,8 @@ auto EntryOf(
       case CallableForm::kTypeAssociated:
         return read(entry.params.front());
       case CallableForm::kInstanceMember:
-        return block.Read(block.Add(
-            mir::MakeFieldAccessExpr(
-                BuildObjectDeref(unit, block, read(*entry.receiver)),
-                mir::ClassFieldTarget{.owner = id, .slot = instance.member},
-                instance.type)));
+        return ReadDeclaringInstance(
+            unit, block, id, instance, read(*entry.receiver));
     }
     throw InternalError("EntryOf: unknown CallableForm");
   };
@@ -324,17 +370,28 @@ auto StateClassFromDeclaration(UnitLowerer& unit_lowerer, hir::ClassId cls)
   mir::Class stated{};
   stated.identity = classes.PathOf(cls);
   stated.self_pointer_type = unit_lowerer.SelfPointerTo(id);
-  const std::optional<DeclaringInstance> instance =
+  const std::optional<DeclaringInstance> declaring =
       unit_lowerer.StateDeclaredLayout(cls, stated);
+  if (!declaring.has_value()) {
+    throw InternalError(
+        "StateClassFromDeclaration: a class stated in the body of a scope "
+        "belongs to no instance -- please report this as a bug");
+  }
+  const DeclaringInstance& instance = *declaring;
   stated.conforming = unit_lowerer.ConformanceOf(cls);
   // Only a class belonging to an instance has code in the body realizing its
-  // scope; an interface class has none (LRM 8.26).
+  // scope.
   const auto entry = [&](const ClassCodePoint& point, CallableForm form) {
     return EntryOf(
-        unit_lowerer, id, *instance, point, form,
+        unit_lowerer, id, instance, point, form,
         unit_lowerer.PublishedClassOf(*declared.instance_scope));
   };
 
+  // Every callable the class has sits at the identity the class took for it.
+  const ClassCallables& callables = unit_lowerer.ClassCallablesOf(cls);
+  for (std::size_t i = 0; i < callables.count; ++i) {
+    stated.callables.Declare();
+  }
   // Each method at its position, under its name or, for the one making a
   // covergroup the class embeds, under that covergroup's (LRM 19.4.1). One the
   // declaration leaves pure has no code anywhere (LRM 8.21) and states only
@@ -351,7 +408,8 @@ auto StateClassFromDeclaration(UnitLowerer& unit_lowerer, hir::ClassId cls)
                                   *stated_method.makes))
                         : stated_method.prototype.name,
             .body = callable});
-    stated.callables.Add(
+    stated.callables.Define(
+        callable,
         mir::CallableDecl{
             .code = hir::IsLeftAbstract(stated_method.dispatch)
                         ? PrototypeOf(
@@ -363,35 +421,42 @@ auto StateClassFromDeclaration(UnitLowerer& unit_lowerer, hir::ClassId cls)
                 hir::ClassMethodTarget{.owner = cls, .method = method}),
             .defining_unit = std::nullopt});
   }
-  // What `randomize()` asks of the class (LRM 18.6), and the form a waited
-  // evaluation calls of each function (LRM 9.4.2), each at the identity the
-  // class took for it.
-  const auto add_entry = [&](mir::CallableId callable, CallableForm form) {
-    const mir::CallableId added = stated.callables.Add(
-        mir::CallableDecl{
-            .code = entry(ClassCallableCode{.callable = callable}, form),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .defining_unit = std::nullopt});
-    if (added != callable) {
-      throw InternalError(
-          "StateClassFromDeclaration: a class's callables are its methods, "
-          "then its hooks, then its reporting forms -- please report this as "
-          "a bug");
-    }
+  // What `randomize()` asks of the class (LRM 18.6), the form a waited
+  // evaluation calls of each function (LRM 9.4.2), and which instances an
+  // object of it is of (LRM 6.22).
+  const auto define = [&](mir::CallableId callable, mir::CallableCode code) {
+    stated.callables.Define(
+        callable, mir::CallableDecl{
+                      .code = std::move(code),
+                      .foreign = std::nullopt,
+                      .virtual_dispatch = std::nullopt,
+                      .defining_unit = std::nullopt});
   };
-  if (const std::optional<RandomizationHooks>& hooks =
-          unit_lowerer.RandomizationHooksOf(cls)) {
-    for (const auto& [body, callback] : hooks->Callbacks()) {
+  const auto define_entry = [&](mir::CallableId callable, CallableForm form) {
+    define(callable, entry(ClassCallableCode{.callable = callable}, form));
+  };
+  if (callables.hooks.has_value()) {
+    for (const auto& [body, callback] : callables.hooks->Callbacks()) {
       stated.library_callbacks.push_back(
           mir::LibraryCallbackBody{.callback = callback, .body = body});
-      add_entry(body, CallableForm::kInstanceMember);
+      define_entry(body, CallableForm::kInstanceMember);
     }
   }
-  for (const auto& [method, form] : unit_lowerer.ReportingFormsOf(cls)) {
-    add_entry(form, CallableFormOf(declared.methods.Get(method).dispatch));
+  for (const auto& [method, form] : callables.reporting_forms) {
+    define_entry(form, CallableFormOf(declared.methods.Get(method).dispatch));
   }
-  if (!declared.is_interface_class) {
+  if (const std::optional<mir::CallableId> kept =
+          callables.declaring_instance) {
+    stated.declaring_instance = *kept;
+    define(
+        *kept,
+        DeclaringInstanceBody(unit_lowerer.Unit(), id, stated, instance));
+  }
+  stated.interface_reaches = callables.reaches;
+  for (const mir::InterfaceReach& named : callables.reaches) {
+    define_entry(named.reach, CallableForm::kTypeAssociated);
+  }
+  if (declared.constructor.has_value()) {
     stated.constructor = mir::ConstructorDecl{
         .code = entry(ClassConstructorCode{}, CallableForm::kConstructor)};
   }

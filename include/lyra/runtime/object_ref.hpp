@@ -176,7 +176,9 @@ auto LibraryObjectDefinition() -> abi::ObjectDefinition {
       .class_object = nullptr,
       .end = &EndObjectOf<T>,
       .interfaces = {},
-      .methods = nullptr};
+      .methods = nullptr,
+      .declaring_instance = nullptr,
+      .interface_reaches = {}};
 }
 
 // Ends an object one owner holds alone, through its class's definition, so the

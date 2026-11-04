@@ -1,6 +1,7 @@
 #pragma once
 
 #include <compare>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -147,6 +148,25 @@ struct PropertyField {
 struct ClassFields {
   std::vector<PropertyField> properties;
   std::optional<mir::TypeId> declaring_instance;
+};
+
+// The callables a class this unit declares has beyond the methods it
+// declares, each at the position the declaration fixes after them, so every
+// body states the class alike and a class extending it can name them: the
+// bodies answering what `randomize()` asks of it (LRM 18.6), absent for an
+// interface class, which has no object (LRM 8.26); the form a waited
+// evaluation calls of each method with a body that a call hands a report (LRM
+// 9.4.2), in method order; the body answering, of an object, the instance the
+// class belongs to, where it keeps one (LRM 6.22); and one reach for each name
+// of an interface class of an instance its declaration writes, in the order
+// written (LRM 8.26.2). `count` is how many callables the class has, its
+// methods among them.
+struct ClassCallables {
+  std::optional<RandomizationHooks> hooks;
+  std::vector<std::pair<hir::MethodId, mir::CallableId>> reporting_forms;
+  std::optional<mir::CallableId> declaring_instance;
+  std::vector<mir::InterfaceReach> reaches;
+  std::size_t count = 0;
 };
 
 // The field of a scope's published class each thing the scope published
@@ -453,29 +473,15 @@ class UnitLowerer {
       mir::TypeId value_type, const hir::PublishedStorage& storage) const
       -> mir::TypeId;
 
-  // The bodies the class `owner` this unit declares answers `randomize()`
-  // with, absent for an interface class, which has no object (LRM 8.26).
-  [[nodiscard]] auto RandomizationHooksOf(hir::ClassId owner) const
-      -> const std::optional<RandomizationHooks>& {
-    const auto it = randomization_hooks_.find(owner);
-    if (it == randomization_hooks_.end()) {
+  // The callables the class `owner` this unit declares has beyond its
+  // methods.
+  [[nodiscard]] auto ClassCallablesOf(hir::ClassId owner) const
+      -> const ClassCallables& {
+    const auto it = class_callables_.find(owner);
+    if (it == class_callables_.end()) {
       throw InternalError(
-          "UnitLowerer::RandomizationHooksOf: only a class this unit declares "
-          "takes randomization bodies -- please report this as a bug");
-    }
-    return it->second;
-  }
-
-  // The callable each function the class `owner` this unit declares is
-  // compiled to in the form a waited evaluation calls (LRM 9.4.2), by the
-  // method it is a form of, in method order.
-  [[nodiscard]] auto ReportingFormsOf(hir::ClassId owner) const
-      -> const std::vector<std::pair<hir::MethodId, mir::CallableId>>& {
-    const auto it = reporting_forms_.find(owner);
-    if (it == reporting_forms_.end()) {
-      throw InternalError(
-          "UnitLowerer::ReportingFormsOf: only a class this unit declares "
-          "takes reporting forms -- please report this as a bug");
+          "UnitLowerer::ClassCallablesOf: only a class this unit declares "
+          "takes callables beyond its methods -- please report this as a bug");
     }
     return it->second;
   }
@@ -692,20 +698,10 @@ class UnitLowerer {
   auto PopulateModuleRoot(std::optional<DesignRootInputs> design_root)
       -> diag::Result<void>;
 
-  // The callables a class this unit declares has beyond the methods it
-  // declares, each at a position after them: the bodies answering what
-  // `randomize()` asks of it, taken before any declaration settles so a class
-  // extending it can name them. Reads nothing but this class, so classes take
-  // theirs in any order and none waits on another.
-  auto TakeRandomizationHooks(hir::ClassId cls)
-      -> std::optional<RandomizationHooks>;
-
-  // The callables a class this unit declares has after its hooks: the form a
-  // waited evaluation calls of each function it compiles (LRM 9.4.2), every
-  // method with a body that a call hands a report. Fixed by the declaration,
-  // so a body defines each where the class reserved it.
-  auto TakeReportingForms(hir::ClassId cls)
-      -> std::vector<std::pair<hir::MethodId, mir::CallableId>>;
+  // Takes the callables a class this unit declares has beyond its methods,
+  // before any declaration settles. Reads nothing but the declarations, so
+  // classes take theirs in any order and none waits on another.
+  auto TakeClassCallables(hir::ClassId cls) -> ClassCallables;
 
   // Publishes everything the unit declares before any root-scope body lowers:
   // every class identity and body, every interned type and the functions each
@@ -767,12 +763,9 @@ class UnitLowerer {
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, std::optional<mir::TypeId>> type_translations_;
   // The class each class the unit names is, of this unit or another, and the
-  // randomization bodies each one this unit declares takes.
+  // callables beyond its methods each one this unit declares takes.
   base::Translation<hir::ClassId, mir::ClassId> class_identities_;
-  std::map<hir::ClassId, std::optional<RandomizationHooks>>
-      randomization_hooks_;
-  std::map<hir::ClassId, std::vector<std::pair<hir::MethodId, mir::CallableId>>>
-      reporting_forms_;
+  std::map<hir::ClassId, ClassCallables> class_callables_;
   // The callable and the cell each member of a unit's namespace this unit names
   // is, by that unit and the name the member was published under.
   std::map<std::pair<std::string, std::string>, mir::CallableId>

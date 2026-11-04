@@ -108,6 +108,10 @@ auto FunctionTypeOf(const TypePool& types, const CallableCode& code) -> TypeId;
 // to a body it enters, whatever class the object is of.
 auto ObjectRootPointer(const TypePool& types) -> TypeId;
 
+// A pointer to an instance of the design hierarchy, whichever scope it
+// realizes, as the library and the code a unit compiles hand one over.
+auto ScopePointer(const TypePool& types) -> TypeId;
+
 // The address of the table a constructor of the design hierarchy is handed,
 // through which it is only read.
 auto ConstructionTablePointer(const TypePool& types) -> TypeId;

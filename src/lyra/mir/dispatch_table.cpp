@@ -152,13 +152,16 @@ auto DispatchNameOf(
           cls.CallbackAnsweredBy(method)) {
     return *callback;
   }
+  if (cls.declaring_instance == method) {
+    return DeclaringInstanceName{};
+  }
   const std::optional<VirtualDispatchRole>& role =
       cls.callables.Get(method).virtual_dispatch;
   if (!role.has_value()) {
     throw InternalError(
         "mir::DispatchNameOf: a method that neither takes part in dispatch nor "
-        "answers a library callback is named by no behavior -- please report "
-        "this as a bug");
+        "answers the library is named by no behavior -- please report this as "
+        "a bug");
   }
   return std::visit(
       Overloaded{

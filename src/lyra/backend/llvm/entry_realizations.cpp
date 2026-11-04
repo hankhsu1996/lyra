@@ -1181,12 +1181,14 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kBlockEntry:
     case support::BuiltinFn::kBlockTable:
     case support::BuiltinFn::kExtendSequence:
-    // Recovering the object a handle names, or a handle naming the object a
-    // body runs on. Each is one library function serving every class, so the
-    // operation's own name is the whole of what a symbol needs.
+    // Recovering the object a handle names, a handle naming the object a body
+    // runs on, or what the definition of an object's class answers of it. Each
+    // is one library function serving every class, so the operation's own name
+    // is the whole of what a symbol needs.
     case support::BuiltinFn::kObjectOf:
     case support::BuiltinFn::kSelfHandle:
     case support::BuiltinFn::kDynamicCast:
+    case support::BuiltinFn::kIsOfInterfaceOf:
     // What reports a change to an object's properties, one library function
     // each for every class.
     case support::BuiltinFn::kObjectEventSource:

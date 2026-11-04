@@ -659,16 +659,19 @@ auto RootOf(const mir::CompilationUnit& unit, mir::ClassId id)
   return unit.GetClass(at).base;
 }
 
-// The prototype every body answering a library callback is entered at: handed
-// the object as the root every object is, then what every body answering that
-// callback takes after its receiver -- the call's problem, for what
-// `randomize()` asks of the variables, the constraints and the random objects
-// (LRM 18.6) -- answering nothing. It follows from the callback alone, so a
-// body of a class another unit defines, declared here without its signature,
-// is entered at it too.
-struct CallbackPrototypes {
+// The prototypes a body the library reaches through a class's definition is
+// entered at. Every body answering a library callback is handed the object as
+// the root every object is, then what every body answering that callback takes
+// after its receiver -- the call's problem, for what `randomize()` asks of the
+// variables, the constraints and the random objects (LRM 18.6) -- answering
+// nothing. It follows from the callback alone, so a body of a class another
+// unit defines, declared here without its signature, is entered at it too.
+struct EntryPrototypes {
   mir::TypeId on_object;
   mir::TypeId on_object_and_problem;
+  // The body answering the instance an object keeps for its class (LRM 6.22)
+  // is handed the object and answers the instance.
+  mir::TypeId instance_of_object;
 
   [[nodiscard]] auto Of(support::LibraryCallback callback) const
       -> mir::TypeId {
@@ -694,7 +697,7 @@ struct CallbackPrototypes {
 template <typename Answers>
 void AddBodies(
     LibraryBodies& bodies, const mir::CompilationUnit& unit, mir::ClassId id,
-    const Answers& answers, const CallbackPrototypes& prototypes) {
+    const Answers& answers, const EntryPrototypes& prototypes) {
   for (const auto& [_, callback] : answers) {
     bodies.emplace(
         callback, mir::CallbackBodyOf(unit, id, callback)
@@ -720,7 +723,7 @@ auto DeclaredDispatchOf(const mir::CompilationUnit& unit, mir::ClassId id)
 
 auto FactsOf(
     const mir::CompilationUnit& unit, mir::ClassId id,
-    const CallbackPrototypes& prototypes) -> LineageFacts {
+    const EntryPrototypes& prototypes) -> LineageFacts {
   const mir::Class& cls = unit.GetClass(id);
   LineageFacts facts{
       .is_interface = cls.is_interface,
@@ -777,19 +780,22 @@ auto FactsOf(
 }
 
 // Gives each body of `cls`, class `id`, that something reaches without knowing
-// the object's class its entry: every one taking part in dispatch or answering
-// a callback the library makes on an object, that the class defines. One
-// answering a callback is entered at that callback's prototype, and one taking
-// part in dispatch at its own, handed the object as the root.
+// the object's class its entry: every one taking part in dispatch, answering
+// a callback the library makes on an object, or answering the instance the
+// object keeps, that the class defines. One answering a callback is entered at
+// that callback's prototype, the one answering the instance at its own, and one
+// taking part in dispatch at its own, handed the object as the root.
 void AddEntries(
     const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    const CallbackPrototypes& prototypes) {
+    const EntryPrototypes& prototypes) {
   const mir::TypeId root = mir::ObjectRootPointer(unit.types);
   std::vector<mir::CallableId> entered;
   for (const mir::CallableId callable : cls.callables.Ids()) {
     const mir::CallableDecl& decl = cls.callables.Get(callable);
     const bool reached_by_definition =
-        decl.virtual_dispatch.has_value() || cls.CallbackAnsweredBy(callable);
+        decl.virtual_dispatch.has_value() ||
+        cls.CallbackAnsweredBy(callable).has_value() ||
+        cls.declaring_instance == callable;
     if (reached_by_definition &&
         std::holds_alternative<mir::DefinedHere>(mir::FormOf(decl))) {
       entered.push_back(callable);
@@ -798,10 +804,13 @@ void AddEntries(
   for (const mir::CallableId method : entered) {
     const std::optional<support::LibraryCallback> callback =
         cls.CallbackAnsweredBy(method);
-    const mir::TypeId prototype =
-        callback.has_value()
-            ? prototypes.Of(*callback)
-            : EntryPrototypeOf(unit, cls.callables.Get(method).code, root);
+    const mir::TypeId prototype = [&] {
+      if (callback.has_value()) return prototypes.Of(*callback);
+      if (cls.declaring_instance == method) {
+        return prototypes.instance_of_object;
+      }
+      return EntryPrototypeOf(unit, cls.callables.Get(method).code, root);
+    }();
     cls.entries.push_back(
         mir::MethodEntry{
             .method = method,
@@ -832,10 +841,11 @@ auto DefinitionAddress(const mir::CompilationUnit& unit, mir::ClassId of)
 // The definition of class `id`, `cls`, from what its lineage decides.
 //
 //   {&Base::definition, &info, &randomization, &end, ConstantSpan(&rows),
-//    &methods}
+//    &methods, &declaring_instance_entry, ConstantSpan(&implemented)}
 auto DefinitionOf(
     const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
     const LineageFacts& facts) -> mir::ConstantValue {
+  using abi::InterfaceReach;
   using abi::InterfaceRow;
   using abi::ObjectDefinition;
   mir::LibraryRecordBuilder<ObjectDefinition> definition(unit);
@@ -877,6 +887,27 @@ auto DefinitionOf(
                          : PointerTo(
                                mir::DispatchTableRef{.of = id},
                                definition.TypeOf(&ObjectDefinition::methods)));
+  definition.Set(
+      &ObjectDefinition::declaring_instance,
+      cls.declaring_instance.has_value()
+          ? PointerTo(
+                mir::DispatchEntryRef{
+                    .body =
+                        mir::CallableTarget{
+                            .owner = id, .slot = *cls.declaring_instance}},
+                definition.TypeOf(&ObjectDefinition::declaring_instance))
+          : Null());
+  definition.Set(
+      &ObjectDefinition::interface_reaches,
+      Table<InterfaceReach>(
+          unit, cls.interface_reaches.size(), [&](std::size_t i) {
+            const mir::InterfaceReach& named = cls.interface_reaches[i];
+            mir::LibraryRecordBuilder<InterfaceReach> entry(unit);
+            entry.Set(&InterfaceReach::of, DefinitionAddress(unit, named.of));
+            entry.Set(
+                &InterfaceReach::reach, Function(unit, id, cls, named.reach));
+            return std::move(entry).Build();
+          }));
   return std::move(definition).Build();
 }
 
@@ -893,12 +924,14 @@ void StateObjectDefinitions(mir::CompilationUnit& unit) {
   // A body handed only the object is entered as the library enters a phase,
   // and one handed the call's problem too takes it as every body answering
   // such a callback declares it.
-  const CallbackPrototypes prototypes{
+  const EntryPrototypes prototypes{
       .on_object = mir::LibraryRecordMemberType(unit, &abi::ScopeInfo::resolve),
       .on_object_and_problem = unit.types.Intern(
           mir::Type{mir::MachineFunctionType{
               .params = {mir::ObjectRootPointer(unit.types), *problem},
-              .result = unit.builtins.void_type}})};
+              .result = unit.builtins.void_type}}),
+      .instance_of_object = mir::LibraryRecordMemberType(
+          unit, &abi::ObjectDefinition::declaring_instance)};
   std::vector<std::optional<LineageFacts>> facts;
   std::vector<std::vector<mir::DispatchedBehavior>> declared;
   facts.reserve(unit.classes.size());

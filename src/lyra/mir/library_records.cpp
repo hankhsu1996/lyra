@@ -81,6 +81,8 @@ auto MirTypeOf(const TypePool& types) -> TypeId {
     return VoidPointer(types, Mutability::kMutable);
   } else if constexpr (std::is_same_v<Field, runtime::GcObject*>) {
     return ObjectRootPointer(types);
+  } else if constexpr (std::is_same_v<Field, runtime::Scope*>) {
+    return ScopePointer(types);
   } else if constexpr (std::is_same_v<Field, const value::ObjectRef&>) {
     // A handle, of whatever class, borrowed for the call.
     return types.Intern(

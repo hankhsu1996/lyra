@@ -2145,7 +2145,7 @@ class HirDumper {
     if (declared.instance_scope.has_value()) {
       Line(
           std::format(
-              "Takes: the instance of {} it belongs to",
+              "Belongs to: the instance of {}",
               support::DisplayOf(*declared.instance_scope)));
     }
     if (declared.base.has_value()) {
@@ -2190,6 +2190,12 @@ class HirDumper {
           std::format(
               "BaseCall: {} ({})",
               FormatDeclaringInstance(c.base_call.declaring_instance), args));
+    }
+    for (const InterfaceReach& named : c.interface_reaches) {
+      Line(
+          std::format(
+              "InterfaceReach: {} {}", FormatClass(named.of),
+              FormatDeclaringInstance(named.reach)));
     }
     Dedent();
     own_scope_ = outer;

@@ -1537,11 +1537,61 @@ auto UnitLowerer::StartReaching(const slang::ast::Scope& target)
       *start);
 }
 
+auto UnitLowerer::StartThroughPort(
+    const WalkFrame& frame, const slang::ast::Scope& target)
+    -> std::optional<RouteOrigin> {
+  if (!LowersAnInstance()) return std::nullopt;
+  const slang::ast::Scope* holder = target.getContainingInstance();
+  // Two ports bound to one instance name one type of it (LRM 6.22), so the
+  // first in declaration order is as good as any.
+  for (const slang::ast::Symbol* member :
+       scope_->asSymbol().as<slang::ast::InstanceBodySymbol>().getPortList()) {
+    const auto* port = member->as_if<slang::ast::InterfacePortSymbol>();
+    if (port == nullptr) continue;
+    const ConnectedInterface& connected = environment_.BindingOf(*port);
+    const auto found = std::ranges::find_if(
+        connected.instances, [&](const slang::ast::InstanceSymbol* instance) {
+          return static_cast<const slang::ast::Scope*>(&instance->body) ==
+                 holder;
+        });
+    if (found == connected.instances.end()) continue;
+    const slang::ast::InstanceBodySymbol& bound = (*found)->body;
+    // The instances are listed row-major over the port's ranges, so where the
+    // bound one stands is one select per dimension, the last varying fastest.
+    PortReach reach = ReachOfPort(frame, *port);
+    auto position = static_cast<std::uint64_t>(
+        std::distance(connected.instances.begin(), found));
+    std::vector<std::uint32_t> selects(reach.hop.dims.size());
+    for (std::size_t d = selects.size(); d-- > 0;) {
+      const std::uint64_t count = reach.hop.dims[d].ElementCount();
+      selects[d] = static_cast<std::uint32_t>(position % count);
+      position /= count;
+    }
+    reach.hop.step.selects = std::move(selects);
+    reach.hop.place = PlaceThroughPort(*port, reach.hop.step.selects);
+    return RouteOrigin{
+        .start =
+            RouteStart{
+                .below = &bound,
+                .base = std::move(reach.base),
+                .leading = std::move(reach.hop)},
+        .written = {}};
+  }
+  return std::nullopt;
+}
+
 auto UnitLowerer::RouteToReplicatingScope(
     const WalkFrame& frame, const slang::ast::Symbol& type)
     -> diag::Result<std::optional<ScopeRoute>> {
   const slang::ast::Scope& scope = ReplicatingScope(type);
-  auto origin = StartReaching(scope);
+  // The standard names a type of another design element only through an
+  // interface port bound to the instance declaring it (LRM 6.18, 25.10), so
+  // where a port of the reader is bound to that instance the route starts
+  // there, and reads alike in every instance bound alike; a type of the
+  // reader's own instance, or of a scope enclosing it, is reached the way a
+  // name written there is.
+  auto origin = StartThroughPort(frame, scope);
+  if (!origin.has_value()) origin = StartReaching(scope);
   if (!origin.has_value()) return std::nullopt;
   return RouteToScope(frame, scope, *std::move(origin));
 }
