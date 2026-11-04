@@ -459,6 +459,13 @@ auto PublishObjectEntry(
           .defining_unit = std::nullopt});
 }
 
+// Whether an object of the class records the instance its class belongs to
+// (LRM 6.22): an interface class belongs to one too, but has no object of its
+// own to record it in (LRM 8.26).
+auto KeepsDeclaringInstance(const hir::ClassDeclaration& declared) -> bool {
+  return declared.instance_scope.has_value() && !declared.is_interface_class;
+}
+
 }  // namespace
 
 auto UnitLowerer::MemberCellType(
@@ -565,10 +572,13 @@ auto UnitLowerer::SettlePublishedScope(
 
   // Then one virtual method per operation of each class the unit declares in
   // the scope, which each body realizing the scope answers with the code it
-  // compiled for it: the constructor, every method the declaration does not
-  // leave pure (LRM 8.21), and what `randomize()` asks of the class (LRM
-  // 18.6). Which there are and what each takes are read off the declarations,
-  // so a body whose construction built none of the scope states them alike.
+  // compiled for it: the constructor of a class that has one, every method the
+  // declaration does not leave pure (LRM 8.21), what `randomize()` asks of the
+  // class (LRM 18.6), the form a waited evaluation calls of each function (LRM
+  // 9.4.2), and the instance each interface class of an instance the
+  // declaration names reaches (LRM 6.22). Which there are and what each takes
+  // are read off the declarations, so a body whose construction built none of
+  // the scope states them alike.
   std::vector<ClassCodeSlot> class_code;
   const auto introduce = [&](mir::ClassId cls, const support::DefPath& path,
                              ClassCodePoint point, std::string_view operation,
@@ -590,9 +600,11 @@ auto UnitLowerer::SettlePublishedScope(
         hir_->classes.Declaration(hir_class);
     const mir::ClassId cls = ClassIdentity(hir_class);
     const support::DefPath& path = hir_->classes.PathOf(hir_class);
-    introduce(
-        cls, path, ClassConstructorCode{}, "new",
-        ClassConstructorPrototype(*this, hir_class));
+    if (declared.constructor.has_value()) {
+      introduce(
+          cls, path, ClassConstructorCode{}, "new",
+          ClassConstructorPrototype(*this, hir_class));
+    }
     for (const hir::MethodId method : declared.methods.Ids()) {
       const hir::DeclaredMethod& m = declared.methods.Get(method);
       if (hir::IsLeftAbstract(m.dispatch)) continue;
@@ -601,22 +613,28 @@ auto UnitLowerer::SettlePublishedScope(
           ClassCallableCode{.callable = mir::CallableId{method.value}},
           m.prototype.name, ClassMethodPrototype(*this, hir_class, method));
     }
-    if (const std::optional<RandomizationHooks>& hooks =
-            RandomizationHooksOf(hir_class)) {
-      for (const auto& [body, callback] : hooks->Callbacks()) {
+    const ClassCallables& callables = ClassCallablesOf(hir_class);
+    if (callables.hooks.has_value()) {
+      for (const auto& [body, callback] : callables.hooks->Callbacks()) {
         introduce(
             cls, path, ClassCallableCode{.callable = body},
             std::format("hook {}", support::LibraryCallbackName(callback)),
             ClassHookPrototype(*this, hir_class, callback));
       }
     }
-    for (const auto& [method, form] : ReportingFormsOf(hir_class)) {
+    for (const auto& [method, form] : callables.reporting_forms) {
       const std::string operation = std::format(
           "{} reporting", declared.methods.Get(method).prototype.name);
       const mir::CallableCode prototype =
           ClassMethodPrototype(*this, hir_class, method);
       introduce(
           cls, path, ClassCallableCode{.callable = form}, operation, prototype);
+    }
+    for (const mir::InterfaceReach& named : callables.reaches) {
+      introduce(
+          cls, path, ClassCallableCode{.callable = named.reach},
+          std::format("reach #{}", named.reach.value),
+          ClassInterfaceReachPrototype(*this));
     }
   }
   // A covergroup's class has four operations besides its constructor, each
@@ -749,62 +767,61 @@ auto UnitLowerer::ClassCodePrototypeOf(
       "declares -- please report this as a bug");
 }
 
-auto UnitLowerer::TakeRandomizationHooks(hir::ClassId cls)
-    -> std::optional<RandomizationHooks> {
+auto UnitLowerer::TakeClassCallables(hir::ClassId cls) -> ClassCallables {
   const hir::ClassDeclaration& declared = hir_->classes.Declaration(cls);
   // Each method the class declares is the callable at its position, so a
   // method is named alike in this unit and in every unit reading the
-  // declaration.
+  // declaration; everything else follows in one order.
   base::IdAllocator<mir::CallableId> callables;
   for (std::size_t m = 0; m < declared.methods.size(); ++m) {
     callables.Take();
   }
-  const auto calls_declared = [&](hir::MethodId method) {
-    return RandomizationHooks::CallsDeclared{
-        .body = callables.Take(), .method = method};
-  };
-  if (declared.is_interface_class) {
-    return std::nullopt;
-  }
-  return RandomizationHooks{
-      .rand_variables = callables.Take(),
-      .constrain = callables.Take(),
-      .rand_objects = callables.Take(),
-      .pre_randomize =
-          hir::MethodReplacing(
-              declared.methods, hir::RandomizationHook::kPreRandomize)
-              .transform(calls_declared),
-      .post_randomize =
-          hir::MethodReplacing(
-              declared.methods, hir::RandomizationHook::kPostRandomize)
-              .transform(calls_declared)};
-}
-
-auto UnitLowerer::TakeReportingForms(hir::ClassId cls)
-    -> std::vector<std::pair<hir::MethodId, mir::CallableId>> {
-  const hir::ClassDeclaration& declared = hir_->classes.Declaration(cls);
-  base::IdAllocator<mir::CallableId> callables;
-  for (std::size_t m = 0; m < declared.methods.size(); ++m) {
-    callables.Take();
-  }
-  if (const std::optional<RandomizationHooks>& hooks =
-          RandomizationHooksOf(cls)) {
-    for (std::size_t h = 0; h < hooks->Callbacks().size(); ++h) {
-      callables.Take();
-    }
+  ClassCallables taken{
+      .hooks = std::nullopt,
+      .reporting_forms = {},
+      .declaring_instance = std::nullopt,
+      .reaches = {},
+      .count = 0};
+  if (!declared.is_interface_class) {
+    const auto calls_declared = [&](hir::MethodId method) {
+      return RandomizationHooks::CallsDeclared{
+          .body = callables.Take(), .method = method};
+    };
+    taken.hooks = RandomizationHooks{
+        .rand_variables = callables.Take(),
+        .constrain = callables.Take(),
+        .rand_objects = callables.Take(),
+        .pre_randomize =
+            hir::MethodReplacing(
+                declared.methods, hir::RandomizationHook::kPreRandomize)
+                .transform(calls_declared),
+        .post_randomize =
+            hir::MethodReplacing(
+                declared.methods, hir::RandomizationHook::kPostRandomize)
+                .transform(calls_declared)};
   }
   // A pure method has no body (LRM 8.21), and the method making an embedded
   // covergroup is written whole rather than compiled from a body.
-  std::vector<std::pair<hir::MethodId, mir::CallableId>> forms;
   for (const hir::MethodId method : declared.methods.Ids()) {
     const hir::DeclaredMethod& m = declared.methods.Get(method);
     if (hir::IsLeftAbstract(m.dispatch) || m.makes.has_value() ||
         !ReportParamTypeOf(unit_, m.prototype.interface.kind).has_value()) {
       continue;
     }
-    forms.emplace_back(method, callables.Take());
+    taken.reporting_forms.emplace_back(method, callables.Take());
   }
-  return forms;
+  if (KeepsDeclaringInstance(declared)) {
+    taken.declaring_instance = callables.Take();
+  }
+  for (const hir::ClassId iface : declared.implements) {
+    if (hir_->classes.Declaration(iface).instance_scope.has_value()) {
+      taken.reaches.push_back(
+          mir::InterfaceReach{
+              .of = ClassIdentity(iface), .reach = callables.Take()});
+    }
+  }
+  taken.count = callables.size();
+  return taken;
 }
 
 auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
@@ -828,8 +845,7 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     covergroup_identities_.Append(unit_.DeclareClass());
   }
   for (const hir::ClassId hir_id : hir_->classes.OwnIds()) {
-    randomization_hooks_.emplace(hir_id, TakeRandomizationHooks(hir_id));
-    reporting_forms_.emplace(hir_id, TakeReportingForms(hir_id));
+    class_callables_.emplace(hir_id, TakeClassCallables(hir_id));
   }
 
   // AST-to-HIR rejects the forms MIR has no shape for, so this projection
@@ -1290,8 +1306,8 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
   const hir::ClassDeclaration& published = hir_->classes.Declaration(cls);
   const std::optional<DeclaringInstance> instance =
       StateDeclaredLayout(cls, declared);
-  if (instance.has_value()) {
-    RecordDeclaringInstanceField(id, instance->member);
+  if (instance.has_value() && instance->member.has_value()) {
+    RecordDeclaringInstanceField(id, *instance->member);
   }
   for (const hir::StaticPropertyId prop : published.static_properties.Ids()) {
     const hir::DeclaredProperty& property =
@@ -1514,8 +1530,8 @@ auto UnitLowerer::DeclaringInstanceFieldOf(mir::ClassId cls) const
   if (it == declaring_instance_fields_.end()) {
     throw InternalError(
         "UnitLowerer::DeclaringInstanceFieldOf: only a class a structural "
-        "scope declares keeps the instance it belongs to, in the field laid "
-        "out for it");
+        "scope declares, and no interface class, keeps the instance it belongs "
+        "to, in the field laid out for it");
   }
   return it->second;
 }
@@ -1524,7 +1540,7 @@ auto UnitLowerer::ClassFieldsOf(const hir::ClassDeclaration& declared) const
     -> ClassFields {
   ClassFields fields{
       .properties = {},
-      .declaring_instance = declared.instance_scope.has_value()
+      .declaring_instance = KeepsDeclaringInstance(declared)
                                 ? std::optional{unit_.builtins.scope_ptr}
                                 : std::nullopt};
   for (const hir::DeclaredProperty& property : declared.properties) {
@@ -1557,11 +1573,12 @@ auto UnitLowerer::StateDeclaredLayout(hir::ClassId cls, mir::Class& stated)
             .name = std::move(property.name),
             .slot = stated.fields.Add(mir::FieldDecl{.type = property.type})});
   }
-  return fields.declaring_instance.transform([&](mir::TypeId type) {
-    return DeclaringInstance{
-        .type = type,
-        .member = stated.fields.Add(mir::FieldDecl{.type = type})};
-  });
+  if (!declared.instance_scope.has_value()) return std::nullopt;
+  return DeclaringInstance{
+      .type = unit_.builtins.scope_ptr,
+      .member = fields.declaring_instance.transform([&](mir::TypeId type) {
+        return stated.fields.Add(mir::FieldDecl{.type = type});
+      })};
 }
 
 auto UnitLowerer::PublishedFieldsOf(const hir::ScopeClassSignature& signature)

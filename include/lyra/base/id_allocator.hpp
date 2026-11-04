@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace lyra::base {
@@ -24,6 +25,12 @@ class IdAllocator {
  public:
   auto Take() -> Id {
     return Id{next_++};
+  }
+
+  // How many identities have been handed out, which is how many entries the
+  // pool built later holds.
+  [[nodiscard]] auto size() const -> std::size_t {
+    return next_;
   }
 
  private:

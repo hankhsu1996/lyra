@@ -158,6 +158,7 @@ enum class LibraryDecl : std::uint8_t {
   kScopeCallable,
   kClassObjectInfo,
   kInterfaceRow,
+  kInterfaceReach,
   kConstructionTable,
   kInstantiation,
   kGeneratePlaces,
@@ -928,6 +929,11 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       static constexpr LibraryDeclData kInterfaceRow =
           kNamedByAddress("interface row", "lyra::abi::InterfaceRow");
       return &kInterfaceRow;
+    }
+    case LibraryDecl::kInterfaceReach: {
+      static constexpr LibraryDeclData kInterfaceReach =
+          kNamedByAddress("interface reach", "lyra::abi::InterfaceReach");
+      return &kInterfaceReach;
     }
     case LibraryDecl::kConstructionTable: {
       static constexpr LibraryDeclData kConstructionTable =

@@ -63,6 +63,24 @@ the declaration is what fixes the count. This was first written as though every 
 shared one declaring instance, and the base was handed the derived's -- which failed to compile on
 one backend and read the wrong scope on the other.
 
+**An interface class belongs to an instance as a class does, and keeps nothing (2026-11-03).** It is
+a type of the instance declaring it (LRM 6.22), with no storage and no object of its own (LRM 8.26),
+so nothing records its instance. Which instance's copy each name of an interface class means is
+fixed by the declaration writing the name -- a class's implements, an interface class's extends --
+reached from that declaration's own instance as a base's is; a cast asks whether an object is a
+value of a given copy by following those names (`a-dynamic-cast-asks-the-type-or-the-object.md`
+D3b).
+
+**A type of another instance is reached through the port bound to it (2026-11-03).** The standard
+names a type of another design element only through an interface port's typedef (LRM 6.18, 25.10),
+and a name through an interface port starts at the port, whose binding says which instance it stands
+for at each position (LRM 25.3). So where a port of the reader is bound to the instance declaring a
+base or an interface class, its route starts at that port, at the position the port holds the
+instance, and reads alike in every instance bound alike, which keeps equal code equal; a type of the
+reader's own instance, or of a scope enclosing it, is reached the way a name written there is. The
+elaborated type keeps the instance and not the port, so the port is found from the binding; two
+ports bound to one instance name one type of it, and the first is taken.
+
 **One compiled class, not one per instance.** LRM 6.22's "unique type" is a type-identity rule the
 front end enforces -- assigning between two instances' versions is rejected where the design
 elaborates -- and Lyra never sees two of them, because it compiles the unit rather than the instance

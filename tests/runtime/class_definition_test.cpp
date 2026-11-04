@@ -1,5 +1,6 @@
 #include "lyra/runtime/class_definition.hpp"
 
+#include <array>
 #include <gtest/gtest.h>
 #include <memory>
 #include <string>
@@ -13,6 +14,7 @@
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/scope.hpp"
+#include "lyra/value/constant_span.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "tests/base/written_at.hpp"
 
@@ -22,15 +24,18 @@ using lyra::test::kWrittenAt;
 
 using lyra::InternalError;
 using lyra::SimulationError;
+using lyra::abi::InterfaceReach;
 using lyra::abi::ObjectDefinition;
 using lyra::abi::ScopeInfo;
 using lyra::runtime::AdoptObject;
 using lyra::runtime::EndObjectOf;
 using lyra::runtime::GcObject;
 using lyra::runtime::HierarchySegment;
+using lyra::runtime::IsOfInterfaceOf;
 using lyra::runtime::OwnedObject;
 using lyra::runtime::RequireScopeClass;
 using lyra::runtime::Scope;
+using lyra::value::ConstantSpan;
 using lyra::value::ObjectRef;
 
 // A definition is a constant the unit declaring its class emits, so every one
@@ -54,7 +59,9 @@ auto ScopeClass(const ObjectDefinition* base) -> ObjectDefinition {
       .class_object = nullptr,
       .end = &EndObjectOf<Scope>,
       .interfaces = {},
-      .methods = nullptr};
+      .methods = nullptr,
+      .declaring_instance = nullptr,
+      .interface_reaches = {}};
 }
 
 const ObjectDefinition kRoot = ScopeClass(nullptr);
@@ -71,7 +78,9 @@ constexpr ObjectDefinition kPlain{
     .class_object = nullptr,
     .end = nullptr,
     .interfaces = {},
-    .methods = nullptr};
+    .methods = nullptr,
+    .declaring_instance = nullptr,
+    .interface_reaches = {}};
 
 auto Segment(std::string name) -> HierarchySegment {
   return HierarchySegment{std::move(name), {}};
@@ -172,7 +181,9 @@ const ObjectDefinition kOwnClassScope{
     .class_object = nullptr,
     .end = &EndObjectOf<OwnClassScope>,
     .interfaces = {},
-    .methods = nullptr};
+    .methods = nullptr,
+    .declaring_instance = nullptr,
+    .interface_reaches = {}};
 
 // An owner holds every scope as a scope, so driving one through its phases runs
 // what its own class's definition states of each, and letting go of it ends
@@ -211,7 +222,9 @@ const ObjectDefinition kOwnObject{
     .class_object = nullptr,
     .end = &EndObjectOf<OwnObject>,
     .interfaces = {},
-    .methods = nullptr};
+    .methods = nullptr,
+    .declaring_instance = nullptr,
+    .interface_reaches = {}};
 
 // A value the program built with `new` is handed, constructed, to the handle
 // that owns it, which reaches it at the address it was made at and ends it as
@@ -229,6 +242,116 @@ TEST(ClassDefinitionTest, AnAdoptedObjectIsReachedAndEndedAsItWasBuilt) {
   EXPECT_EQ(held.use_count(), 2);
   object = ObjectRef{};
   EXPECT_EQ(held.use_count(), 1);
+}
+
+// Three instances of the design hierarchy, which the walk below only compares
+// and never enters.
+auto InstanceA() -> Scope* {
+  static Scope instance;
+  return &instance;
+}
+auto InstanceB() -> Scope* {
+  static Scope instance;
+  return &instance;
+}
+auto InstanceC() -> Scope* {
+  static Scope instance;
+  return &instance;
+}
+
+// The ways a name reaches an instance from the one its declaration belongs
+// to: the same one, or a fixed other one, as a name through a port bound to
+// it reaches it.
+auto SameInstance(Scope* from) -> Scope* {
+  return from;
+}
+auto ToB(Scope*) -> Scope* {
+  return InstanceB();
+}
+auto ToC(Scope*) -> Scope* {
+  return InstanceC();
+}
+
+// What an object of a class belonging to the instance A keeps for it.
+auto KeptA(GcObject*) -> Scope* {
+  return InstanceA();
+}
+
+constexpr auto InterfaceClass(ConstantSpan<InterfaceReach> extends)
+    -> ObjectDefinition {
+  return ObjectDefinition{
+      .base = nullptr,
+      .scope = nullptr,
+      .class_object = nullptr,
+      .end = nullptr,
+      .interfaces = {},
+      .methods = nullptr,
+      .declaring_instance = nullptr,
+      .interface_reaches = extends};
+}
+
+// `Root`, of an instance, extended by `Left` and `Right`, each of the instance
+// it extends `Root` from; `Leaf` stands alone.
+constexpr ObjectDefinition kRootIface = InterfaceClass({});
+constexpr ObjectDefinition kLeafIface = InterfaceClass({});
+constexpr std::array kToRootAtC{
+    InterfaceReach{.of = &kRootIface, .reach = &ToC}};
+constexpr ObjectDefinition kLeftIface =
+    InterfaceClass(ConstantSpan<InterfaceReach>(&kToRootAtC));
+constexpr ObjectDefinition kRightIface =
+    InterfaceClass(ConstantSpan<InterfaceReach>(&kToRootAtC));
+
+// A class of the instance A implementing `Leaf` twice, A's copy and B's, and
+// `Root` along two paths to C's copy.
+constexpr std::array kNamed{
+    InterfaceReach{.of = &kLeafIface, .reach = &SameInstance},
+    InterfaceReach{.of = &kLeafIface, .reach = &ToB},
+    InterfaceReach{.of = &kLeftIface, .reach = &SameInstance},
+    InterfaceReach{.of = &kRightIface, .reach = &ToB}};
+const ObjectDefinition kNamingClass{
+    .base = nullptr,
+    .scope = nullptr,
+    .class_object = nullptr,
+    .end = &EndObjectOf<GcObject>,
+    .interfaces = {},
+    .methods = nullptr,
+    .declaring_instance = &KeptA,
+    .interface_reaches = ConstantSpan<InterfaceReach>(&kNamed)};
+// A class of no instance extending it, whose objects are of what it names.
+const ObjectDefinition kExtendingClass{
+    .base = &kNamingClass,
+    .scope = nullptr,
+    .class_object = nullptr,
+    .end = &EndObjectOf<GcObject>,
+    .interfaces = {},
+    .methods = nullptr,
+    .declaring_instance = nullptr,
+    .interface_reaches = {}};
+
+auto ObjectOf(const ObjectDefinition* definition) -> ObjectRef {
+  auto built = std::make_unique<GcObject>();
+  built->definition = definition;
+  return AdoptObject(built.release());
+}
+
+// An object is a value of each instance's copy of an interface class its
+// lineage names (LRM 6.22, 8.26.5): two names of one interface class reach two
+// copies, a copy named through what an interface class extends is reached from
+// the instance that one is of, and two paths to one copy reach it once. It is
+// a value of no other copy, and a handle naming no object is of none.
+TEST(ClassDefinitionTest, AnObjectIsOfEachInstancesCopyItsLineageNames) {
+  for (const ObjectDefinition* definition : {&kNamingClass, &kExtendingClass}) {
+    const ObjectRef object = ObjectOf(definition);
+    EXPECT_TRUE(IsOfInterfaceOf(object, &kLeafIface, InstanceA()));
+    EXPECT_TRUE(IsOfInterfaceOf(object, &kLeafIface, InstanceB()));
+    EXPECT_FALSE(IsOfInterfaceOf(object, &kLeafIface, InstanceC()));
+    EXPECT_TRUE(IsOfInterfaceOf(object, &kLeftIface, InstanceA()));
+    EXPECT_FALSE(IsOfInterfaceOf(object, &kLeftIface, InstanceB()));
+    EXPECT_TRUE(IsOfInterfaceOf(object, &kRightIface, InstanceB()));
+    EXPECT_TRUE(IsOfInterfaceOf(object, &kRootIface, InstanceC()));
+    EXPECT_FALSE(IsOfInterfaceOf(object, &kRootIface, InstanceA()));
+  }
+  EXPECT_FALSE(IsOfInterfaceOf(ObjectRef{}, &kLeafIface, InstanceA()));
 }
 
 }  // namespace

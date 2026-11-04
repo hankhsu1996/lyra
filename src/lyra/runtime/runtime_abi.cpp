@@ -4121,6 +4121,13 @@ auto lyra_rt_dynamic_cast(const void* handle, const void* definition, void* out)
                static_cast<const ObjectDefinition*>(definition)));
 }
 
+auto lyra_rt_is_of_interface_of(
+    const void* handle, const void* iface, const void* instance) -> bool {
+  return lyra::runtime::IsOfInterfaceOf(
+      Read<ObjectRef>(handle), static_cast<const ObjectDefinition*>(iface),
+      static_cast<const lyra::runtime::Scope*>(instance));
+}
+
 auto lyra_rt_interface_table(const void* object, const void* iface) -> const
     void* {
   return lyra::runtime::InterfaceTableOf(

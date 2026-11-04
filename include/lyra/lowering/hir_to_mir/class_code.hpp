@@ -32,7 +32,8 @@ namespace lyra::lowering::hir_to_mir {
 // prototype states after its object, or for a static one (LRM 8.10) after the
 // instance, where its class belongs to one; what `randomize()` asks of the
 // class (LRM 18.6), the object and, where constraints are stated to it, the
-// problem.
+// problem; the instance an interface class the class names is of (LRM 6.22),
+// the instance the class belongs to, answering the one the name reaches.
 [[nodiscard]] auto ClassConstructorPrototype(
     UnitLowerer& unit_lowerer, hir::ClassId cls) -> mir::CallableCode;
 // The constructor of `cls` itself, as a construction of an object of it
@@ -49,6 +50,12 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto ClassHookPrototype(
     UnitLowerer& unit_lowerer, hir::ClassId cls,
     support::LibraryCallback callback) -> mir::CallableCode;
+[[nodiscard]] auto ClassInterfaceReachPrototype(UnitLowerer& unit_lowerer)
+    -> mir::CallableCode;
+// What answers, of an object reached as `self_pointer_type`, the instance it
+// keeps for its class (LRM 6.22), of the type `instance`.
+[[nodiscard]] auto ClassDeclaringInstancePrototype(
+    mir::TypeId self_pointer_type, mir::TypeId instance) -> mir::CallableCode;
 
 // The method a scope's published class introduces for an operation whose code
 // takes and answers what `operation` does, entered on an object reached as
@@ -66,7 +73,7 @@ auto CallableFormOf(const hir::MethodDispatch& dispatch) -> CallableForm;
 // the operation does, it reads the instance the operation runs for -- the one
 // a body of the form `form` is handed where it is entered by a construction or
 // runs on no object (LRM 8.7, 8.10), and otherwise the one the object recorded
-// in `instance.member` -- and enters the code that instance's body compiled,
+// where `instance` says -- and enters the code that instance's body compiled,
 // through the method `published`, the class published of the scope declaring
 // the class, introduced for it.
 [[nodiscard]] auto EntryOf(

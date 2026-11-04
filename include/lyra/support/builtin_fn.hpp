@@ -970,6 +970,12 @@ enum class BuiltinFn : std::uint16_t {
   // toward a class it may not be (LRM 8.16), the class's definition answering
   // as clang's `__dynamic_cast` reads a class's type information.
   kDynamicCast,
+  // Whether the object its first operand refers to is a value of the copy of
+  // the interface class whose definition its second operand points at that
+  // belongs to the instance its third operand is: what `$cast` asks of an
+  // object toward an interface class an instance declares, once the object is
+  // of it (LRM 6.22, 8.26.5).
+  kIsOfInterfaceOf,
   // A box or a borrow of a closure made one of a closure of no known type, the
   // one the type the call is at holds, as rustc's unsizing coercion makes a
   // `Box<dyn FnMut>` of a `Box<T>` and a `&dyn FnMut` of a `&T`. The closure

@@ -93,9 +93,54 @@ is two types sharing code (JVMS 5.3, recalled).
 
 Before this, the answer came from the definition alone, so an object of another instance's class was
 taken for this instance's, on both backends; a class each generate block declared answered right
-only because each such block compiled a class of its own. An interface class an instance declares is
-still asked about its definition alone: its objects are of classes that keep their own instance, not
-the interface's.
+only because each such block compiled a class of its own.
+
+### D3b. An interface class an instance declares is asked about that instance too (2026-11-03)
+
+An interface class is a type like any other, so LRM 6.22 makes it one per instance too, and a cast
+toward it succeeds only for an object whose class implements that instance's copy (LRM 8.26.5). D3a
+first left it asked about its definition alone, on the ground that its objects keep their own
+class's instance and none for the interface; that much holds, and it is why the object keeps nothing
+more.
+
+**An object may be a value of several copies, so the cast asks a yes-or-no question rather than
+which copy.** Three things are kept apart. The definition is the compiled interface class, one for
+every instance of its unit. A copy is that interface class as a type of one instance, which the
+definition and the instance name together and nothing stores. A reach is how one name of it, written
+in a declaration, finds the instance whose copy it means. One class can name two instances' copies
+-- through two interface ports, or a class and the one it extends each naming one -- and is a value
+of both.
+
+Which copy a name means is fixed where it is written, in the declaration naming it, from that
+declaration's own instance: through the interface port a typedef names it through (LRM 6.18, 25.10),
+or, for an interface class of the declaration's own instance or of a scope enclosing it, as a `new`
+written there would reach the instance. An interface class extending another names it the same way,
+from the instance it belongs to, so the copies compose along the edges the declarations write. So
+each declaration holds, per interface class of an instance it names, a body taking the instance it
+belongs to and answering the one that name reaches; each class's definition holds a body answering,
+of an object, the instance it keeps for that class; and the library walks the lineage, following
+each name from the instance it starts at, until a step lands on the interface class at the instance
+the cast names. Computing it when asked costs nothing a run feels, since only a cast asks; keeping
+it would cost every object a word per name.
+
+The shape is .NET's for generic code shared across instantiations over reference types, with the
+instance in the place of the type argument: one body serves every instantiation, the exact one is
+found at run time, and each level of a lineage keeps its own (dotnet/runtime, BOTR
+`shared-generics.md`); a class there may implement two instantiations of one generic interface, as
+one here may name two copies. .NET builds a type record per instantiation when it is first needed
+and answers a cast from it; a cast here is rare, so the walk computes what that record would hold
+each time it is asked, and a record could be kept later without changing what a definition states.
+Scala 2 puts the same fact where this puts it: an inner trait states an abstract accessor of its
+outer instance and each class mixing it in implements it (`ExplicitOuter`). Scala 3 gives an inner
+trait that never reads its outer instance no such accessor, and so cannot test it at run time
+(scala/scala3#20354); a cast here must answer, so every name keeps its reach. The walk is
+libcxxabi's `__dynamic_cast` over a base graph (`private_typeinfo.cpp`, `search_below_dst`), with
+one difference: C++ must hand back one subobject and so reports a base met along two paths as
+ambiguous, while a SystemVerilog cast hands back the handle unchanged and asks only whether any path
+lands.
+
+Before this, an object of a class implementing another instance's copy was taken for this
+instance's, on both backends.
 
 ### D4. Where the declared types settle it, the answer is a constant
 
@@ -206,5 +251,5 @@ unrelated classes, so it never can" -- and uses it only to warn, never to reject
   record an object carries, which is what the class half of this asks.
 - IEEE 1800-2023: 6.24.2 (`$cast`), 6.22 (a type declared in an instance is that instance's), 6.22.3
   / 6.22.4 / 6.22.5 (assignment compatible, cast compatible, type incompatible), 6.19.5.6 (`name` of
-  a non-member), 8.16 (casting between class handles), 8.26 (interface classes), 20.10 (severity
-  tasks).
+  a non-member), 8.16 (casting between class handles), 8.26 and 8.26.5 (interface classes, and a
+  cast toward one), 6.18 and 25.10 (a type named through an interface port), 20.10 (severity tasks).

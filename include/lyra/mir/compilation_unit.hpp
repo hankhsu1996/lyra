@@ -415,10 +415,7 @@ struct CompilationUnit {
                     .signedness = Signedness::kUnsigned,
                     .state_kind = IntegralStateKind::kFourState}}),
             .effects = LibraryTypeOf(types, support::LibraryDecl::kRuntimeEffects),
-            .scope_ptr = types.Intern(
-                Type{PointerType{
-                    .pointee = LibraryTypeOf(types, support::LibraryDecl::kScope),
-                    .ownership = PointerOwnership::kBorrowed}}),
+            .scope_ptr = ScopePointer(types),
             .process_object = LibraryTypeOf(types, support::LibraryDecl::kProcess),
             .event = types.Intern(
                 Type{ManagedRefType{

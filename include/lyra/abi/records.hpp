@@ -25,6 +25,7 @@
 
 namespace lyra::runtime {
 class GcObject;
+class Scope;
 }  // namespace lyra::runtime
 
 namespace lyra::abi {
@@ -113,6 +114,16 @@ struct InterfaceRow {
   const void* table = nullptr;
 };
 
+// One interface class a class's declaration names -- what a class implements
+// or an interface class extends (LRM 8.26.2) -- that is a type of an instance
+// (LRM 6.22), and the body answering which instance's: handed the instance the
+// declaring class belongs to, it answers the one the name reaches from there.
+// Two names of one interface class reaching two instances are two of these.
+struct InterfaceReach {
+  const ObjectDefinition* of = nullptr;
+  runtime::Scope* (*reach)(runtime::Scope*) = nullptr;
+};
+
 // What `randomize()` asks of an object of a class (LRM 18.6): to
 // declare its random variables (LRM 18.4) and state its constraints (LRM 18.5)
 // to the call's problem, to name the random objects its handles reach, and the
@@ -129,19 +140,23 @@ struct ClassObjectInfo {
 
 // The definition of one class: what it extends, what a class whose values
 // stand in the design hierarchy or are class objects (LRM 8.3) states of them,
-// how an object of it ends, the interface classes it implements, and the
-// body each of its virtual methods runs (LRM 8.20). Which body initializes a
+// how an object of it ends, the interface classes it implements, the body each
+// of its virtual methods runs (LRM 8.20), and, for a class that is a type of an
+// instance (LRM 6.22), which instance an object of it is of and which instance
+// each interface class its declaration names is of. Which body initializes a
 // value is settled where the value is asked for rather than by the class it is
 // of (LRM 8.7), so what a definition carries is what every value of the class
 // shares and nothing about any one of them.
 //
 // Every entry is a body entered on an object whose class the caller does not
-// know. One driving or randomizing the object is handed it as the root every
-// object is and views it as the class whose body it calls; the one ending it
-// is handed its storage, which is what the class's destructor takes. The unit
-// declaring the class emits the definition as one constant, which every unit
-// naming the class reaches by the symbol it is linked under; nothing is
-// declared to the library while the program runs.
+// know, or on an instance. One driving or randomizing the object, or answering
+// the instance the class belongs to, is handed it as the root every object is
+// and views it as the class whose body it calls; the one ending it is handed
+// its storage, which is what the class's destructor takes; one answering the
+// instance an interface class is of is handed the instance the class belongs
+// to. The unit declaring the class emits the definition as one constant, which
+// every unit naming the class reaches by the symbol it is linked under; nothing
+// is declared to the library while the program runs.
 struct ObjectDefinition {
   // The class this one extends (LRM 8.13), or nothing where it extends none.
   const ObjectDefinition* base = nullptr;
@@ -162,6 +177,13 @@ struct ObjectDefinition {
   // 8.20), laid out by the code that dispatches on one and read by nothing
   // here. Absent for an interface class.
   const void* methods = nullptr;
+  // The instance of the design hierarchy the class belongs to (LRM 6.22), as an
+  // object of it keeps it. Absent where the class belongs to none, and for an
+  // interface class, which keeps nothing.
+  runtime::Scope* (*declaring_instance)(runtime::GcObject*) = nullptr;
+  // Each interface class of an instance the class's own declaration names, in
+  // the order written; what the class it extends names is that class's own.
+  value::ConstantSpan<InterfaceReach> interface_reaches;
 };
 
 // How the object at one place of a scope's construction is made: one object
@@ -302,6 +324,13 @@ constexpr void ForEachField(const InterfaceRow& record, const Visit& visit) {
 }
 
 template <typename Visit>
+constexpr void ForEachField(const InterfaceReach& record, const Visit& visit) {
+  const auto& [of, reach] = record;
+  visit(of);
+  visit(reach);
+}
+
+template <typename Visit>
 constexpr void ForEachField(const ClassObjectInfo& record, const Visit& visit) {
   const auto& [rand_variables, constrain, rand_objects, pre_randomize, post_randomize] =
       record;
@@ -315,13 +344,16 @@ constexpr void ForEachField(const ClassObjectInfo& record, const Visit& visit) {
 template <typename Visit>
 constexpr void ForEachField(
     const ObjectDefinition& record, const Visit& visit) {
-  const auto& [base, scope, class_object, end, interfaces, methods] = record;
+  const auto& [base, scope, class_object, end, interfaces, methods, declaring_instance, interface_reaches] =
+      record;
   visit(base);
   visit(scope);
   visit(class_object);
   visit(end);
   visit(interfaces);
   visit(methods);
+  visit(declaring_instance);
+  visit(interface_reaches);
 }
 
 template <typename Visit>

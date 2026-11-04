@@ -34,7 +34,9 @@ const abi::ObjectDefinition kProcessDefinition{
     .class_object = &kProcessRandomization,
     .end = &EndObjectOf<RuntimeProcess>,
     .interfaces = {},
-    .methods = nullptr};
+    .methods = nullptr,
+    .declaring_instance = nullptr,
+    .interface_reaches = {}};
 
 }  // namespace
 

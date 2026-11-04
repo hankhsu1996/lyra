@@ -40,7 +40,9 @@ constexpr auto DefinitionOf(
       .class_object = nullptr,
       .end = &EndObjectOf<T>,
       .interfaces = interfaces,
-      .methods = methods};
+      .methods = methods,
+      .declaring_instance = nullptr,
+      .interface_reaches = {}};
 }
 
 // Every object the runtime holds is one of a class extending the part every
@@ -208,14 +210,18 @@ constexpr ObjectDefinition kNamed{
     .class_object = nullptr,
     .end = nullptr,
     .interfaces = {},
-    .methods = nullptr};
+    .methods = nullptr,
+    .declaring_instance = nullptr,
+    .interface_reaches = {}};
 constexpr ObjectDefinition kRanked{
     .base = nullptr,
     .scope = nullptr,
     .class_object = nullptr,
     .end = nullptr,
     .interfaces = {},
-    .methods = nullptr};
+    .methods = nullptr,
+    .declaring_instance = nullptr,
+    .interface_reaches = {}};
 
 // The table type the class introducing a behavior declares, and the one a
 // class extending it declares over it, as generated code lays tables out: the

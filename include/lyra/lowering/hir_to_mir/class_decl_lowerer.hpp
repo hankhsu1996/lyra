@@ -105,6 +105,13 @@ class ClassDeclLowerer {
       const WalkFrame& declaring_frame, mir::Class& mir_class,
       const RandomizationHooks& hooks) const;
 
+  // Defines what answers which instances an object of the class is of (LRM
+  // 6.22, 8.26.2), each at the identity the class took for it: the instance
+  // each interface class the declaration names reaches, from the instance the
+  // class belongs to as the class's code reaches it.
+  void DefineInstanceBodies(
+      const WalkFrame& declaring_frame, mir::Class& mir_class) const;
+
   UnitLowerer* owner_;
   hir::ClassId hir_class_id_;
   mir::ClassId class_id_;

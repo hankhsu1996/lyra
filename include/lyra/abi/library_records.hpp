@@ -22,6 +22,7 @@ constexpr void ForEachLibraryRecord(const Visit& visit) {
   visit.template operator()<ScopeCallable>(Decl::kScopeCallable);
   visit.template operator()<ClassObjectInfo>(Decl::kClassObjectInfo);
   visit.template operator()<InterfaceRow>(Decl::kInterfaceRow);
+  visit.template operator()<InterfaceReach>(Decl::kInterfaceReach);
   visit.template operator()<ConstructionTable>(Decl::kConstructionTable);
   visit.template operator()<Instantiation>(Decl::kInstantiation);
   visit.template operator()<GeneratePlaces>(Decl::kGeneratePlaces);

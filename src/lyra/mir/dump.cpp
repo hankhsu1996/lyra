@@ -927,6 +927,17 @@ class MirDumper {
               support::LibraryCallbackName(answered.callback),
               answered.body.value));
     }
+    if (s.declaring_instance.has_value()) {
+      Line(
+          std::format(
+              "DeclaringInstance: Callable[{}]", s.declaring_instance->value));
+    }
+    for (const InterfaceReach& named : s.interface_reaches) {
+      Line(
+          std::format(
+              "InterfaceReach: {} <- Callable[{}]", FormatClassRef(named.of),
+              named.reach.value));
+    }
     for (const DispatchedBehavior& dispatched : s.dispatch) {
       Line(
           std::format(

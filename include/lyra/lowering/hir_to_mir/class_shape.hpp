@@ -68,12 +68,13 @@ enum class CallableForm : std::uint8_t {
 // The instance of the structural scope that declares a class (LRM 6.22), as a
 // class this unit declares keeps it: the type a construction or a
 // type-associated body of the class is handed it as, and the member each object
-// records it in for the object's methods to read. It is held as the base every
-// scope extends because the class is published, and what it publishes may name
-// no class the scope keeps to itself.
+// records it in for the object's methods to read -- none for an interface
+// class, which has no object (LRM 8.26). It is held as the base every scope
+// extends because the class is published, and what it publishes may name no
+// class the scope keeps to itself.
 struct DeclaringInstance {
   mir::TypeId type;
-  mir::FieldId member;
+  std::optional<mir::FieldId> member;
 };
 
 // The structural portion of a class declaration: the facts a peer needs to read
@@ -98,8 +99,9 @@ struct ClassShape {
   mir::TypeId self_pointer_type;
   // The instance this class belongs to, present exactly where the class's
   // declaration says it takes one (LRM 6.22): what each body of the class is
-  // handed follows from it. Absent for a scope of the design hierarchy, which
-  // is a type of no instance.
+  // handed follows from it. An interface class belongs to one and keeps it in
+  // no member. Absent for a scope of the design hierarchy, which is a type of
+  // no instance.
   std::optional<DeclaringInstance> declaring_instance;
   TimeResolution time_resolution;
   support::ScopeExecution execution = support::ScopeExecution::kDesign;

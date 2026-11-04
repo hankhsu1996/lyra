@@ -89,6 +89,10 @@ auto SymbolPart::LibraryCallback(support::LibraryCallback function)
   return SymbolPart{std::format("$l{}:{}", name.size(), name)};
 }
 
+auto SymbolPart::DeclaringInstance() -> SymbolPart {
+  return SymbolPart{"$x;"};
+}
+
 auto SymbolPartOf(std::optional<std::string_view> name, std::uint32_t ordinal)
     -> SymbolPart {
   return name.has_value() ? SymbolPart::Name(*name)

@@ -453,11 +453,11 @@ using AssignmentValidity = std::variant<NoAssignmentAllowed, AssignmentAllowed>;
 // front end's to decide, and a run-time check standing where the types already
 // make the assignment invalid answers a question that was settled.
 //
-// `destination_instance` is present where the destination is of a class a
-// structural scope declares, which is a type of each instance of that scope
-// alone (LRM 6.22): an object is of it only where it is of the class and
-// belongs to that instance, which this reaches from where the cast stands, as
-// a `new` of the class written there would.
+// `destination_instance` is present where the destination is a class or an
+// interface class a structural scope declares, which is a type of each instance
+// of that scope alone (LRM 6.22): an object is of it only where it is of the
+// class and is of that instance's copy, which this reaches from where the cast
+// stands, as a `new` written there reaches a class's instance.
 struct DynamicCastExpr {
   ExprId destination;
   ExprId source;

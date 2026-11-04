@@ -222,12 +222,18 @@ struct MintedAppliedName {
   std::string_view source;
 };
 
-// The name of the entry of a method, made from the method's own name:
+// The name a method that takes part in dispatch, or answers what the runtime
+// library asks of an object, is spelled by in every unit naming it: as the
+// source wrote it, as the library names the function it answers, or for the
+// body answering the instance its class belongs to, `sv_declaring_instance`.
+using CppDispatchName = std::variant<SourceName, VerbatimName, MintedWord>;
+
+// The name of the entry of a method, made from the method's dispatch name:
 // `sv_entry_f` for the entry of a method `f`. A method is named alike in every
 // unit that names it, so a unit naming another unit's entry spells it as the
 // defining unit does.
 struct EntryName {
-  std::variant<SourceName, VerbatimName> method;
+  CppDispatchName method;
 };
 
 // The name of the definition the objects of a class carry, made from the
@@ -410,20 +416,19 @@ inline void WriteOne(TargetText& out, NamespaceMemberScope scope) {
   return MintedName{.what = what, .ordinal = ordinal, .source = name};
 }
 
-// The name a method that takes part in dispatch, or answers what the runtime
-// library asks of an object, is spelled by in every unit naming it: as the
-// source wrote it or as the library names the function it answers.
 [[nodiscard]] inline auto CppDispatchNameOf(
     const mir::CompilationUnit& unit, const mir::Class& cls,
-    mir::CallableId method) -> std::variant<SourceName, VerbatimName> {
+    mir::CallableId method) -> CppDispatchName {
   return std::visit(
       Overloaded{
-          [](std::string_view name) -> std::variant<SourceName, VerbatimName> {
+          [](std::string_view name) -> CppDispatchName {
             return ToCppName(name);
           },
-          [](support::LibraryCallback callback)
-              -> std::variant<SourceName, VerbatimName> {
+          [](support::LibraryCallback callback) -> CppDispatchName {
             return VerbatimName{.text = support::LibraryCallbackName(callback)};
+          },
+          [](mir::DeclaringInstanceName) -> CppDispatchName {
+            return MintedWord{.word = "declaring_instance"};
           }},
       mir::DispatchNameOf(unit, cls, method));
 }

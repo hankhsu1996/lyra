@@ -104,12 +104,12 @@ void HoldReceiverShare(
                   .type = share_type})});
 }
 
-// Writes the instance a body run as a constructor is handed into the member
-// the object records it in, before anything else, since whatever that body runs
-// on the object may read it.
+// Writes the instance a body run as a constructor is handed, of the type
+// `instance`, into `member`, which the object records it in, before anything
+// else, since whatever that body runs on the object may read it.
 void RecordDeclaringInstance(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
-    const DeclaringInstance& instance) {
+    mir::TypeId instance, mir::FieldId member) {
   mir::Builder block = frame.Builder();
   const mir::ExprId value = block.Add(
       mir::Expr{
@@ -117,13 +117,13 @@ void RecordDeclaringInstance(
               mir::CastExpr{
                   .operand = BuildEnclosingScopeReceiver(
                       frame, unit, mir::EnclosingHops{})},
-          .type = instance.type});
+          .type = instance});
   const mir::ExprId target = block.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit, block, block.Add(MakeSelfRefExpr(frame))),
           mir::ClassFieldTarget{
-              .owner = frame.current_class.id, .slot = instance.member},
-          instance.type));
+              .owner = frame.current_class.id, .slot = member},
+          instance));
   block.AppendStmt(
       mir::ExprStmt{
           .expr =
@@ -169,12 +169,15 @@ auto BindImplicitParameters(
     }
   }
   if (takes.instance && owner.declaring_instance.has_value()) {
-    bound.params.push_back(bindings.Declare(
-        DeclaringInstanceOrigin{}, owner.declaring_instance->type));
+    const DeclaringInstance& instance = *owner.declaring_instance;
+    bound.params.push_back(
+        bindings.Declare(DeclaringInstanceOrigin{}, instance.type));
     bound.frame = bound.frame.WithStructuralBase(ScopeThroughParameter{});
-    if (takes.object) {
+    // An interface class belongs to an instance and has no object to record
+    // it in (LRM 8.26).
+    if (takes.object && instance.member.has_value()) {
       RecordDeclaringInstance(
-          unit_lowerer.Unit(), bound.frame, *owner.declaring_instance);
+          unit_lowerer.Unit(), bound.frame, instance.type, *instance.member);
     }
   }
   return bound;

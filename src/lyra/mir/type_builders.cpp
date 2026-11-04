@@ -182,6 +182,13 @@ auto ObjectRootPointer(const TypePool& types) -> TypeId {
           .ownership = PointerOwnership::kBorrowed}});
 }
 
+auto ScopePointer(const TypePool& types) -> TypeId {
+  return types.Intern(
+      Type{PointerType{
+          .pointee = LibraryTypeOf(types, support::LibraryDecl::kScope),
+          .ownership = PointerOwnership::kBorrowed}});
+}
+
 auto ConstructionTablePointer(const TypePool& types) -> TypeId {
   return types.Intern(
       Type{PointerType{

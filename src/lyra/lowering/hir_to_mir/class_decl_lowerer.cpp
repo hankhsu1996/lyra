@@ -210,7 +210,7 @@ auto BaseHookTarget(
   if (unit_lowerer.Hir().classes.IsOwn(base)) {
     return mir::CallableTarget{
         .owner = unit_lowerer.ClassIdentity(base),
-        .slot = unit_lowerer.RandomizationHooksOf(base)->BodyOf(callback)};
+        .slot = unit_lowerer.ClassCallablesOf(base).hooks->BodyOf(callback)};
   }
   const mir::ClassId declared = unit_lowerer.ClassIdentity(base);
   const std::optional<mir::CallableId> body =
@@ -377,12 +377,15 @@ auto ClassDeclLowerer::DeclareShape(
   for (PropertyField& property : fields.properties) {
     shape.AddNamedField(std::move(property.name), property.type);
   }
-  if (fields.declaring_instance.has_value()) {
+  if (declared.instance_scope.has_value()) {
+    const std::optional<mir::FieldId> member =
+        fields.declaring_instance.transform(
+            [&](mir::TypeId type) { return shape.AddField(type); });
     shape.declaring_instance = DeclaringInstance{
-        .type = *fields.declaring_instance,
-        .member = shape.AddField(*fields.declaring_instance)};
-    unit_lowerer.RecordDeclaringInstanceField(
-        class_id_, shape.declaring_instance->member);
+        .type = unit_lowerer.Unit().builtins.scope_ptr, .member = member};
+    if (member.has_value()) {
+      unit_lowerer.RecordDeclaringInstanceField(class_id_, *member);
+    }
   }
 
   // Everything the class keeps for itself rather than per object goes to one
@@ -471,23 +474,19 @@ auto ClassDeclLowerer::DeclareShape(
   for (const hir::MethodId id : hir_class.methods.Ids()) {
     method_statics.push_back(bind_statics(hir_class.methods.Get(id)));
   }
-  // What `randomize()` asks of the class (LRM 18.6) is answered by bodies the
-  // library calls, each at the identity the class took for it.
-  std::size_t callable_count = signatures.size();
-  if (const std::optional<RandomizationHooks>& hooks =
-          unit_lowerer.RandomizationHooksOf(hir_class_id_)) {
-    const auto callbacks = hooks->Callbacks();
-    callable_count += callbacks.size();
-    signatures.resize(callable_count);
-    for (const auto& [id, callback] : callbacks) {
+  // Every callable after the methods sits at the identity the class took for
+  // it; those answering what `randomize()` asks (LRM 18.6) are the bodies the
+  // library calls.
+  const ClassCallables& callables =
+      unit_lowerer.ClassCallablesOf(hir_class_id_);
+  if (callables.hooks.has_value()) {
+    for (const auto& [id, callback] : callables.hooks->Callbacks()) {
       shape.library_callbacks.push_back(
           mir::LibraryCallbackBody{.callback = callback, .body = id});
     }
   }
-  // Then the form a waited evaluation calls of each function (LRM 9.4.2).
-  callable_count += unit_lowerer.ReportingFormsOf(hir_class_id_).size();
-  signatures.resize(callable_count);
-  shape.callable_signatures = {callable_count, std::move(signatures)};
+  signatures.resize(callables.count);
+  shape.callable_signatures = {callables.count, std::move(signatures)};
   method_statics_ = {hir_class.methods.size(), std::move(method_statics)};
   ctor_static_bindings_ = bind_statics(hir_class.constructor);
 
@@ -529,9 +528,12 @@ auto ClassDeclLowerer::BodyFrame(
                               .WithScopeName(hir_class_->fixed_name);
   const std::optional<DeclaringInstance>& instance =
       owner_->GetClassShape(class_id_).declaring_instance;
-  if (!instance.has_value()) return frame.WithStructuralBase(NoScope{});
+  // An interface class keeps no instance; what of its code runs is handed one.
+  if (!instance.has_value() || !instance->member.has_value()) {
+    return frame.WithStructuralBase(NoScope{});
+  }
   return frame.WithStructuralBase(
-      ScopeThroughMember{.member = instance->member});
+      ScopeThroughMember{.member = *instance->member});
 }
 
 // Each hook starts with what the class it extends does -- a source class by
@@ -789,6 +791,70 @@ void ClassDeclLowerer::DefineRandomizationHooks(
   calls_own(hooks.post_randomize);
 }
 
+void ClassDeclLowerer::DefineInstanceBodies(
+    const WalkFrame& declaring_frame, mir::Class& mir_class) const {
+  UnitLowerer& unit_lowerer = *owner_;
+  const ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
+  const ClassCallables& callables =
+      unit_lowerer.ClassCallablesOf(hir_class_id_);
+  const mir::TypeId instance_type = unit_lowerer.Unit().builtins.scope_ptr;
+  const auto define = [&](mir::CallableId callable, mir::CallableCode code) {
+    mir_class.callables.Define(
+        callable, mir::CallableDecl{
+                      .code = std::move(code),
+                      .foreign = std::nullopt,
+                      .virtual_dispatch = std::nullopt,
+                      .defining_unit = std::nullopt});
+  };
+  // What the object keeps reads the class's layout alone, which every body
+  // states the class with; only what it takes is stated here.
+  if (const std::optional<mir::CallableId> kept =
+          callables.declaring_instance) {
+    define(
+        *kept, ClassDeclaringInstancePrototype(
+                   shape.self_pointer_type, instance_type));
+  }
+  // The declaration took one reach for each name of an interface class of an
+  // instance it writes, in the order written, and the code states the way
+  // each one goes.
+  const std::vector<hir::InterfaceReach>& written =
+      hir_class_->interface_reaches;
+  const bool aligned =
+      written.size() == callables.reaches.size() &&
+      std::ranges::equal(
+          written, callables.reaches,
+          [&](const hir::InterfaceReach& named,
+              const mir::InterfaceReach& taken) {
+            return unit_lowerer.ClassIdentity(named.of) == taken.of;
+          });
+  if (!aligned) {
+    throw InternalError(
+        "ClassDeclLowerer::DefineInstanceBodies: the code of a class states "
+        "the way to an instance for other than the interface classes its "
+        "declaration names -- please report this as a bug");
+  }
+  for (std::size_t i = 0; i < written.size(); ++i) {
+    // Handed the instance the class belongs to, as a static method is (LRM
+    // 8.10), since the name reaches the same instance whatever object asks.
+    mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
+    CallableBindings bindings(unit_lowerer.Unit(), code);
+    ScopeChainNode link{};
+    BoundImplicitParameters bound = BindImplicitParameters(
+        unit_lowerer,
+        BodyFrame(declaring_frame, mir_class, link)
+            .WithBlock(&code.Body())
+            .WithBindings(&bindings)
+            .WithRunsAsFunctionCall(true),
+        shape, CallableForm::kTypeAssociated);
+    const mir::ExprId instance = BuildImplicitInstanceArgument(
+        *declaring_scope_, bound.frame, written[i].reach);
+    bound.frame.Builder().AppendStmt(mir::ReturnStmt{.value = instance});
+    code.params = std::move(bound.params);
+    code.result_type = instance_type;
+    define(callables.reaches[i].reach, std::move(code));
+  }
+}
+
 auto ClassDeclLowerer::PopulateBodies(
     WalkFrame declaring_frame, StorageBringUp owner_bring_up)
     -> diag::Result<void> {
@@ -961,7 +1027,7 @@ auto ClassDeclLowerer::PopulateBodies(
     // reserved it.
     std::optional<mir::CallableId> reporting;
     for (const auto& [of, form_id] :
-         unit_lowerer.ReportingFormsOf(hir_class_id_)) {
+         unit_lowerer.ClassCallablesOf(hir_class_id_).reporting_forms) {
       if (of.value == callable.value) reporting = form_id;
     }
     auto method_code_or = method_lowerer.Run(method, form, reporting);
@@ -1018,9 +1084,10 @@ auto ClassDeclLowerer::PopulateBodies(
             .defining_unit = std::nullopt});
   }
   if (const std::optional<RandomizationHooks>& hooks =
-          unit_lowerer.RandomizationHooksOf(hir_class_id_)) {
+          unit_lowerer.ClassCallablesOf(hir_class_id_).hooks) {
     DefineRandomizationHooks(declaring_frame, mir_class, *hooks);
   }
+  DefineInstanceBodies(declaring_frame, mir_class);
 
   // The constructor body statements (LRM 8.7) run after base construction
   // and property initialization, so they follow both, already appended to the

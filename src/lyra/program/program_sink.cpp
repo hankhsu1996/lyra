@@ -145,6 +145,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_object_of", &lyra_rt_object_of);
   add("lyra_rt_self_handle", &lyra_rt_self_handle);
   add("lyra_rt_dynamic_cast", &lyra_rt_dynamic_cast);
+  add("lyra_rt_is_of_interface_of", &lyra_rt_is_of_interface_of);
   add("lyra_rt_interface_table", &lyra_rt_interface_table);
   add("lyra_rt_begin_library_part", &lyra_rt_begin_library_part);
   add("lyra_rt_end_library_part", &lyra_rt_end_library_part);

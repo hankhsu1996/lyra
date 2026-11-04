@@ -46,9 +46,10 @@ enum class SymbolCategory : std::uint8_t {
 };
 
 // One component of a symbol: a name the source wrote, an ordinal the compiler
-// counted, a callback of the runtime library a class answers, a type spelled
-// by its structure, or the steps of the path that tells a declaration from the
-// others of its unit.
+// counted, a callback of the runtime library a class answers, the body
+// answering the instance a class belongs to, a type spelled by its structure,
+// or the steps of the path that tells a declaration from the others of its
+// unit.
 // Each self-delimits and says which kind it is, so a sequence of them composes
 // to one string no other sequence composes to: a block and a class carrying one
 // label are different parts, and a method the source named after a library
@@ -57,6 +58,7 @@ struct SymbolPart {
   static auto Name(std::string_view name) -> SymbolPart;
   static auto Ordinal(std::uint32_t value) -> SymbolPart;
   static auto LibraryCallback(support::LibraryCallback function) -> SymbolPart;
+  static auto DeclaringInstance() -> SymbolPart;
 
   std::string encoded;
 };

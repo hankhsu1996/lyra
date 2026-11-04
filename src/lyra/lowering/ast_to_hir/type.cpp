@@ -1285,7 +1285,7 @@ auto UnitLowerer::InternOwnClass(
       .constructor = std::nullopt,
       .methods = {},
       .instance_scope =
-          BelongsToAnInstance(cls) && !cls.isInterface
+          BelongsToAnInstance(cls)
               ? std::optional{scope_publications_.at(&replicating).class_path}
               : std::nullopt,
       .conforming = {}};
@@ -1735,6 +1735,20 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
         .arguments = *std::move(base_arguments),
         .span =
             written != nullptr ? frontend::SpanOf(written->sourceRange) : span};
+  }
+  // The instance of each interface class of an instance the declaration names
+  // is found from where this class is declared, as the base's is, one per such
+  // name in the order the declaration's own list takes them.
+  for (const slang::ast::Type* iface_type : cls.getDeclaredInterfaces()) {
+    const auto& iface =
+        iface_type->getCanonicalType().as<slang::ast::ClassType>();
+    auto reached = DeclaringInstanceFrom(iface, class_frame, span);
+    if (!reached) return std::unexpected(std::move(reached.error()));
+    if (!reached->has_value()) continue;
+    auto of = ResolveClass(iface, span);
+    if (!of) return std::unexpected(std::move(of.error()));
+    decl.interface_reaches.push_back(
+        hir::InterfaceReach{.of = *of, .reach = **std::move(reached)});
   }
   // A static property initializer (LRM 8.9 / 10.5) runs once for the cell
   // rather than once per instance constructed, so its expression lands in the
