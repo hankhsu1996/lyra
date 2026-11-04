@@ -430,19 +430,19 @@ auto StoredWrapper(
 // same wherever it is written, while a computation written again would run
 // again.
 auto NamedAgain(
-    const mir::TypePool& types, const mir::Block& from, mir::Builder to,
+    const mir::CompilationUnit& unit, const mir::Block& from, mir::Builder to,
     mir::ExprId id) -> mir::ExprId {
   const auto computes = []() -> mir::ExprData {
     throw InternalError(
         "access path: a settled path evaluates nothing, and this one holds a "
         "node that computes");
   };
-  if (!mir::EvaluatesNothing(types, from, id)) {
+  if (!mir::EvaluatesNothing(unit, from, id)) {
     computes();
   }
   const mir::Expr& node = from.exprs.Get(id);
   const auto again = [&](mir::ExprId operand) {
-    return NamedAgain(types, from, to, operand);
+    return NamedAgain(unit, from, to, operand);
   };
   mir::ExprData data = std::visit(
       Overloaded{
@@ -1011,7 +1011,7 @@ auto SettledPlace(
     const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
     -> mir::ExprId {
   mir::Builder block = frame.Builder();
-  if (mir::EvaluatesNothing(unit.types, block.Body(), place)) {
+  if (mir::EvaluatesNothing(unit, block.Body(), place)) {
     return place;
   }
   const mir::Expr node = block.Get(place);
@@ -1162,7 +1162,7 @@ auto NamedIn(
     return path;
   }
   const auto again = [&](mir::ExprId id) {
-    return NamedAgain(unit.types, from, to, id);
+    return NamedAgain(unit, from, to, id);
   };
   path.owner = std::visit(
       Overloaded{
@@ -1176,7 +1176,7 @@ auto NamedIn(
       path.owner);
   for (DescentStep& step : path.descent) {
     ForEachOperand(step, [&](mir::ExprId& operand) {
-      operand = NamedAgain(unit.types, from, to, operand);
+      operand = NamedAgain(unit, from, to, operand);
     });
   }
   return path;

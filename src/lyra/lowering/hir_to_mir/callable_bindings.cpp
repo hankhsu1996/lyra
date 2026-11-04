@@ -74,8 +74,8 @@ auto CallableBindings::RootBlock() const -> mir::Block& {
   return code_->Body();
 }
 
-auto CallableBindings::Types() const -> const mir::TypePool& {
-  return unit_->types;
+auto CallableBindings::Unit() const -> const mir::CompilationUnit& {
+  return *unit_;
 }
 
 auto CallableBindings::DeclareAnonymous(mir::TypeId type) -> mir::LocalId {
