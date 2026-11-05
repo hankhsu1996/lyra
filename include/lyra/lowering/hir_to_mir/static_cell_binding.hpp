@@ -117,12 +117,11 @@ struct AssertionControlCell {
 };
 
 // The cell one static-lifetime body variable, or one statement's assertion
-// control, became. `cell_type` is the type the home was declared with -- for a
-// variable an observable cell where something outside the body can reach it,
-// the plain value type where nothing can -- settled once here so no reader
-// recomputes it. `scope` is the scope declaring it, which a variable's
-// initializer is written in though it runs apart from every activation of that
-// scope (LRM 6.21).
+// control, became. `cell_type` is the type the home was declared with -- a
+// variable's observable-cell type, the control's own type for a control --
+// settled once here so no reader recomputes it. `scope` is the scope declaring
+// it, which a variable's initializer is written in though it runs apart from
+// every activation of that scope (LRM 6.21).
 struct StaticCellBinding {
   std::variant<hir::ProceduralVarId, AssertionControlCell> of;
   hir::ProceduralScopeId scope;

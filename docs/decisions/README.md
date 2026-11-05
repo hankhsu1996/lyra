@@ -775,11 +775,12 @@ the detail lives in the entry itself.
   signature states its constructor as it states a method.
 - [type-associated-storage-is-the-declarers](type-associated-storage-is-the-declarers.md) -- storage
   a type owns rather than an object of it is brought up by whatever brings up the thing that
-  replicates its declaration, never by a mechanism of its own; a cell a name can reach outside every
-  body is an observable cell, every one of them takes both a declared representation and a value
-  whether or not the source wrote one, and below LIR it is storage under a symbol with nothing of
-  the class left. A per-class startup body, a program-startup trigger, deciding what the storage is
-  from the shape of the access, and a per-class cell list at LIR are rejected.
+  replicates its declaration, never by a mechanism of its own; a variable no object holds -- a
+  static property, or a static one of the class's methods declares -- is an observable cell, every
+  one of them takes both a declared representation and a value whether or not the source wrote one,
+  and below LIR it is storage under a symbol with nothing of the class left. A per-class startup
+  body, a program-startup trigger, deciding what the storage is from the shape of the access, and a
+  per-class cell list at LIR are rejected.
 - [dispatch-position-is-a-lineage-coordinate](dispatch-position-is-a-lineage-coordinate.md) -- a
   class states the behaviors it introduces and the ones it overrides, never its lineage's; a
   behavior is named by the declaration that introduced it plus an ordinal within it, and flattening

@@ -19,8 +19,9 @@
 // wakes the wait when what it read there changes, and so does an array
 // method's `with` clause it hands each element to; a handle it guards against
 // null is not followed while it is null. A static variable the function
-// declares exists before any call runs, so another call changing it is a
-// change the wait sees.
+// declares exists before any call runs, whether a module's function or a
+// class's static method declares it, so another call changing it is a change
+// the wait sees.
 //
 // Every call in the function is followed the same way. A variable handed by
 // `ref` to a function that reads it is read (LRM 13.5.2). An object the
@@ -138,6 +139,12 @@ class Node;
     return shared;
   endfunction
 
+  static function int tally(bit bump);
+    static int count;
+    if (bump) count = count + 1;
+    return count;
+  endfunction
+
   function int get();
     return status;
   endfunction
@@ -194,6 +201,7 @@ module Top;
   time hierarchical_woke = 0;
   time virtual_woke = 0;
   time own_static_woke = 0;
+  time class_own_static_woke = 0;
   time by_ref_woke = 0;
   time constructor_body_woke = 0;
   time initializer_woke = 0;
@@ -380,6 +388,7 @@ module Top;
       begin @(holder_inst.read_held()); hierarchical_woke = $time; end
       begin @(dispatched.read_level()); virtual_woke = $time; end
       begin @(tally(0)); own_static_woke = $time; end
+      begin wait (Node::tally(0) == 1); class_own_static_woke = $time; end
       begin @(passes_by_ref()); by_ref_woke = $time; end
       begin @(built_body()); constructor_body_woke = $time; end
       begin @(built_initializer()); initializer_woke = $time; end
@@ -418,7 +427,10 @@ module Top;
     #5 bus.e = 1;
     #5 holder_inst.held = 1;
     #5 dispatched.level = 1;
-    #5 void'(tally(1));
+    #5 begin
+      void'(tally(1));
+      void'(Node::tally(1));
+    end
     #5 by_ref_target = 1;
     #5 counters::built_from = 1;
     #5 counters::initialized_from = 1;
@@ -462,6 +474,7 @@ module Top;
     if (hierarchical_woke !== 90) $fatal(1, "a function called by a hierarchical name ended the wait at %0t, expected 90", hierarchical_woke);
     if (virtual_woke !== 95) $fatal(1, "a virtual method ended the wait at %0t, expected 95", virtual_woke);
     if (own_static_woke !== 100) $fatal(1, "a function's own static variable ended the wait at %0t, expected 100", own_static_woke);
+    if (class_own_static_woke !== 100) $fatal(1, "a static method's own static variable ended the wait at %0t, expected 100", class_own_static_woke);
     if (by_ref_woke !== 105) $fatal(1, "a variable handed by 'ref' ended the wait at %0t, expected 105", by_ref_woke);
     if (constructor_body_woke !== 110) $fatal(1, "what a constructor reads ended the wait at %0t, expected 110", constructor_body_woke);
     if (initializer_woke !== 115) $fatal(1, "what a property's initializer reads ended the wait at %0t, expected 115", initializer_woke);

@@ -615,16 +615,16 @@ struct ConstantRef {
   auto operator==(const ConstantRef&) const -> bool = default;
 };
 
-// A place naming a class's static property (`Class::name`, LRM 8.9): a mutable
-// type-associated storage cell. `owner` is the class whose static-property
+// A place naming a cell a class owns rather than an object of it: a static
+// property (`Class::name`, LRM 8.9), or a variable one of the class's bodies
+// declares static (LRM 6.21). `owner` is the class whose static-property
 // arena declares the cell (a derived source access like
 // `Derived::inherited_prop` still names the base class here, mirroring the
 // owner-qualification rule for inherited instance access). `Expr::type` is the
-// property's observable-cell type, so a read wraps it in `Get` and a write in
-// `Set`: the property needs no object, so a name outside every body of the
-// class reaches it and a continuous assignment may take it as an operand
-// (LRM 10.3.2) -- which is what a plain value cannot answer for and an instance
-// property, reachable only through a receiver, never has to.
+// cell's observable-cell type, so a read wraps it in `Get` and a write in
+// `Set`. No object holds the variable, so a process other than the one writing
+// it may wait on it (LRM 9.4.2), and a static property may be a continuous
+// assignment's operand (LRM 10.3.2).
 struct StaticPropertyRef {
   ClassId owner;
   StaticPropertyId prop;

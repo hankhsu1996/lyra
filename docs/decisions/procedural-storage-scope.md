@@ -183,10 +183,10 @@ task is a scope of its own, and unnamed it publishes nothing. Reconstructing the
 from statement nesting instead puts every declaration written without a `begin ... end` behind a
 block nobody wrote, where the rule above then correctly refuses to publish it.
 
-Reachability also decides the storage's shape. Storage in the design hierarchy is an observable
-cell, because a hierarchical reference can read it and an event control can wait on it, so a write
-has to reach subscribers. Storage on a class is a plain cell -- nothing outside the body can name
-it.
+What a name reaches does not decide the storage's shape. Every static is an observable cell wherever
+it lives, because it is one variable for every activation of the body (LRM 6.21), so a process other
+than the one writing it may wait on it (LRM 9.4.2) and a write has to reach subscribers. A static a
+class's method declares is no exception, though no name outside the method reaches it.
 
 ### D5. A procedural scope is no class
 

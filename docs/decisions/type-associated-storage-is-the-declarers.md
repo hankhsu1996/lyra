@@ -89,14 +89,25 @@ reach installed storage. A class static initializer may read a package variable,
 variable's initializer may read a class static; with the class's bring-up outside the two phases
 there is no position for it that is right in both directions.
 
-### D2. A cell a name can reach outside every body is an observable cell
+### D2. A variable no object holds is an observable cell
 
-A static property needs no object, so a name reaches it from anywhere the class is visible, and a
-continuous assignment may take it as an operand (LRM 8.9, 10.3.2). That is the same test that makes
-a namespace variable a cell; an instance property, reachable only through a receiver, stays a plain
-value. Stating it as a plain value made a question about the storage answerable only from the shape
-of the access that reached it -- a member projection meant a runtime-owned cell and a dereferenced
-symbol meant a raw pointer -- and the two answers disagree for one storage.
+A static property needs no object, so code anywhere the class is visible may write it while another
+process waits on it (LRM 9.4.2), and a continuous assignment may take it as an operand (LRM 8.9,
+10.3.2). The storage is therefore watched as itself, as a namespace variable's is; an instance
+property is watched through the object holding it, and stays a plain value. Stating a static
+property as a plain value made a question about the storage answerable only from the shape of the
+access that reached it -- a member projection meant a runtime-owned cell and a dereferenced symbol
+meant a raw pointer -- and the two answers disagree for one storage.
+
+The same holds of a variable a class's method declares `static`, which the class's cells hold too.
+It is one variable for every call (LRM 6.21), and the calls run in whatever process made them, so
+one call may write it while another waits on it. This entry first stated D2 as "a cell a name can
+reach outside every body", which read a static property's reason as the rule, and the lowering
+applied it to the static of a method of a class a package or the compilation-unit scope declares. No
+name outside the method reaches one, so it was given plain storage, and a wait on it never woke.
+Once the wait path refused plain storage, every program reading one stopped building, UVM's registry
+among them. Whether a name reaches the storage was never the question; whether a process other than
+the writer can wait on it is, and for storage no object holds the answer is always yes.
 
 ### D3. Every type-associated cell is installed, whether or not the source wrote a value
 
@@ -153,7 +164,7 @@ agree with no table between them.
 
 ## Cross-references
 
-- LRM 8.9, 8.10, 10.3.2, 10.5, 26.2
+- LRM 6.21, 8.9, 8.10, 9.4.2, 10.3.2, 10.5, 26.2
 - JVMS SE21 5.4.2 (preparation) and 5.5 (initialization)
 - Itanium C++ ABI 2.8 (initialization guard variables)
 - The Go Programming Language Specification, Package initialization
