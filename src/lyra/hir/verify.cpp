@@ -18,7 +18,9 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/assertion.hpp"
 #include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/class_id.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/covergroup.hpp"
@@ -34,6 +36,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/published_covergroup.hpp"
 #include "lyra/hir/range_bounds.hpp"
 #include "lyra/hir/sampled_history.hpp"
 #include "lyra/hir/scope_construction.hpp"
@@ -231,8 +234,6 @@ void ReachRangeBounds(const RangeBounds& bounds, const auto& reach) {
       bounds);
 }
 
-// Calls `reach` with each expression `data` holds, all of them in the arena
-// that holds `data`.
 void ReachReceiver(const CovergroupReceiver& receiver, const auto& operand) {
   std::visit(
       Overloaded{
@@ -241,6 +242,8 @@ void ReachReceiver(const CovergroupReceiver& receiver, const auto& operand) {
       receiver);
 }
 
+// Calls `reach` with each expression `data` holds, all of them in the arena
+// that holds `data`.
 void ForEachOperand(const ExprData& data, const auto& reach) {
   const auto operand = [&](ExprId id) { reach(id, Slot::kOperand); };
   const auto operands = [&](std::span<const ExprId> ids) {
@@ -1152,14 +1155,199 @@ void Report(
   }
 }
 
+void ForEachClassRead(const Primary& primary, const auto& read) {
+  std::visit(
+      Overloaded{
+          [](const IntegerLiteral&) {}, [](const StringLiteral&) {},
+          [](const RealLiteral&) {}, [](const NullLiteral&) {},
+          [](const ThisHandle&) {}, [](const RandomizedObject&) {},
+          [](const QueueLastIndex&) {}, [](const ProceduralVarRef&) {},
+          [&](const ClassPropertyRef& r) { read(r.target.owner); },
+          [&](const StaticPropertyRef& r) {
+            std::visit(
+                Overloaded{
+                    [&](const InstanceStaticPropertyTarget& t) {
+                      read(t.property.owner);
+                    },
+                    [&](const ClassStaticPropertyTarget& t) { read(t.owner); }},
+                r.target);
+          },
+          [](const RoutedValueRef&) {}, [](const RoutedViewPlaceRef&) {},
+          [](const RoutedViewValueRef&) {}, [](const RoutedObjectRef&) {},
+          [](const ScopeArgumentRef&) {}, [](const IterationBindingRef&) {},
+          [](const PatternVarRef&) {}, [](const NamespaceValueRef&) {}},
+      primary);
+}
+
+void ForEachClassRead(const SubroutineRef& callee, const auto& read) {
+  std::visit(
+      Overloaded{
+          [](const StructuralSubroutineRef&) {},
+          [&](const MethodCallRef& ref) {
+            std::visit(
+                Overloaded{
+                    [&](const ClassMethodTarget& target) {
+                      read(target.owner);
+                    },
+                    [&](const BuiltinHookCallee& hook) { read(hook.cls); }},
+                ref.callee);
+          },
+          [&](const StaticMethodCallRef& ref) { read(ref.callee.owner); },
+          [](const SystemSubroutineRef&) {}, [](const BuiltinMethodRef&) {},
+          [](const EnumMethodRef&) {}, [](const ArrayIteratorMethodRef&) {},
+          [](const PastValueRef&) {}, [](const ValueChangeRef&) {},
+          [](const ForeignImportRef&) {}, [](const NamespaceSubroutineRef&) {},
+          [](const PublishedScopeMethodRef&) {}},
+      callee);
+}
+
+// Calls `read` with each class `data` reads: the class whose declaration says
+// what the node means. A method call reads the class declaring the method, and
+// a call of a hook a class has without declaring it reads that class, whose
+// lineage says which body runs (LRM 18.6.2); a property reads the class
+// declaring it; a construction reads the class it builds; and a cast to a class
+// of an instance reads the destination's class, which says whether it is an
+// interface class (LRM 8.26.5). A handle's type only names its class.
+void ForEachClassRead(
+    const CompilationUnit& unit, const base::Arena<Expr, ExprId>& exprs,
+    const ExprData& data, const auto& read) {
+  std::visit(
+      Overloaded{
+          [&](const PrimaryExpr& e) { ForEachClassRead(e.data, read); },
+          [](const UnaryExpr&) {},
+          [](const BinaryExpr&) {},
+          [](const ConditionalExpr&) {},
+          [](const AssignExpr&) {},
+          [](const IncDecExpr&) {},
+          [&](const CallExpr& e) { ForEachClassRead(e.callee, read); },
+          [](const CalleeDefaultExpr&) {},
+          [](const ConversionExpr&) {},
+          [](const ConstantExpr&) {},
+          [](const ValueRangeExpr&) {},
+          [](const InsideExpr&) {},
+          [](const ElementSelectExpr&) {},
+          [](const RangeSelectExpr&) {},
+          [](const MemberAccessExpr&) {},
+          [&](const ClassPropertyAccessExpr& e) { read(e.target.owner); },
+          [](const InterfaceMemberAccessExpr&) {},
+          [](const InterfaceInstanceAccessExpr&) {},
+          [](const ConcatExpr&) {},
+          [](const StreamingConcatExpr&) {},
+          [](const ReplicationExpr&) {},
+          [](const AssignmentPatternExpr&) {},
+          [](const AssignmentPatternReplicationExpr&) {},
+          [](const DynamicArrayNewExpr&) {},
+          [&](const ClassNewExpr& e) { read(e.class_id); },
+          [](const AssociativeAssignmentPatternExpr&) {},
+          [](const AssignmentPatternKeyedExpr&) {},
+          [](const TaggedUnionExpr&) {},
+          [&](const DynamicCastExpr& e) {
+            if (!e.destination_instance.has_value()) return;
+            const auto* handle = unit.types.Get(exprs.Get(e.destination).type)
+                                     .As<ClassHandleType>();
+            if (handle != nullptr) read(handle->class_id);
+          },
+          [](const CovergroupNewExpr&) {},
+          [](const CovergroupMethodCallExpr&) {},
+          [](const CovergroupOptionExpr&) {},
+          [](const RandomizeExpr&) {},
+          [](const RandModeSetExpr&) {},
+          [](const RandModeGetExpr&) {},
+          [](const ConstraintModeSetExpr&) {},
+          [](const ConstraintModeGetExpr&) {}},
+      data);
+}
+
+// Adds one line to `lines` where `unit` holds no declaration of `cls`, which
+// `reader` names something reading. A unit holds what another unit published
+// of every class it reads, and nothing below HIR reads a signature.
+void RequireDeclaration(
+    const CompilationUnit& unit, ClassId cls, const auto& reader,
+    std::vector<std::string>& lines) {
+  if (unit.classes.HasDeclaration(cls)) return;
+  lines.push_back(
+      std::format(
+          "hir verify: {} reads class '{}' of unit '{}', of which unit '{}' "
+          "holds no declaration",
+          reader(), support::DisplayOf(unit.classes.PathOf(cls)),
+          unit.classes.KeyOf(cls).unit_name, unit.name));
+}
+
+// Adds one line to `lines` for each expression `reaches` reached that reads a
+// class the unit holds no declaration of.
+void ReportClassReads(
+    const CompilationUnit& unit, const ArenaReaches& reaches, const auto& where,
+    std::vector<std::string>& lines) {
+  for (const ExprId id : reaches.exprs->Ids()) {
+    if (reaches.at.at(id.value).empty()) continue;
+    const ExprData& data = reaches.exprs->Get(id).data;
+    ForEachClassRead(unit, *reaches.exprs, data, [&](ClassId cls) {
+      RequireDeclaration(
+          unit, cls,
+          [&] {
+            return std::format(
+                "{} (expression {}) in {}", Describe(data), id.value, where());
+          },
+          lines);
+    });
+  }
+}
+
+// What a class declares is read with what it extends and the interface classes
+// it names, since its layout and its tables read theirs. A covergroup is laid
+// out from the class embedding it and is counted by its coverpoints' classes,
+// and a unit lowering a covergroup makes and calls the coverage library's
+// classes.
+void VerifyClassReadsOfDeclarations(
+    const CompilationUnit& unit, std::vector<std::string>& lines) {
+  for (const ClassId id : unit.classes.Ids()) {
+    if (!unit.classes.HasDeclaration(id)) continue;
+    const ClassDeclaration& declared = unit.classes.Declaration(id);
+    const auto by = [&] {
+      return std::format(
+          "the declaration of class '{}'",
+          support::DisplayOf(unit.classes.PathOf(id)));
+    };
+    if (declared.base.has_value()) {
+      RequireDeclaration(unit, *declared.base, by, lines);
+    }
+    for (const ClassId iface : declared.implements) {
+      RequireDeclaration(unit, iface, by, lines);
+    }
+  }
+  for (const CovergroupId id : unit.covergroups.Ids()) {
+    if (!unit.covergroups.IsPublished(id)) continue;
+    const PublishedCovergroup& published = unit.covergroups.Published(id);
+    const auto by = [&] {
+      return std::format(
+          "covergroup '{}'", support::DisplayOf(unit.covergroups.PathOf(id)));
+    };
+    if (published.embedding.has_value()) {
+      RequireDeclaration(unit, *published.embedding, by, lines);
+    }
+    for (const PublishedCoverpoint& point : published.coverpoints) {
+      RequireDeclaration(unit, point.library_class, by, lines);
+    }
+  }
+  if (unit.coverage_library.has_value()) {
+    const CoverageLibraryRefs& library = *unit.coverage_library;
+    const auto by = [] { return std::string{"the coverage library"}; };
+    for (const ClassId cls :
+         {library.registry, library.group_type, library.group_instance,
+          library.cross, library.selection}) {
+      RequireDeclaration(unit, cls, by, lines);
+    }
+  }
+}
+
 // Counts the reaches into one body's expressions. `entered_at` is the
 // statements execution enters the body at, which whatever owns the body
 // states, and `reach_from_owner` adds the reaches that owner makes itself,
 // holding expressions of the body outside any statement of it.
 void VerifyBody(
-    const ProceduralBody& body, std::span<const StmtId> entered_at,
-    const auto& reach_from_owner, const auto& where,
-    std::vector<std::string>& lines) {
+    const CompilationUnit& unit, const ProceduralBody& body,
+    std::span<const StmtId> entered_at, const auto& reach_from_owner,
+    const auto& where, std::vector<std::string>& lines) {
   ArenaReaches reaches{body};
   for (const StmtId id : entered_at) {
     ReachFromStmt(body, reaches, id);
@@ -1179,11 +1367,13 @@ void VerifyBody(
   }
   reach_from_owner(reaches);
   Report(reaches, where, lines);
+  ReportClassReads(unit, reaches, where, lines);
 }
 
 void VerifySubroutine(
-    const SubroutineDecl& subroutine, const auto& reach_from_owner,
-    const auto& where, std::vector<std::string>& lines) {
+    const CompilationUnit& unit, const SubroutineDecl& subroutine,
+    const auto& reach_from_owner, const auto& where,
+    std::vector<std::string>& lines) {
   // A prototype states a signature and has no statement to enter at (LRM
   // 8.21).
   const std::vector<StmtId> entered_at =
@@ -1191,7 +1381,7 @@ void VerifySubroutine(
           ? std::vector<StmtId>{*subroutine.root_stmt}
           : std::vector<StmtId>{};
   VerifyBody(
-      subroutine.body, entered_at,
+      unit, subroutine.body, entered_at,
       [&](ArenaReaches& reaches) {
         ReachReads(
             subroutine.reads, ReachFrom(reaches, std::nullopt, "a subroutine"));
@@ -1213,12 +1403,12 @@ void VerifyClass(
   for (const MethodId method : cls.methods.Ids()) {
     const SubroutineDecl& decl = cls.methods.Get(method);
     VerifySubroutine(
-        decl, [](ArenaReaches&) {},
+        unit, decl, [](ArenaReaches&) {},
         [&] { return std::format("method '{}' of {}", decl.name, owner()); },
         lines);
   }
   VerifySubroutine(
-      cls.constructor,
+      unit, cls.constructor,
       [&](ArenaReaches& reaches) {
         const auto from_base =
             ReachFrom(reaches, std::nullopt, "a base constructor call");
@@ -1233,7 +1423,7 @@ void VerifyClass(
       },
       [&] { return std::format("the constructor of {}", owner()); }, lines);
   VerifyBody(
-      cls.static_init, {},
+      unit, cls.static_init, {},
       [&](ArenaReaches& reaches) {
         const auto from_init =
             ReachFrom(reaches, std::nullopt, "a static property initializer");
@@ -1342,7 +1532,7 @@ void VerifyCovergroup(
   const CovergroupId id = replicated.id;
   const CovergroupDecl& group = replicated.code;
   VerifyBody(
-      group.body, {},
+      unit, group.body, {},
       [&](ArenaReaches& reaches) {
         const auto from_group =
             ReachFrom(reaches, std::nullopt, "a covergroup");
@@ -1666,8 +1856,8 @@ void VerifyRoutesStayOrPublish(
 // `label` names the scope eagerly, unlike a body: a scope's name is part of
 // the name of every scope and body under it, and there are few scopes.
 void VerifyScope(
-    const StructuralScope& scope, const std::string& label,
-    std::vector<std::string>& lines) {
+    const CompilationUnit& unit, const StructuralScope& scope,
+    const std::string& label, std::vector<std::string>& lines) {
   ArenaReaches reaches{scope};
   ReachFromDataObjects(reaches, scope);
   const auto from_assign =
@@ -1706,6 +1896,7 @@ void VerifyScope(
     from_history(history.depth, Slot::kOperand);
   }
   Report(reaches, [&] { return label; }, lines);
+  ReportClassReads(unit, reaches, [&] { return label; }, lines);
   VerifyInstanceMembers(scope, label, lines);
   VerifyRoutesStayOrPublish(scope, label, lines);
 
@@ -1713,7 +1904,7 @@ void VerifyScope(
     const Process& process = scope.processes.Get(id);
     const std::vector<StmtId> entered_at{process.root_stmt};
     VerifyBody(
-        process.body, entered_at,
+        unit, process.body, entered_at,
         [&](ArenaReaches& body_reaches) {
           const auto from_process =
               ReachFrom(body_reaches, std::nullopt, "a process");
@@ -1734,7 +1925,7 @@ void VerifyScope(
   }
   for (const SubroutineDecl& subroutine : scope.structural_subroutines) {
     VerifySubroutine(
-        subroutine, [](ArenaReaches&) {},
+        unit, subroutine, [](ArenaReaches&) {},
         [&] {
           return std::format("subroutine '{}' of {}", subroutine.name, label);
         },
@@ -1759,7 +1950,7 @@ void VerifyScope(
             [&](const ConcurrentCoverStmt& s) { arm(s.pass_stmt); }},
         declared.assertion);
     VerifyBody(
-        declared.action, entered_at,
+        unit, declared.action, entered_at,
         [&](ArenaReaches& body_reaches) {
           const auto from_assertion =
               ReachFrom(body_reaches, std::nullopt, "a concurrent assertion");
@@ -1786,11 +1977,11 @@ void Verify(
     const CompilationUnit& unit, const ScopeConstruction& construction) {
   std::vector<std::string> lines;
   VerifyScope(
-      unit.root_scope, std::format("the root scope of unit '{}'", unit.name),
-      lines);
+      unit, unit.root_scope,
+      std::format("the root scope of unit '{}'", unit.name), lines);
   for (const BlockBodyId id : unit.block_bodies.Ids()) {
     VerifyScope(
-        unit.block_bodies.Get(id).scope,
+        unit, unit.block_bodies.Get(id).scope,
         std::format(
             "block body {} '{}' of unit '{}'", id.value,
             unit.block_bodies.Get(id).scope.source_name, unit.name),
@@ -1812,6 +2003,7 @@ void Verify(
   for (const BlockBodyId id : unit.block_bodies.Ids()) {
     verify_replicated(unit.block_bodies.Get(id).scope);
   }
+  VerifyClassReadsOfDeclarations(unit, lines);
   std::string report;
   for (const std::string& line : lines) {
     if (!report.empty()) {

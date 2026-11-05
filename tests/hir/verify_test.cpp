@@ -1,5 +1,6 @@
 #include "lyra/hir/verify.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <functional>
@@ -13,21 +14,35 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/class_declaration.hpp"
+#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
+#include "lyra/hir/covergroup.hpp"
+#include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/field_id.hpp"
+#include "lyra/hir/method_id.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/published_covergroup.hpp"
+#include "lyra/hir/randomization_hook.hpp"
 #include "lyra/hir/scope_construction.hpp"
+#include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/timing.hpp"
+#include "lyra/hir/type.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/strength_level.hpp"
 
 namespace lyra::hir {
@@ -428,6 +443,233 @@ TEST(HirVerifyTest, ARouteNamesAnotherScopesDeclarationByItsPublication) {
         std::string::npos)
         << message;
   }
+}
+
+auto ClassPath(std::string name) -> support::DefPath {
+  return support::DefPath{
+      .data = {support::ClassStep{
+          .name = std::move(name), .arguments = std::nullopt}}};
+}
+
+auto DeclarationOf(std::string name, std::optional<ClassId> extends)
+    -> ClassDeclaration {
+  return ClassDeclaration{
+      .class_path = ClassPath(std::move(name)),
+      .base = extends,
+      .is_interface_class = false,
+      .implements = {},
+      .properties = {},
+      .static_properties = {},
+      .constructor = std::nullopt,
+      .methods = {},
+      .instance_scope = std::nullopt,
+      .conforming = {}};
+}
+
+auto CovergroupReading(
+    std::optional<ClassId> embedding, std::vector<ClassId> counting)
+    -> PublishedCovergroup {
+  PublishedCovergroup published{
+      .path = ClassPath("G"),
+      .formals = {},
+      .sample_formals = {},
+      .embedding = embedding,
+      .coverpoints = {},
+      .crosses = {},
+      .base = std::nullopt};
+  for (const ClassId cls : counting) {
+    published.coverpoints.push_back(
+        PublishedCoverpoint{
+            .name = "p", .value_type = TypeId{0}, .library_class = cls});
+  }
+  return published;
+}
+
+// Whatever a unit's lowering reads of a class to decide what a construct means,
+// the unit holds what the declaring unit published of it: a method call and a
+// call of a hook the class has without declaring it (LRM 18.6.2), a property
+// and a static property, a construction, a cast to a class of an instance (LRM
+// 8.26.5), a declaration extending or implementing it, and a covergroup
+// embedded in it, counted by it or lowered through the coverage library. Each
+// is refused, naming what reads the class, where the unit holds no
+// declaration of class 'C' of unit 'P', and accepted where it holds one of 'C'
+// and of 'Base', which 'C' extends.
+TEST(HirVerifyTest, EveryReadOfAClassNeedsItsDeclaration) {
+  using Reading = std::function<std::vector<ExprId>(
+      CompilationUnit&, ProceduralBody&, ClassId)>;
+  const auto expr = [](const CompilationUnit& u, ProceduralBody& b,
+                       ExprData data) {
+    return b.exprs.Add(
+        Expr{.type = u.builtins.int_type, .data = std::move(data), .span = {}});
+  };
+  const auto call = [&](const CompilationUnit& u, ProceduralBody& b,
+                        SubroutineRef callee) {
+    return std::vector<ExprId>{
+        expr(u, b, CallExpr{.callee = std::move(callee), .arguments = {}})};
+  };
+  const auto on_handle = [](const CompilationUnit& u, ProceduralBody& b) {
+    return MethodReceiver{HandleReceiver{.expr = AddLeaf(u, b)}};
+  };
+  const std::vector<std::pair<std::string_view, Reading>> readings{
+      {"a method call",
+       [&](CompilationUnit& u, ProceduralBody& b, ClassId cls) {
+         return call(
+             u, b,
+             MethodCallRef{
+                 .receiver = on_handle(u, b),
+                 .callee = BuiltinHookCallee{
+                     .cls = cls, .hook = RandomizationHook::kPreRandomize}});
+       }},
+      {"a method call",
+       [&](CompilationUnit& u, ProceduralBody& b, ClassId cls) {
+         return call(
+             u, b,
+             MethodCallRef{
+                 .receiver = on_handle(u, b),
+                 .callee =
+                     ClassMethodTarget{.owner = cls, .method = MethodId{0}}});
+       }},
+      {"a static method call",
+       [&](CompilationUnit& u, ProceduralBody& b, ClassId cls) {
+         return call(
+             u, b,
+             StaticMethodCallRef{
+                 .callee =
+                     ClassMethodTarget{.owner = cls, .method = MethodId{0}},
+                 .declaring_instance = std::nullopt});
+       }},
+      {"a property reference",
+       [&](CompilationUnit& u, ProceduralBody& b, ClassId cls) {
+         return std::vector<ExprId>{expr(
+             u, b,
+             PrimaryExpr{
+                 .data = ClassPropertyRef{
+                     .target = {.owner = cls, .field = FieldId{0}}}})};
+       }},
+      {"a static property reference",
+       [&](CompilationUnit& u, ProceduralBody& b, ClassId cls) {
+         return std::vector<ExprId>{expr(
+             u, b,
+             PrimaryExpr{
+                 .data = StaticPropertyRef{
+                     .target = ClassStaticPropertyTarget{
+                         .owner = cls, .prop = StaticPropertyId{0}}}})};
+       }},
+      {"a property access",
+       [&](CompilationUnit& u, ProceduralBody& b, ClassId cls) {
+         return std::vector<ExprId>{expr(
+             u, b,
+             ClassPropertyAccessExpr{
+                 .base_value = AddLeaf(u, b),
+                 .target = {.owner = cls, .field = FieldId{0}}})};
+       }},
+      {"an object construction",
+       [&](CompilationUnit& u, ProceduralBody& b, ClassId cls) {
+         return std::vector<ExprId>{expr(
+             u, b,
+             ClassNewExpr{
+                 .class_id = cls,
+                 .arguments = {},
+                 .declaring_instance = std::nullopt})};
+       }},
+      {"a dynamic cast",
+       [&](CompilationUnit& u, ProceduralBody& b, ClassId cls) {
+         const ExprId destination = b.exprs.Add(
+             Expr{
+                 .type = u.types.Intern(Type{ClassHandleType{.class_id = cls}}),
+                 .data = PrimaryExpr{.data = NullLiteral{}},
+                 .span = {}});
+         return std::vector<ExprId>{expr(
+             u, b,
+             DynamicCastExpr{
+                 .destination = destination,
+                 .source = AddLeaf(u, b),
+                 .validity =
+                     AssignmentAllowed{
+                         .check = RunTimeCheck::kObjectIsOfTheDestinationClass},
+                 .on_invalid = InvalidAssignmentHandling::kAnswered,
+                 .destination_instance = StructuralHops{0}})};
+       }},
+      {"the declaration of class 'D'",
+       [](CompilationUnit& u, ProceduralBody&, ClassId cls) {
+         const ClassId implementing = u.classes.Import(
+             ClassKey{.unit_name = "P", .class_path = ClassPath("D")});
+         ClassDeclaration declared = DeclarationOf("D", std::nullopt);
+         declared.implements = {cls};
+         u.classes.SetDeclaration(implementing, std::move(declared));
+         return std::vector<ExprId>{};
+       }},
+      {"covergroup 'G'",
+       [](CompilationUnit& u, ProceduralBody&, ClassId cls) {
+         u.covergroups.Publish(
+             u.covergroups.Import(
+                 CovergroupKey{.unit_name = "P", .path = ClassPath("G")}),
+             CovergroupReading(cls, {}));
+         return std::vector<ExprId>{};
+       }},
+      {"covergroup 'G'",
+       [](CompilationUnit& u, ProceduralBody&, ClassId cls) {
+         u.covergroups.Publish(
+             u.covergroups.Import(
+                 CovergroupKey{.unit_name = "P", .path = ClassPath("G")}),
+             CovergroupReading(std::nullopt, {cls}));
+         return std::vector<ExprId>{};
+       }},
+      {"the coverage library",
+       [](CompilationUnit& u, ProceduralBody&, ClassId cls) {
+         u.coverage_library = CoverageLibraryRefs{
+             .registry = cls,
+             .group_type = cls,
+             .group_instance = cls,
+             .cross = cls,
+             .selection = cls};
+         return std::vector<ExprId>{};
+       }},
+  };
+  const auto reading = [](const Reading& reads, bool c_declared,
+                          bool base_declared) {
+    return UnitWithProcess([&](CompilationUnit& u, ProceduralBody& b) {
+      const ClassId cls = u.classes.Import(
+          ClassKey{.unit_name = "P", .class_path = ClassPath("C")});
+      const ClassId base = u.classes.Import(
+          ClassKey{.unit_name = "P", .class_path = ClassPath("Base")});
+      if (c_declared) u.classes.SetDeclaration(cls, DeclarationOf("C", base));
+      if (base_declared) {
+        u.classes.SetDeclaration(base, DeclarationOf("Base", std::nullopt));
+      }
+      return reads(u, b, cls);
+    });
+  };
+  // A refusal names what reads the class first, then the class it reads.
+  const auto refused = [](const CompilationUnit& unit, std::string_view reader,
+                          std::string_view cls) {
+    try {
+      Verify(unit, {});
+      ADD_FAILURE() << "a unit missing a declaration " << reader
+                    << " reads was accepted";
+    } catch (const InternalError& error) {
+      const std::string message = error.what();
+      const std::size_t named =
+          message.find(std::format("hir verify: {}", reader));
+      EXPECT_NE(named, std::string::npos) << message;
+      EXPECT_NE(
+          message.find(
+              std::format(
+                  "reads class '{}' of unit 'P', of which unit 'U' holds no "
+                  "declaration",
+                  cls),
+              named),
+          std::string::npos)
+          << message;
+    }
+  };
+  for (const auto& [reader, reads] : readings) {
+    EXPECT_NO_THROW(Verify(reading(reads, true, true), {})) << reader;
+    refused(reading(reads, false, true), reader, "C");
+  }
+  refused(
+      reading(readings.front().second, true, false),
+      "the declaration of class 'C'", "Base");
 }
 
 // An id is a position in the arena of the scope that minted it, so a holder

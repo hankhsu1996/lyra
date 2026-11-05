@@ -60,9 +60,10 @@ that identity is the suspect, not the analysis.
    of the same module (LRM 23.6), or a signature naming this unit -- lands on the unit's own
    declaration, so one declaration has one id in a unit. What a unit knows of another unit's
    declaration is what that unit published, read back with every key in it turned into the reader's
-   ids. A member of another unit's namespace (LRM 26.3) is named by its key, which lowering declares
-   in the reader once. _Source-faithful consequence: SV's compilation-unit boundary is where a key
-   becomes an id, and nowhere else._
+   ids, and it knows that of every class a construct of it reads rather than only names; the unit's
+   verification refuses one that does not. A member of another unit's namespace (LRM 26.3) is named
+   by its key, which lowering declares in the reader once. _Source-faithful consequence: SV's
+   compilation-unit boundary is where a key becomes an id, and nowhere else._
 3. HIR preserves LRM-level constructs without flattening them into lower-level primitives. Loops are
    loops, assertions are assertions, classes are classes. _Source-faithful consequence: the
    abstraction level is the language the user wrote; flattening into a generic vocabulary is MIR's
