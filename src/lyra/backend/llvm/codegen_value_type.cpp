@@ -911,11 +911,10 @@ auto CodeGenValueTypes::EmitDeclared() -> void {
         unit_->types.Intern(lir::Type{lir::RecordType{.declaration = id}});
     GetAddrOfLaidOutType(type);
     // Everything another unit hands the library of the record is stated here,
-    // where the record states the operations it is made of.
-    if (OwnOperationOf(type, support::BuiltinFn::kResolveTriState)
-            .has_value()) {
-      GetAddrOfNetFolds(type);
-    }
+    // where the record states the operations it is made of. A net of any
+    // record is built holding its folds, and one of a record no net type
+    // resolves asks none of them.
+    GetAddrOfNetFolds(type);
     if (OwnOperationOf(type, support::BuiltinFn::kTakePositions).has_value()) {
       GetAddrOfTakePositions(type);
     }

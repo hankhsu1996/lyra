@@ -49,8 +49,8 @@ struct RecordDecl {
 
 // A method for every operation on a whole value a record's type has -- a real
 // or a chandle member leaves no bit stream (LRM 6.24.3), a tagged union no
-// stream at all (LRM 11.4.14.1), and a member not valid for a net nothing to
-// resolve (LRM 6.7.1).
+// stream at all (LRM 11.4.14.1), and a member the net types' tables do not
+// fold nothing to resolve (LRM 6.6.1).
 using RecordMethods = std::vector<RecordMethod>;
 
 }  // namespace lyra::mir

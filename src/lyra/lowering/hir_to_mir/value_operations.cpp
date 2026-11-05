@@ -78,15 +78,15 @@ auto EveryPart(
 }
 
 auto HasBitStream(const mir::CompilationUnit& unit, mir::TypeId type) -> bool;
-auto IsValidForNet(const mir::CompilationUnit& unit, mir::TypeId type) -> bool;
+auto FoldsAsAPart(const mir::CompilationUnit& unit, mir::TypeId type) -> bool;
 
 // What a record of `kind` over `members` answers, which a record answers of
 // its members alone, so a declaration still being made answers it too. A
 // stream takes an untagged union as its first member and a tagged one not at
-// all (LRM 11.4.14.1); a net admits a structure or a union of what a net
-// admits (LRM 6.7.1), where a net of a tagged union is refused before any
-// method is stated, so no tagged union states a net's folds; and comparing two
-// untagged unions compares their first members (LRM 7.3.2).
+// all (LRM 11.4.14.1); a net folds a structure or a union of what it folds,
+// where a net of a tagged union is refused before any method is stated, so no
+// tagged union states a net's folds; and comparing two untagged unions
+// compares their first members (LRM 7.3.2).
 auto HasBitStreamOver(
     const mir::CompilationUnit& unit, mir::RecordKind kind,
     std::span<const mir::TypeId> members) -> bool {
@@ -101,17 +101,17 @@ auto HasBitStreamOver(
   throw InternalError("HasBitStreamOver: unknown record kind");
 }
 
-auto IsValidForNetOver(
+auto HasNetFoldsOver(
     const mir::CompilationUnit& unit, mir::RecordKind kind,
     std::span<const mir::TypeId> members) -> bool {
   switch (kind) {
     case mir::RecordKind::kStruct:
     case mir::RecordKind::kUnion:
-      return EveryPart(unit, members, IsValidForNet);
+      return EveryPart(unit, members, FoldsAsAPart);
     case mir::RecordKind::kTaggedUnion:
       return false;
   }
-  throw InternalError("IsValidForNetOver: unknown record kind");
+  throw InternalError("HasNetFoldsOver: unknown record kind");
 }
 
 auto EqualityAnswerOver(
@@ -149,23 +149,6 @@ auto IsFourState(mir::IntegralStateKind state) -> bool {
       return true;
   }
   throw InternalError("IsFourState: unknown integral state kind");
-}
-
-// LRM 6.7.1: a net's data type is a 4-state integral one, or a fixed-size
-// unpacked array, structure or union of such.
-auto IsValidForNet(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
-  const mir::Type& t = unit.types.Get(type);
-  if (t.IsIntegral()) {
-    return IsFourState(t.Integral().state_kind);
-  }
-  if (const std::optional<mir::RecordKind> kind =
-          mir::RecordKindOf(unit, type)) {
-    return IsValidForNetOver(unit, *kind, PartTypes(unit, type));
-  }
-  if (t.Is<mir::UnpackedArrayType>()) {
-    return EveryPart(unit, PartTypes(unit, type), IsValidForNet);
-  }
-  return false;
 }
 
 // The one-bit type `==` and `!=` answer over two values of `type`, which can
@@ -2070,7 +2053,7 @@ auto OperationsHadByUnion(
       .fixed_stream = IsFixedStream(FixedStreamShapeOf(unit, members.front())),
       .run_written = false,
       .run_read = false,
-      .net_folds = IsValidForNetOver(unit, mir::RecordKind::kUnion, members)};
+      .net_folds = HasNetFoldsOver(unit, mir::RecordKind::kUnion, members)};
 }
 
 // What a product has of the operations a type may lack, read off its
@@ -2098,7 +2081,7 @@ auto OperationsHadByProduct(
                       [&](mir::TypeId component) {
                         return IsStreamDestination(unit, component);
                       }),
-      .net_folds = EveryPart(unit, components, IsValidForNet)};
+      .net_folds = EveryPart(unit, components, FoldsAsAPart)};
 }
 
 // Hands `add` every operation a product has, which a structure and a tuple
@@ -2128,7 +2111,7 @@ auto OperationsHadByArray(const mir::CompilationUnit& unit, mir::TypeId array)
       .fixed_stream = fixed_stream,
       .run_written = stream && !fixed_stream && !HoldsClassHandle(unit, array),
       .run_read = stream && !fixed_stream && IsStreamDestination(unit, array),
-      .net_folds = IsValidForNet(unit, array)};
+      .net_folds = HasNetFolds(unit, array)};
 }
 
 // Hands `add` every operation on a whole value `type`, a type no declaration
@@ -2176,7 +2159,31 @@ void ForEachStructuralOperation(
   throw InternalError("hir_to_mir: unknown type of structural operations");
 }
 
+// Whether a value of `type` folds as a part of an aggregate net: a net holds
+// each contribution to one as a value of the net's own type, so a part folds
+// only where it can hold the `z` a driver leaves it at where it drives nothing,
+// which is a 4-state integral value and an aggregate of such (LRM 6.6.1).
+auto FoldsAsAPart(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
+  const mir::Type& t = unit.types.Get(type);
+  if (t.IsIntegral()) {
+    return IsFourState(t.Integral().state_kind);
+  }
+  if (const std::optional<mir::RecordKind> kind =
+          mir::RecordKindOf(unit, type)) {
+    return HasNetFoldsOver(unit, *kind, PartTypes(unit, type));
+  }
+  if (t.Is<mir::UnpackedArrayType>()) {
+    return EveryPart(unit, PartTypes(unit, type), FoldsAsAPart);
+  }
+  return false;
+}
+
 }  // namespace
+
+auto HasNetFolds(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
+  const mir::Type& t = unit.types.Get(type);
+  return t.IsIntegral() || FoldsAsAPart(unit, type);
+}
 
 auto ReferenceTo(const mir::CompilationUnit& unit, mir::TypeId type)
     -> mir::TypeId {

@@ -116,11 +116,17 @@ auto DumpedKindOfVariableType(const slang::ast::Type& declared)
 // `var_type`), none for one a dump records nothing of: a variable holding no
 // integral value, real or event -- an unpacked array or structure, a string, a
 // handle, a container (LRM 21.7.2.1) -- one of automatic lifetime, which no
-// dump can reach, and a net of a type the language gives no keyword there or
-// holding no integral value.
+// dump can reach, a net of a type the language gives no keyword there, and a
+// net holding neither an integral value nor a real. A net holding a real is an
+// input port of that type written with no port kind (LRM 23.2.2.3), and is
+// recorded by its value, as a variable of its type is, since no net type
+// keyword names it.
 auto DumpedKindOf(const slang::ast::ValueSymbol& value)
     -> std::optional<support::DumpVarKind> {
   if (const auto* net = value.as_if<slang::ast::NetSymbol>()) {
+    if (value.getType().isFloating()) {
+      return DumpedKindOfVariableType(value.getType());
+    }
     if (!value.getType().isIntegral()) {
       return std::nullopt;
     }
@@ -238,29 +244,48 @@ auto DumpedPortsOf(const slang::ast::Scope& scope) -> DumpedPorts {
   return ports;
 }
 
-// Whether a value of `type` holds an unpacked tagged union anywhere in it. LRM
-// 6.7.1 admits one in a net's data type, and no resolution of its drivers is
-// carried out.
-auto HoldsTaggedUnion(const slang::ast::Type& type) -> bool {
+// Whether `type`, or the type of any member or element a value of it holds,
+// satisfies `leaf`.
+template <typename Leaf>
+auto HoldsType(const slang::ast::Type& type, const Leaf& leaf) -> bool {
   const slang::ast::Type& canonical = type.getCanonicalType();
+  if (leaf(canonical)) {
+    return true;
+  }
   const auto any_field =
-      [](std::span<const slang::ast::FieldSymbol* const> fields) {
+      [&](std::span<const slang::ast::FieldSymbol* const> fields) {
         return std::ranges::any_of(
-            fields, [](const slang::ast::FieldSymbol* field) {
-              return HoldsTaggedUnion(field->getType());
+            fields, [&](const slang::ast::FieldSymbol* field) {
+              return HoldsType(field->getType(), leaf);
             });
       };
   if (const auto* overlay = canonical.as_if<slang::ast::UnpackedUnionType>()) {
-    return overlay->isTagged || any_field(overlay->fields);
+    return any_field(overlay->fields);
   }
   if (const auto* product = canonical.as_if<slang::ast::UnpackedStructType>()) {
     return any_field(product->fields);
   }
   if (const auto* array =
           canonical.as_if<slang::ast::FixedSizeUnpackedArrayType>()) {
-    return HoldsTaggedUnion(array->elementType);
+    return HoldsType(array->elementType, leaf);
   }
   return false;
+}
+
+// An unpacked tagged union, which LRM 6.7.1 admits in a net's data type, and
+// whose drivers no resolution is carried out for.
+auto IsTaggedUnion(const slang::ast::Type& type) -> bool {
+  const auto* overlay = type.as_if<slang::ast::UnpackedUnionType>();
+  return overlay != nullptr && overlay->isTagged;
+}
+
+// A value whose size the running program decides, or an event: a net of one
+// is what an input port written with no port kind is (LRM 23.2.2.3), and a
+// net holding one is not yet carried out.
+auto IsDynamicOrEvent(const slang::ast::Type& type) -> bool {
+  return type.isQueue() || type.isAssociativeArray() ||
+         type.as_if<slang::ast::DynamicArrayType>() != nullptr ||
+         type.isEvent();
 }
 
 // Where one parameter an instance takes at construction gets its value: the
@@ -955,11 +980,19 @@ auto StructuralScopeLowerer::PopulateNetMember(
         span, diag::DiagCode::kUnsupportedTypeKind,
         "a net delay is not yet supported");
   }
-  if (HoldsTaggedUnion(net.getType())) {
+  if (HoldsType(net.getType(), IsTaggedUnion)) {
     // LRM 6.7.1, 7.3.2.
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedTypeKind,
         "a net holding a tagged union is not yet supported");
+  }
+  if (HoldsType(net.getType(), IsDynamicOrEvent)) {
+    // LRM 23.2.2.3, 6.6.7.
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedTypeKind,
+        "an input port with no port kind holding a dynamic array, a queue, an "
+        "associative array or an event is a net, which is not yet supported; "
+        "'input var' declares the variable port");
   }
 
   frame.current_structural_scope->structural_data_objects.Define(

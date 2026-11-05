@@ -13,7 +13,7 @@
 #include <string_view>
 #include <utility>
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 
 #include "conformance/framework/process.hpp"
 #include "conformance/publish/publish.hpp"

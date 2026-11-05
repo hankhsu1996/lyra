@@ -289,14 +289,15 @@ struct AdmitsHistory
           AdmitsVariable<T>::value && !std::is_same_v<T, value::UnmanagedRef>> {
 };
 
-// A net resolves only what LRM 6.7.1 admits as a net's data type, which of the
-// integral types is the four-state ones.
+// A net is a declared net or an input port of no port kind (LRM 23.2.2.3), so
+// it holds what such a port may be declared as: a value a net holds, but not a
+// value of any type, which no declaration names, nor a reference owning
+// nothing, which no port may be (LRM 6.14, 25.9).
 template <typename T>
-struct AdmitsNet : std::bool_constant<AdmitsVariable<T>::value && NetValue<T>> {
-};
-
-template <BitAddressed T>
-struct AdmitsNet<T> : std::bool_constant<T::kFourState> {};
+struct AdmitsNet : std::bool_constant<
+                       AdmitsVariable<T>::value && NetValue<T> &&
+                       !std::is_same_v<T, value::Any> &&
+                       !std::is_same_v<T, value::UnmanagedRef>> {};
 
 // `Storage` over the value class of `domain`, where `Admits` holds of that
 // class.
@@ -490,9 +491,7 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
               const auto shown = [](const auto& net) {
                 return net.ShownThrough();
               };
-              if constexpr (!BitAddressed<T> && !value::LaidOutByType<T>) {
-                return std::nullopt;
-              } else if constexpr (!AdmitsNet<T>::value) {
+              if constexpr (!AdmitsNet<T>::value) {
                 return NotRealized<Held>();
               } else if constexpr (DynamicallySized<T>) {
                 return through(TailThroughOffset<ResolvedNet<T>, T>(shown));

@@ -1,0 +1,13 @@
+$timescale 1ns $end
+$scope module Top $end
+$scope module u $end
+$var real 64 L level $end
+$var wire 100 W wide [99:0] $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+r2.5 L
+b1001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001 W
+$end

@@ -30,7 +30,7 @@
 #include <variant>
 #include <vector>
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 
 #include "conformance/adapters/lyra/reader.hpp"
 #include "conformance/adapters/verilator/reader.hpp"

@@ -11,7 +11,7 @@
 // port is connected to may itself be a port of another instance, wherever in
 // the module that instance is written.
 module Probe (
-    input logic [7:0] in
+    input var logic [7:0] in
 );
   int changes;
 
@@ -19,16 +19,16 @@ module Probe (
 endmodule
 
 module Handed (
-    input logic [7:0] in
+    input var logic [7:0] in
 );
   Probe below (.in(in));
 endmodule
 
 module Forms (
-    input logic [7:0] same,
-    input logic [7:0] computed,
-    input logic [3:0] part,
-    input logic [7:0] elsewhere,
+    input var logic [7:0] same,
+    input var logic [7:0] computed,
+    input var logic [3:0] part,
+    input var logic [7:0] elsewhere,
     input var logic [7:0] open,
     input var int         open_int,
     input var int         defaulted = 17
@@ -41,8 +41,8 @@ typedef struct {
 } record_t;
 
 module Shapes (
-    input record_t          record,
-    input logic    [99:0]   wide,
+    input var record_t          record,
+    input var logic    [99:0]   wide,
     input var int               list  [3]
 );
 endmodule
@@ -52,7 +52,7 @@ module Other;
 endmodule
 
 module Top (
-    input logic [7:0] from_nothing
+    input var logic [7:0] from_nothing
 );
   logic [7:0] src;
   record_t record;

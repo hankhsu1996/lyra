@@ -120,7 +120,7 @@ class NetProbe final : public DumpProbe {
   }
   void Read(DumpCapture& into, DumpCode code) const override {
     if constexpr (value::HeldAsWords<T>) {
-      into.Bits(code, WordsAt(net_->Shown(), width_, true));
+      into.Bits(code, WordsAt(net_->Shown(), width_, T::kFourState));
     } else {
       ReadValue(into, code, *static_cast<const T*>(net_->Shown()), width_);
     }

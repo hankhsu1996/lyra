@@ -3,7 +3,7 @@
 
 Rules:
   P001: The slang commit MODULE.bazel names is on the fork's branch for the
-        release MODULE.bazel names, `lyra/v<major>`
+        release MODULE.bazel names, `lyra/v<release>`
 
 Lyra reads slang from a fork at one commit. A commit no branch reaches can be
 collected, and every Lyra commit naming it then stops building; the fork keeps
@@ -45,9 +45,8 @@ def check(module_text: str) -> list[str]:
     if not dep or not override:
         return ["MODULE.bazel: P001 names no slang release and commit to check"]
 
-    major = dep.group(1).split(".")[0]
     commit, remote = override.groups()
-    branch = f"lyra/v{major}"
+    branch = f"lyra/v{dep.group(1)}"
 
     with tempfile.TemporaryDirectory() as scratch:
         repo = Path(scratch)
@@ -82,7 +81,7 @@ def main() -> int:
         print(f"\nTotal: {len(errors)} violations")
         print("\nRules:")
         print("  P001: The slang commit MODULE.bazel names is on the fork's branch")
-        print("        for the release MODULE.bazel names, lyra/v<major>")
+        print("        for the release MODULE.bazel names, lyra/v<release>")
         return 1
 
     print("The pinned slang commit is on its release branch")

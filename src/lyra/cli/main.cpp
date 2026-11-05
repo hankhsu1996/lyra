@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <slang/driver/Driver.h>
 #include <slang/text/SourceManager.h>

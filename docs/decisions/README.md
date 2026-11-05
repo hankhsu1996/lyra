@@ -1688,11 +1688,11 @@ the detail lives in the entry itself.
   referring, a bound in the text, copying a message in after `get` returns, a second mailbox
   definition, and compiling the definitions only where named are rejected.
 - [the-front-end-fork-keeps-a-branch-per-release](the-front-end-fork-keeps-a-branch-per-release.md)
-  -- the slang fork keeps one branch per upstream release it is based on, `lyra/v<major>`, which
-  only grows and which the host protects; moving to a release starts a new branch, so every commit
-  Lyra has pinned stays fetchable, and a check holds the pin to the branch of the release
-  `MODULE.bazel` names. One branch rebased onto each release, patch files in Lyra, and a tag per pin
-  are rejected.
+  -- the slang fork keeps one branch per upstream release it is based on, named by the release's
+  whole tag (`lyra/v12.1`), which only grows and which the host protects; moving to a release starts
+  a new branch, so every commit Lyra has pinned stays fetchable, and a check holds the pin to the
+  branch of the release `MODULE.bazel` names. One branch rebased onto each release, a name of the
+  major alone, patch files in Lyra, and a tag per pin are rejected.
 - [a-covergroup-is-a-class-over-a-coverage-library](a-covergroup-is-a-class-over-a-coverage-library.md)
   -- a covergroup is a class over a coverage library in SystemVerilog, read only into a compilation
   whose design declares a covergroup or calls a coverage function, written straight into MIR by one

@@ -381,6 +381,14 @@ enum class BuiltinFn : std::uint16_t {
   // a connection can name of it (LRM 23.3.3.7). A net of an unpacked aggregate
   // is handed a value of its data type, whose shape it takes (LRM 6.7.1), so
   // its install is an entry of its own.
+  //
+  // A net of a type no net type resolves -- a real, a string, a class handle,
+  // or an aggregate holding one or a 2-state part, which only an input port
+  // written with no port
+  // kind declares (LRM 23.2.2.3) -- is a net of a nettype with no resolution
+  // function (LRM 6.6.7): its net type contributes nothing, one driver decides
+  // it, and where none does it holds the value it is handed, its type's
+  // default. So its install takes that value alone.
   kNetInitializeTriState,
   kNetInitializeWiredAnd,
   kNetInitializeWiredOr,
@@ -389,6 +397,7 @@ enum class BuiltinFn : std::uint16_t {
   kAggregateNetInitializeWiredAnd,
   kAggregateNetInitializeWiredOr,
   kAggregateNetInitializeRetaining,
+  kUnresolvedNetInitialize,
   // Reading what a cell holds, and replacing it. Both act on the wrapper rather
   // than name its storage: a read answers with a reference to what the cell
   // shows, and a write publishes the change to whatever the wrapper relates

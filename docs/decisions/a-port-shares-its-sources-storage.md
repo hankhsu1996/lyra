@@ -88,20 +88,21 @@ source alone. One compiled body serves every instance, and which of the two a `r
 connected to differs between them, so it is not decided where the force is compiled: the reference
 records whether it names a sink, and a force through it acts on what it names.
 
-**D4. An input port written with no data type is a net (LRM 23.2.2.3), and it shares its source's
-storage at run time rather than where a unit compiles.** A second driver may reach such a port from
-any unit, so whether the connection is all that drives it is known only once the design is built.
-The connection states, while the design resolves, that it carries the whole of a variable, a net, or
-a port declared as a variable, of the port's own type. The net names the value it shows through a
-member of the same bindings D1 and D3 use for a variable port, naming its own value until the
-connection's turn at time zero; where the connection is then the port's one driver, the turn binds
-the member to the source, so the port shows that object where it lies, a wait on the port is a wait
-on the object, and the connection runs nothing more. The port's own value first takes the source's
-as any write, so its first value is a change as it is under any driver. A force on the port is D3's
-force on the member, onto the net's own value, and never reaches the source; while it is in effect
-the connection's contribution follows the source, so the net resolves it under the force and the
-positions nobody forced go on showing it. A child reads such a port through the member, one load
-more, as D1's reference costs.
+**D4. An input port written with no port kind is a net (LRM 23.2.2.3), and it shares its source's
+storage at run time rather than where a unit compiles** (revised 2026-11-04: it said "with no data
+type", which was what the front end read as a net before slang 12; a typed one is a net too). A
+second driver may reach such a port from any unit, so whether the connection is all that drives it
+is known only once the design is built. The connection states, while the design resolves, that it
+carries the whole of a variable, a net, or a port declared as a variable, of the port's own type.
+The net names the value it shows through a member of the same bindings D1 and D3 use for a variable
+port, naming its own value until the connection's turn at time zero; where the connection is then
+the port's one driver, the turn binds the member to the source, so the port shows that object where
+it lies, a wait on the port is a wait on the object, and the connection runs nothing more. The
+port's own value first takes the source's as any write, so its first value is a change as it is
+under any driver. A force on the port is D3's force on the member, onto the net's own value, and
+never reaches the source; while it is in effect the connection's contribution follows the source, so
+the net resolves it under the force and the positions nobody forced go on showing it. A child reads
+such a port through the member, one load more, as D1's reference costs.
 
 ## Rejected
 

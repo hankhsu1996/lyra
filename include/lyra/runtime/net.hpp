@@ -222,11 +222,15 @@ void WritePositions(
 class NetName;
 class PhysicalNet;
 
-// How an aggregate net folds one contribution into another, what a stronger
-// one leaves a weaker, and what fills a value of the net's shape (LRM 6.6,
-// 6.7.1, 28.12.1). A type the library is compiled with states these itself.
+// A second driver reached a net with no resolution function (LRM 6.6.7).
+[[noreturn]] void NetHasNoResolution();
+
+// How a net folds one contribution into another, what a stronger one leaves a
+// weaker, and what fills a value of the net's shape (LRM 6.6, 6.7.1, 28.12.1).
+// A type the library is compiled with states these itself, and one the net
+// types' tables do not fold has none.
 template <class T>
-struct NetFoldsOf;
+struct NetFoldsOf {};
 
 template <value::NetResolvable T>
 struct NetFoldsOf<T> {
@@ -283,12 +287,23 @@ struct NetFoldsOf<T> {
   }
 };
 
-// A value a net holds (LRM 6.7.1): an integral one, whose positions resolve
-// wherever a connection put them, or an unpacked aggregate, which a net folds
-// one contribution into another of.
+// A type a net may resolve under a net type's table: one stating its folds
+// itself, and one laid out by a type the design is compiled with, whose folds
+// are the table the net is built holding, which a net of a type the tables do
+// not fold is never asked.
 template <class T>
-concept NetValue =
-    BitAddressed<T> || value::NetResolvable<T> || value::LaidOutByType<T>;
+concept FoldableNetValue = value::NetResolvable<T> || value::LaidOutByType<T>;
+
+// A value a net holds: an integral one, whose positions resolve wherever a
+// connection put them, or any other value a variable holds that the net can
+// build with nothing told, since it builds the values it starts from before it
+// is installed. The net types' tables fold an integral value and an aggregate
+// of them (LRM 6.6.1, 6.6.3); a net of any other type is what an input port
+// written with no port kind is (LRM 23.2.2.3), run as a net of a nettype with
+// no resolution function (LRM 6.6.7).
+template <class T>
+concept NetValue = value::LaidOutByType<T> ||
+                   (value::LyraValue<T> && std::default_initializable<T>);
 
 template <NetValue T>
 class Driver;
@@ -302,9 +317,9 @@ class Driver;
 // value lies; a `Driver<T>` names one by an index the net issued, so the
 // storage stays the net's to reorganize.
 //
-// LRM 6.7.1 admits two kinds of data type, and a net of each is a class of its
-// own: an integral type, whose positions a connection may name some of, and an
-// unpacked aggregate, which no connection names any position of.
+// A net of each of two kinds of data type is a class of its own: an integral
+// type, whose positions a connection may name some of, and any other type,
+// whose value the net holds whole and no connection names a position of.
 template <NetValue T>
 class ResolvedNet;
 
@@ -926,7 +941,8 @@ class ResolvedNet<T> : public ConnectableNet {
   // into it is a stable identity. The handle is the net's own, so a source that
   // can hold one by value copies it out of the reference and one that cannot
   // keeps the reference itself.
-  auto AttachDriver(std::int64_t strength) -> Driver<T>&;
+  auto AttachDriver(std::int64_t strength, base::SourceLocation at)
+      -> Driver<T>&;
 
  private:
   friend class Driver<T>;
@@ -1232,12 +1248,16 @@ class ResolvedNet<T> : public ConnectableNet {
   HeldAs held_;
 };
 
-// A net of an unpacked aggregate (LRM 6.7.1): a structure, a union, or a
-// fixed-size array, every element of which is a valid net data type. It
-// resolves element by element and bit by bit under the same tables and
-// strengths an integral net does, which the aggregate's own operations carry
-// out. It keeps no positions another net could reach, so what resolves is the
-// net itself.
+// A net of a value it holds whole. One of an unpacked aggregate (LRM 6.7.1) --
+// a structure, a union, or a fixed-size array, every element of which is a
+// valid net data type -- resolves element by element and bit by bit under the
+// same tables and strengths an integral net does, which the aggregate's own
+// operations carry out. One of a type no net type resolves -- a real, a
+// string, a class handle, or an aggregate holding one or a 2-state part, which
+// cannot hold the `z` a driver of another part leaves it at -- is a net of a
+// nettype with no resolution function (LRM 6.6.7): one driver decides it, and a
+// second is the design's error. It keeps no positions another net could reach,
+// so what resolves is the net itself.
 template <NetValue T>
   requires(!BitAddressed<T>)
 class ResolvedNet<T> : public Observable {
@@ -1256,28 +1276,47 @@ class ResolvedNet<T> : public Observable {
   // resolves tri-state and keeps what the drivers last decided (LRM 6.6.4).
   // Installing twice is a lowering defect.
   void InitializeTriState(
-      const T& prototype, std::int64_t fill, std::int64_t strength) {
+      const T& prototype, std::int64_t fill, std::int64_t strength)
+    requires FoldableNetValue<T>
+  {
     Install(
         prototype, fill, strength, value::NetResolution::kTriState,
         OwnContribution::kFixed);
   }
   void InitializeWiredAnd(
-      const T& prototype, std::int64_t fill, std::int64_t strength) {
+      const T& prototype, std::int64_t fill, std::int64_t strength)
+    requires FoldableNetValue<T>
+  {
     Install(
         prototype, fill, strength, value::NetResolution::kWiredAnd,
         OwnContribution::kFixed);
   }
   void InitializeWiredOr(
-      const T& prototype, std::int64_t fill, std::int64_t strength) {
+      const T& prototype, std::int64_t fill, std::int64_t strength)
+    requires FoldableNetValue<T>
+  {
     Install(
         prototype, fill, strength, value::NetResolution::kWiredOr,
         OwnContribution::kFixed);
   }
   void InitializeRetaining(
-      const T& prototype, std::int64_t fill, std::int64_t strength) {
+      const T& prototype, std::int64_t fill, std::int64_t strength)
+    requires FoldableNetValue<T>
+  {
     Install(
         prototype, fill, strength, value::NetResolution::kTriState,
         OwnContribution::kRetained);
+  }
+  // Fixes a net of a nettype with no resolution function (LRM 6.6.7): it has
+  // no strength levels and so no contribution of its own (LRM 28.12), its one
+  // driver decides it, and where none does it shows `prototype`, its type's
+  // default.
+  void InitializeUnresolved(const T& prototype) {
+    MarkInstalled();
+    value::RebuildFrom(nondriving_, [&] { return prototype; });
+    own_.strength = support::StrengthLevel::kHighImpedance;
+    own_kind_ = OwnContribution::kFixed;
+    held_.Assign(*Resolve());
   }
 
   ResolvedNet(const ResolvedNet&) = delete;
@@ -1316,11 +1355,7 @@ class ResolvedNet<T> : public Observable {
       return;
     }
     sampled_ = std::make_unique<SampledValueOf<TakenShown>>(
-        TakenShown(*this),
-        [&] {
-          return folds_.FilledLike(
-              nondriving_, value::Logic::Filled(value::FourStateBit::kUnknown));
-        },
+        TakenShown(*this), [&] { return SampledDefault(); },
         Trigger(WatchedPlace::Through(Member()), Observation{}, {}, 0, 0));
   }
   [[nodiscard]] auto SampledGet(base::SourceLocation at) const -> const T& {
@@ -1414,8 +1449,11 @@ class ResolvedNet<T> : public Observable {
 
   // Attaches a new driver at the strength its source drives at and returns its
   // handle, which is the net's own. Its contribution starts at the non-driving
-  // one, so attaching is not itself an act of driving.
-  auto AttachDriver(std::int64_t strength) -> Driver<T>&;
+  // one, so attaching is not itself an act of driving. A second driver of a
+  // net with no resolution function is the design's error (LRM 6.6.7),
+  // reported where that driver is written.
+  auto AttachDriver(std::int64_t strength, base::SourceLocation at)
+      -> Driver<T>&;
 
  private:
   friend class Driver<T>;
@@ -1481,12 +1519,10 @@ class ResolvedNet<T> : public Observable {
 
   void Install(
       const T& prototype, std::int64_t fill, std::int64_t strength,
-      value::NetResolution resolution, OwnContribution own_kind) {
-    if (installed_) {
-      throw InternalError(
-          "ResolvedNet: the net's declaration is installed twice");
-    }
-    installed_ = true;
+      value::NetResolution resolution, OwnContribution own_kind)
+    requires FoldableNetValue<T>
+  {
+    MarkInstalled();
     value::RebuildFrom(nondriving_, [&] {
       return folds_.FilledLike(
           prototype, value::Logic::Filled(value::FourStateBit::kHighImpedance));
@@ -1496,36 +1532,94 @@ class ResolvedNet<T> : public Observable {
           prototype, value::Logic::Filled(NetFillOf(fill)));
     });
     own_.strength = static_cast<support::StrengthLevel>(strength);
-    fold_ = resolution;
+    resolution_ = resolution;
     own_kind_ = own_kind;
     held_.Assign(*Resolve());
   }
 
-  // What the net resolves to: between levels the stronger contribution
-  // determines every bit it drives (LRM 28.12.1), and within one the net
-  // type's table folds them (LRM 6.6.1, 6.6.3), each level starting from the
-  // all-`z` value every fold treats as its identity.
+  void MarkInstalled() {
+    if (installed_) {
+      throw InternalError(
+          "ResolvedNet: the net's declaration is installed twice");
+    }
+    installed_ = true;
+  }
+
+  // What the net shows. One with no resolution function shows its one
+  // driver's contribution, or its type's default where it has no driver (LRM
+  // 6.6.7).
+  [[nodiscard]] auto Resolve() const -> value::SmallBox<T> {
+    if constexpr (FoldableNetValue<T>) {
+      if (resolution_.has_value()) {
+        return ResolvedBy(*resolution_);
+      }
+    }
+    return value::SmallBox<T>(
+        contributions_.empty() ? nondriving_ : contributions_.front().value);
+  }
+
+  // What a net of a net type resolves to: between levels the stronger
+  // contribution determines every bit it drives (LRM 28.12.1), and within one
+  // the net type's table folds them (LRM 6.6.1, 6.6.3). A level starts from
+  // its first contribution and resolution from the strongest occupied level,
+  // rather than from an all-`z` value: a 2-state part holds no `z`, so a value
+  // of the net's type may have no identity for the fold to start from (LRM
+  // 6.11.2). A net no contribution reaches shows its non-driving value.
   // Each value it works through is kept where a value of the net's type may
   // be kept, so a net too large for a frame keeps none in one.
-  [[nodiscard]] auto Resolve() const -> value::SmallBox<T> {
+  [[nodiscard]] auto ResolvedBy(value::NetResolution resolution) const
+      -> value::SmallBox<T>
+    requires FoldableNetValue<T>
+  {
     const OccupiedLevels occupied = occupied_ | LevelBit(own_.strength);
-    value::SmallBox<T> resolved(nondriving_);
+    std::optional<value::SmallBox<T>> resolved;
     for (std::size_t level = support::kStrengthLevelCount; level-- > 0;) {
       const auto at = static_cast<support::StrengthLevel>(level);
       if ((occupied & LevelBit(at)) == 0U) {
         continue;
       }
-      value::SmallBox<T> group(own_.strength == at ? own_.value : nondriving_);
+      std::optional<value::SmallBox<T>> group;
+      const auto fold_in = [&](const T& contribution) {
+        if (!group.has_value()) {
+          group.emplace(contribution);
+          return;
+        }
+        *group = value::SmallBox<T>::BuiltBy(
+            [&] { return folds_.Resolve(resolution, **group, contribution); });
+      };
+      if (own_.strength == at) {
+        fold_in(own_.value);
+      }
       for (const DriveContribution<T>& driver : contributions_) {
         if (driver.strength == at) {
-          group = value::SmallBox<T>::BuiltBy(
-              [&] { return folds_.Resolve(fold_, *group, driver.value); });
+          fold_in(driver.value);
         }
       }
-      resolved = value::SmallBox<T>::BuiltBy(
-          [&] { return folds_.Dominating(*resolved, *group); });
+      if (!resolved.has_value()) {
+        resolved = std::move(group);
+        continue;
+      }
+      *resolved = value::SmallBox<T>::BuiltBy(
+          [&] { return folds_.Dominating(**resolved, **group); });
     }
-    return resolved;
+    if (!resolved.has_value()) {
+      return value::SmallBox<T>(nondriving_);
+    }
+    return *std::move(resolved);
+  }
+
+  // The net's sampled value before anything samples it, its type's default in
+  // every bit (LRM 16.5.1, 6.8 Table 6-7): what a net of a net type fills its
+  // shape with, and what a net with no resolution function already shows
+  // undriven.
+  [[nodiscard]] auto SampledDefault() const -> T {
+    if constexpr (FoldableNetValue<T>) {
+      if (resolution_.has_value()) {
+        return folds_.FilledLike(
+            nondriving_, value::Logic::Filled(value::FourStateBit::kUnknown));
+      }
+    }
+    return nondriving_;
   }
 
   // Recomputes the net and publishes if what it shows moved. A net type that
@@ -1682,10 +1776,11 @@ class ResolvedNet<T> : public Observable {
   [[no_unique_address]] NetFoldsOf<T> folds_;
   T nondriving_{};
   // The contribution the net type makes to its own resolution, the table
-  // contributions of equal strength fold under, and whether resolution keeps
-  // that contribution current (LRM 6.7.1, 6.6.4).
+  // contributions of equal strength fold under, which a net of a nettype
+  // declared with no resolution function lacks, and whether resolution keeps
+  // that contribution current (LRM 6.7.1, 6.6.4, 6.6.7).
   DriveContribution<T> own_{};
-  value::NetResolution fold_{};
+  std::optional<value::NetResolution> resolution_;
   OwnContribution own_kind_{};
   bool installed_ = false;
   // The procedural continuous assignments the net has been put under (LRM
@@ -1899,7 +1994,9 @@ Driver<T>::Driver() = default;
 
 template <NetValue T>
   requires BitAddressed<T>
-auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
+auto ResolvedNet<T>::AttachDriver(
+    std::int64_t strength, base::SourceLocation at) -> Driver<T>& {
+  const base::SourceLocationScope bound(at);
   RequireUnsettled(decision_);
   const auto level = static_cast<support::StrengthLevel>(strength);
   contributions_.emplace_back(nondriving_, level);
@@ -1910,8 +2007,13 @@ auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
 
 template <NetValue T>
   requires(!BitAddressed<T>)
-auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
+auto ResolvedNet<T>::AttachDriver(
+    std::int64_t strength, base::SourceLocation at) -> Driver<T>& {
+  const base::SourceLocationScope bound(at);
   RequireUnsettled(decision_);
+  if (!resolution_.has_value() && !contributions_.empty()) {
+    NetHasNoResolution();
+  }
   const auto level = static_cast<support::StrengthLevel>(strength);
   contributions_.emplace_back(nondriving_, level);
   occupied_ |= LevelBit(level);
