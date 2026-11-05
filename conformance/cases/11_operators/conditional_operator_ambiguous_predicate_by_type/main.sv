@@ -27,11 +27,12 @@ module Top;
   } either_t;
 
   // A conditional that is a constant expression answers as one evaluated at
-  // run time does.
+  // run time does. A string literal used as an operand is an integral constant
+  // (LRM 5.9), so the operands are cast to be of the string type.
   localparam real kRealEqual = 1'bx ? 1.5 : 1.5;
   localparam real kRealDiffering = 1'bx ? 1.5 : 2.5;
-  localparam string kStringEqual = 1'bx ? "abc" : "abc";
-  localparam string kStringDiffering = 1'bx ? "abc" : "xyz";
+  localparam string kStringEqual = 1'bx ? string'("abc") : string'("abc");
+  localparam string kStringDiffering = 1'bx ? string'("abc") : string'("xyz");
 
   real real_equal, real_differing, real_not_a_number;
   shortreal shortreal_equal, shortreal_differing;

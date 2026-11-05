@@ -22,7 +22,7 @@
 #include <variant>
 #include <vector>
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <slang/driver/Driver.h>
 #include <slang/util/CommandLine.h>
 

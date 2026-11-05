@@ -341,14 +341,23 @@ element has a valid data type for a net." `int` is 2-state and `real` and `strin
 so each port above is a net of a type no net may have. Forbidden. The clause's own examples write
 the variable port `input var integer x`.
 
-The text is in common use, and the front end accepts it with no diagnostic and takes each such port
-as a variable, which is the only meaning it could have; Lyra keeps that. Write
-`input var int count`, which every reading takes as that variable.
-
-The front end takes `input logic` as a variable as well, which is not a forbidden text but an
-analysis that differs from the standard's: `input logic d` is `input wire logic d`, a net, so left
-unconnected it reads z (6.6) where a variable reads x. That is a defect of the analysis, recorded as
-a wrong answer of Lyra's.
+The text is in common use, and the front end accepts it with no diagnostic, as 23.2.2.3 has it: each
+such port is a net of the default net type and of the type written, the check of 6.7.1 left out.
+What that net does the standard does not say, and the choice changes what the program computes, so
+Lyra rules on it from the nearest texts it allows. The net types' truth tables are over bits (6.6.1,
+6.6.3), so a net of a 2-state integral type folds its drivers as a wire does and takes an x or z the
+fold makes as 0 (6.11.2): nothing driving it reads 0, and two drivers disagreeing on a bit give 0
+there. A structure or array folds part by part where every part can hold the z its driver leaves
+where it drives nothing, since a net holds each contribution to one as a value of the type: a
+4-state integral part, or an aggregate of such. A real, a string, a class handle, or a structure or
+array holding one of those or a 2-state part has no fold, which makes it what a net of a
+user-defined nettype with no resolution function is (6.6.7): its one driver decides it, nothing
+driving it leaves its type's default, the net type it was declared with contributes nothing, as a
+nettype has no contribution of its own, and a second driver is the design's error, reported where
+that driver is written. A queue, a dynamic or associative array, an event, or an aggregate holding
+one, as such a port, is not yet carried out. Where one connection is all that drives such a port,
+every reading gives the value it is connected to. Write `input var int count`, which every reading
+takes as that variable.
 
 #### A static variable initialized in a procedural block with no `static`
 

@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <slang/driver/Driver.h>
 
 #include "lyra/cli/command_line.hpp"

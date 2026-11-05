@@ -3299,12 +3299,17 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     if (net != nullptr) {
       const mir::ExprId net_target = ctor_block.Add(
           mir::MakeFieldAccessExpr(self_object(), cell, mir_field_type));
-      const NetData data =
-          value_ty.IsIntegral()
-              ? NetData{IntegralNetData{}}
-              : NetData{AggregateNetData{
-                    .prototype = ctor_block.Add(BuildDefaultValueFromHir(
-                        unit_lowerer, ctor_block, d.type))}};
+      const NetData data = [&] -> NetData {
+        if (value_ty.IsIntegral()) {
+          return IntegralNetData{};
+        }
+        const mir::ExprId prototype = ctor_block.Add(
+            BuildDefaultValueFromHir(unit_lowerer, ctor_block, d.type));
+        if (HasNetFolds(unit_lowerer.Unit(), mir_value_type)) {
+          return AggregateNetData{.prototype = prototype};
+        }
+        return UnresolvedNetData{.prototype = prototype};
+      }();
       ctor_block.AppendStmt(
           mir::Stmt{
               .label = std::nullopt,

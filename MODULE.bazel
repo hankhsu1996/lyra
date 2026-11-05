@@ -14,19 +14,19 @@ bazel_dep(name = "rules_cc", version = "0.2.25")
 bazel_dep(name = "platforms", version = "1.1.0")
 
 # Slang SystemVerilog Compiler Library, read from a fork. The fork keeps one
-# branch per upstream release it is based on, `lyra/v<major>`, which only ever
-# grows, so every commit Lyra has named stays fetchable; this commit is on the
-# branch of the release `version` names, and moving to a new release starts a
-# new branch rather than rewriting this one.
-bazel_dep(name = "slang", version = "11.0")
+# branch per upstream release it is based on, `lyra/v<release>` as the release
+# tag spells it, which only ever grows, so every commit Lyra has named stays
+# fetchable; this commit is on the branch of the release `version` names, and
+# moving to a new release starts a new branch rather than rewriting this one.
+bazel_dep(name = "slang", version = "12.1")
 git_override(
     module_name = "slang",
-    commit = "fe0b8b9d5849a9183956a7d1af35a25f8f4ce429",
+    commit = "40e785c5b418c9ea1595062a8db5aa17a8282f2a",
     remote = "https://github.com/hankhsu1996/slang.git",
 )
 
 # Formatting
-bazel_dep(name = "fmt", version = "11.1.3")
+bazel_dep(name = "fmt", version = "12.2.0")
 
 # Logging Library
 bazel_dep(name = "spdlog", version = "1.15.1")

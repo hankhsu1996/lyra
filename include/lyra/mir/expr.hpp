@@ -1037,7 +1037,9 @@ struct Expr {
 // the net's data type gives it -- a value of an unpacked aggregate type, and
 // nothing for an integral type -- followed by the contribution the net type
 // makes to the net's own resolution: the scalar the net shows where nothing
-// drives it, and the strength it holds that scalar at (LRM 6.7.1, 28.11).
+// drives it, and the strength it holds that scalar at (LRM 6.7.1, 28.11). A
+// net with no resolution function (LRM 6.6.7) is handed a value of its type
+// alone, which it shows where nothing drives it.
 [[nodiscard]] inline auto MakeNetInstallCallExpr(
     ExprId net, std::vector<ExprId> arguments, support::BuiltinFn entry,
     TypeId void_type) -> Expr {
@@ -1049,9 +1051,8 @@ struct Expr {
       .type = void_type};
 }
 
-// `net.AttachDriver(strength)` -- attaches a driver contributing at `strength`
-// to a net's resolution and yields the driver handle (the result type is the
-// driver type).
+// Attaches a driver contributing at `strength` to a net's resolution and yields
+// the driver handle (the result type is the driver type).
 [[nodiscard]] inline auto MakeNetAttachDriverCallExpr(
     ExprId net, ExprId strength, TypeId driver_type) -> Expr {
   return Expr{

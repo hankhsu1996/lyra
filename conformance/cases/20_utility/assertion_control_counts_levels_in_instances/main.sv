@@ -8,14 +8,14 @@
 // Every assertion here holds, so each check of one runs its pass statement
 // once, and a count of those is how many times it was checked.
 module Leaf (
-    input logic go
+    input var logic go
 );
   int checked = 0;
   always @(go) assert (1) checked = checked + 1;
 endmodule
 
 module Mid (
-    input logic go
+    input var logic go
 );
   int checked = 0;
   always @(go) assert (1) checked = checked + 1;

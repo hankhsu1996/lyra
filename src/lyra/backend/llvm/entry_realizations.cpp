@@ -29,10 +29,6 @@ constexpr DomainSet kOneWordIntegral{
     Domain::kLogic8, Domain::kLogic16, Domain::kLogic32, Domain::kLogic64};
 constexpr DomainSet kWideIntegral{Domain::kBitWide, Domain::kLogicWide};
 constexpr DomainSet kIntegral = kOneWordIntegral | kWideIntegral;
-constexpr DomainSet kOneWordFourState{
-    Domain::kLogic8, Domain::kLogic16, Domain::kLogic32, Domain::kLogic64};
-constexpr DomainSet kFourStateIntegral =
-    kOneWordFourState | DomainSet{Domain::kLogicWide};
 // What is laid out by a type the design is compiled with and states nothing of
 // it in its bytes: a tuple, a record and a fixed-size unpacked array, the one
 // sequence of fixed extent; the other sequences and containers are objects the
@@ -110,9 +106,14 @@ constexpr DomainSet kScalarsBesideIntegral =
 constexpr DomainSet kLibraryObjects =
     DomainsDeclared([](support::LibraryDecl) { return true; }) |
     DomainSet{Domain::kManagedRef};
-// What an aggregate net resolves in (LRM 6.7.1), and what any net does.
-constexpr DomainSet kAggregateNets = kLaidOutByType;
-constexpr DomainSet kNetValues = kFourStateIntegral | kAggregateNets;
+// What a net holds: an integral value, whose positions a connection may name,
+// a value laid out by its type, and a real, a string or a class handle, which
+// no net type resolves and only an input port written with no port kind
+// declares a net of (LRM 6.6.7, 23.2.2.3).
+constexpr DomainSet kUnfoldedNetValues =
+    kReals | DomainSet{Domain::kString, Domain::kManagedRef};
+constexpr DomainSet kNetValues =
+    kIntegral | kLaidOutByType | kUnfoldedNetValues;
 
 // What a variable holds besides an integral value and reads and writes
 // through an entry: an object of the library's, a real and a reference owning
@@ -205,7 +206,7 @@ constexpr std::array kForMembersSteppedInto{
     RealizedFor{.domains = kLaidOutByType, .told = ToldNothing{}}};
 constexpr std::array kForComponentsReferredTo{
     RealizedFor{.domains = kLaidOutByType}};
-constexpr std::array kForJoinedNets{RealizedFor{.domains = kFourStateIntegral}};
+constexpr std::array kForJoinedNets{RealizedFor{.domains = kIntegral}};
 // A net attaching a driver, and a variable's cell a reference is built over,
 // keep what they hold where it lies, so neither is told its type.
 constexpr std::array kForNets{
@@ -242,12 +243,15 @@ constexpr std::array kForHistories{
         .domains = kIntegral | kLibraryContainers | kReals |
                    DomainSet{Domain::kString, Domain::kManagedRef}},
     RealizedFor{.domains = kLaidOutByType, .told = ToldNothing{}}};
-constexpr std::array kForIntegralNets{
-    RealizedFor{.domains = kFourStateIntegral}};
+constexpr std::array kForIntegralNets{RealizedFor{.domains = kIntegral}};
 // A net laying its value out after itself by the value's type was told that
-// type where it was built.
+// type where it was built, and one of a value the library holds whole knows
+// its type.
 constexpr std::array kForAggregateNets{
     RealizedFor{.domains = kLaidOutByType, .told = ToldNothing{}}};
+constexpr std::array kForUnresolvedNets{
+    RealizedFor{.domains = kLaidOutByType, .told = ToldNothing{}},
+    RealizedFor{.domains = kUnfoldedNetValues}};
 
 // A variable is taken over whether reached through its cell or through storage
 // lent for it. A takeover through a reference acts on the variable the
@@ -270,10 +274,12 @@ constexpr std::array kTakeoversBegun{
         .wrapper = WrapperKind::kCell,
         .domains = kLaidOutByType,
         .told = ToldTakePositions{}},
-    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kFourStateIntegral},
     ThroughWrapper{
         .wrapper = WrapperKind::kNet,
-        .domains = kAggregateNets,
+        .domains = kIntegral | kUnfoldedNetValues},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kNet,
+        .domains = kLaidOutByType,
         .told = ToldTakePositions{}},
     ThroughWrapper{
         .wrapper = WrapperKind::kRef,
@@ -324,12 +330,11 @@ constexpr std::array kSampled{
         .domains = kVariableValues,
         .told = ToldNothing{}}};
 // What a dump records of a member (LRM 21.7.2): an integral value or a real,
-// held by a variable, shown by a net of an integral type, or stood for by a
-// port.
+// held by a variable, shown by a net, or stood for by a port.
 constexpr std::array kDescribed{
     ThroughWrapper{
         .wrapper = WrapperKind::kCell, .domains = kIntegral | kReals},
-    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kFourStateIntegral},
+    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kIntegral | kReals},
     ThroughWrapper{
         .wrapper = WrapperKind::kRef,
         .domains = kIntegral | kReals,
@@ -605,7 +610,7 @@ auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told {
           // has, which a layout of a narrower one does not say, and a net of a
           // value laid out by its type that type and how to fold values of it.
           [](const support::ResolvedNetMember& m) -> Told {
-            if (kFourStateIntegral.Holds(m.domain)) {
+            if (kIntegral.Holds(m.domain)) {
               return ToldWidthMetadataAhead{};
             }
             if (support::IsLaidOutByItsType(m.domain)) {
@@ -994,6 +999,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kAggregateNetInitializeWiredOr:
     case support::BuiltinFn::kAggregateNetInitializeRetaining:
       return NamedByStorageDomain{.realized = kForAggregateNets};
+    case support::BuiltinFn::kUnresolvedNetInitialize:
+      return NamedByStorageDomain{.realized = kForUnresolvedNets};
     case support::BuiltinFn::kSampledHistoryInstall:
       return NamedByStorageDomain{.realized = kForHistoriesInstalled};
     case support::BuiltinFn::kSampledHistoryPush:

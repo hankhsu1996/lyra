@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 
 #include "conformance/framework/case.hpp"
 #include "tests/framework/conformance_run.hpp"

@@ -90,6 +90,14 @@ void NetName::Occupy(support::StrengthLevel level) {
   occupied_ |= LevelBit(level);
 }
 
+void NetHasNoResolution() {
+  // LRM 6.7.1, 6.6.7.
+  throw SimulationError(
+      "a net whose data type no net type resolves -- a real, a string, a "
+      "class handle, or an aggregate holding one or a 2-state member -- has "
+      "more than one driver");
+}
+
 void RequireUnsettled(const std::optional<NetDecision>& decision) {
   if (decision.has_value()) {
     throw InternalError(

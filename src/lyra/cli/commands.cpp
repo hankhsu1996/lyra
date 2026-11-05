@@ -20,7 +20,7 @@
 #include <variant>
 #include <vector>
 
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <slang/ast/ASTSerializer.h>
 #include <slang/ast/Compilation.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>

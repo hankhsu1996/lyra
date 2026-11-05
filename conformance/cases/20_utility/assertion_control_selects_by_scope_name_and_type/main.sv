@@ -12,7 +12,7 @@
 // once, and a count of those is how many times it was checked. An assertion
 // turned off is not checked at all, and runs no statement.
 module Leaf (
-    input logic go
+    input var logic go
 );
   int checked = 0;
   always @(go) begin
@@ -21,7 +21,7 @@ module Leaf (
 endmodule
 
 module Mid (
-    input logic go
+    input var logic go
 );
   int checked = 0;
   int generated = 0;

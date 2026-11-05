@@ -51,8 +51,9 @@ call, and so is every whole-value question a structure's own body asks of a memb
   outside a body it stands in. Another unit naming the type calls them by the pair that identifies
   them, across the dependency it already has, and never states them again.
 - **An operation the type does not have has no method.** A real or a chandle leaves no bit stream
-  (6.24.3), a stream is built only where the type fixes its width, and only a type valid for a net
-  (6.7.1) resolves.
+  (6.24.3), a stream is built only where the type fixes its width, and only a type the net types'
+  tables fold resolves: one whose every part can hold the `z` a driver leaves where it drives
+  nothing, a 4-state integral part or an aggregate of such (6.6.1).
 - **The questions the runtime asks as predicates are entries of their own**: whether two values are
   the same bits and whether one holds an unknown bit. So is each of the net's three truth tables,
   for the reason a net's installation is one entry per resolution. `!=` is a method too.

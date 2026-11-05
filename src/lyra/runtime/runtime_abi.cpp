@@ -3662,6 +3662,32 @@ void lyra_rt_shortreal_cell_describe(
       VariableAt<ShortReal>(cell), *static_cast<RuntimeEffects*>(runtime),
       static_cast<const DumpEntry*>(entry));
 }
+void lyra_rt_bit8_net_describe(void* net, void* runtime, const void* entry) {
+  DescribeTo(
+      NetOf<Bit8>(net), *static_cast<RuntimeEffects*>(runtime),
+      static_cast<const DumpEntry*>(entry));
+}
+void lyra_rt_bit16_net_describe(void* net, void* runtime, const void* entry) {
+  DescribeTo(
+      NetOf<Bit16>(net), *static_cast<RuntimeEffects*>(runtime),
+      static_cast<const DumpEntry*>(entry));
+}
+void lyra_rt_bit32_net_describe(void* net, void* runtime, const void* entry) {
+  DescribeTo(
+      NetOf<Bit32>(net), *static_cast<RuntimeEffects*>(runtime),
+      static_cast<const DumpEntry*>(entry));
+}
+void lyra_rt_bit64_net_describe(void* net, void* runtime, const void* entry) {
+  DescribeTo(
+      NetOf<Bit64>(net), *static_cast<RuntimeEffects*>(runtime),
+      static_cast<const DumpEntry*>(entry));
+}
+void lyra_rt_bit_wide_net_describe(
+    void* net, void* runtime, const void* entry) {
+  DescribeTo(
+      NetOf<BitWide>(net), *static_cast<RuntimeEffects*>(runtime),
+      static_cast<const DumpEntry*>(entry));
+}
 void lyra_rt_logic8_net_describe(void* net, void* runtime, const void* entry) {
   DescribeTo(
       NetOf<Logic8>(net), *static_cast<RuntimeEffects*>(runtime),
@@ -3686,6 +3712,17 @@ void lyra_rt_logic_wide_net_describe(
     void* net, void* runtime, const void* entry) {
   DescribeTo(
       NetOf<LogicWide>(net), *static_cast<RuntimeEffects*>(runtime),
+      static_cast<const DumpEntry*>(entry));
+}
+void lyra_rt_real_net_describe(void* net, void* runtime, const void* entry) {
+  DescribeTo(
+      NetOf<Real>(net), *static_cast<RuntimeEffects*>(runtime),
+      static_cast<const DumpEntry*>(entry));
+}
+void lyra_rt_shortreal_net_describe(
+    void* net, void* runtime, const void* entry) {
+  DescribeTo(
+      NetOf<ShortReal>(net), *static_cast<RuntimeEffects*>(runtime),
       static_cast<const DumpEntry*>(entry));
 }
 void lyra_rt_bit8_ref_describe(
@@ -6460,6 +6497,12 @@ void lyra_rt_laidout_aggregate_net_initialize_retaining(
   resolved.InitializeRetaining(resolved.ToOwned(prototype), fill, strength);
 }
 
+void lyra_rt_laidout_unresolved_net_initialize(
+    void* net, const void* prototype) {
+  ResolvedNet<LaidOutValue>& resolved = NetOf<LaidOutValue>(net);
+  resolved.InitializeUnresolved(resolved.ToOwned(prototype));
+}
+
 auto lyra_rt_laidout_net_begin_takeover(
     void* net, std::int64_t level, std::int64_t first, std::int64_t count,
     const void* location, const void* value_take_positions) -> std::int64_t {
@@ -6492,8 +6535,10 @@ auto lyra_rt_laidout_net_sampled_get(void* net, const void* location) -> const
       NetOf<LaidOutValue>(net).SampledGet(SourceLocationAt(location)));
 }
 
-auto lyra_rt_laidout_attach_driver(void* net, std::int64_t strength) -> void* {
-  return &NetOf<LaidOutValue>(net).AttachDriver(strength);
+auto lyra_rt_laidout_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<LaidOutValue>(net).AttachDriver(
+      strength, SourceLocationAt(location));
 }
 
 auto lyra_rt_laidout_driver_get(void* driver) -> const void* {
@@ -6504,6 +6549,162 @@ void lyra_rt_laidout_driver_set(void* driver, const void* value) {
   DriverOf<LaidOutValue>(driver).SetBytes(value);
 }
 
+void lyra_rt_string_unresolved_net_initialize(
+    void* net, const void* prototype) {
+  NetOf<String>(net).InitializeUnresolved(Read<String>(prototype));
+}
+auto lyra_rt_string_net_begin_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<String>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+auto lyra_rt_string_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return NetOf<String>(net).DriveTakeover(
+      level, generation, Read<String>(value), SourceLocationAt(location));
+}
+void lyra_rt_string_net_end_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<String>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+void lyra_rt_string_net_arm_sampling(void* net) {
+  NetOf<String>(net).ArmSampling();
+}
+auto lyra_rt_string_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return &NetOf<String>(net).SampledGet(SourceLocationAt(location));
+}
+auto lyra_rt_string_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<String>(net).AttachDriver(strength, SourceLocationAt(location));
+}
+auto lyra_rt_string_driver_get(void* driver) -> const void* {
+  return &DriverOf<String>(driver).Get();
+}
+void lyra_rt_string_driver_set(void* driver, const void* value) {
+  DriverOf<String>(driver).Set(Read<String>(value));
+}
+void lyra_rt_real_unresolved_net_initialize(void* net, const void* prototype) {
+  NetOf<Real>(net).InitializeUnresolved(Read<Real>(prototype));
+}
+auto lyra_rt_real_net_begin_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<Real>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+auto lyra_rt_real_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return NetOf<Real>(net).DriveTakeover(
+      level, generation, Read<Real>(value), SourceLocationAt(location));
+}
+void lyra_rt_real_net_end_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<Real>(net).EndTakeover(level, first, count, SourceLocationAt(location));
+}
+void lyra_rt_real_net_arm_sampling(void* net) {
+  NetOf<Real>(net).ArmSampling();
+}
+auto lyra_rt_real_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return &NetOf<Real>(net).SampledGet(SourceLocationAt(location));
+}
+auto lyra_rt_real_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<Real>(net).AttachDriver(strength, SourceLocationAt(location));
+}
+auto lyra_rt_real_driver_get(void* driver) -> const void* {
+  return &DriverOf<Real>(driver).Get();
+}
+void lyra_rt_real_driver_set(void* driver, const void* value) {
+  DriverOf<Real>(driver).Set(Read<Real>(value));
+}
+void lyra_rt_shortreal_unresolved_net_initialize(
+    void* net, const void* prototype) {
+  NetOf<ShortReal>(net).InitializeUnresolved(Read<ShortReal>(prototype));
+}
+auto lyra_rt_shortreal_net_begin_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<ShortReal>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+auto lyra_rt_shortreal_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return NetOf<ShortReal>(net).DriveTakeover(
+      level, generation, Read<ShortReal>(value), SourceLocationAt(location));
+}
+void lyra_rt_shortreal_net_end_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<ShortReal>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+void lyra_rt_shortreal_net_arm_sampling(void* net) {
+  NetOf<ShortReal>(net).ArmSampling();
+}
+auto lyra_rt_shortreal_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return &NetOf<ShortReal>(net).SampledGet(SourceLocationAt(location));
+}
+auto lyra_rt_shortreal_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<ShortReal>(net).AttachDriver(
+      strength, SourceLocationAt(location));
+}
+auto lyra_rt_shortreal_driver_get(void* driver) -> const void* {
+  return &DriverOf<ShortReal>(driver).Get();
+}
+void lyra_rt_shortreal_driver_set(void* driver, const void* value) {
+  DriverOf<ShortReal>(driver).Set(Read<ShortReal>(value));
+}
+void lyra_rt_managedref_unresolved_net_initialize(
+    void* net, const void* prototype) {
+  NetOf<ObjectRef>(net).InitializeUnresolved(Read<ObjectRef>(prototype));
+}
+auto lyra_rt_managedref_net_begin_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<ObjectRef>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+auto lyra_rt_managedref_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return NetOf<ObjectRef>(net).DriveTakeover(
+      level, generation, Read<ObjectRef>(value), SourceLocationAt(location));
+}
+void lyra_rt_managedref_net_end_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<ObjectRef>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+void lyra_rt_managedref_net_arm_sampling(void* net) {
+  NetOf<ObjectRef>(net).ArmSampling();
+}
+auto lyra_rt_managedref_net_sampled_get(void* net, const void* location)
+    -> const void* {
+  return &NetOf<ObjectRef>(net).SampledGet(SourceLocationAt(location));
+}
+auto lyra_rt_managedref_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<ObjectRef>(net).AttachDriver(
+      strength, SourceLocationAt(location));
+}
+auto lyra_rt_managedref_driver_get(void* driver) -> const void* {
+  return &DriverOf<ObjectRef>(driver).Get();
+}
+void lyra_rt_managedref_driver_set(void* driver, const void* value) {
+  DriverOf<ObjectRef>(driver).Set(Read<ObjectRef>(value));
+}
 auto lyra_rt_queue_default(const void* answer_type, void* out) -> void* {
   return Emplace(out, RuntimeQueue(QueueTypeAt(answer_type)));
 }
@@ -7493,6 +7694,34 @@ auto lyra_rt_laidout_driver_open_for_write(void* driver, void* out) -> void* {
   return OpenTailDriverWrite<LaidOutValue>(driver, out);
 }
 
+auto lyra_rt_string_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenDriverWrite<String>(driver, out);
+}
+auto lyra_rt_real_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenDriverWrite<Real>(driver, out);
+}
+auto lyra_rt_shortreal_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenDriverWrite<ShortReal>(driver, out);
+}
+auto lyra_rt_managedref_driver_open_for_write(void* driver, void* out)
+    -> void* {
+  return OpenDriverWrite<ObjectRef>(driver, out);
+}
+void lyra_rt_bit8_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<Bit8>(driver, cell);
+}
+void lyra_rt_bit16_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<Bit16>(driver, cell);
+}
+void lyra_rt_bit32_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<Bit32>(driver, cell);
+}
+void lyra_rt_bit64_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<Bit64>(driver, cell);
+}
+void lyra_rt_bit_wide_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<BitWide>(driver, cell);
+}
 void lyra_rt_logic8_driver_drive_from_variable(void* driver, void* cell) {
   DriveFromVariable<Logic8>(driver, cell);
 }
@@ -7508,10 +7737,37 @@ void lyra_rt_logic64_driver_drive_from_variable(void* driver, void* cell) {
 void lyra_rt_logic_wide_driver_drive_from_variable(void* driver, void* cell) {
   DriveFromVariable<LogicWide>(driver, cell);
 }
+void lyra_rt_string_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<String>(driver, cell);
+}
+void lyra_rt_real_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<Real>(driver, cell);
+}
+void lyra_rt_shortreal_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<ShortReal>(driver, cell);
+}
+void lyra_rt_managedref_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<ObjectRef>(driver, cell);
+}
 void lyra_rt_laidout_driver_drive_from_variable(void* driver, void* cell) {
   DriveFromVariable<LaidOutValue>(driver, cell);
 }
 
+void lyra_rt_bit8_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<Bit8>(driver, net);
+}
+void lyra_rt_bit16_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<Bit16>(driver, net);
+}
+void lyra_rt_bit32_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<Bit32>(driver, net);
+}
+void lyra_rt_bit64_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<Bit64>(driver, net);
+}
+void lyra_rt_bit_wide_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<BitWide>(driver, net);
+}
 void lyra_rt_logic8_driver_drive_from_net(void* driver, void* net) {
   DriveFromNet<Logic8>(driver, net);
 }
@@ -7527,10 +7783,38 @@ void lyra_rt_logic64_driver_drive_from_net(void* driver, void* net) {
 void lyra_rt_logic_wide_driver_drive_from_net(void* driver, void* net) {
   DriveFromNet<LogicWide>(driver, net);
 }
+void lyra_rt_string_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<String>(driver, net);
+}
+void lyra_rt_real_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<Real>(driver, net);
+}
+void lyra_rt_shortreal_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<ShortReal>(driver, net);
+}
+void lyra_rt_managedref_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<ObjectRef>(driver, net);
+}
 void lyra_rt_laidout_driver_drive_from_net(void* driver, void* net) {
   DriveFromNet<LaidOutValue>(driver, net);
 }
 
+void lyra_rt_bit8_driver_drive_from_reference(void* driver, void* reference) {
+  DriveFromReference<Bit8>(driver, reference);
+}
+void lyra_rt_bit16_driver_drive_from_reference(void* driver, void* reference) {
+  DriveFromReference<Bit16>(driver, reference);
+}
+void lyra_rt_bit32_driver_drive_from_reference(void* driver, void* reference) {
+  DriveFromReference<Bit32>(driver, reference);
+}
+void lyra_rt_bit64_driver_drive_from_reference(void* driver, void* reference) {
+  DriveFromReference<Bit64>(driver, reference);
+}
+void lyra_rt_bit_wide_driver_drive_from_reference(
+    void* driver, void* reference) {
+  DriveFromReference<BitWide>(driver, reference);
+}
 void lyra_rt_logic8_driver_drive_from_reference(void* driver, void* reference) {
   DriveFromReference<Logic8>(driver, reference);
 }
@@ -7549,6 +7833,20 @@ void lyra_rt_logic64_driver_drive_from_reference(
 void lyra_rt_logic_wide_driver_drive_from_reference(
     void* driver, void* reference) {
   DriveFromReference<LogicWide>(driver, reference);
+}
+void lyra_rt_string_driver_drive_from_reference(void* driver, void* reference) {
+  DriveFromReference<String>(driver, reference);
+}
+void lyra_rt_real_driver_drive_from_reference(void* driver, void* reference) {
+  DriveFromReference<Real>(driver, reference);
+}
+void lyra_rt_shortreal_driver_drive_from_reference(
+    void* driver, void* reference) {
+  DriveFromReference<ShortReal>(driver, reference);
+}
+void lyra_rt_managedref_driver_drive_from_reference(
+    void* driver, void* reference) {
+  DriveFromReference<ObjectRef>(driver, reference);
 }
 void lyra_rt_laidout_driver_drive_from_reference(
     void* driver, void* reference) {
@@ -7675,6 +7973,21 @@ auto lyra_rt_assocarray_ref_reports_to(const void* reference) -> void* {
 auto lyra_rt_any_ref_reports_to(const void* reference) -> void* {
   return RefReportsTo(reference);
 }
+auto lyra_rt_bit8_net_reports_to(void* net) -> void* {
+  return NetReportsTo<Bit8>(net);
+}
+auto lyra_rt_bit16_net_reports_to(void* net) -> void* {
+  return NetReportsTo<Bit16>(net);
+}
+auto lyra_rt_bit32_net_reports_to(void* net) -> void* {
+  return NetReportsTo<Bit32>(net);
+}
+auto lyra_rt_bit64_net_reports_to(void* net) -> void* {
+  return NetReportsTo<Bit64>(net);
+}
+auto lyra_rt_bit_wide_net_reports_to(void* net) -> void* {
+  return NetReportsTo<BitWide>(net);
+}
 auto lyra_rt_logic8_net_reports_to(void* net) -> void* {
   return NetReportsTo<Logic8>(net);
 }
@@ -7690,8 +8003,36 @@ auto lyra_rt_logic64_net_reports_to(void* net) -> void* {
 auto lyra_rt_logic_wide_net_reports_to(void* net) -> void* {
   return NetReportsTo<LogicWide>(net);
 }
+auto lyra_rt_string_net_reports_to(void* net) -> void* {
+  return NetReportsTo<String>(net);
+}
+auto lyra_rt_real_net_reports_to(void* net) -> void* {
+  return NetReportsTo<Real>(net);
+}
+auto lyra_rt_shortreal_net_reports_to(void* net) -> void* {
+  return NetReportsTo<ShortReal>(net);
+}
+auto lyra_rt_managedref_net_reports_to(void* net) -> void* {
+  return NetReportsTo<ObjectRef>(net);
+}
 auto lyra_rt_laidout_net_reports_to(void* net) -> void* {
   return NetReportsTo<LaidOutValue>(net);
+}
+
+auto lyra_rt_bit8_driver_show_source(void* driver) -> bool {
+  return ShowSource<Bit8>(driver);
+}
+auto lyra_rt_bit16_driver_show_source(void* driver) -> bool {
+  return ShowSource<Bit16>(driver);
+}
+auto lyra_rt_bit32_driver_show_source(void* driver) -> bool {
+  return ShowSource<Bit32>(driver);
+}
+auto lyra_rt_bit64_driver_show_source(void* driver) -> bool {
+  return ShowSource<Bit64>(driver);
+}
+auto lyra_rt_bit_wide_driver_show_source(void* driver) -> bool {
+  return ShowSource<BitWide>(driver);
 }
 
 auto lyra_rt_logic8_driver_show_source(void* driver) -> bool {
@@ -7708,6 +8049,18 @@ auto lyra_rt_logic64_driver_show_source(void* driver) -> bool {
 }
 auto lyra_rt_logic_wide_driver_show_source(void* driver) -> bool {
   return ShowSource<LogicWide>(driver);
+}
+auto lyra_rt_string_driver_show_source(void* driver) -> bool {
+  return ShowSource<String>(driver);
+}
+auto lyra_rt_real_driver_show_source(void* driver) -> bool {
+  return ShowSource<Real>(driver);
+}
+auto lyra_rt_shortreal_driver_show_source(void* driver) -> bool {
+  return ShowSource<ShortReal>(driver);
+}
+auto lyra_rt_managedref_driver_show_source(void* driver) -> bool {
+  return ShowSource<ObjectRef>(driver);
 }
 auto lyra_rt_laidout_driver_show_source(void* driver) -> bool {
   return ShowSource<LaidOutValue>(driver);
@@ -8178,6 +8531,18 @@ void lyra_rt_laidout_net_construct(
       *static_cast<const lyra::value::NetFoldTable*>(held_net_folds));
 }
 
+void lyra_rt_string_net_construct(void* storage) {
+  BuildAt<ResolvedNet<String>>(storage);
+}
+void lyra_rt_real_net_construct(void* storage) {
+  BuildAt<ResolvedNet<Real>>(storage);
+}
+void lyra_rt_shortreal_net_construct(void* storage) {
+  BuildAt<ResolvedNet<ShortReal>>(storage);
+}
+void lyra_rt_managedref_net_construct(void* storage) {
+  BuildAt<ResolvedNet<ObjectRef>>(storage);
+}
 void lyra_rt_string_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<String>>(storage);
 }
@@ -8282,6 +8647,18 @@ void lyra_rt_laidout_net_destroy(void* storage) {
   std::destroy_at(static_cast<ResolvedNet<LaidOutValue>*>(storage));
 }
 
+void lyra_rt_string_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<String>(storage));
+}
+void lyra_rt_real_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<Real>(storage));
+}
+void lyra_rt_shortreal_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<ShortReal>(storage));
+}
+void lyra_rt_managedref_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<ObjectRef>(storage));
+}
 void lyra_rt_string_sampled_history_destroy(void* storage) {
   std::destroy_at(static_cast<SampledHistory<String>*>(storage));
 }
@@ -8444,6 +8821,70 @@ void lyra_rt_bit8_insert_designated_bits(
       designation, width, outer_parts, start, bits, bits_width,
       bits_are_four_state);
 }
+void lyra_rt_bit8_net_construct(std::int64_t width, void* storage) {
+  BuildAt<ResolvedNet<Bit8>>(storage, static_cast<std::uint64_t>(width));
+}
+void lyra_rt_bit8_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<Bit8>(storage));
+}
+void lyra_rt_bit8_net_initialize_tri_state(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit8>(net).InitializeTriState(fill, strength);
+}
+void lyra_rt_bit8_net_initialize_wired_and(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit8>(net).InitializeWiredAnd(fill, strength);
+}
+void lyra_rt_bit8_net_initialize_wired_or(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit8>(net).InitializeWiredOr(fill, strength);
+}
+void lyra_rt_bit8_net_initialize_retaining(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit8>(net).InitializeRetaining(fill, strength);
+}
+auto lyra_rt_bit8_net_begin_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<Bit8>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+auto lyra_rt_bit8_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return NetOf<Bit8>(net).DriveTakeover(
+      level, generation, Read<Bit8>(value), SourceLocationAt(location));
+}
+void lyra_rt_bit8_net_end_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<Bit8>(net).EndTakeover(level, first, count, SourceLocationAt(location));
+}
+void lyra_rt_bit8_net_arm_sampling(void* net) {
+  NetOf<Bit8>(net).ArmSampling();
+}
+auto lyra_rt_bit8_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return HandleTo(NetOf<Bit8>(net).SampledGet(SourceLocationAt(location)));
+}
+auto lyra_rt_bit8_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<Bit8>(net).AttachDriver(strength, SourceLocationAt(location));
+}
+void lyra_rt_bit8_net_join(
+    void* net, void* other, std::int64_t here, std::int64_t there,
+    std::int64_t count, const void* location) {
+  JoinNets<Bit8>(net, other, here, there, count, SourceLocationAt(location));
+}
+auto lyra_rt_bit8_driver_get(void* driver) -> const void* {
+  return &DriverOf<Bit8>(driver).Get();
+}
+void lyra_rt_bit8_driver_set(void* driver, const void* value) {
+  DriverOf<Bit8>(driver).Set(Read<Bit8>(value));
+}
+auto lyra_rt_bit8_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenDriverWrite<Bit8>(driver, out);
+}
 
 void lyra_rt_bit16_cell_construct(void* storage) {
   BuildAt<Var<Bit16>>(storage);
@@ -8559,6 +9000,71 @@ void lyra_rt_bit16_insert_designated_bits(
   InsertDesignatedBits<Bit16>(
       designation, width, outer_parts, start, bits, bits_width,
       bits_are_four_state);
+}
+void lyra_rt_bit16_net_construct(std::int64_t width, void* storage) {
+  BuildAt<ResolvedNet<Bit16>>(storage, static_cast<std::uint64_t>(width));
+}
+void lyra_rt_bit16_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<Bit16>(storage));
+}
+void lyra_rt_bit16_net_initialize_tri_state(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit16>(net).InitializeTriState(fill, strength);
+}
+void lyra_rt_bit16_net_initialize_wired_and(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit16>(net).InitializeWiredAnd(fill, strength);
+}
+void lyra_rt_bit16_net_initialize_wired_or(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit16>(net).InitializeWiredOr(fill, strength);
+}
+void lyra_rt_bit16_net_initialize_retaining(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit16>(net).InitializeRetaining(fill, strength);
+}
+auto lyra_rt_bit16_net_begin_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<Bit16>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+auto lyra_rt_bit16_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return NetOf<Bit16>(net).DriveTakeover(
+      level, generation, Read<Bit16>(value), SourceLocationAt(location));
+}
+void lyra_rt_bit16_net_end_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<Bit16>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+void lyra_rt_bit16_net_arm_sampling(void* net) {
+  NetOf<Bit16>(net).ArmSampling();
+}
+auto lyra_rt_bit16_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return HandleTo(NetOf<Bit16>(net).SampledGet(SourceLocationAt(location)));
+}
+auto lyra_rt_bit16_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<Bit16>(net).AttachDriver(strength, SourceLocationAt(location));
+}
+void lyra_rt_bit16_net_join(
+    void* net, void* other, std::int64_t here, std::int64_t there,
+    std::int64_t count, const void* location) {
+  JoinNets<Bit16>(net, other, here, there, count, SourceLocationAt(location));
+}
+auto lyra_rt_bit16_driver_get(void* driver) -> const void* {
+  return &DriverOf<Bit16>(driver).Get();
+}
+void lyra_rt_bit16_driver_set(void* driver, const void* value) {
+  DriverOf<Bit16>(driver).Set(Read<Bit16>(value));
+}
+auto lyra_rt_bit16_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenDriverWrite<Bit16>(driver, out);
 }
 
 void lyra_rt_bit32_cell_construct(void* storage) {
@@ -8676,6 +9182,71 @@ void lyra_rt_bit32_insert_designated_bits(
       designation, width, outer_parts, start, bits, bits_width,
       bits_are_four_state);
 }
+void lyra_rt_bit32_net_construct(std::int64_t width, void* storage) {
+  BuildAt<ResolvedNet<Bit32>>(storage, static_cast<std::uint64_t>(width));
+}
+void lyra_rt_bit32_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<Bit32>(storage));
+}
+void lyra_rt_bit32_net_initialize_tri_state(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit32>(net).InitializeTriState(fill, strength);
+}
+void lyra_rt_bit32_net_initialize_wired_and(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit32>(net).InitializeWiredAnd(fill, strength);
+}
+void lyra_rt_bit32_net_initialize_wired_or(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit32>(net).InitializeWiredOr(fill, strength);
+}
+void lyra_rt_bit32_net_initialize_retaining(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit32>(net).InitializeRetaining(fill, strength);
+}
+auto lyra_rt_bit32_net_begin_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<Bit32>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+auto lyra_rt_bit32_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return NetOf<Bit32>(net).DriveTakeover(
+      level, generation, Read<Bit32>(value), SourceLocationAt(location));
+}
+void lyra_rt_bit32_net_end_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<Bit32>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+void lyra_rt_bit32_net_arm_sampling(void* net) {
+  NetOf<Bit32>(net).ArmSampling();
+}
+auto lyra_rt_bit32_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return HandleTo(NetOf<Bit32>(net).SampledGet(SourceLocationAt(location)));
+}
+auto lyra_rt_bit32_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<Bit32>(net).AttachDriver(strength, SourceLocationAt(location));
+}
+void lyra_rt_bit32_net_join(
+    void* net, void* other, std::int64_t here, std::int64_t there,
+    std::int64_t count, const void* location) {
+  JoinNets<Bit32>(net, other, here, there, count, SourceLocationAt(location));
+}
+auto lyra_rt_bit32_driver_get(void* driver) -> const void* {
+  return &DriverOf<Bit32>(driver).Get();
+}
+void lyra_rt_bit32_driver_set(void* driver, const void* value) {
+  DriverOf<Bit32>(driver).Set(Read<Bit32>(value));
+}
+auto lyra_rt_bit32_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenDriverWrite<Bit32>(driver, out);
+}
 
 void lyra_rt_bit64_cell_construct(void* storage) {
   BuildAt<Var<Bit64>>(storage);
@@ -8791,6 +9362,71 @@ void lyra_rt_bit64_insert_designated_bits(
   InsertDesignatedBits<Bit64>(
       designation, width, outer_parts, start, bits, bits_width,
       bits_are_four_state);
+}
+void lyra_rt_bit64_net_construct(std::int64_t width, void* storage) {
+  BuildAt<ResolvedNet<Bit64>>(storage, static_cast<std::uint64_t>(width));
+}
+void lyra_rt_bit64_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<Bit64>(storage));
+}
+void lyra_rt_bit64_net_initialize_tri_state(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit64>(net).InitializeTriState(fill, strength);
+}
+void lyra_rt_bit64_net_initialize_wired_and(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit64>(net).InitializeWiredAnd(fill, strength);
+}
+void lyra_rt_bit64_net_initialize_wired_or(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit64>(net).InitializeWiredOr(fill, strength);
+}
+void lyra_rt_bit64_net_initialize_retaining(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<Bit64>(net).InitializeRetaining(fill, strength);
+}
+auto lyra_rt_bit64_net_begin_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<Bit64>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+auto lyra_rt_bit64_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return NetOf<Bit64>(net).DriveTakeover(
+      level, generation, Read<Bit64>(value), SourceLocationAt(location));
+}
+void lyra_rt_bit64_net_end_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<Bit64>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+void lyra_rt_bit64_net_arm_sampling(void* net) {
+  NetOf<Bit64>(net).ArmSampling();
+}
+auto lyra_rt_bit64_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return HandleTo(NetOf<Bit64>(net).SampledGet(SourceLocationAt(location)));
+}
+auto lyra_rt_bit64_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<Bit64>(net).AttachDriver(strength, SourceLocationAt(location));
+}
+void lyra_rt_bit64_net_join(
+    void* net, void* other, std::int64_t here, std::int64_t there,
+    std::int64_t count, const void* location) {
+  JoinNets<Bit64>(net, other, here, there, count, SourceLocationAt(location));
+}
+auto lyra_rt_bit64_driver_get(void* driver) -> const void* {
+  return &DriverOf<Bit64>(driver).Get();
+}
+void lyra_rt_bit64_driver_set(void* driver, const void* value) {
+  DriverOf<Bit64>(driver).Set(Read<Bit64>(value));
+}
+auto lyra_rt_bit64_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenDriverWrite<Bit64>(driver, out);
 }
 
 void lyra_rt_logic8_cell_construct(void* storage) {
@@ -8957,8 +9593,9 @@ auto lyra_rt_logic8_net_sampled_get(void* net, const void* location) -> const
     void* {
   return HandleTo(NetOf<Logic8>(net).SampledGet(SourceLocationAt(location)));
 }
-auto lyra_rt_logic8_attach_driver(void* net, std::int64_t strength) -> void* {
-  return &NetOf<Logic8>(net).AttachDriver(strength);
+auto lyra_rt_logic8_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<Logic8>(net).AttachDriver(strength, SourceLocationAt(location));
 }
 void lyra_rt_logic8_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
@@ -9140,8 +9777,10 @@ auto lyra_rt_logic16_net_sampled_get(void* net, const void* location) -> const
     void* {
   return HandleTo(NetOf<Logic16>(net).SampledGet(SourceLocationAt(location)));
 }
-auto lyra_rt_logic16_attach_driver(void* net, std::int64_t strength) -> void* {
-  return &NetOf<Logic16>(net).AttachDriver(strength);
+auto lyra_rt_logic16_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<Logic16>(net).AttachDriver(
+      strength, SourceLocationAt(location));
 }
 void lyra_rt_logic16_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
@@ -9323,8 +9962,10 @@ auto lyra_rt_logic32_net_sampled_get(void* net, const void* location) -> const
     void* {
   return HandleTo(NetOf<Logic32>(net).SampledGet(SourceLocationAt(location)));
 }
-auto lyra_rt_logic32_attach_driver(void* net, std::int64_t strength) -> void* {
-  return &NetOf<Logic32>(net).AttachDriver(strength);
+auto lyra_rt_logic32_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<Logic32>(net).AttachDriver(
+      strength, SourceLocationAt(location));
 }
 void lyra_rt_logic32_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
@@ -9506,8 +10147,10 @@ auto lyra_rt_logic64_net_sampled_get(void* net, const void* location) -> const
     void* {
   return HandleTo(NetOf<Logic64>(net).SampledGet(SourceLocationAt(location)));
 }
-auto lyra_rt_logic64_attach_driver(void* net, std::int64_t strength) -> void* {
-  return &NetOf<Logic64>(net).AttachDriver(strength);
+auto lyra_rt_logic64_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<Logic64>(net).AttachDriver(
+      strength, SourceLocationAt(location));
 }
 void lyra_rt_logic64_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
@@ -9653,6 +10296,72 @@ void lyra_rt_bit_wide_insert_designated_bits(
   lyra::runtime::InsertDesignatedWideBits<BitWide>(
       designation, width, outer_parts, start, bits, bits_width,
       bits_are_four_state);
+}
+void lyra_rt_bit_wide_net_construct(std::int64_t width, void* storage) {
+  BuildAt<ResolvedNet<BitWide>>(storage, static_cast<std::uint64_t>(width));
+}
+void lyra_rt_bit_wide_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<BitWide>(storage));
+}
+void lyra_rt_bit_wide_net_initialize_tri_state(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<BitWide>(net).InitializeTriState(fill, strength);
+}
+void lyra_rt_bit_wide_net_initialize_wired_and(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<BitWide>(net).InitializeWiredAnd(fill, strength);
+}
+void lyra_rt_bit_wide_net_initialize_wired_or(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<BitWide>(net).InitializeWiredOr(fill, strength);
+}
+void lyra_rt_bit_wide_net_initialize_retaining(
+    void* net, std::int64_t fill, std::int64_t strength) {
+  NetOf<BitWide>(net).InitializeRetaining(fill, strength);
+}
+auto lyra_rt_bit_wide_net_begin_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t {
+  return NetOf<BitWide>(net).BeginTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+auto lyra_rt_bit_wide_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool {
+  return NetOf<BitWide>(net).DriveTakeoverBytes(
+      level, generation, value, SourceLocationAt(location));
+}
+void lyra_rt_bit_wide_net_end_takeover(
+    void* net, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) {
+  NetOf<BitWide>(net).EndTakeover(
+      level, first, count, SourceLocationAt(location));
+}
+void lyra_rt_bit_wide_net_arm_sampling(void* net) {
+  NetOf<BitWide>(net).ArmSampling();
+}
+auto lyra_rt_bit_wide_net_sampled_get(void* net, const void* location) -> const
+    void* {
+  return HandleTo(NetOf<BitWide>(net).SampledGet(SourceLocationAt(location)));
+}
+auto lyra_rt_bit_wide_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<BitWide>(net).AttachDriver(
+      strength, SourceLocationAt(location));
+}
+void lyra_rt_bit_wide_net_join(
+    void* net, void* other, std::int64_t here, std::int64_t there,
+    std::int64_t count, const void* location) {
+  JoinNets<BitWide>(net, other, here, there, count, SourceLocationAt(location));
+}
+auto lyra_rt_bit_wide_driver_get(void* driver) -> const void* {
+  return DriverOf<BitWide>(driver).Bytes();
+}
+void lyra_rt_bit_wide_driver_set(void* driver, const void* value) {
+  DriverOf<BitWide>(driver).SetBytes(value);
+}
+auto lyra_rt_bit_wide_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenTailDriverWrite<BitWide>(driver, out);
 }
 
 void lyra_rt_logic_wide_cell_construct(std::int64_t width, void* storage) {
@@ -9834,9 +10543,10 @@ auto lyra_rt_logic_wide_net_sampled_get(void* net, const void* location)
     -> const void* {
   return HandleTo(NetOf<LogicWide>(net).SampledGet(SourceLocationAt(location)));
 }
-auto lyra_rt_logic_wide_attach_driver(void* net, std::int64_t strength)
-    -> void* {
-  return &NetOf<LogicWide>(net).AttachDriver(strength);
+auto lyra_rt_logic_wide_attach_driver(
+    void* net, std::int64_t strength, const void* location) -> void* {
+  return &NetOf<LogicWide>(net).AttachDriver(
+      strength, SourceLocationAt(location));
 }
 void lyra_rt_logic_wide_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,

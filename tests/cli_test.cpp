@@ -2528,6 +2528,88 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
       << stuck.stderr_text;
 }
 
+// An input port written with no port kind, of a type no net type resolves, is
+// a net with no resolution function, which one driver decides; a second
+// driver -- here an assignment inside the module, which coerces the port to
+// inout -- is the design's error (LRM 6.6.7), reported where that driver is
+// written, on both backends.
+TEST(LyraRun, ASecondDriverOfANetNoNetTypeResolvesIsTheDesignsError) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  // A value the library holds whole, one the library declares, one laid out
+  // by a type the design declares, and a structure holding a 2-state member,
+  // which cannot hold the z a driver of another member leaves it at, each
+  // driven by its connection and by an assignment inside the child.
+  struct Design {
+    std::string name;
+    std::string text;
+    // Where the second driver is written.
+    std::string site;
+  };
+  const std::vector<Design> designs = {
+      {.name = "real.sv",
+       .text = "module Leaf (input real level);\n"
+               "  assign level = 1.5;\n"
+               "endmodule\n"
+               "module Test;\n"
+               "  real r = 2.5;\n"
+               "  Leaf u (.level(r));\n"
+               "endmodule\n",
+       .site = "real.sv:2:10"},
+      {.name = "string.sv",
+       .text = "module Leaf (input string name);\n"
+               "  assign name = \"inner\";\n"
+               "endmodule\n"
+               "module Test;\n"
+               "  string s = \"outer\";\n"
+               "  Leaf u (.name(s));\n"
+               "endmodule\n",
+       .site = "string.sv:2:10"},
+      {.name = "record.sv",
+       .text = "typedef struct { string label; int weight; } labelled_t;\n"
+               "module Leaf (input labelled_t item);\n"
+               "  assign item = '{label: \"inner\", weight: 1};\n"
+               "endmodule\n"
+               "module Test;\n"
+               "  labelled_t l = '{label: \"outer\", weight: 2};\n"
+               "  Leaf u (.item(l));\n"
+               "endmodule\n",
+       .site = "record.sv:3:10"},
+      {.name = "counted.sv",
+       .text = "typedef struct { int count; logic [3:0] flags; } counted_t;\n"
+               "module Leaf (input counted_t c);\n"
+               "  assign c.flags = 4'b0011;\n"
+               "endmodule\n"
+               "module Test;\n"
+               "  Leaf u (.c('{count: 32'h0f0f, flags: 4'b1010}));\n"
+               "endmodule\n",
+       .site = "counted.sv:3:10"},
+  };
+  for (const Design& design : designs) {
+    const auto src = *tmp_or / design.name;
+    std::ofstream(src) << design.text;
+    for (const std::string backend : {"llvm", "cpp"}) {
+      const std::vector<std::string> args = {"run",        "--backend", backend,
+                                             "--no-color", "--top",     "Test",
+                                             src.string()};
+      const auto run = RunChildProcess(lyra, args);
+      EXPECT_THAT(run, ExitedWithCode(Ne(0)))
+          << backend << run.stdout_text << run.stderr_text;
+      EXPECT_NE(
+          run.stderr_text.find(
+              design.site +
+              ": error: a net whose data type no net type resolves"),
+          std::string::npos)
+          << backend << run.stderr_text;
+      EXPECT_EQ(run.stderr_text.find("internal error"), std::string::npos)
+          << backend << run.stderr_text;
+    }
+  }
+}
+
 // A procedure that never stops to wait cannot be told from one that is only
 // taking long, so nothing ends such a run but whoever is waiting on it. What
 // that reader is owed when they do is where the run was, and everything the

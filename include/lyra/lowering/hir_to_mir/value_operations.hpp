@@ -45,6 +45,18 @@ class UnitLowerer;
     const mir::CompilationUnit& unit, mir::RecordId record, mir::TypeId overlay,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
 
+// Whether the net types' tables fold contributions to a net of `type` (LRM
+// 6.6.1, 6.6.3). They are tables over 4-state bits. An integral net holds its
+// contributions as 4-state positions whatever its type, and shows the result
+// at its type, a 2-state one taking x and z as 0 (LRM 6.11.2), so it folds in
+// either state. A fixed-size unpacked array, structure or union holds each
+// contribution as a value of its own type, so it folds where every part can
+// hold the `z` a driver leaves where it drives nothing: a 4-state integral part
+// and an aggregate of such. A net of any other type has no resolution
+// function, and one driver decides it (LRM 6.6.7).
+[[nodiscard]] auto HasNetFolds(
+    const mir::CompilationUnit& unit, mir::TypeId type) -> bool;
+
 // How a body answering an operation of a type takes each value it is asked
 // about, the value itself and every other operand: by a read-only reference,
 // as Rust's comparison operators borrow theirs, so a value is read where it

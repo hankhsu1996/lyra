@@ -944,6 +944,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"InitializeRetaining"},
           .takes_the_location = false,
           .operands = {kMachine, kHeld}};
+    case BuiltinFn::kUnresolvedNetInitialize:
+      return {
+          .name = "unresolved_net_initialize",
+          .declaration = Method{"InitializeUnresolved"},
+          .takes_the_location = false,
+          .operands = {kMachine, kHeld}};
     case BuiltinFn::kGet:
       return {
           .name = "get",
@@ -1085,7 +1091,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "attach_driver",
           .declaration = Method{"AttachDriver"},
-          .takes_the_location = false};
+          .takes_the_location = true};
     case BuiltinFn::kDriveFromVariable:
       return {
           .name = "drive_from_variable",

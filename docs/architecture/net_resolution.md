@@ -252,7 +252,7 @@ A single-driver wire `assign w = e;` has one contribution; resolving one contrib
 contribution's value, so `w` tracks `e`. What `w` shows is the N=1 reading of the general model, and
 because no fold changes a lone contribution, `w` holds that contribution as its value instead of
 resolving it (LRM 6.5, 6.6.1). Where `e` is the whole of a variable of `w`'s type, written
-`assign w = v;` or as the connection of an input port written with no data type, that contribution
+`assign w = v;` or as the connection of an input port written with no port kind, that contribution
 is `v`'s value, so `w` shows `v` where it lies and the assignment runs nothing after its turn at
 time zero.
 
@@ -285,6 +285,14 @@ identity everywhere it does not drive. An unpacked union is one storage its memb
 fold reads each contribution as its first member, the member every whole-value use of an untagged
 union reads (LRM 21.2.1.6, 11.4.14.1 name it for the uses they define). The standard names no
 resolution for a union, so this is the one rule applied where it is silent.
+
+A net of a type no net type folds -- a real, a string, a class handle, or an aggregate holding one
+or a 2-state part, which holds each contribution as a value of its type and so cannot hold the `z` a
+driver of another part leaves it at -- which only an input port written with no port kind declares
+(LRM 23.2.2.3) -- is run as a net of a nettype with no resolution function (LRM 6.6.7). Its one
+driver decides it, where nothing drives it it shows its type's default, the net type it was declared
+with contributes nothing, and a second driver is the design's error, refused where it attaches. It
+is told so by its install, which hands it that default and nothing the net type states.
 
 A bidirectional port connection is "a non-strength-reducing transistor connection" (LRM 23.3.3), and
 the standard settles what that means by merging the nets on both sides into one simulated net (LRM
