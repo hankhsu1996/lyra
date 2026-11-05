@@ -1,15 +1,17 @@
 #pragma once
 
-// The designs other simulators are measured on, as Lyra is told of them. The
-// designs are those of Verilator's benchmark suite. Each states its sources,
-// what reading them needs, its tests and the script that checks a run, once,
-// for any simulator; what is built from that here is a declaration of the
-// design in Lyra's own form, so a case is reproduced by building in the
-// directory that declaration is written to.
+// The code other simulators are measured on, as Lyra is told of it. Two kinds
+// of suite supply it: Verilator's benchmark suite, which describes each of its
+// designs itself, once, for any simulator; and the suites
+// `tests/external_design_suites.yaml` describes, which ship sources and no
+// description of their own. Either way a case states its sources, what reading
+// them needs, its runs and how a run is checked, and what is built from that
+// here is a declaration in Lyra's own form, so a case is reproduced by building
+// in the directory that declaration is written to.
 //
-// A case is the one the suite marks as a design's quick check, and what it is
-// recorded as stopping on, and the front end's options its design is built
-// with, are read beside it.
+// A case is the one the benchmark suite marks as a design's quick check, or one
+// run of a described suite, and what it is recorded as stopping on, and the
+// front end's options it is built with, are read beside it.
 
 #include <cstdint>
 #include <filesystem>
@@ -39,7 +41,8 @@ struct DesignStop {
 };
 
 struct DesignCase {
-  // The suite's own name for it: design, configuration and test.
+  // Unique across every suite: the design or suite, its configuration or case
+  // directory, and its test or run.
   std::string name;
   std::string design_name;
   // The design as Lyra is told of it.
@@ -47,8 +50,9 @@ struct DesignCase {
   // What the test reads from the directory it runs in.
   std::vector<std::filesystem::path> files;
   std::vector<std::string> arguments;
-  // The suite's check of a finished run, where the design has one.
-  std::optional<std::filesystem::path> check;
+  // The check of a finished run, where the design has one: a program and what
+  // it is handed, run from the directory the run started in.
+  std::optional<std::vector<std::string>> check;
 };
 
 // The cases, their record, and the front end's options each design is built

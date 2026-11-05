@@ -789,7 +789,7 @@ def count_build_case(
 
 @dataclass(frozen=True)
 class Design:
-    """A case of Verilator's benchmark suite, as `declare_external_design`
+    """A case of the external design suite, as `declare_external_design`
     wrote it: a directory holding its declaration and the directory its run
     starts in."""
     name: str
@@ -798,7 +798,8 @@ class Design:
     run: str
     options: tuple[str, ...]
     arguments: tuple[str, ...]
-    check: Path | None
+    # The suite's check of a run: a program and what it is handed.
+    check: tuple[str, ...] | None
 
 
 def read_design(declared: Path) -> Design:
@@ -810,7 +811,7 @@ def read_design(declared: Path) -> Design:
         run=described["run"],
         options=tuple(described["options"]),
         arguments=tuple(described["arguments"]),
-        check=Path(described["check"]) if described["check"] else None,
+        check=tuple(described["check"]) if described["check"] else None,
     )
 
 
@@ -894,7 +895,7 @@ def count_design_into(
     if record_failure(ran, "counted run", run):
         return
     if design.check is not None:
-        run = run_process([str(design.check)], cwd=str(here))
+        run = run_process(list(design.check), cwd=str(here))
         if record_failure(ran, "the suite's check of the counted run", run):
             return
     ran.instructions_per_unit = float(count)

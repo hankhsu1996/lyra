@@ -281,9 +281,202 @@ auto QuickChecksOf(
         quick.files.push_back(design_dir / file);
       }
       if (const auto hook = LastOf(run, "postHook")) {
-        quick.check = design_dir / *hook;
+        quick.check = std::vector{(design_dir / *hook).string()};
       }
       cases.push_back(std::move(quick));
+    }
+  }
+  return cases;
+}
+
+// Where `relative`, a path under the inputs `root` names, really is, so a
+// path a diagnostic or a declaration names is one that outlives this run; and
+// with it the directory `root` names, which is that path with `relative` taken
+// off its end.
+struct Located {
+  std::filesystem::path path;
+  std::filesystem::path root;
+};
+
+auto Locate(
+    const bazel::tools::cpp::runfiles::Runfiles& runfiles,
+    const std::string& root, const std::filesystem::path& relative)
+    -> std::optional<Located> {
+  // A case may name a file beside its own directory, so `..` is taken out
+  // before what is left is counted off the real path.
+  const std::filesystem::path within = relative.lexically_normal();
+  std::error_code missing;
+  const std::filesystem::path path = std::filesystem::canonical(
+      runfiles.Rlocation(std::format("{}/{}", root, within.string())), missing);
+  if (missing) return std::nullopt;
+  std::filesystem::path base = path;
+  for (auto part = within.begin(); part != within.end(); ++part) {
+    base = base.parent_path();
+  }
+  return Located{.path = path, .root = base};
+}
+
+// Every quick check of every design the benchmark suite holds.
+auto BenchmarkSuiteCases(
+    const bazel::tools::cpp::runfiles::Runfiles& runfiles,
+    std::vector<std::string>& problems) -> std::vector<DesignCase> {
+  const auto located = Locate(runfiles, "rtlmeter", "rtl/__rtlmeter_utils.sv");
+  if (!located) {
+    problems.emplace_back("the benchmark suite is not among this run's inputs");
+    return {};
+  }
+  const std::filesystem::path& suite = located->root;
+  std::set<std::filesystem::path> design_dirs;
+  for (const auto& entry :
+       std::filesystem::directory_iterator(suite / "designs")) {
+    if (std::filesystem::exists(entry.path() / "descriptor.yaml")) {
+      design_dirs.insert(entry.path());
+    }
+  }
+  std::vector<DesignCase> cases;
+  for (const std::filesystem::path& dir : design_dirs) {
+    auto quick = QuickChecksOf(dir.filename().string(), dir, suite);
+    std::ranges::move(quick, std::back_inserter(cases));
+  }
+  return cases;
+}
+
+// The cases of one suite `tests/external_design_suites.yaml` describes, as
+// Lyra is told of them. Where the description names an input this run does
+// not have, or cannot be read as it says, a problem says so and the cases it
+// reaches are left out.
+auto DescribedSuiteCases(
+    const bazel::tools::cpp::runfiles::Runfiles& runfiles,
+    const std::string& suite, const YAML::Node& described,
+    std::vector<std::string>& problems) -> std::vector<DesignCase> {
+  const std::string sources_in = LastOf({described}, "sources_in").value_or("");
+  const std::string cases_in = LastOf({described}, "cases_in").value_or("");
+  std::vector<std::string> sources;
+  std::optional<std::filesystem::path> sources_root;
+  for (const std::string& source : ListOf({described}, "sources")) {
+    const auto located = Locate(runfiles, sources_in, source);
+    if (!located) {
+      problems.push_back(
+          std::format(
+              "'{}' names the source '{}/{}', which is not among this run's "
+              "inputs",
+              suite, sources_in, source));
+      return {};
+    }
+    sources.push_back(located->path.string());
+    sources_root = located->root;
+  }
+  // A suite's include directories are under its sources, which are what says
+  // where those are.
+  const std::vector<std::string> suite_dirs = ListOf({described}, "incdir");
+  if (!suite_dirs.empty() && !sources_root) {
+    problems.push_back(
+        std::format(
+            "'{}' names include directories under '{}' and no source there",
+            suite, sources_in));
+    return {};
+  }
+  std::vector<std::string> suite_incdir;
+  for (const std::string& dir : suite_dirs) {
+    suite_incdir.push_back((*sources_root / dir).lexically_normal().string());
+  }
+  std::string compile;
+  if (const auto scale = LastOf({described}, "timescale")) {
+    compile += std::format("timescale = {}\n", TomlString(*scale));
+  }
+  if (const YAML::Node single = Section(described, "single_unit");
+      single.IsDefined() && single.as<bool>()) {
+    compile += "single_unit = true\n";
+  }
+
+  std::vector<DesignCase> cases;
+  for (const YAML::Node& entry : Section(described, "cases")) {
+    const Sections both = {described, entry};
+    const std::string dir_name = LastOf({entry}, "dir").value_or("");
+    const std::vector<std::string> own = ListOf({entry}, "files");
+    const auto first = own.empty()
+                           ? std::nullopt
+                           : Locate(
+                                 runfiles, cases_in,
+                                 std::filesystem::path(dir_name) / own.front());
+    if (!first) {
+      problems.push_back(
+          std::format(
+              "'{}' names the case '{}', whose first file is not among this "
+              "run's inputs",
+              suite, dir_name));
+      continue;
+    }
+    const std::filesystem::path dir = first->root / dir_name;
+    std::vector<std::string> files = sources;
+    for (const std::string& file : own) {
+      files.push_back((dir / file).lexically_normal().string());
+    }
+    std::vector<std::string> incdir = suite_incdir;
+    incdir.push_back(dir.string());
+    for (const std::string& path : ListOf({entry}, "incdir")) {
+      incdir.push_back((dir / path).lexically_normal().string());
+    }
+    const std::string declaration = std::format(
+        "[library]\nname = {}\nfiles = {}\nincdir = {}\ndefines = {}\n"
+        "\n[compile]\n{}",
+        TomlString(LibraryNameOf(std::format("{}_{}", suite, dir_name))),
+        TomlArray(files), TomlArray(incdir), TomlArray(ListOf(both, "defines")),
+        compile);
+
+    // A case's own check replaces the suite's; the program it names is an
+    // input of this run.
+    const YAML::Node check_node = Section(entry, "check").IsSequence()
+                                      ? Section(entry, "check")
+                                      : Section(described, "check");
+    std::optional<std::vector<std::string>> check;
+    if (check_node.IsSequence()) {
+      std::vector<std::string> command;
+      for (const YAML::Node& word : check_node) {
+        command.push_back(word.as<std::string>());
+      }
+      const std::string program = command.empty() ? "" : command.front();
+      const std::size_t slash = program.find('/');
+      const auto located = slash == std::string::npos
+                               ? std::nullopt
+                               : Locate(
+                                     runfiles, program.substr(0, slash),
+                                     program.substr(slash + 1));
+      if (!located) {
+        problems.push_back(
+            std::format(
+                "'{}' checks a run with '{}', which is not among this run's "
+                "inputs",
+                suite, program));
+        continue;
+      }
+      command.front() = located->path.string();
+      check = std::move(command);
+    }
+
+    // A case that names no runs makes one, handed nothing of its own.
+    std::map<std::string, std::vector<std::string>> runs;
+    if (const YAML::Node named = Section(entry, "runs"); named.IsMap()) {
+      for (const auto& run : named) {
+        std::vector<std::string>& handed = runs[run.first.as<std::string>()];
+        for (const YAML::Node& argument : run.second) {
+          handed.push_back(argument.as<std::string>());
+        }
+      }
+    } else {
+      runs.emplace("default", std::vector<std::string>{});
+    }
+    for (const auto& [run, handed] : runs) {
+      std::vector<std::string> arguments = ListOf({described}, "arguments");
+      std::ranges::copy(handed, std::back_inserter(arguments));
+      cases.push_back(
+          DesignCase{
+              .name = std::format("{}:{}:{}", suite, dir_name, run),
+              .design_name = suite,
+              .declaration = declaration,
+              .files = {},
+              .arguments = std::move(arguments),
+              .check = check});
     }
   }
   return cases;
@@ -306,27 +499,15 @@ auto NameOf(DesignStep step) -> std::string_view {
 auto LoadDesignCorpus(const bazel::tools::cpp::runfiles::Runfiles& runfiles)
     -> DesignCorpus {
   DesignCorpus corpus;
-  // Resolved to where the suite really is, so a path a diagnostic or a
-  // declaration names is one that outlives this run.
-  std::error_code missing;
-  const std::filesystem::path module = std::filesystem::canonical(
-      runfiles.Rlocation("rtlmeter/rtl/__rtlmeter_utils.sv"), missing);
-  if (missing) {
-    corpus.problems.emplace_back("the suite is not among this run's inputs");
-    return corpus;
-  }
-  const std::filesystem::path suite = module.parent_path().parent_path();
-
-  std::set<std::filesystem::path> design_dirs;
-  for (const auto& entry :
-       std::filesystem::directory_iterator(suite / "designs")) {
-    if (std::filesystem::exists(entry.path() / "descriptor.yaml")) {
-      design_dirs.insert(entry.path());
-    }
-  }
-  for (const std::filesystem::path& dir : design_dirs) {
-    auto quick = QuickChecksOf(dir.filename().string(), dir, suite);
-    std::ranges::move(quick, std::back_inserter(corpus.cases));
+  corpus.cases = BenchmarkSuiteCases(runfiles, corpus.problems);
+  const YAML::Node suites = YAML::LoadFile(
+      runfiles.Rlocation("_main/tests/external_design_suites.yaml"));
+  for (const auto& suite : suites) {
+    std::ranges::move(
+        DescribedSuiteCases(
+            runfiles, suite.first.as<std::string>(), suite.second,
+            corpus.problems),
+        std::back_inserter(corpus.cases));
   }
 
   const YAML::Node record = YAML::LoadFile(

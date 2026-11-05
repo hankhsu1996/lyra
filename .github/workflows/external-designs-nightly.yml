@@ -1,7 +1,8 @@
 name: External Designs (Nightly)
 
-# How far Lyra gets with designs written elsewhere for other simulators --
-# today those of RTLMeter, Verilator's benchmark suite. A design is minutes and
+# How far Lyra gets with code written elsewhere for other simulators -- the
+# designs of RTLMeter, Verilator's benchmark suite, and the suites
+# `tests/external_design_suites.yaml` describes. A design is minutes and
 # gigabytes where a corpus case is neither, so no per-PR budget holds it and it
 # runs on its own schedule.
 #
@@ -16,8 +17,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  # The cases are whatever the suite marks as each design's quick check, so the
-  # test is asked for them rather than a list being kept here in step with it.
+  # The cases are whatever the suites hold, so the test is asked for them
+  # rather than a list being kept here in step with it.
   cases:
     name: List the cases
     runs-on: ubuntu-latest

@@ -314,6 +314,21 @@ how wide a build ran does not differ from one machine to the next either. How lo
 printed beside where it stopped, and a case that stops keeps the directory it was built in and names
 it, while one that gets all the way leaves nothing behind.
 
+A suite that ships sources and no description of its own is described in
+`tests/external_design_suites.yaml` instead: the sources every case of it compiles first, what
+reading them needs, and each case's own files, runs and check. The harness knows the shape of such a
+description and nothing of any one suite. Today it holds the UVM class library, on which most
+testbenches are written, because what breaks a testbench is a class library's way of writing --
+handles, parameterized classes, a factory, objections -- which neither the corpus nor a design of
+the benchmark suite writes. UVM 1.2 ships examples its authors run on every simulator, each with a
+Makefile saying what it compiles, which runs it makes and how a run is judged; each of its cases is
+read off one of those Makefiles, and judged as it judges, by the report server's summary saying
+exactly the expected counts of errors and fatals. uvm-core, the library of IEEE 1800.2-2020, ships
+no examples, so its cases are tests of this repository under `tests/uvm`, judged the same way. Every
+case is built without the library's DPI side, so one that needs it stops where it does. Both
+libraries are fetched at a pinned release, as the benchmark suite is, and nothing of either is kept
+here.
+
 Where each case stops is recorded in `tests/paths/llvm.external_designs.yaml`, and a case is held to
 exactly what is listed for it, so the file is the account of what stands between Lyra and each
 design. Two things keep the target out of every run that does not name it. The suite is half a
@@ -437,7 +452,7 @@ built optimized. It **gates its own run**: a case that stops somewhere other tha
 recorded as stopping is either further along, which is an entry to update, or a regression. One that
 newly stops at its check is read against the standard before it is called either, since the check is
 the suite's and was written for another simulator. The jobs are the cases the test itself lists, so
-a design the suite gains is run without this file changing.
+a case a suite gains is run without this file changing.
 
 `conformance-nightly.yml` judges every case of the conformance suite on each configuration a record
 is published for: Lyra on its C++ path, Lyra on its LLVM path, and a pinned Verilator release, each

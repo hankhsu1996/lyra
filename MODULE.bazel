@@ -162,6 +162,39 @@ filegroup(
     remote = "https://github.com/verilator/rtlmeter.git",
 )
 
+# The UVM class library, pinned as the benchmark suite is and fetched only by
+# the targets that name it: UVM 1.2, whose shipped examples are cases, and
+# uvm-core, the library of IEEE 1800.2-2020.
+http_archive(
+    name = "uvm_1_2",
+    build_file_content = """
+filegroup(
+    name = "suite",
+    srcs = glob([
+        "examples/**",
+        "src/**",
+    ]),
+    visibility = ["//visibility:public"],
+)
+""",
+    sha256 = "502a2e605ce552bfd9767803c7e99a053715b00f7a9c4c511c3fbfddfb30157c",
+    strip_prefix = "uvm-1.2",
+    urls = ["https://www.accellera.org/images/downloads/standards/uvm/uvm-1.2.tar.gz"],
+)
+
+git_repository(
+    name = "uvm_core",
+    build_file_content = """
+filegroup(
+    name = "suite",
+    srcs = glob(["src/**"]),
+    visibility = ["//visibility:public"],
+)
+""",
+    commit = "78c06547a2a0a29b3dc9dcafae62b75b2ff61544",
+    remote = "https://github.com/accellera-official/uvm-core.git",
+)
+
 # Development tools
 bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
 git_override(

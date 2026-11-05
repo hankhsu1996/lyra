@@ -1,8 +1,8 @@
-// Writes one case of Verilator's benchmark suite into a directory as Lyra is
+// Writes one case of the external design suite into a directory as Lyra is
 // told of it, for whatever measures the case outside the test that holds how
 // far it gets: its declaration, the directory its run starts in, and a
 // `case.json` naming that directory, the front end's options its design is
-// built with, the arguments its run is given and the script that checks the
+// built with, the arguments its run is given and the command that checks the
 // run.
 //
 // Only a case that builds, runs and passes its check is written. What measures
@@ -12,11 +12,13 @@
 // Usage: declare_external_design <case> <directory>
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -26,7 +28,8 @@
 using bazel::tools::cpp::runfiles::Runfiles;
 
 auto main(int argc, char** argv) -> int {
-  const std::vector<std::string> args(argv, argv + argc);
+  const std::span<char* const> raw_args{argv, static_cast<std::size_t>(argc)};
+  const std::vector<std::string> args(raw_args.begin(), raw_args.end());
   if (args.size() != 3) {
     std::cerr << "usage: declare_external_design <case> <directory>\n";
     return 2;
@@ -71,8 +74,7 @@ auto main(int argc, char** argv) -> int {
       {"options", options == corpus.options.end() ? std::vector<std::string>{}
                                                   : options->second},
       {"arguments", found->arguments},
-      {"check",
-       found->check ? nlohmann::json(found->check->string()) : nullptr},
+      {"check", found->check ? nlohmann::json(*found->check) : nullptr},
   };
   std::ofstream(work / "case.json") << described.dump(2) << "\n";
   return 0;

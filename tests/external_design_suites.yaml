@@ -1,0 +1,158 @@
+# The suites of code written elsewhere that ship sources and no description of
+# their own, described here so the external design suite can build and run
+# them beside the benchmark suite, which describes itself.
+#
+# A suite names the inputs its sources are under (`sources_in`, a repository
+# MODULE.bazel fetches) and the inputs its cases are under (`cases_in`), and
+# states what every case reads: `sources` compiled ahead of each case's own,
+# `incdir` under `sources_in`, `defines`, a `timescale`, whether every file is
+# one compilation unit (`single_unit`), the `arguments` every run is handed, and
+# the `check` of a run -- a program, by the inputs it is under, and what it is
+# handed, run from the directory the run started in, where the run's output is
+# `_execute/stdout.log`. A case names a directory under `cases_in`: its `files`, what it adds to the include path (its own directory
+# is on it always) and to the defines, its `runs`, each with what it is handed
+# (one run handed nothing where it names none), and a `check` replacing the
+# suite's.
+#
+# The UVM class library's: each uvm-1.2 case is read off the Makefile beside
+# its example, and uvm-core's are tests of this repository under `tests/uvm`.
+uvm-1.2:
+  sources_in: uvm_1_2
+  cases_in: uvm_1_2/examples
+  sources: [src/uvm.sv]
+  incdir: [src]
+  defines: [UVM_NO_DPI]
+  timescale: 1ns/1ns
+  single_unit: true
+  arguments: [+UVM_VERBOSITY=UVM_LOW]
+  check: [_main/tests/uvm/report_check.sh, '0', '0']
+  cases:
+  - dir: simple/basic_examples/event_pool
+    files: [test.sv]
+  - dir: simple/basic_examples/module
+    files: [test.sv]
+  - dir: simple/basic_examples/pkg
+    files: [test.sv]
+  - dir: simple/callbacks
+    files: [top.sv]
+  - dir: simple/configuration/automated
+    files: [my_env_pkg.sv, top.sv]
+  - dir: simple/configuration/manual
+    files: [my_env_pkg.sv, top.sv]
+  - dir: simple/factory
+    files: [packet_pkg.sv, gen_pkg.sv, env_pkg.sv, test.sv]
+  - dir: simple/hello_world
+    files: [hello_world.sv]
+  - dir: simple/interfaces
+    files: [interface.sv]
+  - dir: simple/objections
+    files: [simple.sv]
+  - dir: simple/phases/basic
+    files: [test.sv]
+  - dir: simple/phases/run_test
+    files: [test.sv]
+  - dir: simple/phases/timeout
+    files: [test.sv]
+    check: [_main/tests/uvm/report_check.sh, '0', '1']
+  - dir: simple/registers/integration/10direct
+    files: [../common/test.sv]
+    incdir: [../common, ../../../../integrated/apb]
+    runs:
+      uvm_reg_mem_built_in_seq: [+UVM_SEQUENCE=uvm_reg_mem_built_in_seq]
+  - dir: simple/registers/integration/20layered
+    files: [../common/test.sv]
+    incdir: [../common, ../../../../integrated/apb]
+    runs:
+      uvm_reg_mem_built_in_seq: [+UVM_SEQUENCE=uvm_reg_mem_built_in_seq]
+  - dir: simple/registers/models/aliasing
+    files: [tb_run.sv]
+    incdir: [../../common]
+  - dir: simple/registers/models/broadcast
+    files: [tb_run.sv]
+    incdir: [../../../../integrated/apb]
+  - dir: simple/registers/models/coverage
+    files: [tb_run.sv]
+    incdir: [../../common]
+  - dir: simple/registers/models/fifo_reg
+    files: [tb_run.sv]
+    incdir: [../../../../integrated/apb]
+  - dir: simple/registers/models/not_yet_implemented
+    files: [tb_run.sv]
+    incdir: [../../common]
+  - dir: simple/registers/models/reg_without_field
+    files: [tb_run.sv]
+  - dir: simple/registers/models/ro_wo_same_addr
+    files: [tb_run.sv]
+    incdir: [../../common]
+  - dir: simple/registers/models/shared_reg
+    files: [blk_run.sv]
+    incdir: [../../common]
+    runs:
+      blk_test: [+UVM_TESTNAME=blk_test]
+  - dir: simple/registers/models/user-defined
+    files: [tb_run.sv]
+    incdir: [../../common]
+  - dir: simple/registers/primer
+    files: [tb_top.sv, test.sv]
+    incdir: [../../../integrated/apb]
+    runs:
+      hw_reset: [+UVM_TESTNAME=cmdline_test, +UVM_REG_SEQ=uvm_reg_hw_reset_seq]
+      reg_user: [+UVM_TESTNAME=cmdline_test, +UVM_REG_SEQ=user_test_seq]
+  - dir: simple/registers/sequence_api
+    files: [blk_run.sv]
+    incdir: [../../../integrated/apb]
+    runs:
+      blk: [+UVM_TESTNAME=blk_R_test]
+  - dir: simple/registers/vertical_reuse
+    files: [blk_run.sv]
+    incdir: [../../../integrated/apb]
+    runs:
+      blk: [+UVM_TESTNAME=blk_R_test]
+  - dir: simple/registers/vertical_reuse
+    files: [sys_run.sv]
+    incdir: [../../../integrated/apb]
+    runs:
+      sys: [+UVM_TESTNAME=sys_R_test]
+  - dir: simple/sequence/basic_read_write_sequence
+    files: [top.sv]
+  - dir: simple/tlm1/bidir
+    files: [bidir.sv]
+  - dir: simple/tlm1/fifo
+    files: [test.sv]
+  - dir: simple/tlm1/hierarchy
+    files: [hierarchy.sv]
+  - dir: simple/tlm1/producer_consumer
+    files: [fifo.sv]
+  - dir: simple/tlm2/blocking_simple
+    files: [tb_run.sv]
+  - dir: simple/tlm2/nonblocking_simple
+    files: [tb_run.sv]
+  - dir: simple/tlm2/temporal_decoupling
+    files: [tb_run.sv]
+  - dir: simple/trivial
+    files: [component.sv]
+  - dir: integrated/codec
+    files: [tb_top.sv, test.sv]
+    incdir: [../apb, vip]
+    runs:
+      test: []
+      hw_reset_test: [+UVM_TESTNAME=hw_reset_test]
+  - dir: integrated/ubus/examples
+    files: [ubus_tb_top.sv]
+    incdir: [../sv]
+    defines: [UVM_USE_RESOURCE_CONVERTER]
+    runs:
+      test_2m_4s: [+UVM_TESTNAME=test_2m_4s]
+uvm-core:
+  sources_in: uvm_core
+  cases_in: _main/tests/uvm
+  sources: [src/uvm.sv]
+  incdir: [src]
+  defines: [UVM_NO_DPI]
+  timescale: 1ns/1ns
+  single_unit: true
+  arguments: [+UVM_VERBOSITY=UVM_LOW]
+  check: [_main/tests/uvm/report_check.sh, '0', '0']
+  cases:
+  - dir: hello
+    files: [hello.sv]

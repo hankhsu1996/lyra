@@ -712,11 +712,26 @@ cc_test(
     ],
 )
 
+# What reads the external design suite reads: the descriptions, the record, the
+# options, and every suite's inputs.
+filegroup(
+    name = "external_design_inputs",
+    srcs = [
+        "external_design_options.yaml",
+        "external_design_suites.yaml",
+        "paths/llvm.external_designs.yaml",
+        "@rtlmeter//:suite",
+        "@uvm_1_2//:suite",
+        "@uvm_core//:suite",
+    ] + glob(["uvm/**"]),
+)
+
 # Designs written elsewhere, for other simulators, and kept outside this
-# repository: today those of Verilator's benchmark suite, each built and run
-# through the case the suite itself marks as its quick check. A design is tens
-# of thousands to hundreds of thousands of lines, so one case is minutes and
-# gigabytes, and the suite is half a gigabyte to fetch. `manual` is what keeps
+# repository: those of Verilator's benchmark suite, each built and run through
+# the case the suite itself marks as its quick check, and the cases of the
+# suites `external_design_suites.yaml` describes. A design is tens of thousands
+# to hundreds of thousands of lines, so one case is minutes and gigabytes, and
+# the suite is half a gigabyte to fetch. `manual` is what keeps
 # both out of every run that does not name this target: a tag the test filter
 # leaves out is still analyzed, and analysis is what fetches. The program is
 # linked with the host C++ compiler, and the cases run one at a time because a
@@ -729,10 +744,8 @@ cc_test(
     srcs = ["external_design_test.cpp"],
     copts = LYRA_COPTS,
     data = [
-        "external_design_options.yaml",
-        "paths/llvm.external_designs.yaml",
+        ":external_design_inputs",
         "//:lyra",
-        "@rtlmeter//:suite",
     ],
     tags = [
         "manual",
@@ -753,11 +766,7 @@ cc_binary(
     name = "declare_external_design",
     srcs = ["declare_external_design.cpp"],
     copts = LYRA_COPTS,
-    data = [
-        "external_design_options.yaml",
-        "paths/llvm.external_designs.yaml",
-        "@rtlmeter//:suite",
-    ],
+    data = [":external_design_inputs"],
     tags = ["manual"],
     deps = [
         ":framework",
