@@ -15,21 +15,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The type the cell takes, which is decided by whether anything outside the
-// declaring body can reach it. Storage on an object of the design hierarchy can
-// be reached by a hierarchical reference and waited on (LRM 6.21, 9.4.2), and
-// so can one the unit's namespace owns (LRM 26.2), so both are observable
-// cells. A cell a class owns is reached by no name outside the body -- a class
-// is reached by member select rather than by scope name (LRM 23.7) -- so it is
-// a plain one.
-auto CellTypeFor(
-    const UnitLowerer& unit_lowerer, const StaticStorageOwner& owner,
-    mir::TypeId value_type) -> mir::TypeId {
-  return std::holds_alternative<ClassStorage>(owner)
-             ? value_type
-             : mir::ObservableCellOf(unit_lowerer.Unit().types, value_type);
-}
-
 // The cell the scope already placed for `var` where it published that local,
 // and otherwise a fresh one in `owner`.
 auto PlacedOrDeclared(
@@ -89,8 +74,11 @@ auto BindBodyStatics(
     for (const hir::ProceduralVarId var_id : scope.declarations) {
       const hir::ProceduralVarDecl& var = body.procedural_vars.Get(var_id);
       if (var.lifetime != hir::VariableLifetime::kStatic) continue;
-      const mir::TypeId cell_type = CellTypeFor(
-          unit_lowerer, owner, unit_lowerer.TranslateType(var.type));
+      // One variable serves every activation of the body, whatever process each
+      // runs in (LRM 6.21), so one process may write it while another waits on
+      // it (LRM 9.4.2).
+      const mir::TypeId cell_type = mir::ObservableCellOf(
+          unit_lowerer.Unit().types, unit_lowerer.TranslateType(var.type));
       bindings.push_back(
           StaticCellBinding{
               .of = var_id,

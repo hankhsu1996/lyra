@@ -98,11 +98,14 @@ event". Coarser tracking is conforming; a per-property subscriber is one option 
   every variable the property of being waitable -- the event expression takes an expression with no
   restriction on what declared it -- so giving only some of them that property would be a saving
   taken from reading the whole body, which is the shape that entry removes. Every variable of a body
-  that can wait is therefore an observable cell today, borrowed or not; a function's variables and
-  every local the compiler makes are plain since 2026-11-01, so D1 holds of them. What this entry
-  establishes is untouched: the form is still decided by the declaration and never by what an
-  expression elsewhere does, and a class property is still not observable. What is open is whether
-  the subscriber record every procedural variable now carries is worth what it costs, which is a
+  that can wait, and every static-lifetime variable, is therefore an observable cell today, borrowed
+  or not; a function's automatic variables and every local the compiler makes are plain since
+  2026-11-01, so D1 holds of them. A class method's static variable, listed above as plain, is a
+  cell since 2026-11-05. Every call of the method shares it and the calls run in different
+  processes, so one may wait on it while another writes it. What this entry establishes is
+  untouched: the form is still decided by the declaration and never by what an expression elsewhere
+  does, and a property an object holds is still not observable. What is open is whether the
+  subscriber record every procedural variable now carries is worth what it costs, which is a
   measurement nobody has taken.
 
 - **A reference must be able to name both forms.** That is a requirement on the reference's

@@ -408,11 +408,11 @@ auto ClassDeclLowerer::DeclareShape(
   // as the loop goes. That pool also takes what the class's bodies keep, so a
   // property's position in it is not its position in the source.
   //
-  // Each is an observable cell. A static property needs no object, so a name
-  // outside every body of the class reaches it and a continuous assignment may
-  // take it as an operand and must re-evaluate when it changes (LRM 8.9,
-  // 10.3.2) -- the same test that makes a namespace variable a cell and leaves
-  // an instance property, reachable only through a receiver, a plain value.
+  // Each is an observable cell, as every variable no object holds is. A static
+  // property needs no object, so any process may write it while another waits
+  // on it, and a continuous assignment may take it as an operand and must
+  // re-evaluate when it changes (LRM 8.9, 9.4.2, 10.3.2). An instance property
+  // is watched through the object holding it, and stays a plain value.
   shape.static_property_translation =
       base::Translation<hir::StaticPropertyId, StaticStorageHome>{
           declared.static_properties.size()};
