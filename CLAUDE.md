@@ -158,10 +158,11 @@ a function of MIR and LIR node shapes. A filtered run names only the tests it ra
 strategy: which moment answers which question, and what a change selects.
 
 One more target is in neither set and is run only by naming it: `external_design_tests` builds and
-runs designs written elsewhere for other simulators -- today those of RTLMeter, Verilator's
-benchmark suite -- and holds each to what `tests/paths/llvm.external_designs.yaml` records of how
-far it gets. A case is minutes and the suite is half a gigabyte to fetch, so it is `manual`, and one
-case is the usual thing to ask for:
+runs code written elsewhere for other simulators -- the designs of RTLMeter, Verilator's benchmark
+suite, and the suites `tests/external_design_suites.yaml` describes, today the UVM class library --
+and holds each to what `tests/paths/llvm.external_designs.yaml` records of how far it gets. A case
+is minutes and the suite is half a gigabyte to fetch, so it is `manual`, and one case is the usual
+thing to ask for:
 
 ```bash
 bazel test //tests:external_design_tests --test_arg=--gtest_filter='*VeeR_EL2*' --test_output=streamed

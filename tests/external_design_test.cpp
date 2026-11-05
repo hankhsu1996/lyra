@@ -1,4 +1,4 @@
-// Whether Lyra builds and runs the designs other simulators are measured on.
+// Whether Lyra builds and runs code written elsewhere for other simulators.
 // The conformance corpus cannot say: each of its cases is one small unit, and
 // what stops a real design is a hierarchy, a size, or a way of writing that no
 // clause-by-clause case thinks to write.
@@ -85,12 +85,12 @@ constexpr std::size_t kLastLinesShown = 10;
 //
 // A build is bounded well past the slowest one measured, so that which side of
 // the limit a design falls on does not turn on the machine: what it catches is
-// a build that will not end. A run is bounded by what it should cost. Each
-// case is the suite's quick check, which Verilator's own published figures put
-// under a second for most designs and at about thirty for the largest, so ten
-// times the largest is the limit. A run past it is either stuck or slower than
-// that. Waiting longer does not say which, and the time it says it had reached
-// when asked to end does.
+// a build that will not end. A run is bounded by what it should cost. The
+// longest runs here are the benchmark suite's quick checks, which Verilator's
+// own published figures put under a second for most designs and at about
+// thirty for the largest, so ten times the largest is the limit. A run past it
+// is either stuck or slower than that. Waiting longer does not say which, and
+// the time it says it had reached when asked to end does.
 auto TimeLimitOf(DesignStep step) -> std::chrono::seconds {
   switch (step) {
     case DesignStep::kBuild:
@@ -148,15 +148,21 @@ auto ReadWhole(const std::filesystem::path& path) -> std::string {
   return text.str();
 }
 
+// Each word quoted, after a space.
+auto QuotedWords(const std::vector<std::string>& words) -> std::string {
+  std::string out;
+  for (const std::string& word : words) {
+    out += ' ';
+    out += ShellQuoted(word);
+  }
+  return out;
+}
+
 auto LyraCommand(
     const std::filesystem::path& lyra, std::string_view command,
     const std::vector<std::string>& options) -> std::string {
-  std::string line = std::format("{} {}", ShellQuoted(lyra.string()), command);
-  for (const std::string& option : options) {
-    line += ' ';
-    line += ShellQuoted(option);
-  }
-  return line;
+  return std::format(
+      "{} {}{}", ShellQuoted(lyra.string()), command, QuotedWords(options));
 }
 
 // The build of a case, from the directory its declaration is written to. A
@@ -191,11 +197,7 @@ auto Carry(
 
   // The program is the step's process itself, so that asking the step to end
   // asks the program, and the step ends when the program does.
-  std::string command = "exec ../sim";
-  for (const std::string& argument : design.arguments) {
-    command += ' ';
-    command += ShellQuoted(argument);
-  }
+  const std::string command = "exec ../sim" + QuotedWords(design.arguments);
   const auto ran =
       RunFrom(DesignStep::kRun, run, command + " > _execute/stdout.log 2>&1");
   if (ExitCodeOf(ran) != 0) {
@@ -206,10 +208,10 @@ auto Carry(
   }
 
   if (design.check) {
-    // The suite runs a check as a program of its own, so each is written in
-    // whatever its first line names.
+    // A check is a program of its own, so each is written in whatever its
+    // first line names.
     const auto checked =
-        RunFrom(DesignStep::kCheck, run, ShellQuoted(design.check->string()));
+        RunFrom(DesignStep::kCheck, run, QuotedWords(*design.check));
     if (ExitCodeOf(checked) != 0) {
       return DesignStop{
           .at = DesignStep::kCheck, .said = Said(DesignStep::kCheck, checked)};
@@ -353,9 +355,9 @@ auto Subjects() -> std::vector<DesignSubject> {
   return subjects;
 }
 
-// A record naming a case the suite does not have, or options listed for a
-// design it does not have, would hold nothing, and every other test here would
-// still pass.
+// A record naming a case no suite has, options listed for a design none has,
+// or a suite described with an input this run lacks, would hold nothing or
+// leave cases out, and every other test here would still pass.
 TEST(DesignRecord, NamesOnlyWhatTheSuiteHas) {
   const DesignCorpus corpus = LoadCorpus();
   for (const std::string& problem : corpus.problems) {
