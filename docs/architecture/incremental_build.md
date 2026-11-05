@@ -75,12 +75,17 @@ assumes whole-design lowering forecloses it.
     values of the lowerings it reaches -- so the stages of different units interleave freely: one
     unit may be emitting while another is still lowering bodies. A stage that needs no signature
     receives an empty set, which is the same shape as receiving many.
-11. **What a unit's compiled output reads of what another publishes is its dependency on it.** The
-    set is read off the unit's finished output, as a C++ compiler writes out the headers it read, so
-    the query graph's cross-unit edges are enumerable rather than discovered and no read the
-    lowering adds can be left out of them. A fact reaching a unit by any other path is a dependency
-    the graph does not have, and it is invisible until a cached result is reused, at which point it
-    is a stale result rather than an error.
+11. **What a lowering reads of what another unit publishes is its dependency on it, recorded as it
+    is read.** What the design's units publish is reached through one reader, which records each
+    answer as an input of the lowering it serves, as rustc records an edge where a query reads, so
+    the query graph's cross-unit edges are enumerable rather than discovered and no read can be left
+    out of them. That is wider than what the lowering's output names: a read decides what a
+    construct means, and the output may name nothing of the unit read -- a hook call that finds no
+    class declaring the hook runs the library's (LRM 18.6.2). The reads belong to the lowering and
+    not to the body it came out as, since two lowerings that come out as one body may have read
+    different units. A fact reaching a unit by any other path is a dependency the graph does not
+    have, and it is invisible until a cached result is reused, at which point it is a stale result
+    rather than an error.
 
 ## Boundary to Adjacent Layers
 
@@ -177,7 +182,7 @@ details and violates this contract.
 | -------------------------------- | -------------------------------------------------------------------------- |
 | A body of unit U                 | U's stages after the barrier                                               |
 | A declaration U publishes        | U's stages, and the post-barrier stages of every consumer of U's signature |
-| A declaration U does not publish | U's stages only; no consumer names it, so none depends on it               |
+| A declaration U does not publish | U's stages only; no consumer can read it, so none depends on it            |
 
 The first and third rows are what the signature buys, and the first is the common edit. A design
 element publishes every declaration a hierarchical name may reach, so what it keeps to itself is
@@ -190,8 +195,14 @@ The front end elaborates the whole design before the first unit lowers, and in d
 across units on the reader's behalf: it folds a constant the language requires inside the reader's
 own declarations (`logic [pkg::W-1:0] x`), binds every name, answers `$typename` of the reader's own
 operand, and expands every sequence, property or `let` instance with the declaration's text. Each is
-part of what the reader's lowering takes as its own input, and each depends on another unit.
-Recording what a unit reads of the signatures it consumes does not see these, so a query-based build
-either tracks them where the front end runs or runs the front end again. Everything a lowering
-itself takes of another unit -- a declared type's definition, a parameter's value, a member, a
-callable, a clocking event -- comes from that unit's published statement.
+part of what the reader's lowering takes as its own input, and each depends on another unit. The
+reader's record of what a lowering reads does not see these, so a query-based build either tracks
+them where the front end runs or runs the front end again. Everything a lowering itself takes of
+another unit -- a declared type's definition, a parameter's value, a member, a callable, a clocking
+event -- comes from that unit's published statement, through the reader that records it; what it
+takes of another instance's elaboration -- where a name leaving the instance landed, what a
+parameter there settled to -- comes in its environment. The front end works the environment out from
+its tree of the whole design, and what that consulted is no recorded read: an upward name lands
+where it does because of every scope its search passed. While that is so, no lowering's result can
+be reused across builds, and like a query reading state its tracking cannot see, it is computed
+again every time.

@@ -11,11 +11,11 @@
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/consumed_signatures.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/operand_use.hpp"
 #include "lyra/mir/record_decl.hpp"
+#include "lyra/mir/referenced_declarations.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/statistics.hpp"
@@ -180,8 +180,8 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
       {.kind = "constants", .held = constants.size()},
       {.kind = "types", .held = types.size()},
       {.kind = "foreign scope entries", .held = foreign_scope_entries.size()},
-      {.kind = "consumed signatures",
-       .held = ConsumedSignaturesOf(unit).size()},
+      {.kind = "referenced declarations",
+       .held = ReferencedDeclarationsOf(unit).size()},
   };
 }
 

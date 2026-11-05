@@ -7,14 +7,10 @@
 // runs would notice a mismatch until a call through it went wrong. A method the
 // runtime carries out has no definition there.
 
-#include <filesystem>
-#include <fstream>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <utility>
-#include <vector>
 
 #include <slang/ast/ASTContext.h>
 #include <slang/ast/Compilation.h>
@@ -24,11 +20,9 @@
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
-#include <slang/driver/Driver.h>
 
-#include "lyra/compiler/compile.hpp"
-#include "lyra/frontend/load.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
+#include "tests/elaborated_text.hpp"
 
 namespace {
 
@@ -51,34 +45,16 @@ endmodule
 
 class Elaborated {
  public:
-  explicit Elaborated(std::string_view source) {
-    const std::filesystem::path path =
-        std::filesystem::temp_directory_path() /
-        std::filesystem::path{
-            ::testing::UnitTest::GetInstance()->current_test_info()->name()}
-            .concat(".sv");
-    {
-      std::ofstream out(path);
-      out << source;
-    }
-    driver_.addStandardArgs();
-    const std::string path_text = path.string();
-    const std::vector<const char*> args{"lyra", path_text.c_str()};
-    EXPECT_TRUE(
-        driver_.parseCommandLine(static_cast<int>(args.size()), args.data()));
-    lyra::compiler::FrontEndResult front = lyra::compiler::RunFrontEnd(driver_);
-    EXPECT_TRUE(front.elaborated.has_value())
-        << "the front end rejected the probe design: " << front.diagnostics;
-    design_ = std::move(front.elaborated);
+  explicit Elaborated(std::string_view source)
+      : text_(lyra::test::ElaborateText(source)) {
   }
 
   [[nodiscard]] auto Compilation() const -> slang::ast::Compilation& {
-    return *design_->compilation;
+    return *text_.front.elaborated->compilation;
   }
 
  private:
-  slang::driver::Driver driver_;
-  std::optional<lyra::frontend::ParseResult> design_;
+  lyra::test::ElaboratedText text_;
 };
 
 // The value an argument's default evaluates to, or nothing where it has none.

@@ -252,8 +252,8 @@ cc_test(
 )
 
 cc_test(
-    name = "mir_consumed_signatures_test",
-    srcs = ["mir/consumed_signatures_test.cpp"],
+    name = "mir_referenced_declarations_test",
+    srcs = ["mir/referenced_declarations_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
         "//:mir",
@@ -347,7 +347,10 @@ cc_test(
 
 cc_test(
     name = "artifact_count_test",
-    srcs = ["artifact_count_test.cpp"],
+    srcs = [
+        "artifact_count_test.cpp",
+        "elaborated_text.hpp",
+    ],
     copts = LYRA_COPTS,
     deps = [
         "//:base",
@@ -363,8 +366,27 @@ cc_test(
 )
 
 cc_test(
+    name = "signature_reads_test",
+    srcs = [
+        "elaborated_text.hpp",
+        "signature_reads_test.cpp",
+    ],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:compiler",
+        "//:diag",
+        "//:hir",
+        "@googletest//:gtest_main",
+        "@slang",
+    ],
+)
+
+cc_test(
     name = "std_definitions_test",
-    srcs = ["std_definitions_test.cpp"],
+    srcs = [
+        "elaborated_text.hpp",
+        "std_definitions_test.cpp",
+    ],
     copts = LYRA_COPTS,
     deps = [
         "//:ast_to_hir",

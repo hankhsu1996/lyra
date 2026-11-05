@@ -213,7 +213,7 @@ auto UnitLowerer::TakeSignature() -> hir::UnitSignature {
 auto UnitLowerer::LowerBodies(
     const hir::UnitSignatures& signatures, Bodies& implementations)
     -> diag::Result<hir::Lowering> {
-  signatures_ = &signatures;
+  signatures_.emplace(signatures, unit_.name, reads_);
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
   if (auto declared = ReadOwnUnitDeclarations(); !declared) {
     return std::unexpected(std::move(declared.error()));
@@ -231,10 +231,14 @@ auto UnitLowerer::LowerBodies(
   hir::Verify(unit_, own->construction);
   InternedBody interned = implementations.Intern(unit_);
   unit_.body_name = std::move(interned.name);
+  // The record leaves with the lowering, so a read after this point would be
+  // lost; with no reader it is refused instead.
+  signatures_.reset();
   return hir::Lowering{
       .name = std::move(lowering_),
       .construction = std::move(own->construction),
       .body = std::move(unit_),
+      .reads = std::move(reads_),
       .compiles_its_body = interned.compiles_its_body};
 }
 

@@ -21,7 +21,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/constant_id.hpp"
-#include "lyra/mir/consumed_signatures.hpp"
+#include "lyra/mir/referenced_declarations.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/support/linkage.hpp"
 #include "lyra/support/runtime_prelude.hpp"
@@ -144,26 +144,27 @@ void WriteForwardDeclarations(
   if (open.has_value()) CloseNamespace(file.text, VerbatimName{.text = *open});
 }
 
-// The header for one thing this unit's bodies read of another: the opening
-// header for its namespace, the header defining one class, or the header of
-// the body an object entry makes. A body reaches a member of another unit's
-// object without writing the class's name, so its text cannot ask for the
-// class's definition; what the unit read is what says so. Including only those
-// means a change elsewhere in that unit does not recompile this one.
-auto FileConsumed(const mir::ConsumedSignature& consumed) -> std::string {
+// The header for one declaration of another unit this unit's code names: the
+// opening header for its namespace, the header defining one class, or the
+// header of the body an object entry makes. A body reaches a member of another
+// unit's object without writing the class's name, so its text cannot ask for
+// the class's definition; what the unit's MIR names is what says so. Including
+// only those means a change elsewhere in that unit does not recompile this one.
+auto FileReferenced(const mir::ReferencedDeclaration& referenced)
+    -> std::string {
   return std::visit(
       Overloaded{
-          [](const mir::ConsumedNamespace& consumed_namespace) {
-            return UnitOpeningFileOf(consumed_namespace.unit_name);
+          [](const mir::ReferencedNamespace& referenced_namespace) {
+            return UnitOpeningFileOf(referenced_namespace.unit_name);
           },
-          [](const mir::ConsumedClass& consumed_class) {
+          [](const mir::ReferencedClass& referenced_class) {
             return ClassDefinitionFileOf(
-                consumed_class.unit_name, consumed_class.class_path);
+                referenced_class.unit_name, referenced_class.class_path);
           },
-          [](const mir::ConsumedObjectEntry& consumed_entry) {
-            return BodyHeaderFileOf(consumed_entry.body_name);
+          [](const mir::ReferencedObjectEntry& referenced_entry) {
+            return BodyHeaderFileOf(referenced_entry.body_name);
           }},
-      consumed);
+      referenced);
 }
 
 // One header and the text it carries, gathered from whatever is written into
@@ -352,9 +353,9 @@ auto RenderUnitFiles(
   for (const HeaderFile& class_file : class_files) {
     include_once(class_file.relpath);
   }
-  for (const mir::ConsumedSignature& consumed :
-       mir::ConsumedSignaturesOf(unit)) {
-    include_once(FileConsumed(consumed));
+  for (const mir::ReferencedDeclaration& referenced :
+       mir::ReferencedDeclarationsOf(unit)) {
+    include_once(FileReferenced(referenced));
   }
   for (const std::string& required : realized.RequiredFiles()) {
     include_once(required);

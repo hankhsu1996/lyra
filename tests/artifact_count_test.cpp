@@ -17,9 +17,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <format>
-#include <fstream>
 #include <gtest/gtest.h>
 #include <map>
 #include <optional>
@@ -30,8 +28,6 @@
 #include <utility>
 #include <variant>
 #include <vector>
-
-#include <slang/driver/Driver.h>
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/compiler/compile.hpp"
@@ -47,6 +43,7 @@
 #include "lyra/mir/dump.hpp"
 #include "lyra/mir_transform/pass.hpp"
 #include "lyra/support/def_path.hpp"
+#include "tests/elaborated_text.hpp"
 
 namespace {
 
@@ -59,31 +56,13 @@ using LoweredUnits = std::vector<lyra::hir::Lowering>;
 template <typename Use>
 auto WithDeclaredDesign(std::string_view source, const Use& use) -> bool {
   lyra::diag::DiagnosticSink sink;
-  const std::filesystem::path path =
-      std::filesystem::temp_directory_path() /
-      std::filesystem::path{
-          ::testing::UnitTest::GetInstance()->current_test_info()->name()}
-          .concat(".sv");
-  {
-    std::ofstream out(path);
-    out << source;
-  }
-
-  slang::driver::Driver driver;
-  driver.addStandardArgs();
-  const std::string path_text = path.string();
-  const std::vector<const char*> args{"lyra", path_text.c_str()};
-  EXPECT_TRUE(
-      driver.parseCommandLine(static_cast<int>(args.size()), args.data()));
-
-  lyra::compiler::FrontEndResult front = lyra::compiler::RunFrontEnd(driver);
-  EXPECT_TRUE(front.elaborated.has_value())
-      << "the front end rejected the probe design: " << front.diagnostics;
-  if (!front.elaborated.has_value()) return false;
+  lyra::test::ElaboratedText text = lyra::test::ElaborateText(source);
+  if (!text.front.elaborated.has_value()) return false;
 
   auto design = lyra::compiler::DeclareUnits(
-      std::move(front.elaborated->compilation),
-      lyra::compiler::LoweringPolicy{}, sink, front.elaborated->diag_sources);
+      std::move(text.front.elaborated->compilation),
+      lyra::compiler::LoweringPolicy{}, sink,
+      text.front.elaborated->diag_sources);
   EXPECT_TRUE(design.has_value()) << "the probe design did not declare";
   if (!design.has_value()) return false;
 

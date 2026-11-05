@@ -172,12 +172,12 @@ class, and the position is fixed when that class is realized.
   dropping it because with it goes "the property that a unit cannot read a signature unrelated to
   anything it declares". Two things answer that rationale. The bound is over reading, while the
   theorem that makes a stale artifact impossible is `unit-signature.md` D3's, stated over what a
-  lowering _consumes_ -- a promise read and not used records nothing and changes no output, so the
-  bound guards nothing the theorem rests on. And the widening it chose closes over the units a
-  signature names as published objects, which reaches instance nesting and cannot reach a type named
-  only in a body; reaching those means walking the bodies in the declaration pass, which the same
-  entry rejects one alternative later for deciding with less information what the later pass
-  discovers anyway. The two rejections meet once a class type crosses, and the bound is what gives.
+  lowering _consumes_ -- a promise read and not used changes no output, so the bound guards nothing
+  the theorem rests on. And the widening it chose closes over the units a signature names as
+  published objects, which reaches instance nesting and cannot reach a type named only in a body;
+  reaching those means walking the bodies in the declaration pass, which the same entry rejects one
+  alternative later for deciding with less information what the later pass discovers anyway. The two
+  rejections meet once a class type crosses, and the bound is what gives.
 
 - **Publish every property in declaration order, including the ones a class keeps to itself.** Then
   no ordering rule is needed and both sides count the same list. Rejected because a `local` property

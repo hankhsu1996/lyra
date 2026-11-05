@@ -10,6 +10,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/lowering_values.hpp"
+#include "lyra/hir/signature_reads.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/support/def_path.hpp"
@@ -25,12 +26,13 @@ namespace lyra::hir {
 // A unit is found by name, which is the identity a reference carries across
 // the boundary, and a lowering's values by the lowering's name, the place of
 // the instance it was lowered for, which is what a construction names it by;
-// there is no shared table of ids to match on. Which units a unit
-// ends up depending on is read off what it compiled to rather than decided in
-// advance -- a set decided in advance would be an approximation, and it
-// cannot be one: a class first named inside a body is
-// reached after any such set was fixed, and a name is on a signature or not
-// whether or not the reader declared anything.
+// there is no shared table of ids to match on.
+//
+// Only the reader below reads it, and a reader records every read in the
+// record of the lowering it serves, so what a lowering depends on is what it
+// took, recorded as it took it, as rustc records an edge where a query reads.
+// The record is taken at the read because a read can decide what a construct
+// means and leave nothing of the unit it read in what is written.
 class UnitSignatures {
  public:
   // Records what one lowering of a unit publishes, under the unit's name. The
@@ -45,6 +47,18 @@ class UnitSignatures {
     }
     PublishBlocksBuiltBy(published->second, signature);
   }
+
+  // Records the values the lowering named `lowering` holds.
+  void PublishValues(std::string lowering, LoweringValues values) {
+    if (!values_.emplace(std::move(lowering), std::move(values)).second) {
+      throw InternalError(
+          "UnitSignatures::PublishValues: one lowering publishes its "
+          "values once");
+    }
+  }
+
+ private:
+  friend class SignatureReader;
 
   // What the unit named `unit_name` publishes, or nullptr when the design
   // compiles no such unit. An absent answer means there is nothing to compile
@@ -90,7 +104,7 @@ class UnitSignatures {
   // The units of the design that root no object, in name order. A namespace is
   // exactly such a unit (LRM 26.2), and a signature says which it is, so the
   // one artifact that has to bring every namespace up reads the set off the
-  // signatures it already consumes. Sorted because the set is walked to emit
+  // signatures it already reads. Sorted because the set is walked to emit
   // calls, and a design compiles to the same program each time.
   [[nodiscard]] auto NamespaceUnitNames() const -> std::vector<std::string> {
     std::vector<std::string> names;
@@ -101,15 +115,6 @@ class UnitSignatures {
     }
     std::ranges::sort(names);
     return names;
-  }
-
-  // Records the values the lowering named `lowering` holds.
-  void PublishValues(std::string lowering, LoweringValues values) {
-    if (!values_.emplace(std::move(lowering), std::move(values)).second) {
-      throw InternalError(
-          "UnitSignatures::PublishValues: one lowering publishes its "
-          "values once");
-    }
   }
 
   // The values the lowering named `lowering` holds. Every lowering of the
@@ -127,9 +132,84 @@ class UnitSignatures {
     return it->second;
   }
 
- private:
   std::unordered_map<std::string, UnitSignature> by_name_;
   std::unordered_map<std::string, LoweringValues> values_;
+};
+
+// The one way a lowering reads what the design's units publish. Each answer is
+// recorded in `reads` as it is given, whatever the lowering then makes of it,
+// and a read of the reading unit's own signature records nothing, since a unit
+// depends on its own text anyway. Recording changes nothing the lowering
+// computes, so it is done through a reader the lowering holds as const.
+class SignatureReader {
+ public:
+  SignatureReader(
+      const UnitSignatures& signatures, std::string reading_unit,
+      SignatureReads& reads)
+      : SignatureReader(signatures, std::move(reading_unit), &reads) {
+  }
+
+  // A reader whose reads nothing records, for a computation made from the
+  // whole design and so computed again on every build whatever it read, as
+  // rustc names a region that reads without recording.
+  [[nodiscard]] static auto Untracked(
+      const UnitSignatures& signatures, std::string reading_unit)
+      -> SignatureReader {
+    return {signatures, std::move(reading_unit), nullptr};
+  }
+
+  [[nodiscard]] auto Find(const std::string& unit_name) const
+      -> const UnitSignature* {
+    ReadSignatureOf(unit_name);
+    return signatures_->Find(unit_name);
+  }
+
+  [[nodiscard]] auto Instantiated(const std::string& unit_name) const
+      -> const UnitSignature& {
+    ReadSignatureOf(unit_name);
+    return signatures_->Instantiated(unit_name);
+  }
+
+  [[nodiscard]] auto Declaring(const TypeDeclarationRef& declaration) const
+      -> const UnitSignature& {
+    ReadSignatureOf(declaration.unit_name);
+    return signatures_->Declaring(declaration);
+  }
+
+  [[nodiscard]] auto NamespaceUnitNames() const -> std::vector<std::string> {
+    Record(UnitListRead{});
+    return signatures_->NamespaceUnitNames();
+  }
+
+  [[nodiscard]] auto ValuesOf(const std::string& lowering) const
+      -> const LoweringValues& {
+    Record(ValuesRead{.lowering = lowering});
+    return signatures_->ValuesOf(lowering);
+  }
+
+ private:
+  SignatureReader(
+      const UnitSignatures& signatures, std::string reading_unit,
+      SignatureReads* reads)
+      : signatures_(&signatures),
+        reading_unit_(std::move(reading_unit)),
+        reads_(reads) {
+  }
+
+  void ReadSignatureOf(const std::string& unit_name) const {
+    if (unit_name != reading_unit_) {
+      Record(UnitSignatureRead{.unit_name = unit_name});
+    }
+  }
+
+  void Record(ReadOfAnotherUnit read) const {
+    if (reads_ != nullptr) reads_->insert(std::move(read));
+  }
+
+  const UnitSignatures* signatures_;
+  std::string reading_unit_;
+  // Where reads are recorded, or nothing for an untracked reader.
+  SignatureReads* reads_;
 };
 
 }  // namespace lyra::hir

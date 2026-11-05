@@ -9,7 +9,7 @@
 // @each-adds: bodies 1, files, bytes, lowerings 1,
 // @each-adds: mir.classes, mir.constructors, mir.callables, mir.fields,
 // @each-adds: mir.constants, mir.types,
-// @each-adds: mir.consumed signatures 1,
+// @each-adds: mir.referenced declarations 1,
 // @each-adds: lir.classes, lir.constants, lir.definitions, lir.functions,
 // @each-adds: lir.members,
 // @each-adds: lir.type steps, lir.types
