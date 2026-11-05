@@ -1,4 +1,4 @@
-#include "lyra/mir/consumed_signatures.hpp"
+#include "lyra/mir/referenced_declarations.hpp"
 
 #include <algorithm>
 #include <gtest/gtest.h>
@@ -41,10 +41,10 @@ auto PathOf(std::string name) -> support::DefPath {
 }
 
 // A unit `U` declaring two classes package `P` defines, `Derived` extending
-// `Base`, and holding one body of its namespace, `f`, which `read` writes into.
-// `Derived` sits at identity 1 and `Base` at 0.
-template <typename Read>
-auto UnitReading(const Read& read) -> CompilationUnit {
+// `Base`, and holding one body of its namespace, `f`, which `write_body` writes
+// into. `Derived` sits at identity 1 and `Base` at 0.
+template <typename WriteBody>
+auto UnitWithBody(const WriteBody& write_body) -> CompilationUnit {
   CompilationUnit unit;
   unit.name = "U";
   const ClassId base = unit.DeclareClass();
@@ -62,7 +62,7 @@ auto UnitReading(const Read& read) -> CompilationUnit {
   unit.DefineClass(derived, std::move(derived_class));
   CallableCode code = CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
-  read(unit, Builder(code.Body(), diag::SourceSpan{}), derived);
+  write_body(unit, Builder(code.Body(), diag::SourceSpan{}), derived);
   unit.callables.Add(
       CallableDecl{
           .code = std::move(code),
@@ -78,11 +78,11 @@ auto HandleTo(CompilationUnit& unit, ClassId cls) -> TypeId {
           .pointee = unit.types.Intern(Type{ObjectType{.of = cls}})}});
 }
 
-auto Classes(const std::vector<ConsumedSignature>& consumed)
+auto Classes(const std::vector<ReferencedDeclaration>& referenced)
     -> std::vector<std::string> {
   std::vector<std::string> names;
-  for (const ConsumedSignature& read : consumed) {
-    if (const auto* cls = std::get_if<ConsumedClass>(&read)) {
+  for (const ReferencedDeclaration& named : referenced) {
+    if (const auto* cls = std::get_if<ReferencedClass>(&named)) {
       names.push_back(
           cls->unit_name + "::" + support::DisplayOf(cls->class_path));
     }
@@ -90,22 +90,24 @@ auto Classes(const std::vector<ConsumedSignature>& consumed)
   return names;
 }
 
-// Holding a handle reads nothing of its class, so a body that only holds one
-// depends on no unit; a class it reads is read with every class it extends,
+// Holding a handle names nothing of its class, so a body that only holds one
+// names no other unit; a class it names is named with every class it extends,
 // whose layout and dispatch positions it follows.
-TEST(ConsumedSignaturesTest, AHandleReadsNothingAndAReadClassBringsItsLineage) {
-  const CompilationUnit holding = UnitReading([](CompilationUnit& u,
-                                                 Builder body,
-                                                 ClassId derived) {
+TEST(
+    ReferencedDeclarationsTest,
+    AHandleNamesNothingAndANamedClassBringsItsLineage) {
+  const CompilationUnit holding = UnitWithBody([](CompilationUnit& u,
+                                                  Builder body,
+                                                  ClassId derived) {
     body.AppendStmt(
         ExprStmt{
             .expr = body.Add(
                 Expr{.data = NullLiteral{}, .type = HandleTo(u, derived)})});
   });
-  EXPECT_TRUE(ConsumedSignaturesOf(holding).empty());
+  EXPECT_TRUE(ReferencedDeclarationsOf(holding).empty());
 
   const CompilationUnit reaching =
-      UnitReading([](CompilationUnit& u, Builder body, ClassId derived) {
+      UnitWithBody([](CompilationUnit& u, Builder body, ClassId derived) {
         const ExprId object = body.Add(
             Expr{
                 .data = NullLiteral{},
@@ -119,29 +121,29 @@ TEST(ConsumedSignaturesTest, AHandleReadsNothingAndAReadClassBringsItsLineage) {
                     u.builtins.int_type)))});
       });
   EXPECT_EQ(
-      Classes(ConsumedSignaturesOf(reaching)),
+      Classes(ReferencedDeclarationsOf(reaching)),
       (std::vector<std::string>{"P::Derived", "P::Base"}));
 }
 
-// Each way a body reaches into a class reads it, through the node that
+// Each way a body reaches into a class names it, through the node that
 // reaches it and nothing else, with every class it extends.
-TEST(ConsumedSignaturesTest, EveryReachIntoAClassReadsItWithItsLineage) {
-  const auto reads_derived = [](const auto& reach) {
+TEST(ReferencedDeclarationsTest, EveryReachIntoAClassNamesItWithItsLineage) {
+  const auto names_derived = [](const auto& reach) {
     const CompilationUnit unit =
-        UnitReading([&](CompilationUnit& u, Builder body, ClassId derived) {
+        UnitWithBody([&](CompilationUnit& u, Builder body, ClassId derived) {
           body.AppendStmt(ExprStmt{.expr = body.Add(reach(u, body, derived))});
         });
-    return Classes(ConsumedSignaturesOf(unit)) ==
+    return Classes(ReferencedDeclarationsOf(unit)) ==
            std::vector<std::string>{"P::Derived", "P::Base"};
   };
-  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Builder body, ClassId cls) {
+  EXPECT_TRUE(names_derived([](CompilationUnit& u, Builder body, ClassId cls) {
     const ExprId object =
         body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
     return MakeFieldAccessExpr(
         object, ClassFieldTarget{.owner = cls, .slot = FieldId{}},
         u.builtins.int_type);
   })) << "a member accessed";
-  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Builder body, ClassId cls) {
+  EXPECT_TRUE(names_derived([](CompilationUnit& u, Builder body, ClassId cls) {
     const ExprId receiver =
         body.Add(Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
     return Expr{
@@ -156,12 +158,12 @@ TEST(ConsumedSignaturesTest, EveryReachIntoAClassReadsItWithItsLineage) {
                 .arguments = {}},
         .type = u.builtins.void_type};
   })) << "a behavior dispatched on";
-  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Builder, ClassId cls) {
+  EXPECT_TRUE(names_derived([](CompilationUnit& u, Builder, ClassId cls) {
     return MakeCallExpr(
         Direct{.target = ConstructorTarget{.cls = cls}}, {},
         u.builtins.void_type);
   })) << "a construction entered";
-  EXPECT_TRUE(reads_derived([](CompilationUnit& u, Builder, ClassId cls) {
+  EXPECT_TRUE(names_derived([](CompilationUnit& u, Builder, ClassId cls) {
     return Expr{
         .data =
             ReferenceExpr{
@@ -172,12 +174,12 @@ TEST(ConsumedSignaturesTest, EveryReachIntoAClassReadsItWithItsLineage) {
   })) << "a static property";
 }
 
-// What a class this unit defines holds is read where the class owns it, and
-// a value of a record, a variable or an entry another unit declares is read
+// What a class this unit defines holds is named where the class owns it, and
+// a value of a record, a variable or an entry another unit declares is named
 // where a body names it.
-TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
+TEST(ReferencedDeclarationsTest, WhatIsHeldOrNamedOfAnotherUnitIsReferenced) {
   CompilationUnit owning =
-      UnitReading([](CompilationUnit&, Builder, ClassId) {});
+      UnitWithBody([](CompilationUnit&, Builder, ClassId) {});
   Class holder;
   holder.base = ClassRef{ClassObjectRootRef{}};
   holder.fields.Add(
@@ -190,11 +192,11 @@ TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
   const ClassId held_by = owning.DeclareClass();
   owning.DefineClass(held_by, std::move(holder));
   EXPECT_EQ(
-      Classes(ConsumedSignaturesOf(owning)),
+      Classes(ReferencedDeclarationsOf(owning)),
       (std::vector<std::string>{"P::Derived", "P::Base"}));
 
-  const CompilationUnit naming = UnitReading([](CompilationUnit& u,
-                                                Builder body, ClassId) {
+  const CompilationUnit naming = UnitWithBody([](CompilationUnit& u,
+                                                 Builder body, ClassId) {
     const RecordId record = u.records.Add(
         RecordDecl{
             .defining_unit = "R",
@@ -232,19 +234,19 @@ TEST(ConsumedSignaturesTest, WhatIsHeldOrNamedOfAnotherUnitIsRead) {
                     .type = u.builtins.void_type})});
   });
   EXPECT_EQ(
-      ConsumedSignaturesOf(naming),
-      (std::vector<ConsumedSignature>{
-          ConsumedNamespace{.unit_name = "R"},
-          ConsumedNamespace{.unit_name = "Q"},
-          ConsumedObjectEntry{.unit_name = "M", .body_name = "M"}}));
+      ReferencedDeclarationsOf(naming),
+      (std::vector<ReferencedDeclaration>{
+          ReferencedNamespace{.unit_name = "R"},
+          ReferencedNamespace{.unit_name = "Q"},
+          ReferencedObjectEntry{.unit_name = "M", .body_name = "M"}}));
 }
 
 // A handle seen as another class's is the same handle (LRM 8.15), and a `$cast`
 // asks the object whether it is of the class it names (LRM 8.16) by that
-// class's definition alone; neither reads anything the classes declare.
-TEST(ConsumedSignaturesTest, AConversionBetweenClassesReadsNeither) {
+// class's definition alone; neither names anything the classes declare.
+TEST(ReferencedDeclarationsTest, AConversionBetweenClassesNamesNeither) {
   const CompilationUnit seen_as =
-      UnitReading([](CompilationUnit& u, Builder body, ClassId derived) {
+      UnitWithBody([](CompilationUnit& u, Builder body, ClassId derived) {
         const ExprId handle =
             body.Add(Expr{.data = NullLiteral{}, .type = HandleTo(u, derived)});
         body.AppendStmt(
@@ -254,10 +256,10 @@ TEST(ConsumedSignaturesTest, AConversionBetweenClassesReadsNeither) {
                         .data = CastExpr{.operand = handle},
                         .type = HandleTo(u, ClassId{.value = 0})})});
       });
-  EXPECT_TRUE(Classes(ConsumedSignaturesOf(seen_as)).empty());
+  EXPECT_TRUE(Classes(ReferencedDeclarationsOf(seen_as)).empty());
 
-  const CompilationUnit cast = UnitReading([](CompilationUnit& u, Builder body,
-                                              ClassId derived) {
+  const CompilationUnit cast = UnitWithBody([](CompilationUnit& u, Builder body,
+                                               ClassId derived) {
     const TypeId base_handle = HandleTo(u, ClassId{.value = 0});
     const ExprId handle =
         body.Add(Expr{.data = NullLiteral{}, .type = base_handle});
@@ -274,14 +276,16 @@ TEST(ConsumedSignaturesTest, AConversionBetweenClassesReadsNeither) {
                 Direct{.target = support::BuiltinFn::kDynamicCast},
                 {handle, definition}, HandleTo(u, derived)))});
   });
-  EXPECT_TRUE(Classes(ConsumedSignaturesOf(cast)).empty());
+  EXPECT_TRUE(Classes(ReferencedDeclarationsOf(cast)).empty());
 }
 
-// A subroutine of another unit's namespace is read where a body names it, and
-// the unit's own namespace is no dependency of itself.
-TEST(ConsumedSignaturesTest, ANamespaceMemberOfAnotherUnitIsReadWhereNamed) {
-  const CompilationUnit calling = UnitReading([](CompilationUnit& u,
-                                                 Builder body, ClassId) {
+// A subroutine of another unit's namespace is referenced where a body names it,
+// and the unit's own namespace is never named as another's.
+TEST(
+    ReferencedDeclarationsTest,
+    ANamespaceMemberOfAnotherUnitIsReferencedWhereNamed) {
+  const CompilationUnit calling = UnitWithBody([](CompilationUnit& u,
+                                                  Builder body, ClassId) {
     const CallableId declared = u.callables.Add(
         CallableDecl{
             .code = CallableCode{},
@@ -305,8 +309,9 @@ TEST(ConsumedSignaturesTest, ANamespaceMemberOfAnotherUnitIsReadWhereNamed) {
                 {}, u.builtins.void_type))});
   });
   EXPECT_EQ(
-      ConsumedSignaturesOf(calling),
-      (std::vector<ConsumedSignature>{ConsumedNamespace{.unit_name = "Q"}}));
+      ReferencedDeclarationsOf(calling),
+      (std::vector<ReferencedDeclaration>{
+          ReferencedNamespace{.unit_name = "Q"}}));
 }
 
 }  // namespace

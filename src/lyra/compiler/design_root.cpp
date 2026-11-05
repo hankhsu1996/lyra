@@ -93,12 +93,15 @@ void LeaveInputsUnconnected(
 // lowering, building each top's one lowering.
 auto BuildDesignRootHir(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
-    const hir::UnitSignatures& signatures) -> hir::Lowering {
+    const hir::SignatureReader& signatures) -> hir::Lowering {
   hir::Lowering lowered{
       .name = std::string{kDesignRootUnitName},
       .construction = {},
-      .body = hir::CompilationUnit{
-          std::string{kDesignRootUnitName}, std::string{kDesignRootUnitName}}};
+      .body =
+          hir::CompilationUnit{
+              std::string{kDesignRootUnitName},
+              std::string{kDesignRootUnitName}},
+      .reads = {}};
   hir::CompilationUnit& root = lowered.body;
   // Like any module, its object is published as the class an instance of the
   // unit is, and what it publishes is every instance it builds (LRM 23.6).
@@ -196,7 +199,7 @@ void TakeEachUnitMade(
 // The object entry of every unit the root's tables make, as each unit
 // published it, its types taken into the root's.
 auto PublishedObjectEntries(
-    const hir::UnitSignatures& signatures,
+    const hir::SignatureReader& signatures,
     const lowering::hir_to_mir::DesignInstantiations& instantiations,
     hir::TypePool& into, hir::ClassRegistry& classes,
     hir::CovergroupRegistry& covergroups,
@@ -211,7 +214,7 @@ auto PublishedObjectEntries(
     const hir::PublishedDesignElement& element =
         hir::DesignElementOf(signature);
     // The entry answers an owning pointer to the class, which names it and
-    // reads nothing of what it holds, so the root depends on none of that.
+    // needs nothing of what it holds in view.
     const hir::ScopeClassId published_class = scope_classes.Import(
         hir::ScopeClassKey{
             .unit_name = unit,
@@ -233,7 +236,7 @@ auto PublishedObjectEntries(
 // What each declared type the root names declares, as the unit declaring it
 // published it.
 void ReadTypeDefinitions(
-    hir::CompilationUnit& root, const hir::UnitSignatures& signatures) {
+    hir::CompilationUnit& root, const hir::SignatureReader& signatures) {
   std::map<std::string, hir::TypeImportMemo, std::less<>> memos;
   hir::ForEachNamedDeclaration(
       root.types, [&](const hir::TypeDeclarationRef& declaration) {
@@ -253,10 +256,15 @@ void ReadTypeDefinitions(
 
 auto SynthesizeDesignRoot(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
-    const hir::UnitSignatures& signatures,
+    const hir::UnitSignatures& published,
     lowering::hir_to_mir::DesignInstantiations instantiations,
     const mir_transform::PassOptions& passes,
     const diag::SourceManager& sources) -> diag::Result<mir::CompilationUnit> {
+  // The root states every unit's construction table, so it is made from the
+  // whole design and is built again whenever anything is: what it reads of the
+  // published signatures decides nothing about whether it is.
+  const hir::SignatureReader signatures = hir::SignatureReader::Untracked(
+      published, std::string{kDesignRootUnitName});
   hir::Lowering root_hir = BuildDesignRootHir(tops, signatures);
   instantiations.by_lowering.emplace(
       root_hir.name, lowering::hir_to_mir::LoweringMade::Of(root_hir));

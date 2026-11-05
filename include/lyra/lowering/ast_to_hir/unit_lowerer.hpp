@@ -35,7 +35,6 @@
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/published_callable.hpp"
-#include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
@@ -703,6 +702,14 @@ class UnitLowerer {
       const LoweringFacts& facts, const slang::ast::Symbol& home,
       Environment environment, hir::LoweringRef names, hir::UnitRole role);
 
+  // The body phase reads through a reader recording into this object's own
+  // record, so the object stays where it was made.
+  UnitLowerer(const UnitLowerer&) = delete;
+  auto operator=(const UnitLowerer&) -> UnitLowerer& = delete;
+  UnitLowerer(UnitLowerer&&) = delete;
+  auto operator=(UnitLowerer&&) -> UnitLowerer& = delete;
+  ~UnitLowerer() = default;
+
   // The declaration phase: everything this unit states about itself, including
   // the signature it publishes. Reads no other unit, so a body that later
   // references one cannot observe whether it had been declared yet.
@@ -860,10 +867,11 @@ class UnitLowerer {
       -> hir::TypeId;
 
   // What the units this one references published, for a lowering that reaches
-  // across the unit boundary. Reachable only once bodies lower: the declaration
-  // phase reads this unit alone, so it has none.
-  [[nodiscard]] auto Signatures() const -> const hir::UnitSignatures& {
-    if (signatures_ == nullptr) {
+  // across the unit boundary, each read recorded as this lowering's. Reachable
+  // only once bodies lower: the declaration phase reads this unit alone, so it
+  // has none.
+  [[nodiscard]] auto Signatures() const -> const hir::SignatureReader& {
+    if (!signatures_.has_value()) {
       throw InternalError(
           "UnitLowerer::Signatures: another unit's signature is reachable only "
           "while bodies lower; the declaration phase reads this unit alone");
@@ -2045,7 +2053,9 @@ class UnitLowerer {
   // What the design's units publish, for the body phase alone. The declaration
   // phase has none, which is what makes "a declaration reads only its own unit"
   // a property of the code rather than a discipline.
-  const hir::UnitSignatures* signatures_ = nullptr;
+  std::optional<hir::SignatureReader> signatures_;
+  // What the body phase read of other units, handed out with the lowering.
+  hir::SignatureReads reads_;
   // What each signature this unit has read out of became in this unit's pool,
   // one entry per signature, so a type published once is taken once however
   // many connections name it.

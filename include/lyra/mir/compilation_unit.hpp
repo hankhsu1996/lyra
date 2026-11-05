@@ -18,7 +18,6 @@
 #include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/callable.hpp"
-#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -40,7 +39,6 @@
 #include "lyra/support/float_width.hpp"
 #include "lyra/support/layout.hpp"
 #include "lyra/support/library_decl.hpp"
-#include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
 
@@ -101,33 +99,34 @@ struct NamedStaticVariable {
   return std::nullopt;
 }
 
-// What one unit read of another's signature. A unit publishes its namespace --
-// the cells and bodies it declares outside any class of it (LRM 26.2) -- each
-// class it published, and for each body it is compiled to the entry that makes
-// an object of that body. A referrer reads one of those rather than the whole,
-// so what it depends on is that much and no more.
-struct ConsumedNamespace {
+// A declaration of another unit that one unit's code names. A unit publishes
+// its namespace -- the cells and bodies it declares outside any class of it
+// (LRM 26.2) -- each class it published, and for each body it is compiled to
+// the entry that makes an object of that body, and code names one of those
+// rather than the whole, so a target writing it brings that much into view and
+// no more.
+struct ReferencedNamespace {
   std::string unit_name;
 
-  auto operator==(const ConsumedNamespace&) const -> bool = default;
+  auto operator==(const ReferencedNamespace&) const -> bool = default;
 };
 
-struct ConsumedClass {
+struct ReferencedClass {
   std::string unit_name;
   support::DefPath class_path;
 
-  auto operator==(const ConsumedClass&) const -> bool = default;
+  auto operator==(const ReferencedClass&) const -> bool = default;
 };
 
-struct ConsumedObjectEntry {
+struct ReferencedObjectEntry {
   std::string unit_name;
   std::string body_name;
 
-  auto operator==(const ConsumedObjectEntry&) const -> bool = default;
+  auto operator==(const ReferencedObjectEntry&) const -> bool = default;
 };
 
-using ConsumedSignature =
-    std::variant<ConsumedNamespace, ConsumedClass, ConsumedObjectEntry>;
+using ReferencedDeclaration =
+    std::variant<ReferencedNamespace, ReferencedClass, ReferencedObjectEntry>;
 
 // A unit whose instances are a tree of objects the runtime drives (LRM 23.3):
 // the class at the root of the tree, the one body that brings one into

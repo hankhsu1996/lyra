@@ -1,4 +1,4 @@
-#include "lyra/mir/consumed_signatures.hpp"
+#include "lyra/mir/referenced_declarations.hpp"
 
 #include <algorithm>
 #include <optional>
@@ -10,6 +10,7 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/callable.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -29,106 +30,106 @@ namespace lyra::mir {
 
 namespace {
 
-class Reads {
+class Names {
  public:
-  explicit Reads(const CompilationUnit& unit) : unit_(&unit) {
+  explicit Names(const CompilationUnit& unit) : unit_(&unit) {
   }
 
-  // A class read whole, with its lineage. A class this unit defines also
-  // reads what its storage holds, which it builds and ends here.
-  void ReadClass(ClassId id) {
-    if (!read_classes_.insert(id).second) {
+  // A class named whole, with its lineage. A class this unit defines also
+  // names what its storage holds, which it builds and ends here.
+  void NameClass(ClassId id) {
+    if (!named_classes_.insert(id).second) {
       return;
     }
     const mir::Class& cls = unit_->GetClass(id);
     if (cls.defining_unit.has_value()) {
-      Add(ConsumedClass{
+      Add(ReferencedClass{
           .unit_name = *cls.defining_unit,
           .class_path = *support::PathOf(cls.identity)});
     }
     for (const ClassId rested_on : RestsOnDeclaredClasses(cls)) {
-      ReadClass(rested_on);
+      NameClass(rested_on);
     }
     if (cls.defining_unit.has_value()) {
       return;
     }
     for (const FieldDecl& field : cls.fields) {
-      ReadHeld(field.type);
+      NameHeld(field.type);
     }
   }
 
-  // A value of `type`, which reads the declaration a record or an object is.
-  void ReadValue(TypeId type) {
+  // A value of `type`, which names the declaration a record or an object is.
+  void NameValue(TypeId type) {
     const Type& t = unit_->types.Get(type);
     if (const RecordId* record = RecordOf(t)) {
-      ReadRecord(*record);
+      NameRecord(*record);
     } else if (const auto* object = t.As<ObjectType>()) {
-      ReadClass(object->of);
+      NameClass(object->of);
     }
   }
 
-  void ReadCode(const CallableCode& code) {
+  void NameCode(const CallableCode& code) {
     if (code.body.has_value()) {
-      ReadBlock(*code.body);
+      NameBlock(*code.body);
     }
   }
 
-  void ReadConstant(TypeId type, const ConstantValue& value) {
-    ReadHeld(type);
-    ReadConstantValue(value);
+  void NameConstant(TypeId type, const ConstantValue& value) {
+    NameHeld(type);
+    NameConstantValue(value);
   }
 
-  [[nodiscard]] auto Take() && -> std::vector<ConsumedSignature> {
-    return std::move(consumed_);
+  [[nodiscard]] auto Take() && -> std::vector<ReferencedDeclaration> {
+    return std::move(referenced_);
   }
 
  private:
   // A value held: a value of a record, or an object owned, which has to be
-  // complete to move or end; a handle or a borrowed pointer reads nothing.
-  void ReadHeld(TypeId type) {
+  // complete to move or end; a handle or a borrowed pointer names nothing.
+  void NameHeld(TypeId type) {
     const Type& t = unit_->types.Get(type);
     if (const auto* pointer = t.As<PointerType>();
         pointer != nullptr && pointer->ownership == PointerOwnership::kUnique) {
-      ReadHeld(pointer->pointee);
+      NameHeld(pointer->pointee);
     } else if (const auto* vector = t.As<VectorType>()) {
-      ReadHeld(vector->element);
+      NameHeld(vector->element);
     } else {
-      ReadValue(type);
+      NameValue(type);
     }
   }
 
-  void ReadRecord(RecordId id) {
+  void NameRecord(RecordId id) {
     if (const std::optional<std::string>& defining =
             unit_->GetRecord(id).defining_unit) {
-      Add(ConsumedNamespace{.unit_name = *defining});
+      Add(ReferencedNamespace{.unit_name = *defining});
     }
   }
 
-  void ReadBlock(const mir::Block& block) {
+  void NameBlock(const mir::Block& block) {
     for (const Expr& expr : block.exprs) {
-      ReadHeld(expr.type);
-      ReadExpression(expr);
+      NameHeld(expr.type);
+      NameExpression(expr);
     }
     for (const mir::Block& child : block.child_scopes) {
-      ReadBlock(child);
+      NameBlock(child);
     }
   }
 
-  void ReadConstantValue(const ConstantValue& value) {
+  void NameConstantValue(const ConstantValue& value) {
     std::visit(
         Overloaded{
             [&](const PointerValue& pointer) {
-              ReadHeld(pointer.type);
-              ReadReference(pointer.to);
+              NameHeld(pointer.type);
+              NameReference(pointer.to);
             },
             [&](const RecordValue& record) {
               for (const ConstantValue& part : record.parts) {
-                ReadConstantValue(part);
+                NameConstantValue(part);
               }
             },
             [&](const ArrayValue& array) {
               for (const ConstantValue& element : array.elements) {
-                ReadConstantValue(element);
+                NameConstantValue(element);
               }
             },
             [](const IntegralValue&) {}, [](const MachineIntValue&) {},
@@ -137,147 +138,147 @@ class Reads {
         value.value);
   }
 
-  void ReadExpression(const Expr& expr) {
+  void NameExpression(const Expr& expr) {
     if (const auto* access = std::get_if<FieldAccessExpr>(&expr.data)) {
-      ReadField(access->field);
+      NameField(access->field);
     } else if (const auto* call = std::get_if<CallExpr>(&expr.data)) {
-      ReadCall(*call);
+      NameCall(*call);
     } else if (const auto* reference = std::get_if<ReferenceExpr>(&expr.data)) {
-      ReadReference(reference->target);
+      NameReference(reference->target);
     }
   }
 
-  void ReadField(const FieldRef& field) {
+  void NameField(const FieldRef& field) {
     std::visit(
         Overloaded{
-            [&](const ClassFieldTarget& target) { ReadClass(target.owner); },
+            [&](const ClassFieldTarget& target) { NameClass(target.owner); },
             [](const ClosureFieldTarget&) {},
             [](const ComponentFieldTarget&) {}},
         field);
   }
 
-  void ReadCall(const CallExpr& call) {
+  void NameCall(const CallExpr& call) {
     std::visit(
         Overloaded{
             [&](const Direct& direct) {
-              ReadTarget(direct);
+              NameTarget(direct);
               if (direct.part.has_value()) {
                 std::visit(
                     Overloaded{
                         [](const base::ComponentIndex&) {},
                         [&](const ClassFieldTarget& property) {
-                          ReadClass(property.owner);
+                          NameClass(property.owner);
                         }},
                     *direct.part);
               }
             },
             [](const Indirect&) {}, [](const Construct&) {},
             [&](const Virtual& dispatched) {
-              ReadClass(dispatched.slot.owner_class);
+              NameClass(dispatched.slot.owner_class);
             }},
         call.callee);
   }
 
-  void ReadTarget(const Direct& direct) {
+  void NameTarget(const Direct& direct) {
     std::visit(
         Overloaded{
-            [&](const CallableTarget& target) { ReadClass(target.owner); },
+            [&](const CallableTarget& target) { NameClass(target.owner); },
             [](const ClosureTarget&) {},
             [&](const UnitCallableTarget& target) {
               if (const std::optional<std::string>& defining =
                       unit_->callables.Get(target.slot).defining_unit) {
-                Add(ConsumedNamespace{.unit_name = *defining});
+                Add(ReferencedNamespace{.unit_name = *defining});
               }
             },
             [](const support::BuiltinFn&) {},
-            [&](const ConstructorTarget& target) { ReadClass(target.cls); },
+            [&](const ConstructorTarget& target) { NameClass(target.cls); },
             [&](const RecordMethodTarget& target) {
-              ReadRecord(target.record);
+              NameRecord(target.record);
             },
             [](const TypeOperationTarget&) {},
             // The design root brings up every namespace of the design by
             // name, its own set aside.
             [&](const ExternalBringUpTarget& target) {
               if (target.unit_name != unit_->name) {
-                Add(ConsumedNamespace{.unit_name = target.unit_name});
+                Add(ReferencedNamespace{.unit_name = target.unit_name});
               }
             },
             [](const ForeignSymbolTarget&) {}},
         direct.target);
   }
 
-  void ReadReference(const ReferenceTarget& target) {
+  void NameReference(const ReferenceTarget& target) {
     std::visit(
         Overloaded{
             [](const LocalRef&) {},
             // A definition's address is a symbol its class's identity names,
-            // as a handle's type is; it reads nothing the class declares.
+            // as a handle's type is; it names nothing the class declares.
             [](const DefinitionRef&) {}, [](const ConstantRef&) {},
             [&](const StaticPropertyRef& property) {
-              ReadClass(property.owner);
+              NameClass(property.owner);
             },
             [&](const StaticVariableRef& variable) {
               if (const std::optional<std::string>& defining =
                       unit_->static_variables.Get(variable.variable)
                           .defining_unit) {
-                Add(ConsumedNamespace{.unit_name = *defining});
+                Add(ReferencedNamespace{.unit_name = *defining});
               }
             },
             [&](const FunctionRef& function) {
-              ReadClass(function.body.owner);
+              NameClass(function.body.owner);
             },
-            [&](const DispatchEntryRef& entry) { ReadClass(entry.body.owner); },
-            [&](const DestructorRef& end) { ReadClass(end.of); },
-            [&](const DispatchTableRef& table) { ReadClass(table.of); },
+            [&](const DispatchEntryRef& entry) { NameClass(entry.body.owner); },
+            [&](const DestructorRef& end) { NameClass(end.of); },
+            [&](const DispatchTableRef& table) { NameClass(table.of); },
             [&](const InterfaceTableRef& table) {
-              ReadClass(table.of);
-              ReadClass(table.iface);
+              NameClass(table.of);
+              NameClass(table.iface);
             },
             [&](const ExternalObjectEntryRef& entry) {
-              Add(ConsumedObjectEntry{
+              Add(ReferencedObjectEntry{
                   .unit_name = entry.unit_name, .body_name = entry.body_name});
             }},
         target);
   }
 
-  void Add(ConsumedSignature consumed) {
-    if (std::ranges::find(consumed_, consumed) == consumed_.end()) {
-      consumed_.push_back(std::move(consumed));
+  void Add(ReferencedDeclaration referenced) {
+    if (std::ranges::find(referenced_, referenced) == referenced_.end()) {
+      referenced_.push_back(std::move(referenced));
     }
   }
 
   const CompilationUnit* unit_;
-  std::set<ClassId> read_classes_;
-  std::vector<ConsumedSignature> consumed_;
+  std::set<ClassId> named_classes_;
+  std::vector<ReferencedDeclaration> referenced_;
 };
 
 }  // namespace
 
-auto ConsumedSignaturesOf(const CompilationUnit& unit)
-    -> std::vector<ConsumedSignature> {
-  Reads reads(unit);
-  // A class this unit defines is its own declaration, which reads what it
+auto ReferencedDeclarationsOf(const CompilationUnit& unit)
+    -> std::vector<ReferencedDeclaration> {
+  Names names(unit);
+  // A class this unit defines is its own declaration, which names what it
   // extends and what its storage holds.
   for (const ClassId id : unit.classes.Ids()) {
     const Class& cls = unit.GetClass(id);
     if (cls.defining_unit.has_value()) continue;
-    reads.ReadClass(id);
+    names.NameClass(id);
     if (cls.definition.has_value()) {
-      reads.ReadConstant(
+      names.NameConstant(
           LibraryTypeOf(unit.types, support::LibraryDecl::kObjectDefinition),
           *cls.definition);
     }
   }
-  // Every constant of the unit is read, since whichever body or definition
+  // Every constant of the unit is walked, since whichever body or definition
   // names it, the artifact holding it names what it points at.
   for (const ConstantId id : unit.constants.Ids()) {
     const ConstantDecl& constant = unit.constants.Get(id);
-    reads.ReadConstant(constant.type, constant.value);
+    names.NameConstant(constant.type, constant.value);
   }
   ForEachCode(unit, [&](const CodeSource&, const CallableCode& code) {
-    reads.ReadCode(code);
+    names.NameCode(code);
   });
-  return std::move(reads).Take();
+  return std::move(names).Take();
 }
 
 }  // namespace lyra::mir

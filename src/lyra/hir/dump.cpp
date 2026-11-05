@@ -30,6 +30,7 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/published_scope_ref.hpp"
 #include "lyra/hir/scope_construction.hpp"
+#include "lyra/hir/signature_reads.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
@@ -359,6 +360,19 @@ auto FormatInstanceMethodCallee(const InstanceMethodCallee& callee)
       callee);
 }
 
+auto FormatReadOfAnotherUnit(const ReadOfAnotherUnit& read) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const UnitSignatureRead& signature) {
+            return std::format(R"(signature "{}")", signature.unit_name);
+          },
+          [](const ValuesRead& values) {
+            return std::format(R"(values "{}")", values.lowering);
+          },
+          [](const UnitListRead&) { return std::string{"unit list"}; }},
+      read);
+}
+
 class HirDumper {
  public:
   auto Dump(const Lowering& lowered) -> std::string {
@@ -371,6 +385,12 @@ class HirDumper {
     Line("Construction:");
     Indent();
     DumpConstruction(lowered.construction);
+    Dedent();
+    Line("Reads:");
+    Indent();
+    for (const ReadOfAnotherUnit& read : lowered.reads) {
+      Line(FormatReadOfAnotherUnit(read));
+    }
     Dedent();
     Dedent();
     return std::move(out_);

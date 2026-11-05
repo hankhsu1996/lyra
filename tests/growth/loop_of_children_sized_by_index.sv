@@ -6,7 +6,7 @@
 // each unit is made. N is how many blocks the loop counts out.
 // @each-adds: bodies 1, files, bytes, lowerings 1,
 // @each-adds: mir.classes 1, mir.constructors 1, mir.callables, mir.fields,
-// @each-adds: mir.types, mir.consumed signatures 2, mir.declared classes 2,
+// @each-adds: mir.types, mir.referenced declarations 2, mir.declared classes 2,
 // @each-adds: lir.classes 1, lir.functions, lir.members, lir.types,
 // @each-adds: lir.declared classes 2, mir.constants 1
 module Child #(parameter int W = 1) (input logic [W-1:0] d, output logic q);

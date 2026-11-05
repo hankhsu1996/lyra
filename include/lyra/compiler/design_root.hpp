@@ -27,12 +27,12 @@ inline constexpr std::string_view kDesignRootUnitName = "$root";
 // down the same vertical as the rest, so what it answers with is its semantic
 // model and a caller that wants it executable takes it the rest of the way.
 //
-// It is a referrer like any other, and `signatures` is the whole of what it
-// reads of another unit's declarations: each top states the class its
-// instances are, which types the root's handle to one, and a unit that roots
-// no object is a namespace to bring up. No unit's lowered form is among its
-// inputs, so a unit is finished with as soon as a backend has written it, and
-// symbol resolution proper happens where it does for any program -- at link
+// It is a referrer like any other, and what the units published is the whole
+// of what it reads of another unit's declarations: each top states the class
+// its instances are, which types the root's handle to one, and a unit that
+// roots no object is a namespace to bring up. No unit's lowered form is among
+// its inputs, so a unit is finished with as soon as a backend has written it,
+// and symbol resolution proper happens where it does for any program -- at link
 // time.
 //
 // Being the unit the whole design links through, it also states every unit's
@@ -40,7 +40,7 @@ inline constexpr std::string_view kDesignRootUnitName = "$root";
 // its instantiations, as a link states where each symbol resolves.
 auto SynthesizeDesignRoot(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
-    const hir::UnitSignatures& signatures,
+    const hir::UnitSignatures& published,
     lowering::hir_to_mir::DesignInstantiations instantiations,
     const mir_transform::PassOptions& passes,
     const diag::SourceManager& sources) -> diag::Result<mir::CompilationUnit>;

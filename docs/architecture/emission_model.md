@@ -35,8 +35,8 @@ many of them it works on at a time.
   referrer's emitted artifact never embeds what lies outside that published class -- what lowering
   adds to the unit's realization, or the object's size -- and never names a unit it does not
   reference.
-- The rule that what a change re-emits follows the signatures a referrer consumes, not the files it
-  reads.
+- The rule that what a change recompiles follows the parts of signatures a referrer's artifact
+  names, not the files it reads.
 - The role of the runtime SDK as the substrate that stands in for link-time symbol resolution and
   (under LLVM) intrinsics.
 
@@ -109,16 +109,18 @@ many of them it works on at a time.
    every object of it. Nothing about a scope is answered by name at run time: a scope keeps its
    hierarchy segment for `%m` and a scope class keeps its DPI-C export table, and neither is a
    lookup a route reaches.
-7. **A change re-emits exactly the referrers whose consumed signature changed.** A change confined
-   to a unit's bodies changes only its realization, so it changes no signature and re-emits no
-   referrer. A change to a declaration changes what the unit publishes and re-emits every unit that
-   consumes it, which is the dependency being real rather than the mechanism being coarse.
+7. **A change recompiles exactly the referrers whose artifact names a part that changed.** A change
+   confined to a unit's bodies changes only its realization, so it changes no signature and
+   recompiles no referrer. A change to a declaration changes what the unit publishes and recompiles
+   every unit whose artifact names it, which is the dependency being real rather than the mechanism
+   being coarse.
 
-   **A referrer consumes a part of a signature, not the unit whole.** What a unit publishes is its
-   namespace and each class it published, and a reference reads one of those; recording which one is
-   what keeps a change to a class nobody read from reaching anybody. Recording the unit instead
-   would make every referrer of a package depend on every class in it, which is the mechanism being
-   coarse rather than the dependency being real.
+   **A referrer's artifact names a part of a signature, not the unit whole.** What a unit publishes
+   is its namespace and each class it published, and a reference names one of those; naming only
+   that one is what keeps a change to a class nobody named from reaching anybody's compile. Which
+   referrers are lowered again is a different question, answered by what each lowering read
+   (`incremental_build.md` invariant 11), and a referrer lowered again where nothing its artifact
+   names changed writes the same text, which nothing then compiles again.
 
 8. **A published member is placed by the publication, and nothing lowering adds can move it.**
    Because the published part leads the object (invariant 6) and everything the realization adds
@@ -257,7 +259,7 @@ class of `low` that `high` never named is text `high` never sees.
 
 **A code file names every part its unit read, including the ones its own declarations already
 brought.** `high`'s code reads `low.Thing` although `high.Derived` did too. The repetition is the
-point: what a unit depends on is stated in one place a reader can open, rather than being whatever
+point: what a unit's text needs is stated in one place a reader can open, rather than being whatever
 the declarations happened to pull in behind them.
 
 **The graph cannot close.** A declaration draws an arrow to another unit in one way that can chain:
