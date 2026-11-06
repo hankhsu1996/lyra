@@ -177,7 +177,7 @@ class FstWriter final : public DumpWriter {
   // The file's ending writes most of what makes it readable, so a refusal is
   // often first met here, and the writer is gone once it is.
   void Close() override {
-    closed_with_ = RefusalOf(fstWriterClose(std::exchange(context_, nullptr)));
+    closed_with_ = RefusalOf(fstWriterClose2(std::exchange(context_, nullptr)));
   }
 
   void LimitTo(std::uint64_t bytes) override {

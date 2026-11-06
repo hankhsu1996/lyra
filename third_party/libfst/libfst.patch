@@ -1,5 +1,5 @@
 diff --git a/src/fstapi.c b/src/fstapi.c
-index 1afb149..9f12546 100644
+index 1afb149..3ee23e2 100644
 --- a/src/fstapi.c
 +++ b/src/fstapi.c
 @@ -770,6 +770,7 @@ struct fstWriterContext
@@ -164,7 +164,7 @@ index 1afb149..9f12546 100644
 + * file's own close included, or 0 if none did
   */
 -void fstWriterClose(fstWriterContext *xc)
-+int fstWriterClose(fstWriterContext *xc)
++int fstWriterClose2(fstWriterContext *xc)
  {
 +    int write_error = 0;
 +
@@ -340,7 +340,7 @@ index 1afb149..9f12546 100644
                  xc->handle = NULL;
              }
          }
-@@ -2203,8 +2269,11 @@ void fstWriterClose(fstWriterContext *xc)
+@@ -2203,8 +2269,16 @@ void fstWriterClose(fstWriterContext *xc)
  
          free(xc->filename);
          xc->filename = NULL;
@@ -349,10 +349,15 @@ index 1afb149..9f12546 100644
      }
 +
 +    return (write_error);
++}
++
++void fstWriterClose(fstWriterContext *xc)
++{
++    fstWriterClose2(xc);
  }
  
  /*
-@@ -2221,7 +2290,7 @@ void fstWriterSetDate(fstWriterContext *xc, const char *dat)
+@@ -2221,7 +2295,7 @@ void fstWriterSetDate(fstWriterContext *xc, const char *dat)
          memset(s, 0, FST_HDR_DATE_SIZE);
          memcpy(s, dat, (len < FST_HDR_DATE_SIZE) ? len : FST_HDR_DATE_SIZE);
          fstFwrite(s, FST_HDR_DATE_SIZE, 1, xc->handle);
@@ -361,7 +366,7 @@ index 1afb149..9f12546 100644
          fstWriterFseeko(xc, xc->handle, fpos, SEEK_SET);
      }
  }
-@@ -2237,7 +2306,7 @@ void fstWriterSetVersion(fstWriterContext *xc, const char *vers)
+@@ -2237,7 +2311,7 @@ void fstWriterSetVersion(fstWriterContext *xc, const char *vers)
          memset(s, 0, FST_HDR_SIM_VERSION_SIZE);
          memcpy(s, vers, (len < FST_HDR_SIM_VERSION_SIZE) ? len : FST_HDR_SIM_VERSION_SIZE);
          fstFwrite(s, FST_HDR_SIM_VERSION_SIZE, 1, xc->handle);
@@ -370,7 +375,7 @@ index 1afb149..9f12546 100644
          fstWriterFseeko(xc, xc->handle, fpos, SEEK_SET);
      }
  }
-@@ -2252,7 +2321,7 @@ void fstWriterSetFileType(fstWriterContext *xc, enum fstFileType filetype)
+@@ -2252,7 +2326,7 @@ void fstWriterSetFileType(fstWriterContext *xc, enum fstFileType filetype)
  
              fstWriterFseeko(xc, xc->handle, FST_HDR_OFFS_FILETYPE, SEEK_SET);
              fputc(xc->filetype, xc->handle);
@@ -379,7 +384,7 @@ index 1afb149..9f12546 100644
              fstWriterFseeko(xc, xc->handle, fpos, SEEK_SET);
          }
      }
-@@ -2366,7 +2435,7 @@ void fstWriterSetTimescale(fstWriterContext *xc, int ts)
+@@ -2366,7 +2440,7 @@ void fstWriterSetTimescale(fstWriterContext *xc, int ts)
          fst_off_t fpos = ftello(xc->handle);
          fstWriterFseeko(xc, xc->handle, FST_HDR_OFFS_TIMESCALE, SEEK_SET);
          fputc(ts & 255, xc->handle);
@@ -388,7 +393,7 @@ index 1afb149..9f12546 100644
          fstWriterFseeko(xc, xc->handle, fpos, SEEK_SET);
      }
  }
-@@ -2438,7 +2507,7 @@ void fstWriterSetTimezero(fstWriterContext *xc, int64_t tim)
+@@ -2438,7 +2512,7 @@ void fstWriterSetTimezero(fstWriterContext *xc, int64_t tim)
          fst_off_t fpos = ftello(xc->handle);
          fstWriterFseeko(xc, xc->handle, FST_HDR_OFFS_TIMEZERO, SEEK_SET);
          fstWriterUint64(xc->handle, (xc->timezero = tim));
@@ -397,13 +402,13 @@ index 1afb149..9f12546 100644
          fstWriterFseeko(xc, xc->handle, fpos, SEEK_SET);
      }
  }
-@@ -2499,6 +2568,27 @@ int fstWriterGetFseekFailed(fstWriterContext *xc)
+@@ -2499,6 +2573,27 @@ int fstWriterGetFseekFailed(fstWriterContext *xc)
      return (0);
  }
  
 +/*
 + * the errno of the first write that failed so far, 0 if none has; a failure in
-+ * the writes that end the file is answered by fstWriterClose()
++ * the writes that end the file is answered by fstWriterClose2()
 + */
 +int fstWriterGetWriteError(fstWriterContext *xc)
 +{
@@ -426,20 +431,19 @@ index 1afb149..9f12546 100644
  {
      return (xc->vchg_siz >= xc->fst_break_size) || (xc->flush_context_pending);
 diff --git a/src/fstapi.h b/src/fstapi.h
-index 00c6315..6748280 100644
+index 00c6315..95faf40 100644
 --- a/src/fstapi.h
 +++ b/src/fstapi.h
-@@ -374,7 +374,8 @@ struct fstETab
- 
+@@ -375,6 +375,8 @@ struct fstETab
  typedef struct fstWriterContext fstWriterContext;
  
--void fstWriterClose(fstWriterContext *ctx);
-+/* answers the errno of the first write that failed, closing included, or 0 */
-+int fstWriterClose(fstWriterContext *ctx);
+ void fstWriterClose(fstWriterContext *ctx);
++/* fstWriterClose, answering the errno of the first write that failed, or 0 */
++int fstWriterClose2(fstWriterContext *ctx);
  fstWriterContext *fstWriterCreate(const char *nam, int use_compressed_hier);
  fstEnumHandle fstWriterCreateEnumTable(fstWriterContext *ctx,
                                          const char *name,
-@@ -428,6 +429,8 @@ void fstWriterEmitTimeChange(fstWriterContext *ctx, uint64_t tim);
+@@ -428,6 +430,8 @@ void fstWriterEmitTimeChange(fstWriterContext *ctx, uint64_t tim);
  void fstWriterFlushContext(fstWriterContext *ctx);
  int fstWriterGetDumpSizeLimitReached(fstWriterContext *ctx);
  int fstWriterGetFseekFailed(fstWriterContext *ctx);
