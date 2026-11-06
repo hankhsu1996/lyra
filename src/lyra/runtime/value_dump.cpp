@@ -1,26 +1,33 @@
 #include "lyra/runtime/value_dump.hpp"
 
 #include <algorithm>
-#include <condition_variable>
+#include <array>
+#include <atomic>
+#include <cerrno>
 #include <cstdint>
-#include <deque>
 #include <exception>
-#include <future>
+#include <expected>
+#include <fcntl.h>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
+#include <sys/types.h>
+#include <system_error>
 #include <thread>
+#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/base/write_all.hpp"
 #include "lyra/runtime/dump_writer.hpp"
 #include "lyra/runtime/file.hpp"
 #include "lyra/runtime/hierarchy_levels.hpp"
@@ -158,10 +165,8 @@ struct EndDefinitionsCommand {};
 struct TimeCommand {
   SimTime time;
 };
-// The changes of one capture of the batch, by its position there.
-struct ChangesCommand {
-  std::size_t capture;
-};
+// The changes the unit's capture holds.
+struct ChangesCommand {};
 struct BeginCheckpointCommand {
   DumpCheckpoint checkpoint;
 };
@@ -169,9 +174,7 @@ struct EndCheckpointCommand {};
 struct LimitCommand {
   std::uint64_t bytes;
 };
-struct FlushCommand {
-  std::shared_ptr<std::promise<void>> done;
-};
+struct FlushCommand {};
 struct CloseCommand {};
 
 using DumpCommand = std::variant<
@@ -179,17 +182,121 @@ using DumpCommand = std::variant<
     EndDefinitionsCommand, TimeCommand, ChangesCommand, BeginCheckpointCommand,
     EndCheckpointCommand, LimitCommand, FlushCommand, CloseCommand>;
 
+// What the simulation records between two points where it is whole: the
+// definitions, a time step's changes, a checkpoint, a bound, a flush, the
+// end. At most one capture of values is among it.
+struct DumpUnit {
+  std::vector<DumpCommand> commands;
+  DumpCapture capture;
+  bool captured = false;
+};
+
+// A pipe one side writes a byte into to have the other look again. Both
+// `write` and `read` are async-signal-safe (POSIX.1-2024, 2.4.3), so it is
+// the one way to wake a thread that a signal handler and a thread may both
+// take, and to wait in a handler for one; a pipe whose writing end is closed
+// wakes every reader at once, for good.
+class Wakeup {
+ public:
+  // A wake-up on a pipe of its own, or why the system made none.
+  static auto Open() -> std::expected<Wakeup, std::error_code> {
+    std::array<int, 2> ends{};
+    if (::pipe2(ends.data(), O_CLOEXEC) != 0) {
+      return std::unexpected(std::error_code(errno, std::system_category()));
+    }
+    return Wakeup(ends[0], ends[1]);
+  }
+  Wakeup(const Wakeup&) = delete;
+  auto operator=(const Wakeup&) -> Wakeup& = delete;
+  Wakeup(Wakeup&& other) noexcept
+      : read_end_(std::exchange(other.read_end_, -1)),
+        write_end_(std::exchange(other.write_end_, -1)) {
+  }
+  auto operator=(Wakeup&&) -> Wakeup& = delete;
+  ~Wakeup() {
+    if (read_end_ >= 0) {
+      ::close(read_end_);
+    }
+    CloseForGood();
+  }
+
+  // Wakes one reader. A byte is written only where a side is known to wait,
+  // or once by an ending, so the pipe never holds more than a few and the
+  // write never blocks.
+  void Wake() const noexcept {
+    const char byte = 0;
+    base::WriteAll(write_end_, std::span(&byte, 1));
+  }
+
+  // Wakes every reader now and from now on.
+  void CloseForGood() noexcept {
+    if (write_end_ >= 0) {
+      ::close(std::exchange(write_end_, -1));
+    }
+  }
+
+  // Returns once woken, or once the pipe is closed for good.
+  void Await() const noexcept {
+    char byte = 0;
+    while (::read(read_end_, &byte, 1) < 0 && errno == EINTR) {
+    }
+  }
+
+  // Returns once the pipe is closed for good, whatever wakes it before.
+  void AwaitClosedForGood() const noexcept {
+    char byte = 0;
+    while (true) {
+      const ssize_t got = ::read(read_end_, &byte, 1);
+      if (got > 0 || (got < 0 && errno == EINTR)) continue;
+      return;
+    }
+  }
+
+ private:
+  Wakeup(int read_end, int write_end)
+      : read_end_(read_end), write_end_(write_end) {
+  }
+
+  int read_end_ = -1;
+  int write_end_ = -1;
+};
+
 }  // namespace
 
-// What one dump hands its writing thread at a time, and that thread. A batch
-// is handed over once it holds enough values to be worth the hand-off, or
-// where the simulation has to wait for the file; no more than a few are in
-// flight, so a writer that falls behind makes the simulation wait rather than
-// grow.
+// What one dump records, on its way from the simulation to the thread that
+// writes the file, and that thread.
+//
+// The simulation fills one unit at a time and publishes it whole by counting
+// it, so whoever reads the count reads only units nothing is still filling --
+// what a file's finished bytes are to an ending (`File`), a published unit is
+// here. A ring of them stands between the two sides, so a writer that falls
+// behind makes the simulation wait rather than grow, and the writer is woken
+// once enough units wait to be worth it, or one must be written now.
+//
+// Nothing between the two sides takes a lock. An ending reaches this from a
+// signal handler, which may have stopped the simulation anywhere, holding
+// anything; it may only set a flag, write a byte and read one. The writer it
+// hands the dump to encodes, and so allocates, from its own thread's arena: a
+// refused request for memory therefore finishes no dump, and an ending that
+// stopped the simulation inside the allocator itself can leave the writer
+// waiting on it, until a stop from outside ends the process.
 class DumpOutput {
  public:
-  explicit DumpOutput(std::unique_ptr<DumpWriter> writer)
-      : writer_(std::move(writer)), thread_([this] { Run(); }) {
+  // The output of a dump written by `writer`, its thread started, or why the
+  // system would not give it what it waits on.
+  static auto Start(std::unique_ptr<DumpWriter> writer)
+      -> std::expected<std::unique_ptr<DumpOutput>, std::error_code> {
+    auto to_writer = Wakeup::Open();
+    auto to_simulation = Wakeup::Open();
+    auto finished = Wakeup::Open();
+    for (const auto* opened : {&to_writer, &to_simulation, &finished}) {
+      if (!opened->has_value()) {
+        return std::unexpected(opened->error());
+      }
+    }
+    return std::unique_ptr<DumpOutput>(new DumpOutput(
+        std::move(writer), *std::move(to_writer), *std::move(to_simulation),
+        *std::move(finished)));
   }
   DumpOutput(const DumpOutput&) = delete;
   auto operator=(const DumpOutput&) -> DumpOutput& = delete;
@@ -197,163 +304,274 @@ class DumpOutput {
   auto operator=(DumpOutput&&) -> DumpOutput& = delete;
   ~DumpOutput() {
     if (thread_.joinable()) {
-      Send(CloseCommand{});
-      HandOver();
-      thread_.join();
+      Close();
     }
   }
 
   void Send(DumpCommand command) {
-    current_.commands.push_back(std::move(command));
+    Filling().commands.push_back(std::move(command));
   }
 
-  // The capture the next step's changes go into.
-  auto NextCapture() -> DumpCapture& {
-    if (current_.used == current_.captures.size()) {
-      current_.captures.emplace_back();
+  // The capture the unit's values go into, recorded by `ChangesCommand`.
+  auto Capture() -> DumpCapture& {
+    DumpUnit& unit = Filling();
+    if (unit.captured) {
+      throw InternalError("a value dump unit holds a second capture");
     }
-    DumpCapture& capture = current_.captures[current_.used];
-    capture.Clear();
-    return capture;
-  }
-  // Records the capture last handed out as the step's changes.
-  void SendCapture() {
-    Send(ChangesCommand{.capture = current_.used});
-    ++current_.used;
-    if (current_.used >= kCapturesPerBatch) {
-      HandOver();
-    }
+    unit.captured = true;
+    return unit.capture;
   }
 
+  // The unit being filled is whole.
+  void Publish() {
+    PublishFilling(false);
+  }
+
+  // Returns once everything published before it is in the file.
   void Flush() {
-    auto done = std::make_shared<std::promise<void>>();
-    std::future<void> written = done->get_future();
-    Send(FlushCommand{.done = std::move(done)});
-    HandOver();
-    written.wait();
-    RethrowFailure();
+    Send(FlushCommand{});
+    PublishFilling(true);
+    AwaitWriter([&] { return written_.load() >= filling_; });
   }
 
+  // Returns once the file is ended and its thread gone.
   void Close() {
     Send(CloseCommand{});
-    HandOver();
+    PublishFilling(true);
     thread_.join();
-    RethrowFailure();
+  }
+
+  // What the system refused, once the writer has met it; nothing before.
+  [[nodiscard]] auto Refused() const -> std::error_code {
+    if (!refused_seen_.load(std::memory_order_acquire)) {
+      return {};
+    }
+    return refused_;
+  }
+
+  // A defect the writer met, raised where the simulation next hands it work.
+  void RethrowBroken() const {
+    if (broken_seen_.load(std::memory_order_acquire)) {
+      std::rethrow_exception(broken_);
+    }
+  }
+
+  // The ending's half: everything published is written, the file ended at
+  // `now`, and only then does this return. On the writer's own thread there
+  // is no one left to finish it, and it is left as it stands.
+  void FinishAtEnding(SimTime now) noexcept {
+    if (WrittenHere() == this) {
+      return;
+    }
+    finish_at_.store(now);
+    finishing_.store(true);
+    // Woken whether or not it is seen to sleep: the stop may have landed
+    // between the simulation finding the writer asleep and waking it, and a
+    // spare byte only makes the writer look again.
+    to_writer_.Wake();
+    finished_.AwaitClosedForGood();
   }
 
  private:
-  static constexpr std::size_t kCapturesPerBatch = 256;
-  static constexpr std::size_t kBatchesInFlight = 4;
-
-  struct Batch {
-    std::vector<DumpCommand> commands;
-    std::vector<DumpCapture> captures;
-    std::size_t used = 0;
-  };
-
-  void HandOver() {
-    std::unique_lock lock(mutex_);
-    space_.wait(lock, [&] { return pending_.size() < kBatchesInFlight; });
-    pending_.push_back(std::move(current_));
-    ready_.notify_one();
-    if (!spare_.empty()) {
-      current_ = std::move(spare_.back());
-      spare_.pop_back();
-    } else {
-      current_ = Batch{};
-    }
-    current_.commands.clear();
-    current_.used = 0;
+  DumpOutput(
+      std::unique_ptr<DumpWriter> writer, Wakeup to_writer,
+      Wakeup to_simulation, Wakeup finished)
+      : writer_(std::move(writer)),
+        units_(kUnits),
+        to_writer_(std::move(to_writer)),
+        to_simulation_(std::move(to_simulation)),
+        finished_(std::move(finished)),
+        thread_([this] { Run(); }) {
   }
 
-  void RethrowFailure() {
-    std::lock_guard lock(mutex_);
-    if (failure_ != nullptr) {
-      std::rethrow_exception(std::exchange(failure_, nullptr));
+  // The writer may fall behind by a burst of time steps before the simulation
+  // waits for it, and is woken for a quarter of that, so a wake-up's system
+  // call is paid once for many steps.
+  static constexpr std::uint64_t kUnits = 1024;
+  static constexpr std::uint64_t kWakeAfter = 256;
+
+  // The dump whose file the calling thread writes; none on any other thread.
+  static auto WrittenHere() noexcept -> const DumpOutput*& {
+    thread_local constinit const DumpOutput* written_here = nullptr;
+    return written_here;
+  }
+
+  // The unit the simulation fills, made empty where it starts, once the
+  // writer is done with what the slot held last.
+  auto Filling() -> DumpUnit& {
+    DumpUnit& unit = units_[filling_ % kUnits];
+    if (!filling_started_) {
+      AwaitWriter([&] { return filling_ - written_.load() < kUnits; });
+      unit.commands.clear();
+      unit.capture.Clear();
+      unit.captured = false;
+      filling_started_ = true;
+    }
+    return unit;
+  }
+
+  void PublishFilling(bool now) {
+    Filling();
+    filling_started_ = false;
+    ++filling_;
+    published_.store(filling_);
+    if (now) {
+      urgent_.store(filling_);
+    }
+    if (now || filling_ - written_.load() >= kWakeAfter) {
+      WakeWriter();
+    }
+  }
+
+  void WakeWriter() noexcept {
+    if (writer_sleeps_.exchange(false)) {
+      to_writer_.Wake();
+    }
+  }
+
+  // Waits on the writer until `ready` holds, waking it first: what it waits
+  // for may be fewer units than wake it on their own.
+  template <typename Ready>
+  void AwaitWriter(Ready ready) {
+    while (!ready()) {
+      simulation_waits_.store(true);
+      if (ready()) {
+        simulation_waits_.store(false);
+        return;
+      }
+      WakeWriter();
+      to_simulation_.Await();
     }
   }
 
   void Run() {
-    // A stop from outside is handled by the thread running the design, which
-    // hands the files over whole; this thread only writes the dump.
+    // A stop from outside is handled by the thread running the design, never
+    // by this one: the ending it starts waits on this thread to end the file.
     const StopSignalsHeld stop_signals_held;
-    for (bool open = true; open;) {
-      Batch batch;
-      {
-        std::unique_lock lock(mutex_);
-        ready_.wait(lock, [&] { return !pending_.empty(); });
-        batch = std::move(pending_.front());
-        pending_.pop_front();
-        space_.notify_one();
+    WrittenHere() = this;
+    std::uint64_t written = 0;
+    while (true) {
+      // Read before the count, so that an ending seen here sees every unit
+      // published before it.
+      const bool finishing = finishing_.load();
+      const std::uint64_t ready = published_.load();
+      bool closed = false;
+      for (; written < ready; ++written) {
+        closed = Write(units_[written % kUnits]) || closed;
+        written_.store(written + 1);
+        if (simulation_waits_.exchange(false)) {
+          to_simulation_.Wake();
+        }
       }
-      for (DumpCommand& command : batch.commands) {
-        open = Write(command, batch) && open;
+      if (closed) {
+        break;
       }
-      std::lock_guard lock(mutex_);
-      spare_.push_back(std::move(batch));
+      if (finishing) {
+        FinishAt(finish_at_.load());
+        break;
+      }
+      writer_sleeps_.store(true);
+      if (finishing_.load() || urgent_.load() > written ||
+          published_.load() - written >= kWakeAfter) {
+        writer_sleeps_.store(false);
+        continue;
+      }
+      to_writer_.Await();
+      writer_sleeps_.store(false);
     }
+    finished_.CloseForGood();
   }
 
-  // Writes one command, answering whether the file is still open. A failure
-  // to write is kept for the simulation to report where it next waits on the
-  // file, and nothing more is written.
-  auto Write(DumpCommand& command, const Batch& batch) -> bool {
+  // Writes one unit, answering whether it ended the file.
+  auto Write(DumpUnit& unit) -> bool {
+    bool closed = false;
+    for (DumpCommand& command : unit.commands) {
+      closed = Write(command, unit) || closed;
+    }
+    return closed;
+  }
+
+  // Writes one command, answering whether it ended the file. What follows a
+  // refusal or a defect is not written.
+  auto Write(DumpCommand& command, const DumpUnit& unit) -> bool {
     return std::visit(
         Overloaded{
             [&](const ScopeCommand& c) {
               Attempt([&] { writer_->Scope(c.kind, c.name); });
-              return true;
+              return false;
             },
             [&](const UpscopeCommand&) {
               Attempt([&] { writer_->Upscope(); });
-              return true;
+              return false;
             },
             [&](const VarCommand& c) {
               Attempt([&] { writer_->Var(c.code, c.entry); });
-              return true;
+              return false;
             },
             [&](const AliasCommand& c) {
               Attempt([&] { writer_->Alias(c.code, c.entry); });
-              return true;
+              return false;
             },
             [&](const TimescaleCommand& c) {
               Attempt([&] { writer_->Timescale(c.precision_power); });
-              return true;
+              return false;
             },
             [&](const EndDefinitionsCommand&) {
               Attempt([&] { writer_->EndDefinitions(); });
-              return true;
+              defined_ = true;
+              return false;
             },
             [&](const TimeCommand& c) {
-              WhileRoom([&] { writer_->Time(c.time); });
-              return true;
+              WriteTime(c.time);
+              return false;
             },
-            [&](const ChangesCommand& c) {
-              Attempt([&] { WriteChanges(batch.captures[c.capture]); });
-              return true;
+            [&](const ChangesCommand&) {
+              Attempt([&] { WriteChanges(unit.capture); });
+              return false;
             },
             [&](const BeginCheckpointCommand& c) {
               WhileRoom([&] { writer_->BeginCheckpoint(c.checkpoint); });
-              return true;
+              return false;
             },
             [&](const EndCheckpointCommand&) {
               WhileRoom([&] { writer_->EndCheckpoint(); });
-              return true;
+              return false;
             },
             [&](const LimitCommand& c) {
               Attempt([&] { writer_->LimitTo(c.bytes); });
-              return true;
+              return false;
             },
-            [&](FlushCommand& c) {
+            [&](const FlushCommand&) {
               Attempt([&] { writer_->Flush(); });
-              c.done->set_value();
-              return true;
+              return false;
             },
             [&](const CloseCommand&) {
               Attempt([&] { writer_->Close(); });
-              return false;
+              return true;
             }},
         command);
+  }
+
+  // A time step is named once, however many of its records follow: a change,
+  // a checkpoint and the file's end in one step are all under the one `#time`
+  // (LRM 21.7.2.1).
+  void WriteTime(SimTime time) {
+    if (time_written_ == time) {
+      return;
+    }
+    time_written_ = time;
+    WhileRoom([&] { writer_->Time(time); });
+  }
+
+  // The file ends where the run was, as a close at the end of the run ends
+  // it, once its definitions are there for a time to follow. An ending on a
+  // thread other than the simulation's leaves the simulation running, which
+  // may have published a later step since, and a file's time never goes back.
+  void FinishAt(SimTime now) {
+    if (defined_ && (!time_written_.has_value() || now > *time_written_)) {
+      WriteTime(now);
+    }
+    Attempt([&] { writer_->Close(); });
   }
 
   // What the file records only while it has room for more.
@@ -379,37 +597,62 @@ class DumpOutput {
     }
   }
 
+  // Runs `body` unless something before it went wrong, and keeps what went
+  // wrong in it for the simulation.
   template <class Body>
   void Attempt(Body body) {
-    if (failed_) {
+    if (stopped_) {
       return;
     }
     try {
       body();
-    } catch (const SimulationError&) {
-      Fail();
     } catch (const InternalError&) {
-      Fail();
+      stopped_ = true;
+      broken_ = std::current_exception();
+      broken_seen_.store(true, std::memory_order_release);
+      return;
+    }
+    if (const std::error_code refused = writer_->Refused()) {
+      stopped_ = true;
+      refused_ = refused;
+      refused_seen_.store(true, std::memory_order_release);
     }
   }
 
-  void Fail() {
-    failed_ = true;
-    std::lock_guard lock(mutex_);
-    failure_ = std::current_exception();
-  }
-
   std::unique_ptr<DumpWriter> writer_;
-  Batch current_;
-  std::mutex mutex_;
-  std::condition_variable ready_;
-  std::condition_variable space_;
-  std::deque<Batch> pending_;
-  std::vector<Batch> spare_;
-  std::exception_ptr failure_;
-  // Read and written by the writing thread alone.
-  bool failed_ = false;
+  std::vector<DumpUnit> units_;
+
+  // Read and written by the simulation alone.
+  std::uint64_t filling_ = 0;
+  bool filling_started_ = false;
+
+  // Read and written by the writer alone.
+  bool stopped_ = false;
+  bool defined_ = false;
   bool full_ = false;
+  std::optional<SimTime> time_written_;
+
+  // Shared, each written by one side: the counts, and what the writer met,
+  // written before the flag that says so.
+  std::atomic<std::uint64_t> published_ = 0;
+  std::atomic<std::uint64_t> urgent_ = 0;
+  std::atomic<std::uint64_t> written_ = 0;
+  std::error_code refused_;
+  std::atomic<bool> refused_seen_ = false;
+  std::exception_ptr broken_;
+  std::atomic<bool> broken_seen_ = false;
+  // Which side waits for the other, each set by the waiting side and taken
+  // by the one that wakes it.
+  std::atomic<bool> writer_sleeps_ = false;
+  std::atomic<bool> simulation_waits_ = false;
+  // Set by an ending.
+  std::atomic<bool> finishing_ = false;
+  std::atomic<SimTime> finish_at_ = 0;
+
+  Wakeup to_writer_;
+  Wakeup to_simulation_;
+  // Closed for good once the file is ended.
+  Wakeup finished_;
   std::thread thread_;
 };
 
@@ -620,9 +863,27 @@ class PortDescriber final : public Describer {
 
 }  // namespace
 
+void RaiseForWhoeverAsked(
+    base::SourceLocation asked_at, base::DiagMessage message) {
+  if (!asked_at.IsValid()) {
+    throw SimulationError(base::kNoSourceLocation, std::move(message));
+  }
+  const base::SourceLocationScope bound(asked_at);
+  throw SimulationError(std::move(message));
+}
+
 ValueDump::ValueDump(
-    std::unique_ptr<DumpWriter> writer, std::int8_t precision_power)
-    : output_(std::make_unique<DumpOutput>(std::move(writer))) {
+    std::unique_ptr<DumpWriter> writer, std::int8_t precision_power,
+    std::string file, base::SourceLocation asked_at)
+    : file_(std::move(file)), asked_at_(asked_at) {
+  auto output = DumpOutput::Start(std::move(writer));
+  if (!output.has_value()) {
+    RaiseForWhoeverAsked(
+        asked_at_, base::DiagMessage(
+                       "the dump file '{}' could not be written ({})", file_,
+                       output.error().message()));
+  }
+  output_ = *std::move(output);
   output_->Send(TimescaleCommand{.precision_power = precision_power});
 }
 
@@ -678,13 +939,14 @@ void ValueDump::EndStep(SimTime now) {
     return;
   }
   At(now);
-  DumpCapture& capture = output_->NextCapture();
+  DumpCapture& capture = output_->Capture();
   for (DumpWatch* watch : changed_) {
     watch->TakeChanged();
     watch->Read(capture);
   }
   changed_.clear();
-  output_->SendCapture();
+  output_->Send(ChangesCommand{});
+  Publish();
 }
 
 void ValueDump::Off(SimTime now) {
@@ -710,13 +972,7 @@ void ValueDump::All(SimTime now) {
   Checkpoint(DumpCheckpoint::kDumpall, now);
 }
 
-// A time step is named once, however many of its records follow: a change
-// and a checkpoint of one step are both under the one `#time` (LRM 21.7.2.1).
 void ValueDump::At(SimTime now) {
-  if (time_sent_ == now) {
-    return;
-  }
-  time_sent_ = now;
   output_->Send(TimeCommand{.time = now});
 }
 
@@ -726,11 +982,36 @@ void ValueDump::Limit(std::uint64_t bytes) {
 
 void ValueDump::Flush() {
   output_->Flush();
+  RaiseIfRefused();
 }
 
 void ValueDump::Close(SimTime now) {
   At(now);
   output_->Close();
+  RaiseIfRefused();
+}
+
+void ValueDump::FinishAtEnding(SimTime now) noexcept {
+  output_->FinishAtEnding(now);
+}
+
+void ValueDump::Publish() {
+  output_->Publish();
+  RaiseIfRefused();
+}
+
+// Found by the thread writing the file, and said here, where the simulation
+// next hands it something.
+void ValueDump::RaiseIfRefused() {
+  output_->RethrowBroken();
+  const std::error_code refused = output_->Refused();
+  if (!refused || std::exchange(refusal_raised_, true)) {
+    return;
+  }
+  RaiseForWhoeverAsked(
+      asked_at_, base::DiagMessage(
+                     "the dump file '{}' could not be written ({})", file_,
+                     refused.message()));
 }
 
 // A checkpoint records every thing as it stands, which is where each change
@@ -744,7 +1025,7 @@ void ValueDump::Checkpoint(DumpCheckpoint checkpoint, SimTime now) {
   changed_.clear();
   At(now);
   output_->Send(BeginCheckpointCommand{.checkpoint = checkpoint});
-  DumpCapture& capture = output_->NextCapture();
+  DumpCapture& capture = output_->Capture();
   for (const std::unique_ptr<DumpWatch>& watch : watches_) {
     if (unknown) {
       capture.Unknown(watch->Code());
@@ -752,8 +1033,9 @@ void ValueDump::Checkpoint(DumpCheckpoint checkpoint, SimTime now) {
       watch->Read(capture);
     }
   }
-  output_->SendCapture();
+  output_->Send(ChangesCommand{});
   output_->Send(EndCheckpointCommand{});
+  Publish();
 }
 
 }  // namespace lyra::runtime

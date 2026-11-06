@@ -6,7 +6,9 @@
 
 ## Status
 
-Accepted.
+Accepted. Revised 2026-11-05: D4's thread is also what an ending hands the dump to, so the
+simulation publishes each unit it records whole rather than handing over full blocks, and a file the
+system refuses to write is reported as one that cannot be opened is.
 
 ## Why this decision matters
 
@@ -102,11 +104,28 @@ everything is a measurement still to make.
 
 ### D4. The file is written on a thread of its own, in an order the simulation alone decides
 
-The simulation copies each step's values into a block of records and hands full blocks to the dump's
-own writer, which formats and writes them. At most a fixed number of blocks wait, so a writer that
-falls behind makes the simulation wait rather than grow without bound. `$dumpflush` returns once
-everything recorded before it is in the file. What the file holds does not depend on when the writer
-runs.
+The simulation copies each step's values into a unit of records -- a time step's changes, a
+checkpoint, the definitions -- and publishes each unit whole to the dump's own writer, which formats
+and writes them; the writer is woken once enough units wait, or one has to be written now. At most a
+fixed number of units wait, so a writer that falls behind makes the simulation wait rather than grow
+without bound. `$dumpflush` returns once everything recorded before it is in the file. What the file
+holds does not depend on when the writer runs.
+
+The thread is kept for more than taking the encoding off the simulation, which Verilator measured to
+be of doubtful worth. It is the one thread an ending can hand the dump to: a run stopped from
+outside or by a fault leaves the simulation wherever the signal found it, and encoding the units it
+recorded, and ending an FST file, is work no signal handler may do. Every unit published is written
+and the file ended before such a run ends ([ending-a-run](ending-a-run.md) D5); the simulation may
+be stopped holding anything, so no lock stands between the two sides, and an FST block is compressed
+on this thread, not on one of libfst's own, so the file waits on no other.
+
+A dump whose file cannot be opened, or whose two sides the system gives no pipes to wait on, is the
+failure of whoever asked for it: the `$dumpvars` or `$dumpports` call at its place, or the run's own
+options. So is a file the system refuses to write -- full, gone, or failing as it is ended. The
+writer meets the refusal, writes nothing more, and the simulation reports it where it next hands the
+writer a unit, or waits on it. libfst checks no write it makes, so the build carries a change to it
+that keeps the first one refused and answers it from a query and from the file's close, as `ferror`
+and `fclose` do for a C stream; the same change is gtkwave/libfst#34.
 
 ### D5. A format is a writer, chosen by the file's name
 
@@ -149,8 +168,8 @@ class and no object, so the scope holding it describes it as a `begin` scope of 
   variable, records the same changes in a file. Written to the run's output, its lines would have to
   keep their order with `$display`, which a writer on its own thread cannot do.
 - **Splitting the encoding across threads by signal.** The measurement that recommends it was taken
-  on a single-threaded encoder, and libfst already compresses a block on a thread of its own; it
-  waits for a measurement of Lyra's own.
+  on a single-threaded encoder; it waits for a measurement of Lyra's own, and a split would have to
+  leave an ending one thread to hand the dump to.
 
 ## Consequences
 

@@ -583,7 +583,7 @@ void FileTable::DeliverFinished() noexcept {
   }
 }
 
-void DeliverFinishedOutput() noexcept {
+void DeliverFinishedFiles() noexcept {
   if (FileTable* table = DeliveringTable().load(); table != nullptr) {
     table->DeliverFinished();
   }

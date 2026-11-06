@@ -86,12 +86,17 @@ bazel_dep(name = "boost.context", version = "1.89.0")
 # the functions it calls.
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
+# The writer is patched to keep the first write the system refused and answer
+# it, from a query while the file is open and from its close, so a dump that
+# could not be written is reported; the same change is gtkwave/libfst#34.
 http_archive(
     name = "libfst",
     build_file = "//third_party/libfst:libfst.BUILD",
-    sha256 = "be5faa372dcaa4141445d0a4f8dd672114679da08fd6a8b32a7e69b262e188b5",
-    strip_prefix = "libfst-c716c1f67e21a06aaf8722830b371516e70dc657",
-    urls = ["https://github.com/gtkwave/libfst/archive/c716c1f67e21a06aaf8722830b371516e70dc657.tar.gz"],
+    patch_args = ["-p1"],
+    patches = ["//third_party/libfst:libfst.patch"],
+    sha256 = "d452da10eebafcd06bb155c7e15137031cf443c45b4d9121e454b8c8bdd3aa99",
+    strip_prefix = "libfst-17f6a5d27b2f576d65b550114fbde3c035cc74a8",
+    urls = ["https://github.com/gtkwave/libfst/archive/17f6a5d27b2f576d65b550114fbde3c035cc74a8.tar.gz"],
 )
 
 # `randomize()` solves constraints with CUDD's decision diagrams, which

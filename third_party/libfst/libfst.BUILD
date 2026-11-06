@@ -1,5 +1,8 @@
 # GTKWave's FST library (MIT), built as its own Meson build configures it on a
-# POSIX host: the writer may compress a block on a thread of its own.
+# POSIX host, without the writer's own compression thread: a dump compresses
+# its blocks on the one thread that writes it, which is the thread an ending
+# waits on to finish the file, so no thread of the library's can be the one
+# that file waits for.
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
@@ -17,11 +20,8 @@ cc_library(
     ],
     hdrs = ["src/fstapi.h"],
     includes = ["src"],
-    linkopts = ["-lpthread"],
     local_defines = [
         "_GNU_SOURCE",
-        "FST_WRITER_PARALLEL",
-        "HAVE_LIBPTHREAD",
         "HAVE_FSEEKO",
         "HAVE_REALPATH",
     ],

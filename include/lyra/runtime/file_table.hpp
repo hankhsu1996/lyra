@@ -239,10 +239,6 @@ class FileTable {
   // first three file descriptors.
   static constexpr std::size_t kPreOpenedCount = 3;
 
-  // The C stream a file was opened as, closed with it, which closes its
-  // descriptor.
-  using OpenedStream = std::unique_ptr<std::FILE, decltype(&std::fclose)>;
-
   // What a descriptor names: the file while it is open, the C stream the
   // descriptor was opened as (none for a pre-opened file, which is never
   // closed), the last error recorded on it, and the cancel signal of the
@@ -270,7 +266,7 @@ class FileTable {
   // What finished output calls wrote to every open file reaches it, with
   // `write` alone.
   void DeliverFinished() noexcept;
-  friend void DeliverFinishedOutput() noexcept;
+  friend void DeliverFinishedFiles() noexcept;
 
   // Indexed by the low bits of a file descriptor; the first three are the
   // pre-opened files.
@@ -280,10 +276,9 @@ class FileTable {
 };
 
 // What finished output calls wrote to every open file of the run reaches it,
-// with nothing but `write`: what an ending the process can still act on does
-// before it ends, from a signal handler or wherever else nothing may be
-// called.
-void DeliverFinishedOutput() noexcept;
+// with nothing but `write`, from a signal handler or wherever else nothing may
+// be called.
+void DeliverFinishedFiles() noexcept;
 
 // What `$fscanf` reads (LRM 21.3.4.3): a file from where it stands, a byte
 // pushed back by `$ungetc` first, with a null character ordinary input (LRM

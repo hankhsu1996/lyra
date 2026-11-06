@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -33,6 +34,16 @@ class StopSignalsHeld {
  private:
   sigset_t before_{};
 };
+
+// From here on a stop from outside ends the process by its own action, on the
+// calling thread whatever held it and whichever handler stood: what an ending
+// does before it waits on something that may never come. Nothing here is
+// beyond what a signal handler may call.
+void StopSignalsEndTheProcess() noexcept;
+
+// The C stream a file was opened as, closed with it, which closes its
+// descriptor.
+using OpenedStream = std::unique_ptr<std::FILE, decltype(&std::fclose)>;
 
 // A file the design reads and writes through one descriptor (LRM 21.3): one
 // position for both (LRM 21.3.5), and one byte of pushback (LRM 21.3.4.1).

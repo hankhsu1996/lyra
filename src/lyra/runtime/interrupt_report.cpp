@@ -10,7 +10,8 @@
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/write_all.hpp"
-#include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/file.hpp"
+#include "lyra/runtime/finished_output.hpp"
 #include "lyra/runtime/runtime.hpp"
 
 namespace lyra::runtime {
@@ -95,7 +96,9 @@ void InterruptReport::SayWhereTheRunWas(int signal) {
       Write(": note: this procedure was running\n");
     }
   }
-  // Blocked while this handler runs, so it is delivered as the handler returns.
+  // Its handler is gone, so the signal's own action ends the process: at once
+  // where finishing the run's dumps already let the stop signals through, and
+  // otherwise as this handler returns, the signal being blocked while it runs.
   std::raise(signal);
 }
 

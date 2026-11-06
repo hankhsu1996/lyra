@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <variant>
 
 #include "lyra/abi/records.hpp"
@@ -83,14 +84,17 @@ class DumpWriter {
   // while the run goes on sees it (LRM 21.7.1.6).
   virtual void Flush() = 0;
   // Ends the file: what is written so far is handed to it, and nothing more
-  // is. A failure to write is reported here rather than where the writer ends,
-  // which reports nothing.
+  // is.
   virtual void Close() = 0;
   // Bounds the file at `bytes` (LRM 21.7.1.5): once it reaches them, nothing
   // past them is written, which the format records as it records a comment.
   virtual void LimitTo(std::uint64_t bytes) = 0;
   // Whether the file has reached the bound it was given.
   [[nodiscard]] virtual auto ReachedLimit() const -> bool = 0;
+  // Why the system refused to write the file, the ending of it included,
+  // after which nothing more is written; nothing while it has taken
+  // everything.
+  [[nodiscard]] virtual auto Refused() const -> std::error_code = 0;
 };
 
 // The writer for the file `path` names, by its extension: `.fst` is the FST

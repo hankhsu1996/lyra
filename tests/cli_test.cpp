@@ -19,6 +19,7 @@
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <fstapi.h>
 #include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -1623,8 +1624,10 @@ TEST(LyraRun, AReportIsPlacedAtTheStatementThatMadeIt) {
 
 // A dump file that cannot be opened fails the task that asked for it, at the
 // end of its time step, and what else that time step asked of the dump finds
-// none (LRM 21.7.1.2, 21.7.3.1).
-TEST(LyraRun, ADumpThatCannotBeOpenedFailsTheTaskThatAskedForIt) {
+// none (LRM 21.7.1.2, 21.7.3.1). One that opens and then cannot be written
+// fails that task too, with the system's reason, whether the run finds out
+// while it goes on or only as the file is ended, in VCD and in FST.
+TEST(LyraRun, ADumpThatCannotBeOpenedOrWrittenFailsTheTaskThatAskedForIt) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
@@ -1654,6 +1657,65 @@ TEST(LyraRun, ADumpThatCannotBeOpenedFailsTheTaskThatAskedForIt) {
       EXPECT_NE(run.stderr_text.find(placed), std::string::npos)
           << backend << ": no '" << placed << "' in: " << run.stderr_text;
     }
+  }
+
+  // Few enough changes that nothing reaches the file before it is ended, and
+  // enough that the run is still going when the first write fails.
+  for (const int steps : {2, 100000}) {
+    WriteFile(
+        *tmp_or / "dump_full.sv", std::format(
+                                      "module Test;\n"
+                                      "  int count;\n"
+                                      "  initial begin\n"
+                                      "    $dumpfile(\"/dev/full\");\n"
+                                      "    $dumpvars;\n"
+                                      "    repeat ({}) #1 count = count + 1;\n"
+                                      "  end\n"
+                                      "endmodule\n",
+                                      steps));
+    for (const std::string_view backend : {"llvm", "cpp"}) {
+      const auto run = RunLyraFrom(
+          lyra, *tmp_or,
+          std::format("run --backend {} --top Test dump_full.sv", backend));
+      EXPECT_THAT(run, ExitedWithCode(1))
+          << backend << ", " << steps << " steps: " << run.stderr_text;
+      EXPECT_TRUE(run.stderr_text.contains(
+          "dump_full.sv:5:5: error: the dump file '/dev/full' could not be "
+          "written ("))
+          << backend << ", " << steps << " steps: " << run.stderr_text;
+    }
+  }
+
+  // An FST file is written beside working files of its own, so the system is
+  // made to refuse it by a bound on how large a file may grow, past which a
+  // write fails rather than ending the program.
+  WriteFile(
+      *tmp_or / "dump_fst.sv",
+      "module Test;\n"
+      "  int count;\n"
+      "  initial begin\n"
+      "    $dumpfile(\"refused.fst\");\n"
+      "    $dumpvars;\n"
+      "    repeat (2) #1 count = count + 1;\n"
+      "  end\n"
+      "endmodule\n");
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto program = *tmp_or / std::format("fst_{}", backend);
+    const auto built = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "build --backend {} --top Test -o '{}' dump_fst.sv", backend,
+            program.string()));
+    ASSERT_THAT(built, ExitedWithCode(0))
+        << backend << ": " << built.stderr_text;
+    const auto run = RunShellScript(
+        R"(cd "$1" && trap '' XFSZ && ulimit -f 0 && exec "$0")",
+        std::vector<std::string>{program.string(), tmp_or->string()});
+    EXPECT_THAT(run, ExitedWithCode(1)) << backend << ": " << run.stderr_text;
+    EXPECT_TRUE(run.stderr_text.contains(
+        "dump_fst.sv:5:5: error: the dump file 'refused.fst' could not be "
+        "written ("))
+        << backend << ": " << run.stderr_text;
   }
 }
 
@@ -2666,6 +2728,115 @@ TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
         << backend << ": " << run.stdout_text;
     EXPECT_EQ(ReadWholeFile(*tmp_or / "trace.txt"), "traced at 7\n") << backend;
     EXPECT_EQ(ReadWholeFile(*tmp_or / "channel.txt"), "channelled at 7\n")
+        << backend;
+  }
+}
+
+// What libfst's reader finds every thing of the FST file `path` holding at
+// `time`, none where it cannot read the file.
+auto FstValuesAt(const std::filesystem::path& path, std::uint64_t time)
+    -> std::vector<std::string> {
+  fstReaderContext* reader = fstReaderOpen(path.c_str());
+  if (reader == nullptr) {
+    return {};
+  }
+  std::vector<std::string> values;
+  const fstHandle count = fstReaderGetMaxHandle(reader);
+  for (fstHandle handle = 1; handle <= count; ++handle) {
+    std::array<char, 128> spelled{};
+    values.emplace_back(fstReaderGetValueFromHandleAtTime(
+        reader, time, handle, spelled.data()));
+  }
+  fstReaderClose(reader);
+  return values;
+}
+
+// A run that ends without reaching its end -- stopped from outside, or by a
+// fault -- leaves every dump holding each time step it recorded and ending as
+// its format ends a file, so a viewer opens what the run did up to where it
+// was. The step the run never left is not recorded: it was not finished.
+TEST(LyraRun, ARunThatEndsUnfinishedLeavesEveryDumpFinished) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src)
+      << "module Leaf(input logic [31:0] d);\n"
+      << "endmodule\n"
+      << "module Test;\n"
+      << "  int count, reached;\n"
+      << "  bit gate;\n"
+      << "  Leaf leaf(.d(count));\n"
+      << "  function automatic int deeper(int n);\n"
+      << "    return deeper(n + 1) + 1;\n"
+      << "  endfunction\n"
+      << "  initial begin\n"
+      << "    $dumpfile(\"trace.vcd\");\n"
+      << "    $dumpvars;\n"
+      << "    $dumpports(Test.leaf, \"ports.evcd\");\n"
+      << "    repeat (6) #1 count = count + 1;\n"
+      << "    #1;\n"
+      << "    if ($test$plusargs(\"recurse\")) reached = deeper(0);\n"
+      << "    forever begin\n"
+      << "      if (gate) #1;\n"
+      << "      count = count + 1;\n"
+      << "    end\n"
+      << "  end\n"
+      << "endmodule\n";
+  // What every ending leaves: the step at time 6 recorded, and the file ended
+  // at time 7, where the run was.
+  const auto expect_finished = [&](std::string_view how) {
+    const std::string trace = ReadWholeFile(*tmp_or / "trace.vcd");
+    EXPECT_TRUE(trace.contains("$enddefinitions $end\n")) << how << trace;
+    const std::size_t step = trace.find("#6\n");
+    ASSERT_NE(step, std::string::npos) << how << trace;
+    EXPECT_NE(trace.find("b110 ", step), std::string::npos) << how << trace;
+    EXPECT_TRUE(trace.ends_with("#7\n")) << how << trace;
+    const std::string ports = ReadWholeFile(*tmp_or / "ports.evcd");
+    EXPECT_TRUE(ports.contains("#6\n")) << how << ports;
+    EXPECT_TRUE(ports.ends_with("$vcdclose #7 $end\n")) << how << ports;
+  };
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto program = *tmp_or / std::format("program_{}", backend);
+    const auto built = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "build --backend {} --top Test -o '{}' test.sv", backend,
+            program.string()));
+    ASSERT_THAT(built, ExitedWithCode(0))
+        << backend << ": " << built.stderr_text;
+
+    const auto stopped =
+        RunChildProcess(program, {}, std::chrono::seconds{2}, *tmp_or);
+    EXPECT_TRUE(std::holds_alternative<TimedOut>(stopped.end))
+        << backend << ": " << Describe(stopped.end) << "\n"
+        << stopped.stderr_text;
+    expect_finished(std::format("{}, stopped: ", backend));
+
+    const auto faulted = RunChildProcess(
+        program, std::vector<std::string>{"+recurse"}, std::nullopt, *tmp_or);
+    EXPECT_NE(
+        faulted.stderr_text.find("error: the simulation ran out of stack"),
+        std::string::npos)
+        << backend << ": " << faulted.stderr_text;
+    expect_finished(std::format("{}, faulted: ", backend));
+
+    // A dump the run's own options ask for is finished the same way, here in
+    // a format that is whole only once its writer has closed it.
+    const auto fst = *tmp_or / "trace.fst";
+    const auto stopped_fst = RunChildProcess(
+        program,
+        std::vector<std::string>{
+            "+lyra+dump+force", "+lyra+dump=" + fst.string()},
+        std::chrono::seconds{2}, *tmp_or);
+    EXPECT_TRUE(std::holds_alternative<TimedOut>(stopped_fst.end))
+        << backend << ": " << Describe(stopped_fst.end) << "\n"
+        << stopped_fst.stderr_text;
+    EXPECT_THAT(
+        FstValuesAt(fst, 6),
+        testing::Contains("00000000000000000000000000000110"))
         << backend;
   }
 }

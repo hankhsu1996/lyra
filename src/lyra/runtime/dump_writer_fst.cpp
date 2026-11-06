@@ -4,12 +4,13 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/base/simulation_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/dump_writer.hpp"
 #include "lyra/support/dump_kind.hpp"
@@ -81,7 +82,6 @@ class FstWriter final : public DumpWriter {
  public:
   explicit FstWriter(fstWriterContext* context) : context_(context) {
     fstWriterSetPackType(context_, FST_WR_PT_LZ4);
-    fstWriterSetParallelMode(context_, 1);
     fstWriterSetVersion(context_, "Lyra");
   }
   FstWriter(const FstWriter&) = delete;
@@ -174,9 +174,10 @@ class FstWriter final : public DumpWriter {
     fstWriterFlushContext(context_);
   }
 
+  // The file's ending writes most of what makes it readable, so a refusal is
+  // often first met here, and the writer is gone once it is.
   void Close() override {
-    fstWriterClose(context_);
-    context_ = nullptr;
+    closed_with_ = RefusalOf(fstWriterClose(std::exchange(context_, nullptr)));
   }
 
   void LimitTo(std::uint64_t bytes) override {
@@ -187,7 +188,20 @@ class FstWriter final : public DumpWriter {
     return fstWriterGetDumpSizeLimitReached(context_) != 0;
   }
 
+  [[nodiscard]] auto Refused() const -> std::error_code override {
+    return context_ != nullptr ? RefusalOf(fstWriterGetWriteError(context_))
+                               : closed_with_;
+  }
+
  private:
+  // libfst answers a refusal as the system's error number, and none as 0.
+  static auto RefusalOf(int error_number) -> std::error_code {
+    if (error_number == 0) {
+      return {};
+    }
+    return {error_number, std::system_category()};
+  }
+
   // The name the FST hierarchy records is the reference a VCD `$var` writes.
   auto Create(const abi::DumpEntry& entry, fstHandle alias) -> fstHandle {
     const std::string name = DumpReference(entry);
@@ -233,6 +247,7 @@ class FstWriter final : public DumpWriter {
   }
 
   fstWriterContext* context_;
+  std::error_code closed_with_;
   std::vector<Thing> things_;
   std::string spelled_;
 };

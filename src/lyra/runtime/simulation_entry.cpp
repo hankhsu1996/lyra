@@ -21,6 +21,7 @@
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/finished_output.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/interrupt_report.hpp"
 #include "lyra/runtime/plusargs.hpp"
@@ -102,10 +103,13 @@ constexpr std::string_view kOutOfMemory =
 auto RunDesignRoot(
     int argc, char** argv, std::string_view root_name, const RootFactory& make)
     -> int {
-  // Every ending the process can still act on delivers what the design wrote
-  // before it ends: a refused request for memory, a fault, a report of the
-  // checker, and -- for as long as the run lasts -- a signal from outside.
-  base::InstallOutOfMemoryHandler(kOutOfMemory, DeliverFinishedOutput);
+  // Every ending the process can still act on -- a fault, a report of the
+  // checker, and, for as long as the run lasts, a signal from outside --
+  // delivers what the run had finished before it ends: what the design wrote,
+  // and every value dump the run records. A refused request for memory
+  // delivers what the design wrote alone: finishing a dump is encoding, which
+  // needs the memory the run has just been refused.
+  base::InstallOutOfMemoryHandler(kOutOfMemory, DeliverFinishedFiles);
   // The simulation runs on the stack of the thread the program starts on. A
   // foreign task runs on a stack of its own, which is not registered.
   static std::array<std::byte, base::kAltStackSize> alt_stack;

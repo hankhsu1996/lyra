@@ -11,7 +11,9 @@ to run, where it used to stop them. Revised 2026-10-31: every ending the process
 delivers what the design had written, to standard output and to the files it opened, where a signal
 from outside, a fault or the checker's report used to lose whatever had not reached its destination;
 standard output gains a buffer of the runtime's own for that, which the 2026-10-21 revision had said
-it has none of.
+it has none of. Revised 2026-11-05: those endings but the refused request for memory also finish
+every value dump the run is writing, which they used to leave holding none of what the dump thread
+had not yet written.
 
 ## Why this decision matters
 
@@ -166,6 +168,24 @@ D5. What decides whether `final` procedures run is whether the simulation reache
     loses its buffer the same way, and the facilities it leans on -- shared memory, a second
     process kept clear of the terminal's signals, a bridge for the foreign side's stream -- are
     weighed against porting and against what is the compiler's own work.
+
+    A value dump (LRM 21.7) is delivered on those endings by other hands, the refused request for
+    memory excepted. What the simulation finishes of a dump is a recorded time step, not bytes: a
+    format encodes it later, and FST compresses a block of steps and is a readable file only once
+    its library has closed it, none of which a signal handler may do. So each dump publishes how
+    many units it has recorded whole, and an ending wakes the dump's own writing thread -- which no
+    signal interrupted -- by a byte on a pipe, written whatever the simulation was doing, and
+    waits, reading another pipe, until the writer has written every published unit and ended the
+    file where the run was, never before a time it already holds. The handler itself sets a flag,
+    writes a byte and reads one, and before it waits it gives the stop signals their own action
+    back and lets them through, so a stop from outside ends a wait on a writer that cannot finish,
+    after any ending; an ending on the writer's own thread finishes nothing of that dump. Encoding
+    allocates, so a refused request for memory delivers the files alone -- the writer would be
+    refused in its turn, and two writers each refused would wait on each other -- and an ending
+    that stopped the simulation inside the allocator can leave a writer waiting until such a stop.
+    tokio wakes the thread that does a signal's work the same way, a byte on a pipe being all its
+    handler writes (`tokio/src/signal/unix.rs`). A kill nothing can act on loses the steps the
+    writer had not yet written, at most the units the dump holds in flight.
 
 D6. `$stop` ends the run where a tool has no interactive mode, and the diagnostic is the whole of
     what separates it from `$finish`. LRM 20.2 has `$stop` suspend the simulation and `$finish` exit

@@ -1,3 +1,7 @@
-# The build of GTKWave's FST library, which `MODULE.bazel` fetches.
+# The build of GTKWave's FST library, which `MODULE.bazel` fetches, and the
+# change carried on top of it.
 
-exports_files(["libfst.BUILD"])
+exports_files([
+    "libfst.BUILD",
+    "libfst.patch",
+])
