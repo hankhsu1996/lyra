@@ -32,6 +32,7 @@
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
+#include "lyra/lowering/ast_to_hir/passed_by_reference.hpp"
 #include "lyra/lowering/ast_to_hir/published_projection.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -548,6 +549,8 @@ auto ConnectDataPort(
       break;
     }
     case hir::PortDirection::kRef: {
+      auto passed = RefuseUnionPartByReference(*expr);
+      if (!passed) return std::unexpected(std::move(passed.error()));
       // A `ref` port seals to the connected variable's own cell (LRM
       // 23.3.3.2), so what the route reaches has to be the whole of the child's
       // declaration rather than a part of it.
@@ -566,9 +569,12 @@ auto ConnectDataPort(
     // it (LRM 23.3.3.2); the child member is a read-only reference the parent
     // still rebinds at construction, which is a storage shape of its own and
     // not the rebindable plain `ref`.
-    case hir::PortDirection::kConstRef:
+    case hir::PortDirection::kConstRef: {
+      auto passed = RefuseUnionPartByReference(*expr);
+      if (!passed) return std::unexpected(std::move(passed.error()));
       return PortConnectionUnsupported(
           span, "connecting a 'const ref' port is not yet supported");
+    }
     case hir::PortDirection::kInOut: {
       // A bidirectional connection is not a directional edge: it states that
       // positions of the nets on both sides are one physical net, resolving

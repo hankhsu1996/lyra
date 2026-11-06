@@ -31,6 +31,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
+#include "lyra/lowering/ast_to_hir/passed_by_reference.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
@@ -653,6 +654,18 @@ auto LowerEvaluatorDecl(
   }
   const slang::ast::Expression* place = ArgLValue(expr);
   const slang::ast::Expression& evaluated = place != nullptr ? *place : expr;
+  switch (result_direction) {
+    case hir::ParamDirection::kRef:
+    case hir::ParamDirection::kConstRef: {
+      auto passed = RefuseUnionPartByReference(evaluated);
+      if (!passed) return std::unexpected(std::move(passed.error()));
+      break;
+    }
+    case hir::ParamDirection::kInput:
+    case hir::ParamDirection::kOutput:
+    case hir::ParamDirection::kInOut:
+      break;
+  }
   if (names_a_place && NamesNoSingleStorage(evaluated)) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
