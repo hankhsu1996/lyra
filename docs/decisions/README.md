@@ -1491,7 +1491,9 @@ the detail lives in the entry itself.
   which format: the run's plusargs are defaults the design's `$dump*` tasks override, a change is
   found per write and written once per step on a writer thread of its own, the file's name picks
   VCD, FST or text, and each `$dumpports` file is a dump of its own. Choosing at build time is
-  rejected.
+  rejected. Revised 2026-11-05: the writer thread is also what an ending hands the dump to, the
+  simulation publishing each unit whole with no lock between the sides, and a file the system
+  refuses to write is reported where it was asked for, FST included through a carried libfst change.
 - [static-initializer-draws-from-its-container](static-initializer-draws-from-its-container.md) -- a
   randomization call draws from the generator installed for whatever is running, and a static
   initialization installs one just as a process does, seeded from the container the standard names
@@ -1597,7 +1599,9 @@ the detail lives in the entry itself.
   takes it, a cleanup's landing only passing it on. Revised 2026-10-31: every ending the process can
   still act on -- a signal from outside, a fault, the checker's report, a refused request --
   delivers what the design had written, from a buffer of the runtime's own per file, with `write`
-  alone.
+  alone. Revised 2026-11-05: all but the refused request for memory, whose writer would be refused
+  in its turn, also finish every value dump, waking its writing thread to write what the run
+  recorded and end the file, after which a stop from outside ends any wait on it.
 - [deferred-report-queue](deferred-report-queue.md) -- a pending report stays in the region's own
   list and withdrawal is a refusal to act, so it records the sources that can withdraw it and acts
   only if all still stand: two `disable` targets through the accepted cancellation-source

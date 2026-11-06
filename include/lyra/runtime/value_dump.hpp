@@ -5,10 +5,13 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/diag_message.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/dump_writer.hpp"
 #include "lyra/runtime/trigger.hpp"
@@ -185,10 +188,17 @@ class DumpOutput;
 // change at the end of the time step it happened in, and is switched off and
 // on, checkpointed, bounded and flushed as the design or the run asks. What is
 // recorded is handed to a thread of its own that writes the file, so the
-// simulation only copies the values that changed.
+// simulation only copies the values that changed, and so that a run ending
+// where the simulation cannot go on still has that thread to finish the file.
+//
+// A file the system refuses to write, or a dump the system will not set up,
+// is the failure of whoever asked for the dump at `asked_at`, as a file that
+// cannot be opened is.
 class ValueDump {
  public:
-  ValueDump(std::unique_ptr<DumpWriter> writer, std::int8_t precision_power);
+  ValueDump(
+      std::unique_ptr<DumpWriter> writer, std::int8_t precision_power,
+      std::string file, base::SourceLocation asked_at);
   ValueDump(const ValueDump&) = delete;
   auto operator=(const ValueDump&) -> ValueDump& = delete;
   ValueDump(ValueDump&&) = delete;
@@ -219,18 +229,36 @@ class ValueDump {
   void Flush();
   // Ends the file at `now`, reporting a failure to write it.
   void Close(SimTime now);
+  // The run is ending where the simulation cannot go on, at `now`: returns
+  // once the file holds every time step recorded and is ended, the ending's
+  // own work done by the thread writing it. Nothing here is beyond what a
+  // signal handler may call.
+  void FinishAtEnding(SimTime now) noexcept;
 
  private:
   void Checkpoint(DumpCheckpoint checkpoint, SimTime now);
   void Begin(SimTime now);
   void At(SimTime now);
+  // What has been recorded since the last is whole, and may be written.
+  void Publish();
+  // Reports what the writer met: a defect, and, once, a refusal of the system
+  // to write the file.
+  void RaiseIfRefused();
 
   std::unique_ptr<DumpOutput> output_;
+  std::string file_;
+  base::SourceLocation asked_at_;
+  bool refusal_raised_ = false;
   std::vector<std::unique_ptr<DumpWatch>> watches_;
   std::vector<DumpWatch*> changed_;
   std::optional<SimTime> step_submitted_for_;
-  std::optional<SimTime> time_sent_;
   bool on_ = true;
 };
+
+// Raises `message` as the failure of whoever asked for a dump: of the call at
+// `asked_at`, or, where that names no place, of the run's own options, which
+// no statement wrote.
+[[noreturn]] void RaiseForWhoeverAsked(
+    base::SourceLocation asked_at, base::DiagMessage message);
 
 }  // namespace lyra::runtime

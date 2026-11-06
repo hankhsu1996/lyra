@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <span>
@@ -19,6 +21,7 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/dump_writer.hpp"
+#include "lyra/runtime/file.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/scope.hpp"
@@ -38,24 +41,15 @@ constexpr std::string_view kNoneOption = "lyra+dump+none";
 // LRM 21.7.1.1: the file a dump is written to where nothing names one.
 constexpr std::string_view kDefaultFile = "dump.vcd";
 
-auto CouldNotOpen(const std::string& file) -> base::DiagMessage {
-  return base::DiagMessage("the dump file '{}' could not be opened", file);
-}
-
 // `writer`, or, where it could not open `file`, the failure of whoever asked
-// for the dump: the design's, raised at what is bound, or the run's own.
-auto Opened(std::unique_ptr<DumpWriter> writer, const std::string& file)
-    -> std::unique_ptr<DumpWriter> {
-  if (writer == nullptr) {
-    throw SimulationError(CouldNotOpen(file));
-  }
-  return writer;
-}
+// for the dump at `asked_at`.
 auto Opened(
-    base::NoSourceLocation no_location, std::unique_ptr<DumpWriter> writer,
-    const std::string& file) -> std::unique_ptr<DumpWriter> {
+    std::unique_ptr<DumpWriter> writer, const std::string& file,
+    base::SourceLocation asked_at) -> std::unique_ptr<DumpWriter> {
   if (writer == nullptr) {
-    throw SimulationError(no_location, CouldNotOpen(file));
+    RaiseForWhoeverAsked(
+        asked_at,
+        base::DiagMessage("the dump file '{}' could not be opened", file));
   }
   return writer;
 }
@@ -176,13 +170,30 @@ ValueDumps::ValueDumps(std::span<const std::string> plusargs) {
   }
 }
 
-ValueDumps::~ValueDumps() = default;
+namespace {
+
+// The dumps an ending finishes: the run's, once it has begun. A handler is
+// handed nothing but the signal's number, so they are found here.
+auto FinishingDumps() noexcept -> std::atomic<ValueDumps*>& {
+  static constinit std::atomic<ValueDumps*> dumps = nullptr;
+  return dumps;
+}
+
+}  // namespace
+
+ValueDumps::~ValueDumps() {
+  // A second run begun in the same process before this one ended has taken
+  // the endings' attention; it keeps it.
+  ValueDumps* expected = this;
+  FinishingDumps().compare_exchange_strong(expected, nullptr);
+}
 
 void ValueDumps::Begin(
     RuntimeEffects& runtime, Scope& root, std::int8_t precision_power) {
   runtime_ = &runtime;
   root_ = &root;
   precision_power_ = precision_power;
+  FinishingDumps().store(this);
   for (const std::string& window : option_windows_) {
     const std::size_t colon = window.find(':');
     const std::optional<SimTime> from =
@@ -230,22 +241,58 @@ void ValueDumps::Begin(
   const SimTime start = windows_.empty() ? 0 : windows_.front().from;
   runtime.Submit(start, Region::kPostponed, [this, start] {
     if (!design_selected_at_.has_value()) {
-      const std::string file = DumpFileName();
-      Start(
-          Opened(base::kNoSourceLocation, OpenDumpWriter(file), file), start,
-          OptionSelection());
+      Start(DumpFileName(), base::SourceLocation{}, start, OptionSelection());
     }
   });
 }
 
+// Every file is ended, and the first that could not be written is reported
+// once all are.
 void ValueDumps::End() {
   const SimTime now = runtime_->Now();
+  std::exception_ptr failed;
+  const auto close = [&](ValueDump& dump) {
+    try {
+      dump.Close(now);
+    } catch (const SimulationError&) {
+      if (failed == nullptr) {
+        failed = std::current_exception();
+      }
+    }
+  };
   if (dump_ != nullptr) {
-    dump_->Close(now);
+    close(*dump_);
   }
   for (PortDump& ports : port_dumps_) {
     if (ports.dump != nullptr) {
-      ports.dump->Close(now);
+      close(*ports.dump);
+    }
+  }
+  if (failed != nullptr) {
+    std::rethrow_exception(failed);
+  }
+}
+
+void DeliverFinishedDumps() noexcept {
+  if (ValueDumps* dumps = FinishingDumps().load(); dumps != nullptr) {
+    dumps->FinishAtEnding();
+  }
+}
+
+// The dumps are walked as they stand: each change to what holds them is made
+// with the stop signals held, so a stop from outside never finds one half
+// made. Before any wait on a writer, a stop from outside is made to end the
+// process, so a writer that cannot finish holds the process no longer than
+// whoever is waiting on it allows.
+void ValueDumps::FinishAtEnding() noexcept {
+  StopSignalsEndTheProcess();
+  const SimTime now = runtime_->Now();
+  if (dump_ != nullptr) {
+    dump_->FinishAtEnding(now);
+  }
+  for (PortDump& ports : port_dumps_) {
+    if (ports.dump != nullptr) {
+      ports.dump->FinishAtEnding(now);
     }
   }
 }
@@ -366,19 +413,26 @@ void ValueDumps::DumpPortsOf(Scope& instance, const value::String& name) {
     named->selection.instances.push_back(&instance);
     return;
   }
-  const std::size_t index = port_dumps_.size();
-  port_dumps_.push_back(
-      {.file = file,
-       .selection = {.instances = {&instance}},
-       .limit = std::nullopt,
-       .dump = nullptr});
+  PortDump* added = nullptr;
+  {
+    const StopSignalsHeld held;
+    added = &port_dumps_.emplace_back(
+        PortDump{
+            .file = file,
+            .selection = {.instances = {&instance}},
+            .limit = std::nullopt,
+            .dump = nullptr});
+  }
   const base::SourceLocation at = base::BoundSourceLocation("$dumpports");
-  runtime_->Submit(now, Region::kPostponed, [this, index, now, at] {
+  runtime_->Submit(now, Region::kPostponed, [this, &ports = *added, now, at] {
     const base::SourceLocationScope bound(at);
-    PortDump& ports = port_dumps_[index];
-    ports.dump = std::make_unique<ValueDump>(
-        Opened(OpenExtendedVcdWriter(ports.file), ports.file),
-        precision_power_);
+    auto dump = std::make_unique<ValueDump>(
+        Opened(OpenExtendedVcdWriter(ports.file), ports.file, at),
+        precision_power_, ports.file, at);
+    {
+      const StopSignalsHeld held;
+      ports.dump = std::move(dump);
+    }
     if (ports.limit.has_value()) {
       ports.dump->Limit(*ports.limit);
     }
@@ -392,8 +446,7 @@ void ValueDumps::OnEachPortDump(const value::String& name, Act act) {
     return;
   }
   const SimTime now = runtime_->Now();
-  for (std::size_t index = 0; index < port_dumps_.size(); ++index) {
-    PortDump& ports = port_dumps_[index];
+  for (PortDump& ports : port_dumps_) {
     if (!name.View().empty() && ports.file != name.View()) {
       continue;
     }
@@ -401,9 +454,9 @@ void ValueDumps::OnEachPortDump(const value::String& name, Act act) {
       act(*ports.dump);
     } else {
       // The file may have failed to open by then.
-      runtime_->Submit(now, Region::kPostponed, [this, index, act] {
-        if (port_dumps_[index].dump != nullptr) {
-          act(*port_dumps_[index].dump);
+      runtime_->Submit(now, Region::kPostponed, [&ports, act] {
+        if (ports.dump != nullptr) {
+          act(*ports.dump);
         }
       });
     }
@@ -469,8 +522,7 @@ void ValueDumps::Select(SimTime now) {
   const base::SourceLocation at = base::BoundSourceLocation("$dumpvars");
   runtime_->Submit(now, Region::kPostponed, [this, now, at] {
     const base::SourceLocationScope bound(at);
-    const std::string file = DumpFileName();
-    Start(Opened(OpenDumpWriter(file), file), now, design_selection_);
+    Start(DumpFileName(), at, now, design_selection_);
   });
 }
 
@@ -481,9 +533,15 @@ auto ValueDumps::DumpFileName() const -> std::string {
 }
 
 void ValueDumps::Start(
-    std::unique_ptr<DumpWriter> writer, SimTime now,
+    const std::string& file, base::SourceLocation asked_at, SimTime now,
     const DumpSelection& selection) {
-  dump_ = std::make_unique<ValueDump>(std::move(writer), precision_power_);
+  auto dump = std::make_unique<ValueDump>(
+      Opened(OpenDumpWriter(file), file, asked_at), precision_power_, file,
+      asked_at);
+  {
+    const StopSignalsHeld held;
+    dump_ = std::move(dump);
+  }
   if (limit_.has_value()) {
     dump_->Limit(*limit_);
   }

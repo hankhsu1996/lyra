@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <span>
@@ -50,7 +51,8 @@ class ValueDumps {
 
   // The run has bound its design and fixed its precision: a dump the options
   // ask for, which the design does not take over, starts at time zero or where
-  // its window opens.
+  // its window opens. From here every ending the process can act on finishes
+  // the dumps.
   void Begin(RuntimeEffects& runtime, Scope& root, std::int8_t precision_power);
   // Ends every file, reporting a failure to write one.
   void End();
@@ -109,6 +111,11 @@ class ValueDumps {
   };
 
  private:
+  // Every dump file holds each time step it recorded and is ended where the
+  // run was.
+  void FinishAtEnding() noexcept;
+  friend void DeliverFinishedDumps() noexcept;
+
   struct NamedScope {
     std::string path;
     std::int64_t levels;
@@ -134,8 +141,10 @@ class ValueDumps {
   // The file the dump is written to: what the options force, or what the
   // design names, or what the options name, or the default.
   [[nodiscard]] auto DumpFileName() const -> std::string;
+  // Starts the dump of `file`, which the call at `asked_at` asked for, or the
+  // run's own options where that names no place.
   void Start(
-      std::unique_ptr<DumpWriter> writer, SimTime now,
+      const std::string& file, base::SourceLocation asked_at, SimTime now,
       const DumpSelection& selection);
   [[nodiscard]] auto OptionSelection() -> DumpSelection;
   // The member of `instance` that is the variable it declares under `name`,
@@ -172,8 +181,12 @@ class ValueDumps {
   std::optional<SimTime> design_selected_at_;
   std::optional<std::uint64_t> limit_;
   std::vector<Window> windows_;
+  // Every dump is reached by an ending, so what holds them changes only with
+  // the stop signals held.
   std::unique_ptr<ValueDump> dump_;
-  std::vector<PortDump> port_dumps_;
+  // A file of ports keeps its place as more are added, which work deferred to
+  // the end of the time step finds it by.
+  std::deque<PortDump> port_dumps_;
   std::optional<SimTime> ports_selected_at_;
   Describer* describing_ = nullptr;
 };
@@ -206,5 +219,11 @@ void DumpPortsAll(RuntimeEffects& runtime, const value::String& name);
 void DumpPortsLimit(
     RuntimeEffects& runtime, std::int64_t bytes, const value::String& name);
 void DumpPortsFlush(RuntimeEffects& runtime, const value::String& name);
+
+// The run is ending where the simulation cannot go on: returns once every
+// dump file of the run, where one has begun, holds each time step it recorded
+// and is ended where the run was. Nothing here is beyond what a signal handler
+// may call.
+void DeliverFinishedDumps() noexcept;
 
 }  // namespace lyra::runtime

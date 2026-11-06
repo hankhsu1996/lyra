@@ -1,22 +1,23 @@
 #include "lyra/runtime/dump_writer.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <format>
-#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/base/simulation_error.hpp"
-#include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/file.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -112,8 +113,7 @@ auto PortCheckpointKeyword(DumpCheckpoint checkpoint) -> std::string_view {
 // large piece at a time, and its size is what is held and what is written.
 class DumpTextFile {
  public:
-  DumpTextFile(std::ofstream file, std::string path)
-      : file_(std::move(file)), path_(std::move(path)) {
+  explicit DumpTextFile(OpenedStream file) : file_(std::move(file)) {
   }
 
   void Put(std::string_view text) {
@@ -128,12 +128,17 @@ class DumpTextFile {
 
   void Flush() {
     Drain();
-    file_.flush();
   }
 
   void Close() {
     Drain();
-    file_.close();
+    if (std::fclose(file_.release()) != 0 && !refused_) {
+      refused_ = {errno, std::system_category()};
+    }
+  }
+
+  [[nodiscard]] auto Refused() const -> std::error_code {
+    return refused_;
   }
 
   void LimitTo(std::uint64_t bytes) {
@@ -153,23 +158,17 @@ class DumpTextFile {
   }
 
   void Drain() {
-    if (pending_.empty()) {
-      return;
-    }
-    file_.write(pending_.data(), static_cast<std::streamsize>(pending_.size()));
-    if (!file_.good()) {
-      // This runs on the thread writing the dump, where nothing is bound, and
-      // whatever is being recorded when the buffer fills is not what failed.
-      throw SimulationError(
-          base::kNoSourceLocation, "the dump file '{}' could not be written",
-          path_);
+    if (!refused_ &&
+        std::fwrite(pending_.data(), 1, pending_.size(), file_.get()) !=
+            pending_.size()) {
+      refused_ = {errno, std::system_category()};
     }
     written_ += pending_.size();
     pending_.clear();
   }
 
-  std::ofstream file_;
-  std::string path_;
+  OpenedStream file_;
+  std::error_code refused_;
   std::string pending_;
   std::uint64_t written_ = 0;
   std::optional<std::uint64_t> limit_;
@@ -180,8 +179,7 @@ class DumpTextFile {
 // section's end and a comment -- and the file they are written to.
 class VcdCommandWriter : public DumpWriter {
  public:
-  VcdCommandWriter(std::ofstream file, std::string path)
-      : file_(std::move(file), std::move(path)) {
+  explicit VcdCommandWriter(OpenedStream file) : file_(std::move(file)) {
     file_.Put("$version\n   Lyra\n$end\n");
   }
 
@@ -233,6 +231,10 @@ class VcdCommandWriter : public DumpWriter {
 
   [[nodiscard]] auto ReachedLimit() const -> bool override {
     return file_.ReachedLimit();
+  }
+
+  [[nodiscard]] auto Refused() const -> std::error_code override {
+    return file_.Refused();
   }
 
  protected:
@@ -472,8 +474,7 @@ class ExtendedVcdWriter final : public VcdCommandWriter {
 // A thing several names stand for is named by all of them.
 class TextWriter final : public DumpWriter {
  public:
-  TextWriter(std::ofstream file, std::string path)
-      : file_(std::move(file), std::move(path)) {
+  explicit TextWriter(OpenedStream file) : file_(std::move(file)) {
   }
 
   void Timescale(std::int8_t precision_power) override {
@@ -547,6 +548,10 @@ class TextWriter final : public DumpWriter {
     return file_.ReachedLimit();
   }
 
+  [[nodiscard]] auto Refused() const -> std::error_code override {
+    return file_.Refused();
+  }
+
  private:
   [[nodiscard]] auto Now() const -> std::string {
     return std::format("{}{}", time_ * timescale_.count, timescale_.unit);
@@ -585,11 +590,13 @@ class TextWriter final : public DumpWriter {
 
 template <typename Writer>
 auto WriterOf(const std::string& path) -> std::unique_ptr<DumpWriter> {
-  std::ofstream file(path, std::ios::out | std::ios::trunc | std::ios::binary);
-  if (!file.is_open()) {
+  // The text is held a large piece at a time already, so each piece reaches
+  // the system as it is handed over, and the system's answer with it.
+  OpenedStream file(std::fopen(path.c_str(), "wb"), &std::fclose);
+  if (file == nullptr || std::setvbuf(file.get(), nullptr, _IONBF, 0) != 0) {
     return nullptr;
   }
-  return std::make_unique<Writer>(std::move(file), path);
+  return std::make_unique<Writer>(std::move(file));
 }
 
 }  // namespace

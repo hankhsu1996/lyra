@@ -18,17 +18,37 @@
 
 namespace lyra::runtime {
 
-StopSignalsHeld::StopSignalsHeld() {
-  sigset_t held{};
-  ::sigemptyset(&held);
+namespace {
+
+auto StopSignalSet() noexcept -> sigset_t {
+  sigset_t stops{};
+  ::sigemptyset(&stops);
   for (const int signal : kStopSignals) {
-    ::sigaddset(&held, signal);
+    ::sigaddset(&stops, signal);
   }
+  return stops;
+}
+
+}  // namespace
+
+StopSignalsHeld::StopSignalsHeld() {
+  const sigset_t held = StopSignalSet();
   ::pthread_sigmask(SIG_BLOCK, &held, &before_);
 }
 
 StopSignalsHeld::~StopSignalsHeld() {
   ::pthread_sigmask(SIG_SETMASK, &before_, nullptr);
+}
+
+void StopSignalsEndTheProcess() noexcept {
+  struct sigaction own_action{};
+  own_action.sa_handler = SIG_DFL;
+  ::sigemptyset(&own_action.sa_mask);
+  for (const int signal : kStopSignals) {
+    ::sigaction(signal, &own_action, nullptr);
+  }
+  const sigset_t stops = StopSignalSet();
+  ::pthread_sigmask(SIG_UNBLOCK, &stops, nullptr);
 }
 
 File::File(
