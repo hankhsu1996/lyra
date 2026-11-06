@@ -381,6 +381,29 @@ keeps it a warning on purpose. Its author answered that most tools take the text
 assumes it legal, and that a user who wants the refusal asks for `-Werror=explicit-static` (slang
 #1110). Lyra takes the variable as static. Write `static` or `automatic`.
 
+#### `this` in a class property's initializer
+
+```systemverilog
+class C;
+  int a = 1;
+  int b = this.a;
+endclass
+```
+
+8.11: "The this keyword shall only be used as type(this) (see 6.23) or within non-static class
+methods, constraints, inlined constraint methods, or covergroups embedded within classes (see 19.4);
+otherwise, an error shall be issued." 8.7 has the constructor initialize the properties, but an
+initializer is written in no method, and `this` "refers to the object that was used to invoke the
+subroutine that this is used within". Forbidden.
+
+The front end accepts it with no diagnostic and reads `this.a` as the property `a` of the object
+being constructed, which is what the unqualified name means there, and Lyra keeps that reading. 8.7
+initializes the base class first, then each property, and leaves a property's value before its
+initialization undefined; Lyra initializes a class's own properties in declaration order, each
+starting at its type's value. So a property declared earlier is read with its initializer applied,
+one declared later with its type's start value, and a base's property with the base's construction
+complete. Write `a`, which 8.7's own example does (`int d2 = c2;`).
+
 ### Not settled by the standard, so refused
 
 #### One module described twice
@@ -484,6 +507,24 @@ an unpacked structure is not (6.4), and none says whether another expression is 
 
 The front end accepts it, and Lyra carries the message as it does any value: it keeps its type, and
 it is taken only into a variable of an equivalent type (6.22.2).
+
+#### Case equality on a virtual interface
+
+```systemverilog
+virtual bus_if v;
+initial if (v !== null) v.req = 1;
+```
+
+Table 11-1 gives `===` and `!==` as operands "Any except real and shortreal". 25.9: "Only the
+following operations are directly allowed on virtual interface variables", and among comparisons it
+lists equality and inequality alone. Every other kind of handle has case equality listed, "same
+semantics as == and !=": a chandle (6.14), an object handle (8.4) and an event (15.5.5.3). The
+general table allows the text and the clause on the type leaves it out, and nothing says which
+governs.
+
+The front end accepts it and evaluates it as `==`, and Lyra keeps that reading. A virtual interface
+holds an instance or null and never an x or a z, so the two operators answer alike on every value.
+Write `==` or `!=`, which every reading allows.
 
 ### Given a meaning, but a tool may refuse it, so run with a warning
 
