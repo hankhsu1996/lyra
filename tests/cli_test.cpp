@@ -1719,6 +1719,97 @@ TEST(LyraRun, ADumpThatCannotBeOpenedOrWrittenFailsTheTaskThatAskedForIt) {
   }
 }
 
+// Output a run wrote and the system refused, where the design was never told
+// of it by `$ferror`, is reported as the run ends, and the run fails; a
+// design that asked and was answered handles it itself. Standard output is a
+// destination like any other, while a report Lyra makes on the error stream
+// is no output of the design's.
+TEST(LyraRun, OutputLostAndNeverToldOfFailsTheRun) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto writing_to_full = [](std::string_view after) {
+    return std::format(
+        "module Test;\n"
+        "  int fd, code;\n"
+        "  string reason;\n"
+        "  initial begin\n"
+        "    fd = $fopen(\"/dev/full\", \"w\");\n"
+        "    $fdisplay(fd, \"a line\");\n"
+        "    $fflush(fd);\n"
+        "{}"
+        "  end\n"
+        "endmodule\n",
+        after);
+  };
+  WriteFile(*tmp_or / "lost.sv", writing_to_full(""));
+  WriteFile(
+      *tmp_or / "asked.sv",
+      writing_to_full("    code = $ferror(fd, reason);\n"));
+  WriteFile(
+      *tmp_or / "printed.sv",
+      "module Test;\n"
+      "  initial $display(\"a line\");\n"
+      "endmodule\n");
+  WriteFile(
+      *tmp_or / "warned.sv",
+      "module Test;\n"
+      "  initial $warning(\"a report\");\n"
+      "endmodule\n");
+
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto lost = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Test lost.sv", backend));
+    EXPECT_THAT(lost, ExitedWithCode(1)) << backend << ": " << lost.stderr_text;
+    EXPECT_TRUE(lost.stderr_text.contains(
+        "error: output written to '/dev/full' was lost ("))
+        << backend << ": " << lost.stderr_text;
+    EXPECT_TRUE(lost.stderr_text.contains(
+        "note: ask '$ferror' after writing to handle it in the design"))
+        << backend << ": " << lost.stderr_text;
+
+    const auto asked = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Test asked.sv", backend));
+    EXPECT_THAT(asked, ExitedWithCode(0))
+        << backend << ": " << asked.stderr_text;
+    EXPECT_FALSE(asked.stderr_text.contains("was lost"))
+        << backend << ": " << asked.stderr_text;
+
+    const auto program = *tmp_or / std::format("printed_{}", backend);
+    const auto built = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "build --backend {} --top Test -o '{}' printed.sv", backend,
+            program.string()));
+    ASSERT_THAT(built, ExitedWithCode(0))
+        << backend << ": " << built.stderr_text;
+    const auto printed = RunShellScript(
+        R"(exec "$0" > /dev/full)", std::vector<std::string>{program.string()});
+    EXPECT_THAT(printed, ExitedWithCode(1))
+        << backend << ": " << printed.stderr_text;
+    EXPECT_TRUE(printed.stderr_text.contains(
+        "error: output written to standard output was lost ("))
+        << backend << ": " << printed.stderr_text;
+
+    const auto reporter = *tmp_or / std::format("warned_{}", backend);
+    const auto built_reporter = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "build --backend {} --top Test -o '{}' warned.sv", backend,
+            reporter.string()));
+    ASSERT_THAT(built_reporter, ExitedWithCode(0))
+        << backend << ": " << built_reporter.stderr_text;
+    const auto warned = RunShellScript(
+        R"(exec "$0" 2> /dev/full)",
+        std::vector<std::string>{reporter.string()});
+    EXPECT_THAT(warned, ExitedWithCode(0)) << backend;
+  }
+}
+
 // Work a process deferred runs while no process does, often after that
 // process has ended, and its report names the instance of the procedure that
 // made it all the same (LRM 20.10): a nonblocking update, one a fork made, a

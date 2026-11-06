@@ -2308,9 +2308,9 @@ auto lyra_rt_file_read_memory(
   const UnpackedRange range = dims.front();
   const lyra::value::IntegralValueType& word_type =
       *lyra::value::MemoryLeaf(memory, dims, range.Low(), 0).type;
-  const std::int32_t read = lyra::runtime::ReadMemoryWords(
-      *static_cast<FileTable*>(files), fd, word_type.Shape().width, range,
-      start, count, [&](std::int64_t sv, std::span<const char> bytes) {
+  const std::int32_t read = static_cast<FileTable*>(files)->ReadMemoryWords(
+      fd, word_type.Shape().width, range, start, count,
+      [&](std::int64_t sv, std::span<const char> bytes) {
         lyra::value::WrittenWords word(word_type.Shape());
         lyra::runtime::ReadBigEndian(word.MutableView(), bytes);
         word.StoreTo(lyra::value::MemoryLeaf(memory, dims, sv, 0).bytes);

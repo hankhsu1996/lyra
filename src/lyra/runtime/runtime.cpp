@@ -1,6 +1,7 @@
 #include "lyra/runtime/runtime.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -26,8 +27,8 @@
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
+#include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
-#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/program_threads.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
@@ -139,7 +140,22 @@ auto Runtime::Run() -> int {
   // with no assertion API to report immediate cover results at the end of
   // simulation.
   ReportCoverage();
-  return diagnostic_.ReportedFatal() || tool_failed_ ? 1 : 0;
+  // What the run wrote is delivered as it ends, and output lost while the
+  // design was never told of it fails the run, as an output stream reports an
+  // error its client never checked. A design that asks `$ferror` and is
+  // answered handles the loss itself.
+  const std::vector<LostOutput> lost = files_.Finish();
+  for (const LostOutput& one : lost) {
+    const std::array notes{base::DiagMessage(
+        "ask '$ferror' after writing to handle it in the design")};
+    diagnostic_.Report(
+        base::kNoSourceLocation, Severity::kError,
+        base::DiagMessage(
+            "output written to {} was lost ({})", one.destination,
+            one.refused.message()),
+        notes);
+  }
+  return diagnostic_.ReportedFatal() || tool_failed_ || !lost.empty() ? 1 : 0;
 }
 
 void Runtime::RunSimulation() {

@@ -1,6 +1,5 @@
 #include "lyra/runtime/dump_writer.hpp"
 
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -14,6 +13,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/errno_as_error_code.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
@@ -133,7 +133,7 @@ class DumpTextFile {
   void Close() {
     Drain();
     if (std::fclose(file_.release()) != 0 && !refused_) {
-      refused_ = {errno, std::system_category()};
+      refused_ = base::ErrnoAsErrorCode();
     }
   }
 
@@ -161,7 +161,7 @@ class DumpTextFile {
     if (!refused_ &&
         std::fwrite(pending_.data(), 1, pending_.size(), file_.get()) !=
             pending_.size()) {
-      refused_ = {errno, std::system_category()};
+      refused_ = base::ErrnoAsErrorCode();
     }
     written_ += pending_.size();
     pending_.clear();

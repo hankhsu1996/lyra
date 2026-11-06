@@ -12,8 +12,11 @@
 #include <span>
 #include <string_view>
 #include <sys/types.h>
+#include <system_error>
 #include <unistd.h>
+#include <utility>
 
+#include "lyra/base/errno_as_error_code.hpp"
 #include "lyra/base/write_all.hpp"
 
 namespace lyra::runtime {
@@ -79,7 +82,7 @@ void File::Write(std::string_view text) {
   const std::size_t finished = finished_.load(std::memory_order_relaxed);
   if (finished + text.size() > buffer_.size()) HandOver();
   if (text.size() > buffer_.size()) {
-    base::WriteAll(fd_, text);
+    KeepLoss(base::WriteAll(fd_, text));
     return;
   }
   const std::size_t at = finished_.load(std::memory_order_relaxed);
@@ -119,7 +122,10 @@ auto File::Seek(std::int64_t offset, int whence) -> bool {
   if (whence == SEEK_CUR) offset -= Unread();
   read_begin_ = read_end_ = 0;
   putback_.reset();
-  if (::lseek(fd_, offset, whence) < 0) return false;
+  if (::lseek(fd_, offset, whence) < 0) {
+    KeepRefusal({.code = base::ErrnoAsErrorCode(), .lost_output = false});
+    return false;
+  }
   at_end_ = false;
   return true;
 }
@@ -127,7 +133,10 @@ auto File::Seek(std::int64_t offset, int whence) -> bool {
 auto File::Tell() -> std::optional<std::int64_t> {
   HandOver();
   const off_t at = ::lseek(fd_, 0, SEEK_CUR);
-  if (at < 0) return std::nullopt;
+  if (at < 0) {
+    KeepRefusal({.code = base::ErrnoAsErrorCode(), .lost_output = false});
+    return std::nullopt;
+  }
   return static_cast<std::int64_t>(at) - Unread();
 }
 
@@ -142,7 +151,7 @@ void File::HandOver() {
   const StopSignalsHeld held;
   const std::size_t finished = finished_.load(std::memory_order_relaxed);
   if (finished == 0) return;
-  base::WriteAll(fd_, std::span<const char>(buffer_).first(finished));
+  KeepLoss(base::WriteAll(fd_, std::span<const char>(buffer_).first(finished)));
   finished_.store(0, std::memory_order_release);
 }
 
@@ -153,19 +162,45 @@ void File::BeforeForeignCodeRuns() {
 
 void File::DeliverFinished() noexcept {
   const std::size_t finished = finished_.load(std::memory_order_acquire);
-  base::WriteAll(fd_, std::span<const char>(buffer_).first(finished));
+  base::WriteAsMuchAsTaken(fd_, std::span<const char>(buffer_).first(finished));
   finished_.store(0, std::memory_order_release);
+}
+
+auto File::TakeRefusal() -> Refusal {
+  return std::exchange(refused_, {});
+}
+
+void File::ClearUntoldLoss() {
+  untold_loss_ = {};
+}
+
+auto File::TakeUntoldLoss() -> std::error_code {
+  return std::exchange(untold_loss_, {});
+}
+
+void File::KeepRefusal(Refusal refused) {
+  if (!refused_.code) refused_ = refused;
+}
+
+void File::KeepLoss(std::error_code refused) {
+  if (!refused) return;
+  KeepRefusal({.code = refused, .lost_output = true});
+  if (!untold_loss_) untold_loss_ = refused;
 }
 
 void File::DrainCStream() {
   if (!c_stream_may_hold_) return;
-  std::fflush(c_stream_);
+  if (std::fflush(c_stream_) != 0) KeepLoss(base::ErrnoAsErrorCode());
   c_stream_may_hold_ = false;
 }
 
 void File::StopReading() {
   const std::int64_t unread = Unread();
-  if (unread > 0) ::lseek(fd_, -unread, SEEK_CUR);
+  // An unseekable descriptor cannot be moved back over what was read ahead,
+  // which C's stdio leaves as it is too, so a write follows it.
+  if (unread > 0 && ::lseek(fd_, -unread, SEEK_CUR) < 0 && errno != ESPIPE) {
+    KeepRefusal({.code = base::ErrnoAsErrorCode(), .lost_output = false});
+  }
   read_begin_ = read_end_ = 0;
   putback_.reset();
 }
@@ -177,7 +212,11 @@ auto File::ReadAhead() -> bool {
   while (got < 0 && errno == EINTR) {
     got = ::read(fd_, buffer_.data(), buffer_.size());
   }
-  if (got <= 0) {
+  if (got < 0) {
+    KeepRefusal({.code = base::ErrnoAsErrorCode(), .lost_output = false});
+    return false;
+  }
+  if (got == 0) {
     at_end_ = true;
     return false;
   }

@@ -29,7 +29,7 @@ auto ReportedRun() noexcept -> std::atomic<const Runtime*>& {
 // as async-signal-safe may be called: no allocation, no stream, no formatting
 // library. The text goes straight to the error stream's descriptor.
 void Write(std::string_view text) noexcept {
-  base::WriteAll(STDERR_FILENO, text);
+  base::WriteAsMuchAsTaken(STDERR_FILENO, text);
 }
 
 void WriteDecimal(std::uint64_t value) noexcept {

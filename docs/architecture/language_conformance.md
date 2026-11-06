@@ -754,6 +754,31 @@ Lyra places the bytes from the top of the word, as the first byte read fills the
 location, and drops the low bits of the last byte, so the word above is `9'h100`. A packed variable
 read with `$fread` is taken the same way.
 
+#### Which operation `$ferror` reports on
+
+```systemverilog
+fd = $fopen("missing/file.txt", "r");   // 0
+code = $ferror(0, text);                // the opening's error?
+$fwrite(out, "x");                      // refused
+$display("between");
+code = $ferror(out, text);              // still the refused write?
+code = $ferror(out, text);              // and again?
+```
+
+21.3.7: "A string description of the type of error encountered by the most recent file I/O operation
+is written into the variable str ... If the most recent operation did not result in an error, then
+the value returned shall be zero". 21.3.1 sends a failed `$fopen` to `$ferror` "to determine the
+cause of the most recent error", though the only descriptor it hands back is 0. Neither clause says
+whether "most recent" is counted over every file or over the descriptor `$ferror` is given, nor
+whether `$ferror` is itself an operation.
+
+Lyra counts over the descriptor: `$ferror(fd, str)` answers the most recent operation given that
+descriptor's value, so the `$display` above changes nothing, and a failed opening, which answers 0,
+is answered by `$ferror(0, str)`. Counted over every file, any output between a failure and the
+question would answer it, `$display` included, and the descriptor argument would mean nothing.
+`$ferror` asks and is no operation, so asking twice answers the same, as C's `ferror` leaves a
+stream's error indicator as it found it.
+
 #### The end event of a block left by `return`, `break` or `continue`
 
 ```systemverilog
