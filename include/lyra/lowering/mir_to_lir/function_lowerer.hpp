@@ -4,6 +4,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <variant>
 #include <vector>
@@ -12,6 +13,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/lowering/mir_to_lir/cleanups.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/closure_decl.hpp"
@@ -55,82 +57,40 @@ class FunctionLowerer {
     std::size_t scope_depth{};
   };
 
-  // What is owed on every way out of the extent that incurred it: a cleanup a
-  // guarded body states, with the block whose child scopes hold it; the end of
-  // an owned value the extent made; and the end of the owned value a frame slot
-  // holds. A value whose end passed to a slot, or to the caller, leaves nothing
-  // where its own end stood.
-  struct CleanupScope {
-    const mir::Block* owner = nullptr;
-    mir::BlockId cleanup{};
+  // One scope open where the body is being lowered, innermost last. A scope
+  // owes a cleanup, or owed one whose end was since handed on, or is a boundary
+  // a way out meets: a region, whose handler takes what unwinds into it, or the
+  // code of a cleanup, which a cleanup leaves only by running to its end.
+  struct Owed {
+    CleanupId cleanup;
   };
-  struct ValueEnd {
-    lir::ValueId value;
-  };
-  struct SlotEnd {
-    lir::ValueId slot;
-  };
-  // The bytes of a frame slot, which are owed from where the slot comes into
-  // use and so stand below the end of any value it comes to hold, as rustc
-  // schedules a local's storage and its value as two drops.
-  struct StorageDead {
-    lir::ValueId slot;
-  };
-  // A variable among the body's own, which ends with the scope declaring it
-  // while its storage lasts the whole body.
-  struct VariableEnd {
-    lir::VariablePosition position;
-  };
-  struct EndPassedOn {};
-  // Storage a new-expression allocated, while what it is to hold is still
-  // being initialized there: a way out gives the storage back and ends
-  // nothing, since nothing whole lies in it yet, as clang's new-expression
-  // calls `operator delete` when a constructor throws.
-  struct StorageRelease {
-    lir::Operand storage;
-  };
-
-  // A region that takes what unwinds into it: the block that runs its handler,
-  // and the storage the handler binds what it received to. The top of a body
-  // entered as a coroutine is one too, around the whole body, as a C++
-  // coroutine's body is a `try` whose handler hands what escaped to its
-  // promise.
-  struct RegionScope {
+  struct PassedOn {};
+  // The block that runs a region's handler, and the storage the handler binds
+  // what it received to. The top of a body entered as a coroutine is one too,
+  // around the whole body, as a C++ coroutine's body is a `try` whose handler
+  // hands what escaped to its promise.
+  struct Region {
     lir::BlockId handler{};
     lir::ValueId caught{};
   };
+  struct NoWayOut {};
+  using ScopeEntry = std::variant<Owed, PassedOn, Region, NoWayOut>;
 
-  // Stands over a handler while it handles what it took, and ends the
-  // handling on every way out of it, being unwound out of it included.
-  struct HandlingScope {};
-
-  // Stands over a cleanup's own code while it is lowered. A cleanup runs on
-  // every way out of its body, a departure included, so a departure starting
-  // inside one would have nowhere to go, and nothing under this scope may ask
-  // for a landing.
-  struct TerminateScope {};
-
-  // Where a way out going to `target` continues once it reaches a scope: what
-  // the scope owes, run once and passed outward.
-  struct ExitEntry {
+  // A scope open where the body is being lowered, kept on one stack in the
+  // order they nest, which is the order a way out meets them. What a way out
+  // from inside it runs is a node of the cleanup tree; the node unwinding
+  // enters here, and the one each ordinary way out going to a block enters, are
+  // kept with the scope so that later ways out find them without walking
+  // outward. They are found again the same way if lost, since a node is made
+  // once for its cleanup and continuation.
+  struct ExitNode {
     lir::BlockId target;
-    lir::BlockId entry;
+    CleanupNodeId node;
   };
-
-  // A scope a way out of the body meets, kept on one stack in the order they
-  // nest, which is the order a way out meets them. `unwind_entry` is where
-  // unwinding continues once it reaches this scope -- what the scope owes, run
-  // once and passed outward, or the region's handler -- built the first time
-  // something needs it and shared by every landing and every scope nested
-  // inside after that. `exit_entries` is the same for each place an ordinary
-  // way out goes, which is what those ways out differ in after what they end.
-  using ScopeKind = std::variant<
-      CleanupScope, ValueEnd, SlotEnd, StorageDead, VariableEnd, EndPassedOn,
-      StorageRelease, RegionScope, HandlingScope, TerminateScope>;
-  struct UnwindScope {
-    ScopeKind kind;
-    std::optional<lir::BlockId> unwind_entry;
-    std::vector<ExitEntry> exit_entries;
+  struct StackedScope {
+    ScopeEntry entry;
+    std::optional<CleanupNodeId> unwind_node;
+    std::vector<ExitNode> exit_nodes;
   };
 
   // Where a source local's storage is. A cell MIR declared lies among the
@@ -231,19 +191,19 @@ class FunctionLowerer {
   // type, with a copy, and with no end owed for it here.
   [[nodiscard]] auto IsLentCopyable(const lir::Operand& value) const -> bool;
   // States the end of an owned value, and of the one a frame slot holds.
-  void EndValue(lir::Operand value);
-  void EndSlotValue(lir::ValueId slot);
+  void EmitValueEnd(lir::Operand value);
+  void EmitSlotValueEnd(lir::ValueId slot);
   // States that the bytes the frame keeps for `of` come into use, or go out
   // of it.
   void MarkStorage(lir::StorageInstr::Op op, lir::ValueId of);
-  // What a scope owes where a way out runs it: a value's end and its bytes
+  // Runs one kind of cleanup where the code stands: a value's end and its bytes
   // going out of use, the end of what a slot holds, a slot's bytes going out
   // of use, a variable's end, or storage given back.
-  void EmitScopeDrop(const ValueEnd& end);
-  void EmitScopeDrop(const SlotEnd& end);
-  void EmitScopeDrop(const StorageDead& dead);
-  void EmitScopeDrop(const VariableEnd& end);
-  void EmitScopeDrop(const StorageRelease& release);
+  void EmitCleanup(const EndValue& end);
+  void EmitCleanup(const EndSlot& end);
+  void EmitCleanup(const StorageDead& dead);
+  void EmitCleanup(const EndVariable& end);
+  void EmitCleanup(const ReleaseStorage& release);
   auto LowerIfInto(const mir::Block& block, const mir::IfStmt& stmt)
       -> diag::Result<void>;
   auto LowerSwitchInto(const mir::Block& block, const mir::SwitchStmt& stmt)
@@ -265,37 +225,41 @@ class FunctionLowerer {
   auto LowerFinallyInto(const mir::Block& block, const mir::FinallyStmt& stmt)
       -> diag::Result<void>;
 
-  // Opens a scope a departure meets on its way out, innermost.
-  void OpenScope(ScopeKind kind);
+  // Opens a scope owing `cleanup` on every way out of it, innermost.
+  void OpenScope(Cleanup cleanup);
+  // Opens a region, whose handler takes what unwinds into it, innermost.
+  void OpenScope(Region region);
   // Forgets every scope above `depth`.
   void PopScopesTo(std::size_t depth);
-  // Runs what a scope of `kind` owes where the code stands, which for some
-  // kinds is nothing on an ordinary way out.
-  auto RunOwed(const ScopeKind& kind) -> diag::Result<void>;
-  [[nodiscard]] static auto OwesNothing(const ScopeKind& kind) -> bool;
-  // The value or slot whose end a scope of `kind` owes, by which it is found.
-  [[nodiscard]] static auto OwedValueOf(const ScopeKind& kind)
+  // Runs `cleanup` where the code stands.
+  auto RunCleanup(const Cleanup& cleanup) -> diag::Result<void>;
+  // The value or slot whose end `cleanup` is, by which it is found.
+  [[nodiscard]] static auto OwedValueOf(const Cleanup& cleanup)
       -> std::optional<lir::ValueId>;
+  // The cleanup the scope at `index` still owes, or nothing where it is a
+  // boundary or its cleanup's end was handed on.
+  [[nodiscard]] auto OwedAt(std::size_t index) const -> const Cleanup*;
   // Runs the cleanup of every scope open between here and `depth`, innermost
   // first. An extent falling off its end runs them in place.
   auto RunCleanupsDownTo(std::size_t depth) -> diag::Result<void>;
   // Where a way out from here to `target`, which stands at `depth` of the
-  // scopes, enters what it owes. Every way out to one target from inside one
-  // scope owes the same, so each scope's part is built once and the ways out
-  // share it, however many of them there are.
+  // scopes, enters what it owes. Two ways out owing the same on the way to one
+  // target enter one node, however many of them there are.
   auto ExitEntryAt(lir::BlockId target, std::size_t depth)
       -> diag::Result<lir::BlockId>;
-  // The block that runs what the scope at `index` owes and goes on to
-  // `outward`, or `outward` where it owes nothing.
-  auto BuildOwedEntry(std::size_t index, lir::BlockId outward)
-      -> diag::Result<lir::BlockId>;
+  // The node that runs `cleanup` and goes on to `next`, made with its block the
+  // first time a way out needs it.
+  auto NodeFor(CleanupId cleanup, CleanupNodeId next)
+      -> diag::Result<CleanupNodeId>;
   // Ends the body being left where it stands, once what it owed has run.
   auto AbandonBlock() -> lir::BlockId;
   // Returns from the body, once what it owed has run.
   auto ReturnBlock() -> lir::BlockId;
-  // Lowers a cleanup's own code, on whichever way out reached it, under a
-  // scope that refuses any landing inside it.
-  auto LowerCleanupInto(CleanupScope cleanup) -> diag::Result<void>;
+  // Lowers a cleanup's own code, on whichever way out reached it, with none of
+  // the body's scopes open: its one scope is a boundary no way out passes, so
+  // nothing the code does can lead back into a scope around it, the cleanup's
+  // own included, and a way out asked for inside it is refused at once.
+  auto LowerCleanupInto(const RunFinally& cleanup) -> diag::Result<void>;
   // Hands control back to the scheduler where `park` holds, the body going on
   // in one block either way: where it suspended and is resumed, and where it
   // did not have to. Being ended rather than run again is a way out of every
@@ -329,34 +293,33 @@ class FunctionLowerer {
       lir::CallTarget target, std::vector<lir::Operand> args,
       lir::Destination destination) -> diag::Result<void>;
   // The landing the call about to be made here unwinds to: it takes what is
-  // unwinding into the frame's one slot for it and continues where the
-  // innermost open scope takes it, saying whether this frame takes the raise on
-  // that way out. Each call has a landing of its own, because what a target
-  // owes on the way out of one call -- a temporary it made to pass an argument
-  // -- is that call's alone; what the scopes owe is built once and shared.
-  // `unmade` is the value the call would have made, where it makes one whose
-  // bytes a frame keeps.
+  // unwinding into the frame's one slot for it and enters the node the open
+  // scopes owe, saying whether this frame takes the raise on that way out.
+  // Every call unwinding into one node shares its landing, as clang's calls of
+  // one scope share a landing pad. `unmade` is the value the call would have
+  // made, where it makes one whose bytes a frame keeps; their going out of use
+  // is that call's own, ahead of what the scopes owe.
   auto LandingHere(std::optional<lir::ValueId> unmade)
       -> diag::Result<lir::BlockId>;
-  // Where unwinding continues once it reaches the scope at `index` on the
-  // stack, or the frame's own edge below every scope: the cleanup run and
-  // passed on outward, the region's handler, or -- at the edge -- the
-  // unwinding carried out of the frame. Each is built once, and every landing
-  // and every scope nested inside reaches it.
-  auto UnwindEntryAt(std::size_t index) -> diag::Result<lir::BlockId>;
-  // The entry of the scope at `index`, built where what is owed outside it is
-  // reached at `outward`.
-  auto BuildUnwindEntry(std::size_t index, lir::BlockId outward)
-      -> diag::Result<lir::BlockId>;
+  // The node unwinding from where `depth` scopes are open enters: what they
+  // owe, ending at the innermost region's handler, or past every scope at the
+  // frame's own edge, where the unwinding is carried out of the frame.
+  auto UnwindNodeAt(std::size_t depth) -> diag::Result<CleanupNodeId>;
+  // A way out reaching the boundary that stands over a cleanup's own code would
+  // leave that code before its end, which nothing a cleanup holds may do; the
+  // unit's verification refuses such a cleanup, so reaching one here is a
+  // compiler bug. `how` says how the code would be left.
+  static void RefuseLeavingCleanupCode(
+      const ScopeEntry& entry, std::string_view how);
   auto FrameEdge() -> lir::BlockId;
   // Opens a region's handler in the block its scope named: the handling of
   // what the landing took begins, an extent that ends it on every way out is
   // opened, and the runtime is asked what arrived, into the region's `caught`.
   // The handler's own code follows, and closing the extent ends the handling.
-  auto OpenHandler(const RegionScope& region) -> diag::Result<void>;
+  auto OpenHandler(const Region& region) -> diag::Result<void>;
   // The handler of the region a coroutine's whole body stands in: what arrived
   // completes the execution, as a departure.
-  auto EmitCoroutineHandler(const RegionScope& top) -> diag::Result<void>;
+  auto EmitCoroutineHandler(const Region& top) -> diag::Result<void>;
   // The frame storage a landing puts what is unwinding in and every handler
   // and every way out by unwinding reads it from. One serves the whole frame,
   // because it is read only on the way from a landing to where that way ends,
@@ -707,11 +670,10 @@ class FunctionLowerer {
   // own outside every statement of it.
   diag::SourceSpan span_;
   std::vector<BreakableScope> breakable_scopes_;
-  std::vector<UnwindScope> scopes_;
-  // Which scope owes the end of a value or of what a slot holds, and how many
-  // regions are open.
+  std::vector<StackedScope> scopes_;
+  CleanupTree cleanups_;
+  // Which scope owes the end of a value or of what a slot holds.
   std::unordered_map<lir::ValueId, std::size_t> owed_end_;
-  std::size_t open_regions_ = 0;
   // Where unwinding goes once it has passed every scope, built the first time
   // one is needed.
   std::optional<lir::BlockId> frame_edge_;

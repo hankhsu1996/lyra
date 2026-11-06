@@ -1,6 +1,8 @@
 # A coroutine's storage states its lifetime
 
-Date: 2026-11-01. Status: accepted.
+Date: 2026-11-01. Status: accepted. Revised 2026-11-05: calls that owe the same on the way out now
+share a landing, so the exception slot has a writer per landing rather than one per call; the
+markers this record decides do not depend on that.
 
 ## Context
 
@@ -48,8 +50,8 @@ miscompile rather than a lost optimization.
 
 - **Clang** forces the markers for a coroutine: `CodeGenFunction::GenerateCode` reads "Coroutines
   always emit lifetime markers." That is why the C++ backend never paid this. Clang also shares one
-  landing pad per scope where Lyra has one landing per call, which is why Lyra's exception slot had
-  a writer per call.
+  landing pad among the calls of a scope, so the slot it takes what is unwinding into has a writer
+  per landing pad rather than one per call.
 - **LLVM** `SpillUtils.cpp`, `AllocaUseVisitor`: a slot with lifetime starts is judged by whether a
   start reaches a suspension without passing an end, and the pair of users is the fallback when it
   has none.
@@ -65,7 +67,9 @@ miscompile rather than a lost optimization.
   two compilers' output found it.
 - **Fixing the pair of users in LLVM first.** A correct fix, and worth having, but nothing Lyra's
   output needs once it states lifetimes.
-- **Merging landing pads as clang does.** A saving of code size, which the markers do not depend on.
+- **Merging landing pads as clang does, as the answer to this cost.** Calls owing the same do now
+  share a landing, which saves code and writers of the exception slot, but the markers do not depend
+  on it.
 
 ## Limits
 

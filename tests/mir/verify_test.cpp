@@ -2511,5 +2511,153 @@ TEST(MirVerifyTest, AnObjectReachedThroughAHandleIsAnEvaluation) {
   }
 }
 
+void AppendCall(const CompilationUnit& unit, Builder block, Callee callee) {
+  const ExprId call = block.Add(
+      Expr{
+          .data = CallExpr{.callee = std::move(callee), .arguments = {}},
+          .type = unit.builtins.void_type});
+  block.AppendStmt(ExprStmt{.expr = call});
+}
+
+// A unit whose one body is a statement nested in a block labelled 0, that
+// statement an empty body paired with the cleanup `fill` writes.
+template <typename Fill>
+auto UnitWhoseCleanupHolds(const Fill& fill) -> CompilationUnit {
+  return UnitWithCode([&](CompilationUnit& unit, CallableCode& code) {
+    Block labelled;
+    Builder labelled_at(labelled, diag::SourceSpan{});
+    Block cleanup;
+    fill(unit, code, labelled_at.Into(cleanup));
+    labelled_at.AppendFinally(Block{}, std::move(cleanup));
+    Builder body(code.Body(), diag::SourceSpan{});
+    body.AppendStmt(
+        BlockStmt{
+            .scope = body.AddScope(std::move(labelled)),
+            .break_label = LabelId{.value = 0}});
+  });
+}
+
+// A cleanup runs on every way out of its body, a departure on its way out
+// included, so a second way out starting inside it would have nowhere to go:
+// it leaves only by running to its end. Every other way out is refused, and the
+// refusal says the cleanup is what holds it.
+TEST(MirVerifyTest, ACleanupLeavesOnlyByRunningToItsEnd) {
+  EXPECT_NO_THROW(Verify(UnitWhoseCleanupHolds(
+      [](const CompilationUnit& u, CallableCode&, Builder cleanup) {
+        AppendCall(
+            u, cleanup, Direct{.target = support::BuiltinFn::kLeaveStaticInit});
+      })));
+  ExpectRefused(
+      UnitWhoseCleanupHolds([](const CompilationUnit& u, CallableCode&,
+                               Builder cleanup) {
+        AppendCall(u, cleanup, Direct{.target = support::BuiltinFn::kDisable});
+      }),
+      "a cleanup holds a call of the library entry 'disable', which is not "
+      "stated not to leave it");
+  ExpectRefused(
+      UnitWhoseCleanupHolds([](CompilationUnit& u, CallableCode&,
+                               Builder cleanup) {
+        CallableCode callee = CallableCode::Defined(diag::SourceSpan{});
+        callee.result_type = u.builtins.void_type;
+        const CallableId called = u.callables.Add(
+            CallableDecl{
+                .code = std::move(callee),
+                .foreign = std::nullopt,
+                .virtual_dispatch = std::nullopt,
+                .defining_unit = std::nullopt});
+        AppendCall(
+            u, cleanup, Direct{.target = UnitCallableTarget{.slot = called}});
+      }),
+      "a cleanup holds a call of a body, which is not stated not to leave it");
+  ExpectRefused(
+      UnitWhoseCleanupHolds([](const CompilationUnit& u, CallableCode&,
+                               Builder cleanup) {
+        cleanup.AppendStmt(
+            RaiseStmt{
+                .effect = cleanup.Add(
+                    Expr{.data = NullLiteral{}, .type = u.builtins.int_type})});
+      }),
+      "a cleanup raises");
+  ExpectRefused(
+      UnitWhoseCleanupHolds(
+          [](const CompilationUnit& u, CallableCode&, Builder cleanup) {
+            const auto literal = [&] {
+              return cleanup.Add(
+                  Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+            };
+            cleanup.AppendStmt(
+                ExprStmt{.expr = AddSum(u, cleanup, literal(), literal())});
+          }),
+      "a cleanup holds a binary operation, which is not stated not to leave "
+      "it");
+  ExpectRefused(
+      UnitWhoseCleanupHolds(
+          [](const CompilationUnit& u, CallableCode& code, Builder cleanup) {
+            const LocalId caught =
+                code.locals.Add(LocalDecl{.type = u.builtins.int_type});
+            cleanup.AppendStmt(
+                TryStmt{
+                    .body = cleanup.AddScope(Block{}),
+                    .caught = caught,
+                    .handler = cleanup.AddScope(Block{})});
+          }),
+      "a cleanup holds a region, whose handler asks what arrived");
+  ExpectRefused(
+      UnitWhoseCleanupHolds(
+          [](const CompilationUnit&, CallableCode&, Builder cleanup) {
+            cleanup.AppendStmt(ReturnStmt{});
+          }),
+      "a cleanup returns");
+  ExpectRefused(
+      UnitWhoseCleanupHolds(
+          [](const CompilationUnit&, CallableCode&, Builder cleanup) {
+            cleanup.AppendStmt(BreakStmt{.target = LabelId{.value = 0}});
+          }),
+      "a cleanup breaks out of label 0, which stands around it");
+  ExpectRefused(
+      UnitWhoseCleanupHolds(
+          [](const CompilationUnit&, CallableCode&, Builder cleanup) {
+            cleanup.AppendStmt(ContinueStmt{});
+          }),
+      "a cleanup continues a loop that stands around it");
+  ExpectRefused(
+      UnitWhoseCleanupHolds(
+          [](const CompilationUnit& u, CallableCode& code, Builder cleanup) {
+            code.result_type = u.builtins.coroutine_void;
+            const ExprId park = cleanup.Add(
+                Expr{
+                    .data = MachineBoolLiteral{.value = true},
+                    .type = u.builtins.machine_bool});
+            cleanup.AppendStmt(
+                ExprStmt{
+                    .expr = cleanup.Add(
+                        Expr{
+                            .data = WaitExpr{.park = park},
+                            .type = u.builtins.void_type})});
+          }),
+      "a cleanup holds a wait, which is not stated not to leave it");
+  EXPECT_NO_THROW(Verify(UnitWhoseCleanupHolds(
+      [](const CompilationUnit& u, CallableCode&, Builder cleanup) {
+        Block inner;
+        Builder inner_at = cleanup.Into(inner);
+        inner_at.AppendStmt(BreakStmt{.target = LabelId{.value = 1}});
+        Block loop;
+        Builder loop_at = cleanup.Into(loop);
+        loop_at.AppendStmt(ContinueStmt{});
+        const ExprId condition = cleanup.Add(
+            Expr{
+                .data = MachineBoolLiteral{.value = false},
+                .type = u.builtins.machine_bool});
+        cleanup.AppendStmt(
+            BlockStmt{
+                .scope = cleanup.AddScope(std::move(inner)),
+                .break_label = LabelId{.value = 1}});
+        cleanup.AppendStmt(
+            WhileStmt{
+                .condition = condition,
+                .scope = cleanup.AddScope(std::move(loop))});
+      })));
+}
+
 }  // namespace
 }  // namespace lyra::mir

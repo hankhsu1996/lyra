@@ -128,7 +128,13 @@ target language.
 4. **A cleanup runs on every way out, and the ways out are enumerable.** Falling off the end, a
    return, a loop exit, and an effect passing through are all ways out. A layer with scopes gets
    this from the target language; a layer with only edges gets it by emitting the cleanup on each
-   edge.
+   edge. The cleanup's own code has one way out, running to its end: it runs while a departure may
+   already be leaving, so a second one starting inside it has nowhere to go, and leaving it partway
+   skips what it owes. So nothing a cleanup calls may leave, by its declaration, and the semantic
+   layer's verification refuses a cleanup holding any other way out. C++ ends the program where a
+   destructor's own code throws, and rustc's MIR gives a call in a cleanup only a terminating
+   unwind; both allow it because their users write that code, where every cleanup here is the
+   compiler's own.
 
 5. **Whether a departure is due is answered, never stored.** The answer is derived when asked, so
    nothing is queued and nothing has to be cleared. A region is re-entered under one identity -- a
@@ -207,20 +213,23 @@ whether the raise was its own.
 
 The execution backend keeps the scopes a departure can meet -- cleanups, the end of each value the
 body owns, and regions alike -- on one stack in the order they nest, as Clang's exception handling
-does. Each call has a landing of its own, because what the target owes on the way out of one call --
-a temporary it made to pass an argument -- is that call's alone; the landing takes what arrived,
-handling nothing yet, and passes it to the innermost scope open where the call was made, whose
-cleanup runs once on the way out and passes it to the scope it is nested in, until a region's
-handler takes it or the frame's own edge carries it on out of the body. Only a handler begins
-handling what arrived, and every way out of the handler ends it, as Clang begins a `catch` and ends
-it in a cleanup of the handler; a landing says whether its way out ends in such a handler, which is
-what tells the platform this frame takes the raise. A body entered as a coroutine stands in a region
-of its own, as a C++ coroutine's body stands in a `try` whose handler hands what escaped to its
-promise. A cleanup's code therefore appears once on the unwinding path however many calls inside it
-can leave, while the ordinary ways out -- falling off the end, a return, a loop exit -- still copy
-it, as below. A value whose end passes to storage or to the caller stops being owed at that point,
-so the paths built while it was owed keep ending it and those built afterwards do not. An object
-being constructed is such a value. Its creator's reference to it is owed on every way out of the
+does. What a way out owes is a chain of nodes, each one cleanup and the node it continues to, made
+once for that pair as rustc's drop tree is. Calls that owe the same on the way out share a landing,
+as clang's calls of one scope share a landing pad; what one call owes alone -- the bytes its value
+would have been made in -- is a node of its own ahead of the shared part. The landing takes what
+arrived, handling nothing yet, and enters that chain, whose cleanups run once on the way out, until
+a region's handler takes it or the frame's own edge carries it on out of the body. A cleanup's own
+code is lowered with none of the body's scopes open, so nothing in it can lead back into a scope
+around it. Only a handler begins handling what arrived, and every way out of the handler ends it, as
+Clang begins a `catch` and ends it in a cleanup of the handler; a landing says whether its way out
+ends in such a handler, which is what tells the platform this frame takes the raise. A body entered
+as a coroutine stands in a region of its own, as a C++ coroutine's body stands in a `try` whose
+handler hands what escaped to its promise. A cleanup's code therefore appears once on the unwinding
+path however many calls inside it can leave, while the ordinary ways out -- falling off the end, a
+return, a loop exit -- still copy it, as below. A value whose end passes to storage or to the caller
+stops being owed at that point, and a node never changes once a way out recorded it, so the ways out
+recorded while it was owed keep ending it and those recorded afterwards do not. An object being
+constructed is such a value. Its creator's reference to it is owed on every way out of the
 construction, so a departure that leaves the construction partway ends that reference and nothing
 else, and the object goes on existing while anything else refers to it.
 
@@ -235,8 +244,8 @@ Enumerating a body's ways out is what every compiler targeting a control-flow gr
 machine does with a cleanup construct. JVM bytecode has no `finally`; the compiler copies the
 cleanup onto each exit path. An earlier design jumped to one shared copy and returned, which was
 withdrawn because the resulting graph could not be verified. Copying per target, shared by the ways
-out of one scope to it, is the standard answer, and the cost is one stack of owed cleanups in the
-lowering.
+out of one scope to it, is the standard answer, and the cost in the lowering is the stack of open
+scopes and the tree of what their ways out owe.
 
 Adjacent contracts: `activation.md` owns what an activation is and which activations are cancelled
 together; `lir.md` owns the control-flow graph the cleanup is emitted into; `mir.md` owns the

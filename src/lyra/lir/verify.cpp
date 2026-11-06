@@ -477,12 +477,12 @@ void VerifyRvalue(
       value);
 }
 
-// A landing is a block one invoke names and that opens by taking what is
-// unwinding. Neither half stands without the other: a body reaches a landing no
-// other way, and what is unwinding has nowhere else to be taken -- so a block
-// that opens this way and is named by nothing would never run, and one that is
-// named and does not would run with nothing taken. It is one call's alone,
-// because what a target owes on the way out of that call is that call's.
+// A landing is a block invokes name and that opens by taking what is unwinding.
+// Neither half stands without the other: a body reaches a landing no other way,
+// and what is unwinding has nowhere else to be taken -- so a block that opens
+// this way and is named by nothing would never run, and one that is named and
+// does not would run with nothing taken. Calls that owe the same on the way out
+// share one, as LLVM lets any number of invokes unwind to one landing pad.
 auto TakesUnwinding(const Instr& instr) -> bool {
   const auto* assign = std::get_if<AssignInstr>(&instr.data);
   return assign != nullptr &&
@@ -490,10 +490,10 @@ auto TakesUnwinding(const Instr& instr) -> bool {
 }
 
 void VerifyLandings(const Function& fn) {
-  std::vector<std::size_t> named(fn.blocks.size(), 0);
+  std::vector<bool> named(fn.blocks.size(), false);
   for (const BasicBlock& block : fn.blocks) {
     if (const auto* call = std::get_if<InvokeTerm>(&block.terminator.data)) {
-      ++named[call->landing.value];
+      named[call->landing.value] = true;
     }
   }
   for (std::size_t index = 0; index < fn.blocks.size(); ++index) {
@@ -509,14 +509,11 @@ void VerifyLandings(const Function& fn) {
       }
     }
     const bool takes = !instrs.empty() && TakesUnwinding(instrs[0]);
-    if (takes != (named[index] != 0)) {
+    if (takes != named[index]) {
       throw InternalError(
           takes ? "lir verify: a landing no invoke names"
                 : "lir verify: an invoke names a block that takes nothing "
                   "unwinding");
-    }
-    if (named[index] > 1) {
-      throw InternalError("lir verify: a landing more than one invoke names");
     }
   }
 }

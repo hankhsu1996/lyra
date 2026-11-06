@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -88,11 +87,14 @@ struct RaiseStmt {
 // destroys a value at scope exit; a language without that facility can still
 // realize the extent, because the ways out of a body are enumerable.
 //
-// The cleanup itself cannot depart. It runs while a departure may already be
-// on its way out, and a second one would have nowhere to go: a target that
-// runs cleanups as part of unwinding cannot start another unwind from one, and
-// a landing inside the cleanup would stand among the very scopes being left.
-// A lowering that would have to give a cleanup's code a landing refuses it.
+// The cleanup itself leaves only by running to its end. It runs while a
+// departure may already be on its way out, and a second one would have nowhere
+// to go: a target that runs cleanups as part of unwinding cannot start another
+// unwind from one, and a landing inside the cleanup would stand among the very
+// scopes being left. Leaving it partway -- a return, or a break or continue
+// naming a statement around it -- would skip what it owes. So a cleanup calls
+// only what is declared to return, and the unit's verification refuses one
+// holding any other way out.
 struct FinallyStmt {
   BlockId body;
   BlockId cleanup;
