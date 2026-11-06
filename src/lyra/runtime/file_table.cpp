@@ -6,19 +6,24 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <expected>
 #include <format>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "lyra/base/errno_as_error_code.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/write_all.hpp"
 #include "lyra/runtime/file.hpp"
 #include "lyra/support/file_descriptor.hpp"
 #include "lyra/value/integral.hpp"
@@ -68,6 +73,12 @@ auto MakeInt(std::int32_t v) -> value::Int {
   return value::Int::FromInt(v);
 }
 
+// An error the table itself finds, spelled as the system's error of that
+// number.
+auto ErrorCodeOf(int code) -> std::error_code {
+  return {code, std::system_category()};
+}
+
 auto IsFileDescriptor(std::int32_t descriptor) -> bool {
   return (static_cast<std::uint32_t>(descriptor) & (1U << 31U)) != 0U;
 }
@@ -75,6 +86,11 @@ auto IsFileDescriptor(std::int32_t descriptor) -> bool {
 // The index the low 31 bits of a file descriptor carry (LRM 21.3.1).
 auto IndexOf(std::int32_t descriptor) -> std::size_t {
   return static_cast<std::uint32_t>(descriptor) & 0x7FFF'FFFFU;
+}
+
+// The file descriptor whose low 31 bits carry `index` (LRM 21.3.1).
+auto FdOf(std::size_t index) -> std::int32_t {
+  return support::kFdHighBit | static_cast<std::int32_t>(index);
 }
 
 // Decode a file descriptor into an index of a table `size` long, or nullopt for
@@ -102,12 +118,20 @@ auto DeliveringTable() noexcept -> std::atomic<FileTable*>& {
 // is made.
 FileTable::FileTable() {
   fd_slots_.reserve(kPreOpenedCount);
-  fd_slots_.emplace_back().file =
-      std::make_unique<File>(STDIN_FILENO, true, false, kBufferBytes, nullptr);
-  fd_slots_.emplace_back().file =
-      std::make_unique<File>(STDOUT_FILENO, false, true, kBufferBytes, stdout);
-  fd_slots_.emplace_back().file =
-      std::make_unique<File>(STDERR_FILENO, false, true, 0, nullptr);
+  const auto pre_open = [this](std::unique_ptr<File> file, const char* name) {
+    Slot& slot = fd_slots_.emplace_back();
+    slot.file = std::move(file);
+    slot.destination = name;
+  };
+  pre_open(
+      std::make_unique<File>(STDIN_FILENO, true, false, kBufferBytes, nullptr),
+      "standard input");
+  pre_open(
+      std::make_unique<File>(STDOUT_FILENO, false, true, kBufferBytes, stdout),
+      "standard output");
+  pre_open(
+      std::make_unique<File>(STDERR_FILENO, false, true, 0, nullptr),
+      "standard error");
   DeliveringTable().store(this);
 }
 
@@ -157,11 +181,6 @@ auto FileTable::SlotOf(std::int32_t fd) -> Slot* {
   return idx.has_value() ? &fd_slots_.at(*idx) : nullptr;
 }
 
-auto FileTable::SlotOf(std::int32_t fd) const -> const Slot* {
-  const auto idx = IndexInTable(fd, fd_slots_.size());
-  return idx.has_value() ? &fd_slots_.at(*idx) : nullptr;
-}
-
 auto FileTable::FileIfOpen(std::int32_t fd) -> File* {
   Slot* slot = SlotOf(fd);
   return slot == nullptr ? nullptr : slot->file.get();
@@ -175,27 +194,69 @@ auto FileTable::IsPreOpened(const Slot& slot) const -> bool {
   });
 }
 
-auto FileTable::FileToRead(std::int64_t fd_value, std::string_view task)
-    -> File* {
-  const std::int32_t fd = AsInt32(fd_value);
-  File* file = FileIfOpen(fd);
-  if (file == nullptr) {
-    SetError(fd, EBADF, std::format("{}: not an open file descriptor", task));
-    return nullptr;
+FileTable::Sentry::Sentry(FileTable& table, std::int64_t descriptor)
+    : table_(&table), descriptor_(AsInt32(descriptor)) {
+}
+
+FileTable::Sentry::Sentry(Sentry&& other) noexcept
+    : table_(std::exchange(other.table_, nullptr)),
+      descriptor_(other.descriptor_),
+      met_(other.met_) {
+}
+
+FileTable::Sentry::~Sentry() {
+  if (table_ != nullptr) table_->EndOperation(descriptor_, met_);
+}
+
+void FileTable::Sentry::Meet(std::error_code met) {
+  Meet(File::Refusal{.code = met, .lost_output = false});
+}
+
+void FileTable::Sentry::Meet(File::Refusal met) {
+  if (!met_.code) met_ = met;
+}
+
+void FileTable::EndOperation(std::int32_t descriptor, File::Refusal met) {
+  ForEachOpenSlot(descriptor, [&met](Slot& slot) {
+    const File::Refusal refused = slot.file->TakeRefusal();
+    if (!met.code) met = refused;
+  });
+  if (met.code) {
+    met_by_descriptor_.insert_or_assign(descriptor, met);
+  } else {
+    met_by_descriptor_.erase(descriptor);
   }
-  if (!file->PermitsRead()) {
-    SetError(fd, EBADF, std::format("{}: file not open for reading", task));
-    return nullptr;
-  }
+}
+
+auto FileTable::OpenedFile(Sentry& sentry) -> File* {
+  File* file = FileIfOpen(sentry.descriptor_);
+  if (file == nullptr) sentry.Meet(ErrorCodeOf(EBADF));
   return file;
+}
+
+auto FileTable::ReadableFile(Sentry& sentry) -> File* {
+  File* file = OpenedFile(sentry);
+  if (file == nullptr || file->PermitsRead()) return file;
+  sentry.Meet(ErrorCodeOf(EBADF));
+  return nullptr;
+}
+
+template <typename Visit>
+void FileTable::ForEachNamed(Sentry& sentry, Visit visit) {
+  bool named = false;
+  ForEachOpenSlot(sentry.descriptor_, [&](Slot& slot) {
+    named = true;
+    visit(slot);
+  });
+  if (!named) sentry.Meet(ErrorCodeOf(EBADF));
 }
 
 void FileTable::WriteTo(
     std::int64_t descriptor, std::string_view text, bool newline) {
-  ForEachOpenSlot(descriptor, [&](Slot& slot) {
+  Sentry sentry(*this, descriptor);
+  ForEachNamed(sentry, [&](Slot& slot) {
     if (!slot.file->PermitsWrite()) {
-      slot.error = ErrorRecord{
-          .errno_value = EBADF, .message = "file not open for writing"};
+      sentry.Meet(ErrorCodeOf(EBADF));
       return;
     }
     slot.file->Write(text);
@@ -211,9 +272,12 @@ void FileTable::Writeln(std::int64_t descriptor, const value::String& text) {
   WriteTo(descriptor, text.View(), true);
 }
 
+// A report is no output of the design's, so it is written past the design's
+// error stream, which holds nothing, and what the stream refuses of it has
+// nobody to tell.
 void FileTable::WriteToStandardError(std::string_view text) {
   fd_slots_.at(IndexOf(support::kStdoutFd)).file->HandOver();
-  fd_slots_.at(IndexOf(support::kStderrFd)).file->Write(text);
+  base::WriteAsMuchAsTaken(STDERR_FILENO, text);
 }
 
 void FileTable::BeforeForeignCodeRuns() {
@@ -234,17 +298,38 @@ auto ChannelCancellation::IsCancelled() const noexcept -> value::Bit {
 auto FileTable::Open(
     std::string_view name, std::optional<std::string_view> mode)
     -> std::int32_t {
+  const std::expected<std::int32_t, std::error_code> opened =
+      OpenFile(name, mode);
+  if (!opened.has_value()) {
+    EndOperation(0, {.code = opened.error(), .lost_output = false});
+    return 0;
+  }
+  // The descriptor now names this file, so `$ferror` given it no longer tells
+  // the design of what a file closed under it lost.
+  for (ClosedLoss& closed : closed_losses_) {
+    if (closed.asked_by == *opened) closed.asked_by.reset();
+  }
+  EndOperation(*opened, {});
+  return *opened;
+}
+
+auto FileTable::OpenFile(
+    std::string_view name, std::optional<std::string_view> mode)
+    -> std::expected<std::int32_t, std::error_code> {
   const std::string name_z{name};
+  const std::string destination = std::format("'{}'", name);
   // The table changes shape while a file is added, and an ending that arrives
   // meanwhile reads it whole.
   const StopSignalsHeld held;
   if (mode.has_value()) {
     const auto permissions = PermissionsOf(*mode);
-    if (!permissions.has_value()) return 0;
+    if (!permissions.has_value()) {
+      return std::unexpected(ErrorCodeOf(EINVAL));
+    }
     const std::string mode_z{*mode};
     OpenedStream opened(
         std::fopen(name_z.c_str(), mode_z.c_str()), &std::fclose);
-    if (opened == nullptr) return 0;
+    if (opened == nullptr) return std::unexpected(base::ErrnoAsErrorCode());
     // Take the place of the first closed file; grow on demand. The pre-opened
     // files are always open, so their places are never taken.
     const auto free = std::ranges::find_if(
@@ -255,32 +340,48 @@ auto FileTable::Open(
         ::fileno(opened.get()), permissions->read, permissions->write,
         kBufferBytes, nullptr);
     slot.opened_as = std::move(opened);
-    slot.error = ErrorRecord{};
-    return support::kFdHighBit | static_cast<std::int32_t>(idx);
+    slot.destination = destination;
+    return FdOf(idx);
   }
   // MCD path: open write-truncate (LRM 21.3.1 omits the type for MCD form).
   OpenedStream opened(std::fopen(name_z.c_str(), "w"), &std::fclose);
-  if (opened == nullptr) return 0;
+  if (opened == nullptr) return std::unexpected(base::ErrnoAsErrorCode());
   for (std::size_t bit = 1; bit < kChannelCount; ++bit) {
     Slot& slot = channel_slots_.at(bit);
     if (slot.file != nullptr) continue;
     slot.file = std::make_unique<File>(
         ::fileno(opened.get()), false, true, kBufferBytes, nullptr);
     slot.opened_as = std::move(opened);
+    slot.destination = destination;
     return static_cast<std::int32_t>(1U << bit);
   }
   // Every channel in use: the file just opened closes with this scope so
-  // nothing leaks. Return 0 per LRM.
-  return 0;
+  // nothing leaks, and the opening answers 0 (LRM 21.3.1).
+  return std::unexpected(ErrorCodeOf(EMFILE));
 }
 
 void FileTable::Close(std::int64_t descriptor) {
+  Sentry sentry(*this, descriptor);
   const StopSignalsHeld held;
-  ForEachOpenSlot(descriptor, [this](Slot& slot) {
+  ForEachNamed(sentry, [&](Slot& slot) {
     if (IsPreOpened(slot)) return;
+    slot.file->HandOver();
+    sentry.Meet(slot.file->TakeRefusal());
+    std::error_code lost = slot.file->TakeUntoldLoss();
     slot.file.reset();
-    slot.opened_as.reset();
-    slot.error = ErrorRecord{};
+    // A descriptor the system refuses to close may not have kept what was
+    // handed to it.
+    if (std::fclose(slot.opened_as.release()) != 0) {
+      const std::error_code refused = base::ErrnoAsErrorCode();
+      sentry.Meet({.code = refused, .lost_output = true});
+      if (!lost) lost = refused;
+    }
+    if (lost) {
+      closed_losses_.push_back(
+          ClosedLoss{
+              .asked_by = AsInt32(descriptor),
+              .lost = {.destination = slot.destination, .refused = lost}});
+    }
     // LRM 21.3.2: fire cancel on any pending observers; replace the source
     // so the next $fopen to take this place starts with a fresh signal.
     slot.cancel_source.request_stop();
@@ -288,32 +389,10 @@ void FileTable::Close(std::int64_t descriptor) {
   });
 }
 
-void FileTable::SetError(
-    std::int32_t fd, int errno_value, std::string message) {
-  if (Slot* slot = SlotOf(fd); slot != nullptr) {
-    slot->error =
-        ErrorRecord{.errno_value = errno_value, .message = std::move(message)};
-  }
-}
-
-auto FileTable::LastError(std::int32_t fd) const -> int {
-  const Slot* slot = SlotOf(fd);
-  return slot == nullptr ? 0 : slot->error.errno_value;
-}
-
-auto FileTable::LastErrorMessage(std::int32_t fd) const -> std::string_view {
-  const Slot* slot = SlotOf(fd);
-  return slot == nullptr ? std::string_view{} : slot->error.message;
-}
-
-void FileTable::ClearError(std::int32_t fd) {
-  if (Slot* slot = SlotOf(fd); slot != nullptr) {
-    slot->error = ErrorRecord{};
-  }
-}
-
 auto FileTable::ScanInputOf(std::int64_t fd) -> FileScanInput {
-  return FileScanInput(FileToRead(fd, "$fscanf"));
+  Sentry sentry(*this, fd);
+  File* file = ReadableFile(sentry);
+  return {std::move(sentry), file};
 }
 
 auto FileScanInput::Peek() -> int {
@@ -345,37 +424,34 @@ auto FileTable::OpenWithMode(
   return MakeInt(Open(name.View(), mode.View()));
 }
 
-auto FileTable::Getc(std::int64_t fd_value) -> value::Int {
-  File* file = FileToRead(fd_value, "$fgetc");
-  if (file == nullptr) return MakeInt(-1);
-  const int c = file->Take();
-  if (c == File::kEndOfFile) {
-    // LRM 21.3.4.1: EOF is signalled as -1 (wider than 8 bits so callers can
-    // distinguish from 0xFF). The file is now at its end; $feof picks it up.
-    SetError(AsInt32(fd_value), 0, "$fgetc: EOF");
-    return MakeInt(-1);
-  }
-  return MakeInt(c);
+auto FileTable::Getc(std::int64_t fd) -> value::Int {
+  Sentry sentry(*this, fd);
+  File* file = ReadableFile(sentry);
+  // LRM 21.3.4.1: the end of the file and an error are both -1, wider than 8
+  // bits so callers can tell it from 0xFF.
+  return MakeInt(file == nullptr ? -1 : file->Take());
 }
 
-auto FileTable::Ungetc(std::int64_t c, std::int64_t fd_value) -> value::Int {
-  File* file = FileToRead(fd_value, "$ungetc");
+auto FileTable::Ungetc(std::int64_t c, std::int64_t fd) -> value::Int {
+  Sentry sentry(*this, fd);
+  File* file = ReadableFile(sentry);
   if (file == nullptr) return MakeInt(-1);
   // LRM 21.3.4.1 NOTE: implementations may limit pushback depth. We keep a
   // single-byte buffer per FD; a second $ungetc before any read returns -1
   // per "if an error occurs pushing a character ... code is set to EOF".
   if (!file->Unget(static_cast<char>(AsInt32(c) & 0xFF))) {
-    SetError(AsInt32(fd_value), EAGAIN, "$ungetc: putback buffer full");
+    sentry.Meet(ErrorCodeOf(EAGAIN));
     return MakeInt(-1);
   }
   return MakeInt(0);
 }
 
-auto FileTable::Gets(std::int64_t fd_value) -> TextRead {
+auto FileTable::Gets(std::int64_t fd) -> TextRead {
   const auto read_nothing = [] {
     return TextRead{MakeInt(0), value::String{}};
   };
-  File* file = FileToRead(fd_value, "$fgets");
+  Sentry sentry(*this, fd);
+  File* file = ReadableFile(sentry);
   if (file == nullptr) return read_nothing();
   // LRM 21.3.4.2 + 21.3.4.1: byte by byte, so a pushed-back byte is the first
   // of the line.
@@ -386,10 +462,7 @@ auto FileTable::Gets(std::int64_t fd_value) -> TextRead {
     line.push_back(static_cast<char>(c));
     if (c == '\n') break;
   }
-  if (line.empty()) {
-    SetError(AsInt32(fd_value), 0, "$fgets: EOF");
-    return read_nothing();
-  }
+  if (line.empty()) return read_nothing();
   return TextRead{
       MakeInt(static_cast<std::int32_t>(line.size())), value::String{line}};
 }
@@ -411,17 +484,15 @@ auto ReadBytes(File& file, std::span<char> into) -> std::size_t {
 
 }  // namespace
 
-auto FileTable::ReadInto(const value::IntegralView& dest, std::int64_t fd_value)
+auto FileTable::ReadInto(const value::IntegralView& dest, std::int64_t fd)
     -> value::Int {
-  File* file = FileToRead(fd_value, "$fread");
+  Sentry sentry(*this, fd);
+  File* file = ReadableFile(sentry);
   if (file == nullptr) return MakeInt(0);
   const auto byte_count = static_cast<std::size_t>((dest.width + 7U) / 8U);
   std::vector<char> buf(byte_count, '\0');
   const std::size_t got = ReadBytes(*file, buf);
-  if (got == 0U) {
-    SetError(AsInt32(fd_value), 0, "$fread: EOF");
-    return MakeInt(0);
-  }
+  if (got == 0U) return MakeInt(0);
   // LRM 21.3.4.4: 2-value, big-endian. On a short read, the trailing buffer is
   // already zero from the vector constructor and lands in the destination's
   // LSBs ("as much as available").
@@ -442,20 +513,21 @@ void ReadBigEndian(
           static_cast<std::int64_t>(dest.width));
 }
 
-auto ReadMemoryWords(
-    FileTable& files, std::int64_t fd_value, std::uint64_t element_width,
+auto FileTable::ReadMemoryWords(
+    std::int64_t fd, std::uint64_t element_width,
     const value::UnpackedRange& declared, std::int64_t start_sv,
     std::int64_t count,
     const std::function<void(std::int64_t, std::span<const char>)>& write_word)
     -> std::int32_t {
-  File* file = files.FileToRead(fd_value, "$fread");
+  Sentry sentry(*this, fd);
+  File* file = ReadableFile(sentry);
   if (file == nullptr) return 0;
 
-  // LRM 21.3.4.4: out-of-range start has no defined behaviour. Stamp EINVAL
-  // and return 0 so the user sees the failure rather than a silent no-op.
+  // LRM 21.3.4.4: out-of-range start has no defined behaviour. The operation
+  // meets EINVAL and reads nothing, so the user sees the failure rather than a
+  // silent no-op.
   if (start_sv < declared.Low() || start_sv > declared.High()) {
-    files.SetError(
-        AsInt32(fd_value), EINVAL, "$fread: start index out of array range");
+    sentry.Meet(ErrorCodeOf(EINVAL));
     return 0;
   }
   const auto available_elements =
@@ -484,14 +556,11 @@ auto ReadMemoryWords(
 }
 
 auto FileTable::Seek(
-    std::int64_t fd_value, std::int64_t offset, std::int64_t operation)
+    std::int64_t fd, std::int64_t offset, std::int64_t operation)
     -> value::Int {
-  const std::int32_t fd = AsInt32(fd_value);
-  File* file = FileIfOpen(fd);
-  if (file == nullptr) {
-    SetError(fd, EBADF, "$fseek: not an open file descriptor");
-    return MakeInt(-1);
-  }
+  Sentry sentry(*this, fd);
+  File* file = OpenedFile(sentry);
+  if (file == nullptr) return MakeInt(-1);
   int whence = 0;
   switch (AsInt32(operation)) {
     case 0:
@@ -504,33 +573,22 @@ auto FileTable::Seek(
       whence = SEEK_END;
       break;
     default:
-      SetError(fd, EINVAL, "$fseek: operation must be 0, 1, or 2");
+      sentry.Meet(ErrorCodeOf(EINVAL));
       return MakeInt(-1);
   }
-  if (!file->Seek(AsInt32(offset), whence)) {
-    SetError(fd, errno, "$fseek: seek failed");
-    return MakeInt(-1);
-  }
-  return MakeInt(0);
+  return MakeInt(file->Seek(AsInt32(offset), whence) ? 0 : -1);
 }
 
 auto FileTable::Rewind(std::int64_t fd) -> value::Int {
   return Seek(fd, 0, 0);
 }
 
-auto FileTable::Tell(std::int64_t fd_value) -> value::Int {
-  const std::int32_t fd = AsInt32(fd_value);
-  File* file = FileIfOpen(fd);
-  if (file == nullptr) {
-    SetError(fd, EBADF, "$ftell: not an open file descriptor");
-    return MakeInt(-1);
-  }
+auto FileTable::Tell(std::int64_t fd) -> value::Int {
+  Sentry sentry(*this, fd);
+  File* file = OpenedFile(sentry);
+  if (file == nullptr) return MakeInt(-1);
   const std::optional<std::int64_t> pos = file->Tell();
-  if (!pos.has_value()) {
-    SetError(fd, errno, "$ftell: tell failed");
-    return MakeInt(-1);
-  }
-  return MakeInt(static_cast<std::int32_t>(*pos));
+  return MakeInt(pos.has_value() ? static_cast<std::int32_t>(*pos) : -1);
 }
 
 auto FileTable::Eof(std::int64_t fd_value) -> value::Int {
@@ -539,30 +597,58 @@ auto FileTable::Eof(std::int64_t fd_value) -> value::Int {
   return MakeInt(at_end ? 1 : 0);
 }
 
-auto FileTable::Error(std::int64_t fd_value) -> TextRead {
-  const std::int32_t fd = AsInt32(fd_value);
-  const int errno_value = LastError(fd);
-  if (errno_value == 0) {
+auto FileTable::Error(std::int64_t fd) -> TextRead {
+  const auto it = met_by_descriptor_.find(AsInt32(fd));
+  if (it == met_by_descriptor_.end()) {
     return TextRead{MakeInt(0), value::String{}};
   }
-  TextRead completion{
-      MakeInt(errno_value), value::String{LastErrorMessage(fd)}};
-  ClearError(fd);
-  return completion;
+  const File::Refusal& met = it->second;
+  // Answered a refusal that lost output, the design is told the files `fd`
+  // names lost some.
+  if (met.lost_output) {
+    ForEachOpenSlot(fd, [](Slot& slot) { slot.file->ClearUntoldLoss(); });
+    std::erase_if(closed_losses_, [&](const ClosedLoss& closed) {
+      return closed.asked_by == AsInt32(fd);
+    });
+  }
+  return TextRead{MakeInt(met.code.value()), value::String{met.code.message()}};
 }
 
-void FileTable::FlushAll() {
-  for (Slot& slot : fd_slots_) {
-    if (slot.file != nullptr) slot.file->HandOver();
+auto FileTable::Finish() -> std::vector<LostOutput> {
+  std::vector<LostOutput> lost;
+  const auto finish = [&lost](Slot& slot) {
+    if (slot.file == nullptr) return;
+    slot.file->HandOver();
+    if (const std::error_code refused = slot.file->TakeUntoldLoss()) {
+      lost.push_back({.destination = slot.destination, .refused = refused});
+    }
+  };
+  std::ranges::for_each(fd_slots_, finish);
+  std::ranges::for_each(channel_slots_, finish);
+  for (ClosedLoss& closed : closed_losses_) {
+    lost.push_back(std::move(closed.lost));
   }
-  for (Slot& slot : channel_slots_) {
-    if (slot.file != nullptr) slot.file->HandOver();
+  closed_losses_.clear();
+  return lost;
+}
+
+// Each open file is flushed by an operation of its own, under the descriptor
+// that names it alone.
+void FileTable::FlushAll() {
+  for (std::size_t index = 0; index < fd_slots_.size(); ++index) {
+    if (fd_slots_.at(index).file == nullptr) continue;
+    Flush(FdOf(index));
+  }
+  for (std::size_t bit = 1; bit < kChannelCount; ++bit) {
+    if (channel_slots_.at(bit).file == nullptr) continue;
+    Flush(static_cast<std::int32_t>(1U << bit));
   }
   std::fflush(nullptr);
 }
 
 void FileTable::Flush(std::int64_t descriptor) {
-  ForEachOpenSlot(descriptor, [](Slot& slot) { slot.file->HandOver(); });
+  Sentry sentry(*this, descriptor);
+  ForEachNamed(sentry, [](Slot& slot) { slot.file->HandOver(); });
 }
 
 auto FileTable::CancellationFor(std::int64_t descriptor)

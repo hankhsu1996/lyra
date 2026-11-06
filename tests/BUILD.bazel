@@ -633,6 +633,17 @@ cc_test(
 )
 
 cc_test(
+    name = "runtime_file_table_test",
+    srcs = ["runtime/file_table_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:runtime",
+        "//:value",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "abi_records_test",
     srcs = ["abi/records_test.cpp"],
     copts = LYRA_COPTS,

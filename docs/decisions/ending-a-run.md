@@ -13,7 +13,9 @@ from outside, a fault or the checker's report used to lose whatever had not reac
 standard output gains a buffer of the runtime's own for that, which the 2026-10-21 revision had said
 it has none of. Revised 2026-11-05: those endings but the refused request for memory also finish
 every value dump the run is writing, which they used to leave holding none of what the dump thread
-had not yet written.
+had not yet written. Revised 2026-11-06: the run's end reports output the system refused that the
+design was never told of, and exits failing, where it used to drop the refusal and exit as though
+everything had been written.
 
 ## Why this decision matters
 
@@ -168,6 +170,19 @@ D5. What decides whether `final` procedures run is whether the simulation reache
     loses its buffer the same way, and the facilities it leans on -- shared memory, a second
     process kept clear of the terminal's signals, a bridge for the foreign side's stream -- are
     weighed against porting and against what is the compiler's own work.
+
+    The run's own end also answers for output the system refused -- a buffer handed over, a write
+    past the buffer, the drain of the stream foreign code wrote, the close of a file -- where the
+    design was never told of it by `$ferror` answering it that refusal (LRM 21.3.7): each such file
+    is reported once as an error, and the run exits failing. A design that asked and was answered
+    handles the loss itself; a later operation that met nothing, which `$ferror` then answers 0
+    for, or one that met an error of another kind, told it nothing. A report Lyra writes on the
+    error stream is no output of the design's, and what the stream refuses of it has nobody to
+    tell. LLVM's output stream reports, as it is destroyed, an error its client never checked, gnulib's `close_stdout` makes a write error a failing exit, and CPython fails its
+    exit when the last flush of standard output is refused; gnulib reports even an error the
+    program checked, which would fail a design that handles its own. The endings a handler takes
+    report nothing of it: what they may call is what a signal handler may, and their status is
+    already theirs.
 
     A value dump (LRM 21.7) is delivered on those endings by other hands, the refused request for
     memory excepted. What the simulation finishes of a dump is a recorded time step, not bytes: a

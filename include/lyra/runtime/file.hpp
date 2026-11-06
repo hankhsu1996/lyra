@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace lyra::runtime {
@@ -63,10 +64,25 @@ using OpenedStream = std::unique_ptr<std::FILE, decltype(&std::fclose)>;
 // writes: this file's bytes before foreign code runs, and the stream's before
 // the design next writes, so what the two print comes out in the order it was
 // printed.
+//
+// What the descriptor refuses -- bytes handed over, a read, a move of the
+// position -- is kept until an operation on the file takes it, as C's stdio
+// keeps a stream's error indicator: a hand-over the design did not ask for,
+// before a report on the error stream or before foreign code runs, is then
+// reported by the next operation the design asks for on the file. Bytes the
+// descriptor refused are dropped, as stdio drops them, since the design has no
+// way to hold them back.
 class File {
  public:
   // What a read answers at the end of the file.
   static constexpr int kEndOfFile = -1;
+
+  // What the descriptor refused, and whether that lost output the design
+  // wrote.
+  struct Refusal {
+    std::error_code code;
+    bool lost_output = false;
+  };
 
   // A file on `fd`, holding what the design writes in `capacity` bytes before
   // handing it over; a capacity of zero hands every write over at once.
@@ -86,7 +102,9 @@ class File {
 
   void Write(std::string_view text);
 
-  // The next byte, taken or only looked at, or the end of the file.
+  // The next byte, taken or only looked at, or the end of the file; a read
+  // the descriptor refused answers the same, and leaves the file not at its
+  // end.
   auto Take() -> int;
   auto Peek() -> int;
 
@@ -112,10 +130,25 @@ class File {
   void BeforeForeignCodeRuns();
 
   // What finished output calls wrote reaches the descriptor, with `write`
-  // alone.
+  // alone. An ending has nobody to tell what the descriptor refuses.
   void DeliverFinished() noexcept;
 
+  // The first refusal the descriptor gave since the last one was taken, or
+  // nothing.
+  auto TakeRefusal() -> Refusal;
+
+  // The design has been told that this file lost output, by `$ferror`
+  // answering it a refusal that lost some (LRM 21.3.7).
+  void ClearUntoldLoss();
+
+  // The first refusal that lost written output since the design was last
+  // told, or nothing.
+  auto TakeUntoldLoss() -> std::error_code;
+
  private:
+  void KeepRefusal(Refusal refused);
+  // A refusal of written output, kept as a refusal too.
+  void KeepLoss(std::error_code refused);
   // What the C stream holds reaches the descriptor, where foreign code may
   // have written it.
   void DrainCStream();
@@ -143,6 +176,8 @@ class File {
   std::atomic<std::size_t> finished_ = 0;
   std::optional<char> putback_;
   bool at_end_ = false;
+  Refusal refused_;
+  std::error_code untold_loss_;
 };
 
 }  // namespace lyra::runtime

@@ -1601,7 +1601,9 @@ the detail lives in the entry itself.
   delivers what the design had written, from a buffer of the runtime's own per file, with `write`
   alone. Revised 2026-11-05: all but the refused request for memory, whose writer would be refused
   in its turn, also finish every value dump, waking its writing thread to write what the run
-  recorded and end the file, after which a stop from outside ends any wait on it.
+  recorded and end the file, after which a stop from outside ends any wait on it. Revised
+  2026-11-06: the run's end reports output the system refused that `$ferror` never told the design
+  of, once a file, and exits failing.
 - [deferred-report-queue](deferred-report-queue.md) -- a pending report stays in the region's own
   list and withdrawal is a refusal to act, so it records the sources that can withdraw it and acts
   only if all still stand: two `disable` targets through the accepted cancellation-source

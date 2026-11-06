@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -11,6 +12,8 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -62,6 +65,13 @@ using TextRead = value::Tuple<value::Int, value::String>;
 template <class Destination>
 using BinaryRead = value::Tuple<value::Int, Destination>;
 
+// Output written to a destination and lost, which the design was never told
+// of: the destination as a message names it, and what the system answered.
+struct LostOutput {
+  std::string destination;
+  std::error_code refused;
+};
+
 // The files a run's descriptors name (LRM 21.3.1). Two descriptor shapes share
 // one int32 namespace:
 //
@@ -84,11 +94,36 @@ using BinaryRead = value::Tuple<value::Int, Destination>;
 // request_stops it and replaces it with a fresh one, so a channel reused after
 // a close starts with a clean signal while observers of the old source see a
 // permanent stop.
+//
+// What `$ferror` answers is what the most recent operation given a descriptor
+// met (LRM 21.3.7): its own error, else the first refusal of a file the
+// descriptor names, else nothing. An opening that fails answers descriptor 0,
+// so its error is answered there (LRM 21.3.1). Asking is no operation. Being
+// answered a refusal that lost output tells the design those files lost some;
+// what it was never told of is the run's end to report.
 class FileTable {
  public:
-  struct ErrorRecord {
-    int errno_value = 0;
-    std::string message;
+  // One operation on a descriptor (LRM 21.3), bracketed as a C++ stream's
+  // sentry brackets one; as it ends it records what the operation met.
+  class Sentry {
+   public:
+    Sentry(Sentry&& other) noexcept;
+    ~Sentry();
+    Sentry(const Sentry&) = delete;
+    auto operator=(const Sentry&) -> Sentry& = delete;
+    auto operator=(Sentry&&) -> Sentry& = delete;
+
+   private:
+    friend class FileTable;
+    Sentry(FileTable& table, std::int64_t descriptor);
+    // Keeps the first error the operation meets: one it finds itself, or a
+    // refusal of the descriptor's.
+    void Meet(std::error_code met);
+    void Meet(File::Refusal met);
+
+    FileTable* table_;
+    std::int32_t descriptor_;
+    File::Refusal met_;
   };
 
   FileTable();
@@ -107,24 +142,10 @@ class FileTable {
       -> std::int32_t;
 
   // Closes the files `descriptor` names: one file for an FD, each set bit's
-  // for an MCD, firing each closed file's cancel signal (LRM 21.3.2). A
-  // pre-opened file is never closed.
+  // for an MCD, firing each closed file's cancel signal (LRM 21.3.2). What
+  // the last hand-over and the closing were refused is what the operation
+  // met. A pre-opened file is never closed.
   void Close(std::int64_t descriptor);
-
-  // The file a read of `fd` takes bytes from. Null where `fd` names no open
-  // file or one not opened for reading, with that error recorded under `task`
-  // for `$ferror` (LRM 21.3.4, 21.3.7).
-  auto FileToRead(std::int64_t fd, std::string_view task) -> File*;
-
-  // LRM 21.3.7 $ferror state. The runtime entry points stamp the most recent
-  // error for an FD via `SetError`; `$ferror(fd, str)` returns the saved
-  // errno and copies the message into `str`, then clears it. MCDs are
-  // write-only and have no per-channel error reporting on this surface.
-  void SetError(std::int32_t fd, int errno_value, std::string message);
-  [[nodiscard]] auto LastError(std::int32_t fd) const -> int;
-  [[nodiscard]] auto LastErrorMessage(std::int32_t fd) const
-      -> std::string_view;
-  void ClearError(std::int32_t fd);
 
   // Returns a `ChannelCancellation` covering every file `descriptor` names
   // (LRM 21.3.2), which the consumer holds by value.
@@ -132,8 +153,7 @@ class FileTable {
       -> ChannelCancellation;
 
   // LRM 21.2.1 / 21.3.2 write to every file `descriptor` names; one not opened
-  // for writing records EBADF for `$ferror` instead (LRM 21.3.7). `Writeln`
-  // appends a trailing newline.
+  // for writing meets EBADF instead. `Writeln` appends a trailing newline.
   void Write(std::int64_t descriptor, const lyra::value::String& text);
   void Writeln(std::int64_t descriptor, const lyra::value::String& text);
 
@@ -171,8 +191,7 @@ class FileTable {
   // line they make.
   auto Gets(std::int64_t fd) -> TextRead;
 
-  // What `$fscanf` of `fd` reads, with the error recorded where `fd` cannot be
-  // read (LRM 21.3.4.3, 21.3.7).
+  // What `$fscanf` of `fd` reads; the operation ends with the input.
   auto ScanInputOf(std::int64_t fd) -> FileScanInput;
 
   // LRM 21.3.4.3 $fscanf. Parses from `fd`'s stream under `format`, taking
@@ -221,8 +240,8 @@ class FileTable {
   // observed on `fd`, zero otherwise.
   auto Eof(std::int64_t fd) -> value::Int;
 
-  // LRM 21.3.7 $ferror. Completes with the most recent errno stamped on `fd`
-  // and its textual message. The file's error state is cleared after the read.
+  // LRM 21.3.7 $ferror. Completes with the code of the error the most recent
+  // operation given `fd` met and its description, or zero and no text.
   auto Error(std::int64_t fd) -> TextRead;
 
   // LRM 21.3.6 $fflush. Flushing every open file and flushing the files a
@@ -231,6 +250,31 @@ class FileTable {
   // what foreign code wrote to the C library's streams.
   void FlushAll();
   void Flush(std::int64_t descriptor);
+
+  // The run's end: what every open file holds is handed over, and what any
+  // file, open or closed, lost of the output written to it while the design
+  // was never told is answered, once a file.
+  auto Finish() -> std::vector<LostOutput>;
+
+  // LRM 21.3.4.4 memory load, over whatever holds the words. Reads from
+  // `start_sv` toward the highest declared index, stopping at end of file or
+  // after `count` words, and hands each word to `write_word` by its
+  // source-declared index -- the coordinate system the declared range states,
+  // which the holder resolves -- as the bytes it takes, most significant
+  // first. `element_width` is how wide a word is, which is what decides how
+  // many bytes one costs; a word the file ends inside has zeros for the bytes
+  // it lacks. Answers with the byte count, zero where nothing was read.
+  //
+  // The holder is a parameter because a memory reached through a
+  // monomorphized container and one reached through an erased handle are the
+  // same load; a second copy of the addressing and the partial-word rule would
+  // be two readings of one clause.
+  auto ReadMemoryWords(
+      std::int64_t fd, std::uint64_t element_width,
+      const value::UnpackedRange& declared, std::int64_t start_sv,
+      std::int64_t count,
+      const std::function<void(std::int64_t, std::span<const char>)>&
+          write_word) -> std::int32_t;
 
  private:
   // LRM 21.3.1: at most 31 MCD channels, bits 0..30.
@@ -241,19 +285,46 @@ class FileTable {
 
   // What a descriptor names: the file while it is open, the C stream the
   // descriptor was opened as (none for a pre-opened file, which is never
-  // closed), the last error recorded on it, and the cancel signal of the
-  // operations tied to it.
+  // closed), the destination as a message names it, and the cancel signal of
+  // the operations tied to it.
   struct Slot {
     std::unique_ptr<File> file;
     OpenedStream opened_as{nullptr, &std::fclose};
-    ErrorRecord error;
+    std::string destination;
     std::stop_source cancel_source;
   };
+
+  // What a file already closed lost while the design was never told, and the
+  // descriptor `$ferror` can still tell it by, until another file opened
+  // takes that descriptor.
+  struct ClosedLoss {
+    std::optional<std::int32_t> asked_by;
+    LostOutput lost;
+  };
+
+  // The descriptor an opening answers, or what it met.
+  auto OpenFile(std::string_view name, std::optional<std::string_view> mode)
+      -> std::expected<std::int32_t, std::error_code>;
+
+  // The open file the operation's descriptor names, or null where it names
+  // none, which the operation meets as EBADF; `ReadableFile` also where it is
+  // not open for reading (LRM 21.3.4).
+  auto OpenedFile(Sentry& sentry) -> File*;
+  auto ReadableFile(Sentry& sentry) -> File*;
+
+  // Visits every open file the operation's descriptor names, which the
+  // operation meets as EBADF where it names none.
+  template <typename Visit>
+  void ForEachNamed(Sentry& sentry, Visit visit);
+
+  // An operation given `descriptor` ends having met `met`; what the files the
+  // descriptor names were refused meanwhile is taken, the first counting where
+  // it met nothing itself.
+  void EndOperation(std::int32_t descriptor, File::Refusal met);
 
   // The slot a file descriptor names, open or not, or null for a value that
   // is no file descriptor of this table.
   auto SlotOf(std::int32_t fd) -> Slot*;
-  [[nodiscard]] auto SlotOf(std::int32_t fd) const -> const Slot*;
   // The open file a file descriptor names, or null.
   auto FileIfOpen(std::int32_t fd) -> File*;
   [[nodiscard]] auto IsPreOpened(const Slot& slot) const -> bool;
@@ -273,6 +344,11 @@ class FileTable {
   std::vector<Slot> fd_slots_;
   // Indexed by channel; channel 0 is standard output and its slot unused.
   std::array<Slot, kChannelCount> channel_slots_;
+  // What the most recent operation given each descriptor met, for each whose
+  // most recent operation met an error.
+  std::unordered_map<std::int32_t, File::Refusal> met_by_descriptor_;
+  // What files already closed lost while the design was never told.
+  std::vector<ClosedLoss> closed_losses_;
 };
 
 // What finished output calls wrote to every open file of the run reaches it,
@@ -284,11 +360,14 @@ void DeliverFinishedFiles() noexcept;
 // pushed back by `$ungetc` first, with a null character ordinary input (LRM
 // 21.3.4.3(a)). A byte the scan ungets becomes the file's pushed-back byte, so
 // the next read of any kind takes it. A file that cannot be read is an input
-// with no bytes.
+// with no bytes. The scan is one operation on its descriptor, which ends with
+// the input.
 class FileScanInput final : public value::ScanInput {
  public:
-  explicit FileScanInput(File* file)
-      : ScanInput(value::NullByte::kOrdinary), file_(file) {
+  FileScanInput(FileTable::Sentry sentry, File* file)
+      : ScanInput(value::NullByte::kOrdinary),
+        sentry_(std::move(sentry)),
+        file_(file) {
   }
 
   auto Peek() -> int override;
@@ -296,28 +375,9 @@ class FileScanInput final : public value::ScanInput {
   void Unget(int byte) override;
 
  private:
+  FileTable::Sentry sentry_;
   File* file_;
 };
-
-// LRM 21.3.4.4 memory load, over whatever holds the words. Reads from
-// `start_sv` toward the highest declared index, stopping at end of file or
-// after `count` words, and hands each word to `write_word` by its
-// source-declared index -- the coordinate system the declared range states,
-// which the holder resolves -- as the bytes it takes, most significant first.
-// `element_width` is how wide a word is, which is what decides how many bytes
-// one costs; a word the file ends inside has zeros for the bytes it lacks.
-// Answers with the byte count, zero where nothing was read.
-//
-// The holder is a parameter because a memory reached through a monomorphized
-// container and one reached through an erased handle are the same load; a
-// second copy of the addressing and the partial-word rule would be two
-// readings of one clause.
-auto ReadMemoryWords(
-    FileTable& files, std::int64_t fd, std::uint64_t element_width,
-    const value::UnpackedRange& declared, std::int64_t start_sv,
-    std::int64_t count,
-    const std::function<void(std::int64_t, std::span<const char>)>& write_word)
-    -> std::int32_t;
 
 // LRM 21.3.4.4: `bytes` as the value `dest` holds, the first byte filling its
 // most significant location and what they span below its width truncated.
@@ -352,7 +412,7 @@ auto FileTable::ReadMemory(
   value::UnpackedArray<T, N>& memory = answer.template Component<1>();
   const value::UnpackedRange declared = value::UnpackedRangesOf(bounds).front();
   answer.template Component<0>() = value::Int::FromInt(ReadMemoryWords(
-      *this, fd, T::kWidth, declared, sv_start, count,
+      fd, T::kWidth, declared, sv_start, count,
       [&memory, &declared](std::int64_t sv_index, std::span<const char> bytes) {
         ReadBigEndian(
             memory.RawAt(static_cast<std::size_t>(declared.ToOrdinal(sv_index)))

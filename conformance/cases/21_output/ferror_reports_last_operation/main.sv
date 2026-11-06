@@ -31,6 +31,10 @@ module Top;
   string after_write_text;
   int after_write;
 
+  int byte_after_failure;
+  string after_success_text;
+  int after_success;
+
   int read_of_stdout;
   string after_read_of_stdout_text;
   int after_read_of_stdout;
@@ -61,6 +65,13 @@ module Top;
 
     $fwrite(fd, "more");
     after_write = $ferror(fd, after_write_text);
+
+    // The write fails again, and the read after it succeeds, so the most
+    // recent operation is one that met no error.
+    $fwrite(fd, "more");
+    byte_after_failure = $fgetc(fd);
+    after_success_text = "stale";
+    after_success = $ferror(fd, after_success_text);
     $fclose(fd);
 
     read_of_stdout = $fgetc(STDOUT);
@@ -103,6 +114,16 @@ module Top;
       $fatal(1, "$ferror after writing a file opened for reading was 0");
     if (after_write_text.len() == 0)
       $fatal(1, "$ferror after writing a file opened for reading gave no text");
+
+    if (byte_after_failure !== 100)
+      $fatal(1, "the byte read after a failed write was %0d, expected 100",
+             byte_after_failure);
+    if (after_success !== 0)
+      $fatal(1, "$ferror after a read that followed a failure was %0d",
+             after_success);
+    if (after_success_text != "")
+      $fatal(1, "$ferror left '%s' after a read that followed a failure",
+             after_success_text);
 
     if (read_of_stdout !== -1)
       $fatal(1, "$fgetc of STDOUT returned %0d, expected -1", read_of_stdout);

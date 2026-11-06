@@ -33,7 +33,7 @@ void InstallOutOfMemoryHandler(
 
 void EndForLackOfMemory() {
   BeforeEndingAction()();
-  WriteAll(STDERR_FILENO, OutOfMemoryMessage());
+  WriteAsMuchAsTaken(STDERR_FILENO, OutOfMemoryMessage());
   std::_Exit(EXIT_FAILURE);
 }
 

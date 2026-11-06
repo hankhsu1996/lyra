@@ -66,7 +66,7 @@ void ReportFault(int signal, siginfo_t* info, void*) {
   const std::uintptr_t end = StackEnd();
   if (signal == SIGSEGV && end != 0 && fault + kBelowStackEnd >= end &&
       fault < end + kAboveStackEnd) {
-    WriteAll(STDERR_FILENO, OverflowMessage());
+    WriteAsMuchAsTaken(STDERR_FILENO, OverflowMessage());
   }
   for (std::size_t i = 0; i < kFaultSignals.size(); ++i) {
     if (kFaultSignals.at(i) == signal) {

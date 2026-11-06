@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/errno_as_error_code.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
@@ -202,7 +203,7 @@ class Wakeup {
   static auto Open() -> std::expected<Wakeup, std::error_code> {
     std::array<int, 2> ends{};
     if (::pipe2(ends.data(), O_CLOEXEC) != 0) {
-      return std::unexpected(std::error_code(errno, std::system_category()));
+      return std::unexpected(base::ErrnoAsErrorCode());
     }
     return Wakeup(ends[0], ends[1]);
   }
@@ -225,7 +226,7 @@ class Wakeup {
   // write never blocks.
   void Wake() const noexcept {
     const char byte = 0;
-    base::WriteAll(write_end_, std::span(&byte, 1));
+    base::WriteAsMuchAsTaken(write_end_, std::span(&byte, 1));
   }
 
   // Wakes every reader now and from now on.
