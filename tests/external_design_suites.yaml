@@ -21,7 +21,6 @@ uvm-1.2:
   cases_in: uvm_1_2/examples
   sources: [src/uvm.sv]
   incdir: [src]
-  defines: [UVM_NO_DPI]
   timescale: 1ns/1ns
   single_unit: true
   arguments: [+UVM_VERBOSITY=UVM_LOW]
@@ -148,7 +147,6 @@ uvm-core:
   cases_in: _main/tests/uvm
   sources: [src/uvm.sv]
   incdir: [src]
-  defines: [UVM_NO_DPI]
   timescale: 1ns/1ns
   single_unit: true
   arguments: [+UVM_VERBOSITY=UVM_LOW]
