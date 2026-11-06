@@ -11,6 +11,14 @@ analyzed representation means. Where neither the standard nor that representatio
 what an accepted text does, Lyra chooses the simplest behaviour. An error of analysis is corrected
 in the front end, and an error of execution or a missing capability is corrected in Lyra.**
 
+**One kind of accepted text is refused by Lyra: a text the standard forbids, or does not settle,
+whose meaning no rule of the standard for the nearest text it allows supplies.** Giving one a
+meaning would be designing semantics the standard declined to give, and every tool that did so would
+answer differently. Lyra refuses it where it reads the front end's representation, before any
+lowering, as an error saying in words what the language does not allow, and records the ruling
+below. A forbidden text whose meaning the nearest allowed text does supply is carried out as the
+front end analyzed it.
+
 The responsibilities are split three ways.
 
 | Layer                | Responsibility                                                                                                 |
@@ -52,12 +60,14 @@ Consequences:
    and built from the standard's rules for the nearest text it allows, and no allowed text says the
    same (see _Forbidden, run as an extension when asked_ below). It stays an error by default.
 3. **Lowering does not judge again whether the source is legal.** It carries out what the front end
-   analyzed and never inspects the form the source wrote it in. A reader sees one of four outcomes,
-   and lowering says which.
+   analyzed and never inspects the form the source wrote it in. The one refusal of Lyra's own, of a
+   text the standard gives no meaning, is made before lowering, where the front end's representation
+   is read. A reader sees one of five outcomes, and Lyra says which.
 
    | Situation                                                                                         | Reported as                                                                    |
    | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
    | The front end refuses the source                                                                  | The front end's diagnostic. Lowering does not run.                             |
+   | The front end accepts a text the standard gives no meaning, ruled on below                        | An error where it was written, saying what the language does not allow.        |
    | The front end accepts it and builds nothing to carry out (a tolerant reading, or nothing relaxed) | A refusal where it was written, saying the text has no behaviour to carry out. |
    | The front end accepts it and Lyra does not yet carry it out                                       | A gap, naming the construct.                                                   |
    | The representation breaks the hand-off contract                                                   | A compiler error, never a statement about the source.                          |
@@ -403,6 +413,40 @@ initialization undefined; Lyra initializes a class's own properties in declarati
 starting at its type's value. So a property declared earlier is read with its initializer applied,
 one declared later with its type's start value, and a base's property with the base's construction
 complete. Write `a`, which 8.7's own example does (`int d2 = c2;`).
+
+### Forbidden or not settled, accepted by the front end, and refused by Lyra
+
+#### A member of a union, or a part of one, passed by reference
+
+```systemverilog
+typedef struct { int x; int y; } s_t;
+typedef union { int a; s_t s; } u_t;
+u_t v;
+task automatic set(ref int r); r = 3; endtask
+initial begin
+  set(v.a);    // a member of a union
+  set(v.s.x);  // a member of a structure that is a union's member
+end
+```
+
+13.5.2: "Only the following shall be legal to pass by reference: A variable, A class property, A
+member of an unpacked structure, or An element of an unpacked array." A member of an unpacked union,
+tagged or not, is not on the list. Forbidden. A structure's member or an array's element lying in a
+union's member is on the list by its last select, and the clause does not say which governs; 7.3
+makes a union "a single piece of storage that can be accessed using one of the named member data
+types", with "no required representation" for an unpacked one, so what lies in a member has no
+storage of its own while another member may be what the union holds. Not settled, and Lyra takes the
+stricter reading.
+
+The front end accepts both with no diagnostic (it refuses only a member of a packed union). No
+allowed text lends either a meaning: a reference names storage of one type for as long as it is
+held, and a union's storage is read as another type whenever another member writes it (7.3.2), or
+ends and holds another member when a tagged union is assigned (11.9). C++ and Rust let such a
+reference be bound only by leaving a read through it after that undefined, or by a borrow discipline
+SystemVerilog does not have. Lyra refuses it wherever a reference is bound -- an argument, a
+formal's default, a `ref` port's connection -- and where the scope randomize function is handed a
+variable (18.12), which it writes where it lies. Pass the whole union, or pass the member to an
+`inout` formal, which copies it in and out (13.5) and runs.
 
 ### Not settled by the standard, so refused
 

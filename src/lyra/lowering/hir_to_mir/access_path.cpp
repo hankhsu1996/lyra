@@ -159,7 +159,8 @@ auto ComponentStep(StepUse use, base::ComponentIndex position) -> StepTaken {
 
 // A union's member is a component of the union, lying at the union's own start
 // (LRM 7.3), and is taken as one; it has no identity of its own, so nothing
-// lends it by reference (LRM 13.5.2).
+// lends it by reference (LRM 13.5.2), and a source text passing one by
+// reference is refused before this layer.
 auto UnionMemberStep(StepUse use, base::ComponentIndex position) -> StepTaken {
   switch (use) {
     case StepUse::kRead:
@@ -172,8 +173,9 @@ auto UnionMemberStep(StepUse use, base::ComponentIndex position) -> StepTaken {
           .arguments = {}};
     case StepUse::kLend:
       throw InternalError(
-          "access path: a union's member has no identity of its own, and this "
-          "descent lends one");
+          "access path: a union's member has no identity of its own and is "
+          "refused where the source passes one by reference, and this descent "
+          "lends one");
   }
   throw InternalError("access path: unknown step use");
 }
