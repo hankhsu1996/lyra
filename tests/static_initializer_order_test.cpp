@@ -49,10 +49,14 @@ using conformance::framework::LoadCases;
 
 namespace {
 
+// A clockvar is a variable to the front end whose initializer is the signal it
+// names (LRM 14.3), which nothing runs as an initialization, so it is no static
+// initializer.
 auto IsStatic(const slang::ast::Symbol& symbol) -> bool {
   const auto* variable = symbol.as_if<slang::ast::VariableSymbol>();
   return variable != nullptr &&
          symbol.kind != slang::ast::SymbolKind::FormalArgument &&
+         symbol.kind != slang::ast::SymbolKind::ClockVar &&
          variable->lifetime == slang::ast::VariableLifetime::Static;
 }
 

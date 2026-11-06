@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/assertion_control.hpp"
@@ -69,15 +70,35 @@ struct RuntimeOptions {
 //   what a constant drives and not the value the name held before.
 // - An `always_comb` or `always_latch` is triggered after all initial and
 //   always procedures have been started (LRM 9.2.2.2).
+// - An execution of the scope that is no procedure and runs inside each
+//   occurrence of what it waits for starts in the always procedures' turn, so
+//   it is waiting, as they are, before anything it waits for can occur.
 enum class StartKind : std::uint8_t {
   kAlwaysProcedure,
+  kObserver,
   kContinuousDriver,
   kInitialProcedure,
   kTriggeredProcedure,
 };
 
+// The turn a kind of process starts in at time zero.
+constexpr auto TurnOf(StartKind kind) -> std::size_t {
+  switch (kind) {
+    case StartKind::kAlwaysProcedure:
+    case StartKind::kObserver:
+      return 0;
+    case StartKind::kContinuousDriver:
+      return 1;
+    case StartKind::kInitialProcedure:
+      return 2;
+    case StartKind::kTriggeredProcedure:
+      return 3;
+  }
+  throw InternalError("TurnOf: a kind of starting process has no turn");
+}
+
 inline constexpr std::size_t kStartTurnCount =
-    static_cast<std::size_t>(StartKind::kTriggeredProcedure) + 1;
+    TurnOf(StartKind::kTriggeredProcedure) + 1;
 
 // A final procedure bound to the instance it runs for: the call, and what it
 // runs in, which the thread calling it takes on for the length of the call (LRM
@@ -283,8 +304,9 @@ class Runtime final : public RuntimeEffects {
   // Runs the earliest of the regions `first` through `last` holding anything
   // until none does, answering false where the slot met the bound on its passes
   // and was reported.
-  auto DrainRegions(Region first, Region last, SlotPasses& passes) -> bool;
-  void RunRegion(Region region);
+  auto DrainRegions(
+      support::Region first, support::Region last, SlotPasses& passes) -> bool;
+  void RunRegion(support::Region region);
   // Tells the waits on objects that expired since this was last asked (LRM
   // 8.30.3), with no execution running: each runs where its context places a
   // wake, as at any other occurrence, and what that runs may expire more.
@@ -357,6 +379,8 @@ class Runtime final : public RuntimeEffects {
   // What a region pass is working through, held apart from the region it came
   // out of, which meanwhile collects the next pass's work (LRM 9.3.2).
   RegionQueue draining_{effect_storage_};
+  // What runs once the region pass running now has run all it held.
+  DeferredEffects pass_end_effects_{effect_storage_};
   // Every assertion control the design registered (LRM 20.11).
   AssertionControls assertion_controls_;
   BoundMembers bound_members_;
@@ -435,6 +459,11 @@ void RegisterAlwaysProcess(
 void RegisterContinuousDriver(
     Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
     Coroutine<void> coroutine, base::SourceLocation written_at);
+// An execution of the scope woken inside each occurrence of what it waits for,
+// before anything the occurrence woke into a region runs (LRM 14.7, 14.10).
+void RegisterObservingProcess(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    base::SourceLocation written_at);
 void RegisterInitialProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     base::SourceLocation written_at);

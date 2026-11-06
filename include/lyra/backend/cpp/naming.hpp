@@ -657,6 +657,9 @@ inline void WriteOne(TargetText& out, NamespaceMemberScope scope) {
           [](const support::NamedBlockStep&) -> CppName {
             ThrowNamesNoClass();
           },
+          [](const support::ClockingBlockStep&) -> CppName {
+            ThrowNamesNoClass();
+          },
           [](const support::UnnamedBlockStep&) -> CppName {
             ThrowNamesNoClass();
           },
@@ -808,6 +811,7 @@ inline void WriteOne(TargetText& out, const ClassPath& path) {
           [&](const support::ClassStep&) { return from_whole_path(); },
           [&](const support::SubroutineStep&) { return from_whole_path(); },
           [&](const support::NamedBlockStep&) { return from_whole_path(); },
+          [&](const support::ClockingBlockStep&) { return from_whole_path(); },
           [&](const support::UnnamedBlockStep&) { return from_whole_path(); }},
       steps.front());
 }

@@ -50,6 +50,7 @@
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/verify.hpp"
+#include "lyra/lowering/ast_to_hir/clocking_block.hpp"
 #include "lyra/lowering/ast_to_hir/fixed_name.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
@@ -548,10 +549,12 @@ void UnitLowerer::DeclareMemberIdentities(
     case SymbolKind::ClockVar:
     case SymbolKind::LetDecl:
       return;
-    case SymbolKind::ClockingBlock:
-      DeclareClockingEvaluators(
-          member.as<slang::ast::ClockingBlockSymbol>(), decls, published);
+    case SymbolKind::ClockingBlock: {
+      const auto& block = member.as<slang::ast::ClockingBlockSymbol>();
+      DeclareClockingEvaluators(block, decls, published);
+      DeclareClockingStorage(block, decls, published, frame);
       return;
+    }
   }
   throw InternalError(
       "UnitLowerer::DeclareMemberIdentities: unknown slang SymbolKind");
@@ -746,6 +749,108 @@ void UnitLowerer::DeclareClockingEvaluators(
             .event = &event, .operand = operand, .condition = condition});
   }
   published.clockings.push_back(std::move(clocking));
+}
+
+// A clocking block is storage of every instance of its scope (LRM 14.7), held
+// under the block's name: each input clockvar is the variable holding what it
+// last sampled (LRM 14.13), the block's name stands for an event (LRM 14.10),
+// and an output drives its signal from a variable inside the block, which
+// every drive of it writes (LRM 14.16, 14.16.2), one variable onto which all
+// the scope's outputs share. What lands a drive of an output is the scope's,
+// since the output's skew is the instance's (LRM 14.4). What a use reaches is
+// published, so that a unit reaching the block through a port, a virtual
+// interface or a hierarchical name reaches the same storage and the same
+// landing. An unnamed block is the default clocking (LRM 14.12), reached by no
+// name but counted by every cycle delay of its scope.
+void UnitLowerer::DeclareClockingStorage(
+    const slang::ast::ClockingBlockSymbol& block, ScopeDeclarations& decls,
+    ScopePublicationRecord& published, ScopeFrameId frame) {
+  // A global clocking block names only an event (LRM 14.14), which nothing here
+  // carries.
+  if (block.isGlobal) return;
+  const support::DefPath within = support::Extended(
+      published.class_path,
+      support::ClockingBlockStep{.name = std::string{block.name}});
+  using Holds = ScopePublicationRecord::ClockingVariable::Holds;
+  const auto variable = [&](std::string name, Holds holds,
+                            const slang::ast::Symbol* symbol,
+                            const support::DefPath& holder) {
+    const hir::StructuralDataObjectId id =
+        decls.structural_data_objects.Declare();
+    published.members.emplace_back(
+        ScopePublicationRecord::ClockingVariable{
+            .name = std::move(name),
+            .within = holder,
+            .holds = holds,
+            .symbol = symbol,
+            .id = id});
+    return id;
+  };
+  // A variable output's driving variable is the one every output onto that
+  // variable shares, whichever block of the scope declares it.
+  const auto driving_variable_of =
+      [&](const slang::ast::ClockVarSymbol& clockvar) {
+        DrivingVariableNaming naming = DrivingVariableNamingOf(clockvar);
+        if (!naming.held_by_scope) {
+          return variable(std::move(naming.name), &clockvar, nullptr, within);
+        }
+        const slang::ast::VariableSymbol* signal =
+            std::get<VariableSignal>(OutputSignalOf(clockvar)).variable;
+        const auto shared = clocking_driving_variables_.find(signal);
+        if (shared != clocking_driving_variables_.end()) return shared->second;
+        const hir::StructuralDataObjectId id = variable(
+            std::move(naming.name), &clockvar, nullptr, published.class_path);
+        clocking_driving_variables_.emplace(signal, id);
+        return id;
+      };
+  DeclaredClocking declared{
+      .home_frame = frame,
+      .id = decls.clocking_blocks.Declare(),
+      .block_event =
+          variable(ClockingBlockEventName(), hir::EventType{}, nullptr, within),
+      .clockvars = {}};
+  std::uint32_t position = 0;
+  for (const auto& clockvar :
+       block.membersOfType<slang::ast::ClockVarSymbol>()) {
+    DeclaredClockvar parts{
+        .position = hir::ClockvarId{.value = position++},
+        .sample = std::nullopt,
+        .driving = std::nullopt};
+    if (IsClockingInput(clockvar) && !InputRefusal(clockvar).has_value()) {
+      parts.sample =
+          variable(std::string{clockvar.name}, &clockvar, &clockvar, within);
+      MapStructuralDataObjectBinding(clockvar, frame, *parts.sample);
+    }
+    if (IsClockingOutput(clockvar) && !OutputRefusal(clockvar).has_value()) {
+      parts.driving = driving_variable_of(clockvar);
+      published.callables.emplace_back(
+          ScopePublicationRecord::ClockingLanding{
+              .name = ClockingLandingName(block.name, clockvar.name),
+              .lands = hir::ClockingOutputLanding{
+                  .block = declared.id, .clockvar = parts.position}});
+    }
+    declared.clockvars.emplace(&clockvar, parts);
+  }
+  clocking_blocks_.emplace(&block, std::move(declared));
+}
+
+auto UnitLowerer::DeclaredClockingOf(
+    const slang::ast::ClockingBlockSymbol& block) const
+    -> const DeclaredClocking& {
+  const DeclaredClocking* declared = FindDeclaredClocking(block);
+  if (declared == nullptr) {
+    throw InternalError(
+        "UnitLowerer::DeclaredClockingOf: the declaration pass reserves every "
+        "clocking block a scope of this unit declares");
+  }
+  return *declared;
+}
+
+auto UnitLowerer::FindDeclaredClocking(
+    const slang::ast::ClockingBlockSymbol& block) const
+    -> const DeclaredClocking* {
+  const auto found = clocking_blocks_.find(&block);
+  return found == clocking_blocks_.end() ? nullptr : &found->second;
 }
 
 // An assertion whose enabling condition is 1 is not a procedure the design
@@ -1012,7 +1117,7 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
               hir::PublishedDisableTargetId, hir::ProceduralScopeId>{
               published.disable_targets.size()},
       .callables = base::Translation<
-          hir::PublishedCallableId, hir::StructuralSubroutineId>{
+          hir::PublishedCallableId, hir::PublishedCallableDecl>{
           published.callables.size()}};
   scope_classes_.erase(stated);
   for (const ScopePublicationRecord::Member& member : published.members) {
@@ -1054,7 +1159,9 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
                   const auto binding = LookupInterfacePortBinding(*port.symbol);
                   if (!binding.has_value()) unbound("an interface port");
                   return binding->port;
-                }},
+                },
+                [](const ScopePublicationRecord::ClockingVariable& variable)
+                    -> hir::PublishedDecl { return variable.id; }},
             member));
   }
   for (const ScopePublicationRecord::Construct& construct :
@@ -1075,7 +1182,27 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
   }
   for (const ScopePublicationRecord::Callable& callable : published.callables) {
     publication.callables.Append(
-        std::visit([](const auto& entered) { return entered.id; }, callable));
+        std::visit(
+            Overloaded{
+                [](const ScopePublicationRecord::Subroutine& entered) {
+                  return hir::PublishedCallableDecl{entered.id};
+                },
+                [](const ScopePublicationRecord::PortDefault& entered) {
+                  return hir::PublishedCallableDecl{entered.id};
+                },
+                [](const ScopePublicationRecord::ViewRead& entered) {
+                  return hir::PublishedCallableDecl{entered.id};
+                },
+                [](const ScopePublicationRecord::ArgumentDefault& entered) {
+                  return hir::PublishedCallableDecl{entered.id};
+                },
+                [](const ScopePublicationRecord::ClockingExpression& entered) {
+                  return hir::PublishedCallableDecl{entered.id};
+                },
+                [](const ScopePublicationRecord::ClockingLanding& landing) {
+                  return hir::PublishedCallableDecl{landing.lands};
+                }},
+            callable));
   }
   return publication;
 }
@@ -1125,7 +1252,10 @@ auto ScopePublicationRecord::CallableOf(const slang::ast::Symbol& holder) const
             // A clocking block holds an expression per event of its clocking
             // event, so its callables are found through its events rather
             // than by the block.
-            [](const ClockingExpression&) -> bool { return false; }},
+            [](const ClockingExpression&) -> bool { return false; },
+            // What lands a clocking output's drives is found by the name its
+            // block and clockvar give it.
+            [](const ClockingLanding&) -> bool { return false; }},
         callable);
   };
   const auto it = std::ranges::find_if(callables, holds);

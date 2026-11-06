@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -36,6 +37,7 @@
 #include "lyra/lowering/hir_to_mir/class_code.hpp"
 #include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
+#include "lyra/lowering/hir_to_mir/clocking_block.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
@@ -49,6 +51,7 @@
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/extern_binding.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/path_select.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
@@ -1531,13 +1534,30 @@ auto BuildNetJoinStmt(
                   unit.builtins.void_type))}};
 }
 
+// The subroutine of the scope `published` publishes at `callable`, which one
+// the scope leaves to a connected module is (LRM 25.7).
+auto PublishedSubroutineOf(
+    const hir::ScopePublication& published, hir::PublishedCallableId callable)
+    -> hir::StructuralSubroutineId {
+  return std::visit(
+      Overloaded{
+          [](hir::StructuralSubroutineId subroutine) { return subroutine; },
+          [](const hir::ClockingOutputLanding&) -> hir::StructuralSubroutineId {
+            throw InternalError(
+                "hir_to_mir: a subroutine left to a connected module is one "
+                "the source declared -- please report this as a bug");
+          }},
+      published.callables.Get(callable));
+}
+
 // Which of the subroutines `published` leaves to a connected module the
 // subroutine `subroutine` of the scope is.
 auto ExternOf(
     const hir::ScopePublication& published,
     hir::StructuralSubroutineId subroutine) -> hir::PublishedExternId {
   for (const hir::PublishedExternId id : published.signature.externs.Ids()) {
-    if (published.callables.Get(published.signature.externs.Get(id).callable) ==
+    if (PublishedSubroutineOf(
+            published, published.signature.externs.Get(id).callable) ==
         subroutine) {
       return id;
     }
@@ -1742,6 +1762,143 @@ auto BindInputPort(
   const mir::CallableId body = mir_class.callables.Add(*std::move(drive));
   AppendDriverRegistration(
       unit_lowerer, activate_frame, runs_as, body, source.span);
+  return {};
+}
+
+// The bodies a scope's construction is written into, which bringing up its
+// clocking blocks writes each of: the constructor's own, the installation of
+// its storage, its Resolve and Initialize steps, and the activation of its
+// executions.
+struct ClockingBodyFrames {
+  WalkFrame ctor;
+  WalkFrame install;
+  WalkFrame resolve;
+  WalkFrame init;
+  WalkFrame activate;
+};
+
+// Brings up every clocking block the scope declares (LRM 14), one copy per
+// instance like an always procedure (LRM 14.7): its own storage -- what notes
+// each occurrence of its clocking event, the copy each input skewed by a delay
+// reads, and what an output onto a variable commits by -- installed as
+// declared variables are; the execution sampling it inside each occurrence of
+// its clocking event (LRM 14.10, 14.13) and each skewed input's follower,
+// executions of no lineage that start with the always procedures; each net
+// output's driver, a continuous drive from the block's variable (LRM 14.16);
+// and the method landing each output's drives, which overrides the one its
+// published class introduced (LRM 14.16).
+auto InstallClockingBlocks(
+    StructuralScopeLowerer& lowerer, const ClockingBodyFrames& frames)
+    -> diag::Result<void> {
+  UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+  mir::Class& mir_class = *frames.ctor.current_class.cls;
+  mir::Builder install = frames.install.Builder();
+  const auto own_place = [&](mir::ClassFieldTarget field) {
+    return BuildOwnFieldExpr(
+        unit, install, frames.install, field, FieldTypeOf(unit_lowerer, field));
+  };
+  const auto install_cell = [&](mir::ClassFieldTarget field, hir::TypeId type) {
+    install.AppendStmt(
+        mir::ExprStmt{
+            .expr = install.Add(
+                mir::MakeCapabilityInstallCallExpr(
+                    own_place(field),
+                    BuildDeclaredInitialValue(
+                        unit_lowerer, frames.install, type),
+                    support::BuiltinFn::kInitialize,
+                    unit.builtins.void_type))});
+  };
+  // What every output onto one variable shares is brought up once.
+  std::set<hir::StructuralDataObjectId> installed_commits;
+  for (const hir::ClockingBlockId id : hir_scope.clocking_blocks.Ids()) {
+    const hir::ClockingBlockDecl& clocking = hir_scope.clocking_blocks.Get(id);
+    const ClockingFields& fields = lowerer.ClockingFieldsOf(id);
+    const hir::TypeId event_type =
+        hir_scope.structural_data_objects.Get(clocking.block_event).type;
+    install_cell(fields.occurrence, event_type);
+    const auto started =
+        [&](diag::Result<mir::CallableDecl> execution) -> diag::Result<void> {
+      if (!execution) return std::unexpected(std::move(execution.error()));
+      const mir::CallableId body =
+          mir_class.callables.Add(std::move(*execution));
+      AppendProcessRegistration(
+          unit_lowerer, frames.activate, body,
+          support::BuiltinFn::kRegisterObserving, clocking.span);
+      return {};
+    };
+    if (auto r = started(LowerClockingSampler(lowerer, frames.ctor, id)); !r) {
+      return r;
+    }
+    for (const hir::ClockvarId at : clocking.clockvars.Ids()) {
+      const hir::Clockvar& clockvar = clocking.clockvars.Get(at);
+      const ClockvarFields& own = fields.clockvars.Get(at);
+      if (own.copy.has_value()) {
+        install_cell(
+            *own.copy,
+            hir_scope.structural_data_objects.Get(clockvar.input->sample).type);
+        if (auto r =
+                started(LowerClockingFollower(lowerer, frames.ctor, id, at));
+            !r) {
+          return r;
+        }
+      }
+      if (own.commit.has_value() &&
+          installed_commits.insert(clockvar.output->driving).second) {
+        install_cell(own.commit->applying, event_type);
+        install.AppendStmt(
+            mir::ExprStmt{
+                .expr = install.Add(
+                    mir::MakeAssignExpr(
+                        unit.builtins, own_place(own.commit->kept),
+                        ConvertToType(
+                            unit, install,
+                            mir::BuildIntLiteral(unit, install, 0),
+                            unit.builtins.bit1)))});
+      }
+      if (!clockvar.output.has_value()) continue;
+      // LRM 14.16: a net output's driver, updated as if by a continuous
+      // assignment from the variable inside the block, at (strong1, strong0).
+      auto driven = std::visit(
+          Overloaded{
+              [&](const hir::NetSignal& nets) -> diag::Result<void> {
+                auto driver = LowerContinuousDrive(
+                    lowerer, frames.ctor.WithSpan(clockvar.span),
+                    frames.resolve.WithSpan(clockvar.span),
+                    frames.init.WithSpan(clockvar.span),
+                    [&](const WalkFrame& frame) {
+                      return LowerLvalue(
+                          std::as_const(lowerer),
+                          hir_scope.exprs.Get(clockvar.signal), frame);
+                    },
+                    hir_scope.exprs.Get(nets.driving),
+                    support::StrengthLevel::kStrong, std::nullopt, nets.reads);
+                if (!driver) return std::unexpected(std::move(driver.error()));
+                const mir::CallableId body =
+                    mir_class.callables.Add(std::move(*driver));
+                AppendDriverRegistration(
+                    unit_lowerer, frames.activate,
+                    CreatingInstance(unit_lowerer, frames.activate), body,
+                    clockvar.span);
+                return {};
+              },
+              [](const hir::VariableSignal&) -> diag::Result<void> {
+                return {};
+              }},
+          clockvar.output->signal);
+      if (!driven) return driven;
+      const hir::ClockingOutputLanding landing{.block = id, .clockvar = at};
+      const mir::CallableId method = lowerer.ClockingLandingCallable(landing);
+      auto lands = LowerClockingLanding(
+          lowerer, frames.ctor, landing,
+          unit_lowerer.GetClassShape(frames.ctor.current_class.id)
+              .callable_signatures.Get(method)
+              .virtual_dispatch);
+      if (!lands) return std::unexpected(std::move(lands.error()));
+      mir_class.callables.Define(method, *std::move(lands));
+    }
+  }
   return {};
 }
 
@@ -2679,6 +2836,56 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   sampled_history_fields_ = {
       hir_scope.sampled_histories.size(), std::move(sampled_history_fields)};
 
+  // What a clocking block counts its clocking event in, the copy each input
+  // skewed by a delay reads, and what an output onto a variable puts its value
+  // onto it by, are storage nothing outside this scope names either: a drive
+  // from another unit reaches them only through the method landing it (LRM
+  // 14.13, 14.16, 14.16.2). Those methods are reserved with the scope's others
+  // below.
+  const auto own_field = [&](mir::TypeId type) {
+    return mir::ClassFieldTarget{
+        .owner = class_id_, .slot = shape.AddField(type)};
+  };
+  const mir::TypeId event_cell = mir::ObservableCellOf(
+      unit_lowerer.Unit().types, unit_lowerer.Unit().builtins.event);
+  std::vector<mir::ClassFieldTarget> clocking_occurrences;
+  std::vector<std::vector<ClockvarFields>> clockvar_fields;
+  std::map<hir::StructuralDataObjectId, PassCommitFields> pass_commits;
+  clocking_occurrences.reserve(hir_scope.clocking_blocks.size());
+  clockvar_fields.reserve(hir_scope.clocking_blocks.size());
+  for (const hir::ClockingBlockId id : hir_scope.clocking_blocks.Ids()) {
+    const hir::ClockingBlockDecl& block = hir_scope.clocking_blocks.Get(id);
+    clocking_occurrences.push_back(own_field(event_cell));
+    std::vector<ClockvarFields>& fields = clockvar_fields.emplace_back();
+    fields.reserve(block.clockvars.size());
+    for (const hir::Clockvar& clockvar : block.clockvars) {
+      ClockvarFields own{.copy = {}, .landing = {}, .commit = {}};
+      if (clockvar.input.has_value() &&
+          std::holds_alternative<hir::DelaySkew>(clockvar.input->skew)) {
+        own.copy = own_field(unit_lowerer.MemberCellType(
+            unit_lowerer.TranslateType(
+                hir_scope.structural_data_objects.Get(clockvar.input->sample)
+                    .type),
+            hir::VariableStorage{}));
+      }
+      // Every output onto one variable shares its driving variable, and so
+      // what commits it once a pass.
+      if (clockvar.output.has_value() &&
+          std::holds_alternative<hir::VariableSignal>(
+              clockvar.output->signal)) {
+        const auto [shared, first] =
+            pass_commits.try_emplace(clockvar.output->driving);
+        if (first) {
+          shared->second = PassCommitFields{
+              .kept = own_field(unit_lowerer.Unit().builtins.bit1),
+              .applying = own_field(event_cell)};
+        }
+        own.commit = shared->second;
+      }
+      fields.push_back(own);
+    }
+  }
+
   // What an assertion has in flight is storage nothing outside this scope
   // names either: an attempt is started by the clock and read by the tick that
   // advances it, both of which are this scope's own (LRM 16.14.1). The type
@@ -2789,11 +2996,13 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       hir_scope.structural_subroutines.size());
   for (const hir::PublishedCallableId published :
        hir_scope.published.callables.Ids()) {
-    dispatch[hir_scope.published.callables.Get(published).value] =
-        mir::OverridesVirtualSlot{
-            .overridden = mir::VirtualSlot{
-                .owner_class = published_class_id_,
-                .slot = PublishedMethodOf(published)}};
+    if (const auto* subroutine = std::get_if<hir::StructuralSubroutineId>(
+            &hir_scope.published.callables.Get(published))) {
+      dispatch[subroutine->value] = mir::OverridesVirtualSlot{
+          .overridden = mir::VirtualSlot{
+              .owner_class = published_class_id_,
+              .slot = PublishedMethodOf(published)}};
+    }
   }
   base::IdAllocator<mir::CallableId> subroutine_ids;
   std::vector<DeclaredCallable> declared_subroutines;
@@ -2833,6 +3042,35 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                     .owner_class = published_class_id_,
                     .slot = binding.bind}}});
   }
+  // What lands a clocking output's drives is a method the scope publishes
+  // without the source having written it, which overrides the one the
+  // published class introduced for it (LRM 14.16).
+  for (const hir::PublishedCallableId published :
+       hir_scope.published.callables.Ids()) {
+    const auto* landing = std::get_if<hir::ClockingOutputLanding>(
+        &hir_scope.published.callables.Get(published));
+    if (landing == nullptr) continue;
+    clockvar_fields.at(landing->block.value)
+        .at(landing->clockvar.value)
+        .landing = subroutine_ids.Take();
+    signatures.push_back(
+        CallableSignature{
+            .virtual_dispatch = mir::OverridesVirtualSlot{
+                .overridden = mir::VirtualSlot{
+                    .owner_class = published_class_id_,
+                    .slot = PublishedMethodOf(published)}}});
+  }
+  std::vector<ClockingFields> clocking_fields;
+  clocking_fields.reserve(clockvar_fields.size());
+  for (std::size_t i = 0; i < clockvar_fields.size(); ++i) {
+    const std::size_t count = clockvar_fields[i].size();
+    clocking_fields.push_back(
+        ClockingFields{
+            .occurrence = clocking_occurrences[i],
+            .clockvars = {count, std::move(clockvar_fields[i])}});
+  }
+  clocking_fields_ = {
+      hir_scope.clocking_blocks.size(), std::move(clocking_fields)};
   shape.callable_signatures = {signatures.size(), std::move(signatures)};
   declared_subroutines_ = {
       hir_scope.structural_subroutines.size(), std::move(declared_subroutines)};
@@ -3440,7 +3678,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
                 unit_lowerer, class_id_, extern_realizations_[i].field,
                 extern_bindings[i],
                 hir_scope.structural_subroutines
-                    .Get(hir_scope.published.callables.Get(
+                    .Get(PublishedSubroutineOf(
+                        hir_scope.published,
                         hir_scope.published.signature.externs
                             .Get(
                                 hir::PublishedExternId{
@@ -3594,6 +3833,18 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     AppendProcessRegistration(
         unit_lowerer, activate_frame, body, support::BuiltinFn::kRegisterAlways,
         hir_scope.exprs.Get(hir_scope.sampled_histories.Get(id).subject).span);
+  }
+
+  if (auto r = InstallClockingBlocks(
+          *this,
+          ClockingBodyFrames{
+              .ctor = ctor_frame,
+              .install = install_frame,
+              .resolve = resolve_frame,
+              .init = init_frame,
+              .activate = activate_frame});
+      !r) {
+    return r;
   }
 
   // The classes this scope replicates, lowered against it: their bodies reach

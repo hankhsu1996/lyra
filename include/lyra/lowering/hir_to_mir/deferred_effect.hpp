@@ -36,11 +36,41 @@ auto AppendArrivalAtDueRegion(
     ProcessLowerer& process, WalkFrame outer_frame, ClosureBuilder& carrier,
     const hir::DelayOrEventControl& control) -> diag::Result<void>;
 
-// Takes `started`, the coroutine a carrier's body answers once called, on as
-// an execution of no lineage. LRM 9.4.5 makes no process of an update event,
-// so nothing that names processes may find it (LRM 9.6.1, 9.6.3).
-auto RunCarrierDetached(
-    ProcessLowerer& process, WalkFrame frame, mir::Expr started) -> mir::Expr;
+// The instance a synchronous drive reaches through a virtual interface, where
+// its landing is made on the one its target is reached on (LRM 14.16, 25.9):
+// the handle the target's access holds, and that instance evaluated once in
+// `frame`'s block, for both to be made on. Nothing for every other assignment.
+struct DriveInstance {
+  hir::ExprId handle;
+  mir::ExprId object;
+};
+[[nodiscard]] auto DriveInstanceOf(
+    ProcessLowerer& process, const WalkFrame& frame,
+    const hir::AssignExpr& assign)
+    -> diag::Result<std::optional<DriveInstance>>;
+
+// How an execution carrying an effect whose slot `control` finds is run, and
+// whether it goes on to its thread's NBA region once the slot is named. Either
+// way it is of no lineage, since the standard makes no process of the effect
+// and nothing that names processes may find it (LRM 9.6.1, 9.6.3). A
+// nonblocking update's carrier runs apart and lands in its thread's NBA region
+// (LRM 4.4.2.4, 9.4.5). A synchronous drive's runs inside each occurrence it
+// waits for, where the runtime runs what an occurrence woke in the order it
+// began to wait, so drives of one block maturing together land in the order
+// they were made, and its landing has already returned in the Re-NBA region
+// it lands in (LRM 14.16, 14.16.2).
+struct Carrier {
+  support::BuiltinFn run;
+  bool arrives_in_nba_region;
+};
+[[nodiscard]] auto CarrierOf(const hir::DelayOrEventControl& control)
+    -> Carrier;
+
+// Takes `started`, the coroutine a carrier's body answers once called, on as an
+// execution of no lineage, run by the entry `run`.
+auto RunCarrier(
+    ProcessLowerer& process, WalkFrame frame, support::BuiltinFn run,
+    mir::Expr started) -> mir::Expr;
 
 // The two halves a deferred effect is written as, which the standard's own
 // division settles: `capture` reads everything the effect needs into the
@@ -69,10 +99,10 @@ auto BuildDeferredEffect(
     const std::optional<hir::DelayOrEventControl>& control, Capture capture,
     Apply apply) -> diag::Result<mir::Expr> {
   AppendScheduleAfterReturnRequirement(process.Owner(), frame);
-  // An event control is the one form whose slot is not knowable here, so it is
-  // the one that needs an execution of its own to find it, which takes the
-  // closure over; every other form makes the closure where the region's effects
-  // say and is done.
+  // An event control and a synchronous drive's control are the forms whose
+  // slot is not knowable here, so they need an execution of their own to find
+  // it, which takes the closure over; a delay, or no control, makes the closure
+  // where the region's effects say and is done.
   const auto* delay =
       control.has_value() ? std::get_if<hir::DelayControl>(&*control) : nullptr;
   if (control.has_value() && delay == nullptr) {
@@ -85,7 +115,8 @@ auto BuildDeferredEffect(
     // The steps the update runs are the closure's own, so they append to its
     // body: a name the enclosing body declared is not one this body can reach.
     apply(carrier.Body(), *captured);
-    return RunCarrierDetached(process, frame, carrier.BuildCallOnce());
+    return RunCarrier(
+        process, frame, CarrierOf(*control).run, carrier.BuildCallOnce());
   }
 
   ClosureBuilder closure(

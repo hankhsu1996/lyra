@@ -291,6 +291,16 @@ auto LowerHirAssignWrite(
         "is not a legal SV form (LRM A.6.2 grammar)");
   }
   const hir::Expr& lhs = lowerer.HirExprs().Get(a.lhs);
+  // A drive's target and its landing reach one instance through a virtual
+  // interface, evaluated once for both (LRM 14.16).
+  std::optional<ProcessLowerer::HeldInterfaceBinding> drive_instance;
+  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+    auto instance = DriveInstanceOf(lowerer, frame, a);
+    if (!instance) return std::unexpected(std::move(instance.error()));
+    if (instance->has_value()) {
+      drive_instance.emplace(lowerer, (*instance)->handle, (*instance)->object);
+    }
+  }
   // A write to one place is the store itself. A write to a join takes several
   // steps, so it is a sequence of them standing where the expression does.
   if (IsJoin(lowerer, lhs)) {

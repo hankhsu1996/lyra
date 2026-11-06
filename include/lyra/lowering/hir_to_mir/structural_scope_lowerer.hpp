@@ -74,6 +74,34 @@ struct StoredRoute {
 // How a route is reached from its reader.
 using RouteReach = std::variant<ClimbedRoute, StoredRoute>;
 
+// What the outputs onto one variable share, of any block of the scope, to put
+// onto it, once each Re-NBA pass driving it has run, the one value the pass's
+// drives left (LRM 14.16.2): whether the end of the running pass already does
+// so, and the event the pass's drives wait for to write the driving variable,
+// which that end triggers once the variable holds what the signal does.
+struct PassCommitFields {
+  mir::ClassFieldTarget kept;
+  mir::ClassFieldTarget applying;
+};
+
+// What one clockvar of a clocking block keeps that the scope publishes nothing
+// of. An input skewed by a delay reads `copy`, its signal kept that far behind
+// (LRM 14.13); an output is landed by the method `landing` (LRM 14.16), and one
+// whose signal is a variable keeps `commit`.
+struct ClockvarFields {
+  std::optional<mir::ClassFieldTarget> copy;
+  std::optional<mir::CallableId> landing;
+  std::optional<PassCommitFields> commit;
+};
+
+// What a clocking block keeps that nothing outside the scope names (LRM 14.13,
+// 14.16): an event triggered at each occurrence of its clocking event, which a
+// drive matures by, and each clockvar's own.
+struct ClockingFields {
+  mir::ClassFieldTarget occurrence;
+  base::Translation<hir::ClockvarId, ClockvarFields> clockvars;
+};
+
 // Lowers one HIR structural scope into one MIR class, in two passes over the
 // unit's scopes: the first settles what every scope declares, the second lowers
 // every body against those. Two, because a body may name any peer's
@@ -254,6 +282,35 @@ class StructuralScopeLowerer {
     return sampled_history_fields_.Get(hir_id);
   }
 
+  // What a clocking block this scope declares keeps that the scope publishes
+  // nothing of.
+  [[nodiscard]] auto ClockingFieldsOf(hir::ClockingBlockId id) const
+      -> const ClockingFields& {
+    return clocking_fields_.Get(id);
+  }
+
+  // The method landing the drives of one clocking output this scope declares
+  // (LRM 14.16), and the call naming it on this scope's own object.
+  [[nodiscard]] auto ClockingLandingCallable(
+      hir::ClockingOutputLanding landing) const -> mir::CallableId {
+    const std::optional<mir::CallableId>& callable =
+        clocking_fields_.Get(landing.block)
+            .clockvars.Get(landing.clockvar)
+            .landing;
+    if (!callable.has_value()) {
+      throw InternalError(
+          "ClockingLandingCallable: every clocking output a scope declares is "
+          "landed by a method of it");
+    }
+    return *callable;
+  }
+  [[nodiscard]] auto TranslateClockingLanding(
+      hir::ClockingOutputLanding landing) const -> mir::Direct {
+    return mir::Direct{
+        .target = mir::CallableTarget{
+            .owner = class_id_, .slot = ClockingLandingCallable(landing)}};
+  }
+
   // The MIR field holding one concurrent assertion's attempts (LRM 16.14.1).
   // It takes no hop count for the same reason: an assertion is evaluated on the
   // scope that declares it.
@@ -374,6 +431,7 @@ class StructuralScopeLowerer {
       sampled_history_fields_;
   base::Translation<hir::ConcurrentAssertionId, mir::FieldId>
       concurrent_assertion_fields_;
+  base::Translation<hir::ClockingBlockId, ClockingFields> clocking_fields_;
   base::Translation<hir::InterfacePortId, mir::ClassFieldTarget>
       interface_port_fields_;
   base::Translation<hir::RoutedValueRefId, RouteReach> value_reaches_;

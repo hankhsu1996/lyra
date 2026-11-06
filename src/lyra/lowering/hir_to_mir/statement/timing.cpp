@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdint>
 #include <expected>
 #include <functional>
 #include <optional>
@@ -27,11 +26,13 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
@@ -495,22 +496,16 @@ auto BuildDelayWaitStmt(
   auto duration_or =
       process.LowerExpr(process.HirBody().exprs.Get(d.duration), frame);
   if (!duration_or) return std::unexpected(std::move(duration_or.error()));
-  const DelayRead read = ReadDelayAmount(
-      unit, block, block.Add(*std::move(duration_or)),
+  DelayRead read = ReadDelayAmount(
+      unit, block, block.Add(*std::move(duration_or)), process.Resolution(),
       {.integral = support::BuiltinFn::kDelay,
        .real = support::BuiltinFn::kDelayReal});
-
-  const mir::ExprId runtime_id =
-      block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
-  const mir::ExprId unit_power_id = mir::BuildMachineIntLiteral(
-      unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));
-  const mir::ExprId precision_power_id = mir::BuildMachineIntLiteral(
-      unit, block,
-      static_cast<std::int64_t>(process.Resolution().precision_power));
+  read.operands.insert(
+      read.operands.begin(),
+      block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit())));
   const mir::ExprId wait_id = block.Add(
       mir::MakeCallExpr(
-          mir::Direct{.target = read.entry},
-          {runtime_id, read.amount, unit_power_id, precision_power_id},
+          mir::Direct{.target = read.entry}, std::move(read.operands),
           unit.builtins.wait));
   return BuildStopStmt(
       process.Owner(), frame.WithBlock(&block.Body()), wait_id);
@@ -772,6 +767,9 @@ auto BuildEventObjectWaitStmt(
 template auto BuildEventObjectWaitStmt(
     ProcessLowerer&, WalkFrame, mir::Builder, mir::ExprId)
     -> diag::Result<mir::Stmt>;
+template auto BuildEventObjectWaitStmt(
+    const StructuralScopeLowerer&, WalkFrame, mir::Builder, mir::ExprId)
+    -> diag::Result<mir::Stmt>;
 
 auto ChangeDecides(
     const base::Arena<hir::Expr, hir::ExprId>& exprs,
@@ -832,6 +830,104 @@ template auto BuildEventWaitStmt(
     const StructuralScopeLowerer&, WalkFrame, mir::Builder,
     const hir::EventControl&) -> diag::Result<mir::Stmt>;
 
+namespace {
+
+// LRM 15.5.3: whether the object the event value `event` names has been
+// triggered in this time step, in `frame`'s block.
+auto BuildTriggeredCallExpr(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId event)
+    -> mir::ExprId {
+  mir::Builder block = frame.Builder();
+  return block.Add(BuildBuiltinMethodCall(
+      unit, block, support::BuiltinFn::kTriggered, event,
+      {BuildReportHandedOn(unit, frame)}, unit.builtins.bit1));
+}
+
+// How many occurrences of an event a count of `count` waits out when it is
+// counted from this time step's occurrence where `occurred`, a value whether
+// the event has been triggered in this time step, says there was one, and from
+// the next otherwise (LRM 14.11, 14.16): `count` either way, except that a
+// count of none then waits for that next one. An `int`, in the block `frame`
+// writes.
+auto BuildCyclesWaited(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId count,
+    mir::ExprId occurred) -> mir::ExprId {
+  mir::Builder block = frame.Builder();
+  const mir::TypeId int_type = unit.builtins.int_type;
+  if (block.Get(count).type != int_type) {
+    count = block.Add(BuildValueConversion(unit, block, count, int_type));
+  }
+  const mir::LocalId waits = DeclareLocal(frame, count);
+  // Both questions are asked here: none counted, and no occurrence yet in this
+  // time step.
+  const mir::ExprId none = ReduceToCondition(
+      unit, block,
+      block.Add(
+          mir::MakeBinary(
+              unit, block.Body(), mir::BinaryOp::kEquality,
+              block.ReadLocal(waits, int_type),
+              mir::BuildIntLiteral(unit, block, 0), unit.builtins.bit1)));
+  const mir::ExprId not_yet =
+      BuildConditionNot(unit, block, ReduceToCondition(unit, block, occurred));
+  const std::array conditions{none, not_yet};
+  const mir::ExprId waits_for_next = AllHold(unit, block, conditions);
+  mir::Block next;
+  mir::Builder next_block = block.Into(next);
+  AssignLocal(
+      unit, next_block, waits, mir::BuildIntLiteral(unit, next_block, 1));
+  block.AppendIfThen(waits_for_next, std::move(next));
+  return block.ReadLocal(waits, int_type);
+}
+
+// LRM 14.11 `##n`: the occurrences of the clocking block's event the count
+// waits out, the event read once, where the delay is reached, both for whether
+// it has occurred in this time step and for what is waited on.
+auto BuildCycleDelayWaitStmt(
+    ProcessLowerer& process, const WalkFrame& frame, mir::Builder block,
+    const hir::CycleDelay& delay) -> diag::Result<mir::Stmt> {
+  const mir::CompilationUnit& unit = process.Owner().Unit();
+  const auto& exprs = process.HirBody().exprs;
+  auto count = process.LowerExpr(exprs.Get(delay.count), frame);
+  if (!count) return std::unexpected(std::move(count.error()));
+  auto event = process.LowerExpr(exprs.Get(delay.event), frame);
+  if (!event) return std::unexpected(std::move(event.error()));
+  const mir::LocalId held = DeclareLocal(frame, block.Add(*std::move(event)));
+  return BuildOccurrencesWaitStmt(
+      process, frame, block.Add(*std::move(count)),
+      [&](mir::Builder in, const WalkFrame&) {
+        return in.ReadLocal(held, unit.builtins.event);
+      });
+}
+
+}  // namespace
+
+template <ExprLowerer Lowerer>
+auto BuildOccurrencesWaitStmt(
+    Lowerer& lowerer, const WalkFrame& frame, mir::ExprId count,
+    const EventRead& event) -> diag::Result<mir::Stmt> {
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Builder block = frame.Builder();
+  const mir::ExprId waits = BuildCyclesWaited(
+      unit, frame, count,
+      BuildTriggeredCallExpr(unit, frame, event(block, frame)));
+  mir::Block each;
+  mir::Builder each_block = block.Into(each);
+  const WalkFrame each_frame = frame.WithBlock(&each);
+  auto wait = BuildEventObjectWaitStmt(
+      lowerer, each_frame, each_block, event(each_block, each_frame));
+  if (!wait) return std::unexpected(std::move(wait.error()));
+  each_block.AppendStmt(*std::move(wait));
+  return BuildRepeatLoopStmt(
+      unit, frame, block, waits, block.AddScope(std::move(each)));
+}
+
+template auto BuildOccurrencesWaitStmt(
+    ProcessLowerer&, const WalkFrame&, mir::ExprId, const EventRead&)
+    -> diag::Result<mir::Stmt>;
+template auto BuildOccurrencesWaitStmt(
+    const StructuralScopeLowerer&, const WalkFrame&, mir::ExprId,
+    const EventRead&) -> diag::Result<mir::Stmt>;
+
 auto LowerTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::TimedStmt& t) -> diag::Result<mir::Stmt> {
@@ -853,6 +949,9 @@ auto LowerTimedStmt(
                 [&](const hir::ImplicitEventControl& ie) {
                   return BuildValueChangeWaitStmt(
                       block, inner, process, ie.sensitivity_list);
+                },
+                [&](const hir::CycleDelay& c) {
+                  return BuildCycleDelayWaitStmt(process, inner, block, c);
                 }},
             t.timing);
       });

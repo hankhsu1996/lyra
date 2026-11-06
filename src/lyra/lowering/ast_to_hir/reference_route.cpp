@@ -113,6 +113,11 @@ auto NamedHopInto(
       symbol.kind == slang::ast::SymbolKind::StatementBlock) {
     return ProceduralHop{.step = ProceduralStepOf(symbol)};
   }
+  // A clocking block is no object either: what it declares is storage of the
+  // instance holding it (LRM 14.7).
+  if (symbol.kind == slang::ast::SymbolKind::ClockingBlock) {
+    return ProceduralHop{.step = support::ClockingBlockStep{.name = name}};
+  }
   return std::nullopt;
 }
 
@@ -2057,7 +2062,7 @@ auto UnitLowerer::WatchedEntriesOf(
         break;
       }
       case Referent::kPrimitivePort:
-      case Referent::kClockingSignal:
+      case Referent::kClockingOutput:
       case Referent::kAssertionLocal:
       case Referent::kStructureMember:
         return FailOnUnsupportedReferent(resolved->kind, span);

@@ -31,55 +31,13 @@ uvm-1.2:integrated/codec:test:
   says: "reaching this name through a virtual interface is not yet supported"
 uvm-1.2:integrated/ubus/examples:test_2m_4s:
   stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/basic_examples/event_pool:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/basic_examples/module:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/basic_examples/pkg:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/callbacks:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/configuration/automated:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/configuration/manual:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/factory:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/hello_world:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/interfaces:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/objections:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/phases/basic:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/phases/run_test:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/phases/timeout:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
+  says: "a concurrent assertion embedded in a procedure is not yet supported"
 uvm-1.2:simple/registers/integration/10direct:uvm_reg_mem_built_in_seq:
   stops: build
   says: "reaching this name through a virtual interface is not yet supported"
 uvm-1.2:simple/registers/integration/20layered:uvm_reg_mem_built_in_seq:
   stops: build
   says: "reaching this name through a virtual interface is not yet supported"
-uvm-1.2:simple/registers/models/aliasing:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
 uvm-1.2:simple/registers/models/broadcast:default:
   stops: build
   says: "reaching this name through a virtual interface is not yet supported"
@@ -89,21 +47,6 @@ uvm-1.2:simple/registers/models/coverage:default:
 uvm-1.2:simple/registers/models/fifo_reg:default:
   stops: build
   says: "reaching this name through a virtual interface is not yet supported"
-uvm-1.2:simple/registers/models/not_yet_implemented:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/registers/models/reg_without_field:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/registers/models/ro_wo_same_addr:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/registers/models/shared_reg:blk_test:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/registers/models/user-defined:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
 uvm-1.2:simple/registers/primer:hw_reset:
   stops: build
   says: "cannot be assigned to type 'uvm_reg$[]'"
@@ -119,33 +62,3 @@ uvm-1.2:simple/registers/vertical_reuse:blk:
 uvm-1.2:simple/registers/vertical_reuse:sys:
   stops: build
   says: "reaching this name through a virtual interface is not yet supported"
-uvm-1.2:simple/sequence/basic_read_write_sequence:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/tlm1/bidir:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/tlm1/fifo:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/tlm1/hierarchy:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/tlm1/producer_consumer:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/tlm2/blocking_simple:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/tlm2/nonblocking_simple:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/tlm2/temporal_decoupling:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-1.2:simple/trivial:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"
-uvm-core:hello:default:
-  stops: build
-  says: "WatchedPlaceOf: a wait names no variable, net or reference"

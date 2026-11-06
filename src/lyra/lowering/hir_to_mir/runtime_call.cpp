@@ -228,18 +228,25 @@ auto BuildFormatCallExpr(
 
 auto ReadDelayAmount(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId amount,
-    DelayEntries entries) -> DelayRead {
+    TimeResolution resolution, DelayEntries entries) -> DelayRead {
+  const auto with_powers = [&](support::BuiltinFn entry, mir::ExprId read) {
+    return DelayRead{
+        .entry = entry,
+        .operands = {
+            read,
+            mir::BuildMachineIntLiteral(
+                unit, block, std::int64_t{resolution.unit_power}),
+            mir::BuildMachineIntLiteral(
+                unit, block, std::int64_t{resolution.precision_power})}};
+  };
   const auto* real = unit.types.Get(block.Get(amount).type).As<mir::RealType>();
-  if (real == nullptr) {
-    return DelayRead{.entry = entries.integral, .amount = amount};
-  }
+  if (real == nullptr) return with_powers(entries.integral, amount);
   switch (real->width) {
     case support::FloatWidth::k64:
-      return DelayRead{.entry = entries.real, .amount = amount};
+      return with_powers(entries.real, amount);
     case support::FloatWidth::k32:
-      return DelayRead{
-          .entry = entries.real,
-          .amount = ConvertToType(unit, block, amount, unit.builtins.real)};
+      return with_powers(
+          entries.real, ConvertToType(unit, block, amount, unit.builtins.real));
   }
   throw InternalError("hir_to_mir: unknown real width");
 }

@@ -10,7 +10,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/cancellation.hpp"
-#include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/foreign_execution.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
@@ -103,6 +102,11 @@ auto RuntimeProcess::Arrange(
           [&](const LaterInThisTimeStep& later) {
             leaf->ParkOn(awaiter);
             services.Schedule(services.Now(), regions[later.region], leaf);
+            return true;
+          },
+          [&](const InRegion& in) {
+            leaf->ParkOn(awaiter);
+            services.Schedule(in.when, in.region, leaf);
             return true;
           },
           [&](const AtTime& at) {

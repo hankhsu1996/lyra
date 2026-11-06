@@ -26,6 +26,7 @@
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/statement/blocks.hpp"
 #include "lyra/lowering/ast_to_hir/statement/branches.hpp"
+#include "lyra/lowering/ast_to_hir/statement/clocking_drive.hpp"
 #include "lyra/lowering/ast_to_hir/statement/loops.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -98,6 +99,9 @@ auto LowerExpressionStmt(
     if (as.timingControl != nullptr && !as.isNonBlocking()) {
       return LowerIntraAssignmentStmt(proc, frame, as, span);
     }
+    // LRM 14.16: a nonblocking assignment to a clockvar is a synchronous
+    // drive, whose update its clocking block times.
+    if (IsClockingDrive(as)) return LowerClockingDrive(proc, frame, as, span);
   }
   // A statement discards whatever its expression answers, and is the one such
   // position where the source can still say it called a function: a void cast

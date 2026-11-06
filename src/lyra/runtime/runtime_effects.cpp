@@ -55,7 +55,7 @@ auto CurrentRuntimeSlot() -> RuntimeEffects*& {
 // Where a nonblocking assignment the running thread makes updates: NBA in the
 // design, Re-NBA in a program's thread, wherever the code was declared (LRM
 // 24.3.1, 24.5).
-auto RunningNbaRegion(RuntimeEffects& effects) -> Region {
+auto RunningNbaRegion(RuntimeEffects& effects) -> support::Region {
   return AsRuntime(effects).RunningContext().regions.nba;
 }
 
@@ -166,11 +166,12 @@ void RuntimeEffects::RecordCoverage(base::SourceLocation site, bool succeeded) {
 }
 
 void RuntimeEffects::Schedule(
-    SimTime when, Region region, Activation* activation) {
+    SimTime when, support::Region region, Activation* activation) {
   activation->Queue(AsRuntime(*this).SlotAt(when)[region].activations);
 }
 
-void RuntimeEffects::Schedule(SimTime when, Region region, Timer& timer) {
+void RuntimeEffects::Schedule(
+    SimTime when, support::Region region, Timer& timer) {
   AsRuntime(*this).SlotAt(when)[region].timers.PushBack(timer.Place());
 }
 
@@ -189,7 +190,7 @@ void RuntimeEffects::Wake(Activation* activation) {
   throw InternalError("RuntimeEffects::Wake: unknown wake placement");
 }
 
-auto RuntimeEffects::EffectsAt(SimTime when, Region region)
+auto RuntimeEffects::EffectsAt(SimTime when, support::Region region)
     -> DeferredEffects& {
   return AsRuntime(*this).SlotAt(when)[region].effects;
 }
@@ -201,26 +202,41 @@ auto RuntimeEffects::NbaEffects() -> DeferredEffects* {
 auto RuntimeEffects::NbaEffectsAfter(
     const value::ConstIntegralView& duration, std::int64_t unit_power,
     std::int64_t precision_power) -> DeferredEffects* {
-  const auto unit = static_cast<std::int8_t>(unit_power);
-  const auto precision = static_cast<std::int8_t>(precision_power);
   return &EffectsAt(
-      DelayDeadline(*this, DelayTicks(duration, unit, precision), precision),
+      DeadlineAfterAmount(*this, duration, unit_power, precision_power),
       RunningNbaRegion(*this));
 }
 
 auto RuntimeEffects::NbaEffectsAfterReal(
     const value::Real& duration, std::int64_t unit_power,
     std::int64_t precision_power) -> DeferredEffects* {
-  const auto unit = static_cast<std::int8_t>(unit_power);
-  const auto precision = static_cast<std::int8_t>(precision_power);
   return &EffectsAt(
-      DelayDeadline(
-          *this, DelayTicksReal(duration, unit, precision), precision),
+      DeadlineAfterRealAmount(*this, duration, unit_power, precision_power),
       RunningNbaRegion(*this));
 }
 
+auto RuntimeEffects::RegionEffectsAfter(
+    std::int64_t region, const value::ConstIntegralView& duration,
+    std::int64_t unit_power, std::int64_t precision_power) -> DeferredEffects* {
+  return &EffectsAt(
+      DeadlineAfterAmount(*this, duration, unit_power, precision_power),
+      RegionOperand(region));
+}
+
+auto RuntimeEffects::RegionEffectsAfterReal(
+    std::int64_t region, const value::Real& duration, std::int64_t unit_power,
+    std::int64_t precision_power) -> DeferredEffects* {
+  return &EffectsAt(
+      DeadlineAfterRealAmount(*this, duration, unit_power, precision_power),
+      RegionOperand(region));
+}
+
+auto RuntimeEffects::PassEndEffects() -> DeferredEffects* {
+  return &AsRuntime(*this).pass_end_effects_;
+}
+
 auto RuntimeEffects::PostponedEffects() -> DeferredEffects* {
-  return &EffectsAt(Now(), Region::kPostponed);
+  return &EffectsAt(Now(), support::Region::kPostponed);
 }
 
 void RuntimeEffects::RegisterConcurrentAssertion(EvaluationAttempts& attempts) {
@@ -228,7 +244,7 @@ void RuntimeEffects::RegisterConcurrentAssertion(EvaluationAttempts& attempts) {
 }
 
 auto RuntimeEffects::ObservedEffects() -> DeferredEffects* {
-  return &EffectsAt(Now(), Region::kObserved);
+  return &EffectsAt(Now(), support::Region::kObserved);
 }
 
 void RuntimeEffects::KeepViolationReport(
@@ -272,10 +288,10 @@ void RuntimeEffects::SubmitDeferredObserved(
     // initializer, LRM 6.8) belongs to no deferred report queue, so no flush
     // point can clear it, and only a Kill of its control withdraws it.
     Submit(
-        Now(), Region::kObserved,
+        Now(), support::Region::kObserved,
         [this, queued_under, action = std::move(action)]() mutable {
           if (!queued_under.Holds()) return;
-          Submit(Now(), Region::kReactive, std::move(action));
+          Submit(Now(), support::Region::kReactive, std::move(action));
         });
     return;
   }
@@ -284,11 +300,11 @@ void RuntimeEffects::SubmitDeferredObserved(
   // region. Maturing discards the record, so the committed Reactive effect is
   // beyond the reach of any later flush, `disable` or Kill.
   Submit(
-      Now(), Region::kObserved,
+      Now(), support::Region::kObserved,
       [this, validity = AssertionReportValidity(*process), queued_under,
        action = std::move(action)]() mutable {
         if (!validity.Holds() || !queued_under.Holds()) return;
-        Submit(Now(), Region::kReactive, std::move(action));
+        Submit(Now(), support::Region::kReactive, std::move(action));
       });
 }
 
@@ -300,7 +316,7 @@ void RuntimeEffects::SubmitDeferredFinal(
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     Submit(
-        Now(), Region::kPostponed,
+        Now(), support::Region::kPostponed,
         [queued_under, action = std::move(action)]() mutable {
           if (queued_under.Holds()) action();
         });
@@ -311,7 +327,7 @@ void RuntimeEffects::SubmitDeferredFinal(
   // before then. Postponed is non-iterative, so maturing and running are the
   // one region.
   Submit(
-      Now(), Region::kPostponed,
+      Now(), support::Region::kPostponed,
       [validity = AssertionReportValidity(*process), queued_under,
        action = std::move(action)]() mutable {
         if (validity.Holds() && queued_under.Holds()) action();
@@ -395,6 +411,12 @@ void RuntimeEffects::AssertControlOfLoop(
   });
 }
 
+// What an occurrence woke to run at it runs in the order it was woken, which is
+// the order its waits were reached in, and what waits again while running
+// waits behind every wait already reached; so executions that began to wait on
+// one event in some order run in that order at each occurrence they wait out.
+// A clocking block's drives land in the order they were made by this (LRM
+// 14.16.2).
 void RuntimeEffects::RunWokenAtTheOccurrence() {
   Runtime& rt = AsRuntime(*this);
   if (rt.occurrences_being_told_ != 0) return;

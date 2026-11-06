@@ -79,6 +79,29 @@ namespace lyra::lowering::ast_to_hir {
 class StructuralScopeLowerer;
 struct BuiltScope;
 
+// What the declaration pass reserves for one clockvar of a clocking block
+// (LRM 14.3): its position among the block's clockvars, the variable an input
+// half samples into (LRM 14.13), and the variable inside the block holding what
+// an output drives onto its signal, which every drive of it writes and its
+// block lands (LRM 14.16). A variable is absent where the clockvar has no such
+// half.
+struct DeclaredClockvar {
+  hir::ClockvarId position;
+  std::optional<hir::StructuralDataObjectId> sample;
+  std::optional<hir::StructuralDataObjectId> driving;
+};
+
+// What the declaration pass reserves for a clocking block (LRM 14.3): its
+// identity in the scope declaring it, the event its name stands for (LRM
+// 14.10), and each clockvar's parts.
+struct DeclaredClocking {
+  ScopeFrameId home_frame;
+  hir::ClockingBlockId id;
+  hir::StructuralDataObjectId block_event;
+  std::unordered_map<const slang::ast::ClockVarSymbol*, DeclaredClockvar>
+      clockvars;
+};
+
 struct StructuralDataObjectBinding {
   ScopeFrameId home_frame{};
   hir::StructuralDataObjectId var_id{};
@@ -223,9 +246,24 @@ struct ScopePublicationRecord {
   struct InterfacePort {
     const slang::ast::InterfacePortSymbol* symbol = nullptr;
   };
+  // A variable a clocking block holds (LRM 14.3), published as a declaration
+  // of the block: an input clockvar under its own name, and under a name no
+  // identifier holds (LRM 5.6.1) the block's event and the variable an output
+  // drives its nets through. It holds a value of the clockvar's type, or an
+  // event; `symbol` is the clockvar an input's variable is, and none for what
+  // no declaration of the source is.
+  struct ClockingVariable {
+    std::string name;
+    support::DefPath within;
+    using Holds =
+        std::variant<const slang::ast::ClockVarSymbol*, hir::EventType>;
+    Holds holds;
+    const slang::ast::Symbol* symbol = nullptr;
+    hir::StructuralDataObjectId id;
+  };
   using Member = std::variant<
       DataObject, LocalStatic, ClassStatic, CovergroupEvent, Instance,
-      InterfacePort>;
+      InterfacePort, ClockingVariable>;
 
   // A subroutine the source declared on the scope (LRM 13).
   struct Subroutine {
@@ -260,8 +298,18 @@ struct ScopePublicationRecord {
     std::string name;
     hir::StructuralSubroutineId id;
   };
+  // What lands a drive of a clocking output (LRM 14.16): it waits for the
+  // drive to mature and then for the Re-NBA region the output's skew names
+  // (LRM 14.4), which only the scope declaring the block knows, so a drive from
+  // any unit calls it. Nothing the source wrote is its body; it is built a
+  // layer down, from the block.
+  struct ClockingLanding {
+    std::string name;
+    hir::ClockingOutputLanding lands;
+  };
   using Callable = std::variant<
-      Subroutine, PortDefault, ViewRead, ArgumentDefault, ClockingExpression>;
+      Subroutine, PortDefault, ViewRead, ArgumentDefault, ClockingExpression,
+      ClockingLanding>;
 
   // A loop generate, with whatever blocks it counted out (LRM 27.4).
   struct Loop {
@@ -462,12 +510,12 @@ struct ScopeRoute {
 // it; a block of a loop generate, by the label of the loop and the select the
 // name wrote, evaluated in each object the name is read in (LRM 27.4); a block
 // that stands alone or that a conditional chose, by where the source wrote its
-// construct among those of its scope (LRM 27.5); or a named block or
-// subroutine, which is no object (LRM 23.9). A block carries the one the front
-// end resolved the name to, which is built where the name is read and says
-// what the block was published as. It is resolved against what the scope
-// standing above it published, which is known only once the whole descent is
-// in hand.
+// construct among those of its scope (LRM 27.5); or a named block, a subroutine
+// or a clocking block, none of which is an object (LRM 23.9, 14.7). A block
+// carries the one the front end resolved the name to, which is built where the
+// name is read and says what the block was published as. It is resolved
+// against what the scope standing above it published, which is known only once
+// the whole descent is in hand.
 struct InstanceHop {
   std::string name;
   std::vector<std::uint32_t> indices;
@@ -583,6 +631,7 @@ struct ScopeDeclarations {
       instance_members;
   base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>
       procedural_scopes;
+  base::Registry<hir::ClockingBlockDecl, hir::ClockingBlockId> clocking_blocks;
 };
 
 // The specializations of a generic class a namespace declares that a design
@@ -1186,6 +1235,15 @@ class UnitLowerer {
   void MapStructuralDataObjectBinding(
       const slang::ast::ValueSymbol& var, ScopeFrameId home_frame,
       hir::StructuralDataObjectId local);
+  // What the declaration pass reserved for a clocking block this unit
+  // declares.
+  [[nodiscard]] auto DeclaredClockingOf(
+      const slang::ast::ClockingBlockSymbol& block) const
+      -> const DeclaredClocking&;
+  // The same, or nothing where another unit declares the block.
+  [[nodiscard]] auto FindDeclaredClocking(
+      const slang::ast::ClockingBlockSymbol& block) const
+      -> const DeclaredClocking*;
   // The identity the declaration pass reserved for a variable or net this
   // unit declares, which the walk building that declaration defines.
   [[nodiscard]] auto ReservedDataObject(const slang::ast::ValueSymbol& declared)
@@ -1988,6 +2046,9 @@ class UnitLowerer {
   void DeclareClockingEvaluators(
       const slang::ast::ClockingBlockSymbol& block, ScopeDeclarations& decls,
       ScopePublicationRecord& published);
+  void DeclareClockingStorage(
+      const slang::ast::ClockingBlockSymbol& block, ScopeDeclarations& decls,
+      ScopePublicationRecord& published, ScopeFrameId frame);
   void DeclareProcess(
       const slang::ast::ProceduralBlockSymbol& proc, ScopeDeclarations& decls,
       ScopePublicationRecord& published, ScopeFrameId frame);
@@ -2117,6 +2178,13 @@ class UnitLowerer {
   std::unordered_map<
       const slang::ast::GenerateBlockArraySymbol*, hir::GenerateId>
       loop_generates_;
+  std::unordered_map<const slang::ast::ClockingBlockSymbol*, DeclaredClocking>
+      clocking_blocks_;
+  // The variable inside the clocking blocks every output onto one variable
+  // writes, by that variable (LRM 14.16.2).
+  std::unordered_map<
+      const slang::ast::VariableSymbol*, hir::StructuralDataObjectId>
+      clocking_driving_variables_;
   std::unordered_map<const slang::ast::ProceduralBlockSymbol*, hir::ProcessId>
       process_bindings_;
   ProceduralStaticBindings procedural_static_bindings_;

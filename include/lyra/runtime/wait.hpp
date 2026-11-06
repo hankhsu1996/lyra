@@ -46,8 +46,17 @@ struct AtTime {
   SimTime when;
 };
 
-using Resumption =
-    std::variant<WithoutStopping, OnAnOccurrence, LaterInThisTimeStep, AtTime>;
+// In `region` itself of the time slot at `when`, this one or a later one,
+// whatever region set the execution runs in, because the construct names the
+// region rather than its thread: a synchronous drive lands in Re-NBA (LRM
+// 14.16).
+struct InRegion {
+  support::Region region;
+  SimTime when;
+};
+
+using Resumption = std::variant<
+    WithoutStopping, OnAnOccurrence, LaterInThisTimeStep, AtTime, InRegion>;
 
 class DumpWatch;
 class ProgramThreads;

@@ -13,10 +13,10 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/deferred_effects.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
-#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/region.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/real.hpp"
@@ -69,9 +69,9 @@ class RuntimeEffects {
   // LRM 4.4: place `activation` in `region` of the time slot at `when`, to be
   // resumed when that region runs. Naming the placement is the whole of what a
   // suspending construct tells the engine; nothing here says what it waits for.
-  void Schedule(SimTime when, Region region, Activation* activation);
+  void Schedule(SimTime when, support::Region region, Activation* activation);
   // The same for a timer, which fires when that region runs.
-  void Schedule(SimTime when, Region region, Timer& timer);
+  void Schedule(SimTime when, support::Region region, Timer& timer);
 
   // The wait that parked `activation` is satisfied, so it is placed where its
   // context says a wake places it: runnable in the current slot, in the
@@ -123,9 +123,10 @@ class RuntimeEffects {
   // LRM 4.4: the deferred effects of `region` in the time slot at `when`, which
   // an effect the library defers is made in and kept by. A deferred effect
   // runs where it is placed and never suspends whoever submitted it.
-  [[nodiscard]] auto EffectsAt(SimTime when, Region region) -> DeferredEffects&;
+  [[nodiscard]] auto EffectsAt(SimTime when, support::Region region)
+      -> DeferredEffects&;
   template <typename Effect>
-  void Submit(SimTime when, Region region, Effect&& effect) {
+  void Submit(SimTime when, support::Region region, Effect&& effect) {
     EffectsAt(when, region).Emplace(std::forward<Effect>(effect));
   }
 
@@ -155,6 +156,30 @@ class RuntimeEffects {
   [[nodiscard]] auto NbaEffectsAfterReal(
       const value::Real& duration, std::int64_t unit_power,
       std::int64_t precision_power) -> DeferredEffects*;
+  // The effects of `region` itself, a position of `support::Region`, in the
+  // slot a delay names, whichever region set the writing thread runs in: where
+  // a construct the standard names the region of places its effect, as a
+  // clocking block keeps in NBA an input's value that skew behind its signal
+  // (LRM 14.13).
+  [[nodiscard]] auto RegionEffectsAfter(
+      std::int64_t region, const value::ConstIntegralView& duration,
+      std::int64_t unit_power, std::int64_t precision_power)
+      -> DeferredEffects*;
+  template <value::IntegralValue T>
+  [[nodiscard]] auto RegionEffectsAfter(
+      std::int64_t region, const T& duration, std::int64_t unit_power,
+      std::int64_t precision_power) -> DeferredEffects* {
+    return RegionEffectsAfter(
+        region, duration.AsWords().View(), unit_power, precision_power);
+  }
+  [[nodiscard]] auto RegionEffectsAfterReal(
+      std::int64_t region, const value::Real& duration, std::int64_t unit_power,
+      std::int64_t precision_power) -> DeferredEffects*;
+  // The effects run once the pass of the region running now has run
+  // everything it held, and before anything that pass placed: where what the
+  // pass did is settled as one, as a clocking block puts onto its output's
+  // signal only the last value the pass's drives gave it (LRM 14.16.2).
+  [[nodiscard]] auto PassEndEffects() -> DeferredEffects*;
   [[nodiscard]] auto PostponedEffects() -> DeferredEffects*;
   // LRM 16.5, 12.4.2.1: the deferred effects of the Observed region of the
   // current slot, where a concurrent assertion is evaluated once every region

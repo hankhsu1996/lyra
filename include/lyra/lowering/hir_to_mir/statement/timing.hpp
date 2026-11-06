@@ -1,9 +1,11 @@
 #pragma once
 
 // Lowering of timing-control statements: timed statement `@(...) body` /
-// `#N body` / `@e body` / `@* body` (LRM 9.4), the `-> e;` and `->> e;` event
-// triggers (LRM 15.5.1), and `wait (cond) body` (LRM 9.4.3).
+// `#N body` / `@e body` / `@* body` (LRM 9.4) and `##n body` (LRM 14.11), the
+// `-> e;` and `->> e;` event triggers (LRM 15.5.1), and `wait (cond) body`
+// (LRM 9.4.3).
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -67,6 +69,18 @@ auto BuildEventObjectWaitStmt(
 auto BuildTriggerCallExpr(
     UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId event_id)
     -> mir::Expr;
+
+// LRM 14.11, 14.16: a wait for `count` occurrences of an event, counted from
+// this time step's occurrence where it has had one and otherwise from the
+// next, a count of none then waiting for that next one; as a statement of
+// `frame`'s block. `event` reads the event's value in the block it is handed,
+// where it is asked whether it has occurred and again where it is waited on.
+using EventRead =
+    std::function<mir::ExprId(mir::Builder block, const WalkFrame& frame)>;
+template <ExprLowerer Lowerer>
+auto BuildOccurrencesWaitStmt(
+    Lowerer& lowerer, const WalkFrame& frame, mir::ExprId count,
+    const EventRead& event) -> diag::Result<mir::Stmt>;
 
 auto LowerTimedStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,

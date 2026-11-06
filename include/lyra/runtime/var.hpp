@@ -18,7 +18,6 @@
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/owned_call.hpp"
-#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/sampled_value.hpp"
 #include "lyra/runtime/storage_for.hpp"
@@ -26,6 +25,7 @@
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
+#include "lyra/support/region.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/container_lease.hpp"
 #include "lyra/value/formation.hpp"
@@ -1378,7 +1378,8 @@ void Cell<HeldAs>::EndTakeover(
     return;
   }
   RuntimeEffects& runtime = current_runtime();
-  runtime.Submit(runtime.Now(), Region::kActive, [this] { Reevaluate(); });
+  runtime.Submit(
+      runtime.Now(), support::Region::kActive, [this] { Reevaluate(); });
 }
 
 template <class HeldAs>

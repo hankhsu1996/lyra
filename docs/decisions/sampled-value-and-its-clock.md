@@ -207,9 +207,12 @@ would be an upstream leak.
   history, and never a growing number.
 - The front end's analysis diagnostics have to reach the user for the refusal in D2 to be the
   standard's error rather than silence. They are currently computed and dropped.
-- A clocking block is carried only as far as D2 needs it -- a name and an event that a scope may
-  select as its default clocking. Its clockvars and skews, the cycle delay operator, synchronous
-  drives, and the global clocking family are refused, each by name.
+- A clocking block's own sampling (LRM 14.13) reads a `#1step` input over its leaves' sampled
+  values, as D1 keeps them; what samples it is the block's own execution, woken inside each
+  occurrence of its clocking event rather than started as D3's sampler is
+  ([a-clocking-block-is-storage-of-its-scope](a-clocking-block-is-storage-of-its-scope.md)). Revised
+  2026-11-05: this line said the block was carried only as far as D2 needs it, with its clockvars,
+  skews, cycle delays and drives refused. The global clocking family still is.
 
 ## Rejected alternatives
 

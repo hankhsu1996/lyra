@@ -93,9 +93,14 @@ reached has been asked and before the execution that made it occur goes on, whic
 covergroup is sampled on its event (LRM 19.3). It is held beside the region set, chosen where the
 execution is started and passed on to nothing it starts, and read by the one verb that wakes; an
 asynchronous runtime holds the same choice in the same place, as the dispatcher of a coroutine's
-context, one of which resumes a coroutine in whatever resumed it. Running it only once the waits
-have all been asked is what an event library does when it copies its listeners before calling them:
-no code of the design runs while the list it was reached through is walked.
+context, one of which resumes a coroutine in whatever resumed it. The executions an occurrence wakes
+there run in the order they began to wait on it, and one that waits again from inside the occurrence
+waits behind those already waiting, so executions that began to wait in some order keep that order
+across every occurrence they wait out; the placements they then make into one region of one slot run
+in the order made. A clocking block's drives rely on exactly this to land, of those maturing
+together, in the order they were made (LRM 14.16.2). Running it only once the waits have all been
+asked is what an event library does when it copies its listeners before calling them: no code of the
+design runs while the list it was reached through is walked.
 
 ## Deferred work is a closure submit, not a suspension
 
@@ -238,10 +243,19 @@ active set and a program's in the reactive one (LRM 24.3.2). That instance is th
 creates the process, except for the drive across a child's output port. The instantiation creates
 that drive and it evaluates the child's code (LRM 4.9.6), so the instantiating scope launches it as
 the child's without needing to know whether the child is a program. Its generator is still split
-from the instantiating scope's seeds (LRM 18.14.1). Every placement a thread asks for names a region
-of its own set -- where a wake or a delay resumes it, where a `#0` does, where its nonblocking
-updates land -- and the two sets are each other's dual region for region. At time zero each set
-starts its processes in the same turns, the reactive set's once the active set's have settled.
+from the instantiating scope's seeds (LRM 18.14.1). A placement a thread asks for in the terms of
+its own work names a region of its own set -- where a wake or a delay resumes it, where a `#0` does,
+where its nonblocking updates land -- and the two sets are each other's dual region for region. A
+placement whose region the standard names itself names that region, whatever set the thread runs in:
+a deferred assertion's report matures in Observed and acts in Reactive (LRM 16.4.1), a synchronous
+drive lands in the Re-NBA region of the slot its skew names (LRM 14.16), and a skewed input of a
+clocking block is read in Observed from a copy kept in the NBA region (LRM 14.13). One placement
+names no region at all but the end of the pass of the region running now: what a pass did is settled
+there as one, after everything the pass held and before what it placed, as a clocking block puts
+onto an output's variable only the last value the pass's drives gave it (LRM 14.16.2). At time zero
+each set starts its processes in the same turns, the reactive set's once the active set's have
+settled; an execution of a scope woken inside each occurrence of what it waits for, which is no
+procedure, starts in the always procedures' turn.
 
 `#0` delays land in **Inactive**, not Active. A user writing `#0` is asking the engine to let other
 already-pending active work finish first, then come back at this same simulation time. Pushing

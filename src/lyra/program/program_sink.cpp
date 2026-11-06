@@ -89,6 +89,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_await_coroutine", &lyra_rt_await_coroutine);
   add("lyra_rt_release_coroutine", &lyra_rt_release_coroutine);
   add("lyra_rt_register_always", &lyra_rt_register_always);
+  add("lyra_rt_register_observing", &lyra_rt_register_observing);
   add("lyra_rt_register_continuous_driver",
       &lyra_rt_register_continuous_driver);
   add("lyra_rt_register_initial", &lyra_rt_register_initial);
@@ -159,9 +160,15 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_nba_effects", &lyra_rt_nba_effects);
   add("lyra_rt_nba_effects_after", &lyra_rt_nba_effects_after);
   add("lyra_rt_nba_effects_after_real", &lyra_rt_nba_effects_after_real);
+  add("lyra_rt_region_effects_after", &lyra_rt_region_effects_after);
+  add("lyra_rt_region_effects_after_real", &lyra_rt_region_effects_after_real);
+  add("lyra_rt_pass_end_effects", &lyra_rt_pass_end_effects);
   add("lyra_rt_run_detached", &lyra_rt_run_detached);
   add("lyra_rt_run_observing", &lyra_rt_run_observing);
   add("lyra_rt_resume_in_nba_region", &lyra_rt_resume_in_nba_region);
+  add("lyra_rt_resume_in_region_after", &lyra_rt_resume_in_region_after);
+  add("lyra_rt_resume_in_region_after_real",
+      &lyra_rt_resume_in_region_after_real);
   add("lyra_rt_postponed_effects", &lyra_rt_postponed_effects);
   add("lyra_rt_submit_at_run_end", &lyra_rt_submit_at_run_end);
   add("lyra_rt_observed_effects", &lyra_rt_observed_effects);

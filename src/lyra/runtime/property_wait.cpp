@@ -10,11 +10,11 @@
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/owned_call.hpp"
-#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/support/property_answer.hpp"
+#include "lyra/support/region.hpp"
 
 namespace lyra::runtime {
 
@@ -75,10 +75,10 @@ void PropertyEvaluation::Reached(const WaitMembership& membership) {
       static_cast<std::size_t>(&membership - memberships_.data());
   if (position < clock_watched_) {
     ++pending_ticks_;
-    stepping_.ArmNow(*effects_, Region::kObserved);
+    stepping_.ArmNow(*effects_, support::Region::kObserved);
     return;
   }
-  testing_.ArmNow(*effects_, Region::kActive);
+  testing_.ArmNow(*effects_, support::Region::kActive);
 }
 
 void PropertyEvaluation::Step() {

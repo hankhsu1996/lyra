@@ -42,7 +42,7 @@ void Timer::Arm(
       DueAfter(effects, ticks, static_cast<std::int8_t>(precision_power)));
 }
 
-void Timer::ArmNow(RuntimeEffects& effects, Region region) {
+void Timer::ArmNow(RuntimeEffects& effects, support::Region region) {
   place_.Unlink();
   effects.Schedule(effects.Now(), region, *this);
 }

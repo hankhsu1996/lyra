@@ -18,6 +18,7 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/lowering/ast_to_hir/covergroup_access.hpp"
 #include "lyra/lowering/ast_to_hir/covergroup_decl.hpp"
+#include "lyra/lowering/ast_to_hir/expression/drive_target.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -249,11 +250,17 @@ template auto LowerElementSelectExpr(
     ProcessLowerer&, WalkFrame, const slang::ast::ElementSelectExpression&,
     diag::SourceSpan) -> diag::Result<hir::Expr>;
 template auto LowerElementSelectExpr(
+    DriveTargetLowerer&, WalkFrame, const slang::ast::ElementSelectExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerElementSelectExpr(
     StructuralScopeLowerer&, WalkFrame,
     const slang::ast::ElementSelectExpression&, diag::SourceSpan)
     -> diag::Result<hir::Expr>;
 template auto LowerRangeSelectExpr(
     ProcessLowerer&, WalkFrame, const slang::ast::RangeSelectExpression&,
+    diag::SourceSpan) -> diag::Result<hir::Expr>;
+template auto LowerRangeSelectExpr(
+    DriveTargetLowerer&, WalkFrame, const slang::ast::RangeSelectExpression&,
     diag::SourceSpan) -> diag::Result<hir::Expr>;
 template auto LowerRangeSelectExpr(
     StructuralScopeLowerer&, WalkFrame,

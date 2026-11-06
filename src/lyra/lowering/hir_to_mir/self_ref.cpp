@@ -46,6 +46,16 @@ auto BuildObjectDeref(
   return block.Deref(unit.types, reaches, object);
 }
 
+auto BuildOwnFieldExpr(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const WalkFrame& frame, mir::ClassFieldTarget field, mir::TypeId type)
+    -> mir::ExprId {
+  const mir::ExprId self = block.Add(MakeSelfRefExpr(frame));
+  return block.Add(
+      mir::MakeFieldAccessExpr(
+          BuildObjectDeref(unit, block, self), field, type));
+}
+
 auto BuildObjectPointer(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId reaches)
     -> mir::ExprId {

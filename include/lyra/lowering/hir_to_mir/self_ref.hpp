@@ -70,6 +70,13 @@ auto BuildObjectDeref(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId reaches)
     -> mir::ExprId;
 
+// The field `field`, of type `type`, of the object `frame`'s body runs on, as a
+// place added to `block`.
+auto BuildOwnFieldExpr(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const WalkFrame& frame, mir::ClassFieldTarget field, mir::TypeId type)
+    -> mir::ExprId;
+
 // A borrowed pointer to the object `reaches` designates -- a handle, a
 // pointer, or a write in progress -- as a call dispatching on the object or
 // viewing it as a class it extends takes the object.
