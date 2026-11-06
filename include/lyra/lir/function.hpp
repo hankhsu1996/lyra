@@ -634,8 +634,9 @@ struct BitsStoreInstr {
 // says; a made value's, with the instruction that makes it, which needs no
 // statement. Either goes out of use where the lowering says, on every way out
 // of the extent it was introduced in, unwinding included -- and where a call
-// that would have made the value is unwound out of instead, in that call's
-// landing. A value handed on takes its bytes out of use with it, which is what
+// that would have made the value is unwound out of instead, on that call's way
+// out, ahead of what the scopes around it owe. A value handed on takes its
+// bytes out of use with it, which is what
 // a return does with the value it returns. How long a frame's bytes are needed
 // is all this states; none of them is a value too large for a frame, which MIR
 // keeps in a box.
@@ -685,13 +686,13 @@ struct CastInstr {
   Operand operand;
 };
 
-// Takes what is unwinding out of the call whose landing this is, answering it
-// as the machine pointer the unwinder carries; nothing is handled yet. A block
+// Takes what is unwinding out of a call whose landing this is, answering it as
+// the machine pointer the unwinder carries; nothing is handled yet. A block
 // beginning with this is a landing, which is the whole of what makes it one: it
-// is reached only as some call's landing, and what arrives is not an operand
+// is reached only as the landing of calls, and what arrives is not an operand
 // anyone passed.
 //
-// `clause` says whether this frame takes the raise on the way out of that call
+// `clause` says whether this frame takes the raise on the way out of them
 // -- a region of the frame encloses it, or the frame is an execution's top --
 // or only runs what is owed and lets it go on, which is what decides where the
 // platform's search for a taker stops. It is read off the same nesting that

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -334,7 +335,7 @@ auto FunctionLowerer::TakeParam(mir::LocalId param) -> lir::ValueId {
   // An argument with no copy is handed over rather than lent, so the body
   // owns it from here.
   if (unit_->Types().Get(type).IsMoveOnly()) {
-    OpenScope(ValueEnd{.value = value});
+    OpenScope(EndValue{.value = value});
   }
   return value;
 }
@@ -353,7 +354,7 @@ void FunctionLowerer::BindParam(mir::LocalId param, lir::ValueId argument) {
   const lir::ValueId slot = OpenLocalSlot(param, type);
   AssignFrom(LocalPlace(slot), lir::Use{.value = argument});
   if (unit_->Types().Get(type).IsOwnedValue()) {
-    OpenScope(SlotEnd{.slot = slot});
+    OpenScope(EndSlot{.slot = slot});
   }
 }
 
@@ -446,7 +447,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // Everything from here runs as a stretch of the body: the storage its
   // variables live in belongs to whoever drives it, and so does each
   // parameter's binding.
-  std::optional<RegionScope> top;
+  std::optional<Region> top;
   if (is_coroutine) {
     auto suspended = EmitInitialSuspend();
     if (!suspended) {
@@ -456,7 +457,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     // out of the body and completes with it, so the whole body stands in a
     // region of its own, as a C++ coroutine's body stands in a `try` whose
     // handler hands what escaped to its promise.
-    top = RegionScope{
+    top = Region{
         .handler = NewBlock(),
         .caught = NewPlaceLocal(unit_->ControlEffectType())};
     OpenScope(*top);
@@ -531,139 +532,141 @@ auto FunctionLowerer::ExceptionSlot() -> lir::ValueId {
 
 auto FunctionLowerer::LandingHere(std::optional<lir::ValueId> unmade)
     -> diag::Result<lir::BlockId> {
-  const diag::Result<lir::BlockId> continued =
-      scopes_.empty() ? diag::Result<lir::BlockId>{FrameEdge()}
-                      : UnwindEntryAt(scopes_.size() - 1);
-  if (!continued) {
-    return std::unexpected(continued.error());
+  diag::Result<CleanupNodeId> owed = UnwindNodeAt(scopes_.size());
+  if (!owed) {
+    return std::unexpected(std::move(owed.error()));
   }
-  // The way out stops at the innermost region open here, so this frame takes
-  // the raise exactly where one is open at all.
-  const bool taken = open_regions_ > 0;
+  if (unmade.has_value()) {
+    owed = NodeFor(cleanups_.Add(StorageDead{.slot = *unmade}), *owed);
+    if (!owed) {
+      return std::unexpected(std::move(owed.error()));
+    }
+  }
+  if (const std::optional<lir::BlockId> built = cleanups_.LandingOf(*owed)) {
+    return *built;
+  }
   const lir::BlockId landing = NewBlock();
   const lir::BlockId resumed = current_;
   SetCurrent(landing);
   const lir::Operand exception = Emit(
       UnwindingType(),
       lir::LandingInstr{
-          .clause = taken ? lir::LandingInstr::Clause::kCatchAll
-                          : lir::LandingInstr::Clause::kCleanup});
+          .clause = cleanups_.EndsInHandler(*owed)
+                        ? lir::LandingInstr::Clause::kCatchAll
+                        : lir::LandingInstr::Clause::kCleanup});
   Store(
       lir::Place{.base = lir::Use{.value = ExceptionSlot()}, .chain = {}},
       exception);
-  if (unmade.has_value()) {
-    MarkStorage(lir::StorageInstr::Op::kDead, *unmade);
-  }
-  Terminate(lir::BranchTerm{.target = *continued});
+  Terminate(lir::BranchTerm{.target = cleanups_.EntryOf(*owed)});
   SetCurrent(resumed);
+  cleanups_.SetLanding(*owed, landing);
   return landing;
 }
 
-// Walking outward from `index`, the walk stops at the first scope whose entry
-// needs nothing outside it -- one already built, or a region, whose handler
-// takes what arrives -- or at the outermost, which continues to the frame's
-// edge. The scopes inside the stop are then built from the outside in, each
-// continuing to the one around it, so unwinding from inside many scopes is one
-// loop over them, as clang pops its cleanup stack.
-auto FunctionLowerer::UnwindEntryAt(std::size_t index)
-    -> diag::Result<lir::BlockId> {
-  const auto stops = [&](std::size_t at) {
-    return scopes_[at].unwind_entry.has_value() ||
-           std::holds_alternative<RegionScope>(scopes_[at].kind);
-  };
-  std::size_t first = index;
-  while (first > 0 && !stops(first)) {
+void FunctionLowerer::RefuseLeavingCleanupCode(
+    const ScopeEntry& entry, std::string_view how) {
+  if (std::holds_alternative<NoWayOut>(entry)) {
+    throw InternalError(
+        std::format(
+            "mir_to_lir: a cleanup's code {}, though a cleanup leaves only by "
+            "running to its end -- please report this as a bug",
+            how));
+  }
+}
+
+// Walking outward from the innermost open scope, the walk stops at the first
+// scope whose node is
+// known -- one found before, or a region, whose handler takes what arrives --
+// or at the outermost, which continues to the frame's edge. The nodes of the
+// scopes inside the stop are then found from the outside in, each continuing to
+// the one around it, so unwinding from inside many scopes is one loop over
+// them, as clang pops its cleanup stack and rustc builds its drop tree.
+auto FunctionLowerer::UnwindNodeAt(std::size_t depth)
+    -> diag::Result<CleanupNodeId> {
+  std::size_t first = depth;
+  std::optional<CleanupNodeId> node;
+  while (first > 0) {
+    StackedScope& scope = scopes_[first - 1];
+    RefuseLeavingCleanupCode(scope.entry, "can be unwound out of");
+    if (scope.unwind_node.has_value()) {
+      node = scope.unwind_node;
+      break;
+    }
+    if (const auto* region = std::get_if<Region>(&scope.entry)) {
+      node = cleanups_.HandlerRoot(region->handler);
+      scope.unwind_node = node;
+      break;
+    }
     --first;
   }
-  // What the scopes inside the stop continue to: the stop's own entry, which
-  // for a region is its handler, and the frame's edge where the walk reached
-  // the outermost scope without stopping, which is then built like the rest.
-  lir::BlockId outward{};
-  if (const auto built = scopes_[first].unwind_entry; built.has_value()) {
-    outward = *built;
-    ++first;
-  } else if (const auto* region =
-                 std::get_if<RegionScope>(&scopes_[first].kind);
-             region != nullptr) {
-    outward = region->handler;
-    scopes_[first].unwind_entry = outward;
-    ++first;
-  } else {
-    outward = FrameEdge();
+  if (!node.has_value()) {
+    node = cleanups_.Root(FrameEdge());
   }
-  for (std::size_t at = first; at <= index; ++at) {
-    const diag::Result<lir::BlockId> entered = BuildUnwindEntry(at, outward);
-    if (!entered) {
-      return entered;
+  for (std::size_t at = first; at < depth; ++at) {
+    if (const auto* owed = std::get_if<Owed>(&scopes_[at].entry)) {
+      const diag::Result<CleanupNodeId> made = NodeFor(owed->cleanup, *node);
+      if (!made) {
+        return made;
+      }
+      node = *made;
     }
-    scopes_[at].unwind_entry = *entered;
-    outward = *entered;
+    scopes_[at].unwind_node = node;
   }
-  return outward;
+  return *node;
 }
 
-auto FunctionLowerer::BuildUnwindEntry(std::size_t index, lir::BlockId outward)
-    -> diag::Result<lir::BlockId> {
-  // Taken by value: lowering a cleanup's code opens and closes scopes of its
-  // own on the same stack.
-  const ScopeKind kind = scopes_[index].kind;
-  if (std::holds_alternative<RegionScope>(kind)) {
-    throw InternalError(
-        "mir_to_lir: a region's unwind entry is built where the walk outward "
-        "stops at it -- please report this as a bug");
-  }
-  if (std::holds_alternative<TerminateScope>(kind)) {
-    throw InternalError(
-        "mir_to_lir: a cleanup's code can be unwound out of, and unwinding "
-        "starting inside a cleanup has nowhere to go -- please report this as "
-        "a bug");
-  }
-  return BuildOwedEntry(index, outward);
-}
-
-auto FunctionLowerer::BuildOwedEntry(std::size_t index, lir::BlockId outward)
-    -> diag::Result<lir::BlockId> {
-  const ScopeKind kind = scopes_[index].kind;
-  if (OwesNothing(kind)) {
-    return outward;
+auto FunctionLowerer::NodeFor(CleanupId cleanup, CleanupNodeId next)
+    -> diag::Result<CleanupNodeId> {
+  if (const std::optional<CleanupNodeId> found =
+          cleanups_.Find(cleanup, next)) {
+    return *found;
   }
   const lir::BlockId resumed = current_;
   const lir::BlockId entry = NewBlock();
   SetCurrent(entry);
-  auto owed = RunOwed(kind);
-  if (!owed) {
-    return std::unexpected(std::move(owed.error()));
+  // Copied: lowering a cleanup's code adds cleanups of its own to the tree.
+  const Cleanup owed = cleanups_.Get(cleanup);
+  auto ran = RunCleanup(owed);
+  if (!ran) {
+    return std::unexpected(std::move(ran.error()));
   }
-  Terminate(lir::BranchTerm{.target = outward});
+  Terminate(lir::BranchTerm{.target = cleanups_.EntryOf(next)});
   SetCurrent(resumed);
-  return entry;
+  return cleanups_.Insert(cleanup, next, entry);
 }
 
 auto FunctionLowerer::ExitEntryAt(lir::BlockId target, std::size_t depth)
     -> diag::Result<lir::BlockId> {
   const std::size_t top = scopes_.size();
+  for (std::size_t at = depth; at < top; ++at) {
+    RefuseLeavingCleanupCode(scopes_[at].entry, "is left before its end");
+  }
   std::size_t first = top;
-  lir::BlockId outward = target;
+  std::optional<CleanupNodeId> node;
   while (first > depth) {
-    const std::vector<ExitEntry>& built = scopes_[first - 1].exit_entries;
-    const auto found = std::ranges::find_if(
-        built, [&](const ExitEntry& exit) { return exit.target == target; });
-    if (found != built.end()) {
-      outward = found->entry;
+    const std::vector<ExitNode>& found = scopes_[first - 1].exit_nodes;
+    const auto known = std::ranges::find_if(
+        found, [&](const ExitNode& exit) { return exit.target == target; });
+    if (known != found.end()) {
+      node = known->node;
       break;
     }
     --first;
   }
-  for (std::size_t at = first; at < top; ++at) {
-    const diag::Result<lir::BlockId> entered = BuildOwedEntry(at, outward);
-    if (!entered) {
-      return entered;
-    }
-    scopes_[at].exit_entries.push_back(
-        ExitEntry{.target = target, .entry = *entered});
-    outward = *entered;
+  if (!node.has_value()) {
+    node = cleanups_.Root(target);
   }
-  return outward;
+  for (std::size_t at = first; at < top; ++at) {
+    if (const auto* owed = std::get_if<Owed>(&scopes_[at].entry)) {
+      const diag::Result<CleanupNodeId> made = NodeFor(owed->cleanup, *node);
+      if (!made) {
+        return std::unexpected(made.error());
+      }
+      node = *made;
+    }
+    scopes_[at].exit_nodes.push_back(ExitNode{.target = target, .node = *node});
+  }
+  return cleanups_.EntryOf(*node);
 }
 
 auto FunctionLowerer::AbandonBlock() -> lir::BlockId {
@@ -713,8 +716,7 @@ auto FunctionLowerer::FrameEdge() -> lir::BlockId {
   return edge;
 }
 
-auto FunctionLowerer::OpenHandler(const RegionScope& region)
-    -> diag::Result<void> {
+auto FunctionLowerer::OpenHandler(const Region& region) -> diag::Result<void> {
   SetCurrent(region.handler);
   const lir::ValueId slot = ExceptionSlot();
   const lir::TypeId unwinding = UnwindingType();
@@ -723,7 +725,7 @@ auto FunctionLowerer::OpenHandler(const RegionScope& region)
           .exception = Load(
               lir::Place{.base = lir::Use{.value = slot}, .chain = {}},
               unwinding)});
-  OpenScope(HandlingScope{});
+  OpenScope(EndHandling{});
   // What arrived is asked about inside the handling, because the asking is
   // itself a way out of it: what is not the design's goes on from there.
   return EmitInvoke(
@@ -731,7 +733,7 @@ auto FunctionLowerer::OpenHandler(const RegionScope& region)
       lir::Place{.base = lir::Use{.value = region.caught}, .chain = {}});
 }
 
-auto FunctionLowerer::EmitCoroutineHandler(const RegionScope& top)
+auto FunctionLowerer::EmitCoroutineHandler(const Region& top)
     -> diag::Result<void> {
   auto opened = OpenHandler(top);
   if (!opened) {
@@ -772,7 +774,7 @@ auto FunctionLowerer::EmitInvoke(
   // The value exists only where the call returned, so the landing, built
   // before it, owes nothing for it.
   if (owner.has_value()) {
-    OpenScope(ValueEnd{.value = *owner});
+    OpenScope(EndValue{.value = *owner});
   }
   return {};
 }
@@ -847,7 +849,7 @@ void FunctionLowerer::Assign(lir::Destination destination, lir::Rvalue value) {
                   .value = std::move(value)},
           .span = span_});
   if (owner.has_value()) {
-    OpenScope(ValueEnd{.value = *owner});
+    OpenScope(EndValue{.value = *owner});
   }
 }
 
@@ -873,41 +875,41 @@ void FunctionLowerer::EmitStatement(lir::InstrData statement) {
       lir::Instr{.data = std::move(statement), .span = span_});
 }
 
-void FunctionLowerer::EndValue(lir::Operand value) {
+void FunctionLowerer::EmitValueEnd(lir::Operand value) {
   Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
       lir::CallInstr{
           .target = lir::EndValueTarget{}, .args = {std::move(value)}});
 }
 
-void FunctionLowerer::EndSlotValue(lir::ValueId slot) {
-  EndValue(Load(LocalPlace(slot), fn_.values.Get(slot).type));
+void FunctionLowerer::EmitSlotValueEnd(lir::ValueId slot) {
+  EmitValueEnd(Load(LocalPlace(slot), fn_.values.Get(slot).type));
 }
 
 void FunctionLowerer::MarkStorage(lir::StorageInstr::Op op, lir::ValueId of) {
   EmitStatement(lir::StorageInstr{.op = op, .of = of});
 }
 
-void FunctionLowerer::EmitScopeDrop(const ValueEnd& end) {
-  EndValue(lir::Use{.value = end.value});
+void FunctionLowerer::EmitCleanup(const EndValue& end) {
+  EmitValueEnd(lir::Use{.value = end.value});
   MarkStorage(lir::StorageInstr::Op::kDead, end.value);
 }
 
-void FunctionLowerer::EmitScopeDrop(const SlotEnd& end) {
-  EndSlotValue(end.slot);
+void FunctionLowerer::EmitCleanup(const EndSlot& end) {
+  EmitSlotValueEnd(end.slot);
 }
 
-void FunctionLowerer::EmitScopeDrop(const StorageDead& dead) {
+void FunctionLowerer::EmitCleanup(const StorageDead& dead) {
   MarkStorage(lir::StorageInstr::Op::kDead, dead.slot);
 }
 
-void FunctionLowerer::EmitScopeDrop(const VariableEnd& end) {
+void FunctionLowerer::EmitCleanup(const EndVariable& end) {
   EmitStatement(
       lir::EndVariableInstr{
           .variables = *variables_, .position = end.position});
 }
 
-void FunctionLowerer::EmitScopeDrop(const StorageRelease& release) {
+void FunctionLowerer::EmitCleanup(const ReleaseStorage& release) {
   Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
       lir::CallInstr{
@@ -945,8 +947,7 @@ void FunctionLowerer::AssignFrom(
             const std::optional<std::size_t> owed = OwedEndAt(value);
             const std::optional<lir::ValueId> left_behind =
                 owed.has_value()
-                    ? std::optional{std::get<ValueEnd>(scopes_[*owed].kind)
-                                        .value}
+                    ? std::optional{std::get<EndValue>(*OwedAt(*owed)).value}
                     : std::nullopt;
             Assign(std::move(place), ConsumeByCopyOrMove(std::move(value)));
             if (left_behind.has_value()) {
@@ -956,31 +957,37 @@ void FunctionLowerer::AssignFrom(
       destination);
 }
 
-void FunctionLowerer::OpenScope(ScopeKind kind) {
-  if (const std::optional<lir::ValueId> owed = OwedValueOf(kind)) {
+void FunctionLowerer::OpenScope(Cleanup cleanup) {
+  if (const std::optional<lir::ValueId> owed = OwedValueOf(cleanup)) {
     owed_end_.insert_or_assign(*owed, scopes_.size());
   }
-  if (std::holds_alternative<RegionScope>(kind)) {
-    ++open_regions_;
-  }
   scopes_.push_back(
-      UnwindScope{
-          .kind = std::move(kind),
-          .unwind_entry = std::nullopt,
-          .exit_entries = {}});
+      StackedScope{
+          .entry = Owed{.cleanup = cleanups_.Add(std::move(cleanup))},
+          .unwind_node = std::nullopt,
+          .exit_nodes = {}});
+}
+
+void FunctionLowerer::OpenScope(Region region) {
+  scopes_.push_back(
+      StackedScope{
+          .entry = region, .unwind_node = std::nullopt, .exit_nodes = {}});
 }
 
 void FunctionLowerer::PopScopesTo(std::size_t depth) {
   while (scopes_.size() > depth) {
-    const ScopeKind& kind = scopes_.back().kind;
-    if (const std::optional<lir::ValueId> owed = OwedValueOf(kind)) {
-      owed_end_.erase(*owed);
-    }
-    if (std::holds_alternative<RegionScope>(kind)) {
-      --open_regions_;
+    if (const Cleanup* owed = OwedAt(scopes_.size() - 1)) {
+      if (const std::optional<lir::ValueId> value = OwedValueOf(*owed)) {
+        owed_end_.erase(*value);
+      }
     }
     scopes_.pop_back();
   }
+}
+
+auto FunctionLowerer::OwedAt(std::size_t index) const -> const Cleanup* {
+  const auto* owed = std::get_if<Owed>(&scopes_[index].entry);
+  return owed == nullptr ? nullptr : &cleanups_.Get(owed->cleanup);
 }
 
 auto FunctionLowerer::OwedEndAt(const lir::Operand& value) const
@@ -991,7 +998,7 @@ auto FunctionLowerer::OwedEndAt(const lir::Operand& value) const
   }
   const auto owed = owed_end_.find(use->value);
   if (owed == owed_end_.end() ||
-      !std::holds_alternative<ValueEnd>(scopes_[owed->second].kind)) {
+      !std::holds_alternative<EndValue>(*OwedAt(owed->second))) {
     return std::nullopt;
   }
   return owed->second;
@@ -1010,7 +1017,7 @@ auto FunctionLowerer::OwedEndOfLocal(const mir::Block& block, mir::ExprId place)
   }
   const auto owed = owed_end_.find(binding->slot);
   if (owed == owed_end_.end() ||
-      !std::holds_alternative<SlotEnd>(scopes_[owed->second].kind)) {
+      !std::holds_alternative<EndSlot>(*OwedAt(owed->second))) {
     return std::nullopt;
   }
   return owed->second;
@@ -1031,25 +1038,23 @@ auto FunctionLowerer::HandOn(lir::Operand value) -> lir::Operand {
 }
 
 void FunctionLowerer::PassEndAt(std::size_t index) {
-  if (const std::optional<lir::ValueId> owed =
-          OwedValueOf(scopes_[index].kind)) {
+  if (const std::optional<lir::ValueId> owed = OwedValueOf(*OwedAt(index))) {
     owed_end_.erase(*owed);
   }
-  scopes_[index].kind = EndPassedOn{};
-  // What was built while the end was owed goes on running it, which is right
-  // for the calls made then; what is built from here on must not, so this
-  // scope and every one inside it build theirs afresh. A chain is built from
-  // its outermost scope in, so one scope with nothing built ends every chain
-  // that reaches this one, and each entry cleared here was paid for by building
-  // it.
+  scopes_[index].entry = PassedOn{};
+  // A node a way out recorded while the end was owed goes on running it, which
+  // is right for that way out; one from here on must not, so this scope and
+  // every one inside it find theirs afresh. Nodes are found from the outermost
+  // scope in, so one scope with nothing found ends every chain that reaches
+  // this one.
   for (std::size_t j = index; j < scopes_.size(); ++j) {
-    UnwindScope& scope = scopes_[j];
-    if (j > index && !scope.unwind_entry.has_value() &&
-        scope.exit_entries.empty()) {
+    StackedScope& scope = scopes_[j];
+    if (j > index && !scope.unwind_node.has_value() &&
+        scope.exit_nodes.empty()) {
       break;
     }
-    scope.unwind_entry = std::nullopt;
-    scope.exit_entries.clear();
+    scope.unwind_node = std::nullopt;
+    scope.exit_nodes.clear();
   }
 }
 
@@ -1123,7 +1128,7 @@ auto FunctionLowerer::DeclareLocal(
     return closed;
   }
   if (unit_->Types().Get(type).IsOwnedValue()) {
-    OpenScope(SlotEnd{.slot = slot});
+    OpenScope(EndSlot{.slot = slot});
   }
   return {};
 }
@@ -1149,7 +1154,7 @@ auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
             lir::CallInstr{
                 .target = lir::CopyValueTarget{}, .args = {std::move(value)}});
       }
-      EndValue(Load(place, type));
+      EmitValueEnd(Load(place, type));
       AssignFrom(std::move(place), std::move(value));
       return VoidValue();
     }
@@ -1200,7 +1205,7 @@ auto FunctionLowerer::BeginVariable(mir::LocalId local) -> lir::Operand {
       address,
       lir::BeginVariableInstr{.variables = *variables_, .position = position});
   locals_[local.value] = CellBinding{.cell = cell};
-  OpenScope(VariableEnd{.position = position});
+  OpenScope(EndVariable{.position = position});
   return cell;
 }
 
@@ -1291,7 +1296,7 @@ auto FunctionLowerer::CloseExtentYielding(
     return closed;
   }
   if (carried_out) {
-    OpenScope(ValueEnd{.value = std::get<lir::Use>(yielded).value});
+    OpenScope(EndValue{.value = std::get<lir::Use>(yielded).value});
   }
   return {};
 }
@@ -1700,91 +1705,81 @@ auto FunctionLowerer::CurrentRuntime() -> lir::Operand {
           .args = {}});
 }
 
-auto FunctionLowerer::OwesNothing(const ScopeKind& kind) -> bool {
-  return std::visit(
-      Overloaded{
-          [](const CleanupScope&) { return false; },
-          [](const ValueEnd&) { return false; },
-          [](const SlotEnd&) { return false; },
-          [](const StorageDead&) { return false; },
-          [](const VariableEnd&) { return false; },
-          [](const EndPassedOn&) { return true; },
-          [](const StorageRelease&) { return false; },
-          [](const HandlingScope&) { return false; },
-          // A way out leaving a region or a cleanup's own code owes it
-          // nothing: a region's handler is only for what unwinds.
-          [](const RegionScope&) { return true; },
-          [](const TerminateScope&) { return true; }},
-      kind);
-}
-
-auto FunctionLowerer::OwedValueOf(const ScopeKind& kind)
+auto FunctionLowerer::OwedValueOf(const Cleanup& cleanup)
     -> std::optional<lir::ValueId> {
-  if (const auto* end = std::get_if<ValueEnd>(&kind)) {
+  if (const auto* end = std::get_if<EndValue>(&cleanup)) {
     return end->value;
   }
-  if (const auto* slot = std::get_if<SlotEnd>(&kind)) {
+  if (const auto* slot = std::get_if<EndSlot>(&cleanup)) {
     return slot->slot;
   }
   return std::nullopt;
 }
 
-auto FunctionLowerer::RunOwed(const ScopeKind& kind) -> diag::Result<void> {
+auto FunctionLowerer::RunCleanup(const Cleanup& cleanup) -> diag::Result<void> {
   return std::visit(
       Overloaded{
-          [&](const CleanupScope& cleanup) -> diag::Result<void> {
-            return LowerCleanupInto(cleanup);
+          [&](const RunFinally& finally) -> diag::Result<void> {
+            return LowerCleanupInto(finally);
           },
-          [&](const ValueEnd& end) -> diag::Result<void> {
-            EmitScopeDrop(end);
+          [&](const EndValue& end) -> diag::Result<void> {
+            EmitCleanup(end);
             return {};
           },
-          [&](const SlotEnd& end) -> diag::Result<void> {
-            EmitScopeDrop(end);
+          [&](const EndSlot& end) -> diag::Result<void> {
+            EmitCleanup(end);
             return {};
           },
           [&](const StorageDead& dead) -> diag::Result<void> {
-            EmitScopeDrop(dead);
+            EmitCleanup(dead);
             return {};
           },
-          [&](const VariableEnd& end) -> diag::Result<void> {
-            EmitScopeDrop(end);
+          [&](const EndVariable& end) -> diag::Result<void> {
+            EmitCleanup(end);
             return {};
           },
-          [](const EndPassedOn&) -> diag::Result<void> { return {}; },
-          [&](const StorageRelease& release) -> diag::Result<void> {
-            EmitScopeDrop(release);
+          [&](const ReleaseStorage& release) -> diag::Result<void> {
+            EmitCleanup(release);
             return {};
           },
-          [&](const HandlingScope&) -> diag::Result<void> {
+          [&](const EndHandling&) -> diag::Result<void> {
             EmitStatement(lir::EndHandlingInstr{});
             return {};
-          },
-          [](const RegionScope&) -> diag::Result<void> { return {}; },
-          [](const TerminateScope&) -> diag::Result<void> { return {}; }},
-      kind);
+          }},
+      cleanup);
 }
 
 auto FunctionLowerer::RunCleanupsDownTo(std::size_t depth)
     -> diag::Result<void> {
   for (std::size_t i = scopes_.size(); i > depth; --i) {
-    // Taken by value: lowering a cleanup's code opens and closes scopes of its
-    // own on the same stack.
-    const ScopeKind kind = scopes_[i - 1].kind;
-    if (auto lowered = RunOwed(kind); !lowered) {
+    const Cleanup* owed = OwedAt(i - 1);
+    if (owed == nullptr) {
+      continue;
+    }
+    // Copied: lowering a cleanup's code adds cleanups of its own to the tree.
+    const Cleanup running = *owed;
+    if (auto lowered = RunCleanup(running); !lowered) {
       return lowered;
     }
   }
   return {};
 }
 
-auto FunctionLowerer::LowerCleanupInto(CleanupScope cleanup)
+auto FunctionLowerer::LowerCleanupInto(const RunFinally& cleanup)
     -> diag::Result<void> {
-  const std::size_t depth = scopes_.size();
-  OpenScope(TerminateScope{});
+  std::vector<StackedScope> outside = std::exchange(scopes_, {});
+  std::unordered_map<lir::ValueId, std::size_t> outside_ends =
+      std::exchange(owed_end_, {});
+  std::vector<BreakableScope> outside_breaks =
+      std::exchange(breakable_scopes_, {});
+  scopes_.push_back(
+      StackedScope{
+          .entry = NoWayOut{}, .unwind_node = std::nullopt, .exit_nodes = {}});
   auto lowered =
       LowerBlockInto(cleanup.owner->child_scopes.Get(cleanup.cleanup));
-  PopScopesTo(depth);
+  scopes_ = std::move(outside);
+  owed_end_ = std::move(outside_ends);
+  breakable_scopes_ = std::move(outside_breaks);
   return lowered;
 }
 
@@ -1837,7 +1832,7 @@ auto FunctionLowerer::LowerFinallyInto(
     const mir::Block& block, const mir::FinallyStmt& stmt)
     -> diag::Result<void> {
   const std::size_t depth = scopes_.size();
-  OpenScope(CleanupScope{.owner = &block, .cleanup = stmt.cleanup});
+  OpenScope(RunFinally{.owner = &block, .cleanup = stmt.cleanup});
   auto body = LowerBlockInto(block.child_scopes.Get(stmt.body));
   PopScopesTo(depth);
   if (!body) {
@@ -1848,8 +1843,7 @@ auto FunctionLowerer::LowerFinallyInto(
   if (Terminated()) {
     return {};
   }
-  return LowerCleanupInto(
-      CleanupScope{.owner = &block, .cleanup = stmt.cleanup});
+  return LowerCleanupInto(RunFinally{.owner = &block, .cleanup = stmt.cleanup});
 }
 
 auto FunctionLowerer::LowerTryInto(
@@ -1863,7 +1857,7 @@ auto FunctionLowerer::LowerTryInto(
   const lir::ValueId caught =
       NewPlaceLocal(unit_->TranslateType(code_->locals.Get(stmt.caught).type));
   locals_[stmt.caught.value] = PlaceBinding{.slot = caught};
-  const RegionScope region{.handler = handler_id, .caught = caught};
+  const Region region{.handler = handler_id, .caught = caught};
 
   OpenScope(region);
   auto body = LowerBlockInto(block.child_scopes.Get(stmt.body));
@@ -2094,7 +2088,7 @@ auto FunctionLowerer::HeldInSlot(lir::Operand value, lir::TypeId type)
   const lir::ValueId slot = NewLiveSlot(type);
   AssignFrom(LocalPlace(slot), std::move(value));
   if (unit_->Types().Get(type).IsOwnedValue()) {
-    OpenScope(SlotEnd{.slot = slot});
+    OpenScope(EndSlot{.slot = slot});
   }
   return slot;
 }
@@ -2598,7 +2592,7 @@ auto FunctionLowerer::LowerNew(
                   .op = lir::DynamicStorageTarget::Op::kAllocate},
           .args = {}});
   const std::size_t released_at = scopes_.size();
-  OpenScope(StorageRelease{.storage = storage});
+  OpenScope(ReleaseStorage{.storage = storage});
   if (auto made =
           LowerExprInto(block, *allocation.initializer, StorageAt(storage));
       !made) {
@@ -3334,7 +3328,7 @@ auto FunctionLowerer::LowerConditional(
     return std::unexpected(std::move(made.error()));
   }
   if (unit_->Types().Get(result_type).IsOwnedValue()) {
-    OpenScope(SlotEnd{.slot = slot});
+    OpenScope(EndSlot{.slot = slot});
   }
   return Load(LocalPlace(slot), result_type);
 }
@@ -3477,7 +3471,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             if (const std::optional<std::size_t> owed =
                     OwedEndOfLocal(block, m.operand)) {
               PassEndAt(*owed);
-              OpenScope(ValueEnd{.value = std::get<lir::Use>(*value).value});
+              OpenScope(EndValue{.value = std::get<lir::Use>(*value).value});
             }
             return value;
           },
@@ -3542,7 +3536,7 @@ auto FunctionLowerer::LowerReadAsAnother(
   }
   const lir::Operand moved =
       Emit(read_as, lir::CastInstr{.operand = HandOn(*std::move(value))});
-  OpenScope(ValueEnd{.value = std::get<lir::Use>(moved).value});
+  OpenScope(EndValue{.value = std::get<lir::Use>(moved).value});
   return moved;
 }
 

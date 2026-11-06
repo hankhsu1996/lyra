@@ -2467,6 +2467,168 @@ void VerifyBreaksAndSwitches(
   }
 }
 
+// Whether `expr` is a node MIR can state cannot leave the code it stands in:
+// a call of a runtime entry declared to return, a node that computes nothing --
+// a name, a literal, a place, a read of one, a cast, which only reads a value
+// as another type, any conversion that reshapes it being a call -- or one that
+// only chooses or
+// sequences nodes held to the same, a conditional or a block expression, whose
+// parts are each checked where they stand. Whether a call can leave
+// is its callee's declaration, and only a runtime entry declares that it
+// cannot. Any node that computes may be realized below this layer by a call it
+// does not state, so this layer can promise nothing of it, and a suspension is
+// left whenever the execution is ended where it stands.
+auto StatedNotToLeave(const Expr& expr) -> bool {
+  return std::visit(
+      Overloaded{
+          [](const StringLiteral&) { return true; },
+          [](const NullLiteral&) { return true; },
+          [](const MachineBoolLiteral&) { return true; },
+          [](const MachineIntLiteral&) { return true; },
+          [](const FloatingLiteral&) { return true; },
+          [](const ReferenceExpr&) { return true; },
+          [](const FieldAccessExpr&) { return true; },
+          [](const DerefExpr&) { return true; },
+          [](const AddressOfExpr&) { return true; },
+          [](const BorrowExpr&) { return true; },
+          [](const MoveExpr&) { return true; },
+          [](const CopyExpr&) { return true; },
+          [](const CallExpr& call) {
+            const std::optional<support::BuiltinFn> entry =
+                DirectBuiltinFn(call);
+            return entry.has_value() &&
+                   support::RuntimeEntryOf(*entry).ending ==
+                       support::CallEnding::kReturns;
+          },
+          [](const CastExpr&) { return true; },
+          [](const ConditionalExpr&) { return true; },
+          [](const BlockExpr&) { return true; },
+          [](const UnaryExpr&) { return false; },
+          [](const BinaryExpr&) { return false; },
+          [](const AssignExpr&) { return false; },
+          [](const NewExpr&) { return false; },
+          [](const DiscriminantExpr&) { return false; },
+          [](const ClosureExpr&) { return false; },
+          [](const CompositeExpr&) { return false; },
+          [](const UnionExpr&) { return false; },
+          [](const AwaitExpr&) { return false; },
+          [](const WaitExpr&) { return false; },
+          [](const VectorGetExpr&) { return false; }},
+      expr.data);
+}
+
+// That `block`, part of a cleanup's code, holds no way out of that code but
+// running to its end: nothing not stated not to leave it, no region, no raise,
+// no return, and no break or continue naming a statement around the cleanup.
+// `labelled` holds the labels of the statements inside the cleanup that stand
+// around `block`, and `loops` how many loops inside it do.
+void VerifyLeavesOnlyAtItsEnd(
+    const Block& block, std::vector<LabelId>& labelled, int loops,
+    const auto& refuse) {
+  for (const Expr& expr : block.exprs) {
+    if (!StatedNotToLeave(expr)) {
+      refuse(
+          std::format(
+              "holds {}, which is not stated not to leave it",
+              Describe(expr.data)));
+    }
+    if (const auto* steps = std::get_if<BlockExpr>(&expr.data)) {
+      VerifyLeavesOnlyAtItsEnd(
+          block.child_scopes.Get(steps->scope), labelled, loops, refuse);
+    }
+  }
+  const auto inside = [&](BlockId id, std::optional<LabelId> label,
+                          int loops_around) {
+    if (label.has_value()) {
+      labelled.push_back(*label);
+    }
+    VerifyLeavesOnlyAtItsEnd(
+        block.child_scopes.Get(id), labelled, loops_around, refuse);
+    if (label.has_value()) {
+      labelled.pop_back();
+    }
+  };
+  for (const StmtId id : block.root_stmts) {
+    std::visit(
+        Overloaded{
+            [](const EmptyStmt&) {}, [](const LocalDeclStmt&) {},
+            [](const ExprStmt&) {}, [&](const RaiseStmt&) { refuse("raises"); },
+            [&](const ReturnStmt&) { refuse("returns"); },
+            [&](const ContinueStmt&) {
+              if (loops == 0) {
+                refuse("continues a loop that stands around it");
+              }
+            },
+            [&](const BreakStmt& s) {
+              if (!std::ranges::contains(labelled, s.target)) {
+                refuse(
+                    std::format(
+                        "breaks out of label {}, which stands around it",
+                        s.target.value));
+              }
+            },
+            [&](const BlockStmt& s) { inside(s.scope, s.break_label, loops); },
+            [&](const TryStmt&) {
+              refuse("holds a region, whose handler asks what arrived");
+            },
+            [&](const FinallyStmt& s) {
+              inside(s.body, std::nullopt, loops);
+              inside(s.cleanup, std::nullopt, loops);
+            },
+            [&](const IfStmt& s) {
+              inside(s.then_scope, std::nullopt, loops);
+              if (s.else_scope.has_value()) {
+                inside(*s.else_scope, std::nullopt, loops);
+              }
+            },
+            [&](const SwitchStmt& s) {
+              for (const SwitchCase& selected : s.cases) {
+                inside(selected.body, std::nullopt, loops);
+              }
+              if (s.default_body.has_value()) {
+                inside(*s.default_body, std::nullopt, loops);
+              }
+            },
+            [&](const ForStmt& s) {
+              inside(s.scope, s.break_label, loops + 1);
+            },
+            [&](const WhileStmt& s) {
+              inside(s.scope, s.break_label, loops + 1);
+            },
+            [&](const DoWhileStmt& s) {
+              inside(s.scope, s.break_label, loops + 1);
+            }},
+        block.stmts.Get(id).data);
+  }
+}
+
+// A cleanup runs on every way out of its body, a departure on its way out
+// included, so it has one way out of its own, running to its end: a second way
+// out starting inside it would have nowhere to go, and one leaving it partway
+// would leave undone what the body's ways out owe.
+void VerifyCleanupsLeaveOnlyAtTheirEnd(
+    const Block& block, const auto& describe) {
+  for (const Stmt& stmt : block.stmts) {
+    const auto* paired = std::get_if<FinallyStmt>(&stmt.data);
+    if (paired == nullptr) {
+      continue;
+    }
+    std::vector<LabelId> labelled;
+    VerifyLeavesOnlyAtItsEnd(
+        block.child_scopes.Get(paired->cleanup), labelled, 0,
+        [&](std::string_view what) {
+          throw InternalError(
+              std::format(
+                  "mir verify: in {}, a cleanup {}, though a cleanup leaves "
+                  "only by running to its end -- please report this as a bug",
+                  describe(), what));
+        });
+  }
+  for (const Block& child : block.child_scopes) {
+    VerifyCleanupsLeaveOnlyAtTheirEnd(child, describe);
+  }
+}
+
 // How many nodes of `block`, and of every block inside it, name each local.
 void CountNamings(const Block& block, std::map<LocalId, int>& named) {
   for (const ExprId id : block.exprs.Ids()) {
@@ -2680,6 +2842,7 @@ void VerifyCode(
   if (!code.body.has_value()) {
     return;
   }
+  VerifyCleanupsLeaveOnlyAtTheirEnd(*code.body, describe);
   VerifyNoRunEvaluatesTwice(unit, *code.body, {}, describe);
   VerifyPlacesAreRead(unit, *code.body, {}, describe);
   std::map<LocalId, int> named;
