@@ -23,30 +23,18 @@ OpenPiton:1x1:hello:
 OpenTitan:default:hello:
   stops: run
   says: did not end within
-uvm-1.2:integrated/codec:hw_reset_test:
-  stops: build
-  says: "reaching this name through a virtual interface is not yet supported"
-uvm-1.2:integrated/codec:test:
-  stops: build
-  says: "reaching this name through a virtual interface is not yet supported"
 uvm-1.2:integrated/ubus/examples:test_2m_4s:
   stops: build
   says: "a concurrent assertion embedded in a procedure is not yet supported"
 uvm-1.2:simple/registers/integration/10direct:uvm_reg_mem_built_in_seq:
-  stops: build
-  says: "reaching this name through a virtual interface is not yet supported"
+  stops: check
 uvm-1.2:simple/registers/integration/20layered:uvm_reg_mem_built_in_seq:
-  stops: build
-  says: "reaching this name through a virtual interface is not yet supported"
+  stops: check
 uvm-1.2:simple/registers/models/broadcast:default:
-  stops: build
-  says: "reaching this name through a virtual interface is not yet supported"
+  stops: check
 uvm-1.2:simple/registers/models/coverage:default:
   stops: build
   says: "virtual method 'sample' is 'public' but declared 'protected' in superclass method"
-uvm-1.2:simple/registers/models/fifo_reg:default:
-  stops: build
-  says: "reaching this name through a virtual interface is not yet supported"
 uvm-1.2:simple/registers/primer:hw_reset:
   stops: build
   says: "cannot be assigned to type 'uvm_reg$[]'"
@@ -54,11 +42,4 @@ uvm-1.2:simple/registers/primer:reg_user:
   stops: build
   says: "cannot be assigned to type 'uvm_reg$[]'"
 uvm-1.2:simple/registers/sequence_api:blk:
-  stops: build
-  says: "reaching this name through a virtual interface is not yet supported"
-uvm-1.2:simple/registers/vertical_reuse:blk:
-  stops: build
-  says: "reaching this name through a virtual interface is not yet supported"
-uvm-1.2:simple/registers/vertical_reuse:sys:
-  stops: build
-  says: "reaching this name through a virtual interface is not yet supported"
+  stops: check
