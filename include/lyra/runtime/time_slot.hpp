@@ -9,8 +9,8 @@
 #include "lyra/runtime/deferred_effects.hpp"
 #include "lyra/runtime/effect_storage.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
-#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/timer.hpp"
+#include "lyra/support/region.hpp"
 
 namespace lyra::runtime {
 
@@ -49,32 +49,34 @@ struct RegionQueue {
 class TimeSlot {
  public:
   explicit TimeSlot(EffectStorage& storage)
-      : regions_(
-            RegionsOver(storage, std::make_index_sequence<kRegionCount>{})) {
+      : regions_(RegionsOver(
+            storage, std::make_index_sequence<support::kRegionCount>{})) {
   }
 
-  auto operator[](Region region) -> RegionQueue& {
+  auto operator[](support::Region region) -> RegionQueue& {
     return regions_.at(static_cast<std::size_t>(region));
   }
 
-  [[nodiscard]] auto FirstPending(Region first, Region last) const
-      -> std::optional<Region> {
+  [[nodiscard]] auto FirstPending(support::Region first, support::Region last)
+      const -> std::optional<support::Region> {
     for (auto index = static_cast<std::size_t>(first);
          index <= static_cast<std::size_t>(last); ++index) {
       if (!regions_.at(index).Empty()) {
-        return static_cast<Region>(index);
+        return static_cast<support::Region>(index);
       }
     }
     return std::nullopt;
   }
 
   [[nodiscard]] auto Empty() const noexcept -> bool {
-    return !FirstPending(Region::kPreponed, Region::kPostponed).has_value();
+    return !FirstPending(
+                support::Region::kPreponed, support::Region::kPostponed)
+                .has_value();
   }
 
   // Makes every event of a later slot this one's, when time reaches it.
   void Append(TimeSlot& other) {
-    for (std::size_t index = 0; index < kRegionCount; ++index) {
+    for (std::size_t index = 0; index < support::kRegionCount; ++index) {
       regions_.at(index).Append(other.regions_.at(index));
     }
   }
@@ -86,11 +88,11 @@ class TimeSlot {
   }
   template <std::size_t... Index>
   static auto RegionsOver(EffectStorage& storage, std::index_sequence<Index...>)
-      -> std::array<RegionQueue, kRegionCount> {
+      -> std::array<RegionQueue, support::kRegionCount> {
     return {QueueOver<Index>(storage)...};
   }
 
-  std::array<RegionQueue, kRegionCount> regions_;
+  std::array<RegionQueue, support::kRegionCount> regions_;
 };
 
 }  // namespace lyra::runtime

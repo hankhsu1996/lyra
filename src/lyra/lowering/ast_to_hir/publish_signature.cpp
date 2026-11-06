@@ -418,6 +418,23 @@ auto UnitLowerer::PublishedCallableOf(
             return evaluator(
                 clocking.name, InternExpressionType(*clocking.expression, span),
                 hir::ParamDirection::kInput, {}, span);
+          },
+          // A task taking the drive's count of cycles (LRM 14.11), which
+          // returns in the Re-NBA region the drive lands in.
+          [&](const ScopePublicationRecord::ClockingLanding& landing)
+              -> diag::Result<hir::SubroutinePrototype> {
+            return hir::SubroutinePrototype{
+                .name = landing.name,
+                .interface =
+                    hir::CalleeInterface{
+                        .kind = hir::SubroutineKind::kTask,
+                        .params = {hir::CalleeParam{
+                            .direction = hir::ParamDirection::kInput,
+                            .type = unit_.builtins.int_type,
+                            .default_evaluator = std::nullopt}},
+                        .track_caller = false},
+                .result_type = unit_.types.Intern(hir::Type{hir::VoidType{}}),
+                .result_direction = hir::ParamDirection::kInput};
           }},
       callable);
 }
@@ -777,6 +794,26 @@ auto UnitLowerer::PublishScopeClass(const slang::ast::Scope& scope)
             },
             [&](const ScopePublicationRecord::InterfacePort& port) {
               return interface_port(*port.symbol);
+            },
+            [&](const ScopePublicationRecord::ClockingVariable& variable)
+                -> diag::Result<hir::PublishedMember> {
+              auto type = std::visit(
+                  Overloaded{
+                      [&](const slang::ast::ClockVarSymbol* clockvar) {
+                        return InternType(
+                            clockvar->getType(),
+                            frontend::PointSpanOf(clockvar->location));
+                      },
+                      [&](hir::EventType event) -> diag::Result<hir::TypeId> {
+                        return unit_.types.Intern(hir::Type{event});
+                      }},
+                  variable.holds);
+              if (!type) return std::unexpected(std::move(type.error()));
+              return hir::PublishedMember{
+                  .name = variable.name,
+                  .holder = variable.within,
+                  .type = *type,
+                  .storage = hir::VariableStorage{}};
             }},
         member);
     if (!made) return std::unexpected(std::move(made.error()));

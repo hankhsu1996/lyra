@@ -136,6 +136,9 @@ auto SymbolPartOf(const support::DefPath& path) -> SymbolPart {
             [&](const support::NamedBlockStep& block) {
               return named('b', block.name);
             },
+            [&](const support::ClockingBlockStep& block) {
+              return named('k', block.name);
+            },
             [&](const support::UnnamedBlockStep& block) {
               return placed('u', block.position);
             },

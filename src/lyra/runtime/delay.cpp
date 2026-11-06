@@ -180,6 +180,24 @@ auto DelayDeadline(
           ticks, precision_power, runtime.GlobalPrecisionPower()));
 }
 
+auto DeadlineAfterAmount(
+    RuntimeEffects& runtime, const value::ConstIntegralView& duration,
+    std::int64_t unit_power, std::int64_t precision_power) -> SimTime {
+  const auto unit = static_cast<std::int8_t>(unit_power);
+  const auto precision = static_cast<std::int8_t>(precision_power);
+  return DelayDeadline(
+      runtime, DelayTicks(duration, unit, precision), precision);
+}
+
+auto DeadlineAfterRealAmount(
+    RuntimeEffects& runtime, const value::Real& duration,
+    std::int64_t unit_power, std::int64_t precision_power) -> SimTime {
+  const auto unit = static_cast<std::int8_t>(unit_power);
+  const auto precision = static_cast<std::int8_t>(precision_power);
+  return DelayDeadline(
+      runtime, DelayTicksReal(duration, unit, precision), precision);
+}
+
 auto DueAfter(
     RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
     -> DelayDue {

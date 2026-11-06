@@ -54,7 +54,12 @@ specialization reads that specialization's published value.
 **D4. A clocking block is published structure.** Its clocking event crosses as, per event, the edge,
 the callable the declaring scope evaluates the operand in, the callable evaluating its qualifier,
 and the members the operand reads -- the shape a view's computed name already has. An instance of a
-sequence or property declared in another instance's clocking block is clocked by that.
+sequence or property declared in another instance's clocking block is clocked by that. What the
+block holds crosses as members held under the block: each input clockvar under its own name, and
+under names no identifier holds its event and the variable an output drives its nets through; each
+output's landing crosses as a task of the scope, which the declaring unit's lowering writes. So a
+drive from another unit names only what the declarer published, and how its skew is carried out
+stays the declarer's (revised 2026-11-05).
 
 **D5. A type the front end worked out for the reader's expression is the reader's; a type a
 declaration states is the declarer's.** The type of `a.x[3]` is the front end's analysis of the

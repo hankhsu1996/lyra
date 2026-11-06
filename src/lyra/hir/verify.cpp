@@ -61,8 +61,11 @@ namespace {
 // expressions the body itself holds: the report evaluates what it names in an
 // evaluation of its own, ahead of the body, and a sensitivity evaluates
 // nothing, so naming one there is no place the body's evaluation reaches it;
-// it is held only to naming an expression the arena has.
-enum class Slot : std::uint8_t { kOperand, kReport, kSensitivity };
+// it is held only to naming an expression the arena has. A shared name is an
+// expression another holder evaluates, named for the value that evaluation
+// gives: the instance a synchronous drive's target reaches, which its landing
+// is made on too.
+enum class Slot : std::uint8_t { kOperand, kReport, kSensitivity, kShared };
 
 void ReachSensitivityEntry(const SensitivityEntry& entry, const auto& reach) {
   std::visit(
@@ -114,8 +117,28 @@ void ReachTimingControl(const TimingControl& timing, const auto& reach) {
           [&](const EventControl& c) { ReachEventControl(c, reach); },
           [&](const ImplicitEventControl& c) {
             ReachSensitivity(c.sensitivity_list, reach);
+          },
+          [&](const CycleDelay& c) {
+            reach(c.count, Slot::kOperand);
+            reach(c.event, Slot::kOperand);
           }},
       timing);
+}
+
+void ReachClockingLanding(const ClockingLanding& landing, const auto& reach) {
+  std::visit(
+      Overloaded{
+          [](const ClockingOutputLanding&) {},
+          [&](const PublishedLanding& published) {
+            std::visit(
+                Overloaded{
+                    [](const RoutedObjectRef&) {},
+                    [&](const InstanceOfTarget& target) {
+                      reach(target.access, Slot::kShared);
+                    }},
+                published.receiver);
+          }},
+      landing);
 }
 
 void ReachDelayOrEventControl(
@@ -127,6 +150,10 @@ void ReachDelayOrEventControl(
           [&](const RepeatedEventControl& c) {
             reach(c.count, Slot::kOperand);
             ReachEventControl(c.event, reach);
+          },
+          [&](const ClockingDriveControl& c) {
+            if (c.cycles.has_value()) reach(*c.cycles, Slot::kOperand);
+            ReachClockingLanding(c.landing, reach);
           }},
       control);
 }
@@ -923,6 +950,7 @@ struct Reacher {
     switch (slot) {
       case Slot::kReport:
       case Slot::kSensitivity:
+      case Slot::kShared:
         return;
       case Slot::kOperand:
         break;
@@ -1105,6 +1133,8 @@ auto DescribePlace(const base::Arena<Expr, ExprId>& exprs, const Place& place)
       return std::format("the report of {}", holder);
     case Slot::kSensitivity:
       return std::format("the sensitivity of {}", holder);
+    case Slot::kShared:
+      return std::format("the value {} shares", holder);
   }
   throw InternalError("hir::DescribePlace: unknown Slot");
 }
@@ -1340,6 +1370,47 @@ void VerifyClassReadsOfDeclarations(
   }
 }
 
+// A synchronous drive landed on the instance its target is reached on names the
+// member access of the target that reaches it, under the selects the drive
+// wrote: the one expression evaluating the instance for both (LRM 14.16).
+void ReportDriveReceivers(
+    const base::Arena<Expr, ExprId>& exprs, const auto& where,
+    std::vector<std::string>& lines) {
+  for (const ExprId id : exprs.Ids()) {
+    const auto* assign = std::get_if<AssignExpr>(&exprs.Get(id).data);
+    if (assign == nullptr) continue;
+    const auto* deferred = std::get_if<NonBlockingEffect>(&assign->timing);
+    if (deferred == nullptr || !deferred->control.has_value()) continue;
+    const auto* drive = std::get_if<ClockingDriveControl>(&*deferred->control);
+    if (drive == nullptr) continue;
+    const auto* published = std::get_if<PublishedLanding>(&drive->landing);
+    if (published == nullptr) continue;
+    const auto* target = std::get_if<InstanceOfTarget>(&published->receiver);
+    if (target == nullptr) continue;
+    ExprId written = assign->lhs;
+    for (;;) {
+      const ExprData& data = exprs.Get(written).data;
+      if (const auto* sel = std::get_if<ElementSelectExpr>(&data)) {
+        written = sel->base_value;
+      } else if (const auto* range = std::get_if<RangeSelectExpr>(&data)) {
+        written = range->base_value;
+      } else {
+        break;
+      }
+    }
+    if (written != target->access ||
+        !std::holds_alternative<InterfaceMemberAccessExpr>(
+            exprs.Get(written).data)) {
+      lines.push_back(
+          std::format(
+              "in {}: the drive (expression {}) is landed on the instance "
+              "expression {} reaches, which is not the member access of its "
+              "target",
+              where(), id.value, target->access.value));
+    }
+  }
+}
+
 // Counts the reaches into one body's expressions. `entered_at` is the
 // statements execution enters the body at, which whatever owns the body
 // states, and `reach_from_owner` adds the reaches that owner makes itself,
@@ -1368,6 +1439,7 @@ void VerifyBody(
   reach_from_owner(reaches);
   Report(reaches, where, lines);
   ReportClassReads(unit, reaches, where, lines);
+  ReportDriveReceivers(body.exprs, where, lines);
 }
 
 void VerifySubroutine(
@@ -1894,6 +1966,43 @@ void VerifyScope(
     from_history(history.subject, Slot::kOperand);
     ReachEventControl(history.clock, from_history);
     from_history(history.depth, Slot::kOperand);
+  }
+  const auto from_clocking =
+      ReachFrom(reaches, std::nullopt, "a clocking block");
+  const auto reach_delay = [&](const DelayControl& delay) {
+    from_clocking(delay.duration, Slot::kOperand);
+  };
+  for (const ClockingBlockDecl& clocking : scope.clocking_blocks) {
+    ReachEventControl(clocking.event, from_clocking);
+    for (const Clockvar& clockvar : clocking.clockvars) {
+      from_clocking(clockvar.signal, Slot::kOperand);
+      ReachSensitivity(clockvar.signal_reads, from_clocking);
+      if (clockvar.input.has_value()) {
+        std::visit(
+            Overloaded{
+                [](const OneStepSkew&) {},
+                [&](const DelaySkew& skew) { reach_delay(skew.delay); }},
+            clockvar.input->skew);
+      }
+      if (clockvar.output.has_value()) {
+        std::visit(
+            Overloaded{
+                [](const NoSkew&) {},
+                [&](const DelaySkew& skew) { reach_delay(skew.delay); },
+                [&](const EdgeSkew& skew) {
+                  if (skew.delay.has_value()) reach_delay(*skew.delay);
+                }},
+            clockvar.output->skew);
+        std::visit(
+            Overloaded{
+                [&](const NetSignal& nets) {
+                  from_clocking(nets.driving, Slot::kOperand);
+                  ReachSensitivity(nets.reads, from_clocking);
+                },
+                [](const VariableSignal&) {}},
+            clockvar.output->signal);
+      }
+    }
   }
   Report(reaches, [&] { return label; }, lines);
   ReportClassReads(unit, reaches, [&] { return label; }, lines);

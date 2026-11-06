@@ -100,6 +100,19 @@ auto ClockingEventName(std::string_view block, std::size_t entry)
 auto ClockingConditionName(std::string_view block, std::size_t entry)
     -> std::string;
 
+// What lands the drives of the clocking output `clockvar` of the block `block`
+// (LRM 14.16), which every unit driving the output calls.
+auto ClockingLandingName(std::string_view block, std::string_view clockvar)
+    -> std::string;
+
+// What a clocking block holds under names no identifier holds, spelled through
+// one function each for the unit declaring the block and every unit reaching
+// it: the block's event (LRM 14.10), and the variable inside the block an
+// output drives its signal from (LRM 14.16), named after the net output's
+// clockvar or after the variable the outputs onto it share.
+auto ClockingBlockEventName() -> std::string;
+auto ClockingDrivingVariableName(std::string_view named_after) -> std::string;
+
 // Whether whatever declares `callee` evaluates the defaults of its formals in a
 // function of its own, which a call omitting a formal calls (LRM 13.5.3). A
 // subroutine of a scope or a namespace, an import, and a method or a

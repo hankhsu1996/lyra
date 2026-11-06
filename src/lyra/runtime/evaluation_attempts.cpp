@@ -10,10 +10,10 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/assertion_control.hpp"
-#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/support/assertion_control.hpp"
 #include "lyra/support/property_answer.hpp"
+#include "lyra/support/region.hpp"
 
 namespace lyra::runtime {
 
@@ -238,8 +238,9 @@ void EvaluationAttempts::Report(
             if (!runs) return;
             OwnedCall* action =
                 holds ? &installed.pass_action : &installed.fail_action;
-            effects.Submit(
-                effects.Now(), Region::kReactive, [action] { (*action)(); });
+            effects.Submit(effects.Now(), support::Region::kReactive, [action] {
+              (*action)();
+            });
           },
           [&](Held& held) {
             held.answer = holds ? support::AttemptAnswer::kHolds

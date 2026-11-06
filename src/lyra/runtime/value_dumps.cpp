@@ -22,10 +22,10 @@
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/dump_writer.hpp"
 #include "lyra/runtime/file.hpp"
-#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/value_dump.hpp"
+#include "lyra/support/region.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -239,7 +239,7 @@ void ValueDumps::Begin(
   // at the end of that time step, unless the design's own `$dumpvars` has run
   // by then and so starts the dump itself.
   const SimTime start = windows_.empty() ? 0 : windows_.front().from;
-  runtime.Submit(start, Region::kPostponed, [this, start] {
+  runtime.Submit(start, support::Region::kPostponed, [this, start] {
     if (!design_selected_at_.has_value()) {
       Start(DumpFileName(), base::SourceLocation{}, start, OptionSelection());
     }
@@ -357,7 +357,7 @@ void ValueDumps::OnceStarted(Act act) {
   const SimTime now = runtime_->Now();
   if (design_selected_at_ == now) {
     // The file may have failed to open by then.
-    runtime_->Submit(now, Region::kPostponed, [this, act] {
+    runtime_->Submit(now, support::Region::kPostponed, [this, act] {
       if (dump_ != nullptr) {
         act(*dump_);
       }
@@ -424,20 +424,21 @@ void ValueDumps::DumpPortsOf(Scope& instance, const value::String& name) {
             .dump = nullptr});
   }
   const base::SourceLocation at = base::BoundSourceLocation("$dumpports");
-  runtime_->Submit(now, Region::kPostponed, [this, &ports = *added, now, at] {
-    const base::SourceLocationScope bound(at);
-    auto dump = std::make_unique<ValueDump>(
-        Opened(OpenExtendedVcdWriter(ports.file), ports.file, at),
-        precision_power_, ports.file, at);
-    {
-      const StopSignalsHeld held;
-      ports.dump = std::move(dump);
-    }
-    if (ports.limit.has_value()) {
-      ports.dump->Limit(*ports.limit);
-    }
-    ports.dump->Start(ports.selection, now, *this);
-  });
+  runtime_->Submit(
+      now, support::Region::kPostponed, [this, &ports = *added, now, at] {
+        const base::SourceLocationScope bound(at);
+        auto dump = std::make_unique<ValueDump>(
+            Opened(OpenExtendedVcdWriter(ports.file), ports.file, at),
+            precision_power_, ports.file, at);
+        {
+          const StopSignalsHeld held;
+          ports.dump = std::move(dump);
+        }
+        if (ports.limit.has_value()) {
+          ports.dump->Limit(*ports.limit);
+        }
+        ports.dump->Start(ports.selection, now, *this);
+      });
 }
 
 template <typename Act>
@@ -454,7 +455,7 @@ void ValueDumps::OnEachPortDump(const value::String& name, Act act) {
       act(*ports.dump);
     } else {
       // The file may have failed to open by then.
-      runtime_->Submit(now, Region::kPostponed, [&ports, act] {
+      runtime_->Submit(now, support::Region::kPostponed, [&ports, act] {
         if (ports.dump != nullptr) {
           act(*ports.dump);
         }
@@ -520,7 +521,7 @@ void ValueDumps::Select(SimTime now) {
   }
   design_selected_at_ = now;
   const base::SourceLocation at = base::BoundSourceLocation("$dumpvars");
-  runtime_->Submit(now, Region::kPostponed, [this, now, at] {
+  runtime_->Submit(now, support::Region::kPostponed, [this, now, at] {
     const base::SourceLocationScope bound(at);
     Start(DumpFileName(), at, now, design_selection_);
   });
@@ -565,11 +566,11 @@ void ValueDumps::OpenWindowsFrom(std::size_t index) {
   if (window.from > now) {
     dump_->Off(now);
     runtime_->Submit(
-        window.from, Region::kPostponed,
+        window.from, support::Region::kPostponed,
         [this, from = window.from] { dump_->On(from); });
   }
   runtime_->Submit(
-      window.to, Region::kPostponed, [this, index, to = window.to] {
+      window.to, support::Region::kPostponed, [this, index, to = window.to] {
         dump_->Off(to);
         OpenWindowsFrom(index + 1);
       });

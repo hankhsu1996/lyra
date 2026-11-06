@@ -71,7 +71,7 @@ auto SampledAnswerOf(
     case Referent::kPatternBinding:
     case Referent::kViewDefinedName:
     case Referent::kPrimitivePort:
-    case Referent::kClockingSignal:
+    case Referent::kClockingOutput:
     case Referent::kAssertionLocal:
     case Referent::kStructureMember:
       return SampledAnswer::kArmed;

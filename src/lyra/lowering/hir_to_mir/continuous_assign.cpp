@@ -68,13 +68,11 @@ auto AddField(mir::Class& mir_class, mir::TypeId type) -> ClassField {
 auto FieldOfSelf(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::Builder block, const ClassField& field) -> mir::ExprId {
-  const mir::ExprId self = block.Add(MakeSelfRefExpr(frame));
-  return block.Add(
-      mir::MakeFieldAccessExpr(
-          BuildObjectDeref(unit, block, self),
-          mir::ClassFieldTarget{
-              .owner = frame.current_class.id, .slot = field.field},
-          field.type));
+  return BuildOwnFieldExpr(
+      unit, block, frame,
+      mir::ClassFieldTarget{
+          .owner = frame.current_class.id, .slot = field.field},
+      field.type);
 }
 
 // `target = value`, appended to `block`.
@@ -167,19 +165,14 @@ auto DelayTicksOf(
   mir::Builder block = frame.Builder();
   auto lowered = lowerer.LowerExpr(lowerer.HirScope().exprs.Get(amount), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  const DelayRead read = ReadDelayAmount(
+  DelayRead read = ReadDelayAmount(
       unit, block, block.Add(*std::move(lowered)),
+      lowerer.HirScope().time_resolution,
       {.integral = support::BuiltinFn::kDelayTicks,
        .real = support::BuiltinFn::kDelayTicksReal});
-  const TimeResolution resolution = lowerer.HirScope().time_resolution;
-  const mir::ExprId unit_power = mir::BuildMachineIntLiteral(
-      unit, block, std::int64_t{resolution.unit_power});
-  const mir::ExprId precision_power = mir::BuildMachineIntLiteral(
-      unit, block, std::int64_t{resolution.precision_power});
   return block.Add(
       mir::MakeCallExpr(
-          mir::Direct{.target = read.entry},
-          {read.amount, unit_power, precision_power},
+          mir::Direct{.target = read.entry}, std::move(read.operands),
           unit.builtins.machine_word));
 }
 

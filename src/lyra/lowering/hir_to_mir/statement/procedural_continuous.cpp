@@ -316,8 +316,9 @@ auto LowerProceduralContinuousAssignStmt(
 
   wrapper_builder.AppendStmt(
       mir::ExprStmt{
-          .expr = wrapper_builder.Add(
-              RunCarrierDetached(process, outer, closure.BuildCallOnce()))});
+          .expr = wrapper_builder.Add(RunCarrier(
+              process, outer, support::BuiltinFn::kRunDetached,
+              closure.BuildCallOnce()))});
 
   const mir::BlockId scope_id = frame.Builder().AddScope(std::move(wrapper));
   return mir::Stmt{

@@ -558,6 +558,17 @@ enum class BuiltinFn : std::uint16_t {
   // representation.
   kNbaEffectsAfter,
   kNbaEffectsAfterReal,
+  // A region the standard names itself, of the slot a delay names, whichever
+  // region set the writing thread runs in: the region crosses as an operand, a
+  // position of `support::Region`. A clocking block keeps there, in NBA, an
+  // input's value that skew behind its signal for its Observed region to read
+  // (LRM 14.13). One entry per amount representation.
+  kRegionEffectsAfter,
+  kRegionEffectsAfterReal,
+  // What runs once the pass of the region running now has run everything it
+  // held: a clocking block puts there onto an output's signal the one value
+  // the pass's drives of it left (LRM 14.16.2).
+  kPassEndEffects,
   // LRM 9.4.5, 15.5.1: an effect whose control is an event cannot say, where
   // the statement is reached, which slot it lands in, so it is carried by an
   // execution that waits for the event and then applies it. `RunDetached` takes
@@ -568,6 +579,14 @@ enum class BuiltinFn : std::uint16_t {
   // once the event has named the slot.
   kRunDetached,
   kResumeInNbaRegion,
+  // The wait for a region the standard names itself, of the slot a delay
+  // names, whichever region set the waiting thread runs in, the region an
+  // operand as above: a synchronous drive is carried by an execution that
+  // waits for the clocking event to mature it, then stops here to reach the
+  // Re-NBA region of the slot its output skew names (LRM 14.4, 14.16). One
+  // entry per amount representation.
+  kResumeInRegionAfter,
+  kResumeInRegionAfterReal,
   // LRM 19.3: a covergroup sampled on its clocking event samples at each
   // occurrence, as though the execution making it occur called `sample`, so
   // the execution that waits for the event runs inside each occurrence.
@@ -1191,8 +1210,10 @@ enum class BuiltinFn : std::uint16_t {
   // (`kRegisterContinuousDriver`, LRM 4.9.1), an `initial` procedure
   // (`kRegisterInitial`), and an `always_comb` or `always_latch`, which is
   // triggered once the others have started (`kRegisterTriggered`, LRM
-  // 9.2.2.2).
+  // 9.2.2.2). A clocking block is no procedure and is woken inside each
+  // occurrence of its clocking event (`kRegisterObserving`, LRM 14.7).
   kRegisterAlways,
+  kRegisterObserving,
   kRegisterContinuousDriver,
   kRegisterInitial,
   kRegisterTriggered,

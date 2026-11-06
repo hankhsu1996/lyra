@@ -1621,6 +1621,15 @@ the detail lives in the entry itself.
   construction rather than by ordering. A Preponed scan, per-leaf history with replay, a second
   implementation of the clock inference, a node kind for the sampled read, and an armed observation
   are rejected.
+- [a-clocking-block-is-storage-of-its-scope](a-clocking-block-is-storage-of-its-scope.md) -- a
+  clocking block is declared as the source wrote it, with the variables the standard gives it, and
+  carried out a layer down: an execution woken inside each occurrence of its clocking event samples
+  in Observed, a skewed input reads a copy kept that far behind, and a drive is landed by the
+  declaring scope's task on the instance its target is reached on, in the Re-NBA region its skew
+  names, writing the output's variable inside the block, which reaches a variable signal once per
+  Re-NBA pass. A runtime clocking type, a drive as `repeat (n) @(clock)`, the machinery as
+  declarations of the block, a stamp per drive, and collapsing a pass's writes in the engine are
+  rejected.
 - [assertion-control-is-state-of-the-statement](assertion-control-is-state-of-the-statement.md) --
   every statement LRM 20.11's tasks select owns a control, static storage of the statement,
   registered where its scope's storage is brought up, under its instance and the named blocks it

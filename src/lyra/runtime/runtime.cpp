@@ -367,25 +367,6 @@ void Runtime::RegisterFinal(RegisteredFinal registered) {
   finals_.push_back(std::move(registered));
 }
 
-namespace {
-
-// The turn a kind of process starts in at time zero.
-auto TurnOf(StartKind kind) -> std::size_t {
-  switch (kind) {
-    case StartKind::kAlwaysProcedure:
-      return 0;
-    case StartKind::kContinuousDriver:
-      return 1;
-    case StartKind::kInitialProcedure:
-      return 2;
-    case StartKind::kTriggeredProcedure:
-      return 3;
-  }
-  throw InternalError("TurnOf: a kind of starting process has no turn");
-}
-
-}  // namespace
-
 void Runtime::QueueStart(StartKind kind, Activation* top) {
   // The region set is an ordered scale's two halves, so its first region says
   // which set it is.
@@ -504,18 +485,21 @@ auto Runtime::AdvanceToNextSlot() -> bool {
 }
 
 void Runtime::ExecuteTimeSlot() {
-  RunRegion(Region::kPreponed);
+  RunRegion(support::Region::kPreponed);
   SlotPasses passes;
   // LRM 4.5: the active region set is run until it is empty, then the reactive
   // one, and the two again while either holds anything -- so what the reactive
   // set schedules into the active one waits until the reactive set is empty.
-  while (current_slot_.FirstPending(Region::kActive, Region::kReNba)) {
-    if (!DrainRegions(Region::kActive, Region::kObserved, passes) ||
-        !DrainRegions(Region::kReactive, Region::kReNba, passes)) {
+  while (current_slot_.FirstPending(
+      support::Region::kActive, support::Region::kReNba)) {
+    if (!DrainRegions(
+            support::Region::kActive, support::Region::kObserved, passes) ||
+        !DrainRegions(
+            support::Region::kReactive, support::Region::kReNba, passes)) {
       return;
     }
   }
-  RunRegion(Region::kPostponed);
+  RunRegion(support::Region::kPostponed);
   if (std::holds_alternative<Running>(state_) && !current_slot_.Empty()) {
     // LRM 4.4.2.9.
     ReportDesignFailure(
@@ -526,11 +510,11 @@ void Runtime::ExecuteTimeSlot() {
   }
 }
 
-auto Runtime::DrainRegions(Region first, Region last, SlotPasses& passes)
-    -> bool {
+auto Runtime::DrainRegions(
+    support::Region first, support::Region last, SlotPasses& passes) -> bool {
   // What a region produces lands back in the slot, so the earliest one holding
   // anything is looked for again after each.
-  while (const std::optional<Region> region =
+  while (const std::optional<support::Region> region =
              current_slot_.FirstPending(first, last)) {
     if (++passes.count > kMaxRegionPassesPerSlot) {
       ReportUnsettledSlot(passes.ran);
@@ -550,7 +534,7 @@ auto Runtime::DrainRegions(Region first, Region last, SlotPasses& passes)
   return true;
 }
 
-void Runtime::RunRegion(Region region) {
+void Runtime::RunRegion(support::Region region) {
   RegionQueue& queue = current_slot_[region];
   // LRM 9.3.2: work arriving while this pass runs belongs to the next pass, so
   // what the region holds moves out of it and new arrivals accumulate behind.
@@ -562,14 +546,15 @@ void Runtime::RunRegion(Region region) {
   // assertion's action -- runs with no activation holding it, so each runs as
   // a landing of its own: a run-time error it raises is reported and the
   // region goes on to the effects after it.
-  draining_.effects.Drain(
+  const auto run_effect =
       [this](const ProcedureContext& made_by, const auto& effect) {
         {
           const RunningAnEffect running(procedure_in_force_, made_by);
           RunAsLanding(*this, effect);
         }
         TellExpired();
-      });
+      };
+  draining_.effects.Drain(run_effect);
   // A timer comes off its queue as it fires, so arming it again from what the
   // firing wakes queues a new event rather than moving this one. What it does
   // runs with no activation holding it, as a deferred effect does, so it is a
@@ -587,6 +572,12 @@ void Runtime::RunRegion(Region region) {
     ConsumeWait(activation);
     RunProcess(activation);
     TellExpired();
+  }
+  // What was kept for the end of this pass runs once everything the pass held
+  // has, in the order it was kept, before anything the pass placed in the slot.
+  while (!pass_end_effects_.Empty()) {
+    draining_.effects.Append(pass_end_effects_);
+    draining_.effects.Drain(run_effect);
   }
 }
 
@@ -717,6 +708,7 @@ auto CreatorOf(StartKind kind) -> ThreadCreator {
     case StartKind::kTriggeredProcedure:
       return ThreadCreator::kInitialOrAlwaysProcedure;
     case StartKind::kContinuousDriver:
+    case StartKind::kObserver:
       return ThreadCreator::kAnotherConstruct;
   }
   throw InternalError("CreatorOf: a kind of starting process has no creator");
@@ -748,6 +740,22 @@ void RegisterAlwaysProcess(
   RegisterStartingProcess(
       StartKind::kAlwaysProcedure, owning_scope, unit_instance, unit_instance,
       std::move(coroutine), written_at);
+}
+
+// An observer is woken inside each occurrence it waits for, and belongs to no
+// lineage, since no procedure created it (LRM 9.6.1, 9.6.3).
+void RegisterObservingProcess(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    base::SourceLocation written_at) {
+  Runtime& rt = AsRuntime(current_runtime());
+  auto process = StartingProcess(
+      ContextIn(
+          owning_scope, unit_instance, unit_instance, written_at,
+          CreatorOf(StartKind::kObserver))
+          .WokenAtTheOccurrence(),
+      std::move(coroutine));
+  rt.QueueStart(StartKind::kObserver, process->TopActivation());
+  rt.AdoptProcess(std::move(process));
 }
 
 void RegisterContinuousDriver(

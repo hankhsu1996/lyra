@@ -19,6 +19,7 @@
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/clocking_block.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
@@ -163,6 +164,12 @@ using PublishedDecl = std::variant<
     StructuralDataObjectId, PublishedStatic, ClassStaticPropertyTarget,
     CovergroupBlockEvent, InstanceMemberId, InterfacePortId>;
 
+// A callable a scope published: a subroutine of the scope, or what lands the
+// drives of an output of a clocking block it declares, which no subroutine the
+// source wrote is (LRM 14.16).
+using PublishedCallableDecl =
+    std::variant<StructuralSubroutineId, ClockingOutputLanding>;
+
 // What a scope published: `signature` is the class the unit's signature states
 // for it, in this unit's own types, which is what the scope's published class
 // is laid out from on this side and every referrer's side alike; and each of
@@ -183,7 +190,7 @@ struct ScopePublication {
   base::Translation<PublishedChoiceId, GenerateId> choices;
   base::Translation<PublishedDisableTargetId, ProceduralScopeId>
       disable_targets;
-  base::Translation<PublishedCallableId, StructuralSubroutineId> callables;
+  base::Translation<PublishedCallableId, PublishedCallableDecl> callables;
 
   auto operator==(const ScopePublication&) const -> bool = default;
 };
@@ -723,6 +730,10 @@ struct StructuralScope {
   // does: nothing the user wrote evaluates it, and the process that does is
   // synthesized a layer down.
   base::Registry<SampledHistoryDecl, SampledHistoryId> sampled_histories;
+  // The clocking blocks this scope declares (LRM 14.3). What samples their
+  // inputs and carries their drives is no statement the source wrote, so it is
+  // built a layer down from these.
+  base::Registry<ClockingBlockDecl, ClockingBlockId> clocking_blocks;
   // The concurrent assertions this scope declares. They are an arena rather
   // than a registry because nothing names one before it exists: no reference
   // reaches an assertion, and what starts its attempts is the clocking event.

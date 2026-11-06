@@ -7,7 +7,10 @@
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/hir/clocking_block_id.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/published_callable.hpp"
+#include "lyra/hir/scope_class_id.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/support/event_edge.hpp"
 
@@ -149,8 +152,19 @@ struct ImplicitEventControl {
   auto operator==(const ImplicitEventControl&) const -> bool = default;
 };
 
+// LRM 14.11 `##n`: wait for `count` occurrences of `event`, the event of the
+// default clocking (LRM 14.12). Where `count` is zero the wait ends at once if
+// the event has occurred in this time step and otherwise at its next
+// occurrence.
+struct CycleDelay {
+  ExprId count;
+  ExprId event;
+
+  auto operator==(const CycleDelay&) const -> bool = default;
+};
+
 using TimingControl =
-    std::variant<DelayControl, EventControl, ImplicitEventControl>;
+    std::variant<DelayControl, EventControl, ImplicitEventControl, CycleDelay>;
 
 // LRM 9.4.5 `repeat (n) @(...)`: the effect waits for that many occurrences of
 // the event. The grammar puts a repeat count only in front of an event control,
@@ -162,14 +176,53 @@ struct RepeatedEventControl {
   auto operator==(const RepeatedEventControl&) const -> bool = default;
 };
 
-// LRM A.6.5 `delay_or_event_control`: what names the slot an effect is due in,
-// where the source wrote one. It is the timing controls a statement may be
-// prefixed with, minus the implicit `@*` list -- which the grammar admits only
-// in front of a statement -- plus the repeat form, which only this position
-// admits. A nonblocking assignment (LRM 10.4.2) and a nonblocking event trigger
-// (LRM 15.5.1) each carry one.
-using DelayOrEventControl =
-    std::variant<DelayControl, EventControl, RepeatedEventControl>;
+// The landing is made on the instance the drive's target is reached on through
+// a virtual interface (LRM 25.9): the one the member access `access` of the
+// drive's target reaches, evaluated once, where the drive is reached, for both.
+// `access` names that expression and does not hold it.
+struct InstanceOfTarget {
+  ExprId access;
+
+  auto operator==(const InstanceOfTarget&) const -> bool = default;
+};
+
+using LandingReceiver = std::variant<RoutedObjectRef, InstanceOfTarget>;
+
+// What lands a drive of an output of a block another scope published, on
+// `receiver`.
+struct PublishedLanding {
+  ScopeClassId scope_class;
+  PublishedCallableId callable;
+  LandingReceiver receiver;
+
+  auto operator==(const PublishedLanding&) const -> bool = default;
+};
+
+// What lands a synchronous drive: that of the reader's own scope, or one
+// another scope published.
+using ClockingLanding = std::variant<ClockingOutputLanding, PublishedLanding>;
+
+// LRM 14.16 a synchronous drive, `cb.out[sel] <= [##n] value`: an effect due
+// in the Re-NBA region of the slot the output's block names, once the drive
+// has matured at the clocking event `cycles` occurrences on (none written is
+// zero) and the output's skew has passed (LRM 14.4). The assignment's target is
+// the output's driving variable, under whatever selects the drive wrote.
+struct ClockingDriveControl {
+  std::optional<ExprId> cycles;
+  ClockingLanding landing;
+
+  auto operator==(const ClockingDriveControl&) const -> bool = default;
+};
+
+// What names the slot an effect is due in, where the source wrote one: LRM
+// A.6.5 `delay_or_event_control` -- the delay and event controls a statement
+// may be prefixed with, plus the repeat form, which only this position admits
+// -- or a synchronous drive's control. A nonblocking assignment (LRM 10.4.2)
+// and a nonblocking event trigger (LRM 15.5.1) carry one of the first, and a
+// synchronous drive is a nonblocking assignment carrying the second (LRM
+// 14.16), which the standard writes alike.
+using DelayOrEventControl = std::variant<
+    DelayControl, EventControl, RepeatedEventControl, ClockingDriveControl>;
 
 // The effect happens where the statement is reached.
 struct ImmediateEffect {
@@ -177,7 +230,8 @@ struct ImmediateEffect {
 };
 
 // The effect becomes a nonblocking update event, due in the NBA region of the
-// slot `control` names -- this one, where the source wrote none. Everything the
+// slot `control` names, or its Re-NBA region for a synchronous drive (LRM
+// 14.16) -- this one, where the source wrote none. Everything the
 // effect needs is read where the statement is reached, and the procedure
 // carries on without waiting for it (LRM 4.4.2.4, 9.4.5, 10.4.2, 15.5.1).
 struct NonBlockingEffect {

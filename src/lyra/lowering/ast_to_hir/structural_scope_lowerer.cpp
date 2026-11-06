@@ -35,6 +35,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
+#include "lyra/hir/clocking_block.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/expr.hpp"
@@ -44,17 +45,21 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/canonical_body.hpp"
+#include "lyra/lowering/ast_to_hir/clocking_block.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
+#include "lyra/lowering/ast_to_hir/sampled_reads.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
+#include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/strength.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/time_resolution.hpp"
@@ -493,6 +498,7 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   scope.instance_members = std::move(declarations.instance_members);
   construction_.instances.resize(scope.instance_members.size());
   scope.procedural_scopes = std::move(declarations.procedural_scopes);
+  scope.clocking_blocks = std::move(declarations.clocking_blocks);
   const WalkFrame frame =
       parent_frame.WithStructuralFrame(frame_, slang_scope_, &scope)
           .WithProceduralScopeOwner(slang_scope_, &scope.procedural_scopes);
@@ -1068,12 +1074,182 @@ auto StructuralScopeLowerer::PopulateModportMember(
   return {};
 }
 
+namespace {
+
+// Every bit 'z, at `type`, the 4-state packed type `declared` interns as:
+// what a driver a clocking block creates holds until a drive sets it (LRM
+// 14.16).
+auto HighImpedanceOf(
+    const slang::ast::Type& declared, hir::TypeId type, diag::SourceSpan span)
+    -> hir::Expr {
+  return MakeIntegralLiteralExpr(
+      slang::SVInt::createFillZ(
+          static_cast<slang::bitwidth_t>(declared.getBitWidth()),
+          declared.isSigned()),
+      type, span);
+}
+
+// A variable a clocking block holds (LRM 14.10, 14.13, 14.16), declared in the
+// scope declaring the block.
+void DefineBlockVariable(
+    hir::StructuralScope& scope, hir::StructuralDataObjectId id,
+    std::string name, hir::TypeId type,
+    std::optional<hir::ExprId> initializer) {
+  scope.structural_data_objects.Define(
+      id, hir::StructuralDataObjectDecl{
+              .name = std::move(name),
+              .type = type,
+              .kind = hir::StructuralVariableDecl{.initializer = initializer}});
+}
+
+// A clockvar, the type its value interns as, and where it is written.
+struct TypedClockvar {
+  const slang::ast::ClockVarSymbol* symbol = nullptr;
+  hir::TypeId type;
+  diag::SourceSpan at;
+};
+
+// The delay a skew writes, as the source wrote it (LRM 14.4).
+auto SkewDelayOf(
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const slang::ast::TimingControl& control)
+    -> diag::Result<hir::DelayControl> {
+  auto amount =
+      lowerer.LowerExpr(control.as<slang::ast::DelayControl>().expr, frame);
+  if (!amount) return std::unexpected(std::move(amount.error()));
+  return hir::DelayControl{.duration = frame.Exprs().Add(*std::move(amount))};
+}
+
+// The input half of `clockvar`, which samples into `sample` (LRM 14.13).
+auto ClockvarInputOf(
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const TypedClockvar& clockvar, hir::StructuralDataObjectId sample)
+    -> diag::Result<hir::ClockingInput> {
+  DefineBlockVariable(
+      *frame.current_structural_scope, sample,
+      std::string{clockvar.symbol->name}, clockvar.type, {});
+  auto skew = std::visit(
+      Overloaded{
+          // `#1step`, written or taken for want of any skew (LRM 14.3), reads
+          // the signal's sampled value (LRM 16.5.1).
+          [&](const OneStepSkewed&) -> diag::Result<hir::ClockingInputSkew> {
+            auto armed = ArmSampledReads(
+                lowerer.Owner(), frame, *clockvar.symbol->getInitializer(),
+                clockvar.at);
+            if (!armed) return std::unexpected(std::move(armed.error()));
+            return hir::OneStepSkew{};
+          },
+          [&](const DelaySkewed& delayed)
+              -> diag::Result<hir::ClockingInputSkew> {
+            auto delay = SkewDelayOf(lowerer, frame, *delayed.delay);
+            if (!delay) return std::unexpected(std::move(delay.error()));
+            return hir::DelaySkew{.delay = *delay};
+          },
+          [](const EdgeSkewed&) -> diag::Result<hir::ClockingInputSkew> {
+            throw InternalError(
+                "ClockvarInputOf: an input not carried holds no variable of "
+                "the block");
+          }},
+      InputSkewOf(*clockvar.symbol));
+  if (!skew) return std::unexpected(std::move(skew.error()));
+  return hir::ClockingInput{.sample = sample, .skew = *std::move(skew)};
+}
+
+// The output half of `clockvar`, which every drive of it writes into `driving`
+// (LRM 14.16).
+auto ClockvarOutputOf(
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const TypedClockvar& clockvar, hir::StructuralDataObjectId driving)
+    -> diag::Result<hir::ClockingOutput> {
+  auto skew = std::visit(
+      Overloaded{
+          [](const Unskewed&) -> diag::Result<hir::ClockingOutputSkew> {
+            return hir::NoSkew{};
+          },
+          [&](const DelaySkewed& delayed)
+              -> diag::Result<hir::ClockingOutputSkew> {
+            auto delay = SkewDelayOf(lowerer, frame, *delayed.delay);
+            if (!delay) return std::unexpected(std::move(delay.error()));
+            return hir::DelaySkew{.delay = *delay};
+          },
+          [&](const EdgeSkewed& edge) -> diag::Result<hir::ClockingOutputSkew> {
+            std::optional<hir::DelayControl> after;
+            if (edge.delay != nullptr) {
+              auto delay = SkewDelayOf(lowerer, frame, *edge.delay);
+              if (!delay) return std::unexpected(std::move(delay.error()));
+              after = *delay;
+            }
+            return hir::EdgeSkew{
+                .edge = LowerEventEdge(edge.edge), .delay = after};
+          },
+          [](const OneStepSkewed&) -> diag::Result<hir::ClockingOutputSkew> {
+            throw InternalError(
+                "ClockvarOutputOf: an output not carried is landed by "
+                "nothing");
+          }},
+      OutputSkewOf(*clockvar.symbol));
+  if (!skew) return std::unexpected(std::move(skew.error()));
+  hir::StructuralScope& scope = *frame.current_structural_scope;
+  const std::string name = DrivingVariableNamingOf(*clockvar.symbol).name;
+  hir::ClockingOutputSignal signal = std::visit(
+      Overloaded{
+          // LRM 14.16: the net's driver is updated as if by a continuous
+          // assignment from the variable inside the block, at (strong1,
+          // strong0), and is 'z until a drive sets it.
+          [&](const NetSignal&) -> hir::ClockingOutputSignal {
+            DefineBlockVariable(
+                scope, driving, name, clockvar.type,
+                frame.Exprs().Add(HighImpedanceOf(
+                    clockvar.symbol->getType(), clockvar.type, clockvar.at)));
+            const hir::Expr read = lowerer.Owner().MakeRoutedMemberRef(
+                frame.Current(),
+                hir::ValueRoute{
+                    .base = hir::InUnitBase{.hops = {}},
+                    .steps = {},
+                    .leaf =
+                        hir::StructuralDataObjectLeaf{
+                            .object = driving,
+                            .storage = hir::VariableStorage{},
+                            .type = clockvar.type}},
+                clockvar.at);
+            const auto& read_ref = std::get<hir::RoutedValueRef>(
+                std::get<hir::PrimaryExpr>(read.data).data);
+            return hir::NetSignal{
+                .driving = frame.Exprs().Add(read),
+                .reads = {hir::SensitivityEntry{
+                    .cell = hir::ValueTarget{read_ref},
+                    .part = hir::WatchedWhole{}}}};
+          },
+          // LRM 14.16.2: what the outputs onto a variable put onto it is taken
+          // from the variable itself as each pass driving it ends, so this one
+          // never shows a value of its own. Every output onto the variable
+          // shares it, so the first of them declares it.
+          [&](const VariableSignal&) -> hir::ClockingOutputSignal {
+            if (!scope.structural_data_objects.IsDefined(driving)) {
+              DefineBlockVariable(scope, driving, name, clockvar.type, {});
+            }
+            return hir::VariableSignal{};
+          },
+          [](const UncarriedSignal&) -> hir::ClockingOutputSignal {
+            throw InternalError(
+                "ClockvarOutputOf: an output not carried holds no variable of "
+                "the block");
+          }},
+      OutputSignalOf(*clockvar.symbol));
+  return hir::ClockingOutput{
+      .skew = *std::move(skew),
+      .driving = driving,
+      .signal = std::move(signal)};
+}
+
+}  // namespace
+
 // A named clocking block's clocking event clocks a sequence or property it
 // declares wherever the declaration is instantiated (LRM 14.13, 16.16), so a
 // unit instantiating it from elsewhere asks this scope for the value of each
 // event's operand and qualifier. Each answers its own expression's type, which
 // is what the event is taken of.
-auto StructuralScopeLowerer::PopulateClockingMember(
+auto StructuralScopeLowerer::PopulateClockingEvaluators(
     const slang::ast::ClockingBlockSymbol& block, WalkFrame frame)
     -> diag::Result<void> {
   if (block.name.empty()) return {};
@@ -1100,6 +1276,82 @@ auto StructuralScopeLowerer::PopulateClockingMember(
       return r;
     }
   }
+  return {};
+}
+
+// A clocking block holds each clockvar's signal as the scope declaring the
+// block writes it (LRM 14.3), each half's skew as written or as LRM 14.3
+// defaults it, and the variables the block holds: what each input last
+// sampled (LRM 14.13), the event its name stands for (LRM 14.10), and the
+// variable inside the block every drive of an output writes, which drives a
+// net output's nets and is 'z until a drive sets it (LRM 14.16, 14.16.2). What
+// samples the inputs, keeps a skewed input's copy, puts that variable onto the
+// signal and lands a drive is no statement the source wrote, so it is built a
+// layer down from these.
+auto StructuralScopeLowerer::PopulateClockingMember(
+    const slang::ast::ClockingBlockSymbol& block, WalkFrame frame)
+    -> diag::Result<void> {
+  if (auto r = PopulateClockingEvaluators(block, frame); !r) return r;
+  if (block.isGlobal) return {};
+  const auto span = frontend::PointSpanOf(block.location);
+  const DeclaredClocking& declared = owner_->DeclaredClockingOf(block);
+  hir::StructuralScope& scope = *frame.current_structural_scope;
+  DefineBlockVariable(
+      scope, declared.block_event, ClockingBlockEventName(),
+      owner_->Unit().types.Intern(hir::Type{hir::EventType{}}), {});
+  auto event =
+      LowerEventControl(*this, frame, ClockingEvent{&block.getEvent()}, span);
+  if (!event) return std::unexpected(std::move(event.error()));
+  std::vector<hir::Clockvar> clockvars;
+  clockvars.reserve(declared.clockvars.size());
+  for (const auto& clockvar :
+       block.membersOfType<slang::ast::ClockVarSymbol>()) {
+    const auto at = frontend::PointSpanOf(clockvar.location);
+    const DeclaredClockvar& parts = declared.clockvars.at(&clockvar);
+    auto type = owner_->InternType(clockvar.getType(), at);
+    if (!type) return std::unexpected(std::move(type.error()));
+    const slang::ast::Expression* signal = clockvar.getInitializer();
+    if (signal == nullptr) {
+      throw InternalError(
+          "PopulateClockingMember: the front end binds every clockvar to the "
+          "signal it names or refuses the block");
+    }
+    auto lowered = LowerExpr(*signal, frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    auto signal_reads = CellsOfWaitedExpression(*this, frame, *signal);
+    if (!signal_reads) return std::unexpected(std::move(signal_reads.error()));
+    const TypedClockvar typed{.symbol = &clockvar, .type = *type, .at = at};
+    std::optional<hir::ClockingInput> input;
+    if (parts.sample.has_value()) {
+      auto half = ClockvarInputOf(*this, frame, typed, *parts.sample);
+      if (!half) return std::unexpected(std::move(half.error()));
+      input = *std::move(half);
+    }
+    std::optional<hir::ClockingOutput> output;
+    if (parts.driving.has_value()) {
+      auto half = ClockvarOutputOf(*this, frame, typed, *parts.driving);
+      if (!half) return std::unexpected(std::move(half.error()));
+      output = *std::move(half);
+    }
+    clockvars.push_back(
+        hir::Clockvar{
+            .name = std::string{clockvar.name},
+            .span = at,
+            .signal = frame.Exprs().Add(*std::move(lowered)),
+            .signal_reads = *std::move(signal_reads),
+            .input = std::move(input),
+            .output = std::move(output)});
+  }
+  // The positions the declaration pass gave the clockvars are the order the
+  // block declares them in, which is the order they were taken in here.
+  const std::size_t count = clockvars.size();
+  scope.clocking_blocks.Define(
+      declared.id, hir::ClockingBlockDecl{
+                       .name = std::string{block.name},
+                       .span = span,
+                       .event = *std::move(event),
+                       .block_event = declared.block_event,
+                       .clockvars = {count, std::move(clockvars)}});
   return {};
 }
 

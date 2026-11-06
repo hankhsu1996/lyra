@@ -29,6 +29,7 @@
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/clocking_block.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/covergroup_access.hpp"
 #include "lyra/lowering/ast_to_hir/covergroup_decl.hpp"
@@ -137,8 +138,20 @@ auto ResolveReferent(
     // vocabulary in the standard.
     case SymbolKind::PrimitivePort:
       return declared(Referent::kPrimitivePort);
-    case SymbolKind::ClockVar:
-      return declared(Referent::kClockingSignal);
+    // An input clockvar is the variable holding what its block last sampled
+    // (LRM 14.13), read and waited on as any variable is; an output one names
+    // no value (LRM 14.3) and is reached only by a drive.
+    case SymbolKind::ClockVar: {
+      const auto& clockvar = value.as<slang::ast::ClockVarSymbol>();
+      if (!IsClockingInput(clockvar)) {
+        return declared(Referent::kClockingOutput);
+      }
+      if (const auto refused = InputRefusal(clockvar)) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedExpressionForm, *refused);
+      }
+      return declared(Referent::kVariableStorage);
+    }
     case SymbolKind::LocalAssertionVar:
       return declared(Referent::kAssertionLocal);
     case SymbolKind::Field:
@@ -254,9 +267,9 @@ auto UnsupportedReferentMessage(Referent referent) -> base::DiagMessage {
       return base::DiagMessage(
           "a port of a user-defined primitive is not yet supported");
     // LRM 14.3.
-    case Referent::kClockingSignal:
+    case Referent::kClockingOutput:
       return base::DiagMessage(
-          "a signal of a clocking block is not yet supported");
+          "this use of a clocking block's output is not yet supported");
     // LRM 16.10.
     case Referent::kAssertionLocal:
       return base::DiagMessage(
@@ -665,7 +678,7 @@ auto LowerNamedValueProc(
       return LowerValueRef(unit_lowerer, frame, target, *named.type, span);
     case Referent::kSpecparam:
     case Referent::kPrimitivePort:
-    case Referent::kClockingSignal:
+    case Referent::kClockingOutput:
     case Referent::kAssertionLocal:
     case Referent::kStructureMember:
       return FailOnUnsupportedReferent(referent, span);
@@ -733,7 +746,7 @@ auto LowerHierarchicalValue(
       return FailOnCurrentInstanceHandle(span);
     case Referent::kSpecparam:
     case Referent::kPrimitivePort:
-    case Referent::kClockingSignal:
+    case Referent::kClockingOutput:
     case Referent::kAssertionLocal:
     case Referent::kStructureMember:
       return FailOnUnsupportedReferent(referent, span);
@@ -814,7 +827,7 @@ auto LowerNamedValueStructural(
       return FailOnCurrentInstanceHandle(span);
     case Referent::kSpecparam:
     case Referent::kPrimitivePort:
-    case Referent::kClockingSignal:
+    case Referent::kClockingOutput:
     case Referent::kAssertionLocal:
     case Referent::kStructureMember:
       return FailOnUnsupportedReferent(referent, span);
@@ -859,7 +872,7 @@ auto LowerArbitrarySymbol(
       case Referent::kPatternBinding:
       case Referent::kViewDefinedName:
       case Referent::kPrimitivePort:
-      case Referent::kClockingSignal:
+      case Referent::kClockingOutput:
       case Referent::kAssertionLocal:
       case Referent::kStructureMember:
       case Referent::kNotAValue:

@@ -1154,6 +1154,25 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"NbaEffectsAfterReal"},
           .takes_the_runtime_handle = true,
           .takes_the_location = false};
+    case BuiltinFn::kRegionEffectsAfter:
+      return {
+          .name = "region_effects_after",
+          .declaration = Method{"RegionEffectsAfter"},
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false,
+          .operands = {kMachine, kMachine, kNumber}};
+    case BuiltinFn::kRegionEffectsAfterReal:
+      return {
+          .name = "region_effects_after_real",
+          .declaration = Method{"RegionEffectsAfterReal"},
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false};
+    case BuiltinFn::kPassEndEffects:
+      return {
+          .name = "pass_end_effects",
+          .declaration = Method{"PassEndEffects"},
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false};
     case BuiltinFn::kRunDetached:
       return {
           .name = "run_detached",
@@ -1172,6 +1191,19 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "resume_in_nba_region",
           .declaration = RuntimeFunction("ResumeInNbaRegion"),
+          .takes_the_location = false};
+    case BuiltinFn::kResumeInRegionAfter:
+      return {
+          .name = "resume_in_region_after",
+          .declaration = RuntimeFunction("ResumeInRegionAfter"),
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false,
+          .operands = {kMachine, kMachine, kNumber}};
+    case BuiltinFn::kResumeInRegionAfterReal:
+      return {
+          .name = "resume_in_region_after_real",
+          .declaration = RuntimeFunction("ResumeInRegionAfterReal"),
+          .takes_the_runtime_handle = true,
           .takes_the_location = false};
     case BuiltinFn::kPostponedEffects:
       return {
@@ -2471,6 +2503,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "register_always",
           .declaration = RuntimeFunction("RegisterAlwaysProcess"),
+          .takes_the_location = false,
+          .callables = {kStartedPastTheCaller}};
+    case BuiltinFn::kRegisterObserving:
+      return {
+          .name = "register_observing",
+          .declaration = RuntimeFunction("RegisterObservingProcess"),
           .takes_the_location = false,
           .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kRegisterContinuousDriver:

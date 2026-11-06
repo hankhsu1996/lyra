@@ -57,7 +57,7 @@ enum class Referent {
   // Declarations a value reference may denote whose own vocabulary lives in
   // another clause of the standard.
   kPrimitivePort,
-  kClockingSignal,
+  kClockingOutput,
   kAssertionLocal,
   kStructureMember,
   // Not something a value reference can denote at all. Only a value symbol

@@ -50,6 +50,16 @@ auto DelayDeadline(
     RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
     -> SimTime;
 
+// The moment an amount `duration` of a scope's time unit reaches from now, read
+// and rounded as a delay control's amount is (LRM 9.4.1, 3.14.1), for an
+// integral amount and for a real one.
+auto DeadlineAfterAmount(
+    RuntimeEffects& runtime, const value::ConstIntegralView& duration,
+    std::int64_t unit_power, std::int64_t precision_power) -> SimTime;
+auto DeadlineAfterRealAmount(
+    RuntimeEffects& runtime, const value::Real& duration,
+    std::int64_t unit_power, std::int64_t precision_power) -> SimTime;
+
 // Where a delay of `ticks` steps of `precision_power` from now is due. A delay
 // of no steps is an explicit `#0`, due later in this time step in the Inactive
 // region of the region set it is placed in (LRM 4.4.2.3, 4.4.2.7); any other is

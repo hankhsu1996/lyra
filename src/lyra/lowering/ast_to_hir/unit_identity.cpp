@@ -447,6 +447,9 @@ auto ClassKeyOf(const slang::ast::ClassType& cls, const InstanceNames& names)
             [](const support::NamedBlockStep&) -> std::string {
               ThrowClassDeclaredIn("a procedural block");
             },
+            [](const support::ClockingBlockStep&) -> std::string {
+              ThrowClassDeclaredIn("a clocking block");
+            },
             [](const support::UnnamedBlockStep&) -> std::string {
               ThrowClassDeclaredIn("a procedural block");
             },

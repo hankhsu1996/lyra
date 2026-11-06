@@ -308,6 +308,42 @@ class ProcessLowerer {
     return TimeScopeOf(*owner_, enclosing_scope_lowerer_);
   }
 
+  // A statement whose meaning reaches one instance through a virtual
+  // interface more than once -- a synchronous drive, whose target and landing
+  // are both that instance's (LRM 14.16) -- evaluates the handle once, where
+  // the statement is reached, and every reach of `handle` while the binding
+  // stands is that one evaluation, `object`, as clang's code generation binds
+  // an opaque value to what was emitted for it.
+  class HeldInterfaceBinding {
+   public:
+    HeldInterfaceBinding(
+        ProcessLowerer& process, hir::ExprId handle, mir::ExprId object)
+        : process_(&process) {
+      process_->held_interface_ =
+          BoundHeldInterfaceEntry{.handle = handle, .object = object};
+    }
+    HeldInterfaceBinding(const HeldInterfaceBinding&) = delete;
+    auto operator=(const HeldInterfaceBinding&)
+        -> HeldInterfaceBinding& = delete;
+    HeldInterfaceBinding(HeldInterfaceBinding&&) = delete;
+    auto operator=(HeldInterfaceBinding&&) -> HeldInterfaceBinding& = delete;
+    ~HeldInterfaceBinding() {
+      process_->held_interface_.reset();
+    }
+
+   private:
+    ProcessLowerer* process_;
+  };
+
+  // The object bound to the reach of `handle`, where a binding stands for it.
+  [[nodiscard]] auto HeldInterfaceBoundTo(hir::ExprId handle) const
+      -> std::optional<mir::ExprId> {
+    if (!held_interface_.has_value() || held_interface_->handle != handle) {
+      return std::nullopt;
+    }
+    return held_interface_->object;
+  }
+
   void MapProceduralVar(
       hir::ProceduralVarId hir_id, ProceduralVarBinding binding) {
     bindings_.Define(hir_id, binding);
@@ -490,6 +526,12 @@ class ProcessLowerer {
   BodyWriter body_writer_;
 
   std::map<hir::ProceduralVarId, PromotedVarBinding> pending_activation_;
+
+  struct BoundHeldInterfaceEntry {
+    hir::ExprId handle;
+    mir::ExprId object;
+  };
+  std::optional<BoundHeldInterfaceEntry> held_interface_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -132,6 +132,19 @@ auto ClockingConditionName(std::string_view block, std::size_t entry)
   return std::format("clocking condition {} {}", block, entry);
 }
 
+auto ClockingLandingName(std::string_view block, std::string_view clockvar)
+    -> std::string {
+  return std::format("clocking landing {} {}", block, clockvar);
+}
+
+auto ClockingBlockEventName() -> std::string {
+  return "clocking block event";
+}
+
+auto ClockingDrivingVariableName(std::string_view named_after) -> std::string {
+  return std::format("{} driving variable", named_after);
+}
+
 namespace {
 
 // Whether `place` names bits of a packed value, or a join of places, which no

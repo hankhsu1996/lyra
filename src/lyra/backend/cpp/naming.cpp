@@ -134,6 +134,9 @@ void WriteOne(TargetText& out, MintedPathName name) {
             [&](const support::NamedBlockStep& block) {
               named("n", block.name);
             },
+            [&](const support::ClockingBlockStep& block) {
+              named("k", block.name);
+            },
             [&](const support::UnnamedBlockStep& block) {
               placed("u", block.position);
             },

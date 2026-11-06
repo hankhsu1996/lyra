@@ -990,6 +990,11 @@ class HirDumper {
                   "ImplicitEventControl sensitivity={}",
                   FormatSensitivityList(ie.sensitivity_list));
             },
+            [](const CycleDelay& c) -> std::string {
+              return std::format(
+                  "CycleDelay count=Expr[{}] event=Expr[{}]", c.count.value,
+                  c.event.value);
+            },
         },
         tc);
   }
@@ -1004,6 +1009,40 @@ class HirDumper {
               return std::format(
                   "RepeatedEventControl count=Expr[{}] event={}", r.count.value,
                   FormatEventControl(r.event));
+            },
+            [](const ClockingDriveControl& c) -> std::string {
+              return std::format(
+                  "ClockingDriveControl cycles={} landing={}",
+                  c.cycles.has_value()
+                      ? std::format("Expr[{}]", c.cycles->value)
+                      : std::string{"none"},
+                  std::visit(
+                      Overloaded{
+                          [](const ClockingOutputLanding& own) {
+                            return std::format(
+                                "ClockingBlock[{}].clockvar[{}]",
+                                own.block.value, own.clockvar.value);
+                          },
+                          [](const PublishedLanding& published) {
+                            return std::format(
+                                "ScopeClass[{}].callable[{}] on {}",
+                                published.scope_class.value,
+                                published.callable.value,
+                                std::visit(
+                                    Overloaded{
+                                        [](const RoutedObjectRef& routed) {
+                                          return std::format(
+                                              "RoutedObjectRef[{}]",
+                                              routed.id.value);
+                                        },
+                                        [](const InstanceOfTarget& target) {
+                                          return std::format(
+                                              "the instance Expr[{}] reaches",
+                                              target.access.value);
+                                        }},
+                                    published.receiver));
+                          }},
+                      c.landing));
             },
         },
         control);
@@ -2319,8 +2358,19 @@ class HirDumper {
     for (const ProceduralScopeId id : published.disable_targets) {
       add(std::format("DisableTarget[ProceduralScope[{}]]", id.value));
     }
-    for (const StructuralSubroutineId id : published.callables) {
-      add(std::format("Method[StructuralSubroutine[{}]]", id.value));
+    for (const PublishedCallableDecl& callable : published.callables) {
+      add(std::visit(
+          Overloaded{
+              [](const StructuralSubroutineId id) {
+                return std::format(
+                    "Method[StructuralSubroutine[{}]]", id.value);
+              },
+              [](const ClockingOutputLanding& landing) {
+                return std::format(
+                    "Method[ClockingBlock[{}].clockvar[{}] landing]",
+                    landing.block.value, landing.clockvar.value);
+              }},
+          callable));
     }
     return positions;
   }
@@ -2551,6 +2601,64 @@ class HirDumper {
               h.subject.value, h.depth.value));
       Indent();
       Line(std::format("clock: {}", FormatEventControl(h.clock)));
+      Dedent();
+    }
+    for (const ClockingBlockId id : s.clocking_blocks.Ids()) {
+      const ClockingBlockDecl& c = s.clocking_blocks.Get(id);
+      Line(
+          std::format(
+              "ClockingBlock[{}] '{}' block_event=StructuralDataObject[{}]",
+              id.value, c.name, c.block_event.value));
+      Indent();
+      Line(std::format("event: {}", FormatEventControl(c.event)));
+      const auto delay_skew = [](const DelaySkew& skew) {
+        return std::format("#Expr[{}]", skew.delay.duration.value);
+      };
+      for (const Clockvar& clockvar : c.clockvars) {
+        std::string halves;
+        if (clockvar.input.has_value()) {
+          halves += std::format(
+              " input sample=StructuralDataObject[{}] {}",
+              clockvar.input->sample.value,
+              std::visit(
+                  Overloaded{
+                      [](const OneStepSkew&) { return std::string{"#1step"}; },
+                      delay_skew},
+                  clockvar.input->skew));
+        }
+        if (clockvar.output.has_value()) {
+          halves += std::format(
+              " output {} driving=StructuralDataObject[{}] {}",
+              std::visit(
+                  Overloaded{
+                      [](const NoSkew&) { return std::string{"no skew"}; },
+                      delay_skew,
+                      [](const EdgeSkew& skew) {
+                        return std::format(
+                            "edge {}{}", FormatEventEdge(skew.edge),
+                            skew.delay.has_value()
+                                ? std::format(
+                                      " #Expr[{}]", skew.delay->duration.value)
+                                : std::string{});
+                      }},
+                  clockvar.output->skew),
+              clockvar.output->driving.value,
+              std::visit(
+                  Overloaded{
+                      [](const NetSignal& nets) {
+                        return std::format(
+                            "onto nets from Expr[{}]", nets.driving.value);
+                      },
+                      [](const VariableSignal&) {
+                        return std::string{"onto its variable at pass end"};
+                      }},
+                  clockvar.output->signal));
+        }
+        Line(
+            std::format(
+                "clockvar '{}' signal=Expr[{}]{}", clockvar.name,
+                clockvar.signal.value, halves));
+      }
       Dedent();
     }
     for (const ConcurrentAssertionId id : s.concurrent_assertions.Ids()) {
@@ -3497,6 +3605,12 @@ class HirDumper {
             },
             [](const EventControl&) {},
             [](const ImplicitEventControl&) {},
+            [&](const CycleDelay& c) {
+              Line(
+                  std::format(
+                      "Expr[{}] {}", c.count.value,
+                      FormatProcExpr(p, c.count)));
+            },
         },
         t.timing);
     Dedent();

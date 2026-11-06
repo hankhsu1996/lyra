@@ -151,6 +151,9 @@ class StructuralScopeLowerer {
   auto PopulateClockingMember(
       const slang::ast::ClockingBlockSymbol& block, WalkFrame frame)
       -> diag::Result<void>;
+  auto PopulateClockingEvaluators(
+      const slang::ast::ClockingBlockSymbol& block, WalkFrame frame)
+      -> diag::Result<void>;
   auto PopulatePortMember(const slang::ast::PortSymbol& port, WalkFrame frame)
       -> diag::Result<void>;
   auto PopulateProceduralBlockMember(

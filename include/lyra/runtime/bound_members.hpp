@@ -234,7 +234,7 @@ void EndTakeoverThrough(
   if (cell.TakenOver()) {
     return;
   }
-  runtime.Submit(runtime.Now(), Region::kActive, [&member, &cell] {
+  runtime.Submit(runtime.Now(), support::Region::kActive, [&member, &cell] {
     BoundMembers& bound = current_runtime().Bound();
     if (!bound.Forced(member) || cell.TakenOver()) {
       return;

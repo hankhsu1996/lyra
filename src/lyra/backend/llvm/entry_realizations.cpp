@@ -1066,9 +1066,14 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kNbaEffects:
     case support::BuiltinFn::kNbaEffectsAfter:
     case support::BuiltinFn::kNbaEffectsAfterReal:
+    case support::BuiltinFn::kRegionEffectsAfter:
+    case support::BuiltinFn::kRegionEffectsAfterReal:
+    case support::BuiltinFn::kPassEndEffects:
     case support::BuiltinFn::kRunDetached:
     case support::BuiltinFn::kRunObserving:
     case support::BuiltinFn::kResumeInNbaRegion:
+    case support::BuiltinFn::kResumeInRegionAfter:
+    case support::BuiltinFn::kResumeInRegionAfterReal:
     case support::BuiltinFn::kPostponedEffects:
     case support::BuiltinFn::kSubmitAtRunEnd:
     case support::BuiltinFn::kObservedEffects:
@@ -1246,6 +1251,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRequireCallerMayScheduleAfterReturn:
     case support::BuiltinFn::kDisable:
     case support::BuiltinFn::kRegisterAlways:
+    case support::BuiltinFn::kRegisterObserving:
     case support::BuiltinFn::kRegisterContinuousDriver:
     case support::BuiltinFn::kRegisterInitial:
     case support::BuiltinFn::kRegisterTriggered:

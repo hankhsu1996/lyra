@@ -33,11 +33,11 @@
 #include "lyra/runtime/hierarchy_levels.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
-#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/value_dumps.hpp"
 #include "lyra/support/dump_kind.hpp"
+#include "lyra/support/region.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/object_ref.hpp"
 
@@ -924,7 +924,8 @@ void ValueDump::Changed(DumpWatch& watch) {
     return;
   }
   step_submitted_for_ = now;
-  runtime.Submit(now, Region::kPostponed, [this, now] { EndStep(now); });
+  runtime.Submit(
+      now, support::Region::kPostponed, [this, now] { EndStep(now); });
 }
 
 void ValueDump::EndStep(SimTime now) {

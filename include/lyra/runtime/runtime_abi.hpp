@@ -249,6 +249,8 @@ void lyra_rt_register_continuous_driver(
     const void* written_at);
 void lyra_rt_register_initial(
     void* self, void* unit_instance, void* coroutine, const void* written_at);
+void lyra_rt_register_observing(
+    void* self, void* unit_instance, void* coroutine, const void* written_at);
 void lyra_rt_register_triggered(
     void* self, void* unit_instance, void* coroutine, const void* written_at);
 void lyra_rt_register_final(
@@ -685,6 +687,23 @@ auto lyra_rt_nba_effects_after_real(
     void* runtime, const void* duration, std::int64_t unit_power,
     std::int64_t precision_power) -> void*;
 
+// The effects of `region` itself of the slot `duration` away, whichever region
+// set the thread making the effect runs in: where a construct the standard
+// names the region of places its effect, as a clocking block keeps in NBA an
+// input's value that skew behind its signal (LRM 14.13).
+auto lyra_rt_region_effects_after(
+    void* runtime, std::int64_t region, const void* duration,
+    std::int64_t duration_width, bool duration_is_signed,
+    bool duration_is_four_state, std::int64_t unit_power,
+    std::int64_t precision_power) -> void*;
+auto lyra_rt_region_effects_after_real(
+    void* runtime, std::int64_t region, const void* duration,
+    std::int64_t unit_power, std::int64_t precision_power) -> void*;
+
+// The effects run once the pass of the region running now has run everything
+// it held (LRM 14.16.2).
+auto lyra_rt_pass_end_effects(void* runtime) -> void*;
+
 // The NBA commit of an effect carrying an event control (LRM 9.4.5, 15.5.1),
 // which cannot name its slot where the statement is reached. What crosses is
 // the execution that waits for the event and then makes the commit in whichever
@@ -696,6 +715,19 @@ void lyra_rt_run_detached(void* runtime, void* carrier);
 // The wait for the region that update is due in, which the carrier stops at
 // once the event has named the slot (LRM 4.4.2.4).
 auto lyra_rt_resume_in_nba_region(void* out) -> void*;
+
+// The wait for `region` itself of the slot `duration` steps of the waiting
+// scope's time unit away: where a synchronous drive stops once its clocking
+// event has matured it, the Re-NBA region of the slot its output skew names
+// (LRM 14.4, 14.16).
+auto lyra_rt_resume_in_region_after(
+    void* runtime, std::int64_t region, const void* duration,
+    std::int64_t duration_width, bool duration_is_signed,
+    bool duration_is_four_state, std::int64_t unit_power,
+    std::int64_t precision_power, void* out) -> void*;
+auto lyra_rt_resume_in_region_after_real(
+    void* runtime, std::int64_t region, const void* duration,
+    std::int64_t unit_power, std::int64_t precision_power, void* out) -> void*;
 
 // An execution of no lineage that runs at each occurrence of what it waits
 // for: a covergroup sampled on its clocking event (LRM 19.3).

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <cstdint>
 #include <expected>
 #include <span>
@@ -23,6 +24,8 @@
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+class ProcessLowerer;
 
 // The storage behind a member another unit published, reached on the object
 // `object` points at, of the scope class `scope_class` records: the field this
@@ -77,6 +80,11 @@ auto HeldInterfaceObject(
     Lowerer& lowerer, const WalkFrame& frame,
     const hir::InterfaceInstanceAccessExpr& access)
     -> diag::Result<mir::ExprId> {
+  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+    if (const auto bound = lowerer.HeldInterfaceBoundTo(access.handle)) {
+      return *bound;
+    }
+  }
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   BlockBuilder steps(frame);
   auto handle_or =

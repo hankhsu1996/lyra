@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/time.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
@@ -97,18 +98,22 @@ struct DelayEntries {
   support::BuiltinFn real;
 };
 
-// The entry a delay amount is read by, and the amount as that entry takes it.
+// The entry a delay amount is read by, and what that entry is handed of it:
+// the amount, then the unit and precision powers of the time scope it is
+// written in.
 struct DelayRead {
   support::BuiltinFn entry{};
-  mir::ExprId amount;
+  std::vector<mir::ExprId> operands;
 };
 
-// How `amount` is read by whichever of `entries` its type picks: an integral
-// amount as written, and a real one at `real`, into which a `shortreal`
-// widens, since the two differ only in host precision (LRM 6.12.1).
+// How `amount`, written in a scope of `resolution`, is read by whichever of
+// `entries` its type picks: an integral amount as written, and a real one at
+// `real`, into which a `shortreal` widens, since the two differ only in host
+// precision (LRM 6.12.1). The amount crosses unscaled with the scope's powers,
+// because LRM 9.4.1 reads a delay expression's own value before any scaling.
 [[nodiscard]] auto ReadDelayAmount(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId amount,
-    DelayEntries entries) -> DelayRead;
+    TimeResolution resolution, DelayEntries entries) -> DelayRead;
 
 // Builds the file-IO broker expression `current_runtime().Files()`: a
 // `Files` method call on the engine handle, typed as the unit's `files`

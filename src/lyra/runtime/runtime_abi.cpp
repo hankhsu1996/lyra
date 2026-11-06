@@ -2155,6 +2155,8 @@ using lyra::runtime::RefuseReport;
 using lyra::runtime::ReportHandles;
 using lyra::runtime::ResolvedNet;
 using lyra::runtime::ResumeInNbaRegion;
+using lyra::runtime::ResumeInRegionAfter;
+using lyra::runtime::ResumeInRegionAfterReal;
 using lyra::runtime::RunDesignRoot;
 using lyra::runtime::RunHostCommand;
 using lyra::runtime::RunNullHostCommand;
@@ -3068,6 +3070,28 @@ auto lyra_rt_nba_effects_after_real(
       Read<Real>(duration), unit_power, precision_power);
 }
 
+auto lyra_rt_region_effects_after(
+    void* runtime, std::int64_t region, const void* duration,
+    std::int64_t duration_width, bool duration_is_signed,
+    bool duration_is_four_state, std::int64_t unit_power,
+    std::int64_t precision_power) -> void* {
+  const lyra::value::LoadedWords amount = NumberAt(
+      duration, duration_width, duration_is_signed, duration_is_four_state);
+  return static_cast<RuntimeEffects*>(runtime)->RegionEffectsAfter(
+      region, amount.View(), unit_power, precision_power);
+}
+
+auto lyra_rt_region_effects_after_real(
+    void* runtime, std::int64_t region, const void* duration,
+    std::int64_t unit_power, std::int64_t precision_power) -> void* {
+  return static_cast<RuntimeEffects*>(runtime)->RegionEffectsAfterReal(
+      region, Read<Real>(duration), unit_power, precision_power);
+}
+
+auto lyra_rt_pass_end_effects(void* runtime) -> void* {
+  return static_cast<RuntimeEffects*>(runtime)->PassEndEffects();
+}
+
 auto lyra_rt_deferred_effects_allocate(
     void* effects, std::uint64_t size, std::uint64_t alignment) -> void* {
   return static_cast<DeferredEffects*>(effects)->Allocate(size, alignment);
@@ -3396,6 +3420,28 @@ void lyra_rt_refuse_report(const void* why, const void* location) {
 
 auto lyra_rt_resume_in_nba_region(void* out) -> void* {
   return Emplace(out, ResumeInNbaRegion());
+}
+
+auto lyra_rt_resume_in_region_after(
+    void* runtime, std::int64_t region, const void* duration,
+    std::int64_t duration_width, bool duration_is_signed,
+    bool duration_is_four_state, std::int64_t unit_power,
+    std::int64_t precision_power, void* out) -> void* {
+  const lyra::value::LoadedWords amount = NumberAt(
+      duration, duration_width, duration_is_signed, duration_is_four_state);
+  return Emplace(
+      out, ResumeInRegionAfter(
+               *static_cast<RuntimeEffects*>(runtime), region, amount.View(),
+               unit_power, precision_power));
+}
+
+auto lyra_rt_resume_in_region_after_real(
+    void* runtime, std::int64_t region, const void* duration,
+    std::int64_t unit_power, std::int64_t precision_power, void* out) -> void* {
+  return Emplace(
+      out, ResumeInRegionAfterReal(
+               *static_cast<RuntimeEffects*>(runtime), region,
+               Read<Real>(duration), unit_power, precision_power));
 }
 
 auto lyra_rt_event_new(void* out) -> void* {
@@ -3941,6 +3987,14 @@ void lyra_rt_register_initial(
 void lyra_rt_register_always(
     void* self, void* unit_instance, void* coroutine, const void* written_at) {
   RegisterAlwaysProcess(
+      static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
+      std::move(*static_cast<Coroutine<void>*>(coroutine)),
+      SourceLocationAt(written_at));
+}
+
+void lyra_rt_register_observing(
+    void* self, void* unit_instance, void* coroutine, const void* written_at) {
+  RegisterObservingProcess(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
       std::move(*static_cast<Coroutine<void>*>(coroutine)),
       SourceLocationAt(written_at));

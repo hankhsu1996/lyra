@@ -73,6 +73,18 @@ struct NamedBlockStep {
       -> std::strong_ordering = default;
 };
 
+// A clocking block (LRM 14.3), under its name. It is a scope of its declaring
+// module, interface or program, local to it and instanced with it (LRM 14.7),
+// so what it declares is storage of that scope's object, reached under this
+// step as a named block's static variables are.
+struct ClockingBlockStep {
+  std::string name;
+
+  auto operator==(const ClockingBlockStep&) const -> bool = default;
+  auto operator<=>(const ClockingBlockStep&) const
+      -> std::strong_ordering = default;
+};
+
 // A block the source gave no label, which nothing tells from the others of its
 // scope but where it stands among that scope's declarations.
 struct UnnamedBlockStep {
@@ -109,7 +121,7 @@ struct UnnamedTypeStep {
 // type and a value the same name (LRM 6.22.1 c).
 using DefPathData = std::variant<
     GenerateBlockStep, ClassStep, SubroutineStep, NamedBlockStep,
-    UnnamedBlockStep, TypeStep, UnnamedTypeStep>;
+    ClockingBlockStep, UnnamedBlockStep, TypeStep, UnnamedTypeStep>;
 
 // Which declaration of a compilation unit one is, as the scopes the source
 // nests it in, outermost first, the declaration itself last. Every identifier
@@ -161,6 +173,7 @@ struct DefPath {
           [](const ClassStep&) { return false; },
           [](const SubroutineStep&) { return false; },
           [](const NamedBlockStep&) { return false; },
+          [](const ClockingBlockStep&) { return false; },
           [](const UnnamedBlockStep&) { return false; },
           [](const TypeStep&) { return false; },
           [](const UnnamedTypeStep&) { return false; }},
@@ -200,6 +213,7 @@ struct DefPath {
             },
             [](const SubroutineStep& subroutine) { return subroutine.name; },
             [](const NamedBlockStep& block) { return block.name; },
+            [](const ClockingBlockStep& block) { return block.name; },
             [](const UnnamedBlockStep& block) {
               return std::format("<block {}>", block.position);
             },
@@ -246,6 +260,9 @@ struct DefPath {
               return named('s', subroutine.name);
             },
             [&](const NamedBlockStep& block) { return named('n', block.name); },
+            [&](const ClockingBlockStep& block) {
+              return named('k', block.name);
+            },
             [&](const UnnamedBlockStep& block) {
               return placed('u', block.position);
             },
@@ -283,6 +300,9 @@ struct std::hash<lyra::support::DefPath> {
                 HashField(seed, subroutine.name);
               },
               [&](const lyra::support::NamedBlockStep& block) {
+                HashField(seed, block.name);
+              },
+              [&](const lyra::support::ClockingBlockStep& block) {
                 HashField(seed, block.name);
               },
               [&](const lyra::support::UnnamedBlockStep& block) {

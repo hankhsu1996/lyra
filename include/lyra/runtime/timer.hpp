@@ -5,8 +5,8 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/owned_call.hpp"
-#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/running_state.hpp"
+#include "lyra/support/region.hpp"
 
 namespace lyra::runtime {
 
@@ -57,7 +57,7 @@ class Timer {
 
   // Schedules the event in `region` of the current time step, in place of the
   // one pending.
-  void ArmNow(RuntimeEffects& effects, Region region);
+  void ArmNow(RuntimeEffects& effects, support::Region region);
 
   // The event has come: it is no longer pending, and what it does is done.
   void Fire();

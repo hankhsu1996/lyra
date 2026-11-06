@@ -20,6 +20,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/expression/clocking_reach.hpp"
 #include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -123,6 +124,19 @@ auto LowerEventEntry(
     if (sig.expr.type->isEvent()) {
       return LowerNamedEventTrigger(lowerer, frame, sig);
     }
+    // A clocking block's name stands for its event (LRM 14.10, 14.15).
+    if (NamesClockingBlock(sig.expr)) {
+      const auto naming = ClockingNamingOf(lowerer.Owner(), frame, sig.expr);
+      if (!naming.has_value()) {
+        throw InternalError(
+            "LowerEventEntry: a name standing for a clocking block names a "
+            "block");
+      }
+      auto event = LowerClockingBlockEvent(lowerer, frame, *naming, span);
+      if (!event) return std::unexpected(std::move(event.error()));
+      return hir::NamedEventTrigger{
+          .event = frame.Exprs().Add(*std::move(event))};
+    }
     return LowerValueChange(lowerer, frame, sig, span);
   }();
   if (!occurrence) return std::unexpected(std::move(occurrence.error()));
@@ -174,6 +188,30 @@ auto LowerTimingControl(
       if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
       return hir::TimingControl{hir::ImplicitEventControl{
           .sensitivity_list = *std::move(sensitivity)}};
+    }
+    // LRM 14.11: `##n` counts the events of the default clocking in force,
+    // which the front end finds and requires.
+    case slang::ast::TimingControlKind::CycleDelay: {
+      const slang::ast::Symbol* clocking =
+          frame.reader_scope->getCompilation().getDefaultClocking(
+              *frame.reader_scope);
+      if (clocking == nullptr) {
+        throw InternalError(
+            "LowerTimingControl: the front end refuses a cycle delay where no "
+            "default clocking is in force");
+      }
+      const ClockingNaming naming{
+          .block = &clocking->as<slang::ast::ClockingBlockSymbol>(),
+          .reach = proc.Owner().StartOf(
+              frame, *clocking, slang::ast::HierarchicalReference{})};
+      auto count =
+          proc.LowerExpr(tc.as<slang::ast::CycleDelayControl>().expr, frame);
+      if (!count) return std::unexpected(std::move(count.error()));
+      auto event = LowerClockingBlockEvent(proc, frame, naming, span);
+      if (!event) return std::unexpected(std::move(event.error()));
+      return hir::TimingControl{hir::CycleDelay{
+          .count = frame.Exprs().Add(*std::move(count)),
+          .event = frame.Exprs().Add(*std::move(event))}};
     }
     case slang::ast::TimingControlKind::RepeatedEvent:
       // LRM A.6.5: a repeat count stands only inside a whole
@@ -370,10 +408,10 @@ auto LowerIntraAssignmentStmt(
   if (!control) return std::unexpected(std::move(control.error()));
 
   // Each form of the control says how the assignment reaches its own
-  // suspension. Three of them are a single wait, which prefixes the assignment
-  // as one statement; the repeat form is a count of waits, which no single
-  // timing control spells, so it becomes a loop over an empty body with the
-  // assignment after it -- and LRM 9.4.5's count of none then reaches the
+  // suspension. A delay and an event are a single wait, which prefixes the
+  // assignment as one statement; the repeat form is a count of waits, which no
+  // single timing control spells, so it becomes a loop over an empty body with
+  // the assignment after it -- and LRM 9.4.5's count of none then reaches the
   // assignment where the statement stands, by the loop not iterating.
   const auto wait_then_assign = [&](hir::TimingControl timing) {
     statements.push_back(
@@ -392,6 +430,13 @@ auto LowerIntraAssignmentStmt(
             statements.push_back(
                 plain(hir::RepeatStmt{.count = r.count, .body = wait}));
             statements.push_back(assign);
+          },
+          // LRM 14.11 refuses a cycle delay as an intra-assignment delay,
+          // and the front end checks it.
+          [](const hir::ClockingDriveControl&) {
+            throw InternalError(
+                "LowerIntraAssignmentStmt: a blocking assignment carries no "
+                "synchronous drive's control");
           }},
       *std::move(control));
 

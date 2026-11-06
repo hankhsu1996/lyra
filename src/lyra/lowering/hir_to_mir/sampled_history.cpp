@@ -7,7 +7,6 @@
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
-#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
@@ -16,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
+#include "lyra/lowering/hir_to_mir/synthesized_body.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -89,14 +89,10 @@ auto BuildSampledHistoryExpr(
     const StructuralScopeLowerer& lowerer, hir::SampledHistoryId id)
     -> mir::ExprId {
   const mir::FieldId field = lowerer.TranslateSampledHistory(id);
-  const mir::ExprId self = block.Add(MakeSelfRefExpr(frame));
-  const mir::ExprId object =
-      BuildObjectDeref(lowerer.Owner().Unit(), block, self);
-  return block.Add(
-      mir::MakeFieldAccessExpr(
-          object,
-          mir::ClassFieldTarget{.owner = frame.current_class.id, .slot = field},
-          frame.current_class.cls->fields.Get(field).type));
+  return BuildOwnFieldExpr(
+      lowerer.Owner().Unit(), block, frame,
+      mir::ClassFieldTarget{.owner = frame.current_class.id, .slot = field},
+      frame.current_class.cls->fields.Get(field).type);
 }
 
 auto LowerSampledHistorySampler(
@@ -105,78 +101,57 @@ auto LowerSampledHistorySampler(
     -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  const mir::TypeId self_ptr_type =
-      ctor_frame.current_class.cls->self_pointer_type;
   const mir::TypeId void_type = unit.builtins.void_type;
+  return ScopeExecution(
+      lowerer, ctor_frame, ctor_frame.span,
+      [&](const WalkFrame& body_frame) -> diag::Result<void> {
+        mir::Builder body_block_builder = body_frame.Builder();
+        // The tick comes first. A continuous assignment evaluates before its
+        // first wait because it owes a value at time zero; a history owes
+        // none, because it was installed full of the default sampled value
+        // the standard asks for until a tick has happened (LRM 16.9.3).
+        auto wait_or = BuildEventWaitStmt(
+            lowerer, body_frame, body_block_builder, history.clock);
+        if (!wait_or) return std::unexpected(std::move(wait_or.error()));
+        body_block_builder.AppendStmt(*std::move(wait_or));
 
-  mir::CallableCode code = mir::CallableCode::Defined(ctor_frame.span);
-  CallableBindings bindings(unit, code);
-  const mir::LocalId self_id =
-      bindings.Declare(ReceiverOrigin{}, self_ptr_type);
+        // What the tick settles is the subject over its variables' sampled
+        // values (LRM 16.5.1), read here rather than where the answer is used:
+        // a call in the expression is called on the arguments this tick
+        // sampled, and calling it again later would be a different call.
+        const hir::Expr& subject = hir_scope.exprs.Get(history.subject);
+        const WalkFrame sampled_frame =
+            body_frame.WithReadsAsOf(ReadsAsOf::kPreponed);
+        auto settled_or = lowerer.LowerExpr(subject, sampled_frame);
+        if (!settled_or) return std::unexpected(std::move(settled_or.error()));
+        const mir::ExprId settled =
+            body_block_builder.Add(*std::move(settled_or));
 
-  mir::Block body_block;
-  const WalkFrame body_frame =
-      ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
-  mir::Builder body_block_builder = body_frame.Builder();
+        // Recording is held to the Postponed region of this same time step,
+        // so the tick a reader in this step sees is never this one -- which
+        // is what makes "strictly prior" hold by construction rather than by
+        // anyone's ordering.
+        ClosureBuilder closure(unit, body_frame, support::ClosureKind::kFn);
+        const mir::ExprId captured = SnapshotValueIntoClosure(
+            lowerer.Owner(), body_frame, closure, settled);
+        closure.Body().AppendStmt(
+            mir::ExprStmt{
+                .expr = closure.Body().Add(
+                    mir::MakeSampledHistoryPushCallExpr(
+                        BuildSampledHistoryExpr(
+                            closure.Body(), closure.Frame(), lowerer, id),
+                        captured, void_type))});
 
-  // The tick comes first. A continuous assignment evaluates before its first
-  // wait because it owes a value at time zero; a history owes none, because it
-  // was installed full of the default sampled value the standard asks for until
-  // a tick has happened (LRM 16.9.3).
-  auto wait_or = BuildEventWaitStmt(
-      lowerer, body_frame, body_block_builder, history.clock);
-  if (!wait_or) return std::unexpected(std::move(wait_or.error()));
-  body_block_builder.AppendStmt(*std::move(wait_or));
-
-  // What the tick settles is the subject over its variables' sampled values
-  // (LRM 16.5.1), read here rather than where the answer is used: a call in the
-  // expression is called on the arguments this tick sampled, and calling it
-  // again later would be a different call.
-  const hir::Expr& subject = hir_scope.exprs.Get(history.subject);
-  const WalkFrame sampled_frame =
-      body_frame.WithReadsAsOf(ReadsAsOf::kPreponed);
-  auto settled_or = lowerer.LowerExpr(subject, sampled_frame);
-  if (!settled_or) return std::unexpected(std::move(settled_or.error()));
-  const mir::ExprId settled = body_block_builder.Add(*std::move(settled_or));
-
-  // Recording is held to the Postponed region of this same time step, so the
-  // tick a reader in this step sees is never this one -- which is what makes
-  // "strictly prior" hold by construction rather than by anyone's ordering.
-  ClosureBuilder closure(unit, body_frame, support::ClosureKind::kFn);
-  const mir::ExprId captured =
-      SnapshotValueIntoClosure(lowerer.Owner(), body_frame, closure, settled);
-  closure.Body().AppendStmt(
-      mir::ExprStmt{
-          .expr = closure.Body().Add(
-              mir::MakeSampledHistoryPushCallExpr(
-                  BuildSampledHistoryExpr(
-                      closure.Body(), closure.Frame(), lowerer, id),
-                  captured, void_type))});
-
-  mir::Expr keeper = BuildRegionEffectsCallExpr(
-      lowerer.Owner(), body_block_builder,
-      support::BuiltinFn::kPostponedEffects);
-  const mir::ExprId kept = body_block_builder.Add(BuildEmplacedClosure(
-      lowerer.Owner().Unit(), body_frame, std::move(keeper),
-      closure.BuildVoid()));
-  body_block_builder.AppendStmt(mir::ExprStmt{.expr = kept});
-
-  mir::Builder entry(code.Body(), ctor_frame.span);
-  const mir::BlockId body_scope_id = entry.AddScope(std::move(body_block));
-  entry.AppendStmt(
-      mir::ForStmt{
-          .init = {},
-          .condition = std::nullopt,
-          .step = {},
-          .scope = body_scope_id});
-  entry.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  code.params = {self_id};
-  code.result_type = unit.builtins.coroutine_void;
-  return mir::CallableDecl{
-      .code = std::move(code),
-      .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt,
-      .defining_unit = std::nullopt};
+        mir::Expr keeper = BuildRegionEffectsCallExpr(
+            lowerer.Owner(), body_block_builder,
+            support::BuiltinFn::kPostponedEffects);
+        body_block_builder.AppendStmt(
+            mir::ExprStmt{
+                .expr = body_block_builder.Add(BuildEmplacedClosure(
+                    unit, body_frame, std::move(keeper),
+                    closure.BuildVoid()))});
+        return {};
+      });
 }
 
 template <ExprLowerer Lowerer>
