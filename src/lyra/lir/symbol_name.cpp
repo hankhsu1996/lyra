@@ -153,6 +153,14 @@ auto SymbolPartOf(const support::DefPath& path) -> SymbolPart {
   return steps;
 }
 
+auto SymbolPartOf(const support::QualifiedName* name, std::uint32_t ordinal)
+    -> SymbolPart {
+  if (name == nullptr) return SymbolPart::Ordinal(ordinal);
+  SymbolPart part = SymbolPartOf(name->within);
+  part.encoded += SymbolPart::Name(name->name).encoded;
+  return part;
+}
+
 auto SymbolPartOf(const support::ClassName& name) -> SymbolPart {
   return std::visit(
       Overloaded{

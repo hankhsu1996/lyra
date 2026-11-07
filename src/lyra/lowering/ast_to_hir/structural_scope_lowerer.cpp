@@ -1468,6 +1468,29 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
   frame.current_structural_scope->structural_subroutines.Define(
       binding->subroutine_id, *std::move(decl_or));
 
+  // A static variable of a namespace unit's subroutine is one of the
+  // namespace's variables (LRM 6.21, 26.2), declared here with its initializer,
+  // which runs with theirs before any process starts (LRM 10.5).
+  for (const SubroutineStatic& local : StaticsDeclaredBy(sym)) {
+    if (local.keeper == nullptr) continue;
+    const auto span = frontend::PointSpanOf(local.var->location);
+    auto type = owner_->InternType(local.var->getType(), span);
+    if (!type) return std::unexpected(std::move(type.error()));
+    std::optional<hir::ExprId> initializer;
+    if (const slang::ast::Expression* init = local.var->getInitializer()) {
+      auto lowered = LowerExpr(*init, frame);
+      if (!lowered) return std::unexpected(std::move(lowered.error()));
+      initializer = frame.Exprs().Add(*std::move(lowered));
+    }
+    owner_->KeepNamespaceStatic(
+        hir::NamespaceStatic{
+            .name = local.name,
+            .type = *type,
+            .initializer = initializer,
+            .written_in =
+                owner_->LookupProceduralScope(NamedScopeAround(*local.var))});
+  }
+
   if (auto defaults = PopulateArgumentDefaults(sym, frame); !defaults) {
     return defaults;
   }
@@ -1612,8 +1635,24 @@ auto StructuralScopeLowerer::CollectDumped(
     const auto span = frontend::PointSpanOf(value->location);
     auto type = owner_->InternType(value->getType(), span);
     if (!type) return std::unexpected(std::move(type.error()));
-    auto named =
-        owner_->MakeRoutedValueRef(*value, frame_, ScopeRoute::Enclosing({}));
+    // A namespace's variables, its subroutines' statics among them, are
+    // named by the namespace wherever they are read (LRM 26.2, 6.21); a
+    // design element's are storage of this scope's object.
+    diag::Result<hir::Expr> named =
+        !hir::RootsAnObject(owner_->Unit().role)
+            ? owner_
+                  ->ResolveValueTarget(
+                      frame, *value,
+                      RouteOrigin{.start = FromReader{}, .written = {}}, span)
+                  .transform([&](const hir::ValueTarget& target) {
+                    return hir::MakeValueTargetRefExpr(target, *type, span);
+                  })
+            : owner_
+                  ->MakeRoutedValueRef(
+                      *value, frame_, ScopeRoute::Enclosing({}))
+                  .transform([&](hir::RoutedValueRef ref) {
+                    return hir::MakeRefExpr(std::move(ref), *type, span);
+                  });
     if (!named) return std::unexpected(std::move(named.error()));
     const auto port = ports.find(value);
     dumped.declarations.push_back(
@@ -1624,8 +1663,7 @@ auto StructuralScopeLowerer::CollectDumped(
             .range = DumpedRangeOf(value->getType()),
             .port = port != ports.end() ? std::optional(port->second)
                                         : std::nullopt,
-            .named = frame.Exprs().Add(
-                hir::MakeRefExpr(*std::move(named), *type, span))});
+            .named = frame.Exprs().Add(*std::move(named))});
   }
   return dumped;
 }

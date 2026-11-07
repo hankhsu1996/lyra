@@ -166,6 +166,11 @@ set: the blocks and tasks a name reaches, so no pass has to first find out which
 
 ### D4. The lexical owner is the naming owner
 
+This decision is about bodies of the design hierarchy, whose statics their instances replicate. A
+static a class or a namespace keeps for one of its subroutines is that keeper's own entry, declared
+and named by it and reached the same way from every body
+([type-associated-storage-is-the-declarers](type-associated-storage-is-the-declarers.md) D5).
+
 A static's cell is a field of the class enclosing the body -- the same arena that holds the scope's
 own variables, an instance member, or the slot a stored route fills. A body reads it off `self` in
 one step, and nothing has to know which blocks stand between the declaration and the body.
@@ -186,7 +191,9 @@ block nobody wrote, where the rule above then correctly refuses to publish it.
 What a name reaches does not decide the storage's shape. Every static is an observable cell wherever
 it lives, because it is one variable for every activation of the body (LRM 6.21), so a process other
 than the one writing it may wait on it (LRM 9.4.2) and a write has to reach subscribers. A static a
-class's method declares is no exception, though no name outside the method reaches it.
+class's method or a package's subroutine declares is no exception; a name reaches it through the
+subroutine as it reaches any other static (LRM 6.21), and what keeps the subroutine keeps the cell
+([type-associated-storage-is-the-declarers](type-associated-storage-is-the-declarers.md) D5).
 
 ### D5. A procedural scope is no class
 

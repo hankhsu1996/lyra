@@ -3614,7 +3614,7 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
     if (*variable.defining_unit == unit.name) {
       refuse_member("declares as another unit's its own variable", id.value);
     }
-    if (!NameOf(unit.named_static_variables, id).has_value()) {
+    if (NameOf(unit.named_static_variables, id) == nullptr) {
       refuse_member(
           "declares with no name a variable another unit defines", id.value);
     }

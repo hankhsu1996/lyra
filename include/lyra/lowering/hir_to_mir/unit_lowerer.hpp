@@ -770,7 +770,8 @@ class UnitLowerer {
   // is, by that unit and the name the member was published under.
   std::map<std::pair<std::string, std::string>, mir::CallableId>
       namespace_callables_;
-  std::map<std::pair<std::string, std::string>, mir::StaticVariableId>
+  std::map<
+      std::pair<std::string, support::QualifiedName>, mir::StaticVariableId>
       namespace_variables_;
   // The class each covergroup the unit names is written as, of this unit or
   // another.

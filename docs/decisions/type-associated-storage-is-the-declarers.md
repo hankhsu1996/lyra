@@ -1,6 +1,7 @@
 # Storage a type owns is brought up by whatever brings up its declarer
 
-Date: 2026-09-10 Status: accepted
+Date: 2026-09-10 Status: accepted; D5 added 2026-11-06, which corrects what D2 assumed of a method's
+static
 
 ## Status
 
@@ -103,11 +104,15 @@ The same holds of a variable a class's method declares `static`, which the class
 It is one variable for every call (LRM 6.21), and the calls run in whatever process made them, so
 one call may write it while another waits on it. This entry first stated D2 as "a cell a name can
 reach outside every body", which read a static property's reason as the rule, and the lowering
-applied it to the static of a method of a class a package or the compilation-unit scope declares. No
-name outside the method reaches one, so it was given plain storage, and a wait on it never woke.
-Once the wait path refused plain storage, every program reading one stopped building, UVM's registry
-among them. Whether a name reaches the storage was never the question; whether a process other than
-the writer can wait on it is, and for storage no object holds the answer is always yes.
+applied it to the static of a method of a class a package or the compilation-unit scope declares. It
+judged that no name outside the method reaches one, so it was given plain storage, and a wait on it
+never woke. Once the wait path refused plain storage, every program reading one stopped building,
+UVM's registry among them. Whether a name reaches the storage was never the question; whether a
+process other than the writer can wait on it is, and for storage no object holds the answer is
+always yes. The judgement was wrong besides: LRM 6.21 lets a hierarchical name reach "any static
+variable unless the variable is declared inside an unnamed block", static variables of automatic
+subroutines included, so `visit.count` reaches a method's static from anywhere the method's name
+does (D5).
 
 ### D3. Every type-associated cell is installed, whether or not the source wrote a value
 
@@ -126,6 +131,47 @@ which is what a namespace variable already is there. The class survives only in 
 qualified: the unit, then the class, then the cell. Both the unit that declares the class and every
 unit that reaches one of its cells compose that name from the parts each already holds, so they
 agree with no table between them.
+
+### D5. What a class or a namespace keeps is declared once, by it, named as it names each
+
+A static variable a subroutine declares is storage of whatever keeps the subroutine (LRM 6.21), and
+a hierarchical name reaches it through the subroutine from the subroutine itself, from a sibling, or
+from another unit (`visit.count`, `P::bump.count`, `C::visit.blk.count`). What that name chose is
+the declaration and, where it leaves an instance, which replication; the path is the front end's
+lookup and no part of the reference. So such a variable is reached exactly as the keeper's own
+storage of its kind is: a class's as a static property, by the class and the cell's position in the
+class's declaration; a namespace's as a namespace variable, by the name the namespace answers for
+it; a design element's as a member its scope publishes, which it already was.
+
+So the keeper declares it. A class lists its static properties and then every static variable of its
+methods and constructor, each under its qualified name -- the scopes between the class and the
+variable, as steps, then the identifier -- so a property is a qualified name with no scope between;
+the subroutine's body declares nothing of it, and a bare name there resolves to the entry as a
+dotted name elsewhere does. A static in a block the source left unlabelled is an entry too, named by
+the block's position, which no name the source writes reaches. Its initializer joins the class's
+static initializers, which run once before any process starts (LRM 6.21, 10.5), and reports the
+innermost scope around the declaration the source named (LRM 21.2.1.5). A namespace keeps its
+subroutines' statics beside its own variables the same way, and publishes both in its signature,
+each by its qualified name and type, which is what another unit naming one reads (north star
+invariant 5).
+
+The reason it is the keeper's entry rather than the body's own variable is the unit boundary.
+Another unit has no body of the subroutine, only the keeper's published declaration, and a key is
+turned into a unit's id once, one id per declaration (HIR invariant 2); a body-local id in the
+declaring unit beside the entry another unit reads would be two reference forms for one declaration.
+clang needs no such entry only because every translation unit that names a function-local static has
+the function's definition.
+
+The survey is clang and rustc. A function-local `static` named from a body other than its own is the
+same `DeclRefExpr`, and clang's code generation finds the one global by the declaration
+(`CodeGenFunction::EmitDeclRefLValue` falls to `CodeGenModule::getOrCreateStaticVarDecl`, keyed by
+the declaration); a path resolving to a `static` item is `StaticRef { def_id }` in THIR from any
+body. Neither carries the path. The one condition they do not have is that a SystemVerilog
+replication can be an instance built at run time, which is why a class an instance declares keeps
+its cells there and a reference states the hops to it; where nothing is replicated the answer is
+theirs. Below LIR the qualified name is the cell's part of its symbol (D4), its steps
+self-delimiting, so no identifier -- an escaped one holding a `.` included -- composes the same
+symbol.
 
 ## Rejected alternatives
 

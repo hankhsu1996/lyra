@@ -34,9 +34,24 @@ struct DeclaredProperty {
 // position a referrer counted.
 using DeclaredProperties = base::Arena<DeclaredProperty, FieldId>;
 
-// The properties of the class itself (LRM 8.9), placed the same way.
-using DeclaredStaticProperties =
-    base::Arena<DeclaredProperty, StaticPropertyId>;
+// One variable the class itself keeps rather than an object of it: a static
+// property (LRM 8.9), or a static variable a method or the constructor
+// declares (LRM 6.21), each named as the class names it -- a property with no
+// scope between, a subroutine's static through the subroutine and every block
+// between.
+struct DeclaredStatic {
+  support::QualifiedName name;
+  TypeId type;
+  RandomQualifier random = RandomQualifier::kNone;
+
+  auto operator==(const DeclaredStatic&) const -> bool = default;
+};
+
+// What the class itself keeps (LRM 8.9, 6.21): its static properties, placed
+// as its other properties are, then the static variables of its methods and
+// its constructor, subroutine by subroutine in the order the class places its
+// methods, the constructor last, and each one's in the order it declares them.
+using DeclaredStaticProperties = base::Arena<DeclaredStatic, StaticPropertyId>;
 
 // The methods a class declares, each at the position the class places it: the
 // ones it defines, then its pure virtual prototypes (LRM 8.21), then its
@@ -46,12 +61,22 @@ using DeclaredMethods = base::Arena<DeclaredMethod, MethodId>;
 
 // Where the property named `name` sits among `properties`, or nothing where
 // none carries that name. A class declares at most one member under a name.
-template <typename Id>
-[[nodiscard]] auto FindProperty(
-    const base::Arena<DeclaredProperty, Id>& properties, std::string_view name)
-    -> std::optional<Id> {
-  for (const Id id : properties.Ids()) {
+[[nodiscard]] inline auto FindProperty(
+    const DeclaredProperties& properties, std::string_view name)
+    -> std::optional<FieldId> {
+  for (const FieldId id : properties.Ids()) {
     if (properties.Get(id).name == name) return id;
+  }
+  return std::nullopt;
+}
+
+// Where the class keeps what it names `name` among `statics`, or nothing where
+// it keeps nothing under that name.
+[[nodiscard]] inline auto FindStatic(
+    const DeclaredStaticProperties& statics, const support::QualifiedName& name)
+    -> std::optional<StaticPropertyId> {
+  for (const StaticPropertyId id : statics.Ids()) {
+    if (statics.Get(id).name == name) return id;
   }
   return std::nullopt;
 }
@@ -137,11 +162,13 @@ struct ClassDeclaration {
   // `local` one is named by no other unit (LRM 8.18), but a class of another
   // unit extending this one places its own properties after them all.
   DeclaredProperties properties;
-  // Every property of the class itself rather than of an object of it (LRM
-  // 8.9), placed the same way. Where a namespace unit holds the class, each is
-  // a cell the class keeps, at its position here; where a design element holds
-  // it, each is a cell of the instance the class belongs to (LRM 6.22), which
-  // the scope replicating the class publishes among its members.
+  // Everything the class itself keeps rather than an object of it (LRM 8.9,
+  // 6.21). Where a namespace unit holds the class, each is a cell the class
+  // keeps, at its position here; where a design element holds it, each is a
+  // cell of the instance the class belongs to (LRM 6.22), which the scope
+  // replicating the class publishes among its members. A method's static is
+  // the class's in the same way, declared here and nowhere in the method's
+  // body, so every body and every unit naming it names this entry.
   DeclaredStaticProperties static_properties;
   // What a construction of the class is entered with (LRM 8.7): each formal's
   // direction and type, as a method's prototype states them. Absent for an

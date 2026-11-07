@@ -202,12 +202,13 @@ void RenderFieldList(
   }
 }
 
-// A class's static properties (LRM 8.9), one cell per class. Like a field, the
-// declaration holds no value; code run when the class's owner is set up gives
-// it one. A property the source declared is a member of the class, which
-// another unit names it as; a cell the class keeps for its own bodies is a
-// member of the class's own part, since only those bodies read it and what
-// they keep follows their code.
+// What a class keeps for itself (LRM 8.9, 6.21), one cell per class. Like a
+// field, the declaration holds no value; code run when the class's owner is set
+// up gives it one. A cell the class's declaration lists -- a property, or a
+// static variable of a method -- is a member of the class, which another unit
+// names it as; a cell the class keeps for its own bodies is a member of the
+// class's own part, since only those bodies read it and what they keep follows
+// their code.
 void RenderClassStaticProperties(
     const mir::CompilationUnit& unit, const mir::Class& s, TargetText& declared,
     TargetText& own) {

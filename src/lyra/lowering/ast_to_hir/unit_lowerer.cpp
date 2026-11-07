@@ -910,6 +910,9 @@ void UnitLowerer::DeclareProceduralStatics(
                        var->lifetime == slang::ast::VariableLifetime::Static) ||
                       (constant != nullptr && DiffersPerObject(*constant));
     if (!held) continue;
+    // A namespace unit's subroutine has no instance to replicate its statics;
+    // the namespace keeps them as its own variables.
+    if (var != nullptr && KeptBeyondItsBody(*var)) continue;
 
     const hir::ProceduralVarId id =
         procedural_static_vars_[&body_symbol].Declare();
@@ -929,24 +932,19 @@ void UnitLowerer::DeclareProceduralStatics(
   }
 }
 
-void UnitLowerer::DeclareClassStatics(
-    const slang::ast::ClassType& cls, const slang::ast::Scope& replicating) {
+void UnitLowerer::DeclareClassStatic(
+    const slang::ast::VariableSymbol& var, const slang::ast::ClassType& cls,
+    const slang::ast::Scope& replicating, support::QualifiedName name) {
   const auto it = scope_publications_.find(&replicating);
   if (it == scope_publications_.end()) {
     throw InternalError(
-        "UnitLowerer::DeclareClassStatics: a class this unit holds is "
+        "UnitLowerer::DeclareClassStatic: a class this unit holds is "
         "replicated by a scope of this unit, which declared its identities "
         "first");
   }
-  for (const auto& member : cls.members()) {
-    const auto* property = member.as_if<slang::ast::ClassPropertySymbol>();
-    if (property != nullptr &&
-        property->lifetime == slang::ast::VariableLifetime::Static) {
-      it->second.members.emplace_back(
-          ScopePublicationRecord::ClassStatic{
-              .symbol = property, .owner = &cls});
-    }
-  }
+  it->second.members.emplace_back(
+      ScopePublicationRecord::ClassStatic{
+          .symbol = &var, .owner = &cls, .name = std::move(name)});
 }
 
 auto UnitLowerer::ValueSourceOf(const slang::ast::ParameterSymbol& param) const
@@ -1141,7 +1139,7 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
                   return hir::ClassStaticPropertyTarget{
                       .owner = owner->second,
                       .prop = StaticPropertyPositionOf(
-                          owner->second, property.symbol->name)};
+                          owner->second, property.name)};
                 },
                 [&](const ScopePublicationRecord::CovergroupEvent& event)
                     -> hir::PublishedDecl {

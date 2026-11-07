@@ -2147,7 +2147,8 @@ TEST(MirVerifyTest, AnEntryAnotherUnitDefinesHoldsNothingOfItsOwn) {
         u.named_callables.push_back(
             NamedCallable{.name = "g", .body = subroutine});
         u.named_static_variables.push_back(
-            NamedStaticVariable{.name = "v", .variable = variable});
+            NamedStaticVariable{
+                .name = support::UnqualifiedName("v"), .variable = variable});
       }
     });
   };

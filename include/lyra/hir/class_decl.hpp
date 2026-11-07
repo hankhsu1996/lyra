@@ -11,6 +11,7 @@
 #include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -30,16 +31,20 @@ struct FieldInit {
   auto operator==(const FieldInit&) const -> bool = default;
 };
 
-// A source-written static property initializer (LRM 8.9 / 10.5): the
-// assignment that runs once before any initial or always procedure, on the
-// static property named by `target`. Distinct from `FieldInit` because it runs
-// once for the cell rather than once per instance constructed. `value` lives in
-// the arena below, separate from the constructor body's, because the
-// initializer cannot read a per-instance formal or self and must not share
-// the constructor body's expression identities.
+// A source-written initializer of what the class keeps (LRM 8.9, 6.21, 10.5):
+// the assignment that runs once before any initial or always procedure, on the
+// static property or method's static variable named by `target`. Distinct from
+// `FieldInit` because it runs once for the cell rather than once per instance
+// constructed. `value` lives in the arena below, separate from the constructor
+// body's, because the initializer cannot read a per-instance formal or self and
+// must not share the constructor body's expression identities.
 struct StaticPropertyInit {
   StaticPropertyId target;
   ExprId value;
+  // The block or subroutine of a method the initializer was written in, for a
+  // static variable a method declares, whose name a construct in it reports
+  // (LRM 21.2.1.5); nothing for a static property, written in the class.
+  std::optional<ProceduralScopeId> written_in;
 
   auto operator==(const StaticPropertyInit&) const -> bool = default;
 };
@@ -138,9 +143,10 @@ struct InterfaceReach {
 // which is the declaring scope's to answer.
 //
 // `static_property_inits` pairs each source-written `= value` initializer
-// with its static property in source order; expressions live in
-// `static_init.exprs`. A static property without a source initializer takes
-// its type's Table 7-1 default and does not appear here.
+// with what the class keeps that it sets -- its static properties in source
+// order, then its methods' static variables; expressions live in
+// `static_init.exprs`. One without a source initializer takes its type's
+// Table 7-1 default and does not appear here.
 //
 // `fixed_name` is the class's name as far as its text fixes it (LRM
 // 21.2.1.5): the class and whatever declares it short of an instance.

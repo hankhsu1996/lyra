@@ -70,6 +70,13 @@ struct SymbolPart {
 auto SymbolPartOf(std::optional<std::string_view> name, std::uint32_t ordinal)
     -> SymbolPart;
 
+// The part a variable contributes that the scope keeping it names by `name`:
+// the steps of the scopes between, then the identifier, which is the part a
+// variable of that scope's own takes where no scope stands between; or the
+// position it sits at where nothing names it.
+auto SymbolPartOf(const support::QualifiedName* name, std::uint32_t ordinal)
+    -> SymbolPart;
+
 // What a declaration another unit names contributes: one part per step of its
 // path, in order, each opening with the marker of the kind of scope it is. A
 // step is told from every other kind of part by its marker, so the steps end

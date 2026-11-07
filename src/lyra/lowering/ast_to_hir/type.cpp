@@ -858,6 +858,19 @@ auto LowerConstraintBlockDecl(
       .span = span};
 }
 
+// The bodies of a class whose static variables the class keeps (LRM 6.21): its
+// methods that have a body, in the order the class places them, then its
+// constructor.
+auto StaticBodiesOf(
+    std::span<const slang::ast::SubroutineSymbol* const> defined_methods,
+    const slang::ast::SubroutineSymbol* constructor)
+    -> std::vector<const slang::ast::SubroutineSymbol*> {
+  std::vector<const slang::ast::SubroutineSymbol*> bodies{
+      defined_methods.begin(), defined_methods.end()};
+  if (constructor != nullptr) bodies.push_back(constructor);
+  return bodies;
+}
+
 }  // namespace
 
 auto UnitLowerer::MakeClassMethodTarget(
@@ -883,9 +896,11 @@ auto UnitLowerer::PropertyPositionOf(hir::ClassId cls, std::string_view name)
 }
 
 auto UnitLowerer::StaticPropertyPositionOf(
-    hir::ClassId cls, std::string_view name) -> hir::StaticPropertyId {
+    hir::ClassId cls, const support::QualifiedName& name)
+    -> hir::StaticPropertyId {
   return Positioned(
-      cls, name, hir::FindProperty(DeclarationOf(cls).static_properties, name));
+      cls, support::DisplayOf(name),
+      hir::FindStatic(DeclarationOf(cls).static_properties, name));
 }
 
 auto UnitLowerer::MakeClassMethodTarget(
@@ -1093,7 +1108,6 @@ auto UnitLowerer::InternOwnClass(
   // instance is what they name it against: each instance has a type of its own
   // (LRM 6.22), and a specialization on such a type is one too (LRM 8.25).
   const slang::ast::Scope& replicating = ReplicatingScope(cls);
-  DeclareClassStatics(cls, replicating);
   const WalkFrame class_frame =
       WalkFrame{}
           .WithDeclaringScope(DeclaringScopeChain(replicating), &replicating)
@@ -1159,8 +1173,6 @@ auto UnitLowerer::InternOwnClass(
     if (!prop_type) return std::unexpected(std::move(prop_type.error()));
     auto random = RandomQualifierOf(prop.getType(), prop.randMode, span);
     if (!random) return std::unexpected(std::move(random.error()));
-    hir::DeclaredProperty declared{
-        .name = std::string(prop.name), .type = *prop_type, .random = *random};
     // LRM 8.9 / 8.10 keyword position: `static <T> x` marks a type-associated
     // property, whose storage the type owns rather than each object of it.
     // How many such cells exist is a separate question, answered by how many
@@ -1169,10 +1181,19 @@ auto UnitLowerer::InternOwnClass(
     // their identity spaces do not overlap and each downstream reference form
     // names one or the other.
     if (prop.lifetime == slang::ast::VariableLifetime::Static) {
-      declared_statics.Add(std::move(declared));
+      support::QualifiedName name =
+          support::UnqualifiedName(std::string{prop.name});
+      declared_statics.Add(
+          hir::DeclaredStatic{
+              .name = name, .type = *prop_type, .random = *random});
+      DeclareClassStatic(prop, cls, replicating, std::move(name));
       continue;
     }
-    declared_properties.Add(std::move(declared));
+    declared_properties.Add(
+        hir::DeclaredProperty{
+            .name = std::string(prop.name),
+            .type = *prop_type,
+            .random = *random});
   }
   // Every callable the class body declares, resolved to the subroutine that
   // carries its declaration. SystemVerilog spells a definition two ways and
@@ -1240,6 +1261,25 @@ auto UnitLowerer::InternOwnClass(
       }
     }
   };
+  // A static variable a method or the constructor declares is storage the
+  // class keeps, as a static property is (LRM 6.21): one for the class whatever
+  // object a call runs on. So the class declares it, after its properties,
+  // under the name it knows it by, and every body naming it -- the subroutine's
+  // own included -- names this entry.
+  for (const slang::ast::SubroutineSymbol* body :
+       StaticBodiesOf(defined_methods, constructor_sym)) {
+    for (SubroutineStatic& local : StaticsDeclaredBy(*body)) {
+      auto var_type = InternType(
+          local.var->getType(), frontend::PointSpanOf(local.var->location));
+      if (!var_type) return std::unexpected(std::move(var_type.error()));
+      declared_statics.Add(
+          hir::DeclaredStatic{
+              .name = local.name,
+              .type = *var_type,
+              .random = hir::RandomQualifier::kNone});
+      DeclareClassStatic(*local.var, cls, replicating, std::move(local.name));
+    }
+  }
   for (const auto* method : defined_methods) take_defaults(*method);
   for (const auto* proto : pure_prototypes) {
     take_defaults(*proto->getSubroutine());
@@ -1769,8 +1809,10 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
       if (!init_expr) return std::unexpected(std::move(init_expr.error()));
       decl.static_property_inits.push_back(
           hir::StaticPropertyInit{
-              .target = StaticPropertyPositionOf(pending.id, prop.name),
-              .value = decl.static_init.exprs.Add(*std::move(init_expr))});
+              .target = StaticPropertyPositionOf(
+                  pending.id, support::UnqualifiedName(std::string{prop.name})),
+              .value = decl.static_init.exprs.Add(*std::move(init_expr)),
+              .written_in = std::nullopt});
       continue;
     }
     auto init_expr = init_lowerer.LowerExpr(*init, init_frame);
@@ -1779,6 +1821,24 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
         hir::FieldInit{
             .target = PropertyPositionOf(pending.id, prop.name),
             .value = constructor.body.exprs.Add(*std::move(init_expr))});
+  }
+  // A static variable of a method is set once before any process starts, as a
+  // static property is (LRM 6.21, 10.5), so its initializer joins theirs; it is
+  // written in the method's scope, whose name it reports (LRM 21.2.1.5).
+  for (const slang::ast::SubroutineSymbol* body :
+       StaticBodiesOf(defined_methods, constructor_sym)) {
+    for (const SubroutineStatic& local : StaticsDeclaredBy(*body)) {
+      const slang::ast::Expression* init = local.var->getInitializer();
+      if (init == nullptr) continue;
+      auto init_expr = init_lowerer.LowerExpr(*init, static_init_frame);
+      if (!init_expr) return std::unexpected(std::move(init_expr.error()));
+      decl.static_property_inits.push_back(
+          hir::StaticPropertyInit{
+              .target = StaticPropertyPositionOf(pending.id, local.name),
+              .value = decl.static_init.exprs.Add(*std::move(init_expr)),
+              .written_in =
+                  LookupProceduralScope(NamedScopeAround(*local.var))});
+    }
   }
   // The cells constructing an object of the class reads are what a `new` of it
   // reads (LRM 9.4.2), stated for whichever waited evaluation constructs one.

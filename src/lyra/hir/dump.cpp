@@ -843,7 +843,8 @@ class HirDumper {
             },
             [](const NamespaceValueRef& r) -> std::string {
               return std::format(
-                  "NamespaceValue({}::{})", r.unit_name, r.variable_name);
+                  "NamespaceValue({}::{})", r.unit_name,
+                  support::DisplayOf(r.variable));
             },
         },
         p);
@@ -856,7 +857,8 @@ class HirDumper {
               return std::format("routed_ref={}", r.id.value);
             },
             [](const NamespaceValueRef& r) -> std::string {
-              return std::format("var={}::{}", r.unit_name, r.variable_name);
+              return std::format(
+                  "var={}::{}", r.unit_name, support::DisplayOf(r.variable));
             },
             [](const StaticPropertyRef& r) -> std::string {
               return std::format(
@@ -1951,6 +1953,16 @@ class HirDumper {
     Line("Root:");
     Indent();
     DumpScope(u.root_scope);
+    for (const NamespaceStatic& kept : u.namespace_statics) {
+      Line(
+          std::format(
+              "NamespaceStatic \"{}\" : Type[{}]{} in ProceduralScope[{}]",
+              support::DisplayOf(kept.name), kept.type.value,
+              kept.initializer.has_value()
+                  ? std::format(" init=Expr[{}]", kept.initializer->value)
+                  : std::string{},
+              kept.written_in.value));
+    }
     Dedent();
 
     for (const BlockBodyId id : u.block_bodies.Ids()) {
@@ -2224,8 +2236,11 @@ class HirDumper {
     for (const DeclaredProperty& field : declared.properties) {
       Line(std::format("{}:Type[{}]", field.name, field.type.value));
     }
-    for (const DeclaredProperty& field : declared.static_properties) {
-      Line(std::format("static {}:Type[{}]", field.name, field.type.value));
+    for (const DeclaredStatic& field : declared.static_properties) {
+      Line(
+          std::format(
+              "static {}:Type[{}]", support::DisplayOf(field.name),
+              field.type.value));
     }
     for (const auto& init : c.field_inits) {
       Line(

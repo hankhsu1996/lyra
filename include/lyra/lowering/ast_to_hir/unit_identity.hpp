@@ -38,6 +38,8 @@ class Scope;
 class SubroutineSymbol;
 class Symbol;
 class Type;
+class ValueSymbol;
+class VariableSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -233,6 +235,41 @@ auto SubroutineNameOf(const slang::ast::SubroutineSymbol& subroutine)
 // where it sits. The unit publishing what such a scope holds and a unit
 // reaching into it by a hierarchical name (LRM 23.9) both ask here.
 auto ProceduralStepOf(const slang::ast::Symbol& scope) -> support::DefPathData;
+
+// A static variable a subroutine declares (LRM 6.21): what keeps its storage,
+// where that is the class or the namespace unit holding the subroutine -- one
+// storage per class, per specialization (LRM 8.25), or per run -- and nothing
+// where it is a design element's subroutine, whose instances keep it; and the
+// name the class or the scope holding the subroutine knows it by: the
+// subroutine and every block between, as steps, then the variable's own name
+// (LRM 23.6). A block the source left unlabelled is a step by its position,
+// which no name the source writes reaches.
+struct SubroutineStatic {
+  const slang::ast::VariableSymbol* var = nullptr;
+  const slang::ast::Symbol* keeper = nullptr;
+  support::QualifiedName name;
+};
+
+// The above for `value`, where it is a static variable a subroutine declares,
+// and nothing for any other value -- a formal included, which a call binds.
+auto SubroutineStaticOf(const slang::ast::ValueSymbol& value)
+    -> std::optional<SubroutineStatic>;
+
+// Every static variable `subroutine` declares, in the order its body declares
+// them.
+auto StaticsDeclaredBy(const slang::ast::SubroutineSymbol& subroutine)
+    -> std::vector<SubroutineStatic>;
+
+// The innermost scope around `var`'s declaration the source named -- its
+// subroutine or a labelled block -- which a construct written there reports as
+// where it is (LRM 21.2.1.5); a block the source left unlabelled has no name.
+auto NamedScopeAround(const slang::ast::VariableSymbol& var)
+    -> const slang::ast::Symbol&;
+
+// Whether `value` is a static variable a class or a namespace keeps for one of
+// its subroutines: the keeper declares it, and the subroutine's body names it
+// as every other body does.
+auto KeptBeyondItsBody(const slang::ast::ValueSymbol& value) -> bool;
 
 // Which declaration of its compilation unit `declaration` is: one step for each
 // scope the source nests it in, from the unit's own scope down, and one for the

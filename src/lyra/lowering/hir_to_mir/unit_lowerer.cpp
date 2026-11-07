@@ -182,6 +182,52 @@ auto PopulateNamespaceOwnStorage(
             .type = cell_type});
   };
 
+  // One variable the namespace keeps, under the name it knows it by: its cell,
+  // brought up in the install body with its declared representation and
+  // default, and in the value body by the user initializer (LRM 10.5), which
+  // writes through the cell and reports the scope it was written in (LRM
+  // 21.2.1.5).
+  const auto keep = [&](support::QualifiedName name, hir::TypeId type,
+                        std::optional<hir::ExprId> initializer,
+                        const WalkFrame& written) -> diag::Result<void> {
+    const mir::TypeId cell_type =
+        mir::ObservableCellOf(unit.types, unit_lowerer.TranslateType(type));
+    if (!unit.types.Get(cell_type).IsCapabilityWrapper()) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedExpressionForm,
+          "a package variable of this type is not yet supported");
+    }
+    const mir::StaticVariableId variable = unit.static_variables.Add(
+        mir::StaticVariableDecl{
+            .type = cell_type, .defining_unit = std::nullopt});
+    unit.named_static_variables.push_back(
+        mir::NamedStaticVariable{
+            .name = std::move(name), .variable = variable});
+    const mir::ExprId prototype =
+        BuildDeclaredInitialValue(unit_lowerer, install_frame, type);
+    install_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = install_block.Add(
+                mir::MakeCapabilityInstallCallExpr(
+                    make_cell(install_block, variable, cell_type), prototype,
+                    support::BuiltinFn::kInitialize,
+                    unit.builtins.void_type))});
+    if (!initializer.has_value()) return {};
+    auto value_or =
+        expr_lowerer.LowerExpr(scope.exprs.Get(*initializer), written);
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    const mir::ExprId value_id = value_block.Add(*std::move(value_or));
+    value_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = value_block.Add(BuildStoreExpr(
+                unit, value_block,
+                AccessPath{
+                    .owner = make_cell(value_block, variable, cell_type),
+                    .descent = {}},
+                value_id))});
+    return {};
+  };
+
   for (const hir::StructuralDataObjectId hir_id :
        scope.structural_data_objects.Ids()) {
     const hir::StructuralDataObjectDecl& d =
@@ -195,52 +241,31 @@ auto PopulateNamespaceOwnStorage(
           diag::DiagCode::kUnsupportedExpressionForm,
           "a net declared in a package is not yet supported");
     }
-    const mir::TypeId value_type = unit_lowerer.TranslateType(d.type);
-    const mir::TypeId cell_type = mir::ObservableCellOf(unit.types, value_type);
-    if (!unit.types.Get(cell_type).IsCapabilityWrapper()) {
-      return diag::Fail(
-          diag::DiagCode::kUnsupportedExpressionForm,
-          "a package variable of this type is not yet supported");
-    }
-    const mir::StaticVariableId variable = unit.static_variables.Add(
-        mir::StaticVariableDecl{
-            .type = cell_type, .defining_unit = std::nullopt});
-    unit.named_static_variables.push_back(
-        mir::NamedStaticVariable{.name = d.name, .variable = variable});
-
-    // The install body gives the cell its declared representation and default.
-    const mir::ExprId prototype =
-        BuildDeclaredInitialValue(unit_lowerer, install_frame, d.type);
-    install_block.AppendStmt(
-        mir::ExprStmt{
-            .expr = install_block.Add(
-                mir::MakeCapabilityInstallCallExpr(
-                    make_cell(install_block, variable, cell_type), prototype,
-                    support::BuiltinFn::kInitialize,
-                    unit.builtins.void_type))});
-
-    // The value body runs a user initializer (LRM 10.5), which writes through
-    // the cell.
-    if (var->initializer.has_value()) {
-      auto value_or = expr_lowerer.LowerExpr(
-          scope.exprs.Get(*var->initializer), value_frame);
-      if (!value_or) return std::unexpected(std::move(value_or.error()));
-      const mir::ExprId value_id = value_block.Add(*std::move(value_or));
-      value_block.AppendStmt(
-          mir::ExprStmt{
-              .expr = value_block.Add(BuildStoreExpr(
-                  unit, value_block,
-                  AccessPath{
-                      .owner = make_cell(value_block, variable, cell_type),
-                      .descent = {}},
-                  value_id))});
+    if (auto kept = keep(
+            support::UnqualifiedName(d.name), d.type, var->initializer,
+            value_frame);
+        !kept) {
+      return kept;
     }
   }
 
-  // A static-lifetime variable of a package subroutine is one program-global
-  // cell like the package's own variables (LRM 6.21, 26.2), so it comes up in
+  // A static variable of a package subroutine is one of the package's
+  // variables (LRM 6.21, 26.2), named as the package knows it, and comes up in
   // these same two bodies -- once before any process starts, rather than on
-  // each entry to the subroutine that declares it.
+  // each entry to the subroutine that declares it. Its initializer is written
+  // in the subroutine.
+  for (const hir::NamespaceStatic& kept :
+       unit_lowerer.Hir().namespace_statics) {
+    if (auto done = keep(
+            kept.name, kept.type, kept.initializer,
+            value_frame.WithScopeName(scopes.Get(kept.written_in).name));
+        !done) {
+      return done;
+    }
+  }
+
+  // What else a package subroutine keeps past one call -- the control an
+  // assertion control task selects -- comes up in the same two bodies.
   for (const hir::StructuralSubroutineId id :
        scope.structural_subroutines.Ids()) {
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
@@ -1310,8 +1335,7 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
     RecordDeclaringInstanceField(id, *instance->member);
   }
   for (const hir::StaticPropertyId prop : published.static_properties.Ids()) {
-    const hir::DeclaredProperty& property =
-        published.static_properties.Get(prop);
+    const hir::DeclaredStatic& property = published.static_properties.Get(prop);
     declared.named_static_properties.push_back(
         mir::NamedStaticProperty{
             .name = property.name,
@@ -1776,21 +1800,23 @@ auto UnitLowerer::MakeNamespaceCallableTarget(
 auto UnitLowerer::NamespaceVariable(
     const hir::NamespaceValueRef& ref, mir::TypeId cell_type)
     -> mir::StaticVariableId {
-  const auto key = std::pair{ref.unit_name, ref.variable_name};
+  const auto key = std::pair{ref.unit_name, ref.variable};
   if (const auto known = namespace_variables_.find(key);
       known != namespace_variables_.end()) {
     return known->second;
   }
   // The cell a variable of this unit's own namespace holds; for one of another
-  // unit's, a cell declared here for the identifier that unit published.
+  // unit's, a cell declared here for the name that unit published.
   mir::StaticVariableId variable{};
   if (hir_->IsItself(ref.unit_name)) {
-    const std::optional<mir::StaticVariableId> own = mir::StaticVariableNamed(
-        unit_.named_static_variables, ref.variable_name);
+    const std::optional<mir::StaticVariableId> own =
+        mir::StaticVariableNamed(unit_.named_static_variables, ref.variable);
     if (!own.has_value()) {
       throw InternalError(
-          "UnitLowerer::NamespaceVariable: this unit's namespace publishes no "
-          "variable under the identifier a reference inside it spells");
+          std::format(
+              "UnitLowerer::NamespaceVariable: this unit's namespace publishes "
+              "no variable under the name '{}' a reference inside it spells",
+              support::DisplayOf(ref.variable)));
     }
     variable = *own;
   } else {
@@ -1798,8 +1824,7 @@ auto UnitLowerer::NamespaceVariable(
         mir::StaticVariableDecl{
             .type = cell_type, .defining_unit = ref.unit_name});
     unit_.named_static_variables.push_back(
-        mir::NamedStaticVariable{
-            .name = ref.variable_name, .variable = variable});
+        mir::NamedStaticVariable{.name = ref.variable, .variable = variable});
   }
   namespace_variables_.emplace(key, variable);
   return variable;

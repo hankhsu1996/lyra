@@ -209,6 +209,17 @@ struct MintedPathName {
   std::span<const support::DefPathData> steps;
 };
 
+// The name of a variable a scope keeps for one of its subroutines, made from
+// the scopes between that scope and the variable and then the variable's own
+// name, spelled as a path name's steps are: `sv_static_s5_visit_v5_count` for
+// `visit.count`. It shares a namespace with the scope's own variables and
+// properties, which keep their source names, so it is made up as every such
+// name is.
+struct MintedStaticName {
+  std::span<const support::DefPathData> steps;
+  std::string_view variable;
+};
+
 // The name of a declaration whose source name alone does not tell it from the
 // others of its scope: a generate block that is not the first of its scope
 // under its label (LRM 27.5), `sv_gen_1_g`; an application of one the design
@@ -246,13 +257,14 @@ struct DefinitionName {
 // Any of the above, for a declaration whose kind decides which.
 using CppName = std::variant<
     SourceName, MintedName, MintedWord, VerbatimName, MintedPathName,
-    MintedAppliedName, EntryName, DefinitionName>;
+    MintedStaticName, MintedAppliedName, EntryName, DefinitionName>;
 
 void WriteOne(TargetText& out, SourceName name);
 void WriteOne(TargetText& out, const MintedName& name);
 void WriteOne(TargetText& out, MintedWord name);
 void WriteOne(TargetText& out, VerbatimName name);
 void WriteOne(TargetText& out, MintedPathName name);
+void WriteOne(TargetText& out, MintedStaticName name);
 void WriteOne(TargetText& out, const MintedAppliedName& name);
 void WriteOne(TargetText& out, const EntryName& name);
 void WriteOne(TargetText& out, const DefinitionName& name);
@@ -524,16 +536,28 @@ inline void WriteOne(TargetText& out, NamespaceMemberScope scope) {
   return MintedCppNameWith("local", local.value, mir::NameOf(named, local));
 }
 
-// The names of a class's static properties and a unit's static variables. The
-// ones the source declared keep their names; the rest were added by lowering,
+// The name of a variable the source reaches by `name` within the scope keeping
+// it: its own name where no scope stands between, and otherwise one made from
+// the scopes between and its name, since a static variable of a subroutine
+// shares the namespace with the properties or variables of the scope keeping
+// it, which may carry its name.
+[[nodiscard]] inline auto CppQualifiedVariableName(
+    const support::QualifiedName& name) -> CppName {
+  if (name.within.data.empty()) return ToCppName(name.name);
+  return MintedStaticName{
+      .steps = std::span<const support::DefPathData>{name.within.data},
+      .variable = name.name};
+}
+
+// The names of a class's static cells and a unit's static variables: what a
+// source name reaches is named as above, and the rest were added by lowering,
 // for state that outlives one call, and are `sv_cell_<n>` or
 // `sv_variable_<n>`.
 [[nodiscard]] inline auto CppStaticPropertyName(
     std::span<const mir::NamedStaticProperty> named, mir::StaticPropertyId slot)
     -> CppName {
-  const std::optional<std::string_view> name = mir::NameOf(named, slot);
-  if (name.has_value()) {
-    return ToCppName(*name);
+  if (const support::QualifiedName* name = mir::NameOf(named, slot)) {
+    return CppQualifiedVariableName(*name);
   }
   return MintedCppName("cell", slot.value);
 }
@@ -541,9 +565,8 @@ inline void WriteOne(TargetText& out, NamespaceMemberScope scope) {
 [[nodiscard]] inline auto CppStaticVariableName(
     std::span<const mir::NamedStaticVariable> named,
     mir::StaticVariableId variable) -> CppName {
-  const std::optional<std::string_view> name = mir::NameOf(named, variable);
-  if (name.has_value()) {
-    return ToCppName(*name);
+  if (const support::QualifiedName* name = mir::NameOf(named, variable)) {
+    return CppQualifiedVariableName(*name);
   }
   return MintedCppName("variable", variable.value);
 }
@@ -1010,14 +1033,15 @@ inline void WriteOne(TargetText& out, const ClassDetailPath& path) {
   Write(out, path.of, "::", CppClassDetailName());
 }
 
-// Whether a static property of a class is a cell the class keeps for its own
-// bodies, rather than one the source declared (LRM 8.9): only a declared one
-// is named by text outside the class's unit, so only it is a member of the
-// class, and every other is a member of the class's own part.
+// Whether a static cell of a class is one the class keeps for its own bodies,
+// rather than one its declaration lists -- a property (LRM 8.9) or a static
+// variable of a method (LRM 6.21): only one the declaration lists may be named
+// by text outside the class's unit, so only it is a member of the class, and
+// every other is a member of the class's own part.
 [[nodiscard]] inline auto IsKeptForItsBodies(
     std::span<const mir::NamedStaticProperty> named, mir::StaticPropertyId slot)
     -> bool {
-  return !mir::NameOf(named, slot).has_value();
+  return mir::NameOf(named, slot) == nullptr;
 }
 
 // The forward declaration of class `id` that text naming it without needing

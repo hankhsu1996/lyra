@@ -279,9 +279,9 @@ void WriteNamedEntity(
           [&](const mir::DefinitionRef& r) {
             Write(out, CppDefinitionOf{.of = CppClassRef(unit, r.of)});
           },
-          // A property the source declared is a member of its class (LRM
-          // 8.9); a cell the class keeps for its own bodies is a member of the
-          // class's own part, which only its unit's code reads.
+          // A cell the class's declaration lists is a member of its class (LRM
+          // 8.9, 6.21); a cell the class keeps for its own bodies is a member
+          // of the class's own part, which only its unit's code reads.
           [&](const mir::StaticPropertyRef& r) {
             const mir::Class& owner_cls = unit.GetClass(r.owner);
             const ClassPath owner = CppClassPath(unit, r.owner);

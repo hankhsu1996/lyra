@@ -224,10 +224,13 @@ struct ScopePublicationRecord {
     hir::ProceduralVarId var;
     support::DefPath within;
   };
-  // A static property of a class the scope declares (LRM 6.22, 8.9).
+  // What a class the scope declares keeps for itself (LRM 6.22, 8.9): a
+  // static property, or a static variable one of its methods declares (LRM
+  // 6.21), and the name the class reaches it by.
   struct ClassStatic {
-    const slang::ast::ClassPropertySymbol* symbol = nullptr;
+    const slang::ast::VariableSymbol* symbol = nullptr;
     const slang::ast::ClassType* owner = nullptr;
+    support::QualifiedName name;
   };
   // The block event of a covergroup the scope declares (LRM 19.3), whose
   // identity the covergroup is minted with.
@@ -797,6 +800,12 @@ class UnitLowerer {
     return unit_;
   }
 
+  // Declares one of the static variables a namespace unit keeps for its
+  // subroutines (LRM 6.21).
+  void KeepNamespaceStatic(hir::NamespaceStatic kept) {
+    unit_.namespace_statics.push_back(std::move(kept));
+  }
+
   // The slang scope this unit is lowered from -- a module instance body or a
   // package. A constant expression the lowering must evaluate itself (an LRM
   // 20.7 dimension index) is evaluated against its symbol.
@@ -1148,6 +1157,12 @@ class UnitLowerer {
       const std::string& unit_name, const slang::ast::SubroutineSymbol& sym,
       diag::SourceSpan span) -> diag::Result<hir::CalleeInterface>;
 
+  // The type of the variable `unit_name`'s namespace keeps under `name`, as
+  // that namespace published it -- this unit's own read off `var`.
+  auto NamespaceVariableType(
+      const std::string& unit_name, const slang::ast::ValueSymbol& var,
+      const support::QualifiedName& name, diag::SourceSpan span)
+      -> diag::Result<hir::TypeId>;
   // The type the function `evaluator` of the namespace `unit_name` answers for
   // `formal`, read off what that namespace published wherever it is another
   // unit.
@@ -1170,7 +1185,8 @@ class UnitLowerer {
       -> hir::MethodId;
   auto PropertyPositionOf(hir::ClassId cls, std::string_view name)
       -> hir::FieldId;
-  auto StaticPropertyPositionOf(hir::ClassId cls, std::string_view name)
+  auto StaticPropertyPositionOf(
+      hir::ClassId cls, const support::QualifiedName& name)
       -> hir::StaticPropertyId;
 
   // The position `found` names, which a class the front end resolved a name in
@@ -1697,6 +1713,13 @@ class UnitLowerer {
   [[nodiscard]] auto ResolveStaticPropertyTarget(
       const WalkFrame& frame, const slang::ast::ClassPropertySymbol& prop,
       diag::SourceSpan span) -> diag::Result<hir::ValueTarget>;
+  // The same for anything `owner_class` keeps for itself, named `name` within
+  // it: a static property, or a static variable one of its methods declares
+  // (LRM 6.21), which is storage of the class in the same way.
+  [[nodiscard]] auto ResolveClassKept(
+      const WalkFrame& frame, const slang::ast::ClassType& owner_class,
+      const support::QualifiedName& name, diag::SourceSpan span)
+      -> diag::Result<hir::ValueTarget>;
 
   // The walk below, with the one reason that walk can fail written where it is
   // known rather than at whichever caller met it.
@@ -1883,10 +1906,11 @@ class UnitLowerer {
   // unit's own would.
   void PublishParameterValues();
 
-  // Derives what this unit publishes about each subroutine its namespace
-  // declares (LRM 26.3). A design element declares none another unit calls by
-  // name alone, so it publishes none here.
-  auto PublishNamespaceSubroutines() -> diag::Result<void>;
+  // Derives what this unit publishes of its namespace: each subroutine it
+  // declares and each variable it keeps (LRM 26.3, 6.21). A design element
+  // declares none another unit reaches by name alone, so it publishes none
+  // here.
+  auto PublishNamespace() -> diag::Result<void>;
 
   // How this reader reaches the interface an enclosing scope's `port` carries
   // (LRM 25.3). The port is the whole of this unit's reach to it: what stands
@@ -2053,10 +2077,11 @@ class UnitLowerer {
       const slang::ast::ProceduralBlockSymbol& proc, ScopeDeclarations& decls,
       ScopePublicationRecord& published, ScopeFrameId frame);
   // A class is a type of each instance of the scope replicating it (LRM 6.22,
-  // 8.25), so what `cls` keeps for itself (LRM 8.9) is a cell that scope
-  // publishes.
-  void DeclareClassStatics(
-      const slang::ast::ClassType& cls, const slang::ast::Scope& replicating);
+  // 8.25), so what `cls` keeps for itself (LRM 8.9, 6.21) is a cell that scope
+  // publishes: here `var`, which the class names `name`.
+  void DeclareClassStatic(
+      const slang::ast::VariableSymbol& var, const slang::ast::ClassType& cls,
+      const slang::ast::Scope& replicating, support::QualifiedName name);
 
   // The class `scope` is an object of, in this unit's own types: what it
   // declares, which every scope of that class declares alike.

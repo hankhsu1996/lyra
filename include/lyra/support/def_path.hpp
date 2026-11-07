@@ -226,6 +226,36 @@ struct DefPath {
   return text;
 }
 
+// A variable as the scope that keeps its storage names it: the scopes between
+// that scope and the variable, outermost first, then the identifier it was
+// declared by, as clang qualifies a name by the contexts it is nested in. A
+// class's static property or a package's variable is named with no scope
+// between; a static variable of a subroutine is named through the subroutine
+// and every block between (LRM 6.21, 23.6), `visit.count` as the subroutine
+// step `visit` and `count`. The scopes are steps rather than text, so no
+// identifier, an escaped one included, can spell what a path spells
+// (LRM 5.6.1).
+struct QualifiedName {
+  DefPath within;
+  std::string name;
+
+  auto operator==(const QualifiedName&) const -> bool = default;
+  auto operator<=>(const QualifiedName&) const
+      -> std::strong_ordering = default;
+};
+
+// The name of a variable the scope keeping it declares itself, with no scope
+// between: a static property, or a package's own variable.
+[[nodiscard]] inline auto UnqualifiedName(std::string name) -> QualifiedName {
+  return QualifiedName{.within = {}, .name = std::move(name)};
+}
+
+// The qualified name as a person reads it, in a dump or a diagnostic.
+[[nodiscard]] inline auto DisplayOf(const QualifiedName& name) -> std::string {
+  if (name.within.data.empty()) return name.name;
+  return std::format("{}::{}", DisplayOf(name.within), name.name);
+}
+
 // A declaration's path in its unit as an identity: each step as its kind and
 // then the length of its name and the name, or the position it stands at and a
 // terminator, and after a name whatever else tells the step from its siblings,

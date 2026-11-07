@@ -1932,6 +1932,17 @@ void VerifyScope(
     const std::string& label, std::vector<std::string>& lines) {
   ArenaReaches reaches{scope};
   ReachFromDataObjects(reaches, scope);
+  // A namespace keeps its subroutines' statics as its variables, and their
+  // initializers are expressions of its own scope, the one scope it has.
+  if (&scope == &unit.root_scope) {
+    const auto from_kept =
+        ReachFrom(reaches, std::nullopt, "a subroutine static's declaration");
+    for (const NamespaceStatic& kept : unit.namespace_statics) {
+      if (kept.initializer.has_value()) {
+        from_kept(*kept.initializer, Slot::kOperand);
+      }
+    }
+  }
   const auto from_assign =
       ReachFrom(reaches, std::nullopt, "a continuous assignment");
   for (const ContinuousAssign& assign : scope.continuous_assigns) {

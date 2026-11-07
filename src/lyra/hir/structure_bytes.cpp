@@ -52,6 +52,11 @@ class Writer {
     out_ += mark;
   }
 
+  void Qualified(const support::QualifiedName& name) {
+    Text(support::DefPathIdentity(name.within));
+    Text(name.name);
+  }
+
   template <typename Enum>
   void Kind(Enum value) {
     Number(static_cast<std::int64_t>(value));
@@ -441,9 +446,16 @@ class Writer {
   }
 
   void ClassDeclarations(const support::DefPath& declaring) {
-    const auto properties = [&](const auto& of) {
+    const auto properties = [&](const DeclaredProperties& of) {
       Arena(of, [&](const DeclaredProperty& p) {
         Text(p.name);
+        Type(p.type);
+        Kind(p.random);
+      });
+    };
+    const auto statics = [&](const DeclaredStaticProperties& of) {
+      Arena(of, [&](const DeclaredStatic& p) {
+        Qualified(p.name);
         Type(p.type);
         Kind(p.random);
       });
@@ -465,7 +477,7 @@ class Writer {
       Number(cls.is_interface_class ? 1 : 0);
       List(cls.implements, [&](ClassId id) { Class(id); });
       properties(cls.properties);
-      properties(cls.static_properties);
+      statics(cls.static_properties);
       Optional(
           cls.constructor, [&](const CalleeInterface& c) { Interface(c); });
       Arena(cls.methods, [&](const DeclaredMethod& method) {
@@ -571,6 +583,10 @@ class Writer {
               Mark('n');
               List(space.subroutines, [&](const SubroutinePrototype& p) {
                 Prototype(p);
+              });
+              List(space.variables, [&](const PublishedVariable& v) {
+                Qualified(v.name);
+                Type(v.type);
               });
             }},
         signature_->unit);

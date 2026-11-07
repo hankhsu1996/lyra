@@ -5,19 +5,23 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/class_registry.hpp"
 #include "lyra/hir/covergroup.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
+#include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
 
@@ -75,6 +79,19 @@ struct BuiltinHirTypes {
   auto operator==(const BuiltinHirTypes&) const -> bool = default;
 };
 
+// A static variable a subroutine of a namespace unit declares (LRM 6.21),
+// which the namespace keeps as one of its variables: the name it knows it by,
+// its type, and the initializer the source wrote, an expression of the unit's
+// own scope written in that scope's procedural scope `written_in`.
+struct NamespaceStatic {
+  support::QualifiedName name;
+  TypeId type;
+  std::optional<ExprId> initializer;
+  ProceduralScopeId written_in;
+
+  auto operator==(const NamespaceStatic&) const -> bool = default;
+};
+
 // What one lowering of a unit came out as, which is one body of the unit.
 struct CompilationUnit {
   // The unit, which is what it publishes and what every referrer names.
@@ -103,6 +120,10 @@ struct CompilationUnit {
   TypeDefinitions type_definitions;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;
+  // The static variables the subroutines of a namespace unit declare (LRM
+  // 6.21), which it keeps beside its own variables; a design element's
+  // subroutines' statics are its instances', and it lists none.
+  std::vector<NamespaceStatic> namespace_statics;
   // Every body a generate block of the unit compiles to (LRM 27), each once:
   // blocks stating the same thing are one body, whichever objects build them.
   base::Arena<BlockBody, BlockBodyId> block_bodies;

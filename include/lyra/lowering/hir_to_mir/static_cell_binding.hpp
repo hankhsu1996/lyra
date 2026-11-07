@@ -58,9 +58,9 @@ struct ClassCellHome {
   mir::StaticPropertyId property;
 };
 
-// A cell the unit's namespace owns. Only bodies of that same unit reach one of
-// these -- a static-lifetime variable is the body's, whatever storage outlives
-// it -- so the declaration's own position is what a reference needs.
+// A cell the unit's namespace owns for one of its bodies -- what a `disable`
+// or an assertion control of a package subroutine acts on. Only bodies of that
+// same unit reach one of these, so its position is what a reference needs.
 struct UnitCellHome {
   mir::StaticVariableId variable;
 };

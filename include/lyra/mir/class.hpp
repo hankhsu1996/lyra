@@ -24,6 +24,7 @@
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/class_name.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/support/library_callback.hpp"
 #include "lyra/support/scope_execution.hpp"
@@ -46,24 +47,24 @@ struct StaticPropertyDecl {
 };
 
 // One entry of the relation between a class and the type-associated storage it
-// answers by name: the identifier the source declared the property under, and
-// the cell it reaches.
+// answers by name: the name the source reaches it by within the class -- a
+// static property, or a static variable one of its methods declares (LRM
+// 6.21) -- and the cell it reaches.
 struct NamedStaticProperty {
-  std::string name;
+  support::QualifiedName name;
   StaticPropertyId slot;
 };
 
-// The identifier `slot` answers to among `named`, or nothing where nothing
-// names it.
+// The name `slot` answers to among `named`, or nothing where nothing names it.
 [[nodiscard]] inline auto NameOf(
     std::span<const NamedStaticProperty> named, StaticPropertyId slot)
-    -> std::optional<std::string_view> {
+    -> const support::QualifiedName* {
   for (const NamedStaticProperty& entry : named) {
     if (entry.slot == slot) {
-      return std::string_view{entry.name};
+      return &entry.name;
     }
   }
-  return std::nullopt;
+  return nullptr;
 }
 
 // The class's constructor, entered on an object already created whole (LRM

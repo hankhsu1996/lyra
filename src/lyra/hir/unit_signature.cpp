@@ -377,8 +377,8 @@ auto ImportStaticProperties(
     TypeImporter& importer, const DeclaredStaticProperties& properties)
     -> DeclaredStaticProperties {
   DeclaredStaticProperties imported;
-  for (const DeclaredProperty& property : properties) {
-    DeclaredProperty taken = property;
+  for (const DeclaredStatic& property : properties) {
+    DeclaredStatic taken = property;
     taken.type = importer.Import(property.type);
     imported.Add(std::move(taken));
   }
