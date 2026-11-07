@@ -375,8 +375,7 @@ auto UnitLowerer::PublishNamespace() -> diag::Result<void> {
     const auto* subroutine =
         std::get_if<ScopePublicationRecord::Subroutine>(&callable);
     if (subroutine == nullptr) continue;
-    for (SubroutineStatic& local : StaticsDeclaredBy(*subroutine->symbol)) {
-      if (local.keeper == nullptr) continue;
+    for (KeptStatic& local : StaticsKeptBy(*subroutine->symbol)) {
       auto published_var = publish(*local.var, std::move(local.name));
       if (!published_var) return published_var;
     }

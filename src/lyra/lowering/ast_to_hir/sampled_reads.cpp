@@ -14,6 +14,7 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -47,7 +48,7 @@ auto SampledAnswerOf(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           "a sampled value of a 'ref static' argument is not yet supported");
     }
-    if (var->lifetime == slang::ast::VariableLifetime::Automatic) {
+    if (!HasStaticStorage(*var)) {
       return SampledAnswer::kCurrent;
     }
   }

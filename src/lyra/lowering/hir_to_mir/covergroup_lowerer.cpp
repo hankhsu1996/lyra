@@ -823,7 +823,7 @@ class ClassWriter {
     mir::CompilationUnit& unit = Unit();
     mir::Builder block = e.Block();
     for (std::size_t i = 0; i < decl_->formals.size(); ++i) {
-      const hir::SubroutineParam& formal = decl_->formals[i];
+      const hir::CovergroupFormal& formal = decl_->formals[i];
       const std::uint32_t index = first_.layout.formals.at(i);
       const mir::TypeId value =
           u_->TranslateType(decl_->body.procedural_vars.Get(formal.var).type);
@@ -1363,7 +1363,7 @@ class ClassWriter {
       embedding = std::pair{local, type};
     }
     std::vector<std::optional<std::pair<mir::LocalId, mir::TypeId>>> inputs;
-    for (const hir::SubroutineParam& formal : decl_->formals) {
+    for (const hir::CovergroupFormal& formal : decl_->formals) {
       const hir::ProceduralVarDecl& var =
           decl_->body.procedural_vars.Get(formal.var);
       const mir::TypeId value = u_->TranslateType(var.type);
@@ -1562,7 +1562,7 @@ class ClassWriter {
       arguments.push_back(ConvertToType(unit, block, embedded, handle));
     }
     for (std::size_t i = 0; i < decl_->formals.size(); ++i) {
-      const hir::SubroutineParam& formal = decl_->formals[i];
+      const hir::CovergroupFormal& formal = decl_->formals[i];
       const hir::Expr named = hir::MakeRefExpr(
           hir::ProceduralVarRef{.var = formal.var},
           decl_->body.procedural_vars.Get(formal.var).type, diag::SourceSpan{});
@@ -1743,7 +1743,7 @@ class ClassWriter {
     ProcessLowerer lowerer = Lowerer();
     const Writer e(*u_, library_, lowerer, *decl_, function.Frame());
     std::vector<mir::ExprId> forwarded;
-    for (const hir::SubroutineParam& formal : decl_->sample_formals) {
+    for (const hir::CovergroupFormal& formal : decl_->sample_formals) {
       const hir::ProceduralVarDecl& var =
           decl_->body.procedural_vars.Get(formal.var);
       const mir::TypeId type =
@@ -2403,7 +2403,7 @@ auto LowerCovergroupFactory(
       HandleTo(unit_lowerer, *own.published->embedding);
   arguments.push_back(
       ConvertToType(unit, block, this_handle, embedding_handle));
-  for (const hir::SubroutineParam& formal : decl.formals) {
+  for (const hir::CovergroupFormal& formal : decl.formals) {
     const mir::TypeId type = *ParamTypeOf(
         unit,
         unit_lowerer.TranslateType(

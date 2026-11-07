@@ -14,6 +14,8 @@
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
+
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
@@ -34,7 +36,7 @@ struct LifetimeExtendedCollector
   std::unordered_set<const slang::ast::VariableSymbol*> result;
 
   void Declare(const slang::ast::VariableSymbol& var) {
-    if (var.lifetime == slang::ast::VariableLifetime::Automatic) {
+    if (!HasStaticStorage(var)) {
       declared_index.emplace(&var, declared_count++);
     }
   }

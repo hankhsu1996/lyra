@@ -118,10 +118,11 @@ enum and no callable-level field:
 
 `output` / `inout` are **not** modeled as aliases. SV `output` / `inout` copy out at task
 _completion_, not on each write; modeling them as a live `Ref<T>` would let a caller observe an
-intermediate write while a task is suspended, which is the wrong semantics. Instead the formals are
-ordinary body locals, and the callable's result carries an **output pack** (a tuple, an existing MIR
-primitive) assembled at every return. The call site receives the pack after completion and writes
-each component to the caller's actual place:
+intermediate write while a task is suspended, which is the wrong semantics. Instead each formal is a
+variable -- the body's own, or for a static subroutine the one every call shares (LRM 13.3.2) -- and
+the callable's result carries an **output pack** (a tuple, an existing MIR primitive) assembled at
+every return. The call site receives the pack after completion and writes each component to the
+caller's actual place:
 
 ```text
 task t(input int a, output int b, inout int c);

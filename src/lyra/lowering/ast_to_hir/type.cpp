@@ -1268,7 +1268,7 @@ auto UnitLowerer::InternOwnClass(
   // own included -- names this entry.
   for (const slang::ast::SubroutineSymbol* body :
        StaticBodiesOf(defined_methods, constructor_sym)) {
-    for (SubroutineStatic& local : StaticsDeclaredBy(*body)) {
+    for (KeptStatic& local : StaticsKeptBy(*body)) {
       auto var_type = InternType(
           local.var->getType(), frontend::PointSpanOf(local.var->location));
       if (!var_type) return std::unexpected(std::move(var_type.error()));
@@ -1827,7 +1827,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   // written in the method's scope, whose name it reports (LRM 21.2.1.5).
   for (const slang::ast::SubroutineSymbol* body :
        StaticBodiesOf(defined_methods, constructor_sym)) {
-    for (const SubroutineStatic& local : StaticsDeclaredBy(*body)) {
+    for (const KeptStatic& local : StaticsKeptBy(*body)) {
       const slang::ast::Expression* init = local.var->getInitializer();
       if (init == nullptr) continue;
       auto init_expr = init_lowerer.LowerExpr(*init, static_init_frame);

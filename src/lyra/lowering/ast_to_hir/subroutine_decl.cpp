@@ -24,6 +24,7 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/foreign_import.hpp"
@@ -405,6 +406,40 @@ struct SubroutineLoweringResult {
   std::optional<std::vector<hir::ExprId>> base_arguments;
 };
 
+// The variable `formal` is: one its namespace keeps, named as every name
+// reaching it names it (LRM 13.3.2, 6.21), or one the body declares -- an
+// automatic formal, or a static one each instance keeps.
+auto FormalVariableOf(
+    UnitLowerer& unit_lowerer, ProcessLowerer& lowerer, const WalkFrame& frame,
+    hir::ProceduralBody& body, const slang::ast::FormalArgumentSymbol& formal)
+    -> diag::Result<hir::FormalVariable> {
+  const auto span = frontend::PointSpanOf(formal.location);
+  const auto of_the_body = [&]() -> diag::Result<hir::FormalVariable> {
+    auto type = unit_lowerer.InternType(formal.getType(), span);
+    if (!type) return std::unexpected(std::move(type.error()));
+    return hir::FormalVariable{
+        lowerer.AddProceduralVar(frame, body, formal, *type)};
+  };
+  std::optional<KeptStatic> kept = KeptStaticOf(formal);
+  if (!kept.has_value()) return of_the_body();
+  return std::visit(
+      Overloaded{
+          [&](const KeptByNamespace& by) -> diag::Result<hir::FormalVariable> {
+            auto reference = unit_lowerer.NamespaceValueRefOf(
+                *by.unit, formal, std::move(kept->name), span);
+            if (!reference) {
+              return std::unexpected(std::move(reference.error()));
+            }
+            return hir::FormalVariable{*std::move(reference)};
+          },
+          [](const KeptByClass&) -> diag::Result<hir::FormalVariable> {
+            throw InternalError(
+                "FormalVariableOf: a class keeps a formal, though a class "
+                "method is automatic (LRM 8.6) -- please report this as a bug");
+          }},
+      kept->keeper);
+}
+
 auto LowerSubroutineDeclImpl(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
     WalkFrame frame, const slang::ast::Expression* base_call_ast)
@@ -433,8 +468,8 @@ auto LowerSubroutineDeclImpl(
   }
 
   // A subroutine's root scope is named by the source (LRM 23.9), so a
-  // hierarchical path reaches into it and the formals, the implicit result
-  // var, and every body-tree declaration below all land in it.
+  // hierarchical path reaches into it and the formals the body declares, the
+  // implicit result var, and every body-tree declaration below all land in it.
   OpenProceduralScope root{
       unit_lowerer.LookupProceduralScope(sym),
       hir::ProceduralScopeKind::kSubroutineRoot, NameInAPath(sym)};
@@ -444,16 +479,12 @@ auto LowerSubroutineDeclImpl(
   std::vector<hir::SubroutineParam> params;
   params.reserve(sym.getArguments().size());
   for (const auto* formal : sym.getArguments()) {
-    auto formal_type_or = unit_lowerer.InternType(
-        formal->getType(), frontend::PointSpanOf(formal->location));
-    if (!formal_type_or) {
-      return std::unexpected(std::move(formal_type_or.error()));
-    }
-    const hir::ProceduralVarId var =
-        lowerer.AddProceduralVar(body_frame, body, *formal, *formal_type_or);
+    auto variable =
+        FormalVariableOf(unit_lowerer, lowerer, body_frame, body, *formal);
+    if (!variable) return std::unexpected(std::move(variable.error()));
     params.push_back(
         hir::SubroutineParam{
-            .var = var,
+            .variable = *std::move(variable),
             .direction = ParamDirectionOf(*formal),
             .default_evaluator = DefaultEvaluatorOf(unit_lowerer, *formal)});
   }
@@ -635,7 +666,7 @@ auto LowerEvaluatorDecl(
     if (!type) return std::unexpected(std::move(type.error()));
     params.push_back(
         hir::SubroutineParam{
-            .var = lowerer.AddEvaluatorParameter(
+            .variable = lowerer.AddEvaluatorParameter(
                 body_frame, body, *parameter, *type),
             .direction = EvaluatorParamDirectionOf(*parameter),
             .default_evaluator = std::nullopt});
@@ -817,7 +848,7 @@ auto LowerMethodPrototypeDecl(
         lowerer.AddProceduralVar(body_frame, body, *formal, *formal_type_or);
     params.push_back(
         hir::SubroutineParam{
-            .var = var,
+            .variable = var,
             .direction = ParamDirectionOf(*formal),
             .default_evaluator = DefaultEvaluatorOf(unit_lowerer, *formal)});
   }

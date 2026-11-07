@@ -21,8 +21,8 @@ enum class Passing : std::uint8_t {
 };
 
 // How a formal of `direction` is passed in, or nothing for an `output`, which
-// is a body variable whose final value rides the completion (LRM 13.5); an
-// `inout` is passed its value and rides it back the same way.
+// takes nothing in and whose variable's final value rides the completion (LRM
+// 13.5); an `inout` is passed its value and rides it back the same way.
 [[nodiscard]] constexpr auto ParamPassingOf(hir::ParamDirection direction)
     -> std::optional<Passing> {
   switch (direction) {

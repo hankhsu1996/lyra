@@ -23,6 +23,7 @@
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -36,7 +37,9 @@ void ProcessLowerer::AnalyzeLifetimeExtended(
 
 void ProcessLowerer::ExtendLifetimes(
     std::span<const slang::ast::VariableSymbol* const> vars) {
-  lifetime_extended_.insert(vars.begin(), vars.end());
+  for (const slang::ast::VariableSymbol* var : vars) {
+    if (!HasStaticStorage(*var)) lifetime_extended_.insert(var);
+  }
 }
 
 ProcessLowerer::ProcessLowerer(
@@ -183,9 +186,8 @@ void ProcessLowerer::DefineProceduralVar(
       hir::ProceduralVarDecl{
           .name = std::string{var.name},
           .type = type,
-          .lifetime = var.lifetime == slang::ast::VariableLifetime::Automatic
-                          ? hir::VariableLifetime::kAutomatic
-                          : hir::VariableLifetime::kStatic,
+          .lifetime = HasStaticStorage(var) ? hir::VariableLifetime::kStatic
+                                            : hir::VariableLifetime::kAutomatic,
           .lifetime_extended = lifetime_extended_.contains(&var),
           .init = init});
 }

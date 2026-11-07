@@ -215,20 +215,16 @@ class DeclBuilder {
       auto var = Variable(*formal);
       if (!var) return std::unexpected(std::move(var.error()));
       decl_.formals.push_back(
-          hir::SubroutineParam{
-              .var = *var,
-              .direction = ParamDirectionOf(*formal),
-              .default_evaluator = std::nullopt});
+          hir::CovergroupFormal{
+              .var = *var, .direction = ParamDirectionOf(*formal)});
     }
     for (const slang::ast::FormalArgumentSymbol* formal :
          SampleFormalsOf(first)) {
       auto var = Variable(*formal);
       if (!var) return std::unexpected(std::move(var.error()));
       decl_.sample_formals.push_back(
-          hir::SubroutineParam{
-              .var = *var,
-              .direction = ParamDirectionOf(*formal),
-              .default_evaluator = std::nullopt});
+          hir::CovergroupFormal{
+              .var = *var, .direction = ParamDirectionOf(*formal)});
     }
     if (lineage.size() > 1) {
       auto base =

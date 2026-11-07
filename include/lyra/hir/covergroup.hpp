@@ -21,11 +21,11 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/keyed_identities.hpp"
+#include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/published_covergroup.hpp"
-#include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/support/def_path.hpp"
 
@@ -321,6 +321,15 @@ struct SampledAtBlocks {
 using CoverageSampling =
     std::variant<SampledByCall, SampledOnEvent, SampledAtBlocks>;
 
+// A formal of a covergroup or of its `sample` (LRM 19.3, 19.8.1): a variable of
+// the covergroup's body, and how a construction or a sample hands its value.
+struct CovergroupFormal {
+  ProceduralVarId var;
+  ParamDirection direction = ParamDirection::kInput;
+
+  auto operator==(const CovergroupFormal&) const -> bool = default;
+};
+
 // A covergroup (LRM 19.3) as the source declares it, in a module, an interface,
 // a program, a package, the compilation-unit scope or a class: its formals,
 // which its expressions read; the formals of an overriding `sample` (LRM
@@ -335,8 +344,8 @@ using CoverageSampling =
 // 19.4.1) names `base`, takes its formals and coverpoints, and lists only what
 // it adds or declares again.
 struct CovergroupDecl {
-  std::vector<SubroutineParam> formals;
-  std::vector<SubroutineParam> sample_formals;
+  std::vector<CovergroupFormal> formals;
+  std::vector<CovergroupFormal> sample_formals;
   std::optional<ProceduralVarId> embedding;
   CoverageSampling sampling;
   std::vector<OptionSetting> options;

@@ -1157,6 +1157,14 @@ class UnitLowerer {
       const std::string& unit_name, const slang::ast::SubroutineSymbol& sym,
       diag::SourceSpan span) -> diag::Result<hir::CalleeInterface>;
 
+  // The reference to the variable the namespace `unit` keeps under `name`, the
+  // declaration `value` is: one it declares, or a static variable one of its
+  // subroutines declares, a formal included (LRM 26.2, 6.21, 13.3.2).
+  [[nodiscard]] auto NamespaceValueRefOf(
+      const slang::ast::Symbol& unit, const slang::ast::ValueSymbol& value,
+      support::QualifiedName name, diag::SourceSpan span)
+      -> diag::Result<hir::NamespaceValueRef>;
+
   // The type of the variable `unit_name`'s namespace keeps under `name`, as
   // that namespace published it -- this unit's own read off `var`.
   auto NamespaceVariableType(
