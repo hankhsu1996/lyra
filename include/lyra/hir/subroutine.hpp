@@ -2,8 +2,10 @@
 
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -11,17 +13,25 @@
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
 
-// A formal is also a local variable of the subroutine body; `var` indexes the
-// body's procedural-var arena. `default_evaluator` is, for a subroutine a
+// The variable a formal is, which a call writes what it hands in to and takes
+// what it hands back from (LRM 13.5): a variable of the subroutine's body, or,
+// for a static subroutine of a package or the compilation-unit scope, one of
+// the variables that namespace keeps (LRM 13.3.2, 26.2), which every name
+// reaching it -- the body's own included -- names the same way.
+using FormalVariable = std::variant<ProceduralVarId, NamespaceValueRef>;
+
+// A formal as its subroutine declares it: the variable a call binds at its
+// position, how it binds it, and `default_evaluator` -- for a subroutine a
 // structural scope declares, the subroutine of that scope evaluating the
-// formal's default (LRM 13.5.3), which a call omitting the formal calls; it is
-// absent for a formal with no default, and for a method, whose class states
-// its defaults with the rest of what a call reads of it.
+// formal's default (LRM 13.5.3), which a call omitting the formal calls; absent
+// for a formal with no default, and for a method, whose class states its
+// defaults with the rest of what a call reads of it.
 struct SubroutineParam {
-  ProceduralVarId var = {};
+  FormalVariable variable;
   ParamDirection direction = ParamDirection::kInput;
   std::optional<StructuralSubroutineId> default_evaluator;
 
@@ -51,11 +61,9 @@ struct SubroutineParam {
 // ...;`) and for a subroutine an interface leaves to a connected module to
 // define (LRM 25.7), each of which has a signature and no body. That is
 // distinct from a legal empty body (LRM 8.21 note), which has a statement to
-// enter at. The parameters are still in `body.procedural_vars` and their scope
-// in
-// `body.root_scope`, so a backend can emit the declaration. Whether a method
-// has a receiver (LRM 8.10) is what its class declares of it, not a fact of
-// its body.
+// enter at. Its formals are still declared, so a backend can emit the
+// declaration. Whether a method has a receiver (LRM 8.10) is what its class
+// declares of it, not a fact of its body.
 //
 // `reads` is what a call of a function can read (LRM 9.4.2), stated in terms of
 // its own formals and the object it runs on so a wait calling it can ask. A
@@ -86,5 +94,17 @@ struct SubroutineDecl {
 
   auto operator==(const SubroutineDecl&) const -> bool = default;
 };
+
+// The type of the variable the formal `param` of `decl` binds.
+inline auto FormalTypeOf(
+    const SubroutineDecl& decl, const SubroutineParam& param) -> TypeId {
+  return std::visit(
+      Overloaded{
+          [&](ProceduralVarId var) {
+            return decl.body.procedural_vars.Get(var).type;
+          },
+          [](const NamespaceValueRef& kept) { return kept.value_type; }},
+      param.variable);
+}
 
 }  // namespace lyra::hir

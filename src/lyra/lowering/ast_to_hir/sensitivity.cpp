@@ -393,8 +393,10 @@ auto IsDeclaredInside(
 // Whether a read of `symbol` inside a node is a read of state that is there
 // before the node runs. What is declared outside is; so is a static variable
 // the source declares inside, which lives from time zero (LRM 6.21). An
-// automatic one, a formal and a function's result come into being as the node
-// is entered, and a temporary holds only what the node puts in it.
+// automatic one and a function's result come into being as the node is
+// entered, a formal is left out with every variable a called function
+// declares (LRM 9.2.2.2.1 a), and a temporary holds only what the node puts in
+// it.
 auto IsStateOutside(
     const slang::ast::Symbol& symbol, const NodeDeclarations& declarations)
     -> bool {

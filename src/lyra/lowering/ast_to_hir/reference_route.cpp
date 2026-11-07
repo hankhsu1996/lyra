@@ -1484,49 +1484,64 @@ auto UnitLowerer::ResolveValueTarget(
     const WalkFrame& frame, const slang::ast::ValueSymbol& value,
     RouteOrigin origin, diag::SourceSpan span)
     -> diag::Result<hir::ValueTarget> {
-  // A namespace unit has no instance, so its cell is reached by name rather
-  // than by a route out of the reader's own storage (LRM 26.2, 3.12.1). The
-  // same by-name form serves a referrer in another unit and the owning unit's
-  // own bodies, none of which has a receiver to route through, and the type is
-  // the one the namespace published.
   const auto by_name =
       [&](const slang::ast::Symbol& unit,
           support::QualifiedName name) -> diag::Result<hir::ValueTarget> {
-    std::string unit_name = CompilationUnitName(unit, Names());
-    auto value_type = NamespaceVariableType(unit_name, value, name, span);
-    if (!value_type) return std::unexpected(std::move(value_type.error()));
-    return hir::ValueTarget{hir::NamespaceValueRef{
-        .unit_name = std::move(unit_name),
-        .variable = std::move(name),
-        .value_type = *value_type}};
+    auto reference = NamespaceValueRefOf(unit, value, std::move(name), span);
+    if (!reference) return std::unexpected(std::move(reference.error()));
+    return hir::ValueTarget{*std::move(reference)};
   };
   if (const auto* unit = DeclaringNamespaceUnit(value)) {
     return by_name(*unit, support::UnqualifiedName(std::string{value.name}));
   }
+
+  const auto routed = [&]() -> diag::Result<hir::ValueTarget> {
+    auto route = TranslateReferenceRoute(frame, value, std::move(origin));
+    if (!route) return std::unexpected(std::move(route.error()));
+    if (!route->has_value()) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "reaching the storage '{}' names from here is not yet supported",
+          value.name);
+    }
+    return hir::ValueTarget{*std::move(*route)};
+  };
 
   // A static variable a class or a namespace keeps for one of its subroutines
   // (LRM 6.21) is that keeper's storage as its static properties or its
   // variables are, so every name reaching one -- the subroutine's own, a
   // sibling's, another unit's, whatever path spelled it -- reaches it the way
   // it reaches the keeper's own. One a design element's subroutine declares is
-  // storage of the instance and is routed below.
-  if (std::optional<SubroutineStatic> local = SubroutineStaticOf(value);
-      local.has_value() && local->keeper != nullptr) {
-    if (const auto* cls = local->keeper->as_if<slang::ast::ClassType>()) {
-      return ResolveClassKept(frame, *cls, local->name, span);
-    }
-    return by_name(*local->keeper, std::move(local->name));
-  }
+  // storage of the instance and is routed.
+  std::optional<KeptStatic> kept = KeptStaticOf(value);
+  if (!kept.has_value()) return routed();
+  return std::visit(
+      Overloaded{
+          [&](const KeptByClass& by) {
+            return ResolveClassKept(frame, *by.cls, kept->name, span);
+          },
+          [&](const KeptByNamespace& by) {
+            return by_name(*by.unit, std::move(kept->name));
+          }},
+      kept->keeper);
+}
 
-  auto route = TranslateReferenceRoute(frame, value, std::move(origin));
-  if (!route) return std::unexpected(std::move(route.error()));
-  if (!route->has_value()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "reaching the storage '{}' names from here is not yet supported",
-        value.name);
-  }
-  return hir::ValueTarget{*std::move(*route)};
+auto UnitLowerer::NamespaceValueRefOf(
+    const slang::ast::Symbol& unit, const slang::ast::ValueSymbol& value,
+    support::QualifiedName name, diag::SourceSpan span)
+    -> diag::Result<hir::NamespaceValueRef> {
+  // A namespace unit has no instance, so its cell is reached by name rather
+  // than by a route out of the reader's own storage (LRM 26.2, 3.12.1). The
+  // same by-name form serves a referrer in another unit and the owning unit's
+  // own bodies, none of which has a receiver to route through, and the type is
+  // the one the namespace published.
+  std::string unit_name = CompilationUnitName(unit, Names());
+  auto value_type = NamespaceVariableType(unit_name, value, name, span);
+  if (!value_type) return std::unexpected(std::move(value_type.error()));
+  return hir::NamespaceValueRef{
+      .unit_name = std::move(unit_name),
+      .variable = std::move(name),
+      .value_type = *value_type};
 }
 
 auto UnitLowerer::PublishedClassOf(const slang::ast::Scope& scope)

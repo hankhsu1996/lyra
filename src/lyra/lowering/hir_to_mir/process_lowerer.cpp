@@ -17,7 +17,6 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
-#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
@@ -304,50 +303,38 @@ auto LowerImplicitListProcess(ProcessLowerer& process, const hir::Reads& reads)
       });
 }
 
-// A formal that brings a value in: the parameter the call hands it through,
-// which the variable starts at. Where the body runs as a function call the
-// variable is the parameter itself. A static subroutine's is the one variable
-// every call shares (LRM 13.3.2), and the call assigns it the value it hands
-// in.
+// A formal each activation makes for itself (LRM 13.3.2) that brings a value
+// in: the parameter the call hands it through, which the variable starts at.
+// Where the body runs as a function call the variable is the parameter itself.
 auto DeclareParameterVar(
     ProcessLowerer& process, const WalkFrame& frame, hir::ProceduralVarId var,
     const hir::ProceduralVarDecl& decl) -> mir::LocalId {
-  UnitLowerer& unit_lowerer = process.Owner();
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Builder body = frame.Builder();
-  const mir::TypeId value_type = unit_lowerer.TranslateType(decl.type);
-  const bool is_static = decl.lifetime == hir::VariableLifetime::kStatic;
-  if (!is_static && frame.runs_as_function_call && !decl.lifetime_extended) {
+  const mir::TypeId value_type = process.Owner().TranslateType(decl.type);
+  if (frame.runs_as_function_call && !decl.lifetime_extended) {
     const mir::LocalId parameter = frame.bindings->DeclareProcedural(
         ProceduralOrigin{.var = var}, decl.name, value_type);
     process.MapProceduralVar(var, AutomaticVarBinding{.type = value_type});
     return parameter;
   }
+  mir::Builder body = frame.Builder();
   const mir::LocalId parameter = frame.bindings->DeclareAnonymous(value_type);
-  if (is_static) {
-    const AccessPath variable{
-        .owner = body.Add(LowerProceduralVarRefExpr(process, frame, var)),
-        .descent = {}};
-    body.AppendStmt(
-        mir::ExprStmt{
-            .expr = body.Add(BuildStoreExpr(
-                unit, body, variable, body.ReadLocal(parameter, value_type)))});
-    return parameter;
-  }
   body.AppendStmt(LowerVarStart(process, frame, var, decl.name, [&] {
     return body.ReadLocal(parameter, value_type);
   }));
   return parameter;
 }
 
-// The variables a subroutine's scope declares before its first statement: its
-// formals and, for a non-void function, its result (LRM 13.4.1).
+// The variables a subroutine's scope declares before its first statement: the
+// formals that are variables of its body and, for a non-void function, its
+// result (LRM 13.4.1).
 auto DeclaredAhead(const hir::SubroutineDecl& decl)
     -> std::vector<hir::ProceduralVarId> {
   std::vector<hir::ProceduralVarId> declared;
   declared.reserve(decl.params.size() + 1);
   for (const auto& param : decl.params) {
-    declared.push_back(param.var);
+    if (const auto* var = std::get_if<hir::ProceduralVarId>(&param.variable)) {
+      declared.push_back(*var);
+    }
   }
   if (decl.result_var.has_value()) {
     declared.push_back(*decl.result_var);
@@ -448,35 +435,87 @@ auto ProcessLowerer::LowerSubroutine(
   // where the others do, and the completion reads it from that cell.
   OpenActivationScope(*this, body_frame, DeclaredAhead(src));
 
-  // Formals normalize into the signature's data flow (LRM 13.5). Every formal
-  // is a binding in the callable, identified by its HIR id; one that is no
-  // parameter is a default-initialized body variable instead, whose final value
-  // rides the completion payload -- copied out at completion rather than
-  // aliased live. An `inout` is both a parameter and a payload component.
+  // Formals normalize into the signature's data flow (LRM 13.5). A formal that
+  // brings a value in is a parameter; one that is no parameter brings nothing
+  // in, and its variable's final value rides the completion payload -- copied
+  // out at completion rather than aliased live. An `inout` is both a parameter
+  // and a payload component.
   for (const auto& param : src.params) {
-    const auto& hir_var = src.body.procedural_vars.Get(param.var);
-    const hir::ParamDirection dir = param.direction;
+    const mir::TypeId value_type =
+        owner_->TranslateType(hir::FormalTypeOf(src, param));
     const std::optional<mir::TypeId> param_type =
-        ParamTypeOf(owner_->Unit(), owner_->TranslateType(hir_var.type), dir);
+        ParamTypeOf(owner_->Unit(), value_type, param.direction);
+    const bool by_reference =
+        param_type.has_value() &&
+        unit.types.Get(*param_type).Is<mir::VariableRefType>();
 
-    if (!param_type.has_value()) {
-      body_frame.Builder().AppendStmt(LowerVarStart(
-          *this, body_frame, param.var, hir_var.name,
-          DefaultInitialValue(*this, body_frame, hir_var)));
-      output_vars_.push_back(param.var);
-      continue;
-    }
+    // A variable every call shares (LRM 13.3.2) is assigned what the call hands
+    // in as the body begins; an output there takes nothing in and keeps what
+    // the last call left.
+    const auto shared = [&]() -> std::optional<mir::LocalId> {
+      if (!param_type.has_value()) return std::nullopt;
+      if (by_reference) {
+        throw InternalError(
+            "ProcessLowerer::LowerSubroutine: a formal bound by reference is "
+            "one every call shares, though it stands for the actual each call "
+            "binds (LRM 13.5.2) -- please report this as a bug");
+      }
+      mir::Builder body = body_frame.Builder();
+      const mir::LocalId parameter = bindings.DeclareAnonymous(value_type);
+      const AccessPath place{
+          .owner = body.Add(
+              LowerFormalVariableExpr(*this, body_frame, param.variable)),
+          .descent = {}};
+      body.AppendStmt(
+          mir::ExprStmt{
+              .expr = body.Add(BuildStoreExpr(
+                  owner_->Unit(), body, place,
+                  body.ReadLocal(parameter, value_type)))});
+      return parameter;
+    };
+    // A variable this activation makes starts at what the call hands in, or
+    // at its default where the call hands in nothing.
+    const auto of_this_activation =
+        [&](hir::ProceduralVarId var,
+            const hir::ProceduralVarDecl& decl) -> std::optional<mir::LocalId> {
+      if (!param_type.has_value()) {
+        body_frame.Builder().AppendStmt(LowerVarStart(
+            *this, body_frame, var, decl.name,
+            DefaultInitialValue(*this, body_frame, decl)));
+        return std::nullopt;
+      }
+      if (by_reference) {
+        return DeclareReferenceFormal(bindings, var, decl, *param_type);
+      }
+      return DeclareParameterVar(*this, body_frame, var, decl);
+    };
 
-    if (unit.types.Get(*param_type).Is<mir::VariableRefType>()) {
-      params.push_back(
-          DeclareReferenceFormal(bindings, param.var, hir_var, *param_type));
-      continue;
-    }
-
-    params.push_back(
-        DeclareParameterVar(*this, body_frame, param.var, hir_var));
-    if (dir == hir::ParamDirection::kInOut) {
-      output_vars_.push_back(param.var);
+    const std::optional<mir::LocalId> parameter = std::visit(
+        Overloaded{
+            [&](hir::ProceduralVarId var) -> std::optional<mir::LocalId> {
+              const hir::ProceduralVarDecl& decl =
+                  src.body.procedural_vars.Get(var);
+              switch (decl.lifetime) {
+                case hir::VariableLifetime::kStatic:
+                  return shared();
+                case hir::VariableLifetime::kAutomatic:
+                  return of_this_activation(var, decl);
+              }
+              throw InternalError(
+                  "ProcessLowerer::LowerSubroutine: unknown VariableLifetime");
+            },
+            [&](const hir::NamespaceValueRef&) { return shared(); }},
+        param.variable);
+    if (parameter.has_value()) params.push_back(*parameter);
+    switch (param.direction) {
+      case hir::ParamDirection::kOutput:
+      case hir::ParamDirection::kInOut:
+        output_vars_.push_back(param.variable);
+        break;
+      case hir::ParamDirection::kInput:
+      case hir::ParamDirection::kRef:
+      case hir::ParamDirection::kConstRef:
+        break;
     }
   }
 
@@ -659,17 +698,26 @@ void ProcessLowerer::RegisterConstructorFormals(
     std::vector<mir::LocalId>& params) {
   OpenActivationScope(*this, frame, DeclaredAhead(ctor));
   for (const auto& param : ctor.params) {
+    // A constructor is a class method, automatic (LRM 8.6), so each formal is
+    // a variable of its body.
+    const auto* var = std::get_if<hir::ProceduralVarId>(&param.variable);
+    if (var == nullptr) {
+      throw InternalError(
+          "ProcessLowerer::RegisterConstructorFormals: a constructor's formal "
+          "is kept beyond its body, though a class method is automatic (LRM "
+          "8.6) -- please report this as a bug");
+    }
     switch (param.direction) {
       case hir::ParamDirection::kInput:
         params.push_back(DeclareParameterVar(
-            *this, frame, param.var, ctor.body.procedural_vars.Get(param.var)));
+            *this, frame, *var, ctor.body.procedural_vars.Get(*var)));
         break;
       case hir::ParamDirection::kRef:
       case hir::ParamDirection::kConstRef: {
         const hir::ProceduralVarDecl& declared =
-            ctor.body.procedural_vars.Get(param.var);
+            ctor.body.procedural_vars.Get(*var);
         params.push_back(DeclareReferenceFormal(
-            *frame.bindings, param.var, declared,
+            *frame.bindings, *var, declared,
             *ParamTypeOf(
                 owner_->Unit(), owner_->TranslateType(declared.type),
                 param.direction)));
@@ -839,22 +887,21 @@ auto ProcessLowerer::BuildReturnPayload(
 
   mir::CompilationUnit& unit = owner_->Unit();
   std::vector<mir::ExprId> components;
-  const auto read = [&](hir::ProceduralVarId var) {
+  const auto read = [&](mir::Expr place) {
     return PathValue(
         unit, block,
-        AccessPath{
-            .owner = block.Add(LowerProceduralVarRefExpr(*this, frame, var)),
-            .descent = {}});
+        AccessPath{.owner = block.Add(std::move(place)), .descent = {}});
   };
   // A return's value is the result, bound as the result is passed; a body
   // falling off its end completes with its result variable (LRM 13.4.1).
   if (explicit_value.has_value()) {
     components.push_back(*explicit_value);
   } else if (result_var_.has_value()) {
-    components.push_back(read(*result_var_));
+    components.push_back(
+        read(LowerProceduralVarRefExpr(*this, frame, *result_var_)));
   }
-  for (const hir::ProceduralVarId output : output_vars_) {
-    components.push_back(read(output));
+  for (const hir::FormalVariable& output : output_vars_) {
+    components.push_back(read(LowerFormalVariableExpr(*this, frame, output)));
   }
   return block.Add(
       mir::Expr{

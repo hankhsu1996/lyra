@@ -124,10 +124,10 @@ auto PassedTypeOf(
 
 // The type a formal carries as a parameter of the callable, or nothing where it
 // is no parameter at all: what its direction passes in, which for an `output`
-// is nothing, it being a body local whose final value rides the completion
-// instead (LRM 13.5). This is the sole statement of which formals are
-// parameters, so a definition and the prototype it implements cannot declare
-// different parameter lists.
+// is nothing, since it takes nothing in and its variable's final value rides
+// the completion instead (LRM 13.5). This is the sole statement of which
+// formals are parameters, so a definition and the prototype it implements
+// cannot declare different parameter lists.
 auto ParamTypeOf(
     const mir::CompilationUnit& unit, mir::TypeId value_type,
     hir::ParamDirection direction) -> std::optional<mir::TypeId>;

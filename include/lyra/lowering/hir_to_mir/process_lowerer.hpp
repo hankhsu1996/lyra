@@ -522,7 +522,7 @@ class ProcessLowerer {
   std::optional<hir::ProceduralVarId> result_var_;
   Passing result_passing_ = Passing::kByValue;
   mir::TypeId declared_result_type_;
-  std::vector<hir::ProceduralVarId> output_vars_;
+  std::vector<hir::FormalVariable> output_vars_;
   BodyWriter body_writer_;
 
   std::map<hir::ProceduralVarId, PromotedVarBinding> pending_activation_;

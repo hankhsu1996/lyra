@@ -236,40 +236,56 @@ auto SubroutineNameOf(const slang::ast::SubroutineSymbol& subroutine)
 // reaching into it by a hierarchical name (LRM 23.9) both ask here.
 auto ProceduralStepOf(const slang::ast::Symbol& scope) -> support::DefPathData;
 
-// A static variable a subroutine declares (LRM 6.21): what keeps its storage,
-// where that is the class or the namespace unit holding the subroutine -- one
-// storage per class, per specialization (LRM 8.25), or per run -- and nothing
-// where it is a design element's subroutine, whose instances keep it; and the
-// name the class or the scope holding the subroutine knows it by: the
-// subroutine and every block between, as steps, then the variable's own name
-// (LRM 23.6). A block the source left unlabelled is a step by its position,
-// which no name the source writes reaches.
-struct SubroutineStatic {
+// Whether `var` is storage that outlives each activation of its scope (LRM
+// 6.21). A formal bound by reference is not, whatever lifetime its subroutine
+// gives the rest: it stands for the actual each call binds and allocates
+// nothing (LRM 13.5.2).
+auto HasStaticStorage(const slang::ast::VariableSymbol& var) -> bool;
+
+// The class keeps one per class and per specialization (LRM 8.25), for a
+// method.
+struct KeptByClass {
+  const slang::ast::ClassType* cls = nullptr;
+};
+
+// The package or the compilation-unit scope keeps one for the run, for a
+// subroutine it declares (LRM 26.2).
+struct KeptByNamespace {
+  const slang::ast::Symbol* unit = nullptr;
+};
+
+// What keeps a static variable a subroutine declares beyond the subroutine's
+// body: whatever replicates the subroutine's declaration, where that is not a
+// design element's instance, which keeps it as a variable of the body.
+using StaticKeeper = std::variant<KeptByClass, KeptByNamespace>;
+
+// A static variable a class or a namespace keeps for one of its subroutines
+// (LRM 6.21), each formal of a static subroutine among them (LRM 13.3.2): what
+// keeps it, and the name the keeper knows it by -- the subroutine and every
+// block between, as steps, then the variable's own name (LRM 23.6). A block the
+// source left unlabelled is a step by its position, which no name the source
+// writes reaches.
+struct KeptStatic {
   const slang::ast::VariableSymbol* var = nullptr;
-  const slang::ast::Symbol* keeper = nullptr;
+  StaticKeeper keeper;
   support::QualifiedName name;
 };
 
-// The above for `value`, where it is a static variable a subroutine declares,
-// and nothing for any other value -- a formal included, which a call binds.
-auto SubroutineStaticOf(const slang::ast::ValueSymbol& value)
-    -> std::optional<SubroutineStatic>;
+// The above for `value`, and nothing for any other value: an automatic one, or
+// one a design element's subroutine declares.
+auto KeptStaticOf(const slang::ast::ValueSymbol& value)
+    -> std::optional<KeptStatic>;
 
-// Every static variable `subroutine` declares, in the order its body declares
-// them.
-auto StaticsDeclaredBy(const slang::ast::SubroutineSymbol& subroutine)
-    -> std::vector<SubroutineStatic>;
+// Every static variable a class or a namespace keeps for `subroutine`, in the
+// order its body declares them: none for a design element's subroutine.
+auto StaticsKeptBy(const slang::ast::SubroutineSymbol& subroutine)
+    -> std::vector<KeptStatic>;
 
 // The innermost scope around `var`'s declaration the source named -- its
 // subroutine or a labelled block -- which a construct written there reports as
 // where it is (LRM 21.2.1.5); a block the source left unlabelled has no name.
 auto NamedScopeAround(const slang::ast::VariableSymbol& var)
     -> const slang::ast::Symbol&;
-
-// Whether `value` is a static variable a class or a namespace keeps for one of
-// its subroutines: the keeper declares it, and the subroutine's body names it
-// as every other body does.
-auto KeptBeyondItsBody(const slang::ast::ValueSymbol& value) -> bool;
 
 // Which declaration of its compilation unit `declaration` is: one step for each
 // scope the source nests it in, from the unit's own scope down, and one for the

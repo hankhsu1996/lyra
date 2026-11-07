@@ -152,8 +152,8 @@ auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
     formals.push_back(
         CalleeFormal{
             .direction = param.direction,
-            .type = unit_lowerer.TranslateType(
-                decl.body.procedural_vars.Get(param.var).type)});
+            .type =
+                unit_lowerer.TranslateType(hir::FormalTypeOf(decl, param))});
   }
   return formals;
 }
@@ -212,19 +212,19 @@ auto SubroutineCallTypeOf(
 
 namespace {
 
-// The variable a subroutine's declaration states for one of its formals.
-struct FormalVariable {
+// The variable of a subroutine's body a formal is.
+struct BodyVariable {
   hir::ProceduralVarId var;
   std::optional<std::string> name;
 };
 
 // One formal as a prototype declares it: its value type and direction, and its
 // variable where the prototype is read off a declaration rather than off what
-// a unit published.
+// a unit published and the formal is a variable of the body.
 struct PrototypeFormal {
   hir::TypeId type;
   hir::ParamDirection direction;
-  std::optional<FormalVariable> declared;
+  std::optional<BodyVariable> declared;
 };
 
 // A prototype taking `self`, then each of `formals` that is a parameter, then
@@ -284,13 +284,17 @@ auto PrototypeOf(
   std::vector<PrototypeFormal> formals;
   formals.reserve(decl.params.size());
   for (const hir::SubroutineParam& param : decl.params) {
-    const hir::ProceduralVarDecl& var =
-        decl.body.procedural_vars.Get(param.var);
+    const auto* var = std::get_if<hir::ProceduralVarId>(&param.variable);
     formals.push_back(
         PrototypeFormal{
-            .type = var.type,
+            .type = hir::FormalTypeOf(decl, param),
             .direction = param.direction,
-            .declared = FormalVariable{.var = param.var, .name = var.name}});
+            .declared =
+                var == nullptr
+                    ? std::nullopt
+                    : std::optional{BodyVariable{
+                          .var = *var,
+                          .name = decl.body.procedural_vars.Get(*var).name}}});
   }
   return BuildPrototype(
       unit_lowerer, self, decl.kind, formals,

@@ -168,10 +168,7 @@ auto DumpedKindOf(const slang::ast::ValueSymbol& value)
     return std::nullopt;
   }
   const auto* variable = value.as_if<slang::ast::VariableSymbol>();
-  if (variable == nullptr ||
-      variable->lifetime != slang::ast::VariableLifetime::Static) {
-    return std::nullopt;
-  }
+  if (variable == nullptr || !HasStaticStorage(*variable)) return std::nullopt;
   return DumpedKindOfVariableType(value.getType());
 }
 
@@ -1471,8 +1468,7 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
   // A static variable of a namespace unit's subroutine is one of the
   // namespace's variables (LRM 6.21, 26.2), declared here with its initializer,
   // which runs with theirs before any process starts (LRM 10.5).
-  for (const SubroutineStatic& local : StaticsDeclaredBy(sym)) {
-    if (local.keeper == nullptr) continue;
+  for (const KeptStatic& local : StaticsKeptBy(sym)) {
     const auto span = frontend::PointSpanOf(local.var->location);
     auto type = owner_->InternType(local.var->getType(), span);
     if (!type) return std::unexpected(std::move(type.error()));

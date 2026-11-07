@@ -63,7 +63,7 @@ auto LowerVariableDeclStmt(
   // A static variable a class or a namespace keeps for this subroutine is the
   // keeper's declaration, set up with the keeper's own storage before any
   // process starts (LRM 6.21, 10.5), so it declares nothing of this body.
-  if (KeptBeyondItsBody(sym)) return LowerEmptyStmt(span);
+  if (KeptStaticOf(sym).has_value()) return LowerEmptyStmt(span);
   auto type_id_or = proc.Owner().InternType(
       sym.getType(), frontend::PointSpanOf(sym.location));
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));

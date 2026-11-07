@@ -906,13 +906,12 @@ void UnitLowerer::DeclareProceduralStatics(
     // one elaboration gave it.
     const auto* var = member.as_if<slang::ast::VariableSymbol>();
     const auto* constant = member.as_if<slang::ast::ParameterSymbol>();
-    const bool held = (var != nullptr &&
-                       var->lifetime == slang::ast::VariableLifetime::Static) ||
+    const bool held = (var != nullptr && HasStaticStorage(*var)) ||
                       (constant != nullptr && DiffersPerObject(*constant));
     if (!held) continue;
     // A namespace unit's subroutine has no instance to replicate its statics;
     // the namespace keeps them as its own variables.
-    if (var != nullptr && KeptBeyondItsBody(*var)) continue;
+    if (var != nullptr && KeptStaticOf(*var).has_value()) continue;
 
     const hir::ProceduralVarId id =
         procedural_static_vars_[&body_symbol].Declare();

@@ -145,11 +145,10 @@ auto RunDefinition(
       CalleeFormalsOf(unit_lowerer, declared), std::nullopt);
   for (std::size_t i = 0; i < declared.params.size(); ++i) {
     const hir::SubroutineParam& param = declared.params[i];
-    const hir::TypeId source =
-        declared.body.procedural_vars.Get(param.var).type;
+    const hir::TypeId source = hir::FormalTypeOf(declared, param);
     const mir::TypeId value = unit_lowerer.TranslateType(source);
     const auto named = [&] {
-      return block.Add(LowerProceduralVarRefExpr(process, frame, param.var));
+      return block.Add(LowerFormalVariableExpr(process, frame, param.variable));
     };
     const auto read = [&] {
       return PathValue(

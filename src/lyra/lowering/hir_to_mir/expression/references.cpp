@@ -5,7 +5,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/integral_constant.hpp"
@@ -236,6 +235,20 @@ auto LowerNamespaceValueRefExpr(
                       .variable =
                           unit_lowerer.NamespaceVariable(r, cell_type)}},
       .type = cell_type};
+}
+
+auto LowerFormalVariableExpr(
+    ProcessLowerer& process, const WalkFrame& frame,
+    const hir::FormalVariable& variable) -> mir::Expr {
+  return std::visit(
+      Overloaded{
+          [&](hir::ProceduralVarId var) {
+            return LowerProceduralVarRefExpr(process, frame, var);
+          },
+          [&](const hir::NamespaceValueRef& kept) {
+            return LowerNamespaceValueRefExpr(process.Owner(), kept);
+          }},
+      variable);
 }
 
 auto LowerHirIntegralConstant(const hir::IntegralConstant& c)

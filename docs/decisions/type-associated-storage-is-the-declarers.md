@@ -1,7 +1,7 @@
 # Storage a type owns is brought up by whatever brings up its declarer
 
 Date: 2026-09-10 Status: accepted; D5 added 2026-11-06, which corrects what D2 assumed of a method's
-static
+static, and extended 2026-11-07 to a static subroutine's formals
 
 ## Status
 
@@ -155,6 +155,17 @@ subroutines' statics beside its own variables the same way, and publishes both i
 each by its qualified name and type, which is what another unit naming one reads (north star
 invariant 5).
 
+A static subroutine's formals are among them. Its declared items are statically allocated, input,
+output and inout formals included, and keep their values between calls (LRM 13.3.1, 13.3.2), so
+`P::t.a` is a static variable of `t` like any other, and its keeper declares it with no initializer:
+it holds its type's default until a call writes it. The subroutine's parameter list names that entry
+as the variable its position binds, and a call writes the value it hands in to it and takes the
+values it hands back from it. A class keeps none, because a class method is automatic (LRM 8.6).
+This entry first stated D5 for a variable a subroutine declares in its body, and the lowering read
+that as the front end's declared variables only, so a formal stayed a variable of the body: the
+subroutine's own bare name reached it, and every path naming it, its own `t.a` included, was an
+internal error or a refusal.
+
 The reason it is the keeper's entry rather than the body's own variable is the unit boundary.
 Another unit has no body of the subroutine, only the keeper's published declaration, and a key is
 turned into a unit's id once, one id per declaration (HIR invariant 2); a body-local id in the
@@ -210,7 +221,7 @@ symbol.
 
 ## Cross-references
 
-- LRM 6.21, 8.9, 8.10, 9.4.2, 10.3.2, 10.5, 26.2
+- LRM 6.8, 6.21, 8.6, 8.9, 8.10, 9.4.2, 10.3.2, 10.5, 13.3.1, 13.3.2, 26.2
 - JVMS SE21 5.4.2 (preparation) and 5.5 (initialization)
 - Itanium C++ ABI 2.8 (initialization guard variables)
 - The Go Programming Language Specification, Package initialization

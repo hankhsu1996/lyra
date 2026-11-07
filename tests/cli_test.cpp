@@ -1369,6 +1369,55 @@ TEST(LyraRun, AForceOnPartOfAVariableHoldsOnlyThatPart) {
       << stream.stderr_text;
 }
 
+// A `ref` formal is allowed only in an automatic subroutine (LRM 13.5.2), and
+// run when the caller asks for it in a static one. A formal bound by reference
+// stands for the actual each call binds and holds no storage of its own, so it
+// writes that actual whatever lifetime the subroutine gives its other items, a
+// package's task as much as a module's.
+TEST(LyraRun, AReferenceFormalOfAStaticSubroutineWritesItsActual) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "ref.sv",
+      "package P;\n"
+      "  task bump(ref int r);\n"
+      "    r = r + 1;\n"
+      "  endtask\n"
+      "endpackage\n"
+      "module Test;\n"
+      "  int x = 1;\n"
+      "  int y = 10;\n"
+      "  task add_two(ref int r);\n"
+      "    r = r + 2;\n"
+      "  endtask\n"
+      "  initial begin\n"
+      "    P::bump(x);\n"
+      "    P::bump(y);\n"
+      "    add_two(x);\n"
+      "    if (x !== 4 || y !== 11)\n"
+      "      $fatal(1, \"the actuals read %0d and %0d, expected 4 and 11\", x, "
+      "y);\n"
+      "    $display(\"All checks passed\");\n"
+      "  end\n"
+      "endmodule\n");
+  const auto strict = RunLyraFrom(lyra, *tmp_or, "check --top Test ref.sv");
+  EXPECT_THAT(strict, ExitedWithCode(Ne(0)))
+      << "the default reading accepted it";
+
+  for (const char* backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "run --backend {} --compat all --top Test ref.sv", backend));
+    ASSERT_THAT(run, ExitedWithCode(0)) << backend << ": " << run.stderr_text;
+    EXPECT_NE(run.stdout_text.find("All checks passed"), std::string::npos)
+        << backend << ": " << run.stdout_text;
+  }
+}
+
 // An interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) may not be
 // left unconnected, and a top's ports are connected to nothing, so a module
 // declaring either is a design element and not a design. The front end refuses
