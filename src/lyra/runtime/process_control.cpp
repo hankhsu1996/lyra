@@ -110,7 +110,7 @@ void ProcessKill(
   const base::SourceLocationScope bound(at);
   // `self` holds the target for the whole call.
   RuntimeProcess::Kill(ControlledProcessOf(self, "kill"), runtime);
-  TakeDepartureIfDue(runtime.CurrentProcess());
+  TakeDepartureIfDue(runtime);
 }
 
 auto ProcessAwait(
@@ -119,7 +119,7 @@ auto ProcessAwait(
   const base::SourceLocationScope bound(at);
   // The checks are here at the call, symmetric with `suspend`, so the wait
   // itself is pure readiness.
-  if (&ControlledProcessOf(self, "await") == &runtime.CurrentProcess()) {
+  if (&ControlledProcessOf(self, "await") == runtime.TryCurrentProcess()) {
     // LRM 9.7.
     throw SimulationError(
         "'process::await' on the calling process is not allowed");
@@ -134,7 +134,7 @@ void ProcessSuspend(
   // The activation layer does the state transition and the detach; nothing
   // here schedules.
   RuntimeProcess& target = ControlledProcessOf(self, "suspend");
-  if (&target == &runtime.CurrentProcess()) {
+  if (&target == runtime.TryCurrentProcess()) {
     // LRM 9.7.
     throw SimulationError(
         "'process::suspend' on the calling process is not allowed");

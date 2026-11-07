@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 
@@ -47,7 +48,7 @@ void CancellationTarget::Invalidate(RuntimeEffects& effects) {
 
 void EnterCancellationTarget(
     RuntimeEffects& effects, CancellationTarget* target) {
-  effects.CurrentProcess().PushEnclosingTarget(target);
+  effects.Running().targets.Push(target);
 }
 
 void LeaveCancellationTarget(
@@ -55,18 +56,23 @@ void LeaveCancellationTarget(
   // A body's extent is left on every way out of it, and one of those ways runs
   // with nothing of the design executing: the frame of an execution still
   // suspended when the run ends is released where it stands, which runs the
-  // cleanups it was holding open. There is no execution to withdraw the
-  // membership from then, and none that could still consult it (LRM 9.6.2).
-  if (RuntimeProcess* process = effects.TryCurrentProcess();
-      process != nullptr) {
-    process->PopEnclosingTarget(target);
+  // cleanups it was holding open. There is nothing to withdraw the entry from
+  // then, and nothing that could still consult it (LRM 9.6.2).
+  if (RunningState* running = effects.TryRunning(); running != nullptr) {
+    running->targets.Pop(target);
   }
 }
 
 void TakeDepartureIfDue(RuntimeEffects& effects) {
   if (RuntimeProcess* process = effects.TryCurrentProcess();
-      process != nullptr) {
-    TakeDepartureIfDue(*process);
+      process != nullptr && process->TerminationIsDue()) {
+    RaiseUnclaimableEffect();
+  }
+  if (const RunningState* running = effects.TryRunning(); running != nullptr) {
+    if (CancellationTarget* target = running->targets.OutermostInvalidated();
+        target != nullptr) {
+      throw ControlEffect{.target = target};
+    }
   }
 }
 
@@ -74,7 +80,8 @@ void TakeDepartureIfDue(RuntimeProcess& process) {
   if (process.TerminationIsDue()) {
     RaiseUnclaimableEffect();
   }
-  if (CancellationTarget* target = process.OutermostInvalidatedTarget();
+  if (CancellationTarget* target =
+          process.Running().targets.OutermostInvalidated();
       target != nullptr) {
     throw ControlEffect{.target = target};
   }
@@ -86,8 +93,17 @@ auto RegionLandsEffect(
   if (effect.target != target) {
     return false;
   }
-  const RuntimeProcess* process = effects.TryCurrentProcess();
-  return process == nullptr || !process->DepartureIsDue();
+  return !RunningDepartureIsDue(effects);
+}
+
+auto RunningDepartureIsDue(RuntimeEffects& effects) -> bool {
+  if (const RuntimeProcess* process = effects.TryCurrentProcess();
+      process != nullptr && process->TerminationIsDue()) {
+    return true;
+  }
+  const RunningState* running = effects.TryRunning();
+  return running != nullptr &&
+         running->targets.OutermostInvalidated() != nullptr;
 }
 
 void RaiseUnclaimableEffect() {
@@ -146,7 +162,7 @@ CancellationTarget::~CancellationTarget() = default;
 
 void Disable(CancellationTarget* target, RuntimeEffects& effects) {
   target->Invalidate(effects);
-  TakeDepartureIfDue(effects.CurrentProcess());
+  TakeDepartureIfDue(effects);
 }
 
 }  // namespace lyra::runtime

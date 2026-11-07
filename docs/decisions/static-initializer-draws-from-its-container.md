@@ -54,11 +54,11 @@ registration does. A namespace is not instantiated and names nothing: its initia
 for its one bring-up, so its generator starts from the default seed. That is what gives every
 package the same starting point and keeps one package's draws out of another's.
 
-Seeds therefore leave an instance in one order: its static initialization first, then each static
-process as it is created, because initialization runs before activation. The standard accepts that
-adding work shifts what comes after it -- 18.14.1 tells a user adding threads to add them at the end
-of a code block to keep earlier draws where they were -- so an order fixed by structure is the whole
-of what stability requires.
+Seeds therefore leave an instance in one order: its static initialization first, one more for each
+object it makes, then each static process as it is created, because initialization runs before
+activation. The standard accepts that adding work shifts what comes after it -- 18.14.1 tells a user
+adding threads to add them at the end of a code block to keep earlier draws where they were -- so an
+order fixed by structure is the whole of what stability requires.
 
 ### One static initialization per scope, which the standard leaves open
 
@@ -134,17 +134,24 @@ legal program can express, so it is a compiler-invariant failure rather than a r
   that names none.
 - Two instances of one module see the same static-initializer draws, and a package's draws do not
   move when another package is added.
-- Each scope's static initialization consumes one seed from its instance ahead of that instance's
-  static processes, so a design's process seeds shift by one against what the runtime handed out
-  before. Nothing observable about a conforming program depends on which seeds those are.
+- Each scope's static initialization consumes one seed from its instance, and one more for each
+  object it makes, ahead of that instance's static processes, so a design's process seeds shift by
+  that many against what the runtime handed out before. Nothing observable about a conforming
+  program depends on which seeds those are.
 - The generator type is named for what it does rather than for a process, because a static
   initialization is not one.
 - **An object created by a static initializer is not seeded from what that initializer draws from.**
   LRM 18.14.1 names the source outright: with no active thread, the created object's RNG takes the
-  next value of the container's own initialization RNG. What is installed here is one step removed
-  from that, so object stability will need the container reachable during a static initialization as
-  well as the generator -- a second thing for the extent to carry. Nothing asks for it yet, because
-  no object holds an RNG until `randomize()` lands.
+  next split of the container's own initialization RNG, so what the extent installs carries the
+  container beside the generator, and an object made there splits the container's.
+- **A static initialization is one kind of code that runs on no thread; a deferred body that
+  evaluates what the source wrote is the other.** A `$strobe`'s arguments run after every process of
+  their time step (LRM 21.2.2), and the body installs what it took where it was made, the same shape
+  as the extent here; its generator is one the code that made it hands over rather than a split of
+  the initialization RNG, because 18.14.1 lists static initializers among what that RNG serves and
+  lists nothing else run on no thread, and a split taken as such bodies run would depend on the
+  order the threads that made them ran in (18.14.2). An object made in such a body splits the body's
+  own generator.
 
 ## Cross-references
 

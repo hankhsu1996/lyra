@@ -8,6 +8,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/source_location.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
+#include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/dpi_scope_handles.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/running_state.hpp"
@@ -54,20 +55,8 @@ auto HandStringToForeignCaller(
   return effects.Running().import_calls.HandToForeignCaller(text);
 }
 
-namespace {
-
-// Whether this execution is in the disabled state of LRM 35.9. Kept apart from
-// the int the boundary answers with, because what the checks need is the
-// predicate and what crosses the boundary is the standard's own encoding of it.
-auto IsDisabled(RuntimeEffects& effects) -> bool {
-  const RuntimeProcess* process = effects.TryCurrentProcess();
-  return process != nullptr && process->DepartureIsDue();
-}
-
-}  // namespace
-
 auto DisableIsActive(RuntimeEffects& effects) -> std::int32_t {
-  return IsDisabled(effects) ? 1 : 0;
+  return RunningDepartureIsDue(effects) ? 1 : 0;
 }
 
 void AcknowledgeStop(RuntimeEffects& effects) {
@@ -78,7 +67,7 @@ void AcknowledgeStop(RuntimeEffects& effects) {
 
 void CheckImportTaskAcknowledged(
     RuntimeEffects& effects, std::int32_t returned, base::SourceLocation at) {
-  if (!IsDisabled(effects) || returned == 1) {
+  if (!RunningDepartureIsDue(effects) || returned == 1) {
     return;
   }
   // LRM 35.9 item b.
@@ -91,7 +80,7 @@ void CheckImportTaskAcknowledged(
 
 void CheckImportFunctionAcknowledged(
     RuntimeEffects& effects, base::SourceLocation at) {
-  if (!IsDisabled(effects)) {
+  if (!RunningDepartureIsDue(effects)) {
     return;
   }
   RunningState* running = effects.TryRunning();
@@ -108,7 +97,7 @@ void CheckImportFunctionAcknowledged(
 
 void CheckExportReachable(RuntimeEffects& effects) {
   RequireAContextImportCall(effects);
-  if (!IsDisabled(effects)) {
+  if (!RunningDepartureIsDue(effects)) {
     return;
   }
   // LRM 35.9 item d.

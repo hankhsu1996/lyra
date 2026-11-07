@@ -1702,6 +1702,8 @@ class ClassWriter {
               ClosureBuilder postponed(
                   unit, claimed.Frame(), support::ClosureKind::kFn,
                   CapturePolicy{});
+              RunDeferredBodyOnNoThread(
+                  claimed.Lowering(), claimed.Frame(), postponed);
               const Writer later = claimed.At(postponed.Frame());
               later.Do(later.Call(
                   later.Read(Record(later)), Refs().group_instance,

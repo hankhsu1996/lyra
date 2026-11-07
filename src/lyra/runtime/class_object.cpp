@@ -15,17 +15,8 @@
 
 namespace lyra::runtime {
 
-namespace {
-
-// The generator of an object made now (LRM 18.14.1): the next split of
-// whatever is running, a process or a static initialization.
-auto SplitFromRunning() -> DrawRng {
-  return current_runtime().Running().generator->Split();
-}
-
-}  // namespace
-
-ClassObject::ClassObject() : generator_(SplitFromRunning()) {
+ClassObject::ClassObject()
+    : generator_(current_runtime().Running().ObjectGenerator()) {
 }
 
 ClassObject::ClassObject(
@@ -37,7 +28,8 @@ ClassObject::~ClassObject() = default;
 
 // A copy's generator is its own, as a new object's is.
 ClassObject::ClassObject(const ClassObject& other)
-    : GcObject(other), generator_(SplitFromRunning()) {
+    : GcObject(other),
+      generator_(current_runtime().Running().ObjectGenerator()) {
 }
 
 // Assigning changes what an object holds, and its generator is not among

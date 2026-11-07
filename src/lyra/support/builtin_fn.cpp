@@ -1290,7 +1290,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "assertion_control_submit_observed",
           .declaration = Method{"SubmitObserved"},
-          .takes_the_location = false,
           .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kAssertionControlSubmitFinal:
       return {
@@ -2059,6 +2058,17 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "require_caller_may_schedule_after_return",
           .declaration = RuntimeFunction("RequireCallerMayScheduleAfterReturn"),
           .takes_the_runtime_handle = true};
+    case BuiltinFn::kTakeNoThreadContext:
+      return {
+          .name = "take_no_thread_context",
+          .declaration = RuntimeFunction("TakeNoThreadContext"),
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false};
+    case BuiltinFn::kEnterNoThread:
+      return {
+          .name = "enter_no_thread",
+          .declaration = Method{"Enter"},
+          .takes_the_location = false};
     case BuiltinFn::kDisable:
       return {
           .name = "disable",

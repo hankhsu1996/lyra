@@ -125,6 +125,8 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_disable_fork", &lyra_rt_disable_fork);
   add("lyra_rt_require_caller_may_schedule_after_return",
       &lyra_rt_require_caller_may_schedule_after_return);
+  add("lyra_rt_take_no_thread_context", &lyra_rt_take_no_thread_context);
+  add("lyra_rt_enter_no_thread", &lyra_rt_enter_no_thread);
   add("lyra_rt_cancellation_for", &lyra_rt_cancellation_for);
   add("lyra_rt_is_cancelled", &lyra_rt_is_cancelled);
   add("lyra_rt_closure_box_end", &lyra_rt_closure_box_end);
@@ -906,6 +908,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dpi_logic_buffer_copy", &lyra_rt_dpi_logic_buffer_copy);
   add("lyra_rt_dpi_open_array_copy", &lyra_rt_dpi_open_array_copy);
   add("lyra_rt_channel_cancellation_copy", &lyra_rt_channel_cancellation_copy);
+  add("lyra_rt_no_thread_context_copy", &lyra_rt_no_thread_context_copy);
   add("lyra_rt_reference_copy", &lyra_rt_reference_copy);
   add("lyra_rt_any_reference_copy", &lyra_rt_any_reference_copy);
   add("lyra_rt_weak_reference_copy", &lyra_rt_weak_reference_copy);
@@ -928,6 +931,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dpi_logic_buffer_move", &lyra_rt_dpi_logic_buffer_move);
   add("lyra_rt_dpi_open_array_move", &lyra_rt_dpi_open_array_move);
   add("lyra_rt_channel_cancellation_move", &lyra_rt_channel_cancellation_move);
+  add("lyra_rt_no_thread_context_move", &lyra_rt_no_thread_context_move);
   add("lyra_rt_reference_move", &lyra_rt_reference_move);
   add("lyra_rt_any_reference_move", &lyra_rt_any_reference_move);
   add("lyra_rt_weak_reference_move", &lyra_rt_weak_reference_move);
@@ -1510,6 +1514,8 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_loop_blocks_construct", &lyra_rt_loop_blocks_construct);
   add("lyra_rt_channel_cancellation_construct",
       &lyra_rt_channel_cancellation_construct);
+  add("lyra_rt_no_thread_context_construct",
+      &lyra_rt_no_thread_context_construct);
   add("lyra_rt_shared_pointer_construct", &lyra_rt_shared_pointer_construct);
   add("lyra_rt_string_cell_destroy", &lyra_rt_string_cell_destroy);
   add("lyra_rt_bitvec_cell_destroy", &lyra_rt_bitvec_cell_destroy);

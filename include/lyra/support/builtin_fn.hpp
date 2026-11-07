@@ -596,9 +596,8 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 19.9: the coverage database is written once the run has ended, after
   // the final procedures.
   kSubmitAtRunEnd,
-  // LRM 16.5, 12.4.2.1: the Observed region's effects of the current slot,
-  // where a concurrent assertion's tick is evaluated and a violation report
-  // matures.
+  // LRM 16.5: the Observed region's effects of the current slot, where a
+  // concurrent assertion's tick is evaluated.
   kObservedEffects,
   // What each keeper of deferred effects implements keeping by: the
   // allocation function a placement new-expression on the keeper names, which
@@ -618,7 +617,8 @@ enum class BuiltinFn : std::uint16_t {
   // action runs as: the observed (`#0`) form matures in Observed and runs its
   // action in Reactive, the final form matures and runs in Postponed, and both
   // ride the executing process's deferred report queue, which the runtime
-  // reads ambiently.
+  // reads ambiently. The observed form takes where it is written, and is
+  // refused once the slot is in its Postponed region.
   kAssertionControlRegisterIn,
   kAssertionControlRegister,
   kAssertionControlRegisterWithin,
@@ -1062,6 +1062,14 @@ enum class BuiltinFn : std::uint16_t {
   // an error unless an initial or always procedure, or a fork of one, created
   // the running thread. Takes only the runtime handle.
   kRequireCallerMayScheduleAfterReturn,
+  // What a deferred body that evaluates what the source wrote takes where it
+  // is made -- the context it runs in on no thread once its region runs it,
+  // and the generator what is running hands over to it (LRM 21.2.2, 18.14) --
+  // and the entry the body opens with, which takes that context on until the
+  // effect running the body returns. The first takes the runtime handle, and
+  // the second is entered on the context.
+  kTakeNoThreadContext,
+  kEnterNoThread,
   // LRM 9.6.2 `disable <named block or task>`. `kDisable` is the statement
   // itself: it invalidates the named target, wakes the executions blocked
   // inside it so each resumes past it, ends the activities enabled within it,

@@ -127,7 +127,7 @@ by which completion a solver happened to find.
 
 ## Consequences
 
-- Every class object holds the 32 bytes of its generator, as
+- Every class object holds the 40 bytes of its generator, as
   `a-generator-is-split-from-the-one-that-made-it.md` foresaw, and for an object `new` makes the
   generator that made it advances by four draws; a process's is its thread's, which nothing splits
   again. Randomizing a process, which declares no random variable, draws nothing from that

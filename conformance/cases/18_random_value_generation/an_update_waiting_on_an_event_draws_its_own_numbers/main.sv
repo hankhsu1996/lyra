@@ -2,9 +2,9 @@
 // execution the standard makes no process of (LRM 9.4.5), which still
 // evaluates the control: where the statement stands, and again at each change
 // that might be its event. Being no thread, it takes no value from the
-// procedure that reached the statement; what it draws comes from a generator
-// of its own, the next one of its instance's initialization RNG, as an object
-// made with no active thread takes its own (LRM 18.14.1).
+// procedure that reached the statement, whose sequence depends only on its own
+// draws and thread creations (LRM 18.14); what it draws comes from a generator
+// of its own.
 //
 // So two such updates draw apart, two instances of one module start from the
 // same seed (LRM 18.14.1) and draw alike however many changes the control is

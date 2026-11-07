@@ -196,9 +196,9 @@ the region-owned value directly -- and what was missing was a way for MIR to say
   the keeper is found and so before a delay is evaluated (LRM 9.4.5); a value already lying in
   storage is read where the effect is made, so the effect is built once, in the keeper's storage.
 - The keeper's type says which protocol it keeps by -- a region's effects, or the keeper of
-  violation reports, which keeps a report in the Observed region unless its process is flushed first
-  -- and each keeper type has its own allocation function and commit entry, which the placement and
-  the commit name.
+  violation reports, which keeps a report until it matures unless its process is flushed first --
+  and each keeper type has its own allocation function and commit entry, which the placement and the
+  commit name.
 - A node of its own for making a closure in a keeper, naming the keeper and the closure's
   construction, was built first and dropped: it wrote one library type's operation as an IR node,
   which neither clang nor rustc has, where both state the same thing over placement new. A generic
@@ -208,10 +208,11 @@ the region-owned value directly -- and what was missing was a way for MIR to say
   once and only named twice, by the storage and by the commit, as a C++ reader sees `k` twice in
   `k->Commit(::new (k) T(...))`.
 - A region's commit allocates nothing, so an effect made for a region is always kept. The keeper of
-  violation reports commits a report by making, in the Observed region, the condition that holds it,
-  so its commit can raise for a failed allocation alone, and the report then ends unrun, as the
-  statement that raised keeps nothing. An effect whose construction raises leaves bytes handed out
-  and never committed, which are never handed out again; only a failed allocation can raise there.
+  violation reports commits a report by making, in the region it matures in, the condition that
+  holds it, so its commit can raise for a failed allocation alone, and the report then ends unrun,
+  as the statement that raised keeps nothing. An effect whose construction raises leaves bytes
+  handed out and never committed, which are never handed out again; only a failed allocation can
+  raise there.
 - The pointer type gains no allocator. A box carrying its allocator in its type (Rust's `Box<T, A>`)
   was considered and rejected: its one reader would be the keep that takes it at once, so the
   allocator would be stated in a type only to be read off by the next node.

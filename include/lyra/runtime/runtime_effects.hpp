@@ -181,14 +181,20 @@ class RuntimeEffects {
   // signal only the last value the pass's drives gave it (LRM 14.16.2).
   [[nodiscard]] auto PassEndEffects() -> DeferredEffects*;
   [[nodiscard]] auto PostponedEffects() -> DeferredEffects*;
-  // LRM 16.5, 12.4.2.1: the deferred effects of the Observed region of the
-  // current slot, where a concurrent assertion is evaluated once every region
-  // in which that step settles the values it reads has run, and where a
-  // violation report matures.
+  // LRM 16.5: the deferred effects of the Observed region of the current
+  // slot, where a concurrent assertion is evaluated once every region in
+  // which that step settles the values it reads has run.
   [[nodiscard]] auto ObservedEffects() -> DeferredEffects*;
-  // LRM 12.4.2.1: keeps the violation report made at `made` in the Observed
-  // region's effects, where it matures unless the process that raised it
-  // reaches a flush point, or `control` is killed, first (LRM 20.11).
+  // LRM 12.4.2.1: the effects a violation report made now is made in and
+  // matures in -- the Observed region's of the current slot, or, once the slot
+  // has reached its Postponed region, after which no earlier region runs again,
+  // the Postponed region's. The slot has no Observed region left and its
+  // active set can glitch no more, so maturing where it was made reports what
+  // the Observed region would have, at the same time.
+  [[nodiscard]] auto ViolationReportEffects() -> DeferredEffects*;
+  // Keeps the violation report made at `made` in those effects, where it
+  // matures unless the process that raised it reaches a flush point, or
+  // `control` is killed, first (LRM 20.11).
   void KeepViolationReport(void* made, const AssertionControl& control);
   // LRM 16.4: a deferred immediate assertion's action is queued where the
   // statement is reached and acts later only if every source that could
@@ -200,9 +206,14 @@ class RuntimeEffects {
   // what it validated, which is why a matured report can no longer be
   // withdrawn (16.4.1). The action is a subroutine call, which can be a task
   // (16.4), so `body` is what it runs as, built where the statement is with
-  // the arguments it was handed there.
+  // the arguments it was handed there. An observed one reached once the slot
+  // is in its Postponed region has no Observed or Reactive region left to
+  // mature and act in, and running its action in Postponed would run code that
+  // may write what the region forbids writing (LRM 4.4.2.9), so it is the
+  // design's error, at `at`.
   void SubmitDeferredObserved(
-      Coroutine<void> body, const AssertionControl& control);
+      Coroutine<void> body, const AssertionControl& control,
+      base::SourceLocation at);
   void SubmitDeferredFinal(
       Coroutine<void> body, const AssertionControl& control);
 
@@ -278,10 +289,10 @@ class RuntimeEffects {
 
   // What is running: the generator a randomization system call draws from (LRM
   // 18.13, 18.14) and the scope chain a DPI-C foreign call reports through (LRM
-  // 35.5.3). A process and a static initialization each install one. Generated
-  // code also runs under a deferred effect or a timer -- a function a `$strobe`
-  // argument calls -- which installs none, so a call reaching this from there
-  // raises.
+  // 35.5.3). A process installs one, and so does code that runs on no thread:
+  // a static initialization, and a deferred body that evaluates what the
+  // source wrote, which enters the context it took where it was made. A call
+  // reaching this with neither running is a defect of the tool.
   [[nodiscard]] auto Running() -> RunningState&;
   // Nullable form of `Running()`, for a query that can arrive from foreign code
   // while nothing of the design is executing -- `svGetScope` outside an
@@ -343,6 +354,19 @@ void ReportRaisedError(
 // statement is written; the running thread is what only the run knows.
 void RequireCallerMayScheduleAfterReturn(
     RuntimeEffects& effects, base::SourceLocation at);
+
+// What work handed over to run where no thread runs it takes where it is made:
+// the context an execution of no lineage started here would run in, and a
+// generator what is running hands over to it (LRM 18.14). A deferred body that
+// evaluates what the source wrote -- a `$strobe`'s arguments (LRM 21.2.2), a
+// concurrent assertion's tick (LRM 16.5), a clocking block's sample (LRM
+// 14.13) and the settling of its output at the end of a pass (LRM 14.16.2), a
+// covergroup sampled under `strobe` (LRM 19.7), what starts a concurrent
+// assertion's action (LRM 16.14.1) -- runs in it on no thread once its region
+// runs it, and a deferred assertion's action is started from it as an
+// execution of no lineage (LRM 16.4).
+[[nodiscard]] auto TakeNoThreadContext(RuntimeEffects& effects)
+    -> NoThreadContext;
 
 // The `RuntimeEffects` view of the Runtime attached to this thread. Reached
 // without a receiver, so every body kind -- module process, class method,

@@ -15,9 +15,10 @@ struct RandomSeed {
 };
 
 // The generator a randomization system call draws from. A process has one (LRM
-// 18.14.2), and so does the static initialization of a container, which is not
-// a process (LRM 18.14.1). No two share one, which is what makes the values
-// either of them observes independent of the order the rest run in.
+// 18.14.2), and so does code that runs on no thread -- the static
+// initialization of a container (LRM 18.14.1), a deferred body. No two share
+// one, which is what makes the values each observes independent of the order
+// the rest run in.
 //
 // The standard fixes nothing about the algorithm, and what it does fix decides
 // one: every thread and every class object has a generator, each started from a
@@ -58,6 +59,23 @@ class DrawRng {
     const std::uint64_t xor_low = Step();
     const std::uint64_t xor_high = Step();
     return DrawRng{addend, congruential, xor_low, xor_high};
+  }
+
+  // The generator of the next piece of work this one's owner hands over to run
+  // where no thread runs it, which steps nothing a draw steps: handing work
+  // over is no draw and creates no thread, so it may not move what the owner
+  // draws next (LRM 18.14). It is made from the state and from how many have
+  // been handed over since the generator was last set, spread by mixers unlike
+  // its own step, as a stated seed is, so that two of them, and the owner's
+  // own later draws, are unrelated; and setting the generator -- a seed, a
+  // state text, a split -- starts the count again, so one seed decides what
+  // is handed over after it as it decides what is drawn (LRM 18.14.1).
+  [[nodiscard]] auto HandOff() -> DrawRng {
+    const std::uint64_t spread = MixMurmur(handed_off_++ ^ kSilverRatio);
+    return DrawRng{
+        MixMurmur(addend_ ^ spread) | 1U, MixStafford(congruential_ ^ spread),
+        MixStafford(xor_low_ ^ spread ^ kGoldenRatio),
+        MixLea(xor_high_ ^ spread)};
   }
 
   void Reseed(RandomSeed seed) {
@@ -133,6 +151,7 @@ class DrawRng {
   std::uint64_t congruential_;
   std::uint64_t xor_low_;
   std::uint64_t xor_high_;
+  std::uint64_t handed_off_ = 0;
 };
 
 // LRM 18.14.1: what the static processes and static initializers of one module,

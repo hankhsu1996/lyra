@@ -47,10 +47,12 @@ processes may find it: `wait fork` (LRM 9.6.1) does not wait for it, `disable fo
 not reach it. It does evaluate the control it carries, where the statement stands and again at each
 candidacy, so it draws from a generator of its own. Being no thread, it takes nothing from the
 process that reached the statement, whose stream reaching it leaves where it was: its generator is
-the next one of the initialization RNG of that process's instance or package, the one source LRM
-18.14.1 names for what is made with no active thread. Taken from the reaching process, as a thread's
-is, it would move that process's later draws at every such statement, a control that draws nothing
-included.
+one that process hands over, made from its state and the count of what it has handed over without
+stepping it (LRM 18.14). Taken from the reaching process, as a thread's is, it would move that
+process's later draws at every such statement, a control that draws nothing included. Taken as the
+next one of the instance's initialization RNG, as this record first said, it depended on the order
+the processes of one instance reached such statements in, which LRM 18.14.2 keeps a thread's values
+free of; handing it over depends on that process alone.
 
 **It reaches the region itself rather than submitting a closure into it.** Once the event has named
 the slot, the carrier suspends into that slot's NBA region and writes when it resumes. This is the

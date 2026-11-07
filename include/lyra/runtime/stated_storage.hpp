@@ -20,6 +20,7 @@
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/open_write.hpp"
 #include "lyra/runtime/read_report.hpp"
+#include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/shared_pointer.hpp"
 #include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/trigger.hpp"
@@ -98,6 +99,7 @@ constexpr void ForEachDeclaredObjectClass(const Visit& visit) {
   visit(LibraryDecl::kLeasedReference, BuiltIn<LeasedReference>{});
   visit(LibraryDecl::kHierarchySegment, BuiltIn<HierarchySegment>{});
   visit(LibraryDecl::kChannelCancellation, BuiltIn<ChannelCancellation>{});
+  visit(LibraryDecl::kNoThreadContext, BuiltIn<NoThreadContext>{});
   visit(LibraryDecl::kWeakReference, BuiltIn<WeakObjectRef>{});
   visit(LibraryDecl::kString, BuiltIn<value::String>{});
   visit(

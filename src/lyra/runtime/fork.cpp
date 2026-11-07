@@ -115,7 +115,12 @@ auto WaitFork(RuntimeEffects& runtime) -> Wait {
 }
 
 void DisableFork(RuntimeEffects& runtime) {
-  runtime.CurrentProcess().DisableDescendants(runtime);
+  // LRM 9.6.3: the descendants of the calling process. Code that runs on no
+  // thread has none.
+  if (RuntimeProcess* process = runtime.TryCurrentProcess();
+      process != nullptr) {
+    process->DisableDescendants(runtime);
+  }
 }
 
 }  // namespace lyra::runtime

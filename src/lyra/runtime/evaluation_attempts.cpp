@@ -238,9 +238,15 @@ void EvaluationAttempts::Report(
             if (!runs) return;
             OwnedCall* action =
                 holds ? &installed.pass_action : &installed.fail_action;
-            effects.Submit(effects.Now(), support::Region::kReactive, [action] {
-              (*action)();
-            });
+            // LRM 16.14.1: the action runs in the Reactive region, as an
+            // execution of no lineage drawing from what the tick deciding it
+            // hands over.
+            effects.Submit(
+                effects.Now(), support::Region::kReactive,
+                [action, taken = TakeNoThreadContext(effects)] {
+                  taken.Enter();
+                  (*action)();
+                });
           },
           [&](Held& held) {
             held.answer = holds ? support::AttemptAnswer::kHolds

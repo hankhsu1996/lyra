@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/support/assertion_control.hpp"
 
@@ -76,14 +77,15 @@ class AssertionControl {
   void Apply(support::AssertionControlType control);
 
   // A deferred assertion's action, queued as RuntimeEffects queues one and
-  // withdrawn by a Kill before it matures (LRM 16.4.1).
-  void SubmitObserved(Coroutine<void> body) const;
+  // withdrawn by a Kill before it matures (LRM 16.4.1). `at` is where an
+  // observed one was written, which a refusal names.
+  void SubmitObserved(Coroutine<void> body, base::SourceLocation at) const;
   void SubmitFinal(Coroutine<void> body) const;
 
   // Where a violation report raised now is kept (LRM 12.4.2.1): made in the
-  // Observed region's effects and matured there unless the raising process
-  // reaches a flush point or this control is killed first. One raised while
-  // checking is off is ended at once.
+  // effects of the region it matures in and matured there unless the raising
+  // process reaches a flush point or this control is killed first. One raised
+  // while checking is off is ended at once.
   [[nodiscard]] auto Allocate(std::size_t size, std::size_t alignment) -> void*;
   void Commit(void* made) const;
 

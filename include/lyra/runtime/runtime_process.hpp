@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <exception>
-#include <list>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -68,7 +67,7 @@ struct DeferredReportValidity {
   std::vector<CapturedTarget> targets;
 
   [[nodiscard]] auto Holds() const -> bool {
-    return !pass->withdrawn &&
+    return (pass == nullptr || !pass->withdrawn) &&
            std::ranges::all_of(targets, [](const CapturedTarget& captured) {
              return captured.Holds();
            });
@@ -98,9 +97,11 @@ class RuntimeProcess : public ClassObject {
   // A process created whole, held by the reference its creator takes.
   // `generator` is the thread's own. LRM 18.14.1 fixes where it comes from by
   // how the process was created: a dynamically created one takes it out of the
-  // process that created it, and one nothing that is a thread creates -- a
-  // static process, an assertion's action -- out of the initialization RNG of
-  // its context's instance.
+  // process that created it, and a static process out of the initialization
+  // RNG of its context's instance. One handed over to run where no thread runs
+  // it -- an assertion's action, an update waiting on an event -- takes the one
+  // what handed it over derives for it, and an action the end of the run
+  // starts, which nothing hands over, the next of that RNG.
   [[nodiscard]] static auto Create(
       ExecutionContext context, Coroutine<void> coroutine, DrawRng generator)
       -> std::shared_ptr<RuntimeProcess>;
@@ -250,31 +251,13 @@ class RuntimeProcess : public ClassObject {
   // resumes it later by driving the innermost call).
   auto EnterForeignExecution(std::unique_ptr<ForeignExecution> fe) -> bool;
 
-  // Enter (LRM 9.6.2) a disable target: until the target is left, a `disable`
-  // of it reaches this execution, which resumes past it, and a check finds it
-  // among the targets this execution is inside.
-  void PushEnclosingTarget(CancellationTarget* target) {
-    enclosing_targets_.emplace_back(
-        CapturedTarget{.target = target, .generation = target->Generation()},
-        MembershipOrigin::kEntered, *this);
-  }
-
-  // Leave a target. Reached on every exit path an execution can take out of
-  // it, including one already leaving under an effect, so it never raises:
-  // raising from there would end the program rather than report anything.
-  void PopEnclosingTarget(CancellationTarget* target) noexcept {
-    if (!enclosing_targets_.empty() &&
-        enclosing_targets_.back().captured.target == target) {
-      enclosing_targets_.pop_back();
-    }
-  }
-
   // LRM 9.6.2, 9.7: whether a departure is owed here -- a target this execution
   // is inside was disabled, or its own termination was requested or settled.
   // The three are one question because what each owes this execution is the
   // same: it runs no further statement of the design.
   [[nodiscard]] auto DepartureIsDue() const -> bool {
-    return TerminationIsDue() || OutermostInvalidatedTarget() != nullptr;
+    return TerminationIsDue() ||
+           running_.targets.OutermostInvalidated() != nullptr;
   }
 
   // LRM 9.7: whether this execution's own termination was requested or
@@ -289,33 +272,6 @@ class RuntimeProcess : public ClassObject {
   // its own are another language's, and they end only by running.
   [[nodiscard]] auto HasLiveForeignCall() const -> bool {
     return !foreign_calls_.empty();
-  }
-
-  // The outermost target this execution is inside that has been disabled since
-  // it entered (LRM 9.6.2), or null when none has. Outermost wins because
-  // leaving a target also leaves every target nested within it.
-  [[nodiscard]] auto OutermostInvalidatedTarget() const -> CancellationTarget* {
-    for (const EnclosingTarget& enclosing : enclosing_targets_) {
-      if (!enclosing.captured.Holds()) {
-        return enclosing.captured.target;
-      }
-    }
-    return nullptr;
-  }
-
-  // LRM 9.6.2 "all activities enabled within" a target: an activity spawned
-  // inside a target is enabled within it, so a spawned process starts out
-  // enclosed by exactly the targets its spawner was inside. Capturing them here
-  // -- at the spawn, from the spawner's live state -- is what makes the spawned
-  // activity a member from the instant it exists, before it has run any of its
-  // own code, and reaches targets that are not in its body's lexical scope at
-  // all (a fork inside a task called from the target). Nothing of the spawned
-  // activity lies past any of them, so a `disable` of one ends it.
-  void InheritEnclosingTargets(const RuntimeProcess& spawner) {
-    for (const EnclosingTarget& enclosing : spawner.enclosing_targets_) {
-      enclosing_targets_.emplace_back(
-          enclosing.captured, MembershipOrigin::kEnabledWithin, *this);
-    }
   }
 
   // LRM 9.7 `suspend`: withdraw the active leaf from whatever would resume it
@@ -352,25 +308,6 @@ class RuntimeProcess : public ClassObject {
       deferred_report_epoch_->withdrawn = true;
       deferred_report_epoch_.reset();
     }
-  }
-
-  // The disable targets a report queued right now records (LRM 16.4.4). Two of
-  // the targets this execution is inside can withdraw it and no other can: the
-  // innermost, which is how a `disable` names one assertion, since a statement
-  // label is a named block (LRM 16.3); and the outermost, whose disable is the
-  // flush of the whole queue. Disabling a target between them cancels nothing,
-  // so nothing between them is recorded.
-  [[nodiscard]] auto DeferredReportTargets() const
-      -> std::vector<CapturedTarget> {
-    std::vector<CapturedTarget> recorded;
-    if (enclosing_targets_.empty()) {
-      return recorded;
-    }
-    recorded.push_back(enclosing_targets_.front().captured);
-    if (enclosing_targets_.size() > 1) {
-      recorded.push_back(enclosing_targets_.back().captured);
-    }
-    return recorded;
   }
 
   // Bulk subtree termination (`kill` and `disable fork`) dismantles the whole
@@ -470,25 +407,6 @@ class RuntimeProcess : public ClassObject {
   // The set that keeps a process is what places and moves it.
   friend class OwnedProcesses;
 
-  // One disable target this execution is inside (LRM 9.6.2): the generation it
-  // captured entering, and its membership on the target, which stands for as
-  // long as this record does. Being blocked inside a target is waiting for it
-  // not to be disabled, alongside whatever else the frame waits for, and the
-  // membership is how a `disable` finds the process to ask.
-  struct EnclosingTarget {
-    EnclosingTarget(
-        CapturedTarget captured, MembershipOrigin origin,
-        RuntimeProcess& inside)
-        : captured(captured) {
-      membership.process = &inside;
-      membership.origin = origin;
-      captured.target->Members().PushBack(membership);
-    }
-
-    CapturedTarget captured;
-    TargetMembership membership;
-  };
-
   // Drives `fe` for one stretch -- into its next suspension or its return --
   // with this process installed as the one whose foreign call is running, so an
   // exported subroutine the call reaches runs as it. Returns whether
@@ -564,12 +482,6 @@ class RuntimeProcess : public ClassObject {
   OwnedPlace owned_place_;
   OwnedProcesses* owned_by_ = nullptr;
   OwnedProcesses children_{this};
-  // The disable targets enclosing this execution, outermost first: those
-  // inherited from the spawner, then those entered by this execution's own
-  // frames. Entering a target pushes it and leaving pops it. Each is on its
-  // own because its target's list points at the membership it holds, and most
-  // processes are inside none.
-  std::list<EnclosingTarget> enclosing_targets_;
   // Every wait for this process to terminate -- a `join` of the fork that
   // spawned it, an `await` of it (LRM 9.3.2, 9.7) -- asked when this process
   // settles a terminal state.

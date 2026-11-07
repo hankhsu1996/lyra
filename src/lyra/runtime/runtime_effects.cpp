@@ -59,36 +59,41 @@ auto RunningNbaRegion(RuntimeEffects& effects) -> support::Region {
   return AsRuntime(effects).RunningContext().regions.nba;
 }
 
-// What a violation report records where it is created: the executing process's
-// pass and nothing more, which is the whole of the flush-point set LRM 12.4.2.1
-// lists.
-auto ViolationReportValidity(RuntimeProcess& process)
+// The executing process's pass, which the process reaching a flush point
+// withdraws (LRM 12.4.2.1, 16.4.2), and none where code runs on no thread,
+// which has no deferred report queue, so no flush point clears what it makes.
+auto RunningPass(RuntimeEffects& effects)
+    -> std::shared_ptr<const DeferredReportEpoch> {
+  RuntimeProcess* process = effects.TryCurrentProcess();
+  return process != nullptr ? process->CurrentDeferredReportEpoch() : nullptr;
+}
+
+// What a violation report records where it is created: that pass and nothing
+// more, which is the whole of the flush-point set LRM 12.4.2.1 lists.
+auto ViolationReportValidity(RuntimeEffects& effects)
     -> DeferredReportValidity {
-  return DeferredReportValidity{
-      .pass = process.CurrentDeferredReportEpoch(), .targets = {}};
+  return DeferredReportValidity{.pass = RunningPass(effects), .targets = {}};
 }
 
 // What a deferred assertion report records: the same pass, and in addition the
 // disable targets that can withdraw it on their own (LRM 16.4.2, 16.4.4). The
 // two constructs differ in what they record and in nothing else; both act only
 // if everything they recorded still stands.
-auto AssertionReportValidity(RuntimeProcess& process)
+auto AssertionReportValidity(RuntimeEffects& effects)
     -> DeferredReportValidity {
   return DeferredReportValidity{
-      .pass = process.CurrentDeferredReportEpoch(),
-      .targets = process.DeferredReportTargets()};
+      .pass = RunningPass(effects),
+      .targets = effects.Running().targets.ReportTargets()};
 }
 
 // A deferred assertion's action, started once it is due, as an execution of no
 // lineage in the context of whatever reached the statement. No thread creates
-// it, so its generator is the next of that context's initialization RNG (LRM
-// 18.14.1), and the draws of whatever reached the statement do not move.
+// it, so its generator is one whatever reached the statement hands over, and
+// that one's draws do not move (LRM 18.14).
 auto StartWhenDue(RuntimeEffects& effects, Coroutine<void> action) {
-  Runtime& runtime = AsRuntime(effects);
-  const ExecutionContext context = runtime.RunningContext().WithoutLineage();
-  return [&runtime, context, rng = context.SplitInitializationRng(),
+  return [&runtime = AsRuntime(effects), taken = TakeNoThreadContext(effects),
           action = std::move(action)]() mutable {
-    runtime.RunAction(context, std::move(action), rng);
+    runtime.RunAction(taken.context, std::move(action), taken.generator);
   };
 }
 
@@ -247,30 +252,33 @@ auto RuntimeEffects::ObservedEffects() -> DeferredEffects* {
   return &EffectsAt(Now(), support::Region::kObserved);
 }
 
+auto RuntimeEffects::ViolationReportEffects() -> DeferredEffects* {
+  return &EffectsAt(
+      Now(), AsRuntime(*this).CurrentPhase() == Runtime::Phase::kInPostponed
+                 ? support::Region::kPostponed
+                 : support::Region::kObserved);
+}
+
 void RuntimeEffects::KeepViolationReport(
     void* made, const AssertionControl& control) {
-  DeferredEffects& observed = *ObservedEffects();
+  DeferredEffects& matures_in = *ViolationReportEffects();
   const CapturedControl queued_under{
       .control = &control, .generation = control.Generation()};
-  RuntimeProcess* process = TryCurrentProcess();
-  // The condition kept on the report holds it, so the two end together,
-  // whether or not the condition lets it run; the report's own place in the
-  // order is never committed, since the condition stands in it.
-  if (process == nullptr) {
-    // A check that fires with no process running -- in a static variable's
-    // initializer (LRM 6.8), or in a function a deferred effect calls, as a
-    // `$strobe` argument does -- belongs to no deferred report queue, so no
-    // flush point clears it, and only a Kill of its control withdraws it
-    // (LRM 12.4.2.1, 20.11).
-    observed.Emplace([queued_under, report = observed.Take(made)] {
-      if (queued_under.Holds()) report.Call();
-    });
+  // Once the simulation is over no region runs, so the report matures as it is
+  // made.
+  if (AsRuntime(*this).CurrentPhase() == Runtime::Phase::kOver) {
+    const OwnedEffect report = matures_in.Take(made);
+    if (queued_under.Holds()) report.Call();
     return;
   }
-  observed.Emplace([validity = ViolationReportValidity(*process), queued_under,
-                    report = observed.Take(made)] {
-    // LRM 12.4.2.1: a pass that no longer stands is a flush point the
-    // process reached before this report could mature.
+  // The condition kept on the report holds it, so the two end together,
+  // whether or not the condition lets it run; the report's own place in the
+  // order is never committed, since the condition stands in it. LRM 12.4.2.1:
+  // a pass that no longer stands is a flush point the process reached before
+  // this report could mature, and only a Kill of its control withdraws one
+  // made on no thread (LRM 20.11).
+  matures_in.Emplace([validity = ViolationReportValidity(*this), queued_under,
+                      report = matures_in.Take(made)] {
     if (validity.Holds() && queued_under.Holds()) {
       report.Call();
     }
@@ -278,22 +286,15 @@ void RuntimeEffects::KeepViolationReport(
 }
 
 void RuntimeEffects::SubmitDeferredObserved(
-    Coroutine<void> body, const AssertionControl& control) {
-  auto action = StartWhenDue(*this, std::move(body));
-  const CapturedControl queued_under{
-      .control = &control, .generation = control.Generation()};
-  RuntimeProcess* process = AsRuntime(*this).current_process_;
-  if (process == nullptr) {
-    // A deferred assertion outside any process (a static variable's
-    // initializer, LRM 6.8) belongs to no deferred report queue, so no flush
-    // point can clear it, and only a Kill of its control withdraws it.
-    Submit(
-        Now(), support::Region::kObserved,
-        [this, queued_under, action = std::move(action)]() mutable {
-          if (!queued_under.Holds()) return;
-          Submit(Now(), support::Region::kReactive, std::move(action));
-        });
-    return;
+    Coroutine<void> body, const AssertionControl& control,
+    base::SourceLocation at) {
+  const Runtime::Phase phase = AsRuntime(*this).CurrentPhase();
+  if (phase == Runtime::Phase::kInPostponed || phase == Runtime::Phase::kOver) {
+    const base::SourceLocationScope bound(at);
+    throw SimulationError(
+        "an observed deferred assertion cannot be reached once its time "
+        "step's Observed region, where its report matures, and Reactive "
+        "region, where its action runs, have passed");
   }
   // LRM 16.4.1: the report is queued now and matures in Observed only if every
   // source it recorded still stands, then runs its action in the Reactive
@@ -301,8 +302,11 @@ void RuntimeEffects::SubmitDeferredObserved(
   // beyond the reach of any later flush, `disable` or Kill.
   Submit(
       Now(), support::Region::kObserved,
-      [this, validity = AssertionReportValidity(*process), queued_under,
-       action = std::move(action)]() mutable {
+      [this, validity = AssertionReportValidity(*this),
+       queued_under =
+           CapturedControl{
+               .control = &control, .generation = control.Generation()},
+       action = StartWhenDue(*this, std::move(body))]() mutable {
         if (!validity.Holds() || !queued_under.Holds()) return;
         Submit(Now(), support::Region::kReactive, std::move(action));
       });
@@ -310,25 +314,23 @@ void RuntimeEffects::SubmitDeferredObserved(
 
 void RuntimeEffects::SubmitDeferredFinal(
     Coroutine<void> body, const AssertionControl& control) {
+  // Once the simulation is over no region runs, so the report matures as it is
+  // reached and its action runs at once, inside what reached it, as an
+  // execution of no lineage.
+  if (AsRuntime(*this).CurrentPhase() == Runtime::Phase::kOver) {
+    RunDetached(std::move(body));
+    return;
+  }
   auto action = StartWhenDue(*this, std::move(body));
   const CapturedControl queued_under{
       .control = &control, .generation = control.Generation()};
-  RuntimeProcess* process = AsRuntime(*this).current_process_;
-  if (process == nullptr) {
-    Submit(
-        Now(), support::Region::kPostponed,
-        [queued_under, action = std::move(action)]() mutable {
-          if (queued_under.Holds()) action();
-        });
-    return;
-  }
   // LRM 16.4.1: a final deferred assertion matures and runs in the Postponed
   // region, still withdrawn by anything that invalidated a source it recorded
-  // before then. Postponed is non-iterative, so maturing and running are the
-  // one region.
+  // before then. Nothing runs after the Postponed region in its slot, so
+  // maturing and running are the one region.
   Submit(
       Now(), support::Region::kPostponed,
-      [validity = AssertionReportValidity(*process), queued_under,
+      [validity = AssertionReportValidity(*this), queued_under,
        action = std::move(action)]() mutable {
         if (validity.Holds() && queued_under.Holds()) action();
       });
@@ -564,7 +566,7 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
   // is inside (LRM 9.6.2), so it takes that membership here rather than
   // rebuilding it once it starts running: it is spawned already enclosed, and a
   // `disable` landing before its first resumption still reaches it.
-  child->InheritEnclosingTargets(parent);
+  child->Running().targets.InheritFrom(Running().targets);
   parent.Children().Adopt(child);
   Schedule(Now(), child->Context().regions.active, activation);
   return child;
@@ -586,20 +588,20 @@ void RuntimeEffects::StartDetached(
   Runtime& rt = AsRuntime(*this);
   // What it waits for is evaluated there and again at each candidacy, so it
   // draws from a generator of its own. No thread creates it, so that generator
-  // is the next of the context's initialization RNG (LRM 18.14.1), and the
-  // draws of whatever reached the statement do not move.
+  // is one whatever reached the statement hands over, and that one's draws do
+  // not move (LRM 18.14).
   auto execution = RuntimeProcess::Create(
-      context, std::move(coroutine), context.SplitInitializationRng());
+      context, std::move(coroutine), Running().HandOff());
   Activation* const activation = execution->TopActivation();
   // No lineage and no disable membership: the standard makes a process of
   // neither an update it carries out nor a covergroup's sampling, so nothing
   // that names processes may find it (LRM 9.6.1, 9.6.3). What keeps it alive
   // until it ends is therefore the runtime itself.
   rt.AdoptProcess(execution);
-  // Reached where nothing executes -- a static initialization making a
+  // Reached before the regions have begun -- a static initialization making a
   // covergroup sampled on its event (LRM 19.3) -- it starts with the
   // processes, since nothing it waits for can happen before they run.
-  if (rt.current_process_ == nullptr) {
+  if (rt.CurrentPhase() == Runtime::Phase::kBringingUp) {
     Schedule(Now(), execution->Context().regions.active, activation);
     return;
   }
@@ -641,10 +643,20 @@ auto RuntimeEffects::Running() -> RunningState& {
   if (running == nullptr) {
     throw InternalError(
         "RuntimeEffects::Running: a generated body reached the runtime with no "
-        "process and no static initialization running -- please report this as "
-        "a bug");
+        "process running and nothing running on no thread -- please report "
+        "this as a bug");
   }
   return *running;
+}
+
+auto TakeNoThreadContext(RuntimeEffects& effects) -> NoThreadContext {
+  return NoThreadContext{
+      .context = AsRuntime(effects).RunningContext().WithoutLineage(),
+      .generator = effects.Running().HandOff()};
+}
+
+void NoThreadContext::Enter() const {
+  AsRuntime(current_runtime()).EnterNoThread(*this);
 }
 
 auto RuntimeEffects::TryRunning() -> RunningState* {

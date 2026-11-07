@@ -50,9 +50,10 @@ MIR sits at the IR level, where none of those systems keeps the destructor.
 
 A randomization call already draws from the generator installed for whatever is running
 ([static-initializer-draws-from-its-container](static-initializer-draws-from-its-container.md)),
-because a subroutine body is compiled once and reached from both a process and a static
-initialization. The DPI scope chain is a second fact of exactly that kind, reached the same way and
-for the same reason, so it is installed the same way rather than kept on the process.
+because a subroutine body is compiled once and reached from a process and from code that runs on no
+thread -- a static initialization, a strobed write's argument. The DPI scope chain is a second fact
+of exactly that kind, reached the same way and for the same reason, so it is installed the same way
+rather than kept on the process.
 
 What the process placement was protecting is kept: two foreign calls suspended on different
 processes still never share a chain, because a process owns what is in force while it runs and a

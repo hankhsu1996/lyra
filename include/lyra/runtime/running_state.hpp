@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "lyra/base/source_location.hpp"
+#include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/rng.hpp"
@@ -11,6 +12,7 @@
 namespace lyra::runtime {
 
 class ProgramThreads;
+class RuntimeProcess;
 class ReadReport;
 class Scope;
 
@@ -29,8 +31,8 @@ enum class WakePlacement : std::uint8_t {
 // control act on the thread (LRM 9.7) and before it lets a function the thread
 // calls schedule what takes effect after the call returns (LRM 13.4.4): both
 // are allowed only of a thread an initial or always procedure created, or a
-// fork of one. Static initialization runs on no thread, and counts as another
-// construct.
+// fork of one. Code that runs on no thread -- a static initialization, a
+// deferred body -- counts as another construct.
 enum class ThreadCreator : std::uint8_t {
   kInitialOrAlwaysProcedure,
   kAnotherConstruct,
@@ -65,7 +67,8 @@ struct ProcedureContext {
   // that does.
   base::SourceLocation written_at{};
 
-  auto operator<=>(const ProcedureContext&) const = default;
+  auto operator<=>(const ProcedureContext&) const
+      -> std::strong_ordering = default;
 };
 
 // What belongs to no procedure: the run's own work, where no scope is reported.
@@ -78,8 +81,9 @@ inline constexpr ProcedureContext kNoProcedure{};
 struct ExecutionContext {
   ProcedureContext procedure;
   // The initialization RNG of the module, interface or program instance, or of
-  // the package, its declaration belongs to, which seeds whatever nothing that
-  // is a thread creates there (LRM 18.14.1). Borrowed, and held for the run.
+  // the package, its declaration belongs to, which seeds the static processes
+  // and static initializers there and the objects those initializers make
+  // (LRM 18.14.1). Borrowed, and held for the run.
   InitializationRng* seeds = nullptr;
   // The region set the execution is placed in, which is the one its thread
   // started in, whatever the code it runs was declared in (LRM 24.3.1, 24.5).
@@ -127,71 +131,124 @@ struct ExecutionContext {
     return observing;
   }
 
-  // A generator for an execution nothing that is a thread creates here: the
-  // next one of the initialization RNG (LRM 18.14.1).
+  // The next generator of the initialization RNG here (LRM 18.14.1): a static
+  // process's, a static initializer's, and that of an assertion's action the
+  // end of the run starts, which nothing hands one over to.
   [[nodiscard]] auto SplitInitializationRng() const -> DrawRng {
     return seeds->Split();
   }
 };
 
-// What is in force while something runs. Three things are: the generator a
-// randomization call draws from (LRM 18.14), the DPI-C import calls this
-// execution is inside (LRM 35.5.3), and the evaluation of a waited expression
-// it is making, whose report an exported function foreign code calls reports
-// into (LRM 9.4.2). None is ever handed to the code that reads it -- a
-// subroutine body is compiled once and reached from more than one runner, so
-// each is read from whatever is running rather than passed in.
+// What is in force while something runs. Four things are: the generator a
+// randomization call draws from (LRM 18.14), the disable targets it is inside
+// (LRM 9.6.2), the DPI-C import calls it is inside (LRM 35.5.3), and the
+// evaluation of a waited expression it is making, whose report an exported
+// function foreign code calls reports into (LRM 9.4.2). None is ever handed to
+// the code that reads it -- a subroutine body is compiled once and reached from
+// more than one runner, so each is read from whatever is running rather than
+// passed in.
 //
 // A process owns one for its whole life, so two foreign calls suspended on
-// different processes never share a chain. A static initialization owns one
-// for its single run, which is why this is not state of a process: a variable
-// declaration assignment runs before any procedure starts (LRM 10.5, 26.2) and
-// can reach both of these.
+// different processes never share a chain. Code that runs on no thread owns
+// one for its single run, which is why this is not state of a process: a
+// variable declaration assignment runs before any procedure starts (LRM 10.5,
+// 26.2), and a `$strobe` argument is evaluated after every process of its time
+// step has run (LRM 21.2.2), and both can reach all four.
 //
 // The generator is not among what this owns. A process's is the generator of
 // the object the process is, which its `srandom()` seeds (LRM 18.13.3), so it
-// survives a suspension with the process; a static initialization keeps its
-// own beside this.
+// survives a suspension with the process; code on no thread keeps its own
+// beside this.
 struct RunningState {
-  // What runs draws from `generator`, inside no foreign call.
-  explicit RunningState(DrawRng& generator) : generator(&generator) {
+  // What runs draws from `generator`, and an object it makes takes the next
+  // split of `object_seeds` where there is one -- a static initializer's
+  // object is seeded from its instance's initialization RNG (LRM 18.14.1) --
+  // and of `generator` otherwise, as a thread seeds the objects it makes.
+  // `owner` is the process this is the state of, or null for code on no
+  // thread.
+  RunningState(
+      DrawRng& generator, InitializationRng* object_seeds,
+      RuntimeProcess* owner)
+      : generator(&generator), object_seeds(object_seeds), targets(owner) {
+  }
+  RunningState(const RunningState&) = delete;
+  auto operator=(const RunningState&) -> RunningState& = delete;
+  RunningState(RunningState&&) = delete;
+  auto operator=(RunningState&&) -> RunningState& = delete;
+  ~RunningState() = default;
+
+  // The generator of an object made now (LRM 18.14.1).
+  [[nodiscard]] auto ObjectGenerator() const -> DrawRng {
+    return object_seeds != nullptr ? object_seeds->Split() : generator->Split();
+  }
+
+  // The generator of work handed over now to run where no thread runs it -- a
+  // `$strobe`'s arguments, an update waiting on an event, an assertion's
+  // action. It depends only on what runs and how many it has handed over, so
+  // the order other threads run in does not move it (LRM 18.14.2), and handing
+  // it over moves nothing what runs draws next (LRM 18.14).
+  [[nodiscard]] auto HandOff() const -> DrawRng {
+    return generator->HandOff();
   }
 
   // Never null.
   DrawRng* generator;
+  // Null where an object takes its generator from `generator`.
+  InitializationRng* object_seeds;
+  EnclosingTargets targets;
   ImportCallChain import_calls;
   // Null where no evaluation is in progress.
   ReadReport* evaluation_report = nullptr;
 };
 
-// A `RunningState` a static initialization owns, carrying what it displaced so
-// that leaving restores whatever was running before. Its place never moves,
-// since its state draws from the generator beside it.
-struct DisplacingState {
-  DisplacingState(
-      DrawRng initial, const ExecutionContext& context, RunningState* displaced,
+// What the design's code runs in where no thread runs it: a static
+// initialization, before any procedure starts, and a deferred body that
+// evaluates what the source wrote once its region runs it. It answers what the
+// code asks of what is running as a process answers it, from state of its own,
+// and carries what it displaced so that leaving restores whatever was running
+// before. Its place never moves, since its state draws from the generator
+// beside it.
+struct NoThreadRun {
+  NoThreadRun(
+      DrawRng generator, InitializationRng* object_seeds,
+      const ExecutionContext& context, RunningState* displaced,
       const ProcedureContext* displaced_procedure)
-      : generator(initial),
-        state(generator),
+      : generator(generator),
+        state(this->generator, object_seeds, nullptr),
         context(context),
         displaced(displaced),
         displaced_procedure(displaced_procedure) {
   }
-  DisplacingState(const DisplacingState&) = delete;
-  auto operator=(const DisplacingState&) -> DisplacingState& = delete;
-  DisplacingState(DisplacingState&&) = delete;
-  auto operator=(DisplacingState&&) -> DisplacingState& = delete;
-  ~DisplacingState() = default;
+  NoThreadRun(const NoThreadRun&) = delete;
+  auto operator=(const NoThreadRun&) -> NoThreadRun& = delete;
+  NoThreadRun(NoThreadRun&&) = delete;
+  auto operator=(NoThreadRun&&) -> NoThreadRun& = delete;
+  ~NoThreadRun() = default;
 
   DrawRng generator;
   RunningState state;
-  // What the initialization runs in, which a deferred assertion it reaches
-  // takes its action's context from.
+  // What the code runs in, which a deferred assertion it reaches takes its
+  // action's context from. No initial or always procedure created it and it
+  // belongs to no program.
   ExecutionContext context;
   // Null where nothing was running before this one started.
   RunningState* displaced = nullptr;
   // The procedure in force before this one started.
   const ProcedureContext* displaced_procedure;
+};
+
+// What a deferred body that evaluates what the source wrote takes where it is
+// made, to run in once its region runs it: the context an execution of no
+// lineage started there would run in, and the generator what runs there hands
+// over to it. It holds nothing of the execution that made it, which may have
+// ended by then.
+struct NoThreadContext {
+  // Takes the body on as what runs on no thread in the runtime attached to
+  // this thread, until the effect running the body returns.
+  void Enter() const;
+
+  ExecutionContext context;
+  DrawRng generator{RandomSeed{0}};
 };
 
 }  // namespace lyra::runtime

@@ -168,8 +168,9 @@ void AssertionControl::Apply(support::AssertionControlType control) {
   throw InternalError("AssertionControl::Apply: unknown control type");
 }
 
-void AssertionControl::SubmitObserved(Coroutine<void> body) const {
-  current_runtime().SubmitDeferredObserved(std::move(body), *this);
+void AssertionControl::SubmitObserved(
+    Coroutine<void> body, base::SourceLocation at) const {
+  current_runtime().SubmitDeferredObserved(std::move(body), *this, at);
 }
 
 void AssertionControl::SubmitFinal(Coroutine<void> body) const {
@@ -178,14 +179,15 @@ void AssertionControl::SubmitFinal(Coroutine<void> body) const {
 
 auto AssertionControl::Allocate(std::size_t size, std::size_t alignment)
     -> void* {
-  return current_runtime().ObservedEffects()->Allocate(size, alignment);
+  return current_runtime().ViolationReportEffects()->Allocate(size, alignment);
 }
 
 void AssertionControl::Commit(void* made) const {
   // LRM 20.11: with checking off no new violation report is queued, so the one
   // just made is ended unqueued.
   if ((allowed_ & support::kAssertionChecks) == 0) {
-    const OwnedEffect dropped = current_runtime().ObservedEffects()->Take(made);
+    const OwnedEffect dropped =
+        current_runtime().ViolationReportEffects()->Take(made);
     return;
   }
   current_runtime().KeepViolationReport(made, *this);

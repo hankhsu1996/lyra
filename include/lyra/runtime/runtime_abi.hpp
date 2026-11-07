@@ -336,6 +336,12 @@ void lyra_rt_disable_fork(void* runtime);
 void lyra_rt_require_caller_may_schedule_after_return(
     void* runtime, const void* location);
 
+// What a deferred body that evaluates what the source wrote takes where it is
+// made, built at `out`, and the entry the body opens with, which takes it on
+// as what runs on no thread (LRM 21.2.2, 18.14).
+auto lyra_rt_take_no_thread_context(void* runtime, void* out) -> void*;
+void lyra_rt_enter_no_thread(const void* taken);
+
 // LRM 9.7 process control. The receiver is a handle of the managed-reference
 // domain naming a process node; `self` builds one for the calling process,
 // which the engine already owns, so nothing is constructed here, and a null one
@@ -616,7 +622,7 @@ auto lyra_rt_enumeration_prev(
 // effects of the region that will run it -- the write a non-blocking assignment
 // defers, the print a `$strobe` postpones, an assertion's tick -- and the
 // assertion control of a `unique` / `unique0` / `priority` statement, where its
-// violation report is kept for the observed region. The program makes the
+// violation report is kept until it matures. The program makes the
 // closure at the address `*_allocate` hands out, `size` bytes at a multiple of
 // `alignment`, and `*_commit` takes over the closure made at `made`: it is
 // ended once it has run, or once it is dropped unrun.
@@ -640,12 +646,12 @@ void lyra_rt_submit_at_run_end(void* runtime, void* closure);
 // `effects`, held by the instance `scope` or by none, as a statement of Table
 // 20-6 `type` stating Table 20-7 `directive`, 0 where it states none;
 // `register_within` makes it one a task naming `block` selects under the same
-// `effects`. `allowed` is
-// what an execution beginning now may do, as `support::kAssertion*` bits.
-// `submit_observed` and `submit_final` queue a deferred assertion's action,
-// which is started as an execution of its own once the report matures
-// (LRM 16.4), each taking ownership of the coroutine `body` points at, built
-// where the statement is.
+// `effects`. `allowed` is what an execution beginning now may do, as
+// `support::kAssertion*` bits. `submit_observed` and `submit_final` queue a
+// deferred assertion's action, which is started as an execution of its own
+// once the report matures (LRM 16.4), each taking ownership of the coroutine
+// `body` points at, built where the statement is; `location` is where an
+// observed one is written, which its refusal in the Postponed region names.
 void lyra_rt_assertion_control_register_in(
     void* control, void* effects, void* scope, std::uint64_t type,
     std::uint64_t directive);
@@ -654,7 +660,8 @@ void lyra_rt_assertion_control_register(
 void lyra_rt_assertion_control_register_within(
     void* control, void* effects, const void* block);
 auto lyra_rt_assertion_control_allowed(const void* control) -> std::uint64_t;
-void lyra_rt_assertion_control_submit_observed(const void* control, void* body);
+void lyra_rt_assertion_control_submit_observed(
+    const void* control, void* body, const void* location);
 void lyra_rt_assertion_control_submit_final(const void* control, void* body);
 
 // An assertion control task (LRM 20.11): its `control_type`,
@@ -2973,6 +2980,7 @@ auto lyra_rt_dpi_bit_buffer_copy(const void* value, void* out) -> void*;
 auto lyra_rt_dpi_logic_buffer_copy(const void* value, void* out) -> void*;
 auto lyra_rt_dpi_open_array_copy(const void* value, void* out) -> void*;
 auto lyra_rt_channel_cancellation_copy(const void* value, void* out) -> void*;
+auto lyra_rt_no_thread_context_copy(const void* value, void* out) -> void*;
 auto lyra_rt_reference_copy(const void* value, void* out) -> void*;
 auto lyra_rt_any_reference_copy(const void* value, void* out) -> void*;
 auto lyra_rt_weak_reference_copy(const void* value, void* out) -> void*;
@@ -2995,6 +3003,7 @@ auto lyra_rt_dpi_bit_buffer_move(void* value, void* out) -> void*;
 auto lyra_rt_dpi_logic_buffer_move(void* value, void* out) -> void*;
 auto lyra_rt_dpi_open_array_move(void* value, void* out) -> void*;
 auto lyra_rt_channel_cancellation_move(void* value, void* out) -> void*;
+auto lyra_rt_no_thread_context_move(void* value, void* out) -> void*;
 auto lyra_rt_reference_move(void* value, void* out) -> void*;
 auto lyra_rt_any_reference_move(void* value, void* out) -> void*;
 auto lyra_rt_weak_reference_move(void* value, void* out) -> void*;
@@ -3053,6 +3062,7 @@ void lyra_rt_assertion_control_construct(void* storage);
 void lyra_rt_timer_construct(void* storage);
 void lyra_rt_loop_blocks_construct(void* storage);
 void lyra_rt_channel_cancellation_construct(void* storage);
+void lyra_rt_no_thread_context_construct(void* storage);
 void lyra_rt_shared_pointer_construct(void* storage);
 void lyra_rt_string_cell_destroy(void* storage);
 void lyra_rt_bitvec_cell_destroy(void* storage);
