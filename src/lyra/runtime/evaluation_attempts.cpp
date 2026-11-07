@@ -1,6 +1,5 @@
 #include "lyra/runtime/evaluation_attempts.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -68,9 +67,9 @@ auto EvaluationAttempts::AnswersOf(
 }
 
 void EvaluationAttempts::Install(
-    RuntimeEffects& effects, std::uint64_t words, OwnedCall pass_action,
-    OwnedCall fail_action, AssertionControl* control) {
-  Size(words);
+    RuntimeEffects& effects, std::uint64_t words, OwnedCall step,
+    OwnedCall pass_action, OwnedCall fail_action, AssertionControl* control) {
+  Size(words, std::move(step));
   answered_ = Installed{
       .pass_action = std::move(pass_action),
       .fail_action = std::move(fail_action)};
@@ -80,14 +79,14 @@ void EvaluationAttempts::Install(
 }
 
 void EvaluationAttempts::Hold(
-    std::uint64_t words, const AssertionControl* control) {
-  Size(words);
+    std::uint64_t words, const AssertionControl* control, OwnedCall step) {
+  Size(words, std::move(step));
   answered_ =
       Held{.answer = support::AttemptAnswer::kPending, .action_runs = false};
   control_ = control;
 }
 
-void EvaluationAttempts::Size(std::uint64_t words) {
+void EvaluationAttempts::Size(std::uint64_t words, OwnedCall step) {
   if (words == 0) {
     throw InternalError(
         "EvaluationAttempts: a property with no position to be live at "
@@ -95,6 +94,7 @@ void EvaluationAttempts::Size(std::uint64_t words) {
   }
   width_ = static_cast<std::size_t>(words);
   seed_.assign(width_, 0);
+  step_ = std::move(step);
   installed_ = true;
 }
 
@@ -109,7 +109,6 @@ void EvaluationAttempts::SeedWord(std::uint64_t word, std::uint64_t bits) {
 }
 
 void EvaluationAttempts::OpenAttempt() {
-  RequireInstalled();
   const std::uint64_t allowed = control_->Allowed();
   if ((allowed & support::kAssertionChecks) == 0) {
     return;
@@ -117,8 +116,17 @@ void EvaluationAttempts::OpenAttempt() {
   OpenEvaluation(OpensAttempt{.allowed = allowed}, 0);
 }
 
-void EvaluationAttempts::BeginTick() {
+void EvaluationAttempts::BeginAttempt() {
   RequireInstalled();
+  ++matured_;
+  if (ticked_at_ == current_runtime().Now()) {
+    step_();
+  }
+}
+
+void EvaluationAttempts::Tick() {
+  RequireInstalled();
+  ticked_at_ = current_runtime().Now();
   for (Evaluation& evaluation : evaluations_) {
     evaluation.stepped = false;
     for (ImplicationAnswers& answers : evaluation.implications) {
@@ -126,11 +134,22 @@ void EvaluationAttempts::BeginTick() {
     }
   }
   cursor_ = 0;
+  step_();
+}
+
+void EvaluationAttempts::OpenMatured() {
+  RequireInstalled();
+  const std::size_t matured = matured_;
+  matured_ = 0;
+  for (std::size_t instance = 0; instance < matured; ++instance) {
+    OpenAttempt();
+  }
 }
 
 void EvaluationAttempts::DisableTick() {
   RequireInstalled();
   Discard();
+  matured_ = 0;
 }
 
 void EvaluationAttempts::Discard() {
@@ -348,6 +367,7 @@ void EvaluationAttempts::SettleAtEndOfRun() {
   }
   words_.clear();
   evaluations_.clear();
+  matured_ = 0;
   cursor_ = 0;
 }
 

@@ -4994,10 +4994,11 @@ auto lyra_rt_managedref_sampled_history_at(
 }
 
 void lyra_rt_evaluation_attempts_install(
-    void* attempts, void* effects, std::uint64_t words, void* pass_action,
-    void* fail_action, void* control) {
+    void* attempts, void* effects, std::uint64_t words, void* step,
+    void* pass_action, void* fail_action, void* control) {
   static_cast<EvaluationAttempts*>(attempts)->Install(
       *static_cast<RuntimeEffects*>(effects), words,
+      AdoptClosure<lyra::support::EffectSignature>(step),
       AdoptClosure<lyra::support::EffectSignature>(pass_action),
       AdoptClosure<lyra::support::EffectSignature>(fail_action),
       static_cast<AssertionControl*>(control));
@@ -5008,16 +5009,24 @@ void lyra_rt_evaluation_attempts_seed_word(
   static_cast<EvaluationAttempts*>(attempts)->SeedWord(word, bits);
 }
 
-void lyra_rt_evaluation_attempts_open_attempt(void* attempts) {
-  static_cast<EvaluationAttempts*>(attempts)->OpenAttempt();
+void lyra_rt_evaluation_attempts_begin_attempt(void* attempts) {
+  static_cast<EvaluationAttempts*>(attempts)->BeginAttempt();
 }
 
-void lyra_rt_evaluation_attempts_begin_tick(void* attempts) {
-  static_cast<EvaluationAttempts*>(attempts)->BeginTick();
+void lyra_rt_evaluation_attempts_tick(void* attempts) {
+  static_cast<EvaluationAttempts*>(attempts)->Tick();
+}
+
+void lyra_rt_evaluation_attempts_open_matured(void* attempts) {
+  static_cast<EvaluationAttempts*>(attempts)->OpenMatured();
 }
 
 void lyra_rt_evaluation_attempts_disable_tick(void* attempts) {
   static_cast<EvaluationAttempts*>(attempts)->DisableTick();
+}
+
+void lyra_rt_evaluation_attempts_discard(void* attempts) {
+  static_cast<EvaluationAttempts*>(attempts)->Discard();
 }
 
 auto lyra_rt_evaluation_attempts_live_word(

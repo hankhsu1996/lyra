@@ -116,14 +116,25 @@ struct AssertionControlCell {
   std::vector<hir::ProceduralScopeId> within;
 };
 
-// The cell one static-lifetime body variable, or one statement's assertion
-// control, became. `cell_type` is the type the home was declared with -- a
-// variable's observable-cell type, the control's own type for a control --
-// settled once here so no reader recomputes it. `scope` is the scope declaring
-// it, which a variable's initializer is written in though it runs apart from
-// every activation of that scope (LRM 6.21).
+// The attempts one concurrent assertion statement has in flight (LRM 16.14.1),
+// which live as long as its control: whatever replicates the statement holds
+// them, whether the statement is a declaration of the scope or stands in a
+// procedure (LRM 16.14.6).
+struct ConcurrentAttemptsCell {
+  hir::ControlledAssertionId assertion;
+};
+
+// The cell one static-lifetime body variable, one statement's assertion
+// control, or one concurrent assertion's attempts became. `cell_type` is the
+// type the home was declared with -- a variable's observable-cell type, the
+// control's own type for a control -- settled once here so no reader recomputes
+// it. `scope` is the scope declaring it, which a variable's initializer is
+// written in though it runs apart from every activation of that scope
+// (LRM 6.21).
 struct StaticCellBinding {
-  std::variant<hir::ProceduralVarId, AssertionControlCell> of;
+  std::variant<
+      hir::ProceduralVarId, AssertionControlCell, ConcurrentAttemptsCell>
+      of;
   hir::ProceduralScopeId scope;
   StaticStorageHome home;
   mir::TypeId cell_type;

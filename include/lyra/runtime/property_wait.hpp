@@ -44,7 +44,7 @@ class PropertyEvaluation {
 
   // What a tick and a test of the disable condition run, given once the wait
   // holding this exists, since each is code of the waiting body that reaches
-  // back into it.
+  // back into it. The attempts are held from here on.
   void Bind(OwnedCall step, OwnedCall test);
 
   // The disable condition held: the evaluation answers nothing, so nothing is
@@ -79,7 +79,8 @@ class PropertyEvaluation {
   // what tells a tick from a change the disable condition reads.
   std::size_t clock_watched_ = 0;
   IntrusiveList<WaitMembership> answers_;
-  OwnedCall step_;
+  std::uint64_t words_;
+  const AssertionControl* control_;
   Timer stepping_;
   Timer testing_;
   // The ticks the clock reached since the Observed region last stepped.

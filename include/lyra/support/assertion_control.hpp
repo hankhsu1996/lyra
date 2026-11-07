@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "lyra/base/internal_error.hpp"
+
 namespace lyra::support {
 
 // What the assertion control tasks select by type (LRM 20.11, Table 20-6),
@@ -18,6 +20,27 @@ enum class AssertionType : std::uint8_t {
   kUnique0 = 64,
   kPriority = 128,
 };
+
+// Whether a statement of `type` has attempts in flight that storage of its own
+// holds: a concurrent assertion begins one at a tick and each spans later
+// ticks (LRM 16.14.1). An expect statement's one attempt is held by the wait
+// its process stops at (LRM 16.17), and every other kind answers where it is
+// reached.
+[[nodiscard]] constexpr auto HasEvaluationAttempts(AssertionType type) -> bool {
+  switch (type) {
+    case AssertionType::kConcurrent:
+      return true;
+    case AssertionType::kSimpleImmediate:
+    case AssertionType::kObservedDeferredImmediate:
+    case AssertionType::kFinalDeferredImmediate:
+    case AssertionType::kExpect:
+    case AssertionType::kUnique:
+    case AssertionType::kUnique0:
+    case AssertionType::kPriority:
+      return false;
+  }
+  throw InternalError("support::HasEvaluationAttempts: unknown AssertionType");
+}
 
 // What an assertion states (LRM 16.2, Table 20-7), each the bit of
 // `directive_type` that selects it. Only the four assertion types carry one.

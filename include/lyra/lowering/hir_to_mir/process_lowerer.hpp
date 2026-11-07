@@ -132,6 +132,9 @@ class ProcessLowerer {
               [&](hir::ProceduralVarId var) { MapProceduralVar(var, binding); },
               [&](const AssertionControlCell& control) {
                 controls_.emplace(control.assertion, binding);
+              },
+              [&](const ConcurrentAttemptsCell& attempts) {
+                attempts_.emplace(attempts.assertion, binding);
               }},
           binding.of);
     }
@@ -354,6 +357,10 @@ class ProcessLowerer {
   // it acts through, built in `frame`'s block.
   [[nodiscard]] auto ControlCellOf(hir::ControlledAssertionId assertion) const
       -> const StaticCellBinding&;
+  // The cell holding the attempts a concurrent assertion statement of this
+  // body has in flight, where whatever replicates the statement holds them.
+  [[nodiscard]] auto AttemptsCellOf(hir::ControlledAssertionId assertion) const
+      -> const StaticCellBinding&;
   [[nodiscard]] auto ControlPlace(
       const WalkFrame& frame, hir::ControlledAssertionId assertion) const
       -> mir::ExprId;
@@ -511,6 +518,7 @@ class ProcessLowerer {
   base::SymbolTable<hir::ProceduralVarId, ProceduralVarBinding> bindings_;
   // The cell each controlled statement of the body was given, by its id.
   std::map<hir::ControlledAssertionId, StaticCellBinding> controls_;
+  std::map<hir::ControlledAssertionId, StaticCellBinding> attempts_;
 
   // The result type of the body being lowered, set before its body walks. It
   // is the call protocol, so every return site reads what its completion

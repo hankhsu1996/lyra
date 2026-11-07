@@ -84,7 +84,7 @@ auto LowerConversionExpr(
       .type = *type_id,
       .data =
           hir::ConversionExpr{
-              .kind = LowerConversionKind(conv.conversionKind),
+              .kind = LowerConversionKind(conv),
               .operand = operand_id,
           },
       .span = span,

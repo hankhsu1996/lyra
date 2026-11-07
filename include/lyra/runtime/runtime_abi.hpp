@@ -1500,15 +1500,17 @@ auto lyra_rt_managedref_sampled_history_at(
 // through the storage's own address. These carry machine words rather than
 // values of the design, which is why one entry serves every assertion.
 //
-// `install` fixes how wide a position set is, the statements an outcome
-// selects and the assertion's control. `open_attempt` opens an attempt on the
-// staged seed. A tick opens with `begin_tick`, or with `disable_tick` where the
-// disable condition held; `live_word` bounds the Boolean expressions the tick
-// has to read, and `next_unstepped` walks the evaluations it still owes a step,
-// answering -1 when none is left. `bits_at`, `set_word` and `step` read one
-// evaluation's position set, replace it with its successor, and mark it
-// stepped; `seed_word` stages the set a new evaluation starts from and `seed`
-// opens one on it as an instance of one implication of another. `count`,
+// `install` fixes how wide a position set is, what a tick runs, the
+// statements an outcome selects and the assertion's control. `begin_attempt`
+// says an attempt is due and `tick` that the leading clock ticked; whichever
+// comes second in a time step runs the tick. What the tick runs opens what is
+// due with `open_matured`, or where the disable condition held discards
+// everything with `disable_tick`; `live_word` bounds the Boolean expressions
+// the tick has to read, and `next_unstepped` walks the evaluations it still
+// owes a step, answering -1 when none is left. `bits_at`, `set_word` and `step`
+// read one evaluation's position set, replace it with its successor, and mark
+// it stepped; `seed_word` stages the set a new evaluation starts from and
+// `seed` opens one on it as an instance of one implication of another. `count`,
 // `part_of`, `implication_answer`, `implication_nonvacuous` and `resolve`
 // answer each evaluation from the last back: how many there are, which part of
 // the property one answers for, the least answer an implication's instances
@@ -1517,13 +1519,15 @@ auto lyra_rt_managedref_sampled_history_at(
 // `answer` and `action_runs` read what the one attempt an expect statement
 // holds came to and whether the arm it selects may run.
 void lyra_rt_evaluation_attempts_install(
-    void* attempts, void* effects, std::uint64_t words, void* pass_action,
-    void* fail_action, void* control);
+    void* attempts, void* effects, std::uint64_t words, void* step,
+    void* pass_action, void* fail_action, void* control);
 void lyra_rt_evaluation_attempts_seed_word(
     void* attempts, std::uint64_t word, std::uint64_t bits);
-void lyra_rt_evaluation_attempts_open_attempt(void* attempts);
-void lyra_rt_evaluation_attempts_begin_tick(void* attempts);
+void lyra_rt_evaluation_attempts_begin_attempt(void* attempts);
+void lyra_rt_evaluation_attempts_tick(void* attempts);
+void lyra_rt_evaluation_attempts_open_matured(void* attempts);
 void lyra_rt_evaluation_attempts_disable_tick(void* attempts);
+void lyra_rt_evaluation_attempts_discard(void* attempts);
 auto lyra_rt_evaluation_attempts_live_word(
     const void* attempts, std::uint64_t word) -> std::uint64_t;
 auto lyra_rt_evaluation_attempts_next_unstepped(void* attempts) -> std::int64_t;

@@ -572,26 +572,38 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "evaluation_attempts_install",
           .declaration = Method{"Install"},
           .takes_the_location = false,
-          .callables = {kEffectFnPastTheCaller, kEffectFnPastTheCaller}};
+          .callables = {
+              kEffectFnPastTheCaller, kEffectFnPastTheCaller,
+              kEffectFnPastTheCaller}};
     case BuiltinFn::kEvaluationAttemptsSeedWord:
       return {
           .name = "evaluation_attempts_seed_word",
           .declaration = Method{"SeedWord"},
           .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsOpenAttempt:
+    case BuiltinFn::kEvaluationAttemptsBeginAttempt:
       return {
-          .name = "evaluation_attempts_open_attempt",
-          .declaration = Method{"OpenAttempt"},
+          .name = "evaluation_attempts_begin_attempt",
+          .declaration = Method{"BeginAttempt"},
           .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsBeginTick:
+    case BuiltinFn::kEvaluationAttemptsTick:
       return {
-          .name = "evaluation_attempts_begin_tick",
-          .declaration = Method{"BeginTick"},
+          .name = "evaluation_attempts_tick",
+          .declaration = Method{"Tick"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptsOpenMatured:
+      return {
+          .name = "evaluation_attempts_open_matured",
+          .declaration = Method{"OpenMatured"},
           .takes_the_location = false};
     case BuiltinFn::kEvaluationAttemptsDisableTick:
       return {
           .name = "evaluation_attempts_disable_tick",
           .declaration = Method{"DisableTick"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptsDiscard:
+      return {
+          .name = "evaluation_attempts_discard",
+          .declaration = Method{"Discard"},
           .takes_the_location = false};
     case BuiltinFn::kEvaluationAttemptsLiveWord:
       return {

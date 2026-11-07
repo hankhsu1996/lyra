@@ -12,8 +12,12 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerConversionKind(slang::ast::ConversionKind k) -> hir::ConversionKind {
-  switch (k) {
+auto LowerConversionKind(const slang::ast::ConversionExpression& conversion)
+    -> hir::ConversionKind {
+  // LRM 6.24.1: a const cast is written as an explicit cast, and is told apart
+  // because a procedural concurrent assertion saves its value (LRM 16.14.6.1).
+  if (conversion.isConstCast) return hir::ConversionKind::kConstCast;
+  switch (conversion.conversionKind) {
     case slang::ast::ConversionKind::Implicit:
       return hir::ConversionKind::kImplicit;
     case slang::ast::ConversionKind::Propagated:

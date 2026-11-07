@@ -197,6 +197,12 @@ class RuntimeEffects {
   // matures unless the process that raised it reaches a flush point, or
   // `control` is killed, first (LRM 20.11).
   void KeepViolationReport(void* made, const AssertionControl& control);
+  // LRM 16.14.6: a procedural concurrent assertion's pending instance, made at
+  // `made`, matures in the Observed region unless one of the sources that can
+  // flush it -- the executing process's pass, the assertion's own label block
+  // or the process's outermost scope disabled (16.14.6.2, 16.14.6.4), or a
+  // Kill of `control` (LRM 20.11) -- moved first.
+  void KeepPendingInstance(void* made, const AssertionControl& control);
   // LRM 16.4: a deferred immediate assertion's action is queued where the
   // statement is reached and acts later only if every source that could
   // withdraw it still stands -- the executing process's pass, the disable

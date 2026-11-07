@@ -169,6 +169,10 @@ auto IntegrateStaticInitializer(
             RegisterAssertionControl(
                 process, body, bring_up.install, binding, control);
             return {};
+          },
+          // The assertion installs its own attempts, beside its clock.
+          [](const ConcurrentAttemptsCell&) -> diag::Result<void> {
+            return {};
           }},
       binding.of);
 }

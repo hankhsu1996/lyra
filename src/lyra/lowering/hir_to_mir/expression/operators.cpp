@@ -588,6 +588,29 @@ auto LowerHirConditionalExpr(
       unit, frame, arms, value_of(conditional->else_value), result_type);
 }
 
+namespace {
+
+// Where a conversion's operand is read. The sampled value of a constant cast
+// is its argument's current value (LRM 16.5.1), so an assertion reading as of
+// the Preponed region reads under one as it is now; every other conversion
+// reads its operand where the conversion is read.
+auto OperandFrameOf(hir::ConversionKind kind, const WalkFrame& frame)
+    -> WalkFrame {
+  switch (kind) {
+    case hir::ConversionKind::kConstCast:
+      return frame.WithReadsAsOf(ReadsAsOf::kNow);
+    case hir::ConversionKind::kImplicit:
+    case hir::ConversionKind::kPropagated:
+    case hir::ConversionKind::kStreamingConcat:
+    case hir::ConversionKind::kExplicit:
+    case hir::ConversionKind::kBitstreamCast:
+      return frame;
+  }
+  throw InternalError("OperandFrameOf: unknown hir::ConversionKind");
+}
+
+}  // namespace
+
 template <ExprLowerer Lowerer>
 auto LowerHirConversionExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
@@ -599,7 +622,8 @@ auto LowerHirConversionExpr(
   }
   // A stream is asked of a value where it lies, which a struct's own method
   // borrows there; every other conversion takes the operand's value.
-  auto operand_or = LowerAndAddNamed(lowerer, frame, cv.operand);
+  auto operand_or =
+      LowerAndAddNamed(lowerer, OperandFrameOf(cv.kind, frame), cv.operand);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const mir::ExprId named = *operand_or;
   const auto& unit = lowerer.Owner().Unit();
@@ -612,8 +636,10 @@ auto LowerHirConversionExpr(
     // (LRM 11.8.3), and a cast converts the operand to the casting type without
     // restating its signedness first (LRM 6.24.1), so both take the widening
     // every non-propagated context takes.
+    // A const cast converts its operand to its own type (LRM 6.24.1).
     case hir::ConversionKind::kImplicit:
     case hir::ConversionKind::kExplicit:
+    case hir::ConversionKind::kConstCast:
       return BuildValueConversion(unit, block, value(), result_type);
     // LRM 6.24.3 reinterprets the operand as a bit stream and repacks it into
     // the casting type, which is a different operation from reshaping one

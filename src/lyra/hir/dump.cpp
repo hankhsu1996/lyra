@@ -1121,6 +1121,8 @@ class HirDumper {
         return "explicit";
       case ConversionKind::kBitstreamCast:
         return "bitstream-cast";
+      case ConversionKind::kConstCast:
+        return "const-cast";
     }
     throw InternalError("HirDumper::FormatConversionKind: unknown kind");
   }

@@ -9,6 +9,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/assertion_control.hpp"
 #include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -64,6 +65,8 @@ auto BindBodyStatics(
   StaticCellBindings bindings;
   const mir::TypeId control_type = mir::LibraryTypeOf(
       unit_lowerer.Unit().types, support::LibraryDecl::kAssertionControl);
+  const mir::TypeId attempts_type = mir::LibraryTypeOf(
+      unit_lowerer.Unit().types, support::LibraryDecl::kEvaluationAttempts);
   // Descends the body's lexical scope tree, since a declaration states its
   // scope only by sitting in it, carrying the scopes passed on the way down.
   std::vector<hir::ProceduralScopeId> enclosing;
@@ -96,6 +99,15 @@ auto BindBodyStatics(
               .scope = scope_id,
               .home = DeclareStaticCell(owner, control_type),
               .cell_type = control_type});
+      if (support::HasEvaluationAttempts(
+              body.controlled_assertions.Get(assertion).type)) {
+        bindings.push_back(
+            StaticCellBinding{
+                .of = ConcurrentAttemptsCell{.assertion = assertion},
+                .scope = scope_id,
+                .home = DeclareStaticCell(owner, attempts_type),
+                .cell_type = attempts_type});
+      }
     }
     for (const hir::ProceduralScopeId child : scope.child_scopes) {
       self_ref(self_ref, child);

@@ -82,10 +82,14 @@ class AssertionControl {
   void SubmitObserved(Coroutine<void> body, base::SourceLocation at) const;
   void SubmitFinal(Coroutine<void> body) const;
 
-  // Where a violation report raised now is kept (LRM 12.4.2.1): made in the
-  // effects of the region it matures in and matured there unless the raising
-  // process reaches a flush point or this control is killed first. One raised
-  // while checking is off is ended at once.
+  // Where what the statement queues now is kept: made in the effects of the
+  // region it matures in and matured there unless a source that can flush it
+  // moves first, and ended at once while checking is off. Which sources those
+  // are is the construct's: a violation report is flushed by its process's
+  // flush points (LRM 12.4.2.1), and a procedural concurrent assertion's
+  // pending instance also by a `disable` of its label or of the process's
+  // outermost scope (LRM 16.14.6.2, 16.14.6.4); either is withdrawn by a Kill
+  // of this control (LRM 20.11).
   [[nodiscard]] auto Allocate(std::size_t size, std::size_t alignment) -> void*;
   void Commit(void* made) const;
 

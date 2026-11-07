@@ -22,8 +22,10 @@ PropertyEvaluation::PropertyEvaluation(
     RuntimeEffects& effects, std::span<const Trigger* const> clock,
     std::span<const Trigger* const> disable_reads, std::uint64_t words,
     const AssertionControl* control)
-    : effects_(&effects), memberships_(clock.size() + disable_reads.size()) {
-  attempts_.Hold(words, control);
+    : effects_(&effects),
+      memberships_(clock.size() + disable_reads.size()),
+      words_(words),
+      control_(control) {
   for (const Trigger* trigger : clock) {
     Watch(*trigger);
   }
@@ -44,7 +46,7 @@ void PropertyEvaluation::Watch(const Trigger& trigger) {
 }
 
 void PropertyEvaluation::Bind(OwnedCall step, OwnedCall test) {
-  step_ = std::move(step);
+  attempts_.Hold(words_, control_, std::move(step));
   testing_.Bind(std::move(test));
 }
 
@@ -86,7 +88,7 @@ void PropertyEvaluation::Step() {
   // own, all over this time step's sampled values.
   while (pending_ticks_ != 0 && !disabled_ && !Answered()) {
     --pending_ticks_;
-    step_();
+    attempts_.Tick();
   }
   pending_ticks_ = 0;
   if (Answered()) {

@@ -2893,22 +2893,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     }
   }
 
-  // What an assertion has in flight is storage nothing outside this scope
-  // names either: an attempt is started by the clock and read by the tick that
-  // advances it, both of which are this scope's own (LRM 16.14.1). The type
-  // carries nothing, because how wide a position set is and which statements an
-  // outcome selects are fixed by filling the storage rather than by naming it.
-  std::vector<mir::FieldId> concurrent_assertion_fields;
-  concurrent_assertion_fields.reserve(hir_scope.concurrent_assertions.size());
-  for (std::size_t i = 0; i < hir_scope.concurrent_assertions.size(); ++i) {
-    concurrent_assertion_fields.push_back(shape.AddField(
-        mir::LibraryTypeOf(
-            unit_lowerer.Unit().types,
-            support::LibraryDecl::kEvaluationAttempts)));
-  }
-  concurrent_assertion_fields_ = {
-      hir_scope.concurrent_assertions.size(),
-      std::move(concurrent_assertion_fields)};
   instance_member_fields_ = {
       hir_scope.instance_members.size(), settled(instance_fields)};
   interface_port_fields_ = {
@@ -3746,9 +3730,35 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
             .name = std::move(entry.linkage.foreign_name), .body = entry_id});
   }
 
+  // A concurrent assertion a procedure holds keeps its machinery on the scope,
+  // as a declared one does; the statement only says where an attempt falls
+  // due (LRM 16.14.6).
+  std::vector<InstalledConcurrentAssertion> procedural_installed;
   for (const hir::ProcessId id : hir_scope.processes.Ids()) {
     const auto& p = hir_scope.processes.Get(id);
     const StaticCellBindings& statics = process_static_bindings_.Get(id);
+    for (const hir::StmtId stmt_id : p.body.stmts.Ids()) {
+      const hir::Stmt& stmt = p.body.stmts.Get(stmt_id);
+      std::optional<hir::ConcurrentAssertion> held;
+      if (const auto* a = std::get_if<hir::ConcurrentAssertStmt>(&stmt.data)) {
+        held = hir::ConcurrentAssertion{*a};
+      } else if (
+          const auto* c = std::get_if<hir::ConcurrentCoverStmt>(&stmt.data)) {
+        held = hir::ConcurrentAssertion{*c};
+      }
+      if (!held.has_value()) continue;
+      auto built = LowerProceduralConcurrentAssertion(
+          *this, mir_class, ctor_frame.WithSpan(stmt.span), scopes_, statics,
+          p.body, *held, stmt.span);
+      if (!built) return std::unexpected(std::move(built.error()));
+      for (const mir::CallableId process : built->processes) {
+        AppendProcessRegistration(
+            unit_lowerer, activate_frame, process,
+            support::BuiltinFn::kRegisterAlways, stmt.span);
+      }
+      procedural_installed.push_back(*std::move(built));
+    }
+
     // What the procedure's body is built of, beyond its statements, is lowered
     // from the procedure.
     ProcessLowerer process_lowerer(
@@ -3880,10 +3890,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   // sampler is one per history: two assertions under one event could share the
   // wait, and deciding that two clocks are the same event means comparing
   // lowered expressions for equality.
-  std::vector<
-      std::pair<hir::ConcurrentAssertionId, InstalledConcurrentAssertion>>
-      installed_assertions;
-  installed_assertions.reserve(hir_scope.concurrent_assertions.size());
+  std::vector<InstalledConcurrentAssertion> installed_assertions =
+      std::move(procedural_installed);
   for (const hir::ConcurrentAssertionId id :
        hir_scope.concurrent_assertions.Ids()) {
     const hir::ConcurrentAssertionDecl& assertion =
@@ -3893,14 +3901,14 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
         StorageBringUp{
             .install = install_frame.WithSpan(assertion.span),
             .value = init_frame.WithSpan(assertion.span)},
-        scopes_, assertion_static_bindings_.Get(id), id, assertion);
+        scopes_, assertion_static_bindings_.Get(id), assertion);
     if (!installed) return std::unexpected(std::move(installed.error()));
     for (const mir::CallableId process : installed->processes) {
       AppendProcessRegistration(
           unit_lowerer, activate_frame, process,
           support::BuiltinFn::kRegisterAlways, assertion.span);
     }
-    installed_assertions.emplace_back(id, *installed);
+    installed_assertions.push_back(*std::move(installed));
   }
 
   for (const hir::GenerateId gen : hir_scope.generates.Ids()) {
@@ -3965,8 +3973,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   // Every assertion's storage is filled here too. Nothing about one needs an
   // earlier phase -- what it reads it reaches through cells sealed since Seal
   // -- and the sampling those cells answer from is armed just above.
-  for (const auto& [id, installed] : installed_assertions) {
-    AppendConcurrentAssertionInstall(*this, activate_frame, id, installed);
+  for (const InstalledConcurrentAssertion& installed : installed_assertions) {
+    AppendConcurrentAssertionInstall(*this, activate_frame, installed);
   }
 
   ctor_code.params.clear();

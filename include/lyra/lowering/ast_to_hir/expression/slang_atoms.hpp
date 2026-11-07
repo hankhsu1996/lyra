@@ -5,6 +5,7 @@
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/SemanticFacts.h>
+#include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/Operator.h>
 #include <slang/parsing/KnownSystemName.h>
 
@@ -27,7 +28,8 @@
 // and produce HIR" concern.
 namespace lyra::lowering::ast_to_hir {
 
-auto LowerConversionKind(slang::ast::ConversionKind k) -> hir::ConversionKind;
+auto LowerConversionKind(const slang::ast::ConversionExpression& conversion)
+    -> hir::ConversionKind;
 
 auto LowerBinaryOp(slang::ast::BinaryOperator op) -> hir::BinaryOp;
 

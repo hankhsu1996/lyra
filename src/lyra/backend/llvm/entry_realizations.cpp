@@ -1384,9 +1384,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // so there is no representation for these to be named by (LRM 16.14.1).
     case support::BuiltinFn::kEvaluationAttemptsInstall:
     case support::BuiltinFn::kEvaluationAttemptsSeedWord:
-    case support::BuiltinFn::kEvaluationAttemptsOpenAttempt:
-    case support::BuiltinFn::kEvaluationAttemptsBeginTick:
+    case support::BuiltinFn::kEvaluationAttemptsBeginAttempt:
+    case support::BuiltinFn::kEvaluationAttemptsTick:
+    case support::BuiltinFn::kEvaluationAttemptsOpenMatured:
     case support::BuiltinFn::kEvaluationAttemptsDisableTick:
+    case support::BuiltinFn::kEvaluationAttemptsDiscard:
     case support::BuiltinFn::kEvaluationAttemptsLiveWord:
     case support::BuiltinFn::kEvaluationAttemptsNextUnstepped:
     case support::BuiltinFn::kEvaluationAttemptsBitsAt:

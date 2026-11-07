@@ -183,14 +183,31 @@ auto AssertionControl::Allocate(std::size_t size, std::size_t alignment)
 }
 
 void AssertionControl::Commit(void* made) const {
-  // LRM 20.11: with checking off no new violation report is queued, so the one
-  // just made is ended unqueued.
+  // LRM 20.11: with checking off nothing new is queued -- no violation report,
+  // no pending procedural instance -- so what was just made is ended unqueued.
   if ((allowed_ & support::kAssertionChecks) == 0) {
     const OwnedEffect dropped =
         current_runtime().ViolationReportEffects()->Take(made);
     return;
   }
-  current_runtime().KeepViolationReport(made, *this);
+  switch (type_) {
+    case support::AssertionType::kConcurrent:
+      current_runtime().KeepPendingInstance(made, *this);
+      return;
+    case support::AssertionType::kUnique:
+    case support::AssertionType::kUnique0:
+    case support::AssertionType::kPriority:
+      current_runtime().KeepViolationReport(made, *this);
+      return;
+    case support::AssertionType::kSimpleImmediate:
+    case support::AssertionType::kObservedDeferredImmediate:
+    case support::AssertionType::kFinalDeferredImmediate:
+    case support::AssertionType::kExpect:
+      break;
+  }
+  throw InternalError(
+      "AssertionControl::Commit: only a violation report or a procedural "
+      "concurrent assertion's pending instance is made in its control");
 }
 
 void AssertionControls::AddIn(AssertionControl& control, const Scope& in) {

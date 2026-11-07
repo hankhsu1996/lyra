@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/time.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/support/property_answer.hpp"
 
@@ -39,6 +41,12 @@ class RuntimeEffects;
 // answers. Nothing here knows what a position means or how a part of the
 // property combines its answers: the width arrives at installation, every bit
 // pattern crosses opaque, and a part is a number the generated code chose.
+//
+// Whoever owns the attempts says when one is due and when the clock ticks, and
+// this storage alone knows whether the current time step has ticked, which
+// decides whether a due attempt begins now or waits (LRM 16.14.6). What a tick
+// does over the attempts is generated code, given at installation, and both
+// events run it.
 class EvaluationAttempts {
  public:
   EvaluationAttempts() = default;
@@ -51,47 +59,60 @@ class EvaluationAttempts {
   auto operator=(EvaluationAttempts&&) -> EvaluationAttempts& = delete;
   ~EvaluationAttempts() = default;
 
-  // Fixes how wide a position set is, the statements an outcome selects, and
-  // the control whose state decides whether an attempt begins and which of
-  // them its outcome runs (LRM 20.11), which reaches these attempts again to
-  // abort them.
+  // Fixes how wide a position set is, what a tick runs over the attempts, the
+  // statements an outcome selects, and the control whose state decides whether
+  // an attempt begins and which of them its outcome runs (LRM 20.11), which
+  // reaches these attempts again to abort them.
   //
   // Registering here is what puts the answers of attempts the run ends in the
   // middle of before the design's `final` procedures, which read what those
   // statements wrote.
   void Install(
-      RuntimeEffects& effects, std::uint64_t words, OwnedCall pass_action,
-      OwnedCall fail_action, AssertionControl* control);
+      RuntimeEffects& effects, std::uint64_t words, OwnedCall step,
+      OwnedCall pass_action, OwnedCall fail_action, AssertionControl* control);
 
-  // Fixes how wide a position set is for the one attempt of an expect
-  // statement, whose process reads the answer itself (LRM 16.17): nothing runs
-  // when it settles and nothing is owed when the run ends, since a process
-  // still waiting then never goes on. `control` decides which arm an answer may
-  // run; nothing turns an expect off or aborts it (LRM 20.11).
-  void Hold(std::uint64_t words, const AssertionControl* control);
+  // Fixes how wide a position set is and what a tick runs for the one attempt
+  // of an expect statement, whose process reads the answer itself (LRM 16.17):
+  // nothing runs when it settles and nothing is owed when the run ends, since
+  // a process still waiting then never goes on. `control` decides which arm an
+  // answer may run; nothing turns an expect off or aborts it (LRM 20.11).
+  void Hold(
+      std::uint64_t words, const AssertionControl* control, OwnedCall step);
 
-  // Stages one word of the position set the next `OpenAttempt` or `Seed`
+  // Stages one word of the position set the next `OpenMatured` or `Seed`
   // starts an evaluation from. A seed is a constant of the automaton, so it is
   // written a word at a time by whoever holds it rather than described here.
   void SeedWord(std::uint64_t word, std::uint64_t bits);
 
-  // Opens an attempt on the staged seed, answering for the whole property; the
-  // next sweep steps it. The attempt keeps what its control allowed when it
-  // began, and none begins while checking is off (LRM 20.11).
-  void OpenAttempt();
+  // An attempt is due: it begins at the tick of the leading clock in this time
+  // step, or where that has not come, at the next one (LRM 16.14.6). A static
+  // assertion has one due at every tick (LRM 16.14.5), a procedural one where
+  // a pending instance matures, and an expect where it is executed (LRM 16.17).
+  // Where this time step's tick has already been run, what a tick runs is run
+  // again now, which steps only the attempt it opens.
+  void BeginAttempt();
 
-  // A tick of the clock: every evaluation becomes one this tick has not yet
-  // stepped, and no implication has heard from a live instance yet.
-  void BeginTick();
+  // A tick of the leading clock: every evaluation becomes one this tick has
+  // not yet stepped, no implication has heard from a live instance yet, and
+  // what a tick runs is run.
+  void Tick();
+
+  // Opens an attempt on the staged seed for every one that is due, each only
+  // where checking is on now (LRM 20.11) and dropped otherwise. The attempt
+  // keeps what its control allowed when it began.
+  void OpenMatured();
 
   // A tick at which the disable condition held. Every attempt is discarded and
   // none begins -- a disabled attempt is neither a success nor a failure and
-  // runs no statement, and one that would start here starts disabled (LRM
-  // 16.12, 16.14.1).
+  // runs no statement, and one that would start here starts disabled, every
+  // due one among them (LRM 16.12, 16.14.1).
   void DisableTick();
 
   // Aborts every attempt in flight, which settles none of them and runs no
-  // statement (LRM 20.11 Kill).
+  // statement: a Kill (LRM 20.11), and the disable condition coming true
+  // between ticks (LRM 16.12). One that is due is no attempt yet and is kept;
+  // it begins only where checking is on and the condition is false when its
+  // tick comes.
   void Discard();
 
   // One word of the union of every position any unstepped evaluation is live
@@ -242,7 +263,8 @@ class EvaluationAttempts {
       std::int64_t index, std::uint64_t implication) const -> Outcome;
 
   void RequireInstalled() const;
-  void Size(std::uint64_t words);
+  void Size(std::uint64_t words, OwnedCall step);
+  void OpenAttempt();
   void OpenEvaluation(
       std::variant<OpensAttempt, ConsequentOf> role, std::uint64_t part);
   [[nodiscard]] auto IndexOf(std::int64_t index) const -> std::size_t;
@@ -258,6 +280,13 @@ class EvaluationAttempts {
   std::vector<std::uint64_t> words_;
   std::vector<Evaluation> evaluations_;
   std::vector<std::uint64_t> seed_;
+  // The matured assertion queue (LRM 16.14.6): how many attempts are due and
+  // wait for a tick.
+  std::size_t matured_ = 0;
+  // The time step the clock last ticked in.
+  std::optional<SimTime> ticked_at_;
+  // What a tick runs over the attempts.
+  OwnedCall step_;
   std::variant<Installed, Held> answered_;
   const AssertionControl* control_ = nullptr;
   std::size_t width_ = 0;

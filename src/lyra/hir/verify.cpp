@@ -31,6 +31,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/method_id.hpp"
+#include "lyra/hir/operands.hpp"
 #include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/pattern_id.hpp"
@@ -57,557 +58,6 @@
 namespace lyra::hir {
 
 namespace {
-
-// How a holder names an expression. An operand is what the holder evaluates,
-// and is a place the expression is reached at. A function's report and a
-// sensitivity describe what a body reads or waits on, often in terms of
-// expressions the body itself holds: the report evaluates what it names in an
-// evaluation of its own, ahead of the body, and a sensitivity evaluates
-// nothing, so naming one there is no place the body's evaluation reaches it;
-// it is held only to naming an expression the arena has. A shared name is an
-// expression another holder evaluates, named for the value that evaluation
-// gives: the instance a synchronous drive's target reaches, which its landing
-// is made on too.
-enum class Slot : std::uint8_t { kOperand, kReport, kSensitivity, kShared };
-
-void ReachSensitivityEntry(const SensitivityEntry& entry, const auto& reach) {
-  std::visit(
-      Overloaded{
-          [](const WatchedWhole&) {},
-          [&](const WatchedSelect& part) {
-            reach(part.prefix, Slot::kSensitivity);
-          }},
-      entry.part);
-}
-
-void ReachSensitivity(
-    std::span<const SensitivityEntry> entries, const auto& reach) {
-  for (const SensitivityEntry& entry : entries) {
-    ReachSensitivityEntry(entry, reach);
-  }
-}
-
-void ReachReads(const Reads& reads, const auto& reach) {
-  ReachSensitivity(reads.cells, reach);
-  ReachSensitivity(reads.writes, reach);
-  for (const ExprId call : reads.calls) {
-    reach(call, Slot::kReport);
-  }
-}
-
-void ReachEventControl(const EventControl& control, const auto& reach) {
-  for (const EventEntry& entry : control.entries) {
-    std::visit(
-        Overloaded{
-            [&](const ValueChange& c) {
-              reach(c.signal, Slot::kOperand);
-              ReachSensitivity(c.cells, reach);
-            },
-            [&](const NamedEventTrigger& t) {
-              reach(t.event, Slot::kOperand);
-            }},
-        entry.occurrence);
-    if (entry.condition.has_value()) {
-      reach(*entry.condition, Slot::kOperand);
-    }
-  }
-}
-
-void ReachTimingControl(const TimingControl& timing, const auto& reach) {
-  std::visit(
-      Overloaded{
-          [&](const DelayControl& c) { reach(c.duration, Slot::kOperand); },
-          [&](const EventControl& c) { ReachEventControl(c, reach); },
-          [&](const ImplicitEventControl& c) {
-            ReachSensitivity(c.sensitivity_list, reach);
-          },
-          [&](const CycleDelay& c) {
-            reach(c.count, Slot::kOperand);
-            reach(c.event, Slot::kOperand);
-          }},
-      timing);
-}
-
-void ReachClockingLanding(const ClockingLanding& landing, const auto& reach) {
-  std::visit(
-      Overloaded{
-          [](const ClockingOutputLanding&) {},
-          [&](const PublishedLanding& published) {
-            std::visit(
-                Overloaded{
-                    [](const RoutedObjectRef&) {},
-                    [&](const InstanceOfTarget& target) {
-                      reach(target.access, Slot::kShared);
-                    }},
-                published.receiver);
-          }},
-      landing);
-}
-
-void ReachDelayOrEventControl(
-    const DelayOrEventControl& control, const auto& reach) {
-  std::visit(
-      Overloaded{
-          [&](const DelayControl& c) { reach(c.duration, Slot::kOperand); },
-          [&](const EventControl& c) { ReachEventControl(c, reach); },
-          [&](const RepeatedEventControl& c) {
-            reach(c.count, Slot::kOperand);
-            ReachEventControl(c.event, reach);
-          },
-          [&](const ClockingDriveControl& c) {
-            if (c.cycles.has_value()) reach(*c.cycles, Slot::kOperand);
-            ReachClockingLanding(c.landing, reach);
-          }},
-      control);
-}
-
-void ReachEffectTiming(const EffectTiming& timing, const auto& reach) {
-  std::visit(
-      Overloaded{
-          [](const ImmediateEffect&) {},
-          [&](const NonBlockingEffect& deferred) {
-            if (deferred.control.has_value()) {
-              ReachDelayOrEventControl(*deferred.control, reach);
-            }
-          }},
-      timing);
-}
-
-void ReachConditions(
-    std::span<const ConditionClause> conditions, const auto& reach) {
-  for (const ConditionClause& clause : conditions) {
-    reach(clause.expr, Slot::kOperand);
-    if (clause.pattern.has_value()) {
-      reach.ThroughPattern(*clause.pattern);
-    }
-  }
-}
-
-void ReachPropertySpec(const PropertySpec& spec, const auto& reach) {
-  ReachEventControl(spec.clock, reach);
-  if (spec.disable.has_value()) {
-    reach(spec.disable->condition, Slot::kOperand);
-    ReachSensitivity(spec.disable->sensitivity, reach);
-  }
-  reach.ThroughProperty(spec.body);
-}
-
-// What an access through a virtual interface evaluates: the handle, and what
-// selects each loop's block on the way down.
-void ReachInstanceAccess(
-    const InterfaceInstanceAccessExpr& access, const auto& reach) {
-  reach(access.handle, Slot::kOperand);
-  for (const PublishedStep& step : access.steps) {
-    if (const auto* loop = std::get_if<PublishedGenerateLoopRef>(&step.names)) {
-      reach(loop->position, Slot::kOperand);
-    }
-  }
-}
-
-// The expressions a callee holds: the object a call is made on, where the
-// callee names it by an expression, and the expression an array method
-// evaluates at each entry (LRM 7.12).
-void ReachCallee(const SubroutineRef& callee, const auto& reach) {
-  std::visit(
-      Overloaded{
-          [](const StructuralSubroutineRef&) {},
-          [&](const MethodCallRef& ref) {
-            std::visit(
-                Overloaded{
-                    [&](const HandleReceiver& receiver) {
-                      reach(receiver.expr, Slot::kOperand);
-                    },
-                    [](const SelfReceiver&) {}, [](const SuperReceiver&) {}},
-                ref.receiver);
-          },
-          [](const StaticMethodCallRef&) {}, [](const SystemSubroutineRef&) {},
-          [&](const BuiltinMethodRef& ref) {
-            if (ref.receiver.has_value()) {
-              reach(*ref.receiver, Slot::kOperand);
-            }
-          },
-          [](const EnumMethodRef&) {},
-          [&](const ArrayIteratorMethodRef& ref) {
-            if (ref.with_clause.has_value()) {
-              reach(ref.with_clause->expr, Slot::kOperand);
-            }
-          },
-          [](const PastValueRef&) {}, [](const ValueChangeRef&) {},
-          [](const ForeignImportRef&) {}, [](const NamespaceSubroutineRef&) {},
-          [&](const PublishedScopeMethodRef& ref) {
-            std::visit(
-                Overloaded{
-                    [](const RoutedObjectRef&) {},
-                    [&](const InterfaceInstanceAccessExpr& access) {
-                      ReachInstanceAccess(access, reach);
-                    }},
-                ref.receiver);
-          }},
-      callee);
-}
-
-void ReachRangeBounds(const RangeBounds& bounds, const auto& reach) {
-  std::visit(
-      Overloaded{
-          [&](const RangeConstantBounds& b) {
-            reach(b.left_bound, Slot::kOperand);
-            reach(b.right_bound, Slot::kOperand);
-          },
-          [&](const RangeIndexedUpBounds& b) {
-            reach(b.base_index, Slot::kOperand);
-            reach(b.width, Slot::kOperand);
-          },
-          [&](const RangeIndexedDownBounds& b) {
-            reach(b.base_index, Slot::kOperand);
-            reach(b.width, Slot::kOperand);
-          }},
-      bounds);
-}
-
-void ReachReceiver(const CovergroupReceiver& receiver, const auto& operand) {
-  std::visit(
-      Overloaded{
-          [&](const CovergroupInstanceReceiver& r) { operand(r.instance); },
-          [](const CovergroupTypeReceiver&) {}},
-      receiver);
-}
-
-// Calls `reach` with each expression `data` holds, all of them in the arena
-// that holds `data`.
-void ForEachOperand(const ExprData& data, const auto& reach) {
-  const auto operand = [&](ExprId id) { reach(id, Slot::kOperand); };
-  const auto operands = [&](std::span<const ExprId> ids) {
-    for (const ExprId id : ids) {
-      operand(id);
-    }
-  };
-  const auto optional_operand = [&](const std::optional<ExprId>& id) {
-    if (id.has_value()) {
-      operand(*id);
-    }
-  };
-  std::visit(
-      Overloaded{
-          [](const PrimaryExpr&) {},
-          [&](const UnaryExpr& e) { operand(e.operand); },
-          [&](const BinaryExpr& e) {
-            operand(e.lhs);
-            operand(e.rhs);
-          },
-          [&](const ConditionalExpr& e) {
-            ReachConditions(e.conditions, reach);
-            operand(e.then_value);
-            operand(e.else_value);
-          },
-          [&](const AssignExpr& e) {
-            ReachEffectTiming(e.timing, reach);
-            operand(e.lhs);
-            operand(e.rhs);
-          },
-          [&](const IncDecExpr& e) { operand(e.target); },
-          [&](const CallExpr& e) {
-            ReachCallee(e.callee, reach);
-            for (const std::optional<ExprId>& argument : e.arguments) {
-              optional_operand(argument);
-            }
-          },
-          [](const CalleeDefaultExpr&) {},
-          [&](const ConversionExpr& e) { operand(e.operand); },
-          [&](const ConstantExpr& e) { operand(e.value); },
-          [&](const ValueRangeExpr& e) {
-            optional_operand(e.lo);
-            optional_operand(e.hi);
-          },
-          [&](const InsideExpr& e) {
-            operand(e.lhs);
-            operands(e.items);
-          },
-          [&](const ElementSelectExpr& e) {
-            operand(e.base_value);
-            operand(e.index);
-          },
-          [&](const RangeSelectExpr& e) {
-            operand(e.base_value);
-            ReachRangeBounds(e.bounds, reach);
-          },
-          [&](const MemberAccessExpr& e) { operand(e.base_value); },
-          [&](const ClassPropertyAccessExpr& e) { operand(e.base_value); },
-          [&](const InterfaceMemberAccessExpr& e) {
-            ReachInstanceAccess(e.instance, reach);
-          },
-          [&](const InterfaceInstanceAccessExpr& e) {
-            ReachInstanceAccess(e, reach);
-          },
-          [&](const ConcatExpr& e) { operands(e.operands); },
-          [&](const StreamingConcatExpr& e) {
-            for (const StreamOperand& streamed : e.operands) {
-              operand(streamed.value);
-              if (streamed.with.has_value()) {
-                std::visit(
-                    Overloaded{
-                        [&](ExprId element) { operand(element); },
-                        [&](const RangeBounds& bounds) {
-                          ReachRangeBounds(bounds, reach);
-                        }},
-                    *streamed.with);
-              }
-            }
-          },
-          [&](const ReplicationExpr& e) {
-            operand(e.count);
-            operand(e.concat);
-          },
-          [&](const AssignmentPatternExpr& e) { operands(e.elements); },
-          [&](const AssignmentPatternReplicationExpr& e) {
-            operand(e.count);
-            operands(e.items);
-          },
-          [&](const DynamicArrayNewExpr& e) {
-            operand(e.size);
-            optional_operand(e.initializer);
-          },
-          [&](const ClassNewExpr& e) { operands(e.arguments); },
-          [&](const AssociativeAssignmentPatternExpr& e) {
-            for (const auto& entry : e.entries) {
-              operand(entry.key);
-              operand(entry.value);
-            }
-            optional_operand(e.default_value);
-          },
-          [&](const AssignmentPatternKeyedExpr& e) {
-            for (const auto& entry : e.entries) {
-              operand(entry.index);
-              operand(entry.value);
-            }
-            optional_operand(e.default_value);
-          },
-          [&](const TaggedUnionExpr& e) { optional_operand(e.payload); },
-          [&](const DynamicCastExpr& e) {
-            operand(e.destination);
-            operand(e.source);
-          },
-          [&](const CovergroupNewExpr& e) {
-            operands(e.arguments);
-            optional_operand(e.embedding);
-          },
-          [&](const CovergroupMethodCallExpr& e) {
-            ReachReceiver(e.receiver, operand);
-            for (const std::optional<ExprId>& argument : e.arguments) {
-              optional_operand(argument);
-            }
-          },
-          [&](const CovergroupOptionExpr& e) {
-            ReachReceiver(e.receiver, operand);
-          },
-          [&](const RandomizeExpr& e) {
-            std::visit(
-                Overloaded{
-                    [&](const RandomizedClassObject& o) {
-                      operand(o.object);
-                      std::visit(
-                          Overloaded{
-                              [](const DeclaredRandomVariables&) {},
-                              [&](const ListedRandomVariables& l) {
-                                operands(l.variables);
-                              }},
-                          o.variables);
-                    },
-                    [&](const RandomizedScopeVariables& v) {
-                      operands(v.variables);
-                    }},
-                e.target);
-            if (e.with.has_value()) {
-              reach.ThroughConstraint(*e.with);
-            }
-          },
-          [&](const RandModeSetExpr& e) {
-            std::visit(
-                Overloaded{
-                    [&](const RandomVariableMode& m) { operand(m.variable); },
-                    [&](const ObjectModes& m) { operand(m.object); }},
-                e.target);
-            operand(e.on);
-          },
-          [&](const RandModeGetExpr& e) { operand(e.target.variable); },
-          [&](const ConstraintModeSetExpr& e) {
-            std::visit(
-                Overloaded{
-                    [&](const ConstraintBlockMode& m) { operand(m.object); },
-                    [](const StaticConstraintBlockMode&) {},
-                    [&](const ObjectModes& m) { operand(m.object); }},
-                e.target);
-            operand(e.on);
-          },
-          [&](const ConstraintModeGetExpr& e) {
-            std::visit(
-                Overloaded{
-                    [&](const ConstraintBlockMode& m) { operand(m.object); },
-                    [](const StaticConstraintBlockMode&) {}},
-                e.target);
-          }},
-      data);
-}
-
-// Calls `reach` with each expression `data` holds itself, as opposed to through
-// a statement, a pattern or a variable it names.
-void ForEachExpr(const StmtData& data, const auto& reach) {
-  const auto operand = [&](ExprId id) { reach(id, Slot::kOperand); };
-  std::visit(
-      Overloaded{
-          [](const EmptyStmt&) {},
-          [](const VarDeclStmt&) {},
-          [&](const ExprStmt& s) { operand(s.expr); },
-          [](const BlockStmt&) {},
-          [](const ForkStmt&) {},
-          [&](const IfStmt& s) { ReachConditions(s.conditions, reach); },
-          [&](const CaseStmt& s) {
-            operand(s.condition);
-            for (const CaseItem& item : s.items) {
-              for (const ExprId label : item.labels) {
-                operand(label);
-              }
-            }
-          },
-          [&](const PatternCaseStmt& s) {
-            operand(s.condition);
-            for (const PatternCaseItem& item : s.items) {
-              reach.ThroughPattern(item.pattern);
-              if (item.filter.has_value()) {
-                operand(*item.filter);
-              }
-            }
-          },
-          [&](const AssertStmt& s) { operand(s.condition); },
-          [&](const CoverStmt& s) { operand(s.condition); },
-          [&](const ConcurrentAssertStmt& s) {
-            ReachPropertySpec(s.spec, reach);
-          },
-          [&](const ConcurrentCoverStmt& s) {
-            ReachPropertySpec(s.spec, reach);
-          },
-          [&](const ExpectStmt& s) { ReachPropertySpec(s.spec, reach); },
-          [&](const ForStmt& s) {
-            for (const ExprId init : s.init) {
-              operand(init);
-            }
-            if (s.condition.has_value()) {
-              operand(*s.condition);
-            }
-            for (const ExprId step : s.step) {
-              operand(step);
-            }
-          },
-          [&](const ForeachStmt& s) { operand(s.array); },
-          [&](const WhileStmt& s) { operand(s.condition); },
-          [&](const RepeatStmt& s) { operand(s.count); },
-          [&](const DoWhileStmt& s) { operand(s.condition); },
-          [](const ForeverStmt&) {},
-          [](const BreakStmt&) {},
-          [](const ContinueStmt&) {},
-          [&](const ReturnStmt& s) {
-            if (s.value.has_value()) {
-              operand(*s.value);
-            }
-          },
-          [&](const TimedStmt& s) { ReachTimingControl(s.timing, reach); },
-          [&](const EventTriggerStmt& s) {
-            operand(s.event);
-            ReachEffectTiming(s.timing, reach);
-          },
-          [&](const WaitStmt& s) {
-            operand(s.cond);
-            ReachSensitivity(s.cells, reach);
-          },
-          [](const WaitForkStmt&) {},
-          [](const DisableForkStmt&) {},
-          [](const DisableStmt&) {},
-          [&](const ProceduralContinuousAssignStmt& s) {
-            operand(s.target);
-            operand(s.source);
-            ReachSensitivity(s.sensitivity_list, reach);
-          },
-          [&](const ProceduralContinuousEndStmt& s) { operand(s.target); },
-          [&](const ConstraintStmt& s) {
-            reach.ThroughConstraint(s.constraints);
-          }},
-      data);
-}
-
-// Calls `enter` with each statement `data` holds.
-void ForEachChildStmt(const StmtData& data, const auto& enter) {
-  const auto optional_child = [&](const std::optional<StmtId>& id) {
-    if (id.has_value()) {
-      enter(*id);
-    }
-  };
-  std::visit(
-      Overloaded{
-          [](const EmptyStmt&) {},
-          [](const VarDeclStmt&) {},
-          [](const ExprStmt&) {},
-          [&](const BlockStmt& s) {
-            for (const StmtId id : s.statements) {
-              enter(id);
-            }
-          },
-          [&](const ForkStmt& s) {
-            for (const StmtId id : s.locals) {
-              enter(id);
-            }
-            for (const StmtId id : s.branches) {
-              enter(id);
-            }
-          },
-          [&](const IfStmt& s) {
-            enter(s.then_stmt);
-            optional_child(s.else_stmt);
-          },
-          [&](const CaseStmt& s) {
-            for (const CaseItem& item : s.items) {
-              enter(item.stmt);
-            }
-            optional_child(s.default_stmt);
-          },
-          [&](const PatternCaseStmt& s) {
-            for (const PatternCaseItem& item : s.items) {
-              enter(item.stmt);
-            }
-            optional_child(s.default_stmt);
-          },
-          [&](const AssertStmt& s) {
-            optional_child(s.pass_stmt);
-            optional_child(s.fail_stmt);
-          },
-          [&](const CoverStmt& s) { optional_child(s.pass_stmt); },
-          [&](const ConcurrentAssertStmt& s) {
-            optional_child(s.pass_stmt);
-            optional_child(s.fail_stmt);
-          },
-          [&](const ConcurrentCoverStmt& s) { optional_child(s.pass_stmt); },
-          [&](const ExpectStmt& s) {
-            optional_child(s.pass_stmt);
-            optional_child(s.fail_stmt);
-          },
-          [&](const ForStmt& s) { enter(s.body); },
-          [&](const ForeachStmt& s) { enter(s.body); },
-          [&](const WhileStmt& s) { enter(s.body); },
-          [&](const RepeatStmt& s) { enter(s.body); },
-          [&](const DoWhileStmt& s) { enter(s.body); },
-          [&](const ForeverStmt& s) { enter(s.body); },
-          [](const BreakStmt&) {},
-          [](const ContinueStmt&) {},
-          [](const ReturnStmt&) {},
-          [&](const TimedStmt& s) { enter(s.stmt); },
-          [](const EventTriggerStmt&) {},
-          [&](const WaitStmt& s) { enter(s.body); },
-          [](const WaitForkStmt&) {},
-          [](const DisableForkStmt&) {},
-          [](const DisableStmt&) {},
-          [](const ProceduralContinuousAssignStmt&) {},
-          [](const ProceduralContinuousEndStmt&) {},
-          [](const ConstraintStmt&) {}},
-      data);
-}
 
 auto KindOf(const Primary& primary) -> std::string_view {
   return std::visit(
@@ -900,7 +350,7 @@ auto KindOf(const StmtData& data) -> std::string_view {
 struct Place {
   std::optional<ExprId> from;
   std::string_view holder;
-  Slot slot;
+  OperandSlot slot;
 };
 
 // The places each expression of one arena is reached from, and the places that
@@ -944,18 +394,18 @@ struct Reacher {
   std::optional<ExprId> from;
   std::string_view holder;
 
-  void operator()(ExprId id, Slot slot) const {
+  void operator()(ExprId id, OperandSlot slot) const {
     const Place place{.from = from, .holder = holder, .slot = slot};
     if (id.value >= reaches->at.size()) {
       reaches->outside.emplace_back(id, place);
       return;
     }
     switch (slot) {
-      case Slot::kReport:
-      case Slot::kSensitivity:
-      case Slot::kShared:
+      case OperandSlot::kReport:
+      case OperandSlot::kSensitivity:
+      case OperandSlot::kShared:
         return;
-      case Slot::kOperand:
+      case OperandSlot::kOperand:
         break;
     }
     std::vector<Place>& places = reaches->at.at(id.value);
@@ -971,33 +421,15 @@ struct Reacher {
   // The expressions a pattern holds are the constants it matches against (LRM
   // 12.6), however deep in it they are written.
   void ThroughPattern(PatternId id) const {
-    std::visit(
-        Overloaded{
-            [](const WildcardPattern&) {},
-            [&](const ConstantPattern& pattern) {
-              const Reacher from_pattern{
-                  .reaches = reaches,
-                  .from = std::nullopt,
-                  .holder = "a constant pattern"};
-              from_pattern(pattern.value, Slot::kOperand);
-            },
-            [](const VariablePattern&) {},
-            [&](const TaggedPattern& pattern) {
-              if (pattern.value_pattern.has_value()) {
-                ThroughPattern(*pattern.value_pattern);
-              }
-            },
-            [&](const StructurePattern& pattern) {
-              for (const auto& field : pattern.field_patterns) {
-                ThroughPattern(field.second);
-              }
-            }},
-        reaches->patterns->Get(id).data);
+    const Reacher from_pattern{
+        .reaches = reaches,
+        .from = std::nullopt,
+        .holder = "a constant pattern"};
+    ForEachPatternOperand(*reaches->patterns, id, [&](ExprId e) {
+      from_pattern(e, OperandSlot::kOperand);
+    });
   }
 
-  // The expressions a property holds are the Boolean expressions its sequences
-  // are built from (LRM 16.7), and what an if-else or a case property selects
-  // by (LRM 16.12.6, 16.12.16).
   void ThroughProperty(PropertyExprId id) const {
     if (reaches->properties == nullptr) {
       throw InternalError(
@@ -1005,49 +437,11 @@ struct Reacher {
     }
     const Reacher from_property{
         .reaches = reaches, .from = std::nullopt, .holder = "a property"};
-    std::visit(
-        Overloaded{
-            [&](const PropertySequence& property) {
-              ThroughSequence(property.sequence);
-            },
-            [&](const PropertyImplication& property) {
-              ThroughSequence(property.antecedent);
-              ThroughProperty(property.consequent);
-            },
-            [&](const PropertyFollowedBy& property) {
-              ThroughSequence(property.antecedent);
-              ThroughProperty(property.consequent);
-            },
-            [&](const PropertyNot& property) {
-              ThroughProperty(property.operand);
-            },
-            [&](const PropertyBinary& property) {
-              ThroughProperty(property.lhs);
-              ThroughProperty(property.rhs);
-            },
-            [&](const PropertyConditional& property) {
-              from_property(property.condition, Slot::kOperand);
-              ThroughProperty(property.then_property);
-              if (property.else_property.has_value()) {
-                ThroughProperty(*property.else_property);
-              }
-            },
-            [&](const PropertyCase& property) {
-              from_property(property.subject, Slot::kOperand);
-              for (const PropertyCaseItem& item : property.items) {
-                for (const ExprId label : item.labels) {
-                  from_property(label, Slot::kOperand);
-                }
-                ThroughProperty(item.property);
-              }
-              if (property.default_property.has_value()) {
-                ThroughProperty(*property.default_property);
-              }
-            }},
-        reaches->properties->Get(id).data);
+    ForEachPropertyOperand(
+        *reaches->properties, *reaches->sequences, id,
+        [&](ExprId e) { from_property(e, OperandSlot::kOperand); });
   }
 
-  // The expressions a constraint holds, however deep in its tree (LRM 18.5).
   void ThroughConstraint(ConstraintId id) const {
     if (reaches->constraints == nullptr) {
       throw InternalError(
@@ -1055,66 +449,9 @@ struct Reacher {
     }
     const Reacher from_constraint{
         .reaches = reaches, .from = std::nullopt, .holder = "a constraint"};
-    const auto operand = [&](ExprId e) { from_constraint(e, Slot::kOperand); };
-    std::visit(
-        Overloaded{
-            [&](const ConstraintList& c) {
-              for (const ConstraintId item : c.items) {
-                ThroughConstraint(item);
-              }
-            },
-            [&](const ExpressionConstraint& c) { operand(c.condition); },
-            [&](const DistConstraint& c) {
-              operand(c.subject);
-              for (const DistItem& item : c.items) {
-                operand(item.low);
-                if (item.high.has_value()) operand(*item.high);
-                if (item.weight.has_value()) operand(*item.weight);
-              }
-              if (c.default_weight.has_value()) operand(*c.default_weight);
-            },
-            [&](const ImplicationConstraint& c) {
-              operand(c.predicate);
-              ThroughConstraint(c.body);
-            },
-            [&](const ConditionalConstraint& c) {
-              operand(c.predicate);
-              ThroughConstraint(c.then_body);
-              if (c.else_body.has_value()) ThroughConstraint(*c.else_body);
-            },
-            [&](const UniquenessConstraint& c) {
-              for (const ExprId item : c.items) operand(item);
-            },
-            [&](const ForeachConstraint& c) {
-              operand(c.array);
-              ThroughConstraint(c.body);
-            },
-            [&](const SolveBeforeConstraint& c) {
-              for (const ExprId e : c.solve) operand(e);
-              for (const ExprId e : c.after) operand(e);
-            },
-            [&](const DisableSoftConstraint& c) { operand(c.target); }},
-        reaches->constraints->Get(id).data);
-  }
-
-  void ThroughSequence(SequenceExprId id) const {
-    std::visit(
-        Overloaded{
-            [&](const SequenceBoolean& sequence) {
-              const Reacher from_sequence{
-                  .reaches = reaches,
-                  .from = std::nullopt,
-                  .holder = "a sequence"};
-              from_sequence(sequence.condition, Slot::kOperand);
-            },
-            [&](const SequenceDelay& sequence) {
-              ThroughSequence(sequence.head);
-              ThroughSequence(sequence.tail);
-            },
-            [&](const SequenceRepetition& sequence) {
-              ThroughSequence(sequence.body);
-            }},
-        reaches->sequences->Get(id).data);
+    ForEachConstraintOperand(*reaches->constraints, id, [&](ExprId e) {
+      from_constraint(e, OperandSlot::kOperand);
+    });
   }
 };
 
@@ -1130,16 +467,16 @@ auto DescribePlace(const base::Arena<Expr, ExprId>& exprs, const Place& place)
                                  ? Describe(exprs.Get(*place.from).data)
                                  : std::string{place.holder};
   switch (place.slot) {
-    case Slot::kOperand:
+    case OperandSlot::kOperand:
       return holder;
-    case Slot::kReport:
+    case OperandSlot::kReport:
       return std::format("the report of {}", holder);
-    case Slot::kSensitivity:
+    case OperandSlot::kSensitivity:
       return std::format("the sensitivity of {}", holder);
-    case Slot::kShared:
+    case OperandSlot::kShared:
       return std::format("the value {} shares", holder);
   }
-  throw InternalError("hir::DescribePlace: unknown Slot");
+  throw InternalError("hir::DescribePlace: unknown OperandSlot");
 }
 
 // Reaches what the statement `id` of `body` holds, and what every statement
@@ -1857,7 +1194,7 @@ void VerifyBody(
     }
     const ProceduralVarDecl& variable = body.procedural_vars.Get(id);
     if (variable.init.has_value()) {
-      from_variable(*variable.init, Slot::kOperand);
+      from_variable(*variable.init, OperandSlot::kOperand);
     }
   }
   reach_from_owner(reaches);
@@ -1912,12 +1249,12 @@ void VerifyClass(
         const auto from_base =
             ReachFrom(reaches, std::nullopt, "a base constructor call");
         for (const ExprId argument : cls.base_call.arguments) {
-          from_base(argument, Slot::kOperand);
+          from_base(argument, OperandSlot::kOperand);
         }
         const auto from_init =
             ReachFrom(reaches, std::nullopt, "a property initializer");
         for (const FieldInit& init : cls.field_inits) {
-          from_init(init.value, Slot::kOperand);
+          from_init(init.value, OperandSlot::kOperand);
         }
       },
       [&] { return std::format("the constructor of {}", owner()); }, lines);
@@ -1927,7 +1264,7 @@ void VerifyClass(
         const auto from_init =
             ReachFrom(reaches, std::nullopt, "a static property initializer");
         for (const StaticPropertyInit& init : cls.static_property_inits) {
-          from_init(init.value, Slot::kOperand);
+          from_init(init.value, OperandSlot::kOperand);
         }
       },
       [&] { return std::format("the static initializers of {}", owner()); },
@@ -1938,14 +1275,18 @@ void ReachBinElements(std::span<const BinElement> elements, const auto& reach) {
   for (const BinElement& element : elements) {
     std::visit(
         Overloaded{
-            [&](const BinValue& value) { reach(value.value, Slot::kOperand); },
+            [&](const BinValue& value) {
+              reach(value.value, OperandSlot::kOperand);
+            },
             [&](const BinRange& range) {
-              if (range.low.has_value()) reach(*range.low, Slot::kOperand);
-              if (range.high.has_value()) reach(*range.high, Slot::kOperand);
+              if (range.low.has_value())
+                reach(*range.low, OperandSlot::kOperand);
+              if (range.high.has_value())
+                reach(*range.high, OperandSlot::kOperand);
             },
             [&](const BinTolerance& tolerance) {
-              reach(tolerance.center, Slot::kOperand);
-              reach(tolerance.tolerance, Slot::kOperand);
+              reach(tolerance.center, OperandSlot::kOperand);
+              reach(tolerance.tolerance, OperandSlot::kOperand);
             }},
         element);
   }
@@ -1953,7 +1294,7 @@ void ReachBinElements(std::span<const BinElement> elements, const auto& reach) {
 
 void ReachOptions(std::span<const OptionSetting> options, const auto& reach) {
   for (const OptionSetting& option : options) {
-    reach(option.value, Slot::kOperand);
+    reach(option.value, OperandSlot::kOperand);
   }
 }
 
@@ -1961,12 +1302,12 @@ void ReachMatches(const MatchesRequired& matches, const auto& reach) {
   std::visit(
       Overloaded{
           [](const OneMatch&) {}, [](const EveryMatch&) {},
-          [&](ExprId count) { reach(count, Slot::kOperand); }},
+          [&](ExprId count) { reach(count, OperandSlot::kOperand); }},
       matches);
 }
 
 void ReachBin(const BinConstruct& bin, const auto& reach) {
-  if (bin.iff.has_value()) reach(*bin.iff, Slot::kOperand);
+  if (bin.iff.has_value()) reach(*bin.iff, OperandSlot::kOperand);
   std::visit(
       Overloaded{
           [&](const ValueBins& values) {
@@ -1974,21 +1315,24 @@ void ReachBin(const BinConstruct& bin, const auto& reach) {
                 Overloaded{
                     [](const OneBin&) {}, [](const BinPerValue&) {},
                     [&](const FixedBins& fixed) {
-                      reach(fixed.count, Slot::kOperand);
+                      reach(fixed.count, OperandSlot::kOperand);
                     }},
                 values.array);
             ReachBinElements(values.elements, reach);
-            if (values.set.has_value()) reach(*values.set, Slot::kOperand);
+            if (values.set.has_value())
+              reach(*values.set, OperandSlot::kOperand);
             if (values.filter.has_value()) {
-              reach(values.filter->keeps, Slot::kOperand);
+              reach(values.filter->keeps, OperandSlot::kOperand);
             }
           },
           [&](const TransitionBins& transitions) {
             for (const auto& sequence : transitions.sequences) {
               for (const TransitionStep& step : sequence) {
                 ReachBinElements(step.values, reach);
-                if (step.least.has_value()) reach(*step.least, Slot::kOperand);
-                if (step.most.has_value()) reach(*step.most, Slot::kOperand);
+                if (step.least.has_value())
+                  reach(*step.least, OperandSlot::kOperand);
+                if (step.most.has_value())
+                  reach(*step.most, OperandSlot::kOperand);
               }
             }
           },
@@ -1997,10 +1341,10 @@ void ReachBin(const BinConstruct& bin, const auto& reach) {
 }
 
 void ReachCross(const Cross& cross, const auto& reach) {
-  if (cross.iff.has_value()) reach(*cross.iff, Slot::kOperand);
+  if (cross.iff.has_value()) reach(*cross.iff, OperandSlot::kOperand);
   ReachOptions(cross.options, reach);
   for (const CrossBin& bin : cross.bins) {
-    if (bin.iff.has_value()) reach(*bin.iff, Slot::kOperand);
+    if (bin.iff.has_value()) reach(*bin.iff, OperandSlot::kOperand);
   }
   for (const CrossSelectId id : cross.selects.Ids()) {
     std::visit(
@@ -2012,11 +1356,11 @@ void ReachCross(const Cross& cross, const auto& reach) {
             [](const SelectNot&) {}, [](const SelectAnd&) {},
             [](const SelectOr&) {},
             [&](const SelectWith& select) {
-              reach(select.filter, Slot::kOperand);
+              reach(select.filter, OperandSlot::kOperand);
               ReachMatches(select.matches, reach);
             },
             [&](const SelectSet& select) {
-              reach(select.tuples, Slot::kOperand);
+              reach(select.tuples, OperandSlot::kOperand);
               ReachMatches(select.matches, reach);
             }},
         cross.selects.Get(id));
@@ -2113,9 +1457,9 @@ void VerifyCovergroup(
         const auto from_coverpoint =
             ReachFrom(reaches, std::nullopt, "a coverpoint");
         for (const Coverpoint& point : group.coverpoints) {
-          from_coverpoint(point.expression, Slot::kOperand);
+          from_coverpoint(point.expression, OperandSlot::kOperand);
           if (point.iff.has_value()) {
-            from_coverpoint(*point.iff, Slot::kOperand);
+            from_coverpoint(*point.iff, OperandSlot::kOperand);
           }
           ReachOptions(point.options, from_coverpoint);
           for (const BinConstruct& bin : point.bins) {
@@ -2147,7 +1491,7 @@ void ReachFromDataObjects(ArenaReaches& reaches, const StructuralScope& scope) {
         Overloaded{
             [&](const StructuralVariableDecl& decl) {
               if (decl.initializer.has_value()) {
-                from_variable(*decl.initializer, Slot::kOperand);
+                from_variable(*decl.initializer, OperandSlot::kOperand);
               }
             },
             [](const StructuralNetDecl&) {},
@@ -2156,11 +1500,11 @@ void ReachFromDataObjects(ArenaReaches& reaches, const StructuralScope& scope) {
             [](const StructuralConstructionValueDecl&) {},
             [&](const StructuralParameterDecl& decl) {
               if (decl.default_value.has_value()) {
-                from_parameter(*decl.default_value, Slot::kOperand);
+                from_parameter(*decl.default_value, OperandSlot::kOperand);
               }
             },
             [&](const StructuralLocalparamDecl& decl) {
-              from_parameter(decl.initializer, Slot::kOperand);
+              from_parameter(decl.initializer, OperandSlot::kOperand);
             }},
         object.kind);
   }
@@ -2178,23 +1522,23 @@ void ReachFromGenerate(ArenaReaches& reaches, const Generate& generate) {
       Overloaded{
           [](const SingleBlock&) {},
           [&](const BlocksRepeat& loop) {
-            from_loop(loop.initial, Slot::kOperand);
-            from_loop(loop.condition, Slot::kOperand);
-            from_loop(loop.step, Slot::kOperand);
-            from_block(loop.index, Slot::kOperand);
+            from_loop(loop.initial, OperandSlot::kOperand);
+            from_loop(loop.condition, OperandSlot::kOperand);
+            from_loop(loop.step, OperandSlot::kOperand);
+            from_block(loop.index, OperandSlot::kOperand);
           },
           [&](const BlocksChoose& chosen) {
             for (const SelectionChoice& choice : chosen.choices) {
               std::visit(
                   Overloaded{
                       [&](const ChoiceOnCondition& on) {
-                        from_choice(on.condition, Slot::kOperand);
+                        from_choice(on.condition, OperandSlot::kOperand);
                       },
                       [&](const ChoiceOnLabel& on) {
-                        from_choice(on.selector, Slot::kOperand);
+                        from_choice(on.selector, OperandSlot::kOperand);
                         for (const LabeledItem& item : on.items) {
                           for (const ExprId label : item.labels) {
-                            from_choice(label, Slot::kOperand);
+                            from_choice(label, OperandSlot::kOperand);
                           }
                         }
                       }},
@@ -2211,7 +1555,7 @@ void ReachFromConnections(ArenaReaches& reaches, const StructuralScope& scope) {
     for (const InstanceAlternative& alternative : instance.alternatives) {
       for (const ParameterValueAssignment& assigned : alternative.assignments) {
         if (assigned.value.has_value()) {
-          from_instance(*assigned.value, Slot::kOperand);
+          from_instance(*assigned.value, OperandSlot::kOperand);
         }
       }
     }
@@ -2224,12 +1568,12 @@ void ReachFromConnections(ArenaReaches& reaches, const StructuralScope& scope) {
               std::visit(
                   Overloaded{
                       [&](const PortCellEndpoint& endpoint) {
-                        from_port(endpoint.cell, Slot::kOperand);
+                        from_port(endpoint.cell, OperandSlot::kOperand);
                       },
                       [](const ValueRoute&) {}},
                   data.endpoint);
               if (data.peer.has_value()) {
-                from_port(*data.peer, Slot::kOperand);
+                from_port(*data.peer, OperandSlot::kOperand);
               }
               ReachSensitivity(data.sensitivity, from_port);
             },
@@ -2240,7 +1584,7 @@ void ReachFromConnections(ArenaReaches& reaches, const StructuralScope& scope) {
   for (const NetJoin& join : scope.net_joins) {
     for (const NetSide& side : join.sides) {
       for (const NetPositions& operand : side) {
-        from_join(operand.part, Slot::kOperand);
+        from_join(operand.part, OperandSlot::kOperand);
       }
     }
   }
@@ -2447,22 +1791,22 @@ void VerifyScope(
   const auto from_assign =
       ReachFrom(reaches, std::nullopt, "a continuous assignment");
   for (const ContinuousAssign& assign : scope.continuous_assigns) {
-    from_assign(assign.lhs, Slot::kOperand);
-    from_assign(assign.rhs, Slot::kOperand);
+    from_assign(assign.lhs, OperandSlot::kOperand);
+    from_assign(assign.rhs, OperandSlot::kOperand);
     if (assign.delay.has_value()) {
       std::visit(
           Overloaded{
               [&](const SingleDelay& d) {
-                from_assign(d.amount, Slot::kOperand);
+                from_assign(d.amount, OperandSlot::kOperand);
               },
               [&](const RiseFallDelay& d) {
-                from_assign(d.rise, Slot::kOperand);
-                from_assign(d.fall, Slot::kOperand);
+                from_assign(d.rise, OperandSlot::kOperand);
+                from_assign(d.fall, OperandSlot::kOperand);
               },
               [&](const RiseFallTurnOffDelay& d) {
-                from_assign(d.rise, Slot::kOperand);
-                from_assign(d.fall, Slot::kOperand);
-                from_assign(d.turn_off, Slot::kOperand);
+                from_assign(d.rise, OperandSlot::kOperand);
+                from_assign(d.fall, OperandSlot::kOperand);
+                from_assign(d.turn_off, OperandSlot::kOperand);
               }},
           *assign.delay);
     }
@@ -2475,19 +1819,19 @@ void VerifyScope(
   const auto from_history =
       ReachFrom(reaches, std::nullopt, "a sampled history");
   for (const SampledHistoryDecl& history : scope.sampled_histories) {
-    from_history(history.subject, Slot::kOperand);
+    from_history(history.subject, OperandSlot::kOperand);
     ReachEventControl(history.clock, from_history);
-    from_history(history.depth, Slot::kOperand);
+    from_history(history.depth, OperandSlot::kOperand);
   }
   const auto from_clocking =
       ReachFrom(reaches, std::nullopt, "a clocking block");
   const auto reach_delay = [&](const DelayControl& delay) {
-    from_clocking(delay.duration, Slot::kOperand);
+    from_clocking(delay.duration, OperandSlot::kOperand);
   };
   for (const ClockingBlockDecl& clocking : scope.clocking_blocks) {
     ReachEventControl(clocking.event, from_clocking);
     for (const Clockvar& clockvar : clocking.clockvars) {
-      from_clocking(clockvar.signal, Slot::kOperand);
+      from_clocking(clockvar.signal, OperandSlot::kOperand);
       ReachSensitivity(clockvar.signal_reads, from_clocking);
       if (clockvar.input.has_value()) {
         std::visit(
@@ -2508,7 +1852,7 @@ void VerifyScope(
         std::visit(
             Overloaded{
                 [&](const NetSignal& nets) {
-                  from_clocking(nets.driving, Slot::kOperand);
+                  from_clocking(nets.driving, OperandSlot::kOperand);
                   ReachSensitivity(nets.reads, from_clocking);
                 },
                 [](const VariableSignal&) {}},

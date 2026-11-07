@@ -766,12 +766,15 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_evaluation_attempts_install);
   add("lyra_rt_evaluation_attempts_seed_word",
       &lyra_rt_evaluation_attempts_seed_word);
-  add("lyra_rt_evaluation_attempts_open_attempt",
-      &lyra_rt_evaluation_attempts_open_attempt);
-  add("lyra_rt_evaluation_attempts_begin_tick",
-      &lyra_rt_evaluation_attempts_begin_tick);
+  add("lyra_rt_evaluation_attempts_begin_attempt",
+      &lyra_rt_evaluation_attempts_begin_attempt);
+  add("lyra_rt_evaluation_attempts_tick", &lyra_rt_evaluation_attempts_tick);
+  add("lyra_rt_evaluation_attempts_open_matured",
+      &lyra_rt_evaluation_attempts_open_matured);
   add("lyra_rt_evaluation_attempts_disable_tick",
       &lyra_rt_evaluation_attempts_disable_tick);
+  add("lyra_rt_evaluation_attempts_discard",
+      &lyra_rt_evaluation_attempts_discard);
   add("lyra_rt_evaluation_attempts_live_word",
       &lyra_rt_evaluation_attempts_live_word);
   add("lyra_rt_evaluation_attempts_next_unstepped",

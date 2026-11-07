@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <expected>
+#include <format>
 #include <optional>
 #include <span>
 #include <string>
@@ -10,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/Lookup.h>
@@ -17,6 +19,7 @@
 #include <slang/ast/SystemSubroutine.h>
 #include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
@@ -24,7 +27,6 @@
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
-#include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/SVInt.h>
 #include <slang/syntax/AllSyntax.h>
@@ -378,6 +380,24 @@ auto LowerSampledHistoryExpr(
       std::get_if<support::ValueChangeSystemSubroutineInfo>(&desc->semantic);
   if (!past && change == nullptr) {
     return std::optional<hir::Expr>{std::nullopt};
+  }
+
+  // LRM 16.5.1: a past or a future value of a constant cast is its current
+  // value, which a history kept a tick at a time does not hold, and what the
+  // operand reads is counted by variable, which cannot tell a read under the
+  // cast from one beside it.
+  bool casts = false;
+  call.arguments()[0]->visit(
+      slang::ast::makeVisitor(
+          [&](auto& visitor,
+              const slang::ast::ConversionExpression& conversion) {
+            if (conversion.isConstCast) casts = true;
+            visitor.visitDefault(conversion);
+          }));
+  if (casts) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "'{}' of a constant cast is not yet supported", name);
   }
 
   // Arming is the same requirement `$sampled` has, and the same check reports

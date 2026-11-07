@@ -317,14 +317,6 @@ class StructuralScopeLowerer {
             .owner = class_id_, .slot = ClockingLandingCallable(landing)}};
   }
 
-  // The MIR field holding one concurrent assertion's attempts (LRM 16.14.1).
-  // It takes no hop count for the same reason: an assertion is evaluated on the
-  // scope that declares it.
-  [[nodiscard]] auto TranslateConcurrentAssertion(
-      hir::ConcurrentAssertionId hir_id) const -> mir::FieldId {
-    return concurrent_assertion_fields_.Get(hir_id);
-  }
-
   // The MIR field a structural data object of this scope became: a field of
   // the published class where the unit published it, and of this scope's own
   // class otherwise.
@@ -435,8 +427,6 @@ class StructuralScopeLowerer {
       data_object_fields_;
   base::Translation<hir::SampledHistoryId, mir::FieldId>
       sampled_history_fields_;
-  base::Translation<hir::ConcurrentAssertionId, mir::FieldId>
-      concurrent_assertion_fields_;
   base::Translation<hir::ClockingBlockId, ClockingFields> clocking_fields_;
   base::Translation<hir::InterfacePortId, mir::ClassFieldTarget>
       interface_port_fields_;

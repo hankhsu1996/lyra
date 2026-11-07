@@ -212,10 +212,11 @@ so nothing about the automaton's shape waits for run time.
 ### D3. What advances attempts is a synthesized process, one per assertion and clocking event
 
 The process waits on the clocking event and, at each tick, submits one closure to the Observed
-region of that time step. The closure starts a new attempt, advances every live one, and for each
-attempt that resolved submits its action to the Reactive region, where it starts as an execution of
-its own: an action is any procedural statement (LRM 16.3, 16.14.1), so it may wait, and two attempts
-resolving together owe two actions that run side by side. This is the shape a sampler already has
+region of that time step, which tells the storage the clock ticked. The tick opens every attempt due
+at it (D5), advances every live one, and for each attempt that resolved submits its action to the
+Reactive region, where it starts as an execution of its own: an action is any procedural statement
+(LRM 16.3, 16.14.1), so it may wait, and two attempts resolving together owe two actions that run
+side by side. This is the shape a sampler already has
 ([sampled-value-and-its-clock](sampled-value-and-its-clock.md) D3): an action bound to a schedule
 event, waiting on it as any `always` does.
 
@@ -229,7 +230,11 @@ The part that is fixed at compile time is the transition and the answer: code ta
 to its successor, starting the instances its matches seed, and computing what each part of the
 property answers -- built from the design's own Boolean expressions read as of Preponed. The part
 that varies at run time is how many attempts are live and how many evaluations each carries, which
-is member storage holding one position set per evaluation.
+is storage holding one position set per evaluation. Every attempt of one storage reads each Boolean
+expression once a tick, which is what makes one storage the right home for every attempt whose
+Booleans have the same values, and the wrong one for an attempt that saved values of its own (D5).
+The storage belongs to whatever replicates the statement, as its control does, whichever placement
+the statement has.
 
 Nothing interprets a table. A backend renders the transition the way it renders any other callable,
 and the storage the way it renders any other member -- which is what keeps the whole of this
@@ -238,18 +243,50 @@ mechanical (`../architecture/backend_contract.md`).
 ### D5. An attempt begins where the clock ticks and the enabling condition holds
 
 There is one start rule, F1's, and where an assertion is written decides only where its `b` comes
-from. A declarative assertion's `b` is 1, so every tick starts an attempt and nothing else is
-needed. A procedural assertion's `b` is whether control reached the statement, which is no function
-of the trace, so it is observed rather than evaluated -- through the queue F5 names, which is the
-queue [deferred-report-queue](deferred-report-queue.md) D1 through D6 already decide. The entry is
-submitted into the region's own list where the statement is reached, records the sources that can
-withdraw it -- the assertion's own label block, the outermost scope of the enclosing procedure, and
-the creating process's execution pass -- and acts only if all of them still stand. Its withdrawal is
-`b` turning out not to have held.
+from. A declarative assertion's `b` is 1: LRM 16.14.5 makes it the same statement standing in an
+`always` procedure, reached at every tick, so its clock's process is where its attempt falls due and
+nothing else is needed. A procedural assertion's `b` is whether control reached the statement, which
+is no function of the trace, so it is observed rather than evaluated -- through the queue F5 names,
+which is the queue [deferred-report-queue](deferred-report-queue.md) D1 through D6 already decide.
+The entry is submitted into the region's own list where the statement is reached, records the
+sources that can withdraw it -- the assertion's own label block, the outermost scope of the
+enclosing procedure, and the creating process's execution pass -- and acts only if all of them still
+stand. Its withdrawal is `b` turning out not to have held.
 
-What a matured entry does is start an attempt rather than issue a report. The values of the constant
-and automatic expressions LRM 16.14.6.1 requires saved are the entry's own by-value captures, which
-is what a deferred effect's closure already is.
+What a matured entry does is start an attempt rather than issue a report. Revised 2026-11-06: this
+said the values of the constant and automatic expressions LRM 16.14.6.1 requires saved are the
+entry's by-value captures, which holds only until the entry matures. The clause has the attempt read
+them "for the duration of that instance's evaluation", in later ticks and in its action block (its
+examples a7 and a8), so they belong to the attempt and not to the entry. That is a second thing to
+build, and D4's sharing is what it meets: every attempt of one storage reads a Boolean once a tick,
+which is right exactly where no attempt saved anything -- every declared assertion, and a procedural
+one reading no automatic variable and no constant cast. An attempt that saved values is one whose
+Booleans have a value of its own, so it is to be evaluated in a storage of its own, over the same
+automaton and the same sampled histories, with its saved values bound once at the head of its sweep
+and its actions closures capturing them; the matured instance is then what its statement asks for,
+not an attempt of the shared storage. That is not built yet, and a procedural assertion that would
+save anything is refused. What it will save follows the clause's two kinds: an automatic variable of
+the procedure the assertion reads, once, as the value it holds, every use of it -- a read, a
+`const ref` actual -- naming that value as a lambda's by-value capture binds the name in its body,
+with a variable the action block declares being its own; and a constant cast, as the value it makes
+rather than the variables under it. A read of a static variable is its sampled value as in any
+assertion, and the sampled value of a constant cast is its argument's current value (LRM 16.5.1), in
+every assertion; a sampled value function asking a past value of a constant cast is answered by its
+current value, which a history kept a tick at a time does not hold, so it is refused (an automatic
+variable's is answered without a history already).
+
+Whether an attempt due begins now or waits is answered against the time step, by the storage, which
+alone knows whether the step has ticked. Two events reach it: an attempt falls due -- at every tick
+of a declared assertion, where a procedural one's entry matures, where an expect is reached (D8) --
+and the clock ticks. What a tick runs over the attempts is generated once and given to the storage
+at installation; it opens every attempt due and steps every evaluation the tick has not yet stepped.
+The storage runs it at the tick, and again where an attempt falls due after the tick in the same
+step, which then steps only that attempt; one due before the tick, or in a step with none, waits on
+the matured assertion queue (LRM 16.14.6). So no placement has a path the others lack. A matured
+instance is past every flush point and every `disable`, and no attempt yet, so the disable condition
+coming true between ticks preempts only the attempts in flight (LRM 16.12, 16.14.6.4). It begins
+only where checking is on when its tick comes (LRM 20.11), and a tick where the disable condition
+holds discards it as it would have started disabled.
 
 **Where the assertion sits in HIR follows from this and not from the grammar.** An enabling
 condition that is a position in the control flow can only be recorded by being at that position, so
@@ -300,17 +337,18 @@ disable condition reads to the Active region after it, each through a queue node
 What runs there is code of the waiting body, bound to its frame, handed to the wait once the wait
 exists; the wait is a local of that frame, so ending the scope ends the wait and takes the queued
 work off its queue with it. The tick is the same body a declared assertion's tick runs over D1's
-attempt. The process is woken once, by the answer, into the region its own set runs woken work in,
-which is after that Observed region; a disabled attempt answers nothing, so its process is not woken
-at all. Nothing is registered for the end of the run, since a process still waiting then never goes
-on. This is D3's division -- waking is not evaluating -- with the wait in the synthesized process's
-place, which a scope's member cannot take: it reaches no frame, and would be shared by every call of
-an automatic task holding the statement. Waking the process at each tick to step the attempt itself
-was built first and rejected: a program's process is woken after the Observed region it should have
-been evaluated in, and a second tick in that time step comes while the process is parked for the
-first. A clocking event only the waiting process could decide (one that calls or reads through a
-handle) has nothing to watch it and is refused. A sequence standing as the property is read strongly
-(Annex F.3.4.3.1).
+attempt, and its one attempt falls due where the statement is reached (D5), which the wait just made
+hears only from the next tick on. The process is woken once, by the answer, into the region its own
+set runs woken work in, which is after that Observed region; a disabled attempt answers nothing, so
+its process is not woken at all. Nothing is registered for the end of the run, since a process still
+waiting then never goes on. This is D3's division -- waking is not evaluating -- with the wait in
+the synthesized process's place, which a scope's member cannot take: it reaches no frame, and would
+be shared by every call of an automatic task holding the statement. Waking the process at each tick
+to step the attempt itself was built first and rejected: a program's process is woken after the
+Observed region it should have been evaluated in, and a second tick in that time step comes while
+the process is parked for the first. A clocking event only the waiting process could decide (one
+that calls or reads through a handle) has nothing to watch it and is refused. A sequence standing as
+the property is read strongly (Annex F.3.4.3.1).
 
 ## Consequences
 

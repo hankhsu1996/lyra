@@ -365,8 +365,9 @@ Three questions are kept apart, because each has its own owner and none answers 
   is the construct's, and the standard states it construct by construct. A nonblocking assignment
   fixes its value and its target at the statement (LRM 10.4.2); `$strobe` evaluates its arguments
   when it prints (LRM 21.2.2); a deferred assertion's report takes its arguments at the failure (LRM
-  16.4); a procedural concurrent assertion takes its automatics when it is queued (LRM 16.14.6.1); a
-  fork branch shares the enclosing variables (LRM 6.21).
+  16.4); a procedural concurrent assertion takes its automatics and its constant casts when it is
+  queued, and keeps them for the attempt it starts (LRM 16.14.6.1); a fork branch shares the
+  enclosing variables (LRM 6.21).
 - Whether the storage a reference names still exists when it is used is the compiler's. This section
   is about that one.
 

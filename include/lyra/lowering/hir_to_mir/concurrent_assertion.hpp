@@ -20,22 +20,16 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// The class field holding one assertion's attempts, as the place every
-// operation on them acts through. It needs no route: an assertion is evaluated
-// on the scope that declares it, so the storage and everything that reaches it
-// are always the same scope.
-[[nodiscard]] auto BuildEvaluationAttemptsExpr(
-    mir::Builder block, const WalkFrame& frame,
-    const StructuralScopeLowerer& lowerer, hir::ConcurrentAssertionId id)
-    -> mir::ExprId;
-
 // What the design's activation has to do with the callables one concurrent
 // assertion lowered to.
 struct InstalledConcurrentAssertion {
   // The processes the design has to register for this assertion: the one that
-  // advances it at every tick of its clock, and -- where the source wrote a
-  // `disable iff` -- the one watching that condition between ticks.
+  // hands each tick of its clock to the Observed region, and -- where the
+  // source wrote a `disable iff` -- the one watching that condition between
+  // ticks.
   std::vector<mir::CallableId> processes;
+  // What a tick runs over the attempts.
+  mir::CallableId step;
   mir::CallableId pass_action;
   mir::CallableId fail_action;
   // How wide a position set of this assertion's automaton is.
@@ -46,29 +40,50 @@ struct InstalledConcurrentAssertion {
   // The cell of the assertion's control (LRM 20.11), which decides whether an
   // attempt begins and which statement its outcome runs.
   StaticCellBinding control;
+  // The cell holding the assertion's attempts.
+  StaticCellBinding attempts;
 };
 
 // Lowers one concurrent assertion the scope declares into the callables it
-// takes -- the statements each outcome selects, the advance one tick performs,
-// and the process that submits that advance to Observed at every tick of the
-// clock -- adding each to `mir_class`. `statics` are the cells of its action
-// block's static-lifetime variables, whose initializers `bring_up` runs.
+// takes -- the statements each outcome selects, what a tick runs, and the
+// process of its clock, at each tick of which an attempt falls due
+// (LRM 16.14.5) -- adding each to `mir_class`. `statics` are the cells of its
+// action block's static-lifetime variables, whose initializers `bring_up` runs.
 [[nodiscard]] auto LowerConcurrentAssertion(
     StructuralScopeLowerer& lowerer, mir::Class& mir_class,
     const WalkFrame& ctor_frame, const StorageBringUp& bring_up,
     const DeclaredScopes& scopes, const StaticCellBindings& statics,
-    hir::ConcurrentAssertionId id, const hir::ConcurrentAssertionDecl& decl)
+    const hir::ConcurrentAssertionDecl& decl)
     -> diag::Result<InstalledConcurrentAssertion>;
 
-// Fills the storage where the design activates: the width of a position set
-// and the statements an outcome selects.
+// Fills the storage where the design activates: the width of a position set,
+// what a tick runs and the statements an outcome selects.
 // Nothing about an assertion needs an earlier phase -- what it reads is reached
 // through cells sealed since Seal -- and Activate is where the sampling those
 // cells answer from is armed.
 void AppendConcurrentAssertionInstall(
     const StructuralScopeLowerer& lowerer, const WalkFrame& activate_frame,
-    hir::ConcurrentAssertionId id,
     const InstalledConcurrentAssertion& installed);
+
+// Lowers one concurrent assertion a procedure of the scope holds as a statement
+// into what the scope keeps for it -- the machinery a declared one takes,
+// whose attempt falls due where an instance the statement queued matures
+// rather than at every tick (LRM 16.14.6) -- adding each callable to
+// `mir_class`. `statics` are the procedure's own, which its own lowering
+// brings up.
+[[nodiscard]] auto LowerProceduralConcurrentAssertion(
+    StructuralScopeLowerer& lowerer, mir::Class& mir_class,
+    const WalkFrame& ctor_frame, const DeclaredScopes& scopes,
+    const StaticCellBindings& statics, const hir::ProceduralBody& body,
+    const hir::ConcurrentAssertion& assertion, diag::SourceSpan span)
+    -> diag::Result<InstalledConcurrentAssertion>;
+
+// LRM 16.14.6: reaching the statement queues a pending instance on the running
+// process's queue, which matures in the Observed region unless a flush point
+// reaches it first.
+auto LowerProceduralConcurrentAssertionStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::ConcurrentAssertion& assertion) -> diag::Result<mir::Stmt>;
 
 // LRM 16.17: the process waits for one evaluation of the property, which its
 // wait advances in the Observed region at each tick of the clock from the next

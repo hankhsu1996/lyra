@@ -285,6 +285,26 @@ void RuntimeEffects::KeepViolationReport(
   });
 }
 
+void RuntimeEffects::KeepPendingInstance(
+    void* made, const AssertionControl& control) {
+  DeferredEffects& observed = *ObservedEffects();
+  const CapturedControl queued_under{
+      .control = &control, .generation = control.Generation()};
+  RuntimeProcess* process = TryCurrentProcess();
+  if (process == nullptr) {
+    throw InternalError(
+        "RuntimeEffects::KeepPendingInstance: a procedural concurrent "
+        "assertion stands only in an always or initial procedure, so one is "
+        "queued only while a process runs");
+  }
+  // Maturing tests every source once and drops the record, so what the
+  // instance then starts is beyond any later flush or `disable` (16.14.6.4).
+  observed.Emplace([validity = AssertionReportValidity(*process), queued_under,
+                    instance = observed.Take(made)] {
+    if (validity.Holds() && queued_under.Holds()) instance.Call();
+  });
+}
+
 void RuntimeEffects::SubmitDeferredObserved(
     Coroutine<void> body, const AssertionControl& control,
     base::SourceLocation at) {
