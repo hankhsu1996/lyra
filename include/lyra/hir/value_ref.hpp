@@ -259,12 +259,12 @@ struct PatternVarRef {
 // A reference to a variable a namespace unit -- a package (LRM 26.2) or the
 // anonymous `$unit` scope (LRM 3.12.1) -- keeps, reached by name: one it
 // declares, or a static variable one of its subroutines declares (LRM 6.21),
-// named through the subroutine. Such a unit has no instance and no receiver,
-// so its variable is one program-global cell, resolved against that unit's
-// signature at link time rather than reached by a route out of anyone's
-// storage. The same by-name form serves a referrer in another unit and the
-// declaring unit's own bodies, none of which has a receiver to reach it
-// through.
+// a formal of a static one included (LRM 13.3.2), named through the
+// subroutine. Such a unit has no instance and no receiver, so its variable is
+// one program-global cell, resolved against that unit's signature at link time
+// rather than reached by a route out of anyone's storage. The same by-name
+// form serves a referrer in another unit and the declaring unit's own bodies,
+// none of which has a receiver to reach it through.
 struct NamespaceValueRef {
   std::string unit_name;
   support::QualifiedName variable;

@@ -7,6 +7,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_var.hpp"
+#include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -58,5 +59,11 @@ auto LowerStaticPropertyRefExpr(
 // The cell a variable of some unit's namespace is reached through (LRM 26.2).
 auto LowerNamespaceValueRefExpr(
     UnitLowerer& unit_lowerer, const hir::NamespaceValueRef& r) -> mir::Expr;
+
+// The storage of the variable a formal is: a variable of the body, or one its
+// namespace keeps (LRM 13.3.2, 26.2). The expression evaluates nothing.
+auto LowerFormalVariableExpr(
+    ProcessLowerer& process, const WalkFrame& frame,
+    const hir::FormalVariable& variable) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

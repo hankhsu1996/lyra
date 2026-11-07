@@ -663,8 +663,9 @@ auto LowerNamedValueProc(
     // Subroutine formals (LRM 13.5) and foreach iterators (LRM 12.7.3) are
     // variable-family symbols too, so this arm covers a name bound to the
     // enclosing body's own storage as well as one naming a cell elsewhere. The
-    // lexical binding wins: only a name the body does not declare is a value
-    // reached through the object graph.
+    // lexical binding wins: only a name the body holds no variable for -- one
+    // declared outside it, or a static its class or namespace keeps -- is a
+    // value reached as storage outside the body.
     case Referent::kVariableStorage: {
       const auto& var = target.as<slang::ast::VariableSymbol>();
       if (auto local = proc.LookupProceduralVar(var)) {

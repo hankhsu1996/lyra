@@ -2127,13 +2127,13 @@ class HirDumper {
     const StructuralScope* outer = std::exchange(own_scope_, &declaring);
     Line(std::format("[{}] covergroup \"{}\"", id.value, name));
     Indent();
-    const auto vars = [](const std::vector<SubroutineParam>& listed) {
+    const auto vars = [](const std::vector<CovergroupFormal>& listed) {
       std::string text;
-      for (const SubroutineParam& param : listed) {
+      for (const CovergroupFormal& formal : listed) {
         if (!text.empty()) text += ", ";
         text += std::format(
-            "{} ProceduralVar[{}]", FormatParamDirection(param.direction),
-            param.var.value);
+            "{} ProceduralVar[{}]", FormatParamDirection(formal.direction),
+            formal.var.value);
       }
       return text;
     };
@@ -2808,10 +2808,21 @@ class HirDumper {
     Indent();
     for (std::size_t i = 0; i < d.params.size(); ++i) {
       const auto& param = d.params[i];
+      const std::string variable = std::visit(
+          Overloaded{
+              [](ProceduralVarId var) {
+                return std::format("ProceduralVar[{}]", var.value);
+              },
+              [](const NamespaceValueRef& kept) {
+                return std::format(
+                    "{}::{}", kept.unit_name,
+                    support::DisplayOf(kept.variable));
+              }},
+          param.variable);
       Line(
           std::format(
-              "Param[{}] {} var=ProceduralVar[{}]", i,
-              FormatParamDirection(param.direction), param.var.value));
+              "Param[{}] {} var={}", i, FormatParamDirection(param.direction),
+              variable));
     }
     if (d.result_var.has_value()) {
       Line(std::format("Result var=ProceduralVar[{}]", d.result_var->value));

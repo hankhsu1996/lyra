@@ -6,9 +6,9 @@
 
 namespace lyra::hir {
 
-// LRM 13.5 argument directions. On a subroutine declaration a formal is also a
-// local variable of the body; on a cross-unit call reference the same direction
-// classifies how each actual is marshalled at the boundary.
+// LRM 13.5 argument directions. On a subroutine declaration a direction says
+// how a call binds the variable the formal is; on a cross-unit call reference
+// the same direction classifies how each actual is marshalled at the boundary.
 enum class ParamDirection : std::uint8_t {
   kInput,
   kOutput,
