@@ -1249,6 +1249,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kWaitFork:
     case support::BuiltinFn::kDisableFork:
     case support::BuiltinFn::kRequireCallerMayScheduleAfterReturn:
+    case support::BuiltinFn::kTakeNoThreadContext:
+    case support::BuiltinFn::kEnterNoThread:
     case support::BuiltinFn::kDisable:
     case support::BuiltinFn::kRegisterAlways:
     case support::BuiltinFn::kRegisterObserving:

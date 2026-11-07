@@ -59,7 +59,7 @@ RuntimeProcess::RuntimeProcess(
     : ClassObject(kProcessDefinition, generator),
       context_(context),
       coroutine_(std::move(coroutine)),
-      running_(Generator()),
+      running_(Generator(), nullptr, this),
       // Before the body runs, the top frame is the active leaf (what the engine
       // schedules to start the process); a wait moves the leaf inward.
       current_leaf_(coroutine_.Token()) {

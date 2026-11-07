@@ -53,6 +53,37 @@ void AppendScheduleAfterReturnRequirement(
       support::BuiltinFn::kRequireCallerMayScheduleAfterReturn, {});
 }
 
+void RunDeferredBodyOnNoThread(
+    UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
+    ClosureBuilder& closure) {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Builder outer = outer_frame.Builder();
+  const mir::ExprId taken = outer.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kTakeNoThreadContext},
+                  .arguments = {outer.Add(BuildCurrentRuntimeCallExpr(unit))}},
+          .type = unit.builtins.no_thread_context});
+  const mir::ExprId in_body =
+      SnapshotValueIntoClosure(unit_lowerer, outer_frame, closure, taken);
+  mir::Builder body = closure.Body();
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Direct{
+                                  .target = support::BuiltinFn::kEnterNoThread,
+                                  .receiver = in_body},
+                          .arguments = {}},
+                  .type = unit.builtins.void_type})});
+}
+
 auto BuildWaitStmt(
     const UnitLowerer& unit_lowerer, mir::Builder block, mir::ExprId park)
     -> mir::Stmt {

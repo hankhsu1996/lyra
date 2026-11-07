@@ -228,6 +228,7 @@ struct BuiltinMirTypes {
   // questions LRM 6.19.5 and 6.24.2 ask about a value are answered against.
   TypeId enumeration;
   TypeId channel_cancellation;
+  TypeId no_thread_context;
   TypeId print_item;
   TypeId format_spec;
   TypeId format_arg;
@@ -426,6 +427,7 @@ struct CompilationUnit {
             .diagnostic = LibraryTypeOf(types, support::LibraryDecl::kDiagnosticDispatcher),
             .enumeration = LibraryTypeOf(types, support::LibraryDecl::kEnumeration),
             .channel_cancellation = LibraryTypeOf(types, support::LibraryDecl::kChannelCancellation),
+            .no_thread_context = LibraryTypeOf(types, support::LibraryDecl::kNoThreadContext),
             .print_item = LibraryTypeOf(types, support::LibraryDecl::kPrintItem),
             .format_spec = LibraryTypeOf(types, support::LibraryDecl::kFormatSpec),
             .format_arg = LibraryTypeOf(types, support::LibraryDecl::kFormatArg),

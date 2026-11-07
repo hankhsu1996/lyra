@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <exception>
+#include <list>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
@@ -118,6 +120,111 @@ struct CapturedTarget {
   }
 };
 
+// The disable targets what is running is inside, outermost first (LRM 9.6.2):
+// those it was started inside, then those its own frames entered. A process is
+// found through each by a membership the target holds, so that a `disable`
+// from elsewhere wakes or ends it; code that runs on no thread holds none,
+// since nothing else runs while it does, so only it can disable a target it is
+// inside.
+class EnclosingTargets {
+ public:
+  // `owner` is the process inside them, or null for code on no thread.
+  explicit EnclosingTargets(RuntimeProcess* owner) : owner_(owner) {
+  }
+  EnclosingTargets(const EnclosingTargets&) = delete;
+  auto operator=(const EnclosingTargets&) -> EnclosingTargets& = delete;
+  EnclosingTargets(EnclosingTargets&&) = delete;
+  auto operator=(EnclosingTargets&&) -> EnclosingTargets& = delete;
+  ~EnclosingTargets() = default;
+
+  // Enter `target`: until it is left, a `disable` of it reaches what is
+  // running, which resumes past it, and a check finds it among the targets
+  // what is running is inside.
+  void Push(CancellationTarget* target) {
+    entries_.emplace_back(
+        CapturedTarget{.target = target, .generation = target->Generation()},
+        MembershipOrigin::kEntered, owner_);
+  }
+
+  // Leave `target`. Reached on every exit path out of it, including one
+  // already leaving under an effect, so it never raises: raising from there
+  // would end the program rather than report anything.
+  void Pop(CancellationTarget* target) noexcept {
+    if (!entries_.empty() && entries_.back().captured.target == target) {
+      entries_.pop_back();
+    }
+  }
+
+  // LRM 9.6.2 "all activities enabled within" a target: an activity spawned
+  // inside a target is enabled within it, so a spawned process starts out
+  // enclosed by exactly the targets its spawner was inside. Capturing them at
+  // the spawn, from the spawner's live state, makes the spawned activity a
+  // member from the instant it exists, before it has run any of its own code,
+  // and reaches targets that are not in its body's lexical scope at all (a
+  // fork inside a task called from the target). Nothing of the spawned
+  // activity lies past any of them, so a `disable` of one ends it.
+  void InheritFrom(const EnclosingTargets& spawner) {
+    for (const Entry& enclosing : spawner.entries_) {
+      entries_.emplace_back(
+          enclosing.captured, MembershipOrigin::kEnabledWithin, owner_);
+    }
+  }
+
+  // The outermost target this is inside that has been disabled since it
+  // entered, or null when none has. Outermost wins because leaving a target
+  // also leaves every target nested within it.
+  [[nodiscard]] auto OutermostInvalidated() const -> CancellationTarget* {
+    for (const Entry& enclosing : entries_) {
+      if (!enclosing.captured.Holds()) {
+        return enclosing.captured.target;
+      }
+    }
+    return nullptr;
+  }
+
+  // The targets a deferred report queued now records (LRM 16.4.4). Two of
+  // them can withdraw it and no other can: the innermost, which is how a
+  // `disable` names one assertion, since a statement label is a named block
+  // (LRM 16.3); and the outermost, whose disable is the flush of the whole
+  // queue. Disabling a target between them cancels nothing, so nothing between
+  // them is recorded.
+  [[nodiscard]] auto ReportTargets() const -> std::vector<CapturedTarget> {
+    std::vector<CapturedTarget> recorded;
+    if (entries_.empty()) {
+      return recorded;
+    }
+    recorded.push_back(entries_.front().captured);
+    if (entries_.size() > 1) {
+      recorded.push_back(entries_.back().captured);
+    }
+    return recorded;
+  }
+
+ private:
+  // One target, the generation it captured, and for a process the membership
+  // that stands on the target for as long as this record does.
+  struct Entry {
+    Entry(
+        CapturedTarget captured, MembershipOrigin origin, RuntimeProcess* owner)
+        : captured(captured) {
+      if (owner == nullptr) {
+        return;
+      }
+      membership.process = owner;
+      membership.origin = origin;
+      captured.target->Members().PushBack(membership);
+    }
+
+    CapturedTarget captured;
+    TargetMembership membership;
+  };
+
+  RuntimeProcess* owner_;
+  // Each on its own because a target's list points at the membership it
+  // holds.
+  std::list<Entry> entries_;
+};
+
 // The control effect that leaves an execution. It is transport, not a report:
 // the execution it leaves is not in error. It travels outward until a region
 // naming its target consumes it and continues past that target; a called task
@@ -220,12 +327,12 @@ void RunAsLanding(RuntimeEffects& effects, Stretch&& stretch) {
   }
 }
 
-// The two ends of an execution's membership of a target (LRM 9.6.2). Entering
-// captures the target's current generation and marks the executing process as
-// inside it, so a `disable` of the target reaches this execution, which then
-// resumes past it, and a check finds the target among the ones it is inside;
-// leaving withdraws that. The two bracket the target's extent, and the
-// extent's ways out are the caller's to enumerate.
+// The two ends of what is running being inside a target (LRM 9.6.2). Entering
+// captures the target's current generation and records what is running as
+// inside it, so a `disable` of the target reaches it, which then resumes past
+// it, and a check finds the target among the ones it is inside; leaving
+// withdraws that. The two bracket the target's extent, and the extent's ways
+// out are the caller's to enumerate.
 void EnterCancellationTarget(
     RuntimeEffects& effects, CancellationTarget* target);
 void LeaveCancellationTarget(
@@ -244,6 +351,12 @@ void TakeDepartureIfDue(RuntimeProcess& process);
 // the foreign side consumes no simulation time, so this execution regains
 // control with no resumption to ask on its behalf (LRM 35.9).
 void TakeDepartureIfDue(RuntimeEffects& effects);
+
+// LRM 9.6.2, 9.7: whether a departure is owed to what is running -- a process
+// whose termination is due or a target of which it is inside was disabled, or
+// code on no thread inside a target it disabled. Where nothing runs, none is
+// owed.
+[[nodiscard]] auto RunningDepartureIsDue(RuntimeEffects& effects) -> bool;
 
 // Whether a region of `target` lands the effect it is holding (LRM 9.6.2),
 // asked once the region has left its own extent: true when the effect names

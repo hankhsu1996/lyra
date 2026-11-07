@@ -129,6 +129,37 @@ path. The scheduler keeps no place in the source: a nonblocking update and a `$s
 closures of the program, whose own calls hand theirs, and an effect the library itself defers and
 that can report keeps its place in its own capture and binds it when it runs.
 
+**A deferred body that evaluates what the source wrote runs on no thread, in what it took where it
+was made.** A `$strobe`'s arguments, a concurrent assertion's tick, a clocking block's sample and
+the settling of its output at the end of a pass, and a covergroup sampled under `strobe` run code of
+the design once their region runs them, with no process running, and that code asks what a process's
+code asks: which generator it draws from, whether its thread may schedule past a function's return,
+which disable targets it is inside, which foreign calls. The standard names no thread for any of
+them, so each runs on no thread, as a static initializer does (LRM 18.14.1): no initial or always
+procedure created it, it belongs to no program, `process::self()` answers null and `disable fork`
+ends nothing. What it runs in -- the procedure, the seeds and the region set an execution of no
+lineage started where it was made would take, and a generator what made it hands over -- is taken
+there and captured by the body, as an asynchronous runtime's callback captures the context it was
+scheduled in and runs inside it, and the body opens by entering it until the effect running it
+returns. A nonblocking update applies values already evaluated and takes none of this, so no effect
+grows.
+
+What is handed over to run where no thread runs it -- this body, and the executions of no lineage
+below, an update waiting on an event and a deferred or concurrent assertion's action -- draws from a
+generator made from the giver's state and how many it has handed over since it was last seeded,
+without stepping it: handing work over is neither a draw nor a thread creation, so it moves nothing
+the giver draws (LRM 18.14), and it depends on the giver alone, never on the order other threads ran
+in (LRM 18.14.2).
+
+**Once the Postponed region is reached no earlier region of the slot runs again** (LRM 4.4.2.9), so
+the Postponed region runs what is placed in it while it runs, a final deferred assertion's action
+among it (LRM 16.4.1), and a placement into an earlier region of the slot is the design's error,
+reported once the region has run. A violation report made there matures there, since the slot has no
+Observed region left and the active set can glitch no more; an observed deferred assertion reached
+there has no Observed or Reactive region left and is refused at its statement. Once the simulation
+is over no region runs at all, so a violation report or a final deferred assertion made in a final
+procedure matures, and acts, as it is made, and an observed one is refused as in Postponed.
+
 **What an effect is and when it is due are two questions, and only the second decides the shape.**
 The standard writes the second one the same way wherever it appears: a nonblocking assignment and a
 nonblocking event trigger both name an optional delay-or-event control and both land in the NBA
@@ -163,13 +194,13 @@ occurrence reached has been asked and before the execution that made the event o
 thread calling it.** A function may schedule what takes effect after it returns -- a deferred effect
 in any form, a fork-join_none -- only where the thread calling it was created by an initial or
 always procedure, or a fork of one, and it is an error otherwise (LRM 13.4.4); the final procedures'
-thread and static initialization are neither. Whether a statement runs during a function call is
-fixed by where it is written, and which thread calls the function only by the run. So the lowering
-states the question as an operation of its own ahead of each such statement in a body that runs as a
-function call, and the runtime answers it from what created the running thread. The submit itself
-asks nothing, because the same statement outside a function is never refused -- an assertion's
-action may write `x <= 1` directly -- and one thread runs both, with no record of how deep in calls
-it is.
+thread and code that runs on no thread are neither. Whether a statement runs during a function call
+is fixed by where it is written, and which thread calls the function only by the run. So the
+lowering states the question as an operation of its own ahead of each such statement in a body that
+runs as a function call, and the runtime answers it from what created the running thread. The submit
+itself asks nothing, because the same statement outside a function is never refused -- an
+assertion's action may write `x <= 1` directly -- and one thread runs both, with no record of how
+deep in calls it is.
 
 Yield-based alternatives are rejected because they would entangle the deferred effect's commit time
 with the process's resumption schedule. A process that does `q <= d; #5; ...` should not be forced
@@ -201,12 +232,12 @@ condition reads into the Active region, and which ending the wait takes back wit
 A time slot runs regions in LRM 4.4 order: Preponed, Active, Inactive, NBA, Observed, Reactive,
 ReInactive, ReNBA, Postponed. That clause's PLI regions are absent, because there is no PLI.
 
-Preponed runs once on entry and Postponed once on exit. Between them the slot repeats one step: take
-the earliest region from Active through ReNBA that has anything pending -- or, once the reactive set
-has begun and while it holds anything, the earliest of Reactive through ReNBA -- run it, and look
-again. Running a region produces work that lands back in the slot -- an NBA commit wakes a process
-into Active, a resumed process submits an NBA -- so the step repeats until nothing between those two
-bounds is left.
+Preponed runs once on entry, and Postponed on exit until nothing placed in it while it runs is left
+(LRM 16.4.1). Between them the slot repeats one step: take the earliest region from Active through
+ReNBA that has anything pending -- or, once the reactive set has begun and while it holds anything,
+the earliest of Reactive through ReNBA -- run it, and look again. Running a region produces work
+that lands back in the slot -- an NBA commit wakes a process into Active, a resumed process submits
+an NBA -- so the step repeats until nothing between those two bounds is left.
 
 ```mermaid
 flowchart TB

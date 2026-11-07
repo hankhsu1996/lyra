@@ -36,12 +36,22 @@ Its state is four 64-bit words: the state of a linear congruential generator, th
 addend, and the two words of a xoroshiro128 generator. A draw mixes the sum of the congruential
 state and one xoroshiro word, then steps both. `$urandom` answers with the high 32 bits of a draw.
 
-A generator is made in one of two ways and no other.
+A generator is made in one of three ways and no other.
 
 - **From a seed the design states.** The 32 bits are spread over the whole state by mixing functions
   unlike the generator's own step, so neighbouring seeds name unrelated generators.
 - **Split from its parent.** Four draws of the parent become the child's addend, congruential state
   and two xoroshiro words. Nothing 32 bits wide stands between a parent and a child.
+- **Derived for work handed to no thread.** What a thread or a static initialization hands over to
+  run where no thread runs it -- a `$strobe`'s arguments, an update waiting on an event, a deferred
+  assertion's action -- draws from a generator made from the giver's four words and how many it has
+  handed over since it was last set, each spread by mixing functions unlike the step, the giver's
+  words not stepped. Handing work over is neither a draw nor a thread creation, so 18.14 does not
+  let it move what the giver draws next, and a split would; the count is the giver's own, so the
+  generator does not depend on the order other threads ran in (18.14.2), where the next split of the
+  instance's initialization RNG would. Setting a generator -- from a seed, from a state text, as a
+  split -- starts the count again, so a seed decides what is handed over after it as it decides what
+  is drawn, which is what lets one seed define a subtree completely (18.14.1).
 
 The addend is what makes this a splittable generator. Two generators with different addends walk
 different cycles, so two children are not two stretches of one sequence that might overlap; and
@@ -101,8 +111,14 @@ that question rather than of which generator is fastest.
 
 ## Consequences
 
-- A process holds 32 bytes of generator where it held 5,000.
-- **Every class object will hold 32 bytes of generator once objects have one.** The standard seeds
+- A generator keeps the count of what it has handed to no thread beside its four words. `srandom`,
+  `$urandom(seed)` and `set_randstate` set the generator, so what is handed over after them follows
+  what they set, from a count of zero, and what was handed over before keeps its own. The state text
+  is the four words alone, so a state put back replays the draws that followed it and hands over
+  from a count of zero, not from the count it was read at, which is this implementation's choice,
+  since 18.13.5 says nothing of work handed over.
+- A process holds 40 bytes of generator where it held 5,000.
+- **Every class object will hold 40 bytes of generator once objects have one.** The standard seeds
   an object where it is created, in creation order, so the state cannot wait for the first
   `randomize()`; and objects are where generators are most numerous, which is where a narrower one
   would repeat.

@@ -13,10 +13,12 @@ namespace lyra::runtime {
 // The part every object of a class starts with (LRM 8.3), whether the source
 // or this library defines the class: what the language gives every class
 // object whatever its class declares, which is its own generator (LRM 18.14.1,
-// 18.14.3). An object `new` makes has its generator split from whatever is
-// running there -- a process, or a static initialization, whose generator its
-// container's initialization RNG gave -- so its draws follow from where it was
-// made and from nothing else. `randomize()` draws from it (LRM 18.15).
+// 18.14.3). An object `new` makes is seeded where it is made: by the next split
+// of the running thread's generator, or, made by a static initializer, of its
+// container's initialization RNG (LRM 18.14.1), or, made by other code that
+// runs on no thread, of the generator that code was handed -- so its draws
+// follow from where it was made and from nothing else. `randomize()` draws
+// from it (LRM 18.15).
 //
 // A copy made by `new` (LRM 8.12) is a new object, so it is seeded as any new
 // object is rather than continuing the stream of the one it copies.

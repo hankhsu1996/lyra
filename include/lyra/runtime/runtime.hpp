@@ -198,21 +198,41 @@ class Runtime final : public RuntimeEffects {
   // 24.3 makes.
   void ProgramEnded();
 
-  // Takes a static initialization on as what is running, and gives it back.
-  // It runs in `context`, whose initialization RNG hands it its generator (LRM
-  // 18.14.1). Public because the entries generated code reaches live outside
-  // this class.
+  // Takes code that runs on no thread on as what is running. A static
+  // initialization runs in `context`, whose initialization RNG hands it its
+  // generator and seeds the objects it makes (LRM 18.14.1); a deferred body
+  // that evaluates what the source wrote runs in the context it took where it
+  // was made, until the effect running it has returned, however it returns, so
+  // nothing in the body gives it back. Public because the entries generated
+  // code reaches live outside this class.
   void EnterStaticInit(const ExecutionContext& context);
-  void LeaveStaticInit();
+  void EnterNoThread(const NoThreadContext& taken);
+  // Gives back the code running on no thread that entered last.
+  void LeaveNoThread();
 
-  // What the running process or static initialization runs in.
+  // What the running process, or the code running on no thread, runs in.
   [[nodiscard]] auto RunningContext() const -> const ExecutionContext&;
 
-  // The procedure what is running belongs to: the running process's or static
-  // initialization's, or that of whatever made the effect or bound the timer a
-  // region is running, no process running then. None where the run's own work
-  // is running. Read by a run stopped from outside, so it reads only what such
-  // a reader may.
+  // Where the run stands, which decides where work made now can still run:
+  // before the regions have begun, it starts with the processes; once the
+  // slot has reached its Postponed region no earlier region of the slot runs
+  // again (LRM 4.4.2.9, 4.5); and once the simulation is over no region runs
+  // at all (LRM 9.2.3).
+  enum class Phase : std::uint8_t {
+    kBringingUp,
+    kRunningRegions,
+    kInPostponed,
+    kOver,
+  };
+  [[nodiscard]] auto CurrentPhase() const -> Phase {
+    return phase_;
+  }
+
+  // The procedure what is running belongs to: the running process's or that
+  // of the code running on no thread, or that of whatever made the effect or
+  // bound the timer a region is running, no process running then. None where
+  // the run's own work is running. Read by a run stopped from outside, so it
+  // reads only what such a reader may.
   [[nodiscard]] auto RunningProcedure() const noexcept
       -> const ProcedureContext&;
 
@@ -301,6 +321,13 @@ class Runtime final : public RuntimeEffects {
   // the reactive set likewise, repeated until nothing in Active through Re-NBA
   // remains; then Postponed.
   void ExecuteTimeSlot();
+  // Gives back, as it ends, whatever entered to run on no thread while it
+  // stood, as a compiler's cleanup scope pops back to the depth it began at.
+  class NoThreadRunsScope;
+  // Takes `taken` on as what is running, an object made there seeded from
+  // `objects_from` where there is one.
+  void InstallNoThreadRun(
+      const NoThreadContext& taken, InitializationRng* objects_from);
   // Runs the earliest of the regions `first` through `last` holding anything
   // until none does, answering false where the slot met the bound on its passes
   // and was reported.
@@ -396,24 +423,26 @@ class Runtime final : public RuntimeEffects {
   // stopped from outside is asked where it is from a signal handler, which may
   // read nothing else.
   std::atomic<RuntimeProcess*> current_process_ = nullptr;
-  // The procedure in force while no process runs: the static initialization's
-  // running, or that of whoever made the effect or bound the timer a region is
+  // The procedure in force while no process runs: that of the code running on
+  // no thread, or of whoever made the effect or bound the timer a region is
   // running. Atomic for the same reader.
   std::atomic<const ProcedureContext*> procedure_in_force_ = &kNoProcedure;
   // What is running, which is what a randomization call draws from (LRM 18.13,
   // 18.14) and what a DPI-C foreign call reports its scope through (LRM
   // 35.5.3). Whichever is running installs one: a process the state it owns,
-  // a static initialization one of its own.
+  // code on no thread one of its own.
   RunningState* running_ = nullptr;
   // The stream of every `$random` called with no seed (LRM 20.14.1). The
   // standard states no start for it; zero is what the algorithm itself
   // replaces with its own constant (LRM Annex N).
   std::int32_t unseeded_random_seed_ = 0;
-  // The static initializations under way, which own no object to keep their
-  // state on, and whose entry and exit are two separate calls from generated
-  // code with no frame spanning them -- so the runtime holds the stack. A deque
-  // because the pointer above stays valid across a push.
-  std::deque<DisplacingState> displacing_;
+  // The code running on no thread: static initializations, which own no
+  // object to keep their state on and whose entry and exit are two separate
+  // calls from generated code with no frame spanning them, and deferred bodies,
+  // which enter from inside the effect running them -- so the runtime holds the
+  // stack. A deque because the pointer above stays valid across a push.
+  std::deque<NoThreadRun> no_thread_runs_;
+  Phase phase_ = Phase::kBringingUp;
   // The initialization RNG of each namespace, by its name (LRM 18.14.1), held
   // for the run as an instance holds its own. A namespace is here once its one
   // bring-up has been taken: it reaches its initializers through whichever of

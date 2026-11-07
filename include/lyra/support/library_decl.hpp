@@ -94,6 +94,10 @@ enum class LibraryDecl : std::uint8_t {
   // LRM 21.3.2 the token a deferred write on a channel holds, which closing
   // the channel cancels.
   kChannelCancellation,
+  // What a deferred body that evaluates what the source wrote takes where it
+  // is made, so that it runs on no thread once its region runs it (LRM 21.2.2,
+  // 18.14).
+  kNoThreadContext,
   // The buffers a packed vector crosses the DPI-C boundary in (LRM 35.5.6,
   // Annex H.10.1.2), of `svBitVecVal` and of `svLogicVecVal` chunks, and the
   // image of a whole actual a DPI-C open array is (LRM 35.5.6.1, Annex H.12).
@@ -776,6 +780,12 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
           "channel cancellation", "channel_cancellation", kWordsNeedingEnd(24),
           "lyra::runtime::ChannelCancellation", OwnObjectMember{});
       return &kChannelCancellation;
+    }
+    case LibraryDecl::kNoThreadContext: {
+      static constexpr LibraryDeclData kNoThreadContext = kPayload(
+          "no-thread context", "no_thread_context", kWordsNeedingNoEnd(88),
+          "lyra::runtime::NoThreadContext", OwnObjectMember{});
+      return &kNoThreadContext;
     }
     case LibraryDecl::kDpiBitBuffer: {
       static constexpr LibraryDeclData kDpiBitBuffer = kBuiltBy(

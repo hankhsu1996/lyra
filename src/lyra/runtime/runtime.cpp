@@ -78,6 +78,26 @@ class RunningAnEffect {
 
 }  // namespace
 
+class Runtime::NoThreadRunsScope {
+ public:
+  explicit NoThreadRunsScope(Runtime& runtime)
+      : runtime_(&runtime), below_(runtime.no_thread_runs_.size()) {
+  }
+  NoThreadRunsScope(const NoThreadRunsScope&) = delete;
+  auto operator=(const NoThreadRunsScope&) -> NoThreadRunsScope& = delete;
+  NoThreadRunsScope(NoThreadRunsScope&&) = delete;
+  auto operator=(NoThreadRunsScope&&) -> NoThreadRunsScope& = delete;
+  ~NoThreadRunsScope() {
+    while (runtime_->no_thread_runs_.size() > below_) {
+      runtime_->LeaveNoThread();
+    }
+  }
+
+ private:
+  Runtime* runtime_;
+  std::size_t below_;
+};
+
 Runtime::Runtime() : Runtime(RuntimeOptions{}) {
 }
 
@@ -176,6 +196,7 @@ void Runtime::RunSimulation() {
     RunAsLanding(*this, [this] { WalkActivate(design_->Root()); });
     StartFrom(design_starting_, 0);
     StartFrom(program_starting_, 0);
+    phase_ = Phase::kRunningRegions;
 
     while (std::holds_alternative<Running>(state_)) {
       ExecuteTimeSlot();
@@ -185,6 +206,8 @@ void Runtime::RunSimulation() {
         state_ = SimulationEnded{};
       }
     }
+
+    phase_ = Phase::kOver;
 
     // LRM 9.2.3: a final procedure occurs at the end of simulation time. A tool
     // that cannot carry the run on has no such end to offer, and running the
@@ -441,24 +464,36 @@ auto Runtime::NamespaceSeeds(std::string_view name) -> InitializationRng& {
 }
 
 void Runtime::EnterStaticInit(const ExecutionContext& context) {
-  displacing_.emplace_back(
-      context.SplitInitializationRng(), context, running_,
+  InstallNoThreadRun(
+      NoThreadContext{
+          .context = context, .generator = context.SplitInitializationRng()},
+      context.seeds);
+}
+
+void Runtime::EnterNoThread(const NoThreadContext& taken) {
+  InstallNoThreadRun(taken, nullptr);
+}
+
+void Runtime::InstallNoThreadRun(
+    const NoThreadContext& taken, InitializationRng* objects_from) {
+  no_thread_runs_.emplace_back(
+      taken.generator, objects_from, taken.context, running_,
       procedure_in_force_.load(std::memory_order_relaxed));
-  running_ = &displacing_.back().state;
+  running_ = &no_thread_runs_.back().state;
   procedure_in_force_.store(
-      &displacing_.back().context.procedure, std::memory_order_relaxed);
+      &no_thread_runs_.back().context.procedure, std::memory_order_relaxed);
 }
 
 auto Runtime::RunningContext() const -> const ExecutionContext& {
   if (const RuntimeProcess* const process = current_process_) {
     return process->Context();
   }
-  if (displacing_.empty()) {
+  if (no_thread_runs_.empty()) {
     throw InternalError(
         "Runtime::RunningContext: generated code runs only inside a process "
-        "or a static initialization, and neither is running");
+        "or on no thread, and neither is running");
   }
-  return displacing_.back().context;
+  return no_thread_runs_.back().context;
 }
 
 auto Runtime::RunningProcedure() const noexcept -> const ProcedureContext& {
@@ -469,11 +504,11 @@ auto Runtime::RunningProcedure() const noexcept -> const ProcedureContext& {
              : process->Context().procedure;
 }
 
-void Runtime::LeaveStaticInit() {
-  running_ = displacing_.back().displaced;
+void Runtime::LeaveNoThread() {
+  running_ = no_thread_runs_.back().displaced;
   procedure_in_force_.store(
-      displacing_.back().displaced_procedure, std::memory_order_relaxed);
-  displacing_.pop_back();
+      no_thread_runs_.back().displaced_procedure, std::memory_order_relaxed);
+  no_thread_runs_.pop_back();
 }
 
 auto Runtime::FutureSlotAt(SimTime when) -> TimeSlot& {
@@ -515,7 +550,15 @@ void Runtime::ExecuteTimeSlot() {
       return;
     }
   }
-  RunRegion(support::Region::kPostponed);
+  // LRM 16.4.1: what is placed in the Postponed region while it runs, a final
+  // deferred assertion's action among it, runs there in the same time slot.
+  phase_ = Phase::kInPostponed;
+  const bool settled = DrainRegions(
+      support::Region::kPostponed, support::Region::kPostponed, passes);
+  phase_ = Phase::kRunningRegions;
+  if (!settled) {
+    return;
+  }
   if (std::holds_alternative<Running>(state_) && !current_slot_.Empty()) {
     // LRM 4.4.2.9.
     ReportDesignFailure(
@@ -562,10 +605,14 @@ void Runtime::RunRegion(support::Region region) {
   // assertion's action -- runs with no activation holding it, so each runs as
   // a landing of its own: a run-time error it raises is reported and the
   // region goes on to the effects after it.
+  //
+  // What a deferred body entered to run on no thread ends with the effect
+  // running it, however the effect returns.
   const auto run_effect =
       [this](const ProcedureContext& made_by, const auto& effect) {
         {
           const RunningAnEffect running(procedure_in_force_, made_by);
+          const NoThreadRunsScope ends(*this);
           RunAsLanding(*this, effect);
         }
         TellExpired();
@@ -852,9 +899,17 @@ void RunAssertionAction(
   const ExecutionContext context = ContextIn(
       owning_scope, unit_instance, unit_instance, written_at,
       ThreadCreator::kAnotherConstruct);
-  AsRuntime(current_runtime())
-      .RunAction(
-          context, std::move(coroutine), context.SplitInitializationRng());
+  // No thread creates the action, so its generator is one the tick that
+  // decided it hands over (LRM 18.14). At the end of the run nothing decides
+  // it but the finished trace, and nothing hands one over, so it is the next
+  // of its instance's initialization RNG, the actions there running in the
+  // order their assertions registered (LRM 18.14.1).
+  RuntimeEffects& effects = current_runtime();
+  RunningState* const deciding = effects.TryRunning();
+  AsRuntime(effects).RunAction(
+      context, std::move(coroutine),
+      deciding != nullptr ? deciding->HandOff()
+                          : context.SplitInitializationRng());
 }
 
 void EnterScopeStaticInit(RuntimeEffects& runtime, Scope* unit_instance) {
@@ -880,7 +935,7 @@ auto ClaimNamespaceInitialization(RuntimeEffects& runtime, const char* name)
 }
 
 void LeaveStaticInit(RuntimeEffects& runtime) {
-  AsRuntime(runtime).LeaveStaticInit();
+  AsRuntime(runtime).LeaveNoThread();
 }
 
 }  // namespace lyra::runtime

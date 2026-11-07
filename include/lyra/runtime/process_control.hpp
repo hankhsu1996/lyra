@@ -24,9 +24,10 @@ enum class ProcessStatusCode : std::int32_t {
 
 // LRM 9.7 `process::self()`: a handle to the process making the call. A task or
 // function runs in its caller's thread (LRM 9.5), so this returns the enclosing
-// executing process, reached through the ambient execution context. A
-// declaration assignment runs before any procedure starts (LRM 10.5), so a call
-// written there is made by no process, and the handle it answers is null.
+// executing process, reached through the ambient execution context. Code that
+// runs on no thread -- a declaration assignment, before any procedure starts
+// (LRM 10.5), or a strobed write's argument (LRM 21.2.2) -- calls it as no
+// process, and the handle it answers is null.
 auto ProcessSelf(RuntimeEffects& runtime) -> value::ObjectRef;
 
 // LRM 9.7 `process::status()`: the process's execution state projected onto the

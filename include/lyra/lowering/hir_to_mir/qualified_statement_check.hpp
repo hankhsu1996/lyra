@@ -47,9 +47,8 @@ enum class QualifiedArmKind { kCondition, kCaseItem };
 // or `default` where it wrote one, and where it did not, the report a
 // qualifier asserting totality owes -- arriving there is the violation. A
 // statement never carries both, because an explicit catch-all is what
-// discharges that assertion. Reporting is deferred to the Observed region as
-// LRM 12.4.2.1 requires, and kept by the statement's assertion control (LRM
-// 20.11).
+// discharges that assertion. Reporting is deferred as LRM 12.4.2.1 requires,
+// and kept by the statement's assertion control (LRM 20.11).
 auto BuildFallThrough(
     ProcessLowerer& process, const WalkFrame& frame,
     std::optional<mir::Block> catch_all,
@@ -58,8 +57,8 @@ auto BuildFallThrough(
 
 // What a statement asserting uniqueness does before it selects an arm: `held`
 // holds every arm's answer, already evaluated in `frame`'s block. Where more
-// than one arm held, the statement keeps a report to the Observed region (LRM
-// 12.4.2.1), and an execution with at most one keeps nothing.
+// than one arm held, the statement keeps a violation report (LRM 12.4.2.1),
+// and an execution with at most one keeps nothing.
 void BuildUniquenessCheck(
     ProcessLowerer& process, const WalkFrame& frame,
     std::span<const mir::LocalId> held, const hir::QualifiedCheck& check,

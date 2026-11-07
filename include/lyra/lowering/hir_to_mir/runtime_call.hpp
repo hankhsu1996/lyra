@@ -5,6 +5,7 @@
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
@@ -51,6 +52,15 @@ void AppendRuntimeEffectStmt(
 // call the statement schedules for the thread itself, and nothing is asked.
 void AppendScheduleAfterReturnRequirement(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame);
+
+// Makes `closure`, a deferred body that evaluates what the source wrote once
+// its region runs it, run there on no thread (LRM 18.14): the context it runs
+// in is taken in `outer_frame`'s block, where the body is made, and captured,
+// and the body opens by entering it. Called before anything else is added to
+// the body.
+void RunDeferredBodyOnNoThread(
+    UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
+    ClosureBuilder& closure);
 
 // Builds the statement a call that may park its caller amounts to: a stop at a
 // wait, or a foreign task carried on a fiber. `park` is already interned into

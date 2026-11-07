@@ -88,10 +88,10 @@ void AppendReportEmit(
 // matures a region later (LRM 12.4.2.1), so every report is reached through a
 // body the region runs rather than emitted in place. It is made where the
 // statement's assertion control keeps it, which queues it only while checking
-// is on and keeps it in the Observed region on the condition that the process
+// is on and keeps it until it matures on the condition that the process
 // raising it reaches no flush point, and the control no Kill, first (LRM
 // 20.11).
-void KeepInObservedRegion(
+void KeepViolationReport(
     ProcessLowerer& process, const WalkFrame& frame,
     hir::ControlledAssertionId control, mir::Expr body) {
   mir::CompilationUnit& unit = process.Owner().Unit();
@@ -104,7 +104,7 @@ void KeepInObservedRegion(
 }
 
 // The scope a statement runs where it found a violation: it keeps `text` as a
-// report to the Observed region, and the body it submits reads nothing the
+// violation report, and the body it submits reads nothing the
 // statement computed.
 auto BuildReportScope(
     ProcessLowerer& process, const WalkFrame& frame,
@@ -116,7 +116,7 @@ auto BuildReportScope(
   std::vector<RuntimePrintItem> items;
   items.emplace_back(RuntimePrintLiteral{.text = std::move(text)});
   AppendReportEmit(unit, closure.Body(), std::move(items));
-  KeepInObservedRegion(process, scope_frame, control, closure.BuildVoid());
+  KeepViolationReport(process, scope_frame, control, closure.BuildVoid());
   return scope;
 }
 

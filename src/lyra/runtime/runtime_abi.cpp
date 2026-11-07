@@ -2529,6 +2529,16 @@ void lyra_rt_require_caller_may_schedule_after_return(
       *static_cast<RuntimeEffects*>(runtime), SourceLocationAt(location));
 }
 
+auto lyra_rt_take_no_thread_context(void* runtime, void* out) -> void* {
+  return Emplace(
+      out, lyra::runtime::TakeNoThreadContext(
+               *static_cast<RuntimeEffects*>(runtime)));
+}
+
+void lyra_rt_enter_no_thread(const void* taken) {
+  static_cast<const lyra::runtime::NoThreadContext*>(taken)->Enter();
+}
+
 auto lyra_rt_process_self(void* runtime, void* out) -> void* {
   return Emplace(out, ProcessSelf(*static_cast<RuntimeEffects*>(runtime)));
 }
@@ -3159,9 +3169,10 @@ auto lyra_rt_assertion_control_allowed(const void* control) -> std::uint64_t {
 }
 
 void lyra_rt_assertion_control_submit_observed(
-    const void* control, void* body) {
+    const void* control, void* body, const void* location) {
   static_cast<const AssertionControl*>(control)->SubmitObserved(
-      std::move(*static_cast<Coroutine<void>*>(body)));
+      std::move(*static_cast<Coroutine<void>*>(body)),
+      SourceLocationAt(location));
 }
 
 void lyra_rt_assertion_control_submit_final(const void* control, void* body) {
@@ -8413,6 +8424,9 @@ auto lyra_rt_dpi_open_array_copy(const void* value, void* out) -> void* {
 auto lyra_rt_channel_cancellation_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<ChannelCancellation>(value));
 }
+auto lyra_rt_no_thread_context_copy(const void* value, void* out) -> void* {
+  return Emplace(out, Read<lyra::runtime::NoThreadContext>(value));
+}
 auto lyra_rt_reference_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<ErasedReference>(value));
 }
@@ -8481,6 +8495,10 @@ auto lyra_rt_dpi_open_array_move(void* value, void* out) -> void* {
 }
 auto lyra_rt_channel_cancellation_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<ChannelCancellation*>(value)));
+}
+auto lyra_rt_no_thread_context_move(void* value, void* out) -> void* {
+  return Emplace(
+      out, std::move(*static_cast<lyra::runtime::NoThreadContext*>(value)));
 }
 auto lyra_rt_reference_move(void* value, void* out) -> void* {
   return Emplace(out, Read<ErasedReference>(value));
@@ -8639,6 +8657,9 @@ void lyra_rt_loop_blocks_construct(void* storage) {
 }
 void lyra_rt_channel_cancellation_construct(void* storage) {
   BuildAt<ChannelCancellation>(storage);
+}
+void lyra_rt_no_thread_context_construct(void* storage) {
+  BuildAt<lyra::runtime::NoThreadContext>(storage);
 }
 void lyra_rt_shared_pointer_construct(void* storage) {
   BuildAt<SharedPointer>(storage);

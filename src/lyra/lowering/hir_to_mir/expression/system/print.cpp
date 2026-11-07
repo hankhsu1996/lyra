@@ -114,6 +114,7 @@ auto LowerStrobeCall(
   }
 
   ClosureBuilder closure(unit, frame, support::ClosureKind::kFn);
+  RunDeferredBodyOnNoThread(process.Owner(), frame, closure);
   mir::Builder body = closure.Body();
   const WalkFrame& body_frame = closure.Frame();
 

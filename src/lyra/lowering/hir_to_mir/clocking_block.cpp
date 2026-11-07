@@ -150,6 +150,7 @@ auto BuildPassCommitStmt(
   const WalkFrame first_frame = frame.WithBlock(&first);
 
   ClosureBuilder pass_end(unit, first_frame, support::ClosureKind::kFn);
+  RunDeferredBodyOnNoThread(unit_lowerer, first_frame, pass_end);
   const WalkFrame end_frame = pass_end.Frame();
   mir::Builder end = pass_end.Body();
   auto signal =
@@ -230,6 +231,7 @@ auto LowerClockingSampler(
         TriggerOwnEvent(lowerer, each, fields.occurrence);
 
         ClosureBuilder observed(unit, each, support::ClosureKind::kFn);
+        RunDeferredBodyOnNoThread(lowerer.Owner(), each, observed);
         const WalkFrame observed_frame = observed.Frame();
         for (const hir::ClockvarId at : block.clockvars.Ids()) {
           const hir::Clockvar& clockvar = block.clockvars.Get(at);

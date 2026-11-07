@@ -1029,6 +1029,7 @@ auto LowerProcess(
   body_block_builder.AppendStmt(*std::move(wait));
 
   ClosureBuilder closure(unit, body_frame, support::ClosureKind::kFn);
+  RunDeferredBodyOnNoThread(lowerer.Owner(), body_frame, closure);
   closure.Body().AppendStmt(
       mir::ExprStmt{
           .expr = closure.Body().Add(

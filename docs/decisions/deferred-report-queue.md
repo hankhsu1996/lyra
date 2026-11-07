@@ -63,7 +63,8 @@ is iterative, a matured report can be followed by a further execution of the sam
 same time step reaching the opposite result; the standard's own example displays both a pass and a
 fail for one assertion in one time step. The observed form prevents glitches arising from the order
 of procedural execution and not those arising from loops between regions; the final form is the one
-that is glitch-free, because the Postponed region does not iterate (16.4.1, 16.4.2).
+that is glitch-free, because once the Postponed region is reached no earlier region of the slot runs
+again (4.4.2.9, 16.4.1, 16.4.2).
 
 **R9. Only the action call is deferred, not the evaluation of its arguments.** The subroutine
 arguments of an action block are evaluated on each failure even though the action block is not
@@ -93,10 +94,10 @@ engine a way to find the reports again when the region runs.
 The standard itself contains both families of answer to this, which is the strongest evidence that
 the tension is real rather than an artifact of one implementation:
 
-- **Run when settled.** The final form waits for a region that does not iterate, so nothing it
-  reports can be contradicted later in the time step. VHDL's postponed process is the same strategy
-  under another name: it executes only in the last delta cycle, so it observes settled signals and
-  needs no retraction.
+- **Run when settled.** The final form waits for a region after which no earlier one of the slot
+  runs, so nothing it reports can be contradicted later in the time step. VHDL's postponed process
+  is the same strategy under another name: it executes only in the last delta cycle, so it observes
+  settled signals and needs no retraction.
 - **Run eagerly and retract.** The observed form reports from a region that may run again, and pays
   for it with the flush machinery -- and, per R8, still does not fully succeed.
 
@@ -205,8 +206,9 @@ The action is one subroutine call, and the subroutine can be a task (16.4), so i
 report carries is therefore not a call to make but a body to run, started at maturity as an
 execution of its own in the region the report acts in. It belongs to no process's lineage -- no
 process started it, so `wait fork` and `disable fork` do not reach it -- and it takes the scope of
-whatever reached the statement and a generator split from the initialization RNG of that one's
-instance or package (LRM 18.14.1), so the draws of whatever reached the statement do not move. R9 is
+whatever reached the statement and a generator that one hands over, made from its state and the
+count of what it has handed over without stepping it, so its draws do not move and the generator
+does not depend on the order other threads reached their statements in (LRM 18.14, 18.14.2). R9 is
 realized where the body is built: each argument the call reads as a value is evaluated at the
 statement and carried into the body, as a C++ lambda's init-capture is, and an argument the call
 designates -- a `ref` or `const ref` actual -- is designated in the body, when the call runs.

@@ -869,6 +869,60 @@ not take an unknown predicate, and a conditional operator answers one by combini
 (11.4.11). This is the reading the front end's constant evaluation takes, so the expression means
 the same at elaboration and at run time.
 
+#### What a strobed write's arguments run on
+
+```systemverilog
+function automatic int f();
+  process p = process::self();   // null?
+  later <= 1;                     // allowed?
+  return $urandom;                // from which generator?
+endfunction
+initial $strobe("%0d", f());
+```
+
+21.2.2 evaluates the arguments "at the end of the current simulation time", after every event of the
+time step, and names no thread that evaluates them. 18.14.1 says what code with "no active thread"
+draws from only for a static initializer. 13.4.4 lets a function schedule past its return only on a
+thread an initial or always procedure created.
+
+Lyra runs them on no thread, as a static initializer's code runs, and so runs every deferred body
+that evaluates what the source wrote -- a concurrent assertion's tick, a clocking block's sample and
+the settling of its output at the end of a pass, a covergroup sampled under `strobe`.
+`process::self()` answers null, `disable fork` ends nothing, and the nonblocking assignment above is
+the design's error at its line (13.4.4). A draw comes from a generator what called the task -- a
+process, a static initializer, another such body -- handed over, made from its state and how many it
+has handed over without stepping it, so its own draws are the same however many strobes it makes
+(18.14), and the value does not depend on the order the processes of the time step ran in (18.14.2).
+An object made there is seeded by the next split of that generator, not by the initialization RNG
+18.14.1 names for an object a static initializer makes, since that RNG split as such bodies run
+would depend on the same order.
+
+#### A report made once the regions it matures in have passed
+
+```systemverilog
+function automatic int f(int v);
+  unique case (v) 0: return 1; endcase   // a violation: reported, and when?
+  assert #0 (v == 0);                     // matures in Observed, acts in Reactive
+  return v;
+endfunction
+initial $strobe("%0d", f(2));
+```
+
+12.4.2.1 defers a violation report "until the Observed region of the current time step", and 16.4.1
+matures an observed deferred assertion in the Observed region and runs its action in the Reactive
+region. A function a strobed write's argument calls runs in the Postponed region, after both, and
+4.4.2.9 lets nothing be scheduled into an earlier region of the slot; a final procedure runs once
+the simulation is over, when no region runs at all (9.2.3).
+
+Lyra matures the violation report in the Postponed region, at the time it was made: no process can
+reach a flush point that would discard it, and the active set can glitch no more, so it is the
+report the Observed region would have issued. An observed deferred assertion reached there is the
+design's error at its line, since its action is a call written for the Reactive region and may do
+what the Postponed region forbids. A final deferred assertion matures and acts in the Postponed
+region it is reached in, as 16.4.1 schedules its action. In a final procedure a violation report and
+a final deferred assertion mature, and act, as they are made, and an observed deferred assertion is
+refused as in the Postponed region.
+
 ### Allowed
 
 #### An `always_comb` writing one constant key of an associative array
