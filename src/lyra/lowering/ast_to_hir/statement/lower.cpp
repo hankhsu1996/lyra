@@ -29,6 +29,7 @@
 #include "lyra/lowering/ast_to_hir/statement/clocking_drive.hpp"
 #include "lyra/lowering/ast_to_hir/statement/loops.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/support/takeover_level.hpp"
 
@@ -59,6 +60,10 @@ auto LowerVariableDeclStmt(
     const slang::ast::VariableDeclStatement& vd, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
   const auto& sym = vd.symbol;
+  // A static variable a class or a namespace keeps for this subroutine is the
+  // keeper's declaration, set up with the keeper's own storage before any
+  // process starts (LRM 6.21, 10.5), so it declares nothing of this body.
+  if (KeptBeyondItsBody(sym)) return LowerEmptyStmt(span);
   auto type_id_or = proc.Owner().InternType(
       sym.getType(), frontend::PointSpanOf(sym.location));
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));

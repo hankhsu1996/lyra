@@ -1487,14 +1487,35 @@ auto UnitLowerer::ResolveValueTarget(
   // A namespace unit has no instance, so its cell is reached by name rather
   // than by a route out of the reader's own storage (LRM 26.2, 3.12.1). The
   // same by-name form serves a referrer in another unit and the owning unit's
-  // own body, neither of which has a receiver to route through.
-  if (const auto* unit = DeclaringNamespaceUnit(value)) {
-    auto value_type = InternType(value.getType(), span);
+  // own bodies, none of which has a receiver to route through, and the type is
+  // the one the namespace published.
+  const auto by_name =
+      [&](const slang::ast::Symbol& unit,
+          support::QualifiedName name) -> diag::Result<hir::ValueTarget> {
+    std::string unit_name = CompilationUnitName(unit, Names());
+    auto value_type = NamespaceVariableType(unit_name, value, name, span);
     if (!value_type) return std::unexpected(std::move(value_type.error()));
     return hir::ValueTarget{hir::NamespaceValueRef{
-        .unit_name = CompilationUnitName(*unit, Names()),
-        .variable_name = std::string{value.name},
+        .unit_name = std::move(unit_name),
+        .variable = std::move(name),
         .value_type = *value_type}};
+  };
+  if (const auto* unit = DeclaringNamespaceUnit(value)) {
+    return by_name(*unit, support::UnqualifiedName(std::string{value.name}));
+  }
+
+  // A static variable a class or a namespace keeps for one of its subroutines
+  // (LRM 6.21) is that keeper's storage as its static properties or its
+  // variables are, so every name reaching one -- the subroutine's own, a
+  // sibling's, another unit's, whatever path spelled it -- reaches it the way
+  // it reaches the keeper's own. One a design element's subroutine declares is
+  // storage of the instance and is routed below.
+  if (std::optional<SubroutineStatic> local = SubroutineStaticOf(value);
+      local.has_value() && local->keeper != nullptr) {
+    if (const auto* cls = local->keeper->as_if<slang::ast::ClassType>()) {
+      return ResolveClassKept(frame, *cls, local->name, span);
+    }
+    return by_name(*local->keeper, std::move(local->name));
   }
 
   auto route = TranslateReferenceRoute(frame, value, std::move(origin));
@@ -1645,18 +1666,25 @@ auto UnitLowerer::ReachDeclaringInstance(
 auto UnitLowerer::ResolveStaticPropertyTarget(
     const WalkFrame& frame, const slang::ast::ClassPropertySymbol& prop,
     diag::SourceSpan span) -> diag::Result<hir::ValueTarget> {
-  const auto& owner_class =
-      prop.getParentScope()->asSymbol().as<slang::ast::ClassType>();
+  return ResolveClassKept(
+      frame, prop.getParentScope()->asSymbol().as<slang::ast::ClassType>(),
+      support::UnqualifiedName(std::string{prop.name}), span);
+}
+
+auto UnitLowerer::ResolveClassKept(
+    const WalkFrame& frame, const slang::ast::ClassType& owner_class,
+    const support::QualifiedName& name, diag::SourceSpan span)
+    -> diag::Result<hir::ValueTarget> {
   auto owner = ResolveClass(owner_class, span);
   if (!owner) return std::unexpected(std::move(owner.error()));
 
   // A class a namespace unit declares, whichever unit that is, keeps one cell
-  // per static property, and a class one of this unit's structural scopes
+  // per variable it keeps, and a class one of this unit's structural scopes
   // declares keeps one per instance of that scope (LRM 6.22). Either way the
-  // cell is named by the class and the property's position in its declaration.
+  // cell is named by the class and the variable's position in its declaration.
   const auto class_cell = [&]() -> diag::Result<hir::ValueTarget> {
     const hir::ClassStaticPropertyTarget property{
-        .owner = *owner, .prop = StaticPropertyPositionOf(*owner, prop.name)};
+        .owner = *owner, .prop = StaticPropertyPositionOf(*owner, name)};
     if (!BelongsToAnInstance(owner_class)) {
       return hir::ValueTarget{hir::StaticPropertyRef{.target = property}};
     }
@@ -1675,9 +1703,9 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
     const auto refuse = [&] {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedExpressionForm,
-          "reaching the static property '{}' of a class another instance "
+          "reaching the static variable '{}' of a class another instance "
           "declares is not yet supported from here",
-          prop.name);
+          support::DisplayOf(name));
     };
     auto walked = RouteToReplicatingScope(frame, owner_class);
     if (!walked) return std::unexpected(std::move(walked.error()));
@@ -1688,7 +1716,9 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
     if (on == nullptr) return refuse();
     const auto member =
         unit_.scope_classes.Get(on->scope_class)
-            .FindMember(prop.name, unit_.classes.PathOf(*owner));
+            .FindMember(
+                name.name, support::Extended(
+                               unit_.classes.PathOf(*owner), name.within.data));
     if (!member.has_value()) return refuse();
     hir::ScopeRoutes& routes = RoutesOf(frame.Current());
     return hir::ValueTarget{hir::RoutedValueRef{

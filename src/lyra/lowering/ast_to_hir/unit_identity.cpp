@@ -819,6 +819,73 @@ auto ProceduralStepOf(const slang::ast::Symbol& scope) -> support::DefPathData {
   return support::NamedBlockStep{.name = std::string{scope.name}};
 }
 
+auto SubroutineStaticOf(const slang::ast::ValueSymbol& value)
+    -> std::optional<SubroutineStatic> {
+  if (value.kind != slang::ast::SymbolKind::Variable) return std::nullopt;
+  const auto& var = value.as<slang::ast::VariableSymbol>();
+  if (var.lifetime != slang::ast::VariableLifetime::Static) return std::nullopt;
+  std::vector<support::DefPathData> steps;
+  for (const slang::ast::Scope* scope = var.getParentScope(); scope != nullptr;
+       scope = scope->asSymbol().getParentScope()) {
+    const slang::ast::Symbol& holder = scope->asSymbol();
+    if (holder.kind == slang::ast::SymbolKind::StatementBlock) {
+      steps.push_back(ProceduralStepOf(holder));
+      continue;
+    }
+    if (holder.kind != slang::ast::SymbolKind::Subroutine) return std::nullopt;
+    const auto& subroutine = holder.as<slang::ast::SubroutineSymbol>();
+    steps.push_back(ProceduralStepOf(holder));
+    std::ranges::reverse(steps);
+    const slang::ast::Symbol& around = subroutine.getParentScope()->asSymbol();
+    const slang::ast::Symbol* keeper = around.as_if<slang::ast::ClassType>();
+    if (keeper == nullptr) keeper = DeclaringNamespaceUnit(subroutine);
+    return SubroutineStatic{
+        .var = &var,
+        .keeper = keeper,
+        .name = support::QualifiedName{
+            .within = support::DefPath{.data = std::move(steps)},
+            .name = std::string{var.name}}};
+  }
+  return std::nullopt;
+}
+
+auto StaticsDeclaredBy(const slang::ast::SubroutineSymbol& subroutine)
+    -> std::vector<SubroutineStatic> {
+  std::vector<SubroutineStatic> statics;
+  const auto collect = [&](const auto& self,
+                           const slang::ast::Scope& scope) -> void {
+    for (const slang::ast::Symbol& member : scope.members()) {
+      if (const auto* block =
+              member.as_if<slang::ast::StatementBlockSymbol>()) {
+        self(self, *block);
+        continue;
+      }
+      const auto* value = member.as_if<slang::ast::ValueSymbol>();
+      if (value == nullptr) continue;
+      if (std::optional<SubroutineStatic> local = SubroutineStaticOf(*value)) {
+        statics.push_back(*std::move(local));
+      }
+    }
+  };
+  collect(collect, subroutine);
+  return statics;
+}
+
+auto NamedScopeAround(const slang::ast::VariableSymbol& var)
+    -> const slang::ast::Symbol& {
+  const slang::ast::Symbol* at = &var.getParentScope()->asSymbol();
+  while (at->kind == slang::ast::SymbolKind::StatementBlock &&
+         at->name.empty()) {
+    at = &at->getParentScope()->asSymbol();
+  }
+  return *at;
+}
+
+auto KeptBeyondItsBody(const slang::ast::ValueSymbol& value) -> bool {
+  const std::optional<SubroutineStatic> local = SubroutineStaticOf(value);
+  return local.has_value() && local->keeper != nullptr;
+}
+
 auto CovergroupNameOf(const slang::ast::CovergroupType& covergroup)
     -> std::string_view {
   if (!covergroup.name.empty()) return covergroup.name;

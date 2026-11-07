@@ -336,7 +336,7 @@ auto UnitLowerer::PublishTypeSignatures() -> diag::Result<void> {
   return WalkOwnDeclarations(publish);
 }
 
-auto UnitLowerer::PublishNamespaceSubroutines() -> diag::Result<void> {
+auto UnitLowerer::PublishNamespace() -> diag::Result<void> {
   hir::TypeImportMemo published;
   hir::TypeImporter importer = PublishingImporter(published);
   auto& namespace_unit = signature_.unit.emplace<hir::PublishedNamespace>();
@@ -346,6 +346,40 @@ auto UnitLowerer::PublishNamespaceSubroutines() -> diag::Result<void> {
     if (!own) return std::unexpected(std::move(own.error()));
     namespace_unit.subroutines.push_back(
         hir::ImportCallable(importer, *std::move(own)));
+  }
+  // What another unit reads and writes by name (LRM 26.3, 6.21): the
+  // namespace's own variables, and the static variables of its subroutines,
+  // each named as the namespace knows it.
+  const auto publish = [&](const slang::ast::ValueSymbol& var,
+                           support::QualifiedName name) -> diag::Result<void> {
+    auto type = InternType(var.getType(), frontend::PointSpanOf(var.location));
+    if (!type) return std::unexpected(std::move(type.error()));
+    namespace_unit.variables.push_back(
+        hir::PublishedVariable{
+            .name = std::move(name), .type = importer.Import(*type)});
+    return {};
+  };
+  // What this unit declared of the namespace is what its publication record
+  // holds -- a unit lowering a specialization of a class the namespace declares
+  // reads the namespace's scope without declaring what the namespace does.
+  const ScopePublicationRecord& declared = PublicationOf(*scope_);
+  for (const ScopePublicationRecord::Member& member : declared.members) {
+    const auto* data = std::get_if<ScopePublicationRecord::DataObject>(&member);
+    if (data == nullptr) continue;
+    auto published_var = publish(
+        *data->symbol,
+        support::UnqualifiedName(std::string{data->symbol->name}));
+    if (!published_var) return published_var;
+  }
+  for (const ScopePublicationRecord::Callable& callable : declared.callables) {
+    const auto* subroutine =
+        std::get_if<ScopePublicationRecord::Subroutine>(&callable);
+    if (subroutine == nullptr) continue;
+    for (SubroutineStatic& local : StaticsDeclaredBy(*subroutine->symbol)) {
+      if (local.keeper == nullptr) continue;
+      auto published_var = publish(*local.var, std::move(local.name));
+      if (!published_var) return published_var;
+    }
   }
   return {};
 }
@@ -448,7 +482,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   // neither.
   const auto* body = scope_->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
   if (body == nullptr) {
-    if (auto r = PublishNamespaceSubroutines(); !r) return r;
+    if (auto r = PublishNamespace(); !r) return r;
     PublishTypeDefinitions();
     PublishParameterValues();
     return {};
@@ -774,7 +808,9 @@ auto UnitLowerer::PublishScopeClass(const slang::ast::Scope& scope)
                     "interned before the scope's signature is published");
               }
               return cell(
-                  *property.symbol, unit_.classes.PathOf(interned->second));
+                  *property.symbol, support::Extended(
+                                        unit_.classes.PathOf(interned->second),
+                                        property.name.within.data));
             },
             [&](const ScopePublicationRecord::CovergroupEvent& event)
                 -> diag::Result<hir::PublishedMember> {
@@ -1340,6 +1376,29 @@ auto UnitLowerer::NamespaceCalleeInterface(
   }
   hir::TypeImporter importer = ReadingImporter(*signature);
   return hir::ImportCallable(importer, *published).interface;
+}
+
+auto UnitLowerer::NamespaceVariableType(
+    const std::string& unit_name, const slang::ast::ValueSymbol& var,
+    const support::QualifiedName& name, diag::SourceSpan span)
+    -> diag::Result<hir::TypeId> {
+  if (unit_name == unit_.name) return InternType(var.getType(), span);
+  const hir::UnitSignature* signature = Signatures().Find(unit_name);
+  const auto* namespace_unit =
+      signature == nullptr
+          ? nullptr
+          : std::get_if<hir::PublishedNamespace>(&signature->unit);
+  const hir::PublishedVariable* published =
+      namespace_unit == nullptr ? nullptr : namespace_unit->FindVariable(name);
+  if (published == nullptr) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::NamespaceVariableType: '{}' keeps '{}' and published "
+            "no such variable",
+            unit_name, support::DisplayOf(name)));
+  }
+  hir::TypeImporter importer = ReadingImporter(*signature);
+  return importer.Import(published->type);
 }
 
 auto UnitLowerer::NamespaceDefaultType(

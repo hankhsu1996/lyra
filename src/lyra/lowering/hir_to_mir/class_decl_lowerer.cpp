@@ -237,14 +237,15 @@ struct BodyStatics {
 // owner that is was settled where the cells were declared; this only writes
 // where it was told.
 //
-// Every property's cell is installed with its declared representation and
-// default in the install phase, because the storage arrives with none. A
-// source-written value then stores through the cell in the value phase, and the
-// default case needs no statement there, being fully expressed by the
-// installation already. The values are written in the order the source declares
-// them, because an initializer may read a property declared before it. A
-// static-lifetime variable of one of the class's bodies follows, its cell being
-// the class's for the same reason.
+// Every cell the class keeps -- its static properties and its methods' static
+// variables alike -- is installed with its declared representation and default
+// in the install phase, because the storage arrives with none. A source-written
+// value then stores through the cell in the value phase, and the default case
+// needs no statement there, being fully expressed by the installation already.
+// The values are written in the order the class lists them, because an
+// initializer may read a property declared before it. What the class's bodies
+// keep for themselves -- what a `disable` or an assertion control acts on --
+// follows, its cell being the class's for the same reason.
 auto LowerStaticStorageInto(
     UnitLowerer& unit_lowerer, const StructuralScopeLowerer* declaring_scope,
     const hir::ClassDecl& hir_class, const hir::ClassDeclaration& declared,
@@ -279,10 +280,13 @@ auto LowerStaticStorageInto(
                     unit.builtins.void_type))});
   }
   for (const hir::StaticPropertyInit& init : hir_class.static_property_inits) {
-    // The initializer is written in the class, whose name a construct in it
-    // reports (LRM 21.2.1.5).
+    // The initializer is written in the class, or in the block or method of it
+    // declaring the variable, whose name a construct in it reports (LRM
+    // 21.2.1.5).
     const hir::Expr& value = hir_class.static_init.exprs.Get(init.value);
-    const WalkFrame named = frame.WithScopeName(hir_class.fixed_name);
+    const WalkFrame named = frame.WithScopeName(
+        init.written_in.has_value() ? scopes.Get(*init.written_in).name
+                                    : hir_class.fixed_name);
     auto value_or = lowerer.LowerExpr(value, named);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::ExprId value_id = block.Add(*std::move(value_or));
@@ -296,10 +300,9 @@ auto LowerStaticStorageInto(
                 value_id))});
   }
 
-  // LRM 6.21 applies such an initializer once before any process starts, rather
-  // than on each entry to the body that declares it. Each body is lowered
-  // against its own statics, since a declaration's identity is scoped to the
-  // body's arena.
+  // What a body keeps for itself comes up once before any process starts as
+  // well. Each body is lowered against its own cells, since a declaration's
+  // identity is scoped to the body's arena.
   for (const BodyStatics& body : body_statics) {
     ProcessLowerer body_lowerer(
         unit_lowerer, declaring_scope, *body.body, std::nullopt, frame, scopes,
@@ -404,9 +407,11 @@ auto ClassDeclLowerer::DeclareShape(
                                  : StaticStorageOwner{ClassStorage{
                                        .owner = class_id_, .shape = &shape}};
 
-  // Static properties (LRM 8.9) take their cells in declaration order, recorded
-  // as the loop goes. That pool also takes what the class's bodies keep, so a
-  // property's position in it is not its position in the source.
+  // What the class keeps (LRM 8.9, 6.21) takes its cells in the order its list
+  // places it, recorded as the loop goes. That pool also takes what the
+  // class's bodies keep for themselves -- what a `disable` or an assertion
+  // control acts on -- so a cell's position in it is not its position in the
+  // source.
   //
   // Each is an observable cell, as every variable no object holds is. A static
   // property needs no object, so any process may write it while another waits
@@ -417,7 +422,7 @@ auto ClassDeclLowerer::DeclareShape(
       base::Translation<hir::StaticPropertyId, StaticStorageHome>{
           declared.static_properties.size()};
   for (const hir::StaticPropertyId id : declared.static_properties.Ids()) {
-    const hir::DeclaredProperty& sp = declared.static_properties.Get(id);
+    const hir::DeclaredStatic& sp = declared.static_properties.Get(id);
     const mir::TypeId cell_type = mir::ObservableCellOf(
         unit_lowerer.Unit().types, unit_lowerer.TranslateType(sp.type));
     const auto placed =
@@ -426,11 +431,11 @@ auto ClassDeclLowerer::DeclareShape(
         placed != placed_statics.end()
             ? StaticStorageHome{InstanceFieldHome{.field = placed->field}}
             : DeclareStaticCell(class_storage, cell_type);
-    // The class answers the identifier the source declared only where the class
-    // owns the cell. Where a structural scope replicates the class the cell is
-    // storage of that scope's instance, reached as the field it is, and the
-    // class-qualified name a source reference carries is resolved before this
-    // layer rather than spelled on the storage.
+    // The class answers the name the source reaches the cell by only where the
+    // class owns the cell. Where a structural scope replicates the class the
+    // cell is storage of that scope's instance, reached as the field it is, and
+    // the class-qualified name a source reference carries is resolved before
+    // this layer rather than spelled on the storage.
     std::visit(
         Overloaded{
             [&](const ClassCellHome& cell) {
@@ -490,10 +495,10 @@ auto ClassDeclLowerer::DeclareShape(
   method_statics_ = {hir_class.methods.size(), std::move(method_statics)};
   ctor_static_bindings_ = bind_statics(hir_class.constructor);
 
-  // No lexical scope of a method body is a place a path reaches: a class
-  // object is reached by member select rather than by scope name (LRM 23.7),
-  // so no hierarchical path names a block inside a method. A `disable` written
-  // inside one still names it, and what such a target belongs to is the class:
+  // A class object is reached by member select rather than by scope name (LRM
+  // 23.7), so no hierarchical path reaches a block inside a method through an
+  // object. A `disable` written inside a method's block still names the block,
+  // and what such a target belongs to is the class:
   // a method is automatic (LRM 8.6), and LRM 9.6.2 disables a block inside an
   // automatic task for every concurrent execution of it, so one cell serves
   // every object of the class.
@@ -623,8 +628,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
           field.type, type, field.random);
     }
     for (const hir::StaticPropertyId id : declared.static_properties.Ids()) {
-      const hir::DeclaredProperty& property =
-          declared.static_properties.Get(id);
+      const hir::DeclaredStatic& property = declared.static_properties.Get(id);
       if (!hir::IsRandom(property.random)) {
         continue;
       }

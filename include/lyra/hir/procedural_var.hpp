@@ -20,9 +20,10 @@ struct ProceduralVarId {
 
 // LRM 6.21 / 13.3.1 / 13.4.2 variable lifetime. A static-lifetime variable has
 // one storage location that retains its value between calls, per thing that
-// replicates the declaration -- a module instance, and nothing at all for a
-// class method or a package subroutine; an automatic-lifetime variable is
-// allocated fresh for each activation. slang resolves the source keyword and
+// replicates the declaration -- a module instance, which replicates a class it
+// declares too, and nothing at all for a package subroutine or a method of a
+// class a package declares; an automatic-lifetime variable is allocated fresh
+// for each activation. slang resolves the source keyword and
 // the enclosing module / subroutine default into a per-variable choice, which
 // HIR records verbatim.
 enum class VariableLifetime : std::uint8_t {

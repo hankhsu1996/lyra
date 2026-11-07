@@ -102,8 +102,11 @@ void WriteOne(TargetText& out, VerbatimName name) {
   out += name.text;
 }
 
-void WriteOne(TargetText& out, MintedPathName name) {
-  Write(out, kMintedPrefix, name.what);
+namespace {
+
+// Each step of `steps` as the letter of its kind and what tells it from its
+// siblings, each part opened by `_`.
+void WriteSteps(TargetText& out, std::span<const support::DefPathData> steps) {
   const auto named = [&](std::string_view kind, std::string_view source) {
     const std::string identifier = TextOf(SourceName{.name = source});
     Write(out, "_", kind, identifier.size(), "_", identifier);
@@ -114,7 +117,7 @@ void WriteOne(TargetText& out, MintedPathName name) {
   const auto bound = [&](const std::optional<std::uint64_t>& arguments) {
     if (arguments.has_value()) Write(out, "_h", DigestText{*arguments});
   };
-  for (const support::DefPathData& step : name.steps) {
+  for (const support::DefPathData& step : steps) {
     std::visit(
         Overloaded{
             [&](const support::GenerateBlockStep& block) {
@@ -146,6 +149,20 @@ void WriteOne(TargetText& out, MintedPathName name) {
             }},
         step);
   }
+}
+
+}  // namespace
+
+void WriteOne(TargetText& out, MintedPathName name) {
+  Write(out, kMintedPrefix, name.what);
+  WriteSteps(out, name.steps);
+}
+
+void WriteOne(TargetText& out, MintedStaticName name) {
+  Write(out, kMintedPrefix, "static");
+  WriteSteps(out, name.steps);
+  const std::string identifier = TextOf(SourceName{.name = name.variable});
+  Write(out, "_v", identifier.size(), "_", identifier);
 }
 
 // The digest is sixteen hex digits and the number at most ten decimal ones, so
@@ -184,6 +201,7 @@ void WriteOne(TargetText& out, const CppName& name) {
           [&out](MintedWord n) { WriteOne(out, n); },
           [&out](VerbatimName n) { WriteOne(out, n); },
           [&out](MintedPathName n) { WriteOne(out, n); },
+          [&out](MintedStaticName n) { WriteOne(out, n); },
           [&out](const MintedAppliedName& n) { WriteOne(out, n); },
           [&out](const EntryName& n) { WriteOne(out, n); },
           [&out](const DefinitionName& n) { WriteOne(out, n); }},

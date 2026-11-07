@@ -115,14 +115,36 @@ struct PublishedDesignElement {
   }
 };
 
+// A variable a namespace unit keeps (LRM 26.2, 6.21): the name another unit
+// reaches it by -- a variable of the namespace itself, or a static variable of
+// one of its subroutines through the subroutine -- and its type.
+struct PublishedVariable {
+  support::QualifiedName name;
+  TypeId type;
+
+  auto operator==(const PublishedVariable&) const -> bool = default;
+};
+
 // What a namespace unit -- a package (LRM 26.2) or the `$unit` scope (LRM
 // 3.12.1) -- publishes beside its classes: the subroutines another unit calls
-// by name on no object (LRM 26.3), what a call to each passes and awaits. It
+// by name on no object (LRM 26.3), what a call to each passes and awaits, and
+// the variables it keeps, which another unit reads and writes by name. It
 // roots no object, so nothing reaches it through a receiver.
 struct PublishedNamespace {
   std::vector<SubroutinePrototype> subroutines;
+  std::vector<PublishedVariable> variables;
 
   auto operator==(const PublishedNamespace&) const -> bool = default;
+
+  // The variable published under `name`, or nothing where the unit published
+  // no such name.
+  [[nodiscard]] auto FindVariable(const support::QualifiedName& name) const
+      -> const PublishedVariable* {
+    for (const PublishedVariable& published : variables) {
+      if (published.name == name) return &published;
+    }
+    return nullptr;
+  }
 
   // The subroutine published under `name`, or nothing where the unit published
   // no such name.

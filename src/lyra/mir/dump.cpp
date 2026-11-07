@@ -872,6 +872,12 @@ class MirDumper {
     return name.has_value() ? std::format(" \"{}\"", *name) : std::string{};
   }
 
+  static auto FormatQualifiedName(const support::QualifiedName* name)
+      -> std::string {
+    return name != nullptr ? std::format(" \"{}\"", support::DisplayOf(*name))
+                           : std::string{};
+  }
+
   static auto FormatClassName(const support::ClassName& name) -> std::string {
     return std::visit(
         Overloaded{
@@ -980,7 +986,7 @@ class MirDumper {
       Line(
           std::format(
               "[{}]{} : {}", id.value,
-              FormatName(NameOf(s.named_static_properties, id)),
+              FormatQualifiedName(NameOf(s.named_static_properties, id)),
               FormatVarType(p.type)));
     }
     Dedent();

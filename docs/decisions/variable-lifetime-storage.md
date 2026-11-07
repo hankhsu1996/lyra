@@ -49,8 +49,10 @@ C++ local at its source position.** A process and a method use the identical mec
   to the SV class rather than to an object of it, and how many cells that is follows the class's own
   replication (see the revision below). What the declaring block decides is the name a hierarchical
   path reaches the member by (`procedural-storage-scope.md`), never where the member sits.
-- The body reaches the static local by the same scoped reference it uses for any local; the backend
-  resolves that reference to the per-instance member.
+- A body of the design hierarchy reaches the static local by the same scoped reference it uses for
+  any local; the backend resolves that reference to the per-instance member. A static a class or a
+  namespace keeps for one of its subroutines is the keeper's entry instead, which every body names
+  alike, the declaring one included (`type-associated-storage-is-the-declarers.md` D5).
 - The per-instance member is a flat member on the owner class's member arena -- not a sub-struct
   grouping per callable. SystemVerilog's per-callable scoping is already settled by HIR name-binding
   before MIR sees the program; the cross-scope dimension the LRM exposes is the addressable scope (a
@@ -66,7 +68,10 @@ C++ local at its source position.** A process and a method use the identical mec
   source name stays what the declaring scope offers a hierarchical path
   (`procedural-storage-scope.md`), never something composed into the member -- a name joined to a
   word of the compiler's own is a name a design may also declare, and the two then land on one
-  member.
+  member. A cell a class or a namespace keeps for a subroutine is the one that answers to a name,
+  and the name is that same relation -- the subroutine and the blocks between, as steps, then the
+  identifier -- never a spelling joined from them (`type-associated-storage-is-the-declarers.md`
+  D5).
 
 ### Why honor the frontend, and not reclassify bare to automatic
 

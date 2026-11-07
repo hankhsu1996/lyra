@@ -63,34 +63,36 @@ struct StaticVariableDecl {
 };
 
 // One entry of the relation between a unit's namespace and the storage it
-// answers by name: the identifier the source declared the variable under, and
-// the cell it reaches. This is also the unit's published surface for it -- what
-// another unit has instead of the arena.
+// answers by name: the name the source reaches the variable by within the
+// namespace -- a variable of the package itself, or a static variable one of
+// its subroutines declares (LRM 6.21) -- and the cell it reaches. This is also
+// the unit's published surface for it -- what another unit has instead of the
+// arena.
 struct NamedStaticVariable {
-  std::string name;
+  support::QualifiedName name;
   StaticVariableId variable;
 };
 
-// The identifier `variable` answers to among `named`, or nothing where nothing
-// names it.
+// The name `variable` answers to among `named`, or nothing where nothing names
+// it.
 [[nodiscard]] inline auto NameOf(
     std::span<const NamedStaticVariable> named, StaticVariableId variable)
-    -> std::optional<std::string_view> {
+    -> const support::QualifiedName* {
   for (const NamedStaticVariable& entry : named) {
     if (entry.variable == variable) {
-      return std::string_view{entry.name};
+      return &entry.name;
     }
   }
-  return std::nullopt;
+  return nullptr;
 }
 
 // The storage `name` reaches among `named`, or nothing where the unit publishes
-// no such identifier. The relation read the other way: a reference written
-// inside the declaring unit arrives carrying what the source spelled, and what
-// it names is a position in that unit's own arena.
+// no such name. The relation read the other way: a reference written inside
+// the declaring unit arrives carrying what the source spelled, and what it
+// names is a position in that unit's own arena.
 [[nodiscard]] inline auto StaticVariableNamed(
-    std::span<const NamedStaticVariable> named, std::string_view name)
-    -> std::optional<StaticVariableId> {
+    std::span<const NamedStaticVariable> named,
+    const support::QualifiedName& name) -> std::optional<StaticVariableId> {
   for (const NamedStaticVariable& entry : named) {
     if (entry.name == name) {
       return entry.variable;
