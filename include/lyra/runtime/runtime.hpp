@@ -322,7 +322,7 @@ class Runtime final : public RuntimeEffects {
   // remains; then Postponed.
   void ExecuteTimeSlot();
   // Gives back, as it ends, whatever entered to run on no thread while it
-  // stood, as a compiler's cleanup scope pops back to the depth it began at.
+  // stood, restoring what was running as it began.
   class NoThreadRunsScope;
   // Takes `taken` on as what is running, an object made there seeded from
   // `objects_from` where there is one.

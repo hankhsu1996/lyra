@@ -78,24 +78,28 @@ class RunningAnEffect {
 
 }  // namespace
 
+// Every effect runs inside one, and nearly none enters anything, so what it
+// keeps is what was running as it began: whatever else installs what is running
+// has given it back by the time the effect returns, so anything still standing
+// then entered to run on no thread, and is left, innermost first.
 class Runtime::NoThreadRunsScope {
  public:
   explicit NoThreadRunsScope(Runtime& runtime)
-      : runtime_(&runtime), below_(runtime.no_thread_runs_.size()) {
+      : runtime_(&runtime), began_with_(runtime.running_) {
   }
   NoThreadRunsScope(const NoThreadRunsScope&) = delete;
   auto operator=(const NoThreadRunsScope&) -> NoThreadRunsScope& = delete;
   NoThreadRunsScope(NoThreadRunsScope&&) = delete;
   auto operator=(NoThreadRunsScope&&) -> NoThreadRunsScope& = delete;
   ~NoThreadRunsScope() {
-    while (runtime_->no_thread_runs_.size() > below_) {
+    while (runtime_->running_ != began_with_) {
       runtime_->LeaveNoThread();
     }
   }
 
  private:
   Runtime* runtime_;
-  std::size_t below_;
+  const RunningState* began_with_;
 };
 
 Runtime::Runtime() : Runtime(RuntimeOptions{}) {
