@@ -119,22 +119,16 @@ auto RunDesignRoot(
     __sanitizer_set_death_callback(DeliverFinishedOutput);
   }
 
-  // A built program's own argv leads with its name, which is not one of the
-  // simulation's arguments.
   const std::span<char*> args{argv, static_cast<std::size_t>(argc)};
-  std::vector<std::string> arguments;
-  for (std::size_t i = 1; i < args.size(); ++i) {
-    arguments.emplace_back(args[i]);
-  }
-  std::vector<std::string> plusargs = PlusargsFrom(arguments);
+  std::vector<std::string> words{args.begin(), args.end()};
   // The program carries third-party code inside the runtime it links, whose
   // notices it prints when asked, in place of a run.
-  if (std::ranges::contains(plusargs, kLicensesOption)) {
+  if (std::ranges::contains(PlusargsFrom(words), kLicensesOption)) {
     const std::string_view notices = ThirdPartyLicenses();
     std::fwrite(notices.data(), 1, notices.size(), stdout);
     return EXIT_SUCCESS;
   }
-  Runtime runtime{RuntimeOptions{.plusargs = std::move(plusargs)}};
+  Runtime runtime{RuntimeOptions{.command_line = std::move(words)}};
 
   // Building the design and resolving its references precede the simulation
   // (LRM 3.12). An error here has no activation to leave and no final procedure

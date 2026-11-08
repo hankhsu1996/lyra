@@ -2603,21 +2603,21 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .takes_the_runtime_handle = true,
           .takes_the_location = false,
           .ending = CallEnding::kReturns};
-    case BuiltinFn::kDisableIsActive:
+    case BuiltinFn::kExportedTaskReturnValue:
       return {
-          .name = "disable_is_active",
-          .declaration = RuntimeFunction("DisableIsActive"),
+          .name = "exported_task_return_value",
+          .declaration = RuntimeFunction("ExportedTaskReturnValue"),
           .takes_the_runtime_handle = true,
           .takes_the_location = false};
-    case BuiltinFn::kCheckImportTaskAcknowledged:
+    case BuiltinFn::kContextImportTaskReturned:
       return {
-          .name = "check_import_task_acknowledged",
-          .declaration = RuntimeFunction("CheckImportTaskAcknowledged"),
+          .name = "context_import_task_returned",
+          .declaration = RuntimeFunction("ContextImportTaskReturned"),
           .takes_the_runtime_handle = true};
-    case BuiltinFn::kCheckImportFunctionAcknowledged:
+    case BuiltinFn::kContextImportFunctionReturned:
       return {
-          .name = "check_import_function_acknowledged",
-          .declaration = RuntimeFunction("CheckImportFunctionAcknowledged"),
+          .name = "context_import_function_returned",
+          .declaration = RuntimeFunction("ContextImportFunctionReturned"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kCheckExportReachable:
       return {

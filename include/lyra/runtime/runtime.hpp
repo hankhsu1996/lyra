@@ -22,6 +22,7 @@
 #include "lyra/runtime/assertion_control.hpp"
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/closure.hpp"
+#include "lyra/runtime/command_line.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/coverage.hpp"
 #include "lyra/runtime/diagnostic.hpp"
@@ -52,9 +53,8 @@ class RuntimeProcess;
 class Scope;
 
 struct RuntimeOptions {
-  // LRM 21.6 command-line plusarg tokens with the `+` prefix already
-  // stripped, in the order they appeared on the host command line.
-  std::vector<std::string> plusargs;
+  // The command line the program was started with, its own name first.
+  std::vector<std::string> command_line;
 };
 
 // The kinds of process that start at time zero. They start in turn, in the
@@ -362,10 +362,10 @@ class Runtime final : public RuntimeEffects {
 
   FileTable files_;
   DiagnosticDispatcher diagnostic_{files_};
-  // Built from the plusargs before they are moved into their own source.
+  runtime::CommandLine command_line_;
+  // Built from the command line's plusargs.
   ValueDumps dumps_;
   RandomizeSettings randomize_settings_;
-  PlusArgsSource plusargs_;
   CoverageLog coverage_;
   CurrentRuntimeGuard current_runtime_guard_{*this};
   // The waits on objects that expired and have not been told yet. Declared

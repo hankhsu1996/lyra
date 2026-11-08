@@ -129,40 +129,39 @@ Anyone may open the first two, each from its template.
 
 The work itself is written down by whoever takes it on.
 
-- **Work item.** A feature or a refactor, about one pull request. The title states the target in 50
-  characters or fewer, and the body has three parts: what holds today, the target, and when it is
-  done. A feature request becomes one once its target is settled.
-- **Tracking.** One line of work, from its own template. Its items are its sub-issues, so GitHub
-  counts how far it has come, and its body says only what the line covers and when it is finished.
+- **Work item.** About one pull request. The title states the target, and the body says what holds
+  today, the target, and when it is done.
+- **Tracking issue.** A line of work. It says what the line covers and when the line is finished,
+  and its items are its sub-issues.
 
-No issue states where it stands in its text. That is what its fields are for.
+**A line covers what the standard says, not what some program has needed so far.** Its tracking
+issue lists each section of the clauses it covers and the issue that owns it, so a section nobody
+owns can be seen. Which item is taken first is a separate question, answered by the project's order
+of work, where what a real design needs counts.
 
-- **Open or closed.** A pull request whose description says `Closes #N` closes the issue when it
-  merges; one that does part of it says `Part of #N`.
-- **Parent.** An item is a sub-issue of the tracking issue for its line.
-- **Blocked by.** Set where an item cannot start before another lands, and on a bug whose cause is
-  another item. Such a bug is fixed by that item, not on top of it. An order that is only better
-  goes in the project's Rank.
-- **Labels.** One `type:` label, one or two `area:` labels naming the parts of Lyra it changes,
-  `tracking` on a tracking issue, `real design` on an item a design written elsewhere stops on, and
-  `good first issue` on an item a newcomer can take.
-- **Assignee.** Whoever is working on it now. Unassign yourself when you stop.
-- **Project.** Every issue is on the project board, with two fields.
-  - **Tier** says how bad the problem is. An item that blocks others takes the worst Tier among
-    them, so the cause of a crash ranks as a crash.
-    - `crash or wrong answer` -- Lyra crashes, or a program it builds answers wrongly. A regression
-      is one. A feature nobody has built is not one, however a program using it ends.
-    - `cannot build` -- Lyra refuses legal SystemVerilog, or has not built what it asks for.
-    - `cost` -- build time, run time or memory that stands between a design and its use.
-    - `design` -- a debt in the architecture that no user meets.
-    - `owed` -- a check or a measurement a merged change left to do.
-  - **Rank** is the order the work is taken in, lowest first. What a real design stops on comes
-    first, with crashes and wrong answers, then refactors and cost, then other bugs, then features
-    no real design needs. Inside each it sorts by how many items an item blocks, then by Tier, then
-    by age, and it puts every item after the items blocking it. An issue with no Rank has not been
-    placed yet.
-- **Status.** The board sets it from the issue, never by hand. An issue is Todo when it is added, In
-  Progress once a pull request links it, and Done when it closes.
+**A tracking issue is a sub-issue of a larger line where it is a milestone of that line** -- a part
+with a finish of its own that someone would ask about. Grouping a few items is no reason for one.
+
+**An issue's text never says where it stands.** Its state, its parent, the issues it is blocked by
+and the project's fields say that. A pull request that finishes an issue says `Closes #N`, and one
+that does part of it `Part of #N`. An issue is blocked by another where it cannot start before that
+one lands, or where it is a bug whose cause is that one; such a bug is fixed by the other, not on
+top of it.
+
+Labels say what kind of issue it is and which parts of Lyra it changes. Every issue is on the
+project board, where its **Tier** says how bad the problem is and its **Rank** is the order the work
+is taken in:
+
+- `crash or wrong answer` -- Lyra crashes, or a program it builds answers wrongly.
+- `cannot build` -- Lyra refuses legal SystemVerilog, or has not built what it asks for.
+- `cost` -- build time, run time or memory that stands between a design and its use.
+- `design` -- a debt in the architecture that no user meets.
+- `owed` -- a check or a measurement a merged change left to do.
+
+An issue that blocks others takes the worst Tier among them, so the cause of a crash ranks as a
+crash. Rank is lowest first, puts every issue after the issues blocking it, and puts what a real
+design stops on before what none needs. Whoever is working on an issue is its assignee, and
+unassigns themselves when they stop.
 
 ## Documentation
 

@@ -39,8 +39,8 @@ enum class ProcessTerminationCause : std::uint8_t {
   // Ran to the end of its body. LRM 9.7 reports this as FINISHED.
   kCompleted,
   // Left by a departure rather than by reaching the end: `kill` (LRM 9.7), a
-  // `disable` (LRM 9.6), or a run-time error the body had no way to carry on
-  // from. Reported as KILLED.
+  // `disable` (LRM 9.6), the run it ended (LRM 20.2), or a run-time error the
+  // body had no way to carry on from. Reported as KILLED.
   kKilled,
 };
 
@@ -251,13 +251,19 @@ class RuntimeProcess : public ClassObject {
   // resumes it later by driving the innermost call).
   auto EnterForeignExecution(std::unique_ptr<ForeignExecution> fe) -> bool;
 
-  // LRM 9.6.2, 9.7: whether a departure is owed here -- a target this execution
-  // is inside was disabled, or its own termination was requested or settled.
-  // The three are one question because what each owes this execution is the
-  // same: it runs no further statement of the design.
+  // LRM 9.6.2, 9.7, 20.2: whether a departure is owed here -- a target this
+  // execution is inside was disabled, its own termination was requested or
+  // settled, or it ended the run. They are one question because what each owes
+  // this execution is the same: it runs no further statement of the design.
   [[nodiscard]] auto DepartureIsDue() const -> bool {
-    return TerminationIsDue() ||
+    return TerminationIsDue() || running_.ended_the_run ||
            running_.targets.OutermostInvalidated() != nullptr;
+  }
+
+  // LRM 20.2: whether this execution ended the run, after which nothing of the
+  // design runs in it again, whether or not its frame has settled yet.
+  [[nodiscard]] auto EndedTheRun() const -> bool {
+    return running_.ended_the_run;
   }
 
   // LRM 9.7: whether this execution's own termination was requested or

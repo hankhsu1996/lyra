@@ -5,9 +5,10 @@
 // that calls it is declared in the same package, since only an export of the
 // import's own scope may be called directly (LRM 35.5.3). Nothing of the design
 // runs afterwards, neither the rest of the exported function nor the
-// statements after the import call, and the exchange conforms, so a conforming
-// tool issues no error report, and $finish(0) prints no finish message (LRM
-// 20.2).
+// statements after the import call. No disable is involved, so the foreign
+// caller owes the disable protocol nothing (LRM 35.9) and never consults it,
+// and a conforming tool issues no error report for that; $finish(0) prints no
+// finish message (LRM 20.2).
 package exporting_pkg;
   import "DPI-C" context function int ask(input int seed);
   export "DPI-C" function answer;

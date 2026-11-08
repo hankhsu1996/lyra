@@ -38,10 +38,10 @@ struct RuntimeLocation {
   // The root of the runtime's own sources and the lists saying how each is
   // compiled, for a build whose compiler builds them beside the design.
   std::filesystem::path sources_root;
-  // The standard DPI-C header (LRM 35, Annex I). Not part of the runtime -- no
-  // Lyra source includes it -- but shipped alongside so a user's foreign
-  // sources compile against the standard declarations.
-  std::filesystem::path svdpi_header;
+  // The standard's C headers (LRM Annexes I, K, L and M), shipped beside a
+  // program's generated DPI-C header so a user's foreign sources compile
+  // against the standard declarations of what the runtime defines.
+  std::vector<std::filesystem::path> standard_headers;
   // The notices of the third-party code the runtime library carries.
   std::filesystem::path third_party_licenses;
 };

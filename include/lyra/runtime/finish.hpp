@@ -22,4 +22,16 @@ namespace lyra::runtime {
     RuntimeEffects& runtime, std::int64_t finish_number,
     base::SourceLocation at);
 
+// The same tasks where no departure may be raised, because the frames beneath
+// are foreign code's, which no departure crosses (LRM 35.9): the run ends and
+// the calling execution is recorded as having ended it, and it leaves at the
+// next point of its own that asks whether it must.
+void FinishWithoutRaising(
+    RuntimeEffects& runtime, std::int64_t finish_number,
+    base::SourceLocation at);
+
+void StopWithoutRaising(
+    RuntimeEffects& runtime, std::int64_t finish_number,
+    base::SourceLocation at);
+
 }  // namespace lyra::runtime

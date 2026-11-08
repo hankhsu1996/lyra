@@ -4070,20 +4070,20 @@ void lyra_rt_leave_dpi_scope(void* runtime) noexcept {
   LeaveDpiScope(*static_cast<RuntimeEffects*>(runtime));
 }
 
-auto lyra_rt_disable_is_active(void* runtime) -> std::int32_t {
-  return DisableIsActive(*static_cast<RuntimeEffects*>(runtime));
+auto lyra_rt_exported_task_return_value(void* runtime) -> std::int32_t {
+  return ExportedTaskReturnValue(*static_cast<RuntimeEffects*>(runtime));
 }
 
-void lyra_rt_check_import_task_acknowledged(
+void lyra_rt_context_import_task_returned(
     void* runtime, std::int32_t returned, const void* location) {
-  CheckImportTaskAcknowledged(
+  ContextImportTaskReturned(
       *static_cast<RuntimeEffects*>(runtime), returned,
       SourceLocationAt(location));
 }
 
-void lyra_rt_check_import_function_acknowledged(
+void lyra_rt_context_import_function_returned(
     void* runtime, const void* location) {
-  CheckImportFunctionAcknowledged(
+  ContextImportFunctionReturned(
       *static_cast<RuntimeEffects*>(runtime), SourceLocationAt(location));
 }
 

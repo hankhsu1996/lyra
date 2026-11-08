@@ -102,11 +102,12 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_leave_static_init", &lyra_rt_leave_static_init);
   add("lyra_rt_enter_dpi_scope", &lyra_rt_enter_dpi_scope);
   add("lyra_rt_leave_dpi_scope", &lyra_rt_leave_dpi_scope);
-  add("lyra_rt_disable_is_active", &lyra_rt_disable_is_active);
-  add("lyra_rt_check_import_task_acknowledged",
-      &lyra_rt_check_import_task_acknowledged);
-  add("lyra_rt_check_import_function_acknowledged",
-      &lyra_rt_check_import_function_acknowledged);
+  add("lyra_rt_exported_task_return_value",
+      &lyra_rt_exported_task_return_value);
+  add("lyra_rt_context_import_task_returned",
+      &lyra_rt_context_import_task_returned);
+  add("lyra_rt_context_import_function_returned",
+      &lyra_rt_context_import_function_returned);
   add("lyra_rt_check_export_reachable", &lyra_rt_check_export_reachable);
   add("lyra_rt_before_foreign_code_runs", &lyra_rt_before_foreign_code_runs);
   add("lyra_rt_hand_string_to_foreign_caller",

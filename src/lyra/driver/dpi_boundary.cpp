@@ -273,7 +273,12 @@ auto WriteDpiSurface(
       !r) {
     return r;
   }
-  return CopyFile(runtime.svdpi_header, dir / kSvdpiHeader);
+  for (const std::filesystem::path& header : runtime.standard_headers) {
+    if (auto r = CopyFile(header, dir / header.filename()); !r) {
+      return r;
+    }
+  }
+  return {};
 }
 
 auto ForeignCompileFlags(

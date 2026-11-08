@@ -86,6 +86,13 @@ auto ProcessStatus(const value::ObjectRef& self, base::SourceLocation at)
   const base::SourceLocationScope bound(at);
   const RuntimeProcess& node = ProcessNodeOf(self);
   const ProcessStatusCode code = [&] {
+    // A process that ended the run runs nothing of the design again, whether
+    // or not its frame has settled -- one that ended it in an exported task
+    // waits on the foreign stack until the run's end releases it -- so it
+    // reports having left its body, as one whose frame settled does.
+    if (node.EndedTheRun()) {
+      return ProcessStatusCode::kKilled;
+    }
     switch (node.ExecutionState()) {
       case ProcessExecutionState::kCreated:
       case ProcessExecutionState::kRunning:

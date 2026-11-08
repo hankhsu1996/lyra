@@ -30,7 +30,7 @@ class CancellationTarget;
 class DiagnosticDispatcher;
 class FileTable;
 class LoopBlocks;
-class PlusArgsSource;
+class CommandLine;
 class BoundMembers;
 class VariableCell;
 class EvaluationAttempts;
@@ -55,7 +55,8 @@ class RuntimeEffects {
  public:
   auto Diagnostic() -> DiagnosticDispatcher&;
   auto Files() -> FileTable&;
-  auto PlusArgs() -> PlusArgsSource&;
+  // The command line the program was started with (LRM 38.17).
+  auto CommandLine() -> runtime::CommandLine&;
   // LRM 21.7: the run's value dump, which the design's `$dump*` tasks act on.
   auto Dumps() -> ValueDumps&;
   // LRM 18.6: how the run's `randomize()` calls draw.

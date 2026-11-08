@@ -273,11 +273,11 @@ class FunctionLowerer {
   // only place one is held.
   auto LeaveCarrying(lir::Operand effect) -> diag::Result<void>;
   // Where an execution regains control: asks the runtime whether it has been
-  // told to stop -- a target it is inside was disabled while it was away, or
-  // its own termination is owed -- and leaves carrying the effect that names
-  // whichever it was. The comparison is the runtime's; what crosses is its
-  // answer, because a simulated process cannot be made to run code partway
-  // through a statement of the design.
+  // told to stop -- a target it is inside was disabled while it was away, its
+  // own termination is owed, or it ended the run -- and leaves carrying the
+  // effect that names whichever it was. The comparison is the runtime's; what
+  // crosses is its answer, because a simulated process cannot be made to run
+  // code partway through a statement of the design.
   //
   // Which targets an execution is inside is the execution's own state, not the
   // body's: an activity spawned or enabled inside a target is enclosed by it

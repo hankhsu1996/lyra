@@ -8,6 +8,7 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/driver/file_output.hpp"
@@ -166,11 +167,15 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
     }
     *path = *std::move(found);
   }
-  auto svdpi = LocateShipped(
-      *runfiles, "_main/third_party/systemverilog/svdpi.h",
-      "the standard DPI-C header");
-  if (!svdpi) {
-    return std::unexpected(std::move(svdpi.error()));
+  std::vector<std::filesystem::path> standard_headers;
+  for (const std::string_view header : kStandardHeaders) {
+    auto found = LocateShipped(
+        *runfiles, std::format("_main/third_party/systemverilog/{}", header),
+        "the standard's C headers");
+    if (!found) {
+      return std::unexpected(std::move(found.error()));
+    }
+    standard_headers.push_back(*std::move(found));
   }
   auto licenses = LocateShipped(
       *runfiles, std::format("_main/{}", kThirdPartyLicensesFile),
@@ -190,7 +195,7 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
       .address_sanitized_lib = *std::move(sanitized),
       .address_sanitizer = std::move(asan),
       .sources_root = source_list->parent_path(),
-      .svdpi_header = *std::move(svdpi),
+      .standard_headers = std::move(standard_headers),
       .third_party_licenses = *std::move(licenses)};
 }
 

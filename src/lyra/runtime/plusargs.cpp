@@ -3,11 +3,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "lyra/runtime/command_line.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -85,9 +87,10 @@ auto ConvertIntegralRemainder(std::string_view remainder, int base)
 
 }  // namespace
 
-auto PlusargsFrom(std::span<const std::string> arguments)
+auto PlusargsFrom(std::span<const std::string> words)
     -> std::vector<std::string> {
   std::vector<std::string> plusargs;
+  const auto arguments = words | std::views::drop(1);
   for (const std::string& argument : arguments) {
     if (argument.starts_with("+")) {
       plusargs.emplace_back(argument.substr(1));
@@ -96,9 +99,10 @@ auto PlusargsFrom(std::span<const std::string> arguments)
   return plusargs;
 }
 
-auto PlusArgsSource::MatchPrefix(std::string_view prefix) const
+auto MatchPlusargPrefix(
+    std::span<const std::string> plusargs, std::string_view prefix)
     -> std::optional<std::string_view> {
-  for (const std::string& token : tokens_) {
+  for (const std::string& token : plusargs) {
     const std::string_view content{token};
     if (content.starts_with(prefix)) {
       return content.substr(prefix.size());
@@ -109,7 +113,8 @@ auto PlusArgsSource::MatchPrefix(std::string_view prefix) const
 
 auto TestPlusargs(RuntimeEffects& runtime, const value::String& user_string)
     -> value::Int {
-  const auto match = runtime.PlusArgs().MatchPrefix(user_string.View());
+  const auto match =
+      MatchPlusargPrefix(runtime.CommandLine().Plusargs(), user_string.View());
   return value::Int::FromBool(match.has_value());
 }
 
@@ -120,7 +125,8 @@ auto ValuePlusargsInto(
   const auto base = BaseForFormat(parsed.format_letter);
   // %s / %e / %f / %g on an integral target converts nothing.
   if (!base.has_value()) return value::Int::FromInt(0);
-  const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
+  const auto match =
+      MatchPlusargPrefix(runtime.CommandLine().Plusargs(), parsed.prefix);
   if (!match.has_value()) return value::Int::FromInt(0);
   value::FromInt(out, ConvertIntegralRemainder(*match, *base));
   return value::Int::FromInt(1);
@@ -136,7 +142,8 @@ auto ValuePlusargs(
   const auto parsed = ParseUserString(user_string.View());
   const char letter = parsed.format_letter;
   if (letter != 's' && letter != 'S') return missed();
-  const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
+  const auto match =
+      MatchPlusargPrefix(runtime.CommandLine().Plusargs(), parsed.prefix);
   if (!match.has_value()) return missed();
   return Completion{value::Int::FromInt(1), value::String(std::string(*match))};
 }

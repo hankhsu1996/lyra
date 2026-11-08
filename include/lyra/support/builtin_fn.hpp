@@ -1259,23 +1259,31 @@ enum class BuiltinFn : std::uint16_t {
   kLeaveDpiScope,
   // The DPI-C disable protocol (LRM 35.9), which is what a boundary states
   // instead of letting a departure cross a frame this compiler did not emit.
-  // The answer is the int LRM 35.8 gives an exported task's entry: 1 while a
-  // disable is active on this execution thread -- one reached a block it is
-  // inside, its process was terminated, or the run ended -- and 0 otherwise.
+  // The first is the int LRM 35.8 gives an exported task's entry to hand its
+  // foreign caller: 1 while the execution thread is disabled -- a disable
+  // reached a block it is inside, or its process was terminated -- and 0
+  // otherwise. Where the execution ended the run instead, the entry does not
+  // hand it back at all: it waits on the foreign stack until the run's end
+  // releases it, so foreign code calling in for ever cannot keep the run from
+  // ending (LRM 20.2).
   //
-  // The three checks are the ones the clause makes the simulator's, each placed
-  // where its evidence is: what an imported task returned, whether an imported
-  // function acknowledged, and whether an exported subroutine was reached at
-  // all once the state was entered. None of them leaves by an effect, because
-  // each holds only once the execution has been told to stop, so the departure
-  // is already due where control comes back. Outside that state the last also
-  // holds the call to LRM 35.5.3, which lets an export be called only from
-  // inside a `context` import's call; that breach finds the execution told
-  // nothing, so it is raised, and the region of the function foreign code
-  // called settles it.
-  kDisableIsActive,
-  kCheckImportTaskAcknowledged,
-  kCheckImportFunctionAcknowledged,
+  // Where a `context` import's foreign call returns, what the foreign side left
+  // for that return is settled: the clause's checks of what an imported task
+  // returned and whether an imported function acknowledged, and a control task
+  // foreign code asked for through `vpi_control`, which runs upon the return
+  // (LRM 38.4), ending the run there, so the execution leaves through the gate
+  // after the call. Where
+  // an exported subroutine is reached, whether it may be reached at all once
+  // the state was entered. No check leaves by an effect, because each holds
+  // only once the execution is disabled, so the departure is already due where
+  // control comes back. Outside that state the last also holds the
+  // call to LRM 35.5.3, which lets an export be called only from inside a
+  // `context` import's call; that breach finds the execution told nothing, so
+  // it is raised, and the region of the function foreign code called settles
+  // it.
+  kExportedTaskReturnValue,
+  kContextImportTaskReturned,
+  kContextImportFunctionReturned,
   kCheckExportReachable,
   // Foreign code is about to run (LRM 35) -- at an import call that may write,
   // and where an export returns to its foreign caller -- so each side hands
