@@ -90,7 +90,8 @@ auto ConvertIntegralRemainder(std::string_view remainder, int base)
 auto PlusargsFrom(std::span<const std::string> words)
     -> std::vector<std::string> {
   std::vector<std::string> plusargs;
-  for (const std::string& argument : words | std::views::drop(1)) {
+  const auto arguments = words | std::views::drop(1);
+  for (const std::string& argument : arguments) {
     if (argument.starts_with("+")) {
       plusargs.emplace_back(argument.substr(1));
     }
