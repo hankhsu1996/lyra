@@ -224,17 +224,13 @@ auto LowerProceduralVarRefExpr(
 // value one dereference further, exactly as a signal's cell.
 auto LowerNamespaceValueRefExpr(
     UnitLowerer& unit_lowerer, const hir::NamespaceValueRef& r) -> mir::Expr {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const mir::TypeId cell_type = mir::ObservableCellOf(
-      unit.types, unit_lowerer.TranslateType(r.value_type));
   return mir::Expr{
       .data =
           mir::ReferenceExpr{
               .target =
                   mir::StaticVariableRef{
-                      .variable =
-                          unit_lowerer.NamespaceVariable(r, cell_type)}},
-      .type = cell_type};
+                      .variable = unit_lowerer.NamespaceVariable(r)}},
+      .type = unit_lowerer.NamespaceCellType(r)};
 }
 
 auto LowerFormalVariableExpr(

@@ -61,7 +61,7 @@ on no object and bears no type, so there is no argument position that could have
 
 ### D2. Binding a receiver is a property of the call, not another alternative of the target
 
-The target says where the code is found -- by name in this unit's arena, by name across a unit
+The target says where the code is found -- at a position in this unit's arena, by name across a unit
 boundary, in the DPI-C name space, in the runtime library. What the code is applied to is a separate
 question, and the two vary independently: any of those may or may not take a receiver.
 

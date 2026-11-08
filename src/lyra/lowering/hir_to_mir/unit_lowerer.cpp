@@ -155,8 +155,8 @@ auto UnitsReadBy(const mir::CompilationUnit& unit, const mir::Block& body)
 // every unit before initializing any, so a value initializer always reaches
 // installed storage. Neither this unit's cells nor another's sit on an
 // instance, so an initializer here lowers with no enclosing scope and no
-// receiver: a sibling cell is reached by its position in this arena, and
-// another unit's by the identifier that unit published (`unit::name`).
+// receiver: a sibling cell is this unit's own, and another unit's is the cell
+// declared here for it.
 auto PopulateNamespaceOwnStorage(
     UnitLowerer& unit_lowerer, const hir::StructuralScope& scope,
     const base::Translation<hir::StructuralSubroutineId, StaticCellBindings>&
@@ -182,16 +182,21 @@ auto PopulateNamespaceOwnStorage(
             .type = cell_type});
   };
 
-  // One variable the namespace keeps, under the name it knows it by: its cell,
-  // brought up in the install body with its declared representation and
-  // default, and in the value body by the user initializer (LRM 10.5), which
-  // writes through the cell and reports the scope it was written in (LRM
+  // Every variable the namespace keeps has its cell before any initializer
+  // lowers, since an initializer may call a subroutine declared after it (LRM
+  // 13.7), and a name through one may reach that subroutine's statics;
+  // each comes up in the install body with its declared representation and
+  // default, and then in the value body by the user initializer (LRM 10.5),
+  // which writes through the cell and reports the scope it was written in (LRM
   // 21.2.1.5).
-  const auto keep = [&](support::QualifiedName name, hir::TypeId type,
-                        std::optional<hir::ExprId> initializer,
-                        const WalkFrame& written) -> diag::Result<void> {
-    const mir::TypeId cell_type =
-        mir::ObservableCellOf(unit.types, unit_lowerer.TranslateType(type));
+  const hir::CompilationUnit& hir_unit = unit_lowerer.Hir();
+  const hir::NamespaceDefinition& defined = *hir_unit.namespace_definition;
+  const hir::NamespaceId own = defined.entry;
+  const hir::NamespaceDeclaration& declared =
+      hir_unit.namespaces.Declaration(own);
+  for (const hir::NamespaceVariableId id : defined.variables.Ids()) {
+    const hir::NamespaceValueRef ref{.owner = own, .variable = id};
+    const mir::TypeId cell_type = unit_lowerer.NamespaceCellType(ref);
     if (!unit.types.Get(cell_type).IsCapabilityWrapper()) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedExpressionForm,
@@ -202,9 +207,15 @@ auto PopulateNamespaceOwnStorage(
             .type = cell_type, .defining_unit = std::nullopt});
     unit.named_static_variables.push_back(
         mir::NamedStaticVariable{
-            .name = std::move(name), .variable = variable});
-    const mir::ExprId prototype =
-        BuildDeclaredInitialValue(unit_lowerer, install_frame, type);
+            .name = declared.variables.Get(id).name, .variable = variable});
+    unit_lowerer.DefineOwnNamespaceMember(ref, variable);
+  }
+  for (const hir::NamespaceVariableId id : defined.variables.Ids()) {
+    const hir::NamespaceValueRef ref{.owner = own, .variable = id};
+    const mir::StaticVariableId variable = unit_lowerer.NamespaceVariable(ref);
+    const mir::TypeId cell_type = unit_lowerer.NamespaceCellType(ref);
+    const mir::ExprId prototype = BuildDeclaredInitialValue(
+        unit_lowerer, install_frame, declared.variables.Get(id).type);
     install_block.AppendStmt(
         mir::ExprStmt{
             .expr = install_block.Add(
@@ -212,9 +223,38 @@ auto PopulateNamespaceOwnStorage(
                     make_cell(install_block, variable, cell_type), prototype,
                     support::BuiltinFn::kInitialize,
                     unit.builtins.void_type))});
-    if (!initializer.has_value()) return {};
-    auto value_or =
-        expr_lowerer.LowerExpr(scope.exprs.Get(*initializer), written);
+    // A variable the namespace's own scope declares is written there; a
+    // static of one of its subroutines is written in that subroutine (LRM
+    // 21.2.1.5).
+    auto initializer = std::visit(
+        Overloaded{
+            [&](hir::StructuralDataObjectId object)
+                -> diag::Result<
+                    std::pair<std::optional<hir::ExprId>, WalkFrame>> {
+              const auto* var = std::get_if<hir::StructuralVariableDecl>(
+                  &scope.structural_data_objects.Get(object).kind);
+              // A package declares no ports, so nothing here stands for
+              // storage another scope owns; a net is the only other kind a
+              // package-scope declaration reaches this as.
+              if (var == nullptr) {
+                return diag::Fail(
+                    diag::DiagCode::kUnsupportedExpressionForm,
+                    "a net declared in a package is not yet supported");
+              }
+              return std::pair{var->initializer, value_frame};
+            },
+            [&](const hir::NamespaceStatic& kept)
+                -> diag::Result<
+                    std::pair<std::optional<hir::ExprId>, WalkFrame>> {
+              return std::pair{
+                  kept.initializer,
+                  value_frame.WithScopeName(scopes.Get(kept.written_in).name)};
+            }},
+        defined.variables.Get(id));
+    if (!initializer) return std::unexpected(std::move(initializer.error()));
+    const auto& [value, written] = *initializer;
+    if (!value.has_value()) continue;
+    auto value_or = expr_lowerer.LowerExpr(scope.exprs.Get(*value), written);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::ExprId value_id = value_block.Add(*std::move(value_or));
     value_block.AppendStmt(
@@ -225,43 +265,6 @@ auto PopulateNamespaceOwnStorage(
                     .owner = make_cell(value_block, variable, cell_type),
                     .descent = {}},
                 value_id))});
-    return {};
-  };
-
-  for (const hir::StructuralDataObjectId hir_id :
-       scope.structural_data_objects.Ids()) {
-    const hir::StructuralDataObjectDecl& d =
-        scope.structural_data_objects.Get(hir_id);
-    // A package declares no ports, so nothing here stands for storage another
-    // scope owns; a net is the only other kind a package-scope declaration
-    // reaches this as.
-    const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
-    if (var == nullptr) {
-      return diag::Fail(
-          diag::DiagCode::kUnsupportedExpressionForm,
-          "a net declared in a package is not yet supported");
-    }
-    if (auto kept = keep(
-            support::UnqualifiedName(d.name), d.type, var->initializer,
-            value_frame);
-        !kept) {
-      return kept;
-    }
-  }
-
-  // A static variable of a package subroutine is one of the package's
-  // variables (LRM 6.21, 26.2), named as the package knows it, and comes up in
-  // these same two bodies -- once before any process starts, rather than on
-  // each entry to the subroutine that declares it. Its initializer is written
-  // in the subroutine.
-  for (const hir::NamespaceStatic& kept :
-       unit_lowerer.Hir().namespace_statics) {
-    if (auto done = keep(
-            kept.name, kept.type, kept.initializer,
-            value_frame.WithScopeName(scopes.Get(kept.written_in).name));
-        !done) {
-      return done;
-    }
   }
 
   // What else a package subroutine keeps past one call -- the control an
@@ -576,7 +579,8 @@ auto UnitLowerer::SettlePublishedScope(
   base::IdAllocator<mir::CallableId> methods;
   base::Translation<hir::PublishedCallableId, PublishedSubroutine> subroutines{
       signature.callables.size()};
-  for (const hir::SubroutinePrototype& callable : signature.callables) {
+  for (const hir::ScopeCallable& listed : signature.callables) {
+    const hir::SubroutinePrototype& callable = listed.prototype;
     methods.Take();
     subroutines.Append(
         PublishedSubroutine{
@@ -1153,6 +1157,12 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
             .name = scope.structural_subroutines.Get(id).name, .body = body});
     subroutine_callables.Append(body);
   }
+  const hir::NamespaceDefinition& defined = *hir_->namespace_definition;
+  for (const hir::NamespaceSubroutineId id : defined.subroutines.Ids()) {
+    DefineOwnNamespaceMember(
+        hir::NamespaceSubroutineRef{.owner = defined.entry, .subroutine = id},
+        subroutine_callables.Get(defined.subroutines.Get(id)));
+  }
 
   // The two bodies the design root calls at time zero. They exist before
   // anything that fills them, because everything the namespace owns comes up in
@@ -1401,7 +1411,7 @@ void UnitLowerer::DeclareExternBindings(
   bindings.reserve(scope.externs.size());
   for (const hir::PublishedExtern& declared : scope.externs) {
     const hir::SubroutinePrototype& subroutine =
-        scope.callables.Get(declared.callable);
+        scope.callables.Get(declared.callable).prototype;
     const mir::ClassId callback = unit_.DeclareClass();
     mir::CallableCode invoke =
         PrototypeOf(*this, subroutine, SelfPointerTo(callback));
@@ -1487,7 +1497,8 @@ auto UnitLowerer::DeclarePublishedScopeClass(
     slots.push_back(slot);
     field_types.push_back(field.type);
   }
-  for (const hir::SubroutinePrototype& callable : scope.callables) {
+  for (const hir::ScopeCallable& listed : scope.callables) {
+    const hir::SubroutinePrototype& callable = listed.prototype;
     declared.named_callables.push_back(
         mir::NamedCallable{
             .name = callable.name,
@@ -1732,8 +1743,7 @@ auto UnitLowerer::DispatchRoleOf(const hir::ClassMethodTarget& method) const
           [&](const hir::OverridesVirtual& overriding)
               -> std::optional<mir::VirtualDispatchRole> {
             return mir::VirtualDispatchRole{mir::OverridesVirtualSlot{
-                .overridden = VirtualSlotOf(
-                    hir_->classes.IntroducedBy(overriding.overridden)),
+                .overridden = VirtualSlotOf(overriding.overridden),
                 .is_pure = overriding.is_pure}};
           }},
       declared.dispatch);
@@ -1749,8 +1759,8 @@ auto UnitLowerer::VirtualSlotOf(const hir::ClassMethodTarget& behavior) const
 
 auto UnitLowerer::ConformanceOf(hir::ClassId cls) const
     -> std::vector<mir::ConformingBehavior> {
-  const auto slot_of = [&](const hir::NamedBehavior& behavior) {
-    return VirtualSlotOf(hir_->classes.IntroducedBy(behavior));
+  const auto slot_of = [&](const hir::ClassMethodTarget& behavior) {
+    return VirtualSlotOf(behavior);
   };
   std::vector<mir::ConformingBehavior> conforming;
   for (const hir::ConformingBehavior& answered :
@@ -1765,69 +1775,82 @@ auto UnitLowerer::ConformanceOf(hir::ClassId cls) const
 
 auto UnitLowerer::MakeNamespaceCallableTarget(
     const hir::NamespaceSubroutineRef& ref) -> mir::DirectTarget {
-  const auto key = std::pair{ref.unit_name, ref.subroutine_name};
-  if (const auto known = namespace_callables_.find(key);
+  if (const auto known = namespace_callables_.find(ref);
       known != namespace_callables_.end()) {
     return mir::UnitCallableTarget{.slot = known->second};
   }
-  // A subroutine of this unit's own namespace is the body declared under the
-  // identifier; one of another unit's is a body declared here for the
-  // identifier that unit published.
-  mir::CallableId callable{};
-  if (hir_->IsItself(ref.unit_name)) {
-    const std::optional<mir::CallableId> body =
-        mir::CallableNamed(unit_.named_callables, ref.subroutine_name);
-    if (!body.has_value()) {
-      throw InternalError(
-          "MakeNamespaceCallableTarget: this unit's namespace publishes no "
-          "subroutine under the identifier a call inside it spells");
-    }
-    callable = *body;
-  } else {
-    callable = unit_.callables.Add(
-        mir::CallableDecl{
-            .code = {},
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .defining_unit = ref.unit_name});
-    unit_.named_callables.push_back(
-        mir::NamedCallable{.name = ref.subroutine_name, .body = callable});
+  if (hir_->namespaces.IsOwn(ref.owner)) {
+    throw InternalError(
+        "MakeNamespaceCallableTarget: this unit's namespace defines every "
+        "subroutine it declares before anything naming one lowers -- please "
+        "report this as a bug");
   }
-  namespace_callables_.emplace(key, callable);
+  // Another unit's subroutine is a body declared here under the identifier
+  // that unit published it by, which is how the program's link spells it.
+  const mir::CallableId callable = unit_.callables.Add(
+      mir::CallableDecl{
+          .code = {},
+          .foreign = std::nullopt,
+          .virtual_dispatch = std::nullopt,
+          .defining_unit = hir_->namespaces.KeyOf(ref.owner).unit_name});
+  unit_.named_callables.push_back(
+      mir::NamedCallable{
+          .name = hir_->namespaces.SubroutineOf(ref.owner, ref.subroutine)
+                      .prototype.name,
+          .body = callable});
+  namespace_callables_.emplace(ref, callable);
   return mir::UnitCallableTarget{.slot = callable};
 }
 
-auto UnitLowerer::NamespaceVariable(
-    const hir::NamespaceValueRef& ref, mir::TypeId cell_type)
+auto UnitLowerer::NamespaceCellType(const hir::NamespaceValueRef& ref)
+    -> mir::TypeId {
+  return mir::ObservableCellOf(
+      unit_.types,
+      TranslateType(hir_->namespaces.VariableOf(ref.owner, ref.variable).type));
+}
+
+auto UnitLowerer::NamespaceVariable(const hir::NamespaceValueRef& ref)
     -> mir::StaticVariableId {
-  const auto key = std::pair{ref.unit_name, ref.variable};
-  if (const auto known = namespace_variables_.find(key);
+  if (const auto known = namespace_variables_.find(ref);
       known != namespace_variables_.end()) {
     return known->second;
   }
-  // The cell a variable of this unit's own namespace holds; for one of another
-  // unit's, a cell declared here for the name that unit published.
-  mir::StaticVariableId variable{};
-  if (hir_->IsItself(ref.unit_name)) {
-    const std::optional<mir::StaticVariableId> own =
-        mir::StaticVariableNamed(unit_.named_static_variables, ref.variable);
-    if (!own.has_value()) {
-      throw InternalError(
-          std::format(
-              "UnitLowerer::NamespaceVariable: this unit's namespace publishes "
-              "no variable under the name '{}' a reference inside it spells",
-              support::DisplayOf(ref.variable)));
-    }
-    variable = *own;
-  } else {
-    variable = unit_.static_variables.Add(
-        mir::StaticVariableDecl{
-            .type = cell_type, .defining_unit = ref.unit_name});
-    unit_.named_static_variables.push_back(
-        mir::NamedStaticVariable{.name = ref.variable, .variable = variable});
+  if (hir_->namespaces.IsOwn(ref.owner)) {
+    throw InternalError(
+        "UnitLowerer::NamespaceVariable: this unit's namespace defines every "
+        "variable it keeps before anything naming one lowers -- please report "
+        "this as a bug");
   }
-  namespace_variables_.emplace(key, variable);
+  // Another unit's variable is a cell declared here under the name that unit
+  // published it by, which is how the program's link spells it.
+  const mir::StaticVariableId variable = unit_.static_variables.Add(
+      mir::StaticVariableDecl{
+          .type = NamespaceCellType(ref),
+          .defining_unit = hir_->namespaces.KeyOf(ref.owner).unit_name});
+  unit_.named_static_variables.push_back(
+      mir::NamedStaticVariable{
+          .name = hir_->namespaces.VariableOf(ref.owner, ref.variable).name,
+          .variable = variable});
+  namespace_variables_.emplace(ref, variable);
   return variable;
+}
+
+void UnitLowerer::DefineOwnNamespaceMember(
+    const hir::NamespaceValueRef& ref, mir::StaticVariableId defined) {
+  if (!namespace_variables_.emplace(ref, defined).second) {
+    throw InternalError(
+        "UnitLowerer::DefineOwnNamespaceMember: this unit's namespace defines "
+        "a variable twice -- please report this as a bug");
+  }
+}
+
+void UnitLowerer::DefineOwnNamespaceMember(
+    const hir::NamespaceSubroutineRef& ref, mir::CallableId defined) {
+  if (!namespace_callables_.emplace(ref, defined).second) {
+    throw InternalError(
+        "UnitLowerer::DefineOwnNamespaceMember: this unit's namespace defines "
+        "a subroutine twice -- please report this as a bug");
+  }
 }
 
 auto UnitLowerer::PublishedSubroutineSlot(

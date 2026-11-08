@@ -105,8 +105,9 @@ auto ConstructionPrototype(
     }
   }
   params.push_back(unit.builtins.read_report_ptr);
-  const bool track_caller =
-      unit_lowerer.Hir().classes.Declaration(cls).constructor->track_caller;
+  const bool track_caller = unit_lowerer.Hir()
+                                .classes.Declaration(cls)
+                                .constructor->interface.track_caller;
   if (track_caller) {
     params.push_back(unit.builtins.source_location);
   }

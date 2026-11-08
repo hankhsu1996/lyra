@@ -1,12 +1,13 @@
 #pragma once
 
 #include <optional>
-#include <string>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
+#include "lyra/hir/method_id.hpp"
 #include "lyra/hir/randomization_hook.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
 
@@ -44,30 +45,18 @@ struct IntroducesVirtual {
   auto operator==(const IntroducesVirtual&) const -> bool = default;
 };
 
-// A behavior (LRM 8.20) as anything outside the class introducing it names it:
-// by that class and the name it was introduced under. Its position is found
-// where that class's declaration is read.
-struct NamedBehavior {
-  ClassId introducer;
-  std::string name;
-
-  auto operator==(const NamedBehavior&) const -> bool = default;
-};
-
 // A method overriding a virtual method of a class this one extends, whether or
 // not the source wrote `virtual` (LRM 8.20), naming the behavior it overrides
-// by the class that introduced it and the name it was introduced under: the
-// method's own for a method, and for the method making an embedded covergroup
-// the one making the first covergroup of its lineage (LRM 19.4.1). The class
-// declaring the method finds the introducer once along its own lineage, and
-// every unit reading the method reads that answer rather than walking the
-// lineage again; a position in the introducer is found where its declaration
-// is read, which the declaration of this one may not do. A pure one restates
+// as the method that introduced it: the method's own for a method, and for the
+// method making an embedded covergroup the one making the first covergroup of
+// its lineage (LRM 19.4.1). The class declaring the method finds the
+// introducer once along its own lineage, and every unit reading the method
+// reads that answer rather than walking the lineage again. A pure one restates
 // the method and gives it no body, so the position keeps what the class
 // extended put there.
 struct OverridesVirtual {
   bool is_pure = false;
-  NamedBehavior overridden;
+  ClassMethodTarget overridden;
 
   auto operator==(const OverridesVirtual&) const -> bool = default;
 };
@@ -103,6 +92,9 @@ using MethodDispatch = std::variant<
 // also what a body overriding the method takes and completes with.
 struct DeclaredMethod {
   SubroutinePrototype prototype;
+  // At the position of each formal that has a default, the method of the
+  // class evaluating it (LRM 13.5.3).
+  std::vector<std::optional<MethodId>> defaults;
   MethodDispatch dispatch;
   // The hook this method takes the place of, in the class and in each class
   // extending it that declares none of its own (LRM 18.6.2), as the front end

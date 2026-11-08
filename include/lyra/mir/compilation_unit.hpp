@@ -86,21 +86,6 @@ struct NamedStaticVariable {
   return nullptr;
 }
 
-// The storage `name` reaches among `named`, or nothing where the unit publishes
-// no such name. The relation read the other way: a reference written inside
-// the declaring unit arrives carrying what the source spelled, and what it
-// names is a position in that unit's own arena.
-[[nodiscard]] inline auto StaticVariableNamed(
-    std::span<const NamedStaticVariable> named,
-    const support::QualifiedName& name) -> std::optional<StaticVariableId> {
-  for (const NamedStaticVariable& entry : named) {
-    if (entry.name == name) {
-      return entry.variable;
-    }
-  }
-  return std::nullopt;
-}
-
 // A declaration of another unit that one unit's code names. A unit publishes
 // its namespace -- the cells and bodies it declares outside any class of it
 // (LRM 26.2) -- each class it published, and for each body it is compiled to

@@ -124,7 +124,7 @@ auto ConstructorFormalsOf(UnitLowerer& unit_lowerer, hir::ClassId cls)
         "ConstructorFormalsOf: an interface class is never constructed (LRM "
         "8.26.5)");
   }
-  return CalleeFormalsOf(unit_lowerer, *published.constructor);
+  return CalleeFormalsOf(unit_lowerer, published.constructor->interface);
 }
 
 auto ConstraintProblemParamTypeOf(
@@ -152,8 +152,9 @@ auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
     formals.push_back(
         CalleeFormal{
             .direction = param.direction,
-            .type =
-                unit_lowerer.TranslateType(hir::FormalTypeOf(decl, param))});
+            .type = unit_lowerer.TranslateType(
+                hir::FormalTypeOf(
+                    unit_lowerer.Hir().namespaces, decl, param))});
   }
   return formals;
 }
@@ -287,7 +288,8 @@ auto PrototypeOf(
     const auto* var = std::get_if<hir::ProceduralVarId>(&param.variable);
     formals.push_back(
         PrototypeFormal{
-            .type = hir::FormalTypeOf(decl, param),
+            .type =
+                hir::FormalTypeOf(unit_lowerer.Hir().namespaces, decl, param),
             .direction = param.direction,
             .declared =
                 var == nullptr

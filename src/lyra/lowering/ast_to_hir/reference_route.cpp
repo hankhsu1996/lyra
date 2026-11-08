@@ -1484,15 +1484,14 @@ auto UnitLowerer::ResolveValueTarget(
     const WalkFrame& frame, const slang::ast::ValueSymbol& value,
     RouteOrigin origin, diag::SourceSpan span)
     -> diag::Result<hir::ValueTarget> {
-  const auto by_name =
-      [&](const slang::ast::Symbol& unit,
-          support::QualifiedName name) -> diag::Result<hir::ValueTarget> {
-    auto reference = NamespaceValueRefOf(unit, value, std::move(name), span);
-    if (!reference) return std::unexpected(std::move(reference.error()));
-    return hir::ValueTarget{*std::move(reference)};
+  const auto in_namespace = [&](const slang::ast::Symbol& unit,
+                                const support::QualifiedName& name)
+      -> diag::Result<hir::ValueTarget> {
+    return hir::ValueTarget{NamespaceValueRefOf(unit, name)};
   };
   if (const auto* unit = DeclaringNamespaceUnit(value)) {
-    return by_name(*unit, support::UnqualifiedName(std::string{value.name}));
+    return in_namespace(
+        *unit, support::UnqualifiedName(std::string{value.name}));
   }
 
   const auto routed = [&]() -> diag::Result<hir::ValueTarget> {
@@ -1521,27 +1520,28 @@ auto UnitLowerer::ResolveValueTarget(
             return ResolveClassKept(frame, *by.cls, kept->name, span);
           },
           [&](const KeptByNamespace& by) {
-            return by_name(*by.unit, std::move(kept->name));
+            return in_namespace(*by.unit, kept->name);
           }},
       kept->keeper);
 }
 
 auto UnitLowerer::NamespaceValueRefOf(
-    const slang::ast::Symbol& unit, const slang::ast::ValueSymbol& value,
-    support::QualifiedName name, diag::SourceSpan span)
-    -> diag::Result<hir::NamespaceValueRef> {
-  // A namespace unit has no instance, so its cell is reached by name rather
-  // than by a route out of the reader's own storage (LRM 26.2, 3.12.1). The
-  // same by-name form serves a referrer in another unit and the owning unit's
-  // own bodies, none of which has a receiver to route through, and the type is
-  // the one the namespace published.
-  std::string unit_name = CompilationUnitName(unit, Names());
-  auto value_type = NamespaceVariableType(unit_name, value, name, span);
-  if (!value_type) return std::unexpected(std::move(value_type.error()));
-  return hir::NamespaceValueRef{
-      .unit_name = std::move(unit_name),
-      .variable = std::move(name),
-      .value_type = *value_type};
+    const slang::ast::Symbol& unit, const support::QualifiedName& name)
+    -> hir::NamespaceValueRef {
+  // A namespace has no instance, so its cell is reached as the namespace's
+  // own rather than by a route out of the reader's storage (LRM 26.2, 3.12.1),
+  // from another unit and from the namespace's own bodies alike.
+  const hir::NamespaceId owner = NamespaceOf(unit);
+  const std::optional<hir::NamespaceVariableId> variable =
+      unit_.namespaces.Declaration(owner).FindVariable(name);
+  if (!variable.has_value()) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::NamespaceValueRefOf: '{}' keeps '{}' and published "
+            "no such variable -- please report this as a bug",
+            unit_.namespaces.KeyOf(owner).unit_name, support::DisplayOf(name)));
+  }
+  return hir::NamespaceValueRef{.owner = owner, .variable = *variable};
 }
 
 auto UnitLowerer::PublishedClassOf(const slang::ast::Scope& scope)
@@ -1882,7 +1882,7 @@ auto UnitLowerer::PublishedClockingEntries(
         MakeRoutedObjectRef(owner_frame, route, ScopeClassTypeOf(scope_class));
     return frame.Exprs().Add(
         hir::Expr{
-            .type = declaring.callables.Get(callable).result_type,
+            .type = declaring.callables.Get(callable).prototype.result_type,
             .data =
                 hir::CallExpr{
                     .callee =

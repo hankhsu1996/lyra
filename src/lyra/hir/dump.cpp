@@ -291,12 +291,13 @@ auto FormatStaticPropertyTarget(const StaticPropertyTarget& target)
       target);
 }
 
-auto FormatClassMethod(const ClassMethodTarget& t) -> std::string {
-  return std::format("Class[{}].{}", t.owner.value, t.method.value);
+auto FormatNamespaceValue(const NamespaceValueRef& r) -> std::string {
+  return std::format(
+      "Namespace[{}].Variable[{}]", r.owner.value, r.variable.value);
 }
 
-auto FormatBehavior(const NamedBehavior& behavior) -> std::string {
-  return std::format("Class[{}].{}", behavior.introducer.value, behavior.name);
+auto FormatClassMethod(const ClassMethodTarget& t) -> std::string {
+  return std::format("Class[{}].{}", t.owner.value, t.method.value);
 }
 
 auto SubroutineKindName(SubroutineKind kind) -> std::string_view {
@@ -330,7 +331,7 @@ auto FormatMethodDispatch(const MethodDispatch& dispatch) -> std::string {
           [&](const OverridesVirtual& overrides) {
             return std::format(
                 " virtual{} overrides={}", pure(overrides.is_pure),
-                FormatBehavior(overrides.overridden));
+                FormatClassMethod(overrides.overridden));
           }},
       dispatch);
 }
@@ -842,9 +843,7 @@ class HirDumper {
               return std::format("PatternVar[{}]", r.pattern.value);
             },
             [](const NamespaceValueRef& r) -> std::string {
-              return std::format(
-                  "NamespaceValue({}::{})", r.unit_name,
-                  support::DisplayOf(r.variable));
+              return std::format("NamespaceValue({})", FormatNamespaceValue(r));
             },
         },
         p);
@@ -857,8 +856,7 @@ class HirDumper {
               return std::format("routed_ref={}", r.id.value);
             },
             [](const NamespaceValueRef& r) -> std::string {
-              return std::format(
-                  "var={}::{}", r.unit_name, support::DisplayOf(r.variable));
+              return std::format("var={}", FormatNamespaceValue(r));
             },
             [](const StaticPropertyRef& r) -> std::string {
               return std::format(
@@ -1286,9 +1284,10 @@ class HirDumper {
                                 },
                                 [&](const NamespaceDeclaringScope& space) {
                                   return std::format(
-                                      "declaring_scope=namespace:{} "
+                                      "declaring_scope=Namespace[{}] "
                                       "defaults={}",
-                                      space.unit_name, omitted(space.defaults));
+                                      space.owner.value,
+                                      omitted(space.defaults));
                                 }},
                             *f.declaring_scope)
                       : "declaring_scope=none",
@@ -1296,15 +1295,14 @@ class HirDumper {
             },
             [](const NamespaceSubroutineRef& e) -> std::string {
               return std::format(
-                  "NamespaceSubroutine {} \"{}::{}\"",
-                  SubroutineKindName(e.interface.kind), e.unit_name,
-                  e.subroutine_name);
+                  "NamespaceSubroutine Namespace[{}].Subroutine[{}]",
+                  e.owner.value, e.subroutine.value);
             },
             [this](const PublishedScopeMethodRef& e) -> std::string {
               const ScopeClassSignature& published =
                   unit_->scope_classes.Get(e.scope_class);
               const SubroutinePrototype& callable =
-                  published.callables.Get(e.callable);
+                  published.callables.Get(e.callable).prototype;
               const std::string receiver = std::visit(
                   Overloaded{
                       [](const RoutedObjectRef& r) -> std::string {
@@ -1855,6 +1853,30 @@ class HirDumper {
       DumpForeignImport(id.value, u.foreign_imports.Get(id));
     }
 
+    for (const NamespaceId id : u.namespaces.Ids()) {
+      Line(
+          std::format(
+              "Namespace[{}] \"{}\"{}", id.value,
+              u.namespaces.KeyOf(id).unit_name,
+              u.namespaces.IsOwn(id) ? " own" : ""));
+      Indent();
+      const NamespaceDeclaration& declared = u.namespaces.Declaration(id);
+      for (const NamespaceVariableId at : declared.variables.Ids()) {
+        const NamespaceVariable& variable = declared.variables.Get(at);
+        Line(
+            std::format(
+                "Variable[{}] \"{}\" : Type[{}]", at.value,
+                support::DisplayOf(variable.name), variable.type.value));
+      }
+      for (const NamespaceSubroutineId at : declared.subroutines.Ids()) {
+        Line(
+            std::format(
+                "Subroutine[{}] \"{}\"", at.value,
+                declared.subroutines.Get(at).prototype.name));
+      }
+      Dedent();
+    }
+
     RecordDeclaringScopes(u);
     if (u.classes.size() > 0) {
       Line("Classes:");
@@ -1942,7 +1964,7 @@ class HirDumper {
           Line(
               std::format(
                   "extern[{}] \"{}\"{}", extern_id.value,
-                  record.callables.Get(published.callable).name,
+                  record.callables.Get(published.callable).prototype.name,
                   FormatExternForm(published.form)));
         }
         Dedent();
@@ -1953,15 +1975,8 @@ class HirDumper {
     Line("Root:");
     Indent();
     DumpScope(u.root_scope);
-    for (const NamespaceStatic& kept : u.namespace_statics) {
-      Line(
-          std::format(
-              "NamespaceStatic \"{}\" : Type[{}]{} in ProceduralScope[{}]",
-              support::DisplayOf(kept.name), kept.type.value,
-              kept.initializer.has_value()
-                  ? std::format(" init=Expr[{}]", kept.initializer->value)
-                  : std::string{},
-              kept.written_in.value));
+    if (u.namespace_definition.has_value()) {
+      DumpNamespaceDefinition(*u.namespace_definition);
     }
     Dedent();
 
@@ -2228,9 +2243,10 @@ class HirDumper {
     for (const ConformingBehavior& answered : declared.conforming) {
       Line(
           std::format(
-              "Conforms: {} <- {}", FormatBehavior(answered.interface_behavior),
+              "Conforms: {} <- {}",
+              FormatClassMethod(answered.interface_behavior),
               answered.answered_by.has_value()
-                  ? FormatBehavior(*answered.answered_by)
+                  ? FormatClassMethod(*answered.answered_by)
                   : std::string{"nothing"}));
     }
     for (const DeclaredProperty& field : declared.properties) {
@@ -2814,9 +2830,7 @@ class HirDumper {
                 return std::format("ProceduralVar[{}]", var.value);
               },
               [](const NamespaceValueRef& kept) {
-                return std::format(
-                    "{}::{}", kept.unit_name,
-                    support::DisplayOf(kept.variable));
+                return FormatNamespaceValue(kept);
               }},
           param.variable);
       Line(
@@ -2835,6 +2849,43 @@ class HirDumper {
       DumpProceduralBody(d.body, *d.root_stmt, scopes);
     } else {
       DumpProceduralDeclarations(d.body, scopes);
+    }
+    Dedent();
+  }
+
+  void DumpNamespaceDefinition(const NamespaceDefinition& definition) {
+    Line(std::format("Defines Namespace[{}]:", definition.entry.value));
+    Indent();
+    for (const NamespaceVariableId id : definition.variables.Ids()) {
+      if (!definition.variables.IsDefined(id)) {
+        Line(std::format("Variable[{}] undefined", id.value));
+        continue;
+      }
+      Line(
+          std::visit(
+              Overloaded{
+                  [&](StructuralDataObjectId object) {
+                    return std::format(
+                        "Variable[{}] = StructuralDataObject[{}]", id.value,
+                        object.value);
+                  },
+                  [&](const NamespaceStatic& kept) {
+                    return std::format(
+                        "Variable[{}] = static{} in ProceduralScope[{}]",
+                        id.value,
+                        kept.initializer.has_value()
+                            ? std::format(
+                                  " init=Expr[{}]", kept.initializer->value)
+                            : std::string{},
+                        kept.written_in.value);
+                  }},
+              definition.variables.Get(id)));
+    }
+    for (const NamespaceSubroutineId id : definition.subroutines.Ids()) {
+      Line(
+          std::format(
+              "Subroutine[{}] = StructuralSubroutine[{}]", id.value,
+              definition.subroutines.Get(id).value));
     }
     Dedent();
   }

@@ -43,6 +43,7 @@
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/bodies.hpp"
+#include "lyra/lowering/ast_to_hir/class_methods.hpp"
 #include "lyra/lowering/ast_to_hir/climb.hpp"
 #include "lyra/lowering/ast_to_hir/coverage_library.hpp"
 #include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
@@ -800,11 +801,14 @@ class UnitLowerer {
     return unit_;
   }
 
-  // Declares one of the static variables a namespace unit keeps for its
-  // subroutines (LRM 6.21).
-  void KeepNamespaceStatic(hir::NamespaceStatic kept) {
-    unit_.namespace_statics.push_back(std::move(kept));
-  }
+  // Gives every member this namespace declares its position, and says which
+  // declaration of its scope each is.
+  void DeclareOwnNamespace();
+
+  // Defines the variable this namespace keeps under `name` (LRM 26.2, 6.21).
+  void DefineNamespaceVariable(
+      const support::QualifiedName& name,
+      hir::NamespaceVariableDefinition definition);
 
   // The slang scope this unit is lowered from -- a module instance body or a
   // package. A constant expression the lowering must evaluate itself (an LRM
@@ -1099,16 +1103,9 @@ class UnitLowerer {
   [[nodiscard]] auto Defining(const slang::ast::SubroutineSymbol& method) const
       -> const slang::ast::SubroutineSymbol*;
 
-  // The method `method` of the class `owner` declares, at its position among
-  // that class's methods: for a class of this unit the one the interning
-  // registered for the symbol, and for another unit's the one of that name its
-  // signature published.
-  [[nodiscard]] auto MakeClassMethodTarget(
-      hir::ClassId owner, const slang::ast::SubroutineSymbol& method)
-      -> hir::ClassMethodTarget;
-
-  // The same for a method a call reaches, `owner` being the slang class
-  // declaring it.
+  // The method `method` of the class `owner` declares, at the position the
+  // class places it, which every unit counts alike from the class's
+  // declaration.
   auto MakeClassMethodTarget(
       const slang::ast::ClassType& owner,
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
@@ -1150,35 +1147,22 @@ class UnitLowerer {
       const slang::ast::FormalArgumentSymbol& formal, diag::SourceSpan span)
       -> diag::Result<hir::TypeId>;
 
-  // The interface a call to `sym` is made through, where `sym` is declared in
-  // the namespace of the unit named `unit_name` (LRM 26.3). Another unit's is
-  // read off that unit's signature; this unit's own is its own declaration.
-  auto NamespaceCalleeInterface(
-      const std::string& unit_name, const slang::ast::SubroutineSymbol& sym,
-      diag::SourceSpan span) -> diag::Result<hir::CalleeInterface>;
+  // The namespace `unit` is (LRM 26.2, 3.12.1), entered the first time a name
+  // reaches it with what it published, this unit included.
+  auto NamespaceOf(const slang::ast::Symbol& unit) -> hir::NamespaceId;
+  // The same for the namespace the unit named `unit_name` is.
+  auto NamespaceNamed(std::string unit_name) -> hir::NamespaceId;
 
-  // The reference to the variable the namespace `unit` keeps under `name`, the
-  // declaration `value` is: one it declares, or a static variable one of its
-  // subroutines declares, a formal included (LRM 26.2, 6.21, 13.3.2).
+  // The reference to the variable the namespace `unit` keeps under `name`: one
+  // it declares, or a static variable one of its subroutines declares, a
+  // formal included (LRM 26.2, 6.21, 13.3.2).
   [[nodiscard]] auto NamespaceValueRefOf(
-      const slang::ast::Symbol& unit, const slang::ast::ValueSymbol& value,
-      support::QualifiedName name, diag::SourceSpan span)
-      -> diag::Result<hir::NamespaceValueRef>;
+      const slang::ast::Symbol& unit, const support::QualifiedName& name)
+      -> hir::NamespaceValueRef;
 
-  // The type of the variable `unit_name`'s namespace keeps under `name`, as
-  // that namespace published it -- this unit's own read off `var`.
-  auto NamespaceVariableType(
-      const std::string& unit_name, const slang::ast::ValueSymbol& var,
-      const support::QualifiedName& name, diag::SourceSpan span)
-      -> diag::Result<hir::TypeId>;
-  // The type the function `evaluator` of the namespace `unit_name` answers for
-  // `formal`, read off what that namespace published wherever it is another
-  // unit.
-  auto NamespaceDefaultType(
-      const std::string& unit_name,
-      const slang::ast::FormalArgumentSymbol& formal,
-      const std::string& evaluator, diag::SourceSpan span)
-      -> diag::Result<hir::TypeId>;
+  // The reference to `sym`, a subroutine a namespace declares (LRM 26.3).
+  [[nodiscard]] auto NamespaceSubroutineOf(
+      const slang::ast::SubroutineSymbol& sym) -> hir::NamespaceSubroutineRef;
 
   // The property `prop` of the class `owner`, at the position the property of
   // that name has in the class's declaration, whichever unit declares it.
@@ -1187,10 +1171,19 @@ class UnitLowerer {
       const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
       -> diag::Result<hir::ClassPropertyTarget>;
 
+  // Every member of `cls` holding a method position, in the order the class
+  // places them, which every unit counts alike from the class's declaration.
+  [[nodiscard]] auto MethodsOf(const slang::ast::ClassType& cls)
+      -> const ClassMethods&;
+
+  // The position `member` -- a method or a constraint block of `owner` -- has
+  // in the class's declaration, whichever unit declares it.
+  [[nodiscard]] auto MethodPositionIn(
+      const slang::ast::ClassType& owner, const slang::ast::Symbol& member)
+      -> hir::MethodId;
+
   // The position the member named `name` has in the declaration of `cls`,
   // whichever unit declares it.
-  auto MethodPositionOf(hir::ClassId cls, std::string_view name)
-      -> hir::MethodId;
   auto PropertyPositionOf(hir::ClassId cls, std::string_view name)
       -> hir::FieldId;
   auto StaticPropertyPositionOf(
@@ -1571,16 +1564,9 @@ class UnitLowerer {
     // declaration half and looked up by the registry they belong to, so the
     // registry may not move between the two halves.
     std::unique_ptr<hir::ClassDecl> decl;
-    std::vector<const slang::ast::SubroutineSymbol*> defined_methods;
-    std::vector<const slang::ast::MethodPrototypeSymbol*> pure_prototypes;
-    std::vector<const slang::ast::ConstraintBlockSymbol*> constraint_blocks;
-    // Every formal of a method with a default the class evaluates (LRM
-    // 13.5.3), beside the method declaring it.
-    std::vector<std::pair<
-        const slang::ast::SubroutineSymbol*,
-        const slang::ast::FormalArgumentSymbol*>>
-        defaulted_formals;
-    const slang::ast::SubroutineSymbol* constructor_sym = nullptr;
+    // Every member of the class holding a method position, kept by the unit's
+    // cache of them, which outlives the body.
+    const ClassMethods* members = nullptr;
   };
 
   // Lowers the code of every class `scope` replicates -- each method, the
@@ -2176,6 +2162,7 @@ class UnitLowerer {
       scope_classes_;
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
+  std::unordered_map<const slang::ast::ClassType*, ClassMethods> class_methods_;
   // The identity of every class this unit's lowering has resolved, so the walk
   // up slang's parent chain finding the unit declaring a class runs once per
   // class.

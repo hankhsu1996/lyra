@@ -4,7 +4,6 @@
 #include <format>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -18,7 +17,6 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/declared_method.hpp"
 #include "lyra/hir/keyed_identities.hpp"
-#include "lyra/hir/method_id.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
@@ -134,29 +132,9 @@ class ClassRegistry {
             },
             [&](const OverridesVirtual& overriding)
                 -> std::optional<ClassMethodTarget> {
-              return IntroducedBy(overriding.overridden);
+              return overriding.overridden;
             }},
         Declaration(method.owner).methods.Get(method.method).dispatch);
-  }
-
-  // The method declaring the behavior `behavior` names (LRM 8.20), in the
-  // class that introduced it. A class declares at most one member under a
-  // name, so the name finds it.
-  [[nodiscard]] auto IntroducedBy(const NamedBehavior& behavior) const
-      -> ClassMethodTarget {
-    const ClassId introducer = behavior.introducer;
-    const std::string_view name = behavior.name;
-    const std::optional<MethodId> method =
-        FindMethod(Declaration(introducer).methods, name);
-    if (!method.has_value()) {
-      throw InternalError(
-          std::format(
-              "hir::ClassRegistry::IntroducedBy: class '{}' of unit '{}' "
-              "introduces no '{}' -- please report this as a bug",
-              support::DisplayOf(PathOf(introducer)),
-              KeyOf(introducer).unit_name, name));
-    }
-    return ClassMethodTarget{.owner = introducer, .method = *method};
   }
 
   [[nodiscard]] auto Ids() const -> base::IdRange<ClassId> {

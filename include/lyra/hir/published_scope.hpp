@@ -112,6 +112,10 @@ struct PublishedExternId {
       -> std::strong_ordering = default;
 };
 
+// A subroutine a scope published, with which of the scope's published
+// subroutines evaluates each formal's default.
+using ScopeCallable = DeclaredSubroutine<PublishedCallableId>;
+
 // The class of a scope of a unit -- an instance of the unit, or one of the
 // generate blocks inside it (LRM 23.6 reaches a declaration of either by name):
 // which class of the unit it is, the members another unit may name on it, the
@@ -141,7 +145,7 @@ struct PublishedExternId {
 struct ScopeClassSignature {
   support::DefPath class_path;
   base::Arena<PublishedMember, PublishedMemberId> members;
-  base::Arena<SubroutinePrototype, PublishedCallableId> callables;
+  base::Arena<ScopeCallable, PublishedCallableId> callables;
   base::Arena<PublishedLoop, PublishedLoopId> loops;
   base::Arena<PublishedChoice, PublishedChoiceId> choices;
   base::Arena<PublishedDisableTarget, PublishedDisableTargetId> disable_targets;
@@ -208,7 +212,7 @@ struct ScopeClassSignature {
   [[nodiscard]] auto FindCallable(std::string_view name) const
       -> std::optional<PublishedCallableId> {
     for (const PublishedCallableId id : callables.Ids()) {
-      if (callables.Get(id).name == name) return id;
+      if (callables.Get(id).prototype.name == name) return id;
     }
     return std::nullopt;
   }

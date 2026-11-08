@@ -441,8 +441,8 @@ auto ProcessLowerer::LowerSubroutine(
   // out at completion rather than aliased live. An `inout` is both a parameter
   // and a payload component.
   for (const auto& param : src.params) {
-    const mir::TypeId value_type =
-        owner_->TranslateType(hir::FormalTypeOf(src, param));
+    const mir::TypeId value_type = owner_->TranslateType(
+        hir::FormalTypeOf(owner_->Hir().namespaces, src, param));
     const std::optional<mir::TypeId> param_type =
         ParamTypeOf(owner_->Unit(), value_type, param.direction);
     const bool by_reference =

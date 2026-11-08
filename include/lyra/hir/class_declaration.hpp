@@ -119,10 +119,21 @@ using DeclaredMethods = base::Arena<DeclaredMethod, MethodId>;
 // the front end resolved its name there (LRM 8.26.2). Nothing answers it where
 // the class is abstract and leaves the implementation to a class extending it.
 struct ConformingBehavior {
-  NamedBehavior interface_behavior;
-  std::optional<NamedBehavior> answered_by;
+  ClassMethodTarget interface_behavior;
+  std::optional<ClassMethodTarget> answered_by;
 
   auto operator==(const ConformingBehavior&) const -> bool = default;
+};
+
+// What a construction of a class is entered with (LRM 8.7): each formal's
+// direction and type, as a method's prototype states them, and at the position
+// of each formal that has a default, the method of the class evaluating it
+// (LRM 13.5.3).
+struct DeclaredConstructor {
+  CalleeInterface interface;
+  std::vector<std::optional<MethodId>> defaults;
+
+  auto operator==(const DeclaredConstructor&) const -> bool = default;
 };
 
 // What a class declares (LRM 8), as the front end elaborated it and as every
@@ -170,10 +181,9 @@ struct ClassDeclaration {
   // the class's in the same way, declared here and nowhere in the method's
   // body, so every body and every unit naming it names this entry.
   DeclaredStaticProperties static_properties;
-  // What a construction of the class is entered with (LRM 8.7): each formal's
-  // direction and type, as a method's prototype states them. Absent for an
+  // What a construction of the class is entered with (LRM 8.7). Absent for an
   // interface class, of which no object is constructed (LRM 8.26.5).
-  std::optional<CalleeInterface> constructor;
+  std::optional<DeclaredConstructor> constructor;
   // Every method the class declares, as the class places them.
   DeclaredMethods methods;
   // The scope of the design hierarchy whose instance the class belongs to

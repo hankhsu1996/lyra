@@ -1418,6 +1418,45 @@ TEST(LyraRun, AReferenceFormalOfAStaticSubroutineWritesItsActual) {
   }
 }
 
+// Data is declared before it is used (LRM 6.5), and the front end still takes a
+// package variable whose initializer names, through a subroutine declared
+// after it, that subroutine's static. A namespace's every variable is one cell
+// before anything of the namespace is evaluated, so the name reaches that
+// cell, which holds its type's default until something writes it.
+TEST(LyraRun, APackageInitializerNamesALaterSubroutinesStatic) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "ahead.sv",
+      "package P;\n"
+      "  int ahead = stash.kept + 1;\n"
+      "  function automatic void stash(int v);\n"
+      "    static int kept;\n"
+      "    kept = v;\n"
+      "  endfunction\n"
+      "endpackage\n"
+      "module Test;\n"
+      "  initial begin\n"
+      "    P::stash(7);\n"
+      "    if (P::ahead !== 1 || P::stash.kept !== 7)\n"
+      "      $fatal(1, \"read %0d and %0d, expected 1 and 7\", P::ahead,\n"
+      "             P::stash.kept);\n"
+      "    $display(\"All checks passed\");\n"
+      "  end\n"
+      "endmodule\n");
+  for (const char* backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Test ahead.sv", backend));
+    ASSERT_THAT(run, ExitedWithCode(0)) << backend << ": " << run.stderr_text;
+    EXPECT_NE(run.stdout_text.find("All checks passed"), std::string::npos)
+        << backend << ": " << run.stdout_text;
+  }
+}
+
 // An interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) may not be
 // left unconnected, and a top's ports are connected to nothing, so a module
 // declaring either is a design element and not a design. The front end refuses

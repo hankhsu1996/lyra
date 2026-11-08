@@ -109,7 +109,7 @@ class UnitSignatures {
   [[nodiscard]] auto NamespaceUnitNames() const -> std::vector<std::string> {
     std::vector<std::string> names;
     for (const auto& [name, signature] : by_name_) {
-      if (std::holds_alternative<PublishedNamespace>(signature.unit)) {
+      if (std::holds_alternative<NamespaceDeclaration>(signature.unit)) {
         names.push_back(name);
       }
     }

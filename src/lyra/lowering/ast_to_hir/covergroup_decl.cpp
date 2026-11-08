@@ -946,9 +946,7 @@ auto UnitLowerer::PublishedFactoryOf(
     if (!type) return std::unexpected(std::move(type.error()));
     interface.params.push_back(
         hir::CalleeParam{
-            .direction = ParamDirectionOf(*formal),
-            .type = *type,
-            .default_evaluator = std::nullopt});
+            .direction = ParamDirectionOf(*formal), .type = *type});
   }
   auto made = InternType(first, span);
   if (!made) return std::unexpected(std::move(made.error()));
@@ -958,14 +956,16 @@ auto UnitLowerer::PublishedFactoryOf(
   // covergroup of the lineage introduced, the method making that covergroup.
   hir::MethodDispatch dispatch = hir::IntroducesVirtual{};
   if (BaseOf(covergroup) != nullptr) {
-    auto introducer = ResolveClass(*EmbeddingOf(first), span);
+    const slang::ast::ClassType& embedding = *EmbeddingOf(first);
+    auto introducer = ResolveClass(embedding, span);
     if (!introducer) return std::unexpected(std::move(introducer.error()));
     dispatch = hir::OverridesVirtual{
         .is_pure = false,
-        .overridden = hir::NamedBehavior{
-            .introducer = *introducer,
-            .name = hir::CovergroupFactoryName(DefPathOf(first, Names()))}};
+        .overridden = hir::ClassMethodTarget{
+            .owner = *introducer,
+            .method = MethodsOf(embedding).PositionOf(first)}};
   }
+  std::vector<std::optional<hir::MethodId>> defaults(interface.params.size());
   return hir::DeclaredMethod{
       .prototype =
           hir::SubroutinePrototype{
@@ -973,6 +973,7 @@ auto UnitLowerer::PublishedFactoryOf(
                   hir::CovergroupFactoryName(DefPathOf(covergroup, Names())),
               .interface = std::move(interface),
               .result_type = *made},
+      .defaults = std::move(defaults),
       .dispatch = dispatch,
       .replaces = std::nullopt,
       .makes = *own};

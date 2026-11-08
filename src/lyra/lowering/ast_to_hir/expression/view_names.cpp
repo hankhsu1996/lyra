@@ -43,7 +43,7 @@ auto PublishedViewNameType(
       Overloaded{
           [](const hir::ViewDefinedPlace& place) { return place.type; },
           [&](const hir::ViewComputedValue& computed) {
-            return scope.callables.Get(computed.evaluate).result_type;
+            return scope.callables.Get(computed.evaluate).prototype.result_type;
           }},
       scope.ViewName(name));
 }

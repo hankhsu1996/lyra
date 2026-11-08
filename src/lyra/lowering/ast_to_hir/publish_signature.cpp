@@ -1,7 +1,9 @@
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <ranges>
@@ -67,6 +69,37 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
+
+// `published` as the scope publishing it lists it, among `callables`, the
+// scope's callables in the order it publishes them: with, at the position of
+// each formal of a subroutine that has a default, the position of the callable
+// evaluating it (LRM 13.5.3). Only a subroutine the source declared takes
+// formals a call may omit.
+template <typename Id>
+auto DeclaredSubroutineOf(
+    std::span<const ScopePublicationRecord::Callable> callables,
+    const ScopePublicationRecord::Callable& callable,
+    hir::SubroutinePrototype published) -> hir::DeclaredSubroutine<Id> {
+  std::vector<std::optional<Id>> defaults(published.interface.params.size());
+  if (const auto* subroutine =
+          std::get_if<ScopePublicationRecord::Subroutine>(&callable)) {
+    const auto formals = subroutine->symbol->getArguments();
+    for (std::size_t position = 0; position < formals.size(); ++position) {
+      const auto evaluator = std::ranges::find_if(
+          callables, [&](const ScopePublicationRecord::Callable& candidate) {
+            const auto* argument =
+                std::get_if<ScopePublicationRecord::ArgumentDefault>(
+                    &candidate);
+            return argument != nullptr && argument->formal == formals[position];
+          });
+      if (evaluator == callables.end()) continue;
+      defaults[position] = Id{static_cast<std::uint32_t>(
+          std::distance(callables.begin(), evaluator))};
+    }
+  }
+  return hir::DeclaredSubroutine<Id>{
+      .prototype = std::move(published), .defaults = std::move(defaults)};
+}
 
 // Whether the declaration a `ref` port reaches forbids writing through it (LRM
 // 23.3.3.2). The frontend carries this on the declaration rather than on the
@@ -339,30 +372,31 @@ auto UnitLowerer::PublishTypeSignatures() -> diag::Result<void> {
 auto UnitLowerer::PublishNamespace() -> diag::Result<void> {
   hir::TypeImportMemo published;
   hir::TypeImporter importer = PublishingImporter(published);
-  auto& namespace_unit = signature_.unit.emplace<hir::PublishedNamespace>();
-  for (const ScopePublicationRecord::Callable& callable :
-       PublicationOf(*scope_).callables) {
+  auto& namespace_unit = signature_.unit.emplace<hir::NamespaceDeclaration>();
+  const ScopePublicationRecord& declared = PublicationOf(*scope_);
+  for (const ScopePublicationRecord::Callable& callable : declared.callables) {
     auto own = PublishedCallableOf(callable);
     if (!own) return std::unexpected(std::move(own.error()));
-    namespace_unit.subroutines.push_back(
-        hir::ImportCallable(importer, *std::move(own)));
+    namespace_unit.subroutines.Add(
+        DeclaredSubroutineOf<hir::NamespaceSubroutineId>(
+            declared.callables, callable,
+            hir::ImportCallable(importer, *std::move(own))));
   }
-  // What another unit reads and writes by name (LRM 26.3, 6.21): the
+  // What another unit reads and writes (LRM 26.3, 6.21): the
   // namespace's own variables, and the static variables of its subroutines,
   // each named as the namespace knows it.
   const auto publish = [&](const slang::ast::ValueSymbol& var,
                            support::QualifiedName name) -> diag::Result<void> {
     auto type = InternType(var.getType(), frontend::PointSpanOf(var.location));
     if (!type) return std::unexpected(std::move(type.error()));
-    namespace_unit.variables.push_back(
-        hir::PublishedVariable{
+    namespace_unit.variables.Add(
+        hir::NamespaceVariable{
             .name = std::move(name), .type = importer.Import(*type)});
     return {};
   };
   // What this unit declared of the namespace is what its publication record
   // holds -- a unit lowering a specialization of a class the namespace declares
   // reads the namespace's scope without declaring what the namespace does.
-  const ScopePublicationRecord& declared = PublicationOf(*scope_);
   for (const ScopePublicationRecord::Member& member : declared.members) {
     const auto* data = std::get_if<ScopePublicationRecord::DataObject>(&member);
     if (data == nullptr) continue;
@@ -463,8 +497,7 @@ auto UnitLowerer::PublishedCallableOf(
                         .kind = hir::SubroutineKind::kTask,
                         .params = {hir::CalleeParam{
                             .direction = hir::ParamDirection::kInput,
-                            .type = unit_.builtins.int_type,
-                            .default_evaluator = std::nullopt}},
+                            .type = unit_.builtins.int_type}},
                         .track_caller = false},
                 .result_type = unit_.types.Intern(hir::Type{hir::VoidType{}}),
                 .result_direction = hir::ParamDirection::kInput};
@@ -477,8 +510,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     return std::unexpected(std::move(r.error()));
   }
   // Only a design element instantiated into the hierarchy has ports and an
-  // object; a namespace unit publishes its declarations by name and roots
-  // neither.
+  // object; a namespace unit publishes its declarations and roots neither.
   const auto* body = scope_->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
   if (body == nullptr) {
     if (auto r = PublishNamespace(); !r) return r;
@@ -861,7 +893,9 @@ auto UnitLowerer::PublishScopeClass(const slang::ast::Scope& scope)
   for (const ScopePublicationRecord::Callable& callable : published.callables) {
     auto own = PublishedCallableOf(callable);
     if (!own) return std::unexpected(std::move(own.error()));
-    cls.callables.Add(*std::move(own));
+    cls.callables.Add(
+        DeclaredSubroutineOf<hir::PublishedCallableId>(
+            published.callables, callable, *std::move(own)));
   }
 
   // A construct is published as the source wrote it: how many blocks a loop
@@ -1206,7 +1240,80 @@ auto UnitLowerer::ReadOwnUnitDeclarations() -> diag::Result<void> {
   for (const auto& [declaration, _] : signature.type_definitions) {
     TypeDefinitionOf(declaration);
   }
+  if (std::holds_alternative<hir::NamespaceDeclaration>(signature.unit)) {
+    DeclareOwnNamespace();
+  }
   return {};
+}
+
+void UnitLowerer::DeclareOwnNamespace() {
+  // Every position the namespace declares exists before any body lowers, since
+  // a call may be written before the subroutine it names (LRM 13.7), and a
+  // name through a subroutine may reach its statics there too.
+  const hir::NamespaceId entry = NamespaceNamed(unit_.name);
+  const hir::NamespaceDeclaration& declared =
+      unit_.namespaces.Declaration(entry);
+  hir::NamespaceDefinition& defined = unit_.namespace_definition.emplace(
+      hir::NamespaceDefinition{
+          .entry = entry, .variables = {}, .subroutines = {}});
+  for (std::size_t i = 0; i < declared.variables.size(); ++i) {
+    defined.variables.Declare();
+  }
+  const ScopePublicationRecord& published = PublicationOf(*scope_);
+  for (const ScopePublicationRecord::Member& member : published.members) {
+    const auto* data = std::get_if<ScopePublicationRecord::DataObject>(&member);
+    if (data == nullptr) continue;
+    DefineNamespaceVariable(
+        support::UnqualifiedName(std::string{data->symbol->name}), data->id);
+  }
+  // Each subroutine the namespace declares is the subroutine of its scope at
+  // the same position of what it published.
+  defined.subroutines = base::Translation<
+      hir::NamespaceSubroutineId, hir::StructuralSubroutineId>(
+      declared.subroutines.size());
+  for (const ScopePublicationRecord::Callable& callable : published.callables) {
+    defined.subroutines.Append(
+        std::visit(
+            Overloaded{
+                [](const ScopePublicationRecord::ClockingLanding&)
+                    -> hir::StructuralSubroutineId {
+                  throw InternalError(
+                      "UnitLowerer::DeclareOwnNamespace: a namespace declares "
+                      "no clocking block (LRM 14.3) -- please report this as "
+                      "a bug");
+                },
+                [](const ScopePublicationRecord::Subroutine& declared) {
+                  return declared.id;
+                },
+                [](const ScopePublicationRecord::PortDefault& evaluator) {
+                  return evaluator.id;
+                },
+                [](const ScopePublicationRecord::ViewRead& evaluator) {
+                  return evaluator.id;
+                },
+                [](const ScopePublicationRecord::ArgumentDefault& evaluator) {
+                  return evaluator.id;
+                },
+                [](const ScopePublicationRecord::ClockingExpression&
+                       evaluator) { return evaluator.id; }},
+            callable));
+  }
+}
+
+void UnitLowerer::DefineNamespaceVariable(
+    const support::QualifiedName& name,
+    hir::NamespaceVariableDefinition definition) {
+  hir::NamespaceDefinition& defined = *unit_.namespace_definition;
+  const std::optional<hir::NamespaceVariableId> variable =
+      unit_.namespaces.Declaration(defined.entry).FindVariable(name);
+  if (!variable.has_value()) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::DefineNamespaceVariable: namespace '{}' published no "
+            "variable '{}' -- please report this as a bug",
+            unit_.name, support::DisplayOf(name)));
+  }
+  defined.variables.Define(*variable, std::move(definition));
 }
 
 auto UnitLowerer::DeclarationOf(hir::ClassId cls)
@@ -1352,76 +1459,50 @@ void UnitLowerer::PublishTypeDefinitions() {
   }
 }
 
-auto UnitLowerer::NamespaceCalleeInterface(
-    const std::string& unit_name, const slang::ast::SubroutineSymbol& sym,
-    diag::SourceSpan span) -> diag::Result<hir::CalleeInterface> {
-  if (unit_name == unit_.name) {
-    return MakeCalleeInterface(sym, span);
-  }
-  const hir::UnitSignature* signature = Signatures().Find(unit_name);
-  const auto* namespace_unit =
-      signature == nullptr
-          ? nullptr
-          : std::get_if<hir::PublishedNamespace>(&signature->unit);
-  const hir::SubroutinePrototype* published =
-      namespace_unit == nullptr ? nullptr
-                                : namespace_unit->FindSubroutine(sym.name);
-  if (published == nullptr) {
-    throw InternalError(
-        std::format(
-            "UnitLowerer::NamespaceCalleeInterface: '{}' declares '{}' and "
-            "published no such subroutine",
-            unit_name, sym.name));
-  }
-  hir::TypeImporter importer = ReadingImporter(*signature);
-  return hir::ImportCallable(importer, *published).interface;
+auto UnitLowerer::NamespaceOf(const slang::ast::Symbol& unit)
+    -> hir::NamespaceId {
+  return NamespaceNamed(CompilationUnitName(unit, Names()));
 }
 
-auto UnitLowerer::NamespaceVariableType(
-    const std::string& unit_name, const slang::ast::ValueSymbol& var,
-    const support::QualifiedName& name, diag::SourceSpan span)
-    -> diag::Result<hir::TypeId> {
-  if (unit_name == unit_.name) return InternType(var.getType(), span);
-  const hir::UnitSignature* signature = Signatures().Find(unit_name);
-  const auto* namespace_unit =
+auto UnitLowerer::NamespaceNamed(std::string unit_name) -> hir::NamespaceId {
+  hir::NamespaceKey key{.unit_name = std::move(unit_name)};
+  const auto [id, entered] = unit_.namespaces.Enter(key);
+  if (!entered) return id;
+  // What a namespace declares is what it published, read the first time a
+  // name reaches it -- by its own unit as by any other, so the two read one
+  // declaration.
+  const hir::UnitSignature* signature = Signatures().Find(key.unit_name);
+  const auto* declared =
       signature == nullptr
           ? nullptr
-          : std::get_if<hir::PublishedNamespace>(&signature->unit);
-  const hir::PublishedVariable* published =
-      namespace_unit == nullptr ? nullptr : namespace_unit->FindVariable(name);
-  if (published == nullptr) {
+          : std::get_if<hir::NamespaceDeclaration>(&signature->unit);
+  if (declared == nullptr) {
     throw InternalError(
         std::format(
-            "UnitLowerer::NamespaceVariableType: '{}' keeps '{}' and published "
-            "no such variable",
-            unit_name, support::DisplayOf(name)));
+            "UnitLowerer::NamespaceNamed: '{}' declares a name and published "
+            "no namespace -- please report this as a bug",
+            key.unit_name));
   }
   hir::TypeImporter importer = ReadingImporter(*signature);
-  return importer.Import(published->type);
+  unit_.namespaces.SetDeclaration(
+      id, hir::ImportNamespaceDeclaration(importer, *declared));
+  return id;
 }
 
-auto UnitLowerer::NamespaceDefaultType(
-    const std::string& unit_name,
-    const slang::ast::FormalArgumentSymbol& formal,
-    const std::string& evaluator, diag::SourceSpan span)
-    -> diag::Result<hir::TypeId> {
-  if (unit_name == unit_.name) return InternDefaultType(formal, span);
-  const hir::UnitSignature* signature = Signatures().Find(unit_name);
-  const auto* namespace_unit =
-      signature == nullptr
-          ? nullptr
-          : std::get_if<hir::PublishedNamespace>(&signature->unit);
-  const hir::SubroutinePrototype* published =
-      namespace_unit == nullptr ? nullptr
-                                : namespace_unit->FindSubroutine(evaluator);
-  if (published == nullptr) {
+auto UnitLowerer::NamespaceSubroutineOf(const slang::ast::SubroutineSymbol& sym)
+    -> hir::NamespaceSubroutineRef {
+  const slang::ast::Symbol& unit = *DeclaringNamespaceUnit(sym);
+  const hir::NamespaceId owner = NamespaceOf(unit);
+  const std::optional<hir::NamespaceSubroutineId> subroutine =
+      unit_.namespaces.Declaration(owner).FindSubroutine(sym.name);
+  if (!subroutine.has_value()) {
     throw InternalError(
         std::format(
-            "UnitLowerer::NamespaceDefaultType: '{}' published no '{}'",
-            unit_name, evaluator));
+            "UnitLowerer::NamespaceSubroutineOf: '{}' declares '{}' and "
+            "published no such subroutine -- please report this as a bug",
+            unit_.namespaces.KeyOf(owner).unit_name, sym.name));
   }
-  hir::TypeImporter importer = ReadingImporter(*signature);
-  return hir::ImportCallable(importer, *published).result_type;
+  return hir::NamespaceSubroutineRef{.owner = owner, .subroutine = *subroutine};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

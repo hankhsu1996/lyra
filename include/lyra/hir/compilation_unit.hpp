@@ -15,6 +15,7 @@
 #include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
+#include "lyra/hir/namespace.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -30,8 +31,8 @@ namespace lyra::hir {
 // composing a top class. A program (LRM 24) roots one too, and its procedures
 // are moreover a program's: they run in the reactive region set, and the
 // program and the run end with them (LRM 24.3, 24.7). A package (LRM 26) and
-// the `$unit` file-set scope (LRM 3.12.1) hold declarations reached by name
-// with no receiver, and root none. Whether a module or an interface was written
+// the `$unit` file-set scope (LRM 3.12.1) hold declarations reached with no
+// receiver, and root none. Whether a module or an interface was written
 // is not asked below this. The answer is intrinsic to the source construct, so
 // it travels on the unit rather than being re-inferred from its scope shape at
 // each stage that must branch on it.
@@ -79,19 +80,6 @@ struct BuiltinHirTypes {
   auto operator==(const BuiltinHirTypes&) const -> bool = default;
 };
 
-// A static variable a subroutine of a namespace unit declares (LRM 6.21),
-// which the namespace keeps as one of its variables: the name it knows it by,
-// its type, and the initializer the source wrote, an expression of the unit's
-// own scope written in that scope's procedural scope `written_in`.
-struct NamespaceStatic {
-  support::QualifiedName name;
-  TypeId type;
-  std::optional<ExprId> initializer;
-  ProceduralScopeId written_in;
-
-  auto operator==(const NamespaceStatic&) const -> bool = default;
-};
-
 // What one lowering of a unit came out as, which is one body of the unit.
 struct CompilationUnit {
   // The unit, which is what it publishes and what every referrer names.
@@ -120,10 +108,10 @@ struct CompilationUnit {
   TypeDefinitions type_definitions;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;
-  // The static variables the subroutines of a namespace unit declare (LRM
-  // 6.21), which it keeps beside its own variables; a design element's
-  // subroutines' statics are its instances', and it lists none.
-  std::vector<NamespaceStatic> namespace_statics;
+  // Every namespace this unit names, the unit itself where it is one.
+  NamespaceRegistry namespaces;
+  // What this unit defines as a namespace, present exactly where it is one.
+  std::optional<NamespaceDefinition> namespace_definition;
   // Every body a generate block of the unit compiles to (LRM 27), each once:
   // blocks stating the same thing are one body, whichever objects build them.
   base::Arena<BlockBody, BlockBodyId> block_bodies;
@@ -149,6 +137,7 @@ struct CompilationUnit {
       : name(std::move(name)),
         body_name(std::move(body_name)),
         builtins(MakeBuiltins(types)),
+        namespaces(this->name),
         classes(this->name),
         covergroups(this->name),
         scope_classes(this->name) {

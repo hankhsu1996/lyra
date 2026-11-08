@@ -425,12 +425,8 @@ auto FormalVariableOf(
   return std::visit(
       Overloaded{
           [&](const KeptByNamespace& by) -> diag::Result<hir::FormalVariable> {
-            auto reference = unit_lowerer.NamespaceValueRefOf(
-                *by.unit, formal, std::move(kept->name), span);
-            if (!reference) {
-              return std::unexpected(std::move(reference.error()));
-            }
-            return hir::FormalVariable{*std::move(reference)};
+            return hir::FormalVariable{
+                unit_lowerer.NamespaceValueRefOf(*by.unit, kept->name)};
           },
           [](const KeptByClass&) -> diag::Result<hir::FormalVariable> {
             throw InternalError(

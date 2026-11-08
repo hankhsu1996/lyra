@@ -271,16 +271,16 @@ class ProcessLowerer {
   // peer subroutine). Absent for a body that sits inside no structural scope
   // -- a class method or a package callable -- because the source forms
   // resolved through this pass are meaningless there: a class method reaches
-  // its owner through `self`, and a package callable reaches its peers by
-  // name across the unit boundary. Reaching this from such a body is a
-  // compiler bug.
+  // its owner through `self`, and a package callable reaches its peers as
+  // members of its namespace. Reaching this from such a body is a compiler
+  // bug.
   [[nodiscard]] auto EnclosingScopeLowerer() const
       -> const StructuralScopeLowerer& {
     if (enclosing_scope_lowerer_ == nullptr) {
       throw InternalError(
           "ProcessLowerer::EnclosingScopeLowerer: this body counts its hops "
           "from no structural scope; a namespace unit replicates nothing, so a "
-          "callable of one reaches its declarations by name");
+          "callable of one reaches its declarations through the namespace");
     }
     return *enclosing_scope_lowerer_;
   }

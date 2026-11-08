@@ -1,7 +1,5 @@
 #pragma once
 
-#include <optional>
-#include <string>
 #include <vector>
 
 #include "lyra/hir/param_direction.hpp"
@@ -10,30 +8,13 @@
 
 namespace lyra::hir {
 
-// The function that evaluates a formal's default (LRM 13.5.3), which a call
-// omitting the formal calls on the callee's receiver: its name among the
-// callables of whatever declares the callee, and the type of what it answers --
-// the formal's for an `input`, and otherwise the place the default names, the
-// formal's only by the assignment that binds them (LRM 13.5). The result stands
-// as the actual of the formal it hangs on, whose direction says the rest. A
-// call reads the type here rather than off the function's own prototype because
-// a namespace's prototypes are another unit's.
-struct DefaultEvaluator {
-  std::string name;
-  TypeId result_type{};
-
-  auto operator==(const DefaultEvaluator&) const -> bool = default;
-};
-
 // One formal of a callee as a call is made through it. The direction classifies
 // how the actual is marshalled at the boundary (LRM 13.5); the type is the
 // formal's type interned in the referring unit, needed to shape the completion
 // payload an output / inout rides back in and the writeback assignment.
-// `default_evaluator` is absent for a formal with no default.
 struct CalleeParam {
   ParamDirection direction = ParamDirection::kInput;
   TypeId type{};
-  std::optional<DefaultEvaluator> default_evaluator;
 
   auto operator==(const CalleeParam&) const -> bool = default;
 };
