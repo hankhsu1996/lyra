@@ -1107,7 +1107,16 @@ the detail lives in the entry itself.
   execution holding an unreturned foreign call is asked to stop rather than settled. Unwinding
   through the foreign frames, carrying the departure across, and a second departure state at the
   boundary are rejected. Revised 2026-10-21: the release at the run's end unwinds the foreign
-  frames, running what every frame of the design's on that stack owes.
+  frames, running what every frame of the design's on that stack owes. Revised 2026-11-07: a control
+  foreign code asks for through VPI is carried out at the same boundary; and the disabled state is
+  asked apart from the gate, for a disable or a kill only, so the run's end holds foreign code to
+  nothing and an exported task whose execution ended the run waits out the run.
+- [vpi-routines-are-defined-against-the-standard-s-headers](vpi-routines-are-defined-against-the-standard-s-headers.md)
+  -- the runtime defines each VPI routine against the standard's own headers, and one not provided
+  is not defined, so an application calling it fails to link; save and restart are never provided;
+  the variadic routines are C; `vpi_control` is carried out upon the innermost context import's
+  return; every compatibility mode's bound names are defined. Stubs answering an error, `<cstdarg>`
+  in the runtime, and acting where `vpi_control` is called are rejected.
 
 ### Compile-time model and specialization
 
@@ -1603,7 +1612,9 @@ the detail lives in the entry itself.
   in its turn, also finish every value dump, waking its writing thread to write what the run
   recorded and end the file, after which a stop from outside ends any wait on it. Revised
   2026-11-06: the run's end reports output the system refused that `$ferror` never told the design
-  of, once a file, and exits failing.
+  of, once a file, and exits failing. Revised 2026-11-07: the run's end puts no foreign frame in the
+  disabled state and holds it to nothing; the execution that ended the run, a process or not, makes
+  no further progress through the design, and an exported task never returns to its foreign caller.
 - [deferred-report-queue](deferred-report-queue.md) -- a pending report stays in the region's own
   list and withdrawal is a refusal to act, so it records the sources that can withdraw it and acts
   only if all still stand: two `disable` targets through the accepted cancellation-source

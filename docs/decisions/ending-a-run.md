@@ -15,7 +15,12 @@ it has none of. Revised 2026-11-05: those endings but the refused request for me
 every value dump the run is writing, which they used to leave holding none of what the dump thread
 had not yet written. Revised 2026-11-06: the run's end reports output the system refused that the
 design was never told of, and exits failing, where it used to drop the refusal and exit as though
-everything had been written.
+everything had been written. Revised 2026-11-07: R5 said the run's end puts a foreign frame beneath
+the execution in the disabled state of LRM 35.9, on the premise that a disable is the one stop the
+standard lets come back to a foreign call; a `$finish` in an exported function comes back to it too,
+and holding that frame to the protocol made a legal program end in a fatal error. The run's end now
+asks nothing of foreign code, and the execution that ended it makes no further progress through the
+design, a process or not.
 
 ## Why this decision matters
 
@@ -102,13 +107,17 @@ R3. Final procedures run once the simulation has ended this way (LRM 9.2.3), exc
     registered do not.
 R4. A frame of another language is never unwound by the design and never skipped; while the run
     lasts it ends only by returning (LRM 35.9).
-R5. A foreign frame beneath an execution the run ended under is told that its caller will not
-    continue, in the protocol's own terms. LRM 35.9 names the disabled state for a disable only,
-    because that is the one stop it lets reach a foreign call and come back to it; what the
-    foreign side can do about any stop is the same -- call in no further, and return -- so it is
-    told the same thing and held to the same protocol as under a disable.
-R6. Nothing of the design runs after the run has ended, including a subroutine foreign code calls
-    into afterwards.
+R5. A foreign frame beneath an execution that ended the run is told nothing and held to nothing.
+    LRM 35.9 enters the disabled state only where a disable targets the call, and the protocol
+    exists so that the run can go on past an execution being torn down while foreign code holds
+    it; the run does not go on past its own end, so nothing asks the foreign side to cooperate, and
+    a check of a protocol it was never in would turn a legal program into a fatal error.
+R6. Nothing of the design runs after the run has ended, in the execution that ended it, including
+    a subroutine foreign code calls into afterwards; and an exported task does not hand the
+    foreign code control again (LRM 20.2's exit), so foreign code calling exported tasks in a loop
+    cannot keep the run from ending. An exported function cannot wait, so it hands control back,
+    and foreign code that loops on one without returning holds the run in that time step, since a
+    time step does not end while foreign code runs.
 R7. One program means the same thing on every backend, so what an ending does is decided above
     the backends, never by one of them.
 ```
@@ -295,10 +304,13 @@ not whether the execution was in error.
 - A process that ends the run reports KILLED from `status()` afterwards (LRM 9.7), because its
   execution departed rather than running out its body. Only a `final` procedure holding its handle
   can observe that.
-- A foreign caller beneath an exported subroutine that ended the run is in the disabled state of LRM
-  35.9, as it is under a kill, and owes what the protocol asks: an imported function acknowledges,
-  an imported task returns 1, and neither calls in again. One that does call in again is reported,
-  and the call runs nothing of the design.
+- A foreign caller beneath an exported subroutine that ended the run is not in the disabled state of
+  LRM 35.9, where a kill would put it, and owes the protocol nothing. One that calls in again is not
+  reported: an exported function runs nothing and answers the zero of its result, and an exported
+  task never returns to it, waiting on the foreign stack until the run's end releases that stack,
+  and its process reports KILLED all the same, since nothing of the design runs in it again. That
+  holds for code on no thread as much as for a process, because what ended the run is recorded on
+  whatever was running rather than on a process.
 - A bare `$finish` prints a line, because LRM Table 20-1's default level is 1. Every simulator does
   this; Lyra printing nothing was the level being discarded rather than a choice.
 - `activation.md` invariant 2's third alternative goes. An activation settles the value it produced

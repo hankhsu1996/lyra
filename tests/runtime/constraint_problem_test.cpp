@@ -137,8 +137,8 @@ TEST(ConstraintProblemTest, ACallAdvancesTheGeneratorTheSameWhateverItDraws) {
 // constraint, and the run says once that it was not drawn uniformly, with how
 // to raise the limit a run's command line sets.
 TEST(ConstraintProblemTest, ADrawPastTheBudgetIsReportedOnce) {
-  lyra::runtime::Runtime run{
-      lyra::runtime::RuntimeOptions{.plusargs = {"lyra+randomize+nodes=4"}}};
+  lyra::runtime::Runtime run{lyra::runtime::RuntimeOptions{
+      .command_line = {"program", "+lyra+randomize+nodes=4"}}};
   DrawRng rng{RandomSeed{40}};
   testing::internal::CaptureStderr();
   for (int round = 0; round < 3; ++round) {

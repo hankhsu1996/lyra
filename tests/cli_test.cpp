@@ -4371,8 +4371,9 @@ TEST(LyraBuild, ABuildThatIsEndedLeavesNothingItStarted) {
 // Foreign code may call an exported subroutine only from inside a call of a
 // `context` import (LRM 35.5.3), and not once its execution thread is in the
 // disabled state (LRM 35.9 item d); a call breaking either is an error the
-// simulator reports, and the call runs nothing of the design. The run ending
-// puts the thread in the disabled state too. A call from a plain import is made
+// simulator reports, and the call runs nothing of the design. The thread is put
+// in that state by a disable the export makes of the procedure the import call
+// stands in. A call from a plain import is made
 // to an export of a package, whose name reaches its subroutine directly, and to
 // one of a module, whose name resolves the instance first; the foreign caller
 // catches everything around each, so a report that left by unwinding through
@@ -4404,14 +4405,14 @@ TEST(LyraRun, CallingInWhereNoExportMayBeReachedIsReportedAndRunsNothing) {
       << "  int instance_calls;\n"
       << "  function int answer();\n"
       << "    entered = entered + 1;\n"
-      << "    $finish(0);\n"
+      << "    disable asking;\n"
       << "    return 2;\n"
       << "  endfunction\n"
       << "  function int instance_answer();\n"
       << "    instance_calls = instance_calls + 1;\n"
       << "    return 5;\n"
       << "  endfunction\n"
-      << "  initial begin\n"
+      << "  initial begin : asking\n"
       << "    entered = 0;\n"
       << "    if ($test$plusargs(\"package\")) void'(ask_package_plainly());\n"
       << "    else if ($test$plusargs(\"module\")) "
@@ -4447,7 +4448,7 @@ TEST(LyraRun, CallingInWhereNoExportMayBeReachedIsReportedAndRunsNothing) {
       "run",  "--backend",  "llvm",           "--top",
       "Test", "--dpi-link", foreign.string(), src.string()};
   {
-    SCOPED_TRACE("after the run ended");
+    SCOPED_TRACE("after a disable");
     const auto run = RunChildProcess(lyra, args);
     EXPECT_THAT(run, ExitedWithCode(Ne(0)))
         << run.stdout_text << run.stderr_text;
@@ -4488,15 +4489,18 @@ auto CountOccurrences(std::string_view text, std::string_view needle)
 
 // A frame of another language ends only by returning (LRM 35.9), so a design's
 // run-time error raised below one stops where the foreign caller entered the
-// design: it is reported once and ends the run, and the foreign caller regains
-// control told that its caller will not continue. A foreign C++ caller that
-// catches everything around the call is the sharpest witness, since anything
-// that crossed would land in its handler instead of being reported. The error
-// is raised at each depth an exported subroutine can hold it -- in its own
-// body, in a function it calls, inside a named block that a `disable` names,
-// in an export reached through a second foreign frame, and in an exported task.
-// The corpus cannot state this: which way a run-time error ends the run is the
-// tool's to choose, and the run has to fail.
+// design: it is reported once and ends the run. Nothing disabled the foreign
+// caller, so it is not told it was and owes the protocol nothing: an exported
+// function hands it back control, and an exported task does not hand it back
+// at all, since the run ends around it. A foreign C++ caller that catches
+// everything around the call is the sharpest witness, since anything that
+// crossed would land in its handler instead of being reported. The error is
+// raised at each depth an exported subroutine can hold it -- in its own body,
+// in a function it calls, inside a named block that a `disable` names, in an
+// export reached through a second foreign frame, and in an exported task --
+// and a `$fatal`, which ends the run the same way, stands in the exported
+// function itself. The corpus cannot state this: which way a run-time error
+// ends the run is the tool's to choose, and the run has to fail.
 TEST(LyraRun, AnErrorBelowAForeignCallerStopsWhereItEnteredTheDesign) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -4531,6 +4535,7 @@ TEST(LyraRun, AnErrorBelowAForeignCallerStopsWhereItEnteredTheDesign) {
       << "        dyn = new[-1];\n"
       << "      end\n"
       << "      4: void'(relay());\n"
+      << "      6: $fatal(1, \"the export gives up\");\n"
       << "    endcase\n"
       << "    return 7;\n"
       << "  endfunction\n"
@@ -4591,7 +4596,7 @@ TEST(LyraRun, AnErrorBelowAForeignCallerStopsWhereItEnteredTheDesign) {
       << "  return 1;\n"
       << "}\n";
 
-  for (const int depth : {1, 2, 3, 4, 5}) {
+  for (const int depth : {1, 2, 3, 4, 5, 6}) {
     SCOPED_TRACE(std::format("+depth={}", depth));
     const std::vector<std::string> args = {
         "run",
@@ -4607,32 +4612,31 @@ TEST(LyraRun, AnErrorBelowAForeignCallerStopsWhereItEnteredTheDesign) {
     const auto run = RunChildProcess(lyra, args);
     EXPECT_THAT(run, ExitedWithCode(Ne(0)))
         << run.stdout_text << run.stderr_text;
-    EXPECT_EQ(
-        CountOccurrences(
-            run.stderr_text, "a dynamic array's new[] is negative"),
-        1U)
+    const std::string_view reported =
+        depth == 6 ? "the export gives up"
+                   : "a dynamic array's new[] is negative";
+    EXPECT_EQ(CountOccurrences(run.stderr_text, reported), 1U)
+        << run.stderr_text;
+    EXPECT_EQ(run.stderr_text.find("disabled state"), std::string::npos)
         << run.stderr_text;
     EXPECT_EQ(
         run.stdout_text.find("the foreign caller caught something"),
         std::string::npos)
         << run.stdout_text;
-    const std::string_view entered = depth == 5 ? "ask_task" : "ask";
-    EXPECT_NE(
-        run.stdout_text.find(std::format("{} regained control", entered)),
-        std::string::npos)
+    EXPECT_EQ(run.stdout_text.find("saw the disabled state"), std::string::npos)
         << run.stdout_text;
-    if (depth == 4) {
-      EXPECT_NE(
-          run.stdout_text.find("relay saw the disabled state"),
-          std::string::npos)
-          << run.stdout_text;
-    }
     if (depth == 5) {
-      EXPECT_NE(run.stdout_text.find("work answered 1"), std::string::npos)
+      EXPECT_EQ(run.stdout_text.find("regained control"), std::string::npos)
+          << run.stdout_text;
+      EXPECT_EQ(run.stdout_text.find("work answered"), std::string::npos)
           << run.stdout_text;
     } else {
+      EXPECT_NE(run.stdout_text.find("ask regained control"), std::string::npos)
+          << run.stdout_text;
+    }
+    if (depth == 4) {
       EXPECT_NE(
-          run.stdout_text.find("ask saw the disabled state"), std::string::npos)
+          run.stdout_text.find("relay regained control"), std::string::npos)
           << run.stdout_text;
     }
     EXPECT_NE(run.stdout_text.find("after=0"), std::string::npos)
@@ -4640,12 +4644,12 @@ TEST(LyraRun, AnErrorBelowAForeignCallerStopsWhereItEnteredTheDesign) {
   }
 }
 
-// LRM 35.9 names the disabled state for a `disable` only, because that is the
-// one way it lets an execution be stopped under a foreign call and handed back
-// to it. A `kill` stops it the same way as far as the foreign side can tell --
-// it must call in no further and return -- so Lyra tells it the same thing: the
-// exported task it was inside answers 1. A conforming tool may answer 0, which
-// is why this is Lyra's own answer and not the corpus's.
+// LRM 35.9 names the disabled state for a `disable`, and LRM 9.7 counts a
+// `kill` with a disable: both forcibly terminate the process while the run goes
+// on, so the foreign frames beneath it have to return for the run to go on
+// past it. So Lyra tells the foreign side the same thing: the exported task it
+// was inside answers 1. A conforming tool may answer 0, which is why this is
+// Lyra's own answer and not the corpus's.
 TEST(LyraRun, AKilledProcessTellsItsForeignFramesTheyWereDisabled) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();

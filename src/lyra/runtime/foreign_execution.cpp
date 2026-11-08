@@ -259,6 +259,10 @@ auto MakeForeignExecution(OwnedCall entry)
   return std::make_unique<Fiber>(std::move(entry));
 }
 
+auto ForeignExecutionIsRunning() -> bool {
+  return RunningFiberSlot() != nullptr;
+}
+
 void YieldForeignExecution() {
   if (RunningFiberSlot() == nullptr) {
     // LRM 35.5.3.

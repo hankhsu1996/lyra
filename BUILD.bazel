@@ -62,11 +62,25 @@ refresh_compile_commands(
 
 cc_library(
     name = "base",
-    srcs = glob(["src/lyra/base/*.cpp"]),
+    srcs = glob(["src/lyra/base/*.cpp"]) + [":lyra_version_text"],
     hdrs = glob(["include/lyra/base/*.hpp"]),
     copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
+)
+
+# The version `MODULE.bazel` gives Lyra, which a program reports as the tool it
+# was built by.
+genrule(
+    name = "lyra_version_text",
+    outs = ["lyra_version_text.cpp"],
+    cmd = "{ " +
+          "printf '#include \"lyra/base/version.hpp\"\\n\\n'; " +
+          "printf 'namespace lyra::base {\\n\\n'; " +
+          "printf 'auto LyraVersion() -> std::string_view {\\n'; " +
+          "printf '  return \"%s\";\\n}\\n\\n'; " % module_version() +
+          "printf '}  // namespace lyra::base\\n'; " +
+          "} > $@",
 )
 
 cc_library(
@@ -175,7 +189,10 @@ cc_library(
 
 cc_library(
     name = "runtime",
-    srcs = glob(["src/lyra/runtime/*.cpp"]) + [":third_party_licenses_text"],
+    srcs = glob([
+        "src/lyra/runtime/*.c",
+        "src/lyra/runtime/*.cpp",
+    ]) + [":third_party_licenses_text"],
     hdrs = glob(["include/lyra/runtime/*.hpp"]),
     copts = LYRA_COPTS,
     includes = ["include"],
@@ -185,6 +202,7 @@ cc_library(
         ":base",
         ":support",
         ":value",
+        "//third_party/systemverilog:vpi",
         "@boost.context//:boost.context",
         "@cadical",
         "@cudd",
@@ -600,7 +618,7 @@ cc_binary(
         ":runtime_sources",
         ":runtime_surface",
         ":third_party_licenses",
-        "//third_party/systemverilog:svdpi.h",
+        "//third_party/systemverilog:headers",
     ],
     visibility = ["//visibility:public"],
     deps = [

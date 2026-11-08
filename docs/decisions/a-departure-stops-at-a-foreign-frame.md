@@ -2,7 +2,13 @@
 
 Date: 2026-09-16 Status: accepted. Revised 2026-10-21: D8 said the rule that forbids unwinding a
 foreign call's frames forbids running them; the release does unwind them, running nothing of the
-other language's, and runs what each of the design's frames on that stack owes.
+other language's, and runs what each of the design's frames on that stack owes. Revised 2026-11-07:
+D5 also carries out a control foreign code asked for through VPI. Revised 2026-11-07 again: the
+question was one, covering the run's end as well, on the reasoning that foreign code can do only one
+thing about any stop; a `$finish` in an exported function then held a C caller that nothing disabled
+to the protocol, a fatal error for a legal program. The disabled state is now a second question that
+leaves the run's end out, and an exported task does not return to a foreign caller once its
+execution has ended the run.
 
 ## Why this decision matters
 
@@ -28,11 +34,15 @@ mechanism.
 
 ```text
 the question   whether the execution now running must stop: a disable has reached a block it is
-               inside, its process has been terminated, or the run has ended. One question because
-               foreign code can do only one thing about any of them.
+               inside, its process has been terminated, or it ended the run. And within it, whether
+               it is disabled, which is the first two: there the run goes on past the execution, so
+               the foreign frames beneath it must return for that, and the protocol of LRM 35.9 is
+               how they are told; the run does not go on past its own end, so nothing asks them to
+               cooperate with that one.
 
-the answer     an exported task's entry returns it as the int LRM 35.8 gives that entry, and
-               svIsDisabledState answers it to any foreign frame that asks.
+the answer     an exported task's entry returns whether it is disabled as the int LRM 35.8 gives
+               that entry, and svIsDisabledState answers the same to any foreign frame that asks.
+               Once the execution has ended the run, the task's entry does not return.
 
 the departure  is not carried across. Whether one is due is derived where control comes back, so
                the boundary loses nothing by landing it.
@@ -63,7 +73,13 @@ D2. What each such function hands back in its place is the standard's own answer
     one, and it is stated from the exported name alone, so a module's symbol and its entry answer
     alike. An exported task returns the disable-active int (LRM 35.8) whichever way its boundary
     ended, so its two paths meet at one return. LRM 35.9 gives an exported function no such value,
-    so it answers with the zero of its result's C type, which for a string keeps no storage.
+    so it answers with the zero of its result's C type, which for a string keeps no storage. An
+    exported task whose execution ended the run hands nothing back where the foreign stack can
+    wait, which an imported task's can: it waits there until the run's end releases that stack
+    (D8). Foreign code told nothing of the run's end may call in for ever, and LRM 20.2 has the
+    simulator exit, so it is not handed control again; Java's `Runtime.exit` "neither returns nor
+    throws" for the same reason. An exported function cannot wait, so it answers its zero and runs
+    nothing (D5).
 
 D3. The simulator's half of the protocol is implemented, and the foreign side's half is checked.
     Item a is D2. Items b, c and d are obligations on the foreign programmer that LRM 35.9 also
@@ -73,8 +89,8 @@ D3. The simulator's half of the protocol is implemented, and the foreign side's 
     outside the call of a `context` import is refused where it is reached, as the call LRM 35.5.3
     makes an error.
 
-D4. No check departs across a foreign frame. Items b, c and d hold only once the execution has been
-    told to stop, so a breach of any of them is reported and ends the run, and the departure, which
+D4. No check departs across a foreign frame. Items b, c and d hold only once the execution is
+    disabled, so a breach of any of them is reported and ends the run, and the departure, which
     is already due, is taken at the boundary where control comes back; the composition a fatal
     makes is taken apart that way. The refusal of LRM 35.5.3 finds the execution told nothing, so it
     raises the error, inside the region of the function foreign code called, which lands it, reports
@@ -86,7 +102,11 @@ D5. The boundary is where the execution leaves. Every other point at which an ex
     itself. Only a `context` import may reach an exported subroutine (LRM 35.5.3), so only its
     boundary carries any of this. A plain import that reaches one anyway is refused at the export,
     and its own boundary still carries nothing, since the standard keeps a non-context call free of
-    instrumentation; the statements after that call run until the execution next suspends.
+    instrumentation; the statements after that call run until the execution next suspends. A
+    `$finish` or `$stop` foreign code asks for through `vpi_control` is carried out at the same
+    boundary, upon the import's return (LRM 38.4): the run ends and the execution is recorded as
+    having ended it where the import returns, and it leaves through the gate this decision already
+    places there.
 
 D6. Terminating an execution that holds an unreturned foreign call is a request, not a settlement.
     It is asked to stop and handed control once more; it leaves at its own gate, its foreign frames
@@ -94,10 +114,12 @@ D6. Terminating an execution that holds an unreturned foreign call is a request,
     This is the two-step transition an execution whose frame is still running already takes, applied
     to the one other case where a frame cannot be torn down where it stands.
 
-D7. The gate is one question with two sources. A target disabled since this execution entered it,
-    and a termination this execution has yet to unwind for, are asked together wherever control is
-    regained; a departure naming no target is one no region may claim, which is what a termination's
-    is.
+D7. The gate is one question with three sources. A target disabled since this execution entered
+    it, a termination this execution has yet to unwind for, and the run this execution ended, are
+    asked together wherever control is regained; a departure naming no target is one no region may
+    claim, which is what a termination's and the run's end are. The protocol's answers and checks
+    ask the first two alone. The run's end is recorded on the running execution rather than on a
+    process, because code on no thread ends the run too, and would otherwise go on past the call.
 
 D8. When the run itself ends, nothing is handed control. A foreign call that never returned is
     released the way every other suspended execution is -- the run is over, so none of its code
@@ -166,6 +188,8 @@ D8. When the run itself ends, nothing is handed control. A foreign call that nev
   frame that lands nothing carries nothing.
 - `../architecture/activation.md` -- the two-step termination for an execution that cannot be torn
   down where it stands.
+- [vpi-routines-are-defined-against-the-standard-s-headers](vpi-routines-are-defined-against-the-standard-s-headers.md)
+  -- the control foreign code asks for through VPI, which D5 carries out.
 - IEEE 1800-2023: 35.8 (an exported task's return value), 35.9 (the disable protocol, its four
   items, and the checks a simulator owes), 35.5.3 (only a context import may reach an export), 9.6.2
-  and 9.6.3 (`disable`, `disable fork`), 9.7 (`kill`), 20.2 (`$finish`).
+  and 9.6.3 (`disable`, `disable fork`), 9.7 (`kill`), 20.2 (`$finish`), 38.4 (`vpi_control`).

@@ -106,9 +106,9 @@ Runtime::Runtime() : Runtime(RuntimeOptions{}) {
 }
 
 Runtime::Runtime(RuntimeOptions options)
-    : dumps_(options.plusargs),
-      randomize_settings_(options.plusargs),
-      plusargs_(std::move(options.plusargs)) {
+    : command_line_(std::move(options.command_line)),
+      dumps_(command_line_.Plusargs()),
+      randomize_settings_(command_line_.Plusargs()) {
   diagnostic_.SetContextSource([this] { return ReportContext(); });
 }
 

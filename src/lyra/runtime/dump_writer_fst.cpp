@@ -12,6 +12,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/base/version.hpp"
 #include "lyra/runtime/dump_writer.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -82,7 +83,8 @@ class FstWriter final : public DumpWriter {
  public:
   explicit FstWriter(fstWriterContext* context) : context_(context) {
     fstWriterSetPackType(context_, FST_WR_PT_LZ4);
-    fstWriterSetVersion(context_, "Lyra");
+    // The name is a string literal, so its characters end in a null.
+    fstWriterSetVersion(context_, base::kProductName.data());
   }
   FstWriter(const FstWriter&) = delete;
   auto operator=(const FstWriter&) -> FstWriter& = delete;

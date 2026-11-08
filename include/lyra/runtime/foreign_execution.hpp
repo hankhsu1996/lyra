@@ -67,6 +67,10 @@ auto MakeForeignExecution(OwnedCall entry) -> std::unique_ptr<ForeignExecution>;
 // no foreign execution running on the thread.
 void YieldForeignExecution();
 
+// Whether foreign code now running is on a stack of its own, which an imported
+// task's call is and an imported function's is not, so that it can wait there.
+[[nodiscard]] auto ForeignExecutionIsRunning() -> bool;
+
 // The process whose foreign call is running on this thread right now -- the one
 // that entered the current foreign execution. The exported-task driver, reached
 // from foreign C with no engine handle, uses it to run the exported body as

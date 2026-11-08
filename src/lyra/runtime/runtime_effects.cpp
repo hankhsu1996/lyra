@@ -162,8 +162,8 @@ auto RuntimeEffects::Randomize() -> RandomizeSettings& {
   return AsRuntime(*this).randomize_settings_;
 }
 
-auto RuntimeEffects::PlusArgs() -> PlusArgsSource& {
-  return AsRuntime(*this).plusargs_;
+auto RuntimeEffects::CommandLine() -> runtime::CommandLine& {
+  return AsRuntime(*this).command_line_;
 }
 
 void RuntimeEffects::RecordCoverage(base::SourceLocation site, bool succeeded) {

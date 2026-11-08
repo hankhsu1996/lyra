@@ -1267,9 +1267,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kLeaveStaticInit:
     case support::BuiltinFn::kEnterDpiScope:
     case support::BuiltinFn::kLeaveDpiScope:
-    case support::BuiltinFn::kDisableIsActive:
-    case support::BuiltinFn::kCheckImportTaskAcknowledged:
-    case support::BuiltinFn::kCheckImportFunctionAcknowledged:
+    case support::BuiltinFn::kExportedTaskReturnValue:
+    case support::BuiltinFn::kContextImportTaskReturned:
+    case support::BuiltinFn::kContextImportFunctionReturned:
     case support::BuiltinFn::kCheckExportReachable:
     case support::BuiltinFn::kBeforeForeignCodeRuns:
     case support::BuiltinFn::kHandStringToForeignCaller:

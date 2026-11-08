@@ -141,6 +141,29 @@ class FileTable {
   auto Open(std::string_view name, std::optional<std::string_view> mode)
       -> std::int32_t;
 
+  // The descriptor the open file opened under `name` is named by -- a
+  // channel's, else a file descriptor's -- or 0 where none is.
+  [[nodiscard]] auto DescriptorOpenedAs(std::string_view name) -> std::int32_t;
+
+  // The part of `descriptor` that names open files: a file descriptor whole
+  // where it is open, and of a multichannel descriptor the bits of its open
+  // channels; 0 where it names none.
+  [[nodiscard]] auto OpenPartOf(std::int64_t descriptor) -> std::int32_t;
+
+  // The part of `descriptor` a close would close: what `OpenPartOf` answers,
+  // less the pre-opened files -- standard input, output and error, and the
+  // channel standard output is -- which a close leaves open.
+  [[nodiscard]] auto ClosablePartOf(std::int64_t descriptor) -> std::int32_t;
+
+  // Whether `descriptor` is a file descriptor rather than a multichannel one
+  // (LRM 21.3.1): its most significant bit is set.
+  [[nodiscard]] static auto IsFileDescriptor(std::int64_t descriptor) -> bool;
+
+  // The name the one open file `descriptor` names was opened under -- a file
+  // descriptor, or a multichannel descriptor of one channel -- or none.
+  [[nodiscard]] auto NameOf(std::int64_t descriptor)
+      -> std::optional<std::string_view>;
+
   // Closes the files `descriptor` names: one file for an FD, each set bit's
   // for an MCD, firing each closed file's cancel signal (LRM 21.3.2). What
   // the last hand-over and the closing were refused is what the operation
@@ -285,12 +308,14 @@ class FileTable {
 
   // What a descriptor names: the file while it is open, the C stream the
   // descriptor was opened as (none for a pre-opened file, which is never
-  // closed), the destination as a message names it, and the cancel signal of
-  // the operations tied to it.
+  // closed), the name it was opened under, and the cancel signal of the
+  // operations tied to it.
   struct Slot {
     std::unique_ptr<File> file;
     OpenedStream opened_as{nullptr, &std::fclose};
-    std::string destination;
+    // The name the file was opened under; a pre-opened file is named by the
+    // stream it is.
+    std::string name;
     std::stop_source cancel_source;
   };
 
@@ -321,6 +346,18 @@ class FileTable {
   // descriptor names were refused meanwhile is taken, the first counting where
   // it met nothing itself.
   void EndOperation(std::int32_t descriptor, File::Refusal met);
+
+  // The destination a message names the slot's file as.
+  [[nodiscard]] auto DestinationOf(const Slot& slot) const -> std::string;
+
+  // The slot channel `bit` of a multichannel descriptor names: channel 0 is
+  // standard output's file, and every other channel a file of its own.
+  auto ChannelSlot(std::size_t bit) -> Slot&;
+
+  // The part of `descriptor` whose files `keep` answers true for: a file
+  // descriptor whole or nothing, and of a multichannel descriptor the bits.
+  template <typename Keep>
+  auto PartWhere(std::int64_t descriptor, Keep keep) -> std::int32_t;
 
   // The slot a file descriptor names, open or not, or null for a value that
   // is no file descriptor of this table.

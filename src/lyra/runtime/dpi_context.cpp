@@ -1,9 +1,11 @@
 #include "lyra/runtime/dpi_context.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <variant>
 
 #include "lyra/abi/records.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/source_location.hpp"
@@ -11,6 +13,9 @@
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/dpi_scope_handles.hpp"
 #include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/finish.hpp"
+#include "lyra/runtime/foreign_execution.hpp"
+#include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -56,7 +61,18 @@ auto HandStringToForeignCaller(
 }
 
 auto DisableIsActive(RuntimeEffects& effects) -> std::int32_t {
-  return RunningDepartureIsDue(effects) ? 1 : 0;
+  return RunningIsDisabled(effects) ? 1 : 0;
+}
+
+auto ExportedTaskReturnValue(RuntimeEffects& effects) -> std::int32_t {
+  if (const RunningState* running = effects.TryRunning();
+      running != nullptr && running->ended_the_run &&
+      ForeignExecutionIsRunning()) {
+    for (;;) {
+      YieldForeignExecution();
+    }
+  }
+  return DisableIsActive(effects);
 }
 
 void AcknowledgeStop(RuntimeEffects& effects) {
@@ -65,39 +81,73 @@ void AcknowledgeStop(RuntimeEffects& effects) {
   }
 }
 
-void CheckImportTaskAcknowledged(
-    RuntimeEffects& effects, std::int32_t returned, base::SourceLocation at) {
-  if (!RunningDepartureIsDue(effects) || returned == 1) {
+namespace {
+
+// What foreign code asked of the run while the call returning now was the
+// innermost, done now that it returns (LRM 38.4), as the design's own task
+// would be done where the call is written. A task import returns on a stack of
+// its own, so nothing is raised here: the execution leaves at the boundary the
+// call returns through, as it does for a departure an export's body owed.
+void ActOnRequestedControl(RuntimeEffects& effects, base::SourceLocation at) {
+  RunningState* running = effects.TryRunning();
+  if (running == nullptr) {
     return;
   }
-  // LRM 35.9 item b.
-  const base::SourceLocationScope bound(at);
-  effects.ReportDesignFailure(
-      base::DiagMessage(
-          "an imported task returned while its execution thread was in the "
-          "disabled state without returning 1"));
+  const std::optional<ForeignControl> requested =
+      running->import_calls.TakeRequestedControl();
+  if (!requested.has_value()) {
+    return;
+  }
+  switch (requested->task) {
+    case ForeignControl::Task::kFinish:
+      FinishWithoutRaising(effects, requested->finish_number, at);
+      return;
+    case ForeignControl::Task::kStop:
+      StopWithoutRaising(effects, requested->finish_number, at);
+      return;
+  }
+  throw InternalError("a requested control names no task");
 }
 
-void CheckImportFunctionAcknowledged(
+}  // namespace
+
+void ContextImportTaskReturned(
+    RuntimeEffects& effects, std::int32_t returned, base::SourceLocation at) {
+  if (RunningIsDisabled(effects) && returned != 1) {
+    // LRM 35.9 item b.
+    const base::SourceLocationScope bound(at);
+    effects.ReportDesignFailure(
+        base::DiagMessage(
+            "an imported task returned while its execution thread was in the "
+            "disabled state without returning 1"));
+  }
+  ActOnRequestedControl(effects, at);
+}
+
+void ContextImportFunctionReturned(
     RuntimeEffects& effects, base::SourceLocation at) {
-  if (!RunningDepartureIsDue(effects)) {
-    return;
-  }
   RunningState* running = effects.TryRunning();
-  if (running != nullptr && running->import_calls.InnermostAcknowledgedStop()) {
-    return;
+  if (RunningIsDisabled(effects) &&
+      (running == nullptr ||
+       !running->import_calls.InnermostAcknowledgedStop())) {
+    // LRM 35.9 item c.
+    const base::SourceLocationScope bound(at);
+    effects.ReportDesignFailure(
+        base::DiagMessage(
+            "an imported function returned while its execution thread was in "
+            "the disabled state without calling 'svAckDisabledState'"));
   }
-  // LRM 35.9 item c.
-  const base::SourceLocationScope bound(at);
-  effects.ReportDesignFailure(
-      base::DiagMessage(
-          "an imported function returned while its execution thread was in "
-          "the disabled state without calling 'svAckDisabledState'"));
+  ActOnRequestedControl(effects, at);
+}
+
+auto RequestControl(RuntimeEffects& effects, ForeignControl control) -> bool {
+  RunningState* running = effects.TryRunning();
+  return running != nullptr && running->import_calls.RequestControl(control);
 }
 
 void CheckExportReachable(RuntimeEffects& effects) {
   RequireAContextImportCall(effects);
-  if (!RunningDepartureIsDue(effects)) {
+  if (!RunningIsDisabled(effects)) {
     return;
   }
   // LRM 35.9 item d.

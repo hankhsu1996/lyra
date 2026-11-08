@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -79,10 +80,6 @@ auto ErrorCodeOf(int code) -> std::error_code {
   return {code, std::system_category()};
 }
 
-auto IsFileDescriptor(std::int32_t descriptor) -> bool {
-  return (static_cast<std::uint32_t>(descriptor) & (1U << 31U)) != 0U;
-}
-
 // The index the low 31 bits of a file descriptor carry (LRM 21.3.1).
 auto IndexOf(std::int32_t descriptor) -> std::size_t {
   return static_cast<std::uint32_t>(descriptor) & 0x7FFF'FFFFU;
@@ -97,7 +94,7 @@ auto FdOf(std::size_t index) -> std::int32_t {
 // any value that is not one (zero, an MCD, out of range).
 auto IndexInTable(std::int32_t descriptor, std::size_t size)
     -> std::optional<std::size_t> {
-  if (!IsFileDescriptor(descriptor)) return std::nullopt;
+  if (!FileTable::IsFileDescriptor(descriptor)) return std::nullopt;
   const std::size_t idx = IndexOf(descriptor);
   if (idx >= size) return std::nullopt;
   return idx;
@@ -121,7 +118,7 @@ FileTable::FileTable() {
   const auto pre_open = [this](std::unique_ptr<File> file, const char* name) {
     Slot& slot = fd_slots_.emplace_back();
     slot.file = std::move(file);
-    slot.destination = name;
+    slot.name = name;
   };
   pre_open(
       std::make_unique<File>(STDIN_FILENO, true, false, kBufferBytes, nullptr),
@@ -170,10 +167,80 @@ void FileTable::ForEachOpenSlot(std::int64_t descriptor_value, Visit visit) {
   const auto raw = static_cast<std::uint32_t>(descriptor);
   for (std::size_t bit = 0; bit < kChannelCount; ++bit) {
     if ((raw & (1U << bit)) == 0U) continue;
-    Slot& slot = bit == 0 ? fd_slots_.at(IndexOf(support::kStdoutFd))
-                          : channel_slots_.at(bit);
+    Slot& slot = ChannelSlot(bit);
     if (slot.file != nullptr) visit(slot);
   }
+}
+
+auto FileTable::DestinationOf(const Slot& slot) const -> std::string {
+  return IsPreOpened(slot) ? slot.name : std::format("'{}'", slot.name);
+}
+
+auto FileTable::DescriptorOpenedAs(std::string_view name) -> std::int32_t {
+  for (std::size_t bit = 1; bit < kChannelCount; ++bit) {
+    if (const Slot& slot = channel_slots_.at(bit);
+        slot.file != nullptr && slot.name == name) {
+      return static_cast<std::int32_t>(1U << bit);
+    }
+  }
+  for (std::size_t idx = kPreOpenedCount; idx < fd_slots_.size(); ++idx) {
+    if (const Slot& slot = fd_slots_.at(idx);
+        slot.file != nullptr && slot.name == name) {
+      return FdOf(idx);
+    }
+  }
+  return 0;
+}
+
+auto FileTable::IsFileDescriptor(std::int64_t descriptor) -> bool {
+  return (static_cast<std::uint32_t>(AsInt32(descriptor)) & (1U << 31U)) != 0U;
+}
+
+auto FileTable::ChannelSlot(std::size_t bit) -> Slot& {
+  return bit == 0 ? fd_slots_.at(IndexOf(support::kStdoutFd))
+                  : channel_slots_.at(bit);
+}
+
+template <typename Keep>
+auto FileTable::PartWhere(std::int64_t descriptor, Keep keep) -> std::int32_t {
+  const std::int32_t named = AsInt32(descriptor);
+  if (IsFileDescriptor(named)) {
+    const Slot* slot = SlotOf(named);
+    return slot != nullptr && slot->file != nullptr && keep(*slot) ? named : 0;
+  }
+  std::uint32_t part = 0;
+  const auto raw = static_cast<std::uint32_t>(named);
+  for (std::size_t bit = 0; bit < kChannelCount; ++bit) {
+    if ((raw & (1U << bit)) == 0U) continue;
+    const Slot& slot = ChannelSlot(bit);
+    if (slot.file != nullptr && keep(slot)) part |= 1U << bit;
+  }
+  return static_cast<std::int32_t>(part);
+}
+
+auto FileTable::OpenPartOf(std::int64_t descriptor) -> std::int32_t {
+  return PartWhere(descriptor, [](const Slot&) { return true; });
+}
+
+auto FileTable::ClosablePartOf(std::int64_t descriptor) -> std::int32_t {
+  return PartWhere(
+      descriptor, [this](const Slot& slot) { return !IsPreOpened(slot); });
+}
+
+auto FileTable::NameOf(std::int64_t descriptor)
+    -> std::optional<std::string_view> {
+  const std::int32_t named = AsInt32(descriptor);
+  if (OpenPartOf(named) != named || named == 0) {
+    return std::nullopt;
+  }
+  if (IsFileDescriptor(named)) {
+    return SlotOf(named)->name;
+  }
+  const auto raw = static_cast<std::uint32_t>(named);
+  if (!std::has_single_bit(raw)) {
+    return std::nullopt;
+  }
+  return ChannelSlot(static_cast<std::size_t>(std::countr_zero(raw))).name;
 }
 
 auto FileTable::SlotOf(std::int32_t fd) -> Slot* {
@@ -317,7 +384,6 @@ auto FileTable::OpenFile(
     std::string_view name, std::optional<std::string_view> mode)
     -> std::expected<std::int32_t, std::error_code> {
   const std::string name_z{name};
-  const std::string destination = std::format("'{}'", name);
   // The table changes shape while a file is added, and an ending that arrives
   // meanwhile reads it whole.
   const StopSignalsHeld held;
@@ -340,7 +406,7 @@ auto FileTable::OpenFile(
         ::fileno(opened.get()), permissions->read, permissions->write,
         kBufferBytes, nullptr);
     slot.opened_as = std::move(opened);
-    slot.destination = destination;
+    slot.name = name;
     return FdOf(idx);
   }
   // MCD path: open write-truncate (LRM 21.3.1 omits the type for MCD form).
@@ -352,7 +418,7 @@ auto FileTable::OpenFile(
     slot.file = std::make_unique<File>(
         ::fileno(opened.get()), false, true, kBufferBytes, nullptr);
     slot.opened_as = std::move(opened);
-    slot.destination = destination;
+    slot.name = name;
     return static_cast<std::int32_t>(1U << bit);
   }
   // Every channel in use: the file just opened closes with this scope so
@@ -380,7 +446,7 @@ void FileTable::Close(std::int64_t descriptor) {
       closed_losses_.push_back(
           ClosedLoss{
               .asked_by = AsInt32(descriptor),
-              .lost = {.destination = slot.destination, .refused = lost}});
+              .lost = {.destination = DestinationOf(slot), .refused = lost}});
     }
     // LRM 21.3.2: fire cancel on any pending observers; replace the source
     // so the next $fopen to take this place starts with a fresh signal.
@@ -616,11 +682,11 @@ auto FileTable::Error(std::int64_t fd) -> TextRead {
 
 auto FileTable::Finish() -> std::vector<LostOutput> {
   std::vector<LostOutput> lost;
-  const auto finish = [&lost](Slot& slot) {
+  const auto finish = [this, &lost](Slot& slot) {
     if (slot.file == nullptr) return;
     slot.file->HandOver();
     if (const std::error_code refused = slot.file->TakeUntoldLoss()) {
-      lost.push_back({.destination = slot.destination, .refused = refused});
+      lost.push_back({.destination = DestinationOf(slot), .refused = refused});
     }
   };
   std::ranges::for_each(fd_slots_, finish);

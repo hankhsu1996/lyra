@@ -175,10 +175,12 @@ auto RuntimeProcess::TakeInnermostRaisedError() -> std::exception_ptr {
 
 void RuntimeProcess::Suspend() {
   // A process on its way to terminating is handed control only so that it can
-  // finish leaving; stopping it there would leave it never terminated.
+  // finish leaving; stopping it there would leave it never terminated. One that
+  // ended the run runs nothing of the design again, so there is nothing to
+  // stop.
   if (execution_state_ == ProcessExecutionState::kSuspended ||
       execution_state_ == ProcessExecutionState::kTerminated ||
-      termination_requested_) {
+      termination_requested_ || running_.ended_the_run) {
     return;
   }
   // Take the leaf off whatever could resume it -- the awaiter it is parked on
@@ -390,12 +392,12 @@ void RuntimeProcess::RunUndispatched(
     return;
   }
   // Nothing outside it names an execution run this way, so what ended it is an
-  // error it met, already reported where it was received. It was met where the
-  // executing process stands, so it stops that process the same way; an
-  // occurrence the scheduler itself carries out stops nothing more.
-  RuntimeProcess* const caller = effects.TryCurrentProcess();
-  if (caller == nullptr) return;
-  caller->RequestTermination(ProcessTerminationCause::kKilled);
+  // error it met, already reported where it was received, which ended the run.
+  // It was met where what is running stands -- a process, or code on no thread
+  // -- so that ended the run and leaves the same way; an occurrence the
+  // scheduler itself carries out, with nothing running, stops nothing more.
+  if (effects.TryRunning() == nullptr) return;
+  RecordRunningEndedTheRun(effects);
   RaiseUnclaimableEffect();
 }
 

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <list>
+#include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -24,6 +26,14 @@ struct UnissuedHandle {
 // declaration sits in no instance -- or an address that is none.
 using CurrentDpiHandle = std::variant<Scope*, UnissuedHandle>;
 
+// A simulation control task foreign code asked for through `vpi_control`
+// (LRM 38.4), with the diagnostic level the task is handed (LRM 20.2).
+struct ForeignControl {
+  enum class Task : std::uint8_t { kFinish, kStop };
+  Task task;
+  std::int64_t finish_number;
+};
+
 // The DPI-C import calls this execution is inside (LRM 35.5.3), innermost last.
 // A `context` import enters one for the duration of its foreign call and leaves
 // it however that call ends, so the chain is non-empty only inside one -- which
@@ -32,8 +42,10 @@ using CurrentDpiHandle = std::variant<Scope*, UnissuedHandle>;
 //
 // An entry carries the handle the call has current, which an export the foreign
 // side calls back resolves against, whether the foreign frame has acknowledged
-// that this execution must stop (LRM 35.9 item c), and where the design wrote
-// the call, which is where what foreign code does wrong under it is reported.
+// that this execution must stop (LRM 35.9 item c), a control task the foreign
+// side asked for through VPI to run as the call returns (LRM 38.4), and where
+// the design wrote the call, which is where what foreign code does wrong under
+// it is reported.
 // Each is a fact of the call rather than of the execution: a call reached from
 // inside another has its own. The call's location is kept rather than bound,
 // since an imported task can suspend inside its foreign call.
@@ -110,6 +122,27 @@ class ImportCallChain {
     return calls_.empty() || calls_.back().acknowledged_stop;
   }
 
+  // `vpi_control` (LRM 38.4): the task foreign code asks for runs "upon return
+  // of the application routine", so it is kept on the innermost call and done
+  // as that call returns; a later request replaces an earlier one. Outside any
+  // such call no return is coming to do it at, so nothing is kept, which the
+  // caller answers as the routine's failure.
+  auto RequestControl(ForeignControl control) -> bool {
+    if (calls_.empty()) {
+      return false;
+    }
+    calls_.back().requested_control = control;
+    return true;
+  }
+
+  // What the innermost call was asked to do as it returns, taken.
+  auto TakeRequestedControl() -> std::optional<ForeignControl> {
+    if (calls_.empty()) {
+      return std::nullopt;
+    }
+    return std::exchange(calls_.back().requested_control, std::nullopt);
+  }
+
   // Keeps a copy of `text` until the innermost call is left, and answers its
   // characters. What is kept never moves, because its address is what the
   // foreign side holds.
@@ -121,6 +154,7 @@ class ImportCallChain {
   struct ImportCall {
     CurrentDpiHandle current;
     bool acknowledged_stop = false;
+    std::optional<ForeignControl> requested_control = std::nullopt;
     // How many strings were kept when the call was entered, which is how many
     // are left once it is left.
     std::size_t kept_from;

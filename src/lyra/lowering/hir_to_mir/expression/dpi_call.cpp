@@ -825,19 +825,21 @@ auto PopulateForeignImportBoundary(
     if (!stored) return std::unexpected(std::move(stored.error()));
   }
 
-  // LRM 35.9 items b and c, checked where the foreign frame has just returned
-  // and its evidence is still in hand. Only a `context` import may reach an
-  // exported subroutine (LRM 35.5.3), and a plain one that does is refused at
-  // the export, so a plain import's boundary carries no check.
+  // What the foreign frame left for its return is settled where it has just
+  // returned and its evidence is still in hand: LRM 35.9 items b and c, and a
+  // control task it asked for through VPI (LRM 38.4). Only a `context` import
+  // may reach an exported subroutine or VPI (LRM 35.5.3), and a plain one that
+  // reaches an export is refused there, so a plain import's boundary has
+  // nothing to settle.
   if (import.is_context) {
     if (import.is_task) {
       AppendRuntimeEffectStmt(
-          unit_lowerer, body, support::BuiltinFn::kCheckImportTaskAcknowledged,
+          unit_lowerer, body, support::BuiltinFn::kContextImportTaskReturned,
           {body.ReadLocal(*ret_temp, call_type)});
     } else {
       AppendRuntimeEffectStmt(
           unit_lowerer, body,
-          support::BuiltinFn::kCheckImportFunctionAcknowledged, {});
+          support::BuiltinFn::kContextImportFunctionReturned, {});
     }
   }
 
@@ -1223,8 +1225,9 @@ void CloseForeignCallerRegion(
 // a departure or an error instead of answering. An exported name states it
 // from the kind of subroutine it is and what its result crosses as, so its
 // symbol and its entry answer alike. A task always returns the protocol's int
-// (LRM 35.8), which says whether a disable is active, so a task's two ways out
-// meet here, and a function returning nothing answers nothing. LRM 35.9 fixes
+// (LRM 35.8), which the runtime answers -- and never hands back where the
+// execution ended the run -- so a task's two ways out meet here, and a
+// function returning nothing answers nothing. LRM 35.9 fixes
 // that value for a task alone, so a function returning a value answers the
 // zero of its result's C type, which needs no SystemVerilog type to state and,
 // for a string, no storage to keep.
@@ -1242,8 +1245,8 @@ void ReturnTheFallbackAnswer(
                           mir::CallExpr{
                               .callee =
                                   mir::Direct{
-                                      .target =
-                                          support::BuiltinFn::kDisableIsActive},
+                                      .target = support::BuiltinFn::
+                                          kExportedTaskReturnValue},
                               .arguments = {block.Add(
                                   BuildCurrentRuntimeCallExpr(module.Unit()))}},
                       .type =

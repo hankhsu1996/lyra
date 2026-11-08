@@ -205,11 +205,13 @@ inline constexpr std::array<std::string_view, 3> kDesignCompileFlags{
 // prepared header the same way whichever compiler it runs.
 inline constexpr std::string_view kPreludeOfferHeader = "pch/prelude.hpp";
 inline constexpr std::string_view kPreparedHeaderSuffix = ".gch";
-// The DPI-C boundary surface a user's foreign sources compile against (LRM 35):
-// the generated prototypes plus the standard header they are spelled in. Both
-// sit at the project root so one include path reaches them.
+// The foreign boundary surface a user's foreign sources compile against: the
+// generated DPI-C prototypes (LRM 35), and the standard's headers they and VPI
+// (LRM 36 to 38) are spelled in. All sit at the project root so one include
+// path reaches them.
 inline constexpr std::string_view kDpiAbiHeader = "dpi.h";
-inline constexpr std::string_view kSvdpiHeader = "svdpi.h";
+inline constexpr std::array<std::string_view, 4> kStandardHeaders = {
+    "svdpi.h", "vpi_user.h", "sv_vpi_user.h", "vpi_compatibility.h"};
 // Where a portable project keeps its copies of the user's DPI-C link inputs,
 // so the directory builds on another machine without reaching back to their
 // originals, and where its program finds a shared library among them when it

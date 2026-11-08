@@ -289,10 +289,10 @@ struct Unwound {
 [[nodiscard]] auto ClassifyUnwind() -> Unwound;
 
 // Makes a raised error the ending it is (LRM 20.10): reports it, ends the run,
-// and asks the running execution, if there is one, to stop. A design's error
-// is the fatal report and the run ends as `$fatal` ends it; a failure of the
-// tool ends the run without the design's final procedures. What remains is the
-// departure, which the caller states the way its own frame leaves.
+// and records that what is running ended it. A design's error is the fatal
+// report and the run ends as `$fatal` ends it; a failure of the tool ends the
+// run without the design's final procedures. What remains is the departure,
+// which the caller states the way its own frame leaves.
 void SettleRaised(RuntimeEffects& effects, const std::exception_ptr& raised);
 
 // What a handler received, as the control effect it now carries. A handler
@@ -338,12 +338,13 @@ void EnterCancellationTarget(
 void LeaveCancellationTarget(
     RuntimeEffects& effects, CancellationTarget* target);
 
-// LRM 9.6.2, 9.7: raises the departure owed here, if one is. Reached where an
-// execution can next run a user statement -- a leaf wait resuming, a foreign
-// call returning, and the `disable` statement itself -- so no execution runs a
-// statement it has been told not to. The outermost invalidated target wins,
-// because leaving it also leaves everything nested in it; a termination names
-// no target, because nothing may continue past one.
+// LRM 9.6.2, 9.7, 20.2: raises the departure owed here, if one is. Reached
+// where an execution can next run a user statement -- a leaf wait resuming, a
+// foreign call returning, and the `disable` statement itself -- so no
+// execution runs a statement it has been told not to. The outermost
+// invalidated target wins, because leaving it also leaves everything nested in
+// it; a termination, and the run's end, name no target, because nothing may
+// continue past either.
 void TakeDepartureIfDue(RuntimeProcess& process);
 
 // The same question where the body itself states it, because nothing else runs
@@ -352,11 +353,22 @@ void TakeDepartureIfDue(RuntimeProcess& process);
 // control with no resumption to ask on its behalf (LRM 35.9).
 void TakeDepartureIfDue(RuntimeEffects& effects);
 
-// LRM 9.6.2, 9.7: whether a departure is owed to what is running -- a process
-// whose termination is due or a target of which it is inside was disabled, or
-// code on no thread inside a target it disabled. Where nothing runs, none is
-// owed.
+// LRM 9.6.2, 9.7: whether a departure is owed to what is running -- it is
+// disabled, or it ended the run (LRM 20.2). Where nothing runs, none is owed.
 [[nodiscard]] auto RunningDepartureIsDue(RuntimeEffects& effects) -> bool;
+
+// LRM 35.9: whether what is running is disabled -- a target it is inside was
+// disabled, or its process was terminated (`disable fork`, `kill`, `$exit`),
+// which LRM 9.7 counts with a disable -- so a foreign frame beneath it is in
+// the disabled state and is held to the protocol. Ending the run is not among
+// these: the run does not go on past it, so nothing asks the foreign side to
+// cooperate. Where nothing runs, nothing is disabled.
+[[nodiscard]] auto RunningIsDisabled(RuntimeEffects& effects) -> bool;
+
+// Records that what is running ended the run, so it leaves at the next point
+// that asks and nothing of the design runs in it again (LRM 20.2). Where
+// nothing runs, there is nothing to record.
+void RecordRunningEndedTheRun(RuntimeEffects& effects);
 
 // Whether a region of `target` lands the effect it is holding (LRM 9.6.2),
 // asked once the region has left its own extent: true when the effect names

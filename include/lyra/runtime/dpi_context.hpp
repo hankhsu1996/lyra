@@ -57,43 +57,59 @@ void RequireAContextImportCall(RuntimeEffects& effects);
 [[nodiscard]] auto ImportCallWrittenAt(RuntimeEffects& effects)
     -> base::SourceLocation;
 
-// LRM 35.8: the int an exported task's entry hands its foreign caller, and what
-// `svIsDisabledState` answers -- 1 while a disable is active on this
-// execution thread, 0 otherwise. Active covers everything that stops an
-// execution: a disable reaching a block it is inside, its process being
-// terminated, and the run ending. The standard names only the first, because
-// it is the only one it lets reach a foreign call and return to it; the others
-// reach the foreign side the same way here, and they are one answer because
-// foreign code can do only one thing about any of them -- stop calling in and
-// return. An execution running none of the design's own code has nothing to
-// stop, and answers 0.
+// What `svIsDisabledState` answers (LRM 35.9): 1 while this execution thread is
+// disabled -- a disable reached a block it is inside, or its process was
+// terminated, which LRM 9.7 counts with a disable -- and 0 otherwise. An
+// execution that ended the run is not disabled: the run does not go on past
+// it, so nothing asks the foreign side to cooperate, and it answers 0. An
+// execution running none of the design's own code has nothing to stop, and
+// answers 0.
 [[nodiscard]] auto DisableIsActive(RuntimeEffects& effects) -> std::int32_t;
+
+// LRM 35.8: the int an exported task's entry hands its foreign caller, which is
+// what `svIsDisabledState` answers. Where the execution ended the run, the
+// entry hands back nothing and never returns: the task waits on the foreign
+// stack until the run's end releases that stack, as a task waiting inside the
+// exported body would be. Foreign code told nothing of the run's end may call
+// in for ever, and a simulator exits at `$finish` (LRM 20.2), so it is not
+// handed control again. Only an imported task's call has a stack that can
+// wait; an exported task reached from anything else answers as an exported
+// function does, and the run leaves at that call's boundary.
+[[nodiscard]] auto ExportedTaskReturnValue(RuntimeEffects& effects)
+    -> std::int32_t;
 
 // `svAckDisabledState` (LRM 35.9 item c): the foreign frame now running says it
 // is following the protocol, which is what its boundary holds an imported
 // function to before it returns.
 void AcknowledgeStop(RuntimeEffects& effects);
 
-// LRM 35.9's checks on the foreign side, each reported where its evidence is
-// and none of them leaving by an effect -- each holds only once the execution
-// has been told to stop, so what is left is to report and end the run, and the
-// execution departs, as it already must, at the boundary where control comes
-// back.
-//
-// Item b: an imported task that returns while its execution must stop returns
-// 1. Item c: an imported function in that state calls `svAckDisabledState`
-// before returning. Item d: no exported subroutine is called at all once the
-// state is entered, which is checked where such a call arrives. The same check
-// first holds the call to LRM 35.5.3, which lets an export be called only from
-// inside a `context` import's call; that breach has no such call to be placed
-// at, so it is raised as the run's own, and the region of the function foreign
-// code called settles it. Items b and c are reported at the import call `at`,
-// and item d at the call foreign code is running under.
-void CheckImportTaskAcknowledged(
+// The foreign call of a `context` import has returned, `at` being where the
+// design wrote the call: what the foreign side left for its return is settled
+// here, while the call is still the innermost. First LRM 35.9's protocol: an
+// imported task that returns while its execution must stop returns 1 (item b),
+// and an imported function in that state calls `svAckDisabledState` before
+// returning (item c). Neither leaves by an effect -- each holds only once the
+// execution is disabled, so what is left is to report and end the
+// run, and the execution departs, as it already must, here. Then a simulation
+// control task foreign code asked for through `vpi_control` runs, as LRM 38.4
+// says, upon the return.
+void ContextImportTaskReturned(
     RuntimeEffects& effects, std::int32_t returned, base::SourceLocation at);
-void CheckImportFunctionAcknowledged(
+void ContextImportFunctionReturned(
     RuntimeEffects& effects, base::SourceLocation at);
+
+// LRM 35.9 item d: no exported subroutine is called at all once the execution
+// is in the disabled state, which is checked where such a call arrives. The
+// same check first holds the call to LRM 35.5.3, which lets an export be called
+// only from inside a `context` import's call; that breach has no such call to
+// be placed at, so it is raised as the run's own, and the region of the
+// function foreign code called settles it. Item d is reported at the call
+// foreign code is running under.
 void CheckExportReachable(RuntimeEffects& effects);
+
+// `vpi_control` asks for `control` once the context import foreign code is
+// running in returns (LRM 38.4), answering whether one is there to return.
+auto RequestControl(RuntimeEffects& effects, ForeignControl control) -> bool;
 
 // Foreign code is about to run (LRM 35): each side hands over the standard
 // output it holds, so the two print in the order written.

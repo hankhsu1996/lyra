@@ -139,21 +139,21 @@ struct ExecutionContext {
   }
 };
 
-// What is in force while something runs. Four things are: the generator a
+// What is in force while something runs. Five things are: the generator a
 // randomization call draws from (LRM 18.14), the disable targets it is inside
-// (LRM 9.6.2), the DPI-C import calls it is inside (LRM 35.5.3), and the
+// (LRM 9.6.2), the DPI-C import calls it is inside (LRM 35.5.3), the
 // evaluation of a waited expression it is making, whose report an exported
-// function foreign code calls reports into (LRM 9.4.2). None is ever handed to
-// the code that reads it -- a subroutine body is compiled once and reached from
-// more than one runner, so each is read from whatever is running rather than
-// passed in.
+// function foreign code calls reports into (LRM 9.4.2), and whether it ended
+// the run (LRM 20.2). None is ever handed to the code that reads it -- a
+// subroutine body is compiled once and reached from more than one runner, so
+// each is read from whatever is running rather than passed in.
 //
 // A process owns one for its whole life, so two foreign calls suspended on
 // different processes never share a chain. Code that runs on no thread owns
 // one for its single run, which is why this is not state of a process: a
 // variable declaration assignment runs before any procedure starts (LRM 10.5,
 // 26.2), and a `$strobe` argument is evaluated after every process of its time
-// step has run (LRM 21.2.2), and both can reach all four.
+// step has run (LRM 21.2.2), and both can reach every one of them.
 //
 // The generator is not among what this owns. A process's is the generator of
 // the object the process is, which its `srandom()` seeds (LRM 18.13.3), so it
@@ -199,6 +199,13 @@ struct RunningState {
   ImportCallChain import_calls;
   // Null where no evaluation is in progress.
   ReadReport* evaluation_report = nullptr;
+  // Whether this ended the run -- by a task that ends it, by a `vpi_control`
+  // carried out as an import returned, or by an error that ended it -- so it
+  // leaves at the next point that asks, and nothing of the design runs in it
+  // again (LRM 20.2). Unlike a disable or a kill, it puts no foreign frame
+  // beneath it in the disabled state (LRM 35.9), since the run does not go on
+  // past it.
+  bool ended_the_run = false;
 };
 
 // What the design's code runs in where no thread runs it: a static

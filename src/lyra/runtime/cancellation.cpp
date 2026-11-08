@@ -69,6 +69,9 @@ void TakeDepartureIfDue(RuntimeEffects& effects) {
     RaiseUnclaimableEffect();
   }
   if (const RunningState* running = effects.TryRunning(); running != nullptr) {
+    if (running->ended_the_run) {
+      RaiseUnclaimableEffect();
+    }
     if (CancellationTarget* target = running->targets.OutermostInvalidated();
         target != nullptr) {
       throw ControlEffect{.target = target};
@@ -77,7 +80,7 @@ void TakeDepartureIfDue(RuntimeEffects& effects) {
 }
 
 void TakeDepartureIfDue(RuntimeProcess& process) {
-  if (process.TerminationIsDue()) {
+  if (process.TerminationIsDue() || process.EndedTheRun()) {
     RaiseUnclaimableEffect();
   }
   if (CancellationTarget* target =
@@ -97,6 +100,12 @@ auto RegionLandsEffect(
 }
 
 auto RunningDepartureIsDue(RuntimeEffects& effects) -> bool {
+  const RunningState* running = effects.TryRunning();
+  return RunningIsDisabled(effects) ||
+         (running != nullptr && running->ended_the_run);
+}
+
+auto RunningIsDisabled(RuntimeEffects& effects) -> bool {
   if (const RuntimeProcess* process = effects.TryCurrentProcess();
       process != nullptr && process->TerminationIsDue()) {
     return true;
@@ -104,6 +113,12 @@ auto RunningDepartureIsDue(RuntimeEffects& effects) -> bool {
   const RunningState* running = effects.TryRunning();
   return running != nullptr &&
          running->targets.OutermostInvalidated() != nullptr;
+}
+
+void RecordRunningEndedTheRun(RuntimeEffects& effects) {
+  if (RunningState* running = effects.TryRunning(); running != nullptr) {
+    running->ended_the_run = true;
+  }
 }
 
 void RaiseUnclaimableEffect() {
@@ -128,10 +143,7 @@ auto ClassifyUnwind() -> Unwound {
 
 void SettleRaised(RuntimeEffects& effects, const std::exception_ptr& raised) {
   ReportRaisedError(effects, raised);
-  if (RuntimeProcess* process = effects.TryCurrentProcess();
-      process != nullptr) {
-    process->RequestTermination(ProcessTerminationCause::kKilled);
-  }
+  RecordRunningEndedTheRun(effects);
 }
 
 auto ReceiveDeparture() -> ControlEffect {

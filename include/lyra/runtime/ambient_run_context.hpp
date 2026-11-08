@@ -11,9 +11,10 @@ class Scope;
 class RuntimeEffects;
 
 // The design context in effect for the duration of a running simulation. A
-// foreign C function that calls back an exported SV subroutine (LRM 35.5), or
-// that queries the DPI scope surface (LRM 35.5.3, Annex H), reaches the runtime
-// with plain C arguments and no design pointer, so it has nothing to reach the
+// foreign C function that calls back an exported SV subroutine (LRM 35.5), that
+// queries the DPI scope surface (LRM 35.5.3, Annex H), or that calls a VPI
+// routine (LRM 38), reaches the runtime with plain C arguments and no design
+// pointer, so it has nothing to reach the
 // run from unless the runtime anchors it ambiently. This holds the run's
 // effects facade for the executing process and time queries, and the scope
 // handles the run has given foreign code.
@@ -40,6 +41,11 @@ class AmbientRunContext {
   }
 
   static auto Current() -> AmbientRunContext&;
+
+  // The context in effect, or null where no simulation is running on this
+  // thread, for a caller that answers that case itself rather than as an
+  // error of the design.
+  static auto TryCurrent() -> AmbientRunContext*;
 
  private:
   RuntimeEffects* effects_;

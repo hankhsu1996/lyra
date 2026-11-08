@@ -1,0 +1,3 @@
+# The standard's headers are kept as the standard lists them (README.md).
+DisableFormat: true
+SortIncludes: Never

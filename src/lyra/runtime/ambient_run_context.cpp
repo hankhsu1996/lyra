@@ -46,6 +46,10 @@ AmbientRunContext::~AmbientRunContext() {
   CurrentSlot() = nullptr;
 }
 
+auto AmbientRunContext::TryCurrent() -> AmbientRunContext* {
+  return CurrentSlot();
+}
+
 auto AmbientRunContext::Current() -> AmbientRunContext& {
   if (CurrentSlot() == nullptr) {
     // LRM 35.5.3.

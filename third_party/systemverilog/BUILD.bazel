@@ -5,15 +5,39 @@
 # does not depend on the frontend library.
 #
 # Do not modify these headers. They are standard ABI contracts.
-# Source: IEEE Std 1800-2023, Annex I (svdpi.h).
+# Source: IEEE Std 1800-2023, Annexes I, K, L and M.
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
-exports_files(["svdpi.h"])
+# The headers a user's foreign sources compile against, each shipped beside
+# the program's generated DPI-C header.
+filegroup(
+    name = "headers",
+    srcs = [
+        "sv_vpi_user.h",
+        "svdpi.h",
+        "vpi_compatibility.h",
+        "vpi_user.h",
+    ],
+    visibility = ["//visibility:public"],
+)
 
 cc_library(
     name = "svdpi",
     hdrs = ["svdpi.h"],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
+
+# The runtime defines the routines these declare, so the declarations hold its
+# definitions to the standard's prototypes.
+cc_library(
+    name = "vpi",
+    hdrs = [
+        "sv_vpi_user.h",
+        "vpi_compatibility.h",
+        "vpi_user.h",
+    ],
     includes = ["."],
     visibility = ["//visibility:public"],
 )
