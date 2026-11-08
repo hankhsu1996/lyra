@@ -570,19 +570,26 @@ class UnitLowerer {
   [[nodiscard]] auto ConformanceOf(hir::ClassId cls) const
       -> std::vector<mir::ConformingBehavior>;
 
-  // Receiver-less callable of a unit's namespace (LRM 26.3 package function or
-  // task). A body of that same unit names the position its declaration sits at,
-  // because it holds the arena; a body outside it has only the identifier the
-  // namespace published, under which a body is declared here once.
+  // The callable a subroutine of a namespace is (LRM 26.3): one of this unit's
+  // own bodies, or one declared here for another unit's.
   auto MakeNamespaceCallableTarget(const hir::NamespaceSubroutineRef& ref)
       -> mir::DirectTarget;
 
-  // The cell a variable of a unit's namespace is (LRM 26.2), whose cell is of
-  // `cell_type`: this unit's own, or one declared here for the identifier
-  // another unit published, once per variable.
-  auto NamespaceVariable(
-      const hir::NamespaceValueRef& ref, mir::TypeId cell_type)
+  // The cell a variable of a namespace is (LRM 26.2): this unit's own, or one
+  // declared here for another unit's.
+  auto NamespaceVariable(const hir::NamespaceValueRef& ref)
       -> mir::StaticVariableId;
+
+  // The type of that cell.
+  [[nodiscard]] auto NamespaceCellType(const hir::NamespaceValueRef& ref)
+      -> mir::TypeId;
+
+  // States that this unit's own namespace defines `ref` as `defined`, before
+  // anything naming it lowers.
+  void DefineOwnNamespaceMember(
+      const hir::NamespaceValueRef& ref, mir::StaticVariableId defined);
+  void DefineOwnNamespaceMember(
+      const hir::NamespaceSubroutineRef& ref, mir::CallableId defined);
 
   // A subroutine a unit published on the object its instances are (LRM 23.6,
   // 25.7): a virtual method of that unit's published class, which the class
@@ -766,13 +773,11 @@ class UnitLowerer {
   // callables beyond its methods each one this unit declares takes.
   base::Translation<hir::ClassId, mir::ClassId> class_identities_;
   std::map<hir::ClassId, ClassCallables> class_callables_;
-  // The callable and the cell each member of a unit's namespace this unit names
-  // is, by that unit and the name the member was published under.
-  std::map<std::pair<std::string, std::string>, mir::CallableId>
-      namespace_callables_;
-  std::map<
-      std::pair<std::string, support::QualifiedName>, mir::StaticVariableId>
-      namespace_variables_;
+  // The callable and the cell each member of a namespace this unit names is:
+  // this unit's own as it defines them, and another's as declared here the
+  // first time a reference reaches it.
+  std::map<hir::NamespaceSubroutineRef, mir::CallableId> namespace_callables_;
+  std::map<hir::NamespaceValueRef, mir::StaticVariableId> namespace_variables_;
   // The class each covergroup the unit names is written as, of this unit or
   // another.
   base::Translation<hir::CovergroupId, mir::ClassId> covergroup_identities_;

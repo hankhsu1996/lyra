@@ -1323,6 +1323,314 @@ void ReportClassReads(
   }
 }
 
+// What a report says of a reference to the namespace `owner` where the unit
+// holds no declaration of it, and nothing where it holds one.
+auto UnheldNamespace(const CompilationUnit& unit, NamespaceId owner)
+    -> std::optional<std::string> {
+  if (owner.value < unit.namespaces.size() &&
+      unit.namespaces.HasDeclaration(owner)) {
+    return std::nullopt;
+  }
+  return std::format(
+      "namespace {}, which unit '{}' holds no declaration of", owner.value,
+      unit.name);
+}
+
+// What a report says of a reference to the `kind` at `position` of the
+// namespace `owner`, which declares `count` of them, and nothing where it
+// declares one there.
+auto UndeclaredNamespaceMember(
+    const CompilationUnit& unit, NamespaceId owner, std::string_view kind,
+    std::uint32_t position, std::size_t count) -> std::optional<std::string> {
+  if (position < count) return std::nullopt;
+  return std::format(
+      "{} {} of namespace '{}', which declares {}", kind, position,
+      unit.namespaces.KeyOf(owner).unit_name, count);
+}
+
+auto MissingNamespaceVariable(
+    const CompilationUnit& unit, const NamespaceValueRef& ref)
+    -> std::optional<std::string> {
+  if (auto unheld = UnheldNamespace(unit, ref.owner)) return unheld;
+  return UndeclaredNamespaceMember(
+      unit, ref.owner, "variable", ref.variable.value,
+      unit.namespaces.Declaration(ref.owner).variables.size());
+}
+
+auto MissingNamespaceSubroutine(
+    const CompilationUnit& unit, NamespaceId owner,
+    NamespaceSubroutineId subroutine) -> std::optional<std::string> {
+  if (auto unheld = UnheldNamespace(unit, owner)) return unheld;
+  return UndeclaredNamespaceMember(
+      unit, owner, "subroutine", subroutine.value,
+      unit.namespaces.Declaration(owner).subroutines.size());
+}
+
+// Adds one line to `lines` for each expression `reaches` reached that names a
+// member of a namespace the unit holds no declaration of, or one that
+// namespace does not declare. What a read set or a sampled cell names is a
+// read one of these expressions makes, so it is checked here.
+void ReportNamespaceMembers(
+    const CompilationUnit& unit, const ArenaReaches& reaches, const auto& where,
+    std::vector<std::string>& lines) {
+  for (const ExprId id : reaches.exprs->Ids()) {
+    if (reaches.at.at(id.value).empty()) continue;
+    const ExprData& data = reaches.exprs->Get(id).data;
+    std::vector<std::optional<std::string>> missing;
+    if (const auto* primary = std::get_if<PrimaryExpr>(&data)) {
+      if (const auto* r = std::get_if<NamespaceValueRef>(&primary->data)) {
+        missing.push_back(MissingNamespaceVariable(unit, *r));
+      }
+    }
+    if (const auto* call = std::get_if<CallExpr>(&data)) {
+      if (const auto* r = std::get_if<NamespaceSubroutineRef>(&call->callee)) {
+        missing.push_back(
+            MissingNamespaceSubroutine(unit, r->owner, r->subroutine));
+      }
+      if (const auto* r = std::get_if<ForeignImportRef>(&call->callee)) {
+        const auto* space =
+            r->declaring_scope.has_value()
+                ? std::get_if<NamespaceDeclaringScope>(&*r->declaring_scope)
+                : nullptr;
+        if (space != nullptr) {
+          for (const std::optional<NamespaceSubroutineId>& evaluator :
+               space->defaults) {
+            if (!evaluator.has_value()) continue;
+            missing.push_back(
+                MissingNamespaceSubroutine(unit, space->owner, *evaluator));
+          }
+        }
+      }
+    }
+    for (const std::optional<std::string>& reported : missing) {
+      if (!reported.has_value()) continue;
+      lines.push_back(
+          std::format(
+              "hir verify: {} (expression {}) in {} names {}", Describe(data),
+              id.value, where(), *reported));
+    }
+  }
+}
+
+// Adds one line to `lines` for each formal of `subroutine` bound to a
+// namespace's variable the unit does not hold.
+void ReportNamespaceFormals(
+    const CompilationUnit& unit, const SubroutineDecl& subroutine,
+    const auto& where, std::vector<std::string>& lines) {
+  for (std::size_t position = 0; position < subroutine.params.size();
+       ++position) {
+    const auto* kept =
+        std::get_if<NamespaceValueRef>(&subroutine.params[position].variable);
+    if (kept == nullptr) continue;
+    if (const std::optional<std::string> reported =
+            MissingNamespaceVariable(unit, *kept)) {
+      lines.push_back(
+          std::format(
+              "hir verify: formal {} of {} binds {}", position, where(),
+              *reported));
+    }
+  }
+}
+
+// Adds one line to `lines` where what a namespace unit defines does not match
+// what its entry for itself declares: a variable at every position defined,
+// a subroutine of its scope for every subroutine.
+void VerifyNamespaceDefinition(
+    const CompilationUnit& unit, std::vector<std::string>& lines) {
+  if (unit.namespace_definition.has_value() !=
+      (unit.role == UnitRole::kNamespace)) {
+    lines.push_back(
+        std::format(
+            "hir verify: unit '{}' {} what a namespace defines, and {} one",
+            unit.name,
+            unit.namespace_definition.has_value() ? "holds" : "lacks",
+            unit.role == UnitRole::kNamespace ? "is" : "is not"));
+    return;
+  }
+  if (!unit.namespace_definition.has_value()) return;
+  const NamespaceDefinition& defined = *unit.namespace_definition;
+  if (const std::optional<std::string> unheld =
+          UnheldNamespace(unit, defined.entry)) {
+    lines.push_back(
+        std::format("hir verify: unit '{}' defines {}", unit.name, *unheld));
+    return;
+  }
+  if (!unit.namespaces.IsOwn(defined.entry)) {
+    lines.push_back(
+        std::format(
+            "hir verify: unit '{}' defines namespace '{}', another unit",
+            unit.name, unit.namespaces.KeyOf(defined.entry).unit_name));
+    return;
+  }
+  const NamespaceDeclaration& declared =
+      unit.namespaces.Declaration(defined.entry);
+  if (defined.variables.size() != declared.variables.size() ||
+      defined.subroutines.size() != declared.subroutines.size()) {
+    lines.push_back(
+        std::format(
+            "hir verify: unit '{}' defines {} variables and {} subroutines of "
+            "a namespace declaring {} and {}",
+            unit.name, defined.variables.size(), defined.subroutines.size(),
+            declared.variables.size(), declared.subroutines.size()));
+    return;
+  }
+  for (const NamespaceVariableId id : defined.variables.Ids()) {
+    if (defined.variables.IsDefined(id)) continue;
+    lines.push_back(
+        std::format(
+            "hir verify: unit '{}' defines no variable '{}' its namespace "
+            "declares",
+            unit.name, support::DisplayOf(declared.variables.Get(id).name)));
+  }
+  // The scope's subroutine a declared subroutine is evaluates its defaults by
+  // the subroutines the declaration names for them.
+  const auto& subroutines = unit.root_scope.structural_subroutines;
+  for (const NamespaceSubroutineId id : defined.subroutines.Ids()) {
+    const StructuralSubroutineId body = defined.subroutines.Get(id);
+    if (body.value >= subroutines.size()) continue;
+    const SubroutineDecl& decl = subroutines.Get(body);
+    const NamespaceSubroutine& listed = declared.subroutines.Get(id);
+    if (decl.params.size() != listed.defaults.size()) continue;
+    for (std::size_t j = 0; j < decl.params.size(); ++j) {
+      const std::optional<StructuralSubroutineId> stated =
+          listed.defaults[j].transform([&](NamespaceSubroutineId evaluator) {
+            return defined.subroutines.Get(evaluator);
+          });
+      if (stated == decl.params[j].default_evaluator) continue;
+      lines.push_back(
+          std::format(
+              "hir verify: subroutine '{}' of namespace '{}' names another "
+              "evaluator for formal {} than its scope's subroutine does",
+              listed.prototype.name, unit.name, j));
+    }
+  }
+}
+
+// Adds one line to `lines` where a behavior `declared` names -- one a method
+// overrides, or one of an interface class and what answers it -- is no method
+// of a class the unit holds that introduces a behavior (LRM 8.20). A behavior
+// is named by the introducing method's position, which nothing but this
+// checks against what that class declares.
+void VerifyBehaviorsOf(
+    const CompilationUnit& unit, const ClassDeclaration& declared,
+    const auto& by, std::vector<std::string>& lines) {
+  const auto require = [&](const ClassMethodTarget& behavior) {
+    RequireDeclaration(unit, behavior.owner, by, lines);
+    if (!unit.classes.HasDeclaration(behavior.owner)) return;
+    const DeclaredMethods& methods =
+        unit.classes.Declaration(behavior.owner).methods;
+    if (behavior.method.value >= methods.size() ||
+        !std::holds_alternative<IntroducesVirtual>(
+            methods.Get(behavior.method).dispatch)) {
+      lines.push_back(
+          std::format(
+              "hir verify: {} names method {} of class '{}' as a behavior, "
+              "which introduces none",
+              by(), behavior.method.value,
+              support::DisplayOf(unit.classes.PathOf(behavior.owner))));
+    }
+  };
+  for (const DeclaredMethod& method : declared.methods) {
+    if (const auto* overriding =
+            std::get_if<OverridesVirtual>(&method.dispatch)) {
+      require(overriding->overridden);
+    }
+  }
+  for (const ConformingBehavior& answered : declared.conforming) {
+    require(answered.interface_behavior);
+    if (answered.answered_by.has_value()) require(*answered.answered_by);
+  }
+}
+
+// Adds one line to `lines` where `defaults` does not state one evaluator per
+// formal of `interface`, or names one past the `count` callables of whatever
+// declares it: the two lists are read side by side, and nothing else holds
+// them in step.
+template <typename Id>
+void VerifyDefaults(
+    const CalleeInterface& interface,
+    const std::vector<std::optional<Id>>& defaults, std::size_t count,
+    const auto& what, std::vector<std::string>& lines) {
+  if (defaults.size() != interface.params.size()) {
+    lines.push_back(
+        std::format(
+            "hir verify: {} states {} defaults for {} formals", what(),
+            defaults.size(), interface.params.size()));
+    return;
+  }
+  for (const std::optional<Id>& evaluator : defaults) {
+    if (evaluator.has_value() && evaluator->value >= count) {
+      lines.push_back(
+          std::format(
+              "hir verify: {} names evaluator {} of a declarer of {}", what(),
+              evaluator->value, count));
+    }
+  }
+}
+
+// Every list of evaluators the unit holds, of each class, scope class and
+// namespace it holds the declaration of.
+void VerifyDeclaredDefaults(
+    const CompilationUnit& unit, std::vector<std::string>& lines) {
+  for (const ClassId id : unit.classes.Ids()) {
+    if (!unit.classes.HasDeclaration(id)) continue;
+    const ClassDeclaration& declared = unit.classes.Declaration(id);
+    const std::size_t count = declared.methods.size();
+    for (const MethodId at : declared.methods.Ids()) {
+      const DeclaredMethod& method = declared.methods.Get(at);
+      VerifyDefaults(
+          method.prototype.interface, method.defaults, count,
+          [&] {
+            return std::format(
+                "method '{}' of class '{}'", method.prototype.name,
+                support::DisplayOf(unit.classes.PathOf(id)));
+          },
+          lines);
+    }
+    if (declared.constructor.has_value()) {
+      VerifyDefaults(
+          declared.constructor->interface, declared.constructor->defaults,
+          count,
+          [&] {
+            return std::format(
+                "the constructor of class '{}'",
+                support::DisplayOf(unit.classes.PathOf(id)));
+          },
+          lines);
+    }
+  }
+  for (const ScopeClassId id : unit.scope_classes.Ids()) {
+    if (!unit.scope_classes.IsRecorded(id)) continue;
+    const ScopeClassSignature& scope = unit.scope_classes.Get(id);
+    for (const ScopeCallable& callable : scope.callables) {
+      VerifyDefaults(
+          callable.prototype.interface, callable.defaults,
+          scope.callables.size(),
+          [&] {
+            return std::format(
+                "subroutine '{}' of scope class '{}'", callable.prototype.name,
+                support::DisplayOf(unit.scope_classes.KeyOf(id).class_path));
+          },
+          lines);
+    }
+  }
+  for (const NamespaceId id : unit.namespaces.Ids()) {
+    if (!unit.namespaces.HasDeclaration(id)) continue;
+    const NamespaceDeclaration& declared = unit.namespaces.Declaration(id);
+    for (const NamespaceSubroutine& subroutine : declared.subroutines) {
+      VerifyDefaults(
+          subroutine.prototype.interface, subroutine.defaults,
+          declared.subroutines.size(),
+          [&] {
+            return std::format(
+                "subroutine '{}' of namespace '{}'", subroutine.prototype.name,
+                unit.namespaces.KeyOf(id).unit_name);
+          },
+          lines);
+    }
+  }
+}
+
 // What a class declares is read with what it extends and the interface classes
 // it names, since its layout and its tables read theirs. A covergroup is laid
 // out from the class embedding it and is counted by its coverpoints' classes,
@@ -1344,6 +1652,7 @@ void VerifyClassReadsOfDeclarations(
     for (const ClassId iface : declared.implements) {
       RequireDeclaration(unit, iface, by, lines);
     }
+    VerifyBehaviorsOf(unit, declared, by, lines);
   }
   for (const CovergroupId id : unit.covergroups.Ids()) {
     if (!unit.covergroups.IsPublished(id)) continue;
@@ -1439,6 +1748,7 @@ void VerifyBody(
   reach_from_owner(reaches);
   Report(reaches, where, lines);
   ReportClassReads(unit, reaches, where, lines);
+  ReportNamespaceMembers(unit, reaches, where, lines);
   ReportDriveReceivers(body.exprs, where, lines);
 }
 
@@ -1460,6 +1770,7 @@ void VerifySubroutine(
         reach_from_owner(reaches);
       },
       where, lines);
+  ReportNamespaceFormals(unit, subroutine, where, lines);
 }
 
 void VerifyClass(
@@ -1937,9 +2248,15 @@ void VerifyScope(
   if (&scope == &unit.root_scope) {
     const auto from_kept =
         ReachFrom(reaches, std::nullopt, "a subroutine static's declaration");
-    for (const NamespaceStatic& kept : unit.namespace_statics) {
-      if (kept.initializer.has_value()) {
-        from_kept(*kept.initializer, Slot::kOperand);
+    if (unit.namespace_definition.has_value()) {
+      const NamespaceDefinition& defined = *unit.namespace_definition;
+      for (const NamespaceVariableId id : defined.variables.Ids()) {
+        if (!defined.variables.IsDefined(id)) continue;
+        const auto* kept =
+            std::get_if<NamespaceStatic>(&defined.variables.Get(id));
+        if (kept != nullptr && kept->initializer.has_value()) {
+          from_kept(*kept->initializer, Slot::kOperand);
+        }
       }
     }
   }
@@ -2017,6 +2334,7 @@ void VerifyScope(
   }
   Report(reaches, [&] { return label; }, lines);
   ReportClassReads(unit, reaches, [&] { return label; }, lines);
+  ReportNamespaceMembers(unit, reaches, [&] { return label; }, lines);
   VerifyInstanceMembers(scope, label, lines);
   VerifyRoutesStayOrPublish(scope, label, lines);
 
@@ -2124,6 +2442,8 @@ void Verify(
     verify_replicated(unit.block_bodies.Get(id).scope);
   }
   VerifyClassReadsOfDeclarations(unit, lines);
+  VerifyNamespaceDefinition(unit, lines);
+  VerifyDeclaredDefaults(unit, lines);
   std::string report;
   for (const std::string& line : lines) {
     if (!report.empty()) {

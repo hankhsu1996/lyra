@@ -110,15 +110,14 @@ struct EvaluatedDefault {
 };
 
 // What the function evaluating the default of an import's formal at `position`
-// answers, standing as the actual of a formal of direction `formal`, called on
-// `scope`, the scope declaring the import, with `earlier`, what the call binds
-// each formal before it that the function takes (LRM 13.5.3, 35.5.4).
+// answers, called on `scope`, the scope declaring the import, with `earlier`,
+// what the call binds each formal before it that the function takes (LRM
+// 13.5.3, 35.5.4).
 template <ExprLowerer Lowerer>
 auto EvaluateImportDefault(
     Lowerer& lowerer, const WalkFrame& frame,
     const hir::ImportDeclaringScope& scope, std::size_t position,
-    hir::ParamDirection formal, std::span<const mir::ExprId> earlier)
-    -> diag::Result<EvaluatedDefault>;
+    std::span<const mir::ExprId> earlier) -> diag::Result<EvaluatedDefault>;
 
 // A call of the method `callee` names where no source expression stands for
 // it: on the object the handle `receiver` holds, or on none for a

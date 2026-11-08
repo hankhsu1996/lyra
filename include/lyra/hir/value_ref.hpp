@@ -2,12 +2,12 @@
 
 #include <compare>
 #include <cstdint>
-#include <string>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/pool_id.hpp"
 #include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/namespace.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -256,30 +256,25 @@ struct PatternVarRef {
   auto operator==(const PatternVarRef&) const -> bool = default;
 };
 
-// A reference to a variable a namespace unit -- a package (LRM 26.2) or the
-// anonymous `$unit` scope (LRM 3.12.1) -- keeps, reached by name: one it
-// declares, or a static variable one of its subroutines declares (LRM 6.21),
-// a formal of a static one included (LRM 13.3.2), named through the
-// subroutine. Such a unit has no instance and no receiver, so its variable is
-// one program-global cell, resolved against that unit's signature at link time
-// rather than reached by a route out of anyone's storage. The same by-name
-// form serves a referrer in another unit and the declaring unit's own bodies,
-// none of which has a receiver to reach it through.
+// A reference to a variable a namespace -- a package (LRM 26.2) or the
+// compilation-unit scope (LRM 3.12.1) -- keeps: one it declares, or a static
+// variable one of its subroutines declares (LRM 6.21), a formal of a static
+// one included (LRM 13.3.2). A namespace has no instance and no receiver, so
+// its variable is one program-global cell, named by the namespace and the
+// variable's position in what it declares, from another unit and from the
+// namespace's own bodies alike.
 struct NamespaceValueRef {
-  std::string unit_name;
-  support::QualifiedName variable;
-  // The cell's type. A referrer in another unit declares nothing of the cell,
-  // so the type crosses as part of the declaring unit's signature.
-  TypeId value_type;
+  NamespaceId owner;
+  NamespaceVariableId variable;
 
   auto operator<=>(const NamespaceValueRef&) const
       -> std::strong_ordering = default;
 };
 
 // Where a value's cell is, as the reader reaches it: through a reader-relative
-// route to a cell on the design hierarchy, by name across the boundary to a
-// namespace unit's one program-global cell (LRM 26.2, 3.12.1), which has no
-// per-instance storage to route to, or on whatever replicates a class
+// route to a cell on the design hierarchy, as a member of a namespace, whose
+// one program-global cell (LRM 26.2, 3.12.1) has no per-instance storage to
+// route to, or on whatever replicates a class
 // declaration, for a cell the type owns rather than any object of it (LRM 8.9).
 // One target serves every consumer of the reference -- value read, value write,
 // and change observation -- so the name is neutral to the consumer and owned by

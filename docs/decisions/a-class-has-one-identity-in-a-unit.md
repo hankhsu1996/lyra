@@ -6,15 +6,18 @@
 
 ## Status
 
-Accepted. Revised 2026-10-23: D3 says where a virtual behavior of this unit's class, reached through
-another unit's lineage, is named as its own. Revised 2026-10-24: one identity and one answer for a
-class of this unit and another unit's alike (D1, D2), every member in one coordinate space (D3).
-Revised 2026-11-04: D2 tells what a unit holds a declaration of from what its MIR depends on, and
-says HIR's verification holds a unit to the first. Revised 2026-11-05: D2's dependency is what the
-lowering read, recorded where it read it; the set read off the finished MIR had been taken for it,
-on the ground that, like `-MD`, it could miss no read, but a read that decides a construct and is
-written as a library call leaves nothing in MIR, so that set is what the unit's text names and no
-more.
+Accepted. Revised 2026-11-07: a namespace is named by an entry as a class is (D1); D1 had recorded
+its members as named by their key in HIR, a shape no requirement asked for, and HIR-to-MIR then
+found each by name, telling the unit's own from another's by comparing names. A behavior is named by
+the introducing method's position, which every unit counts from the class's declaration (D3).
+Revised 2026-10-23: D3 says where a virtual behavior of this unit's class, reached through another
+unit's lineage, is named as its own. Revised 2026-10-24: one identity and one answer for a class of
+this unit and another unit's alike (D1, D2), every member in one coordinate space (D3). Revised
+2026-11-04: D2 tells what a unit holds a declaration of from what its MIR depends on, and says HIR's
+verification holds a unit to the first. Revised 2026-11-05: D2's dependency is what the lowering
+read, recorded where it read it; the set read off the finished MIR had been taken for it, on the
+ground that, like `-MD`, it could miss no read, but a read that decides a construct and is written
+as a library call leaves nothing in MIR, so that set is what the unit's text names and no more.
 
 ## Why this decision matters
 
@@ -56,9 +59,10 @@ Every reference -- an object type, a property, a method, a static property, a be
 construction -- names the class by the handle, and MIR and LIR keep it: a class another unit defines
 is an entry of the same registry, declared with what that unit published, and whether this unit
 defines the class is a fact of the entry. The same holds of a covergroup's class and of the class a
-scope of the design hierarchy is published as. A record and a member of a unit's namespace are named
-in HIR by their key, one form for this unit's and another's, and from MIR down by one entry of the
-reader's tables.
+scope of the design hierarchy is published as, and of a namespace: a package or the compilation-unit
+scope is one declaration, whose variables and subroutines are named by the unit's entry for it and
+their positions in what it declares, the namespace's own bodies included. A record is named in HIR
+by its key, and from MIR down by one entry of the reader's tables.
 
 ### D2. What is known of a class is one answer, with two providers
 
@@ -95,7 +99,9 @@ so it brings nothing of the class into view.
 A member is named by its class's handle and its position in that class, whichever unit declares the
 class. A property of another unit's class is at the slot that unit gave it, its published properties
 being the class's first fields in order; a method at the position its declaration publishes it; and
-a behavior by the class that introduced it and that method. Which class introduced the behavior an
+a behavior by the class that introduced it and that method's position, which a unit counts from the
+front end's declaration of the introducing class by the one function the declaring unit counts it
+by, so it needs no other unit's signature to state it. Which class introduced the behavior an
 override replaces is found once, by the unit declaring the overriding class, along its own lineage
 as the front end resolved it, and published, so a reader never re-derives it. A lineage another unit
 published may lead back to this unit -- a specialization of a generic this unit declares, extending

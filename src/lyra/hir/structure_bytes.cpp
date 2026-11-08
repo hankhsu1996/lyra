@@ -263,10 +263,13 @@ class Writer {
     List(callee.params, [&](const CalleeParam& p) {
       Kind(p.direction);
       Type(p.type);
-      Optional(p.default_evaluator, [&](const DefaultEvaluator& d) {
-        Text(d.name);
-        Type(d.result_type);
-      });
+    });
+  }
+
+  template <typename Id>
+  void Defaults(const std::vector<std::optional<Id>>& defaults) {
+    List(defaults, [&](const std::optional<Id>& evaluator) {
+      Optional(evaluator, [&](Id id) { Number(id.value); });
     });
   }
 
@@ -333,7 +336,10 @@ class Writer {
               [&](const BorrowedObjectStorage&) { Mark('b'); }},
           m.storage);
     });
-    Arena(scope.callables, [&](const SubroutinePrototype& p) { Prototype(p); });
+    Arena(scope.callables, [&](const ScopeCallable& callable) {
+      Prototype(callable.prototype);
+      Defaults(callable.defaults);
+    });
     Arena(scope.loops, [&](const PublishedLoop& loop) { Text(loop.name); });
     Arena(scope.choices, [&](const PublishedChoice& choice) {
       Number(choice.construct);
@@ -468,9 +474,9 @@ class Writer {
     }
     List(declared, [&](const ClassDeclaration* of) {
       const ClassDeclaration& cls = *of;
-      const auto named = [&](const NamedBehavior& behavior) {
-        Class(behavior.introducer);
-        Text(behavior.name);
+      const auto named = [&](const ClassMethodTarget& behavior) {
+        Class(behavior.owner);
+        Number(behavior.method.value);
       };
       OwnPath(cls.class_path);
       Optional(cls.base, [&](ClassId base) { Class(base); });
@@ -478,10 +484,13 @@ class Writer {
       List(cls.implements, [&](ClassId id) { Class(id); });
       properties(cls.properties);
       statics(cls.static_properties);
-      Optional(
-          cls.constructor, [&](const CalleeInterface& c) { Interface(c); });
+      Optional(cls.constructor, [&](const DeclaredConstructor& c) {
+        Interface(c.interface);
+        Defaults(c.defaults);
+      });
       Arena(cls.methods, [&](const DeclaredMethod& method) {
         Prototype(method.prototype);
+        Defaults(method.defaults);
         std::visit(
             Overloaded{
                 [&](const TypeAssociated&) { Mark('t'); },
@@ -579,12 +588,13 @@ class Writer {
               List(element.handed, [&](TypeId type) { Type(type); });
               Scope(element.instance_class);
             },
-            [&](const PublishedNamespace& space) {
+            [&](const NamespaceDeclaration& space) {
               Mark('n');
-              List(space.subroutines, [&](const SubroutinePrototype& p) {
-                Prototype(p);
+              Arena(space.subroutines, [&](const NamespaceSubroutine& p) {
+                Prototype(p.prototype);
+                Defaults(p.defaults);
               });
-              List(space.variables, [&](const PublishedVariable& v) {
+              Arena(space.variables, [&](const NamespaceVariable& v) {
                 Qualified(v.name);
                 Type(v.type);
               });

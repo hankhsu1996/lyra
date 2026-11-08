@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/namespace.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -95,15 +96,20 @@ struct SubroutineDecl {
   auto operator==(const SubroutineDecl&) const -> bool = default;
 };
 
-// The type of the variable the formal `param` of `decl` binds.
+// The type of the variable the formal `param` of `decl` binds: the body's own
+// variable's, or the one a namespace in `namespaces` declares for a static
+// subroutine's formal.
 inline auto FormalTypeOf(
-    const SubroutineDecl& decl, const SubroutineParam& param) -> TypeId {
+    const NamespaceRegistry& namespaces, const SubroutineDecl& decl,
+    const SubroutineParam& param) -> TypeId {
   return std::visit(
       Overloaded{
           [&](ProceduralVarId var) {
             return decl.body.procedural_vars.Get(var).type;
           },
-          [](const NamespaceValueRef& kept) { return kept.value_type; }},
+          [&](const NamespaceValueRef& kept) {
+            return namespaces.VariableOf(kept.owner, kept.variable).type;
+          }},
       param.variable);
 }
 

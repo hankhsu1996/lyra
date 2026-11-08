@@ -61,9 +61,13 @@ that identity is the suspect, not the analysis.
    declaration, so one declaration has one id in a unit. What a unit knows of another unit's
    declaration is what that unit published, read back with every key in it turned into the reader's
    ids, and it knows that of every class a construct of it reads rather than only names; the unit's
-   verification refuses one that does not. A member of another unit's namespace (LRM 26.3) is named
-   by its key, which lowering declares in the reader once. _Source-faithful consequence: SV's
-   compilation-unit boundary is where a key becomes an id, and nowhere else._
+   verification refuses one that does not. A namespace (LRM 26.3) is such a declaration: a unit
+   holds one entry for each namespace it names, its own included, with what the namespace declares,
+   and names a member of it by the entry and the member's position there, as it names a class's
+   member; the verification refuses a reference to an entry the unit does not hold. Below this layer
+   a name is spelling and nothing finds a declaration by it; what does not yet hold this is listed
+   by the architecture policy's rules A029 and A030, and the list only shrinks. _Source-faithful
+   consequence: SV's compilation-unit boundary is where a key becomes an id, and nowhere else._
 3. HIR preserves LRM-level constructs without flattening them into lower-level primitives. Loops are
    loops, assertions are assertions, classes are classes. _Source-faithful consequence: the
    abstraction level is the language the user wrote; flattening into a generic vocabulary is MIR's

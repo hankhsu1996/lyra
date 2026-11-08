@@ -550,7 +550,7 @@ auto LowerObjectSubroutineCall(
         "supported");
   }
   const hir::SubroutinePrototype& prototype =
-      published.callables.Get(*callable);
+      published.callables.Get(*callable).prototype;
   return hir::Expr{
       .type = prototype.result_type,
       .data =
@@ -583,16 +583,22 @@ auto ReachImportScope(
   };
   if (const auto* unit = DeclaringNamespaceUnit(sym)) {
     if (omitted.empty()) return std::nullopt;
+    const hir::NamespaceId owner = unit_lowerer.NamespaceOf(*unit);
+    const hir::NamespaceDeclaration& declared =
+        unit_lowerer.Unit().namespaces.Declaration(owner);
     hir::NamespaceDeclaringScope space{
-        .unit_name = CompilationUnitName(*unit, unit_lowerer.Names()),
-        .defaults =
-            std::vector<std::optional<hir::DefaultEvaluator>>(formals.size())};
+        .owner = owner,
+        .defaults = std::vector<std::optional<hir::NamespaceSubroutineId>>(
+            formals.size())};
     for (const std::size_t position : omitted) {
-      auto type = unit_lowerer.NamespaceDefaultType(
-          space.unit_name, *formals[position], evaluator_name(position), span);
-      if (!type) return std::unexpected(std::move(type.error()));
-      space.defaults[position] = hir::DefaultEvaluator{
-          .name = evaluator_name(position), .result_type = *type};
+      space.defaults[position] =
+          declared.FindSubroutine(evaluator_name(position));
+      if (!space.defaults[position].has_value()) {
+        throw InternalError(
+            "ReachImportScope: a namespace declaring an import with a default "
+            "publishes the function evaluating it -- please report this as a "
+            "bug");
+      }
     }
     return hir::ImportDeclaringScope{std::move(space)};
   }
@@ -665,7 +671,7 @@ auto LowerHeldInterfaceCall(
         "declares, and this one is not among them");
   }
   const hir::SubroutinePrototype& prototype =
-      published.callables.Get(*callable);
+      published.callables.Get(*callable).prototype;
   return hir::Expr{
       .type = prototype.result_type,
       .data =
@@ -1306,30 +1312,27 @@ auto LowerSubroutineCall(
   }
 
   // A subroutine declared in a package or the `$unit` scope (LRM 26.3 /
-  // 3.12.1) is reached by its unit and name, from that unit's own bodies as
-  // from any other's, rather than through an enclosing-scope binding. Each
-  // formal's direction and type is what marshals an output / inout / ref
-  // actual at that boundary (LRM 13.5), and the declaring unit's declarations
-  // are where it is stated. The call's result type is the enclosing
-  // expression's own type and is not recorded again here.
-  if (const auto* unit = DeclaringNamespaceUnit(*sym)) {
-    std::string unit_name = CompilationUnitName(*unit, unit_lowerer.Names());
-    auto interface =
-        unit_lowerer.NamespaceCalleeInterface(unit_name, *sym, span);
-    if (!interface) return std::unexpected(std::move(interface.error()));
+  // 3.12.1) is reached by the namespace and its position in what the namespace
+  // declares, from the namespace's own bodies as from any other's, rather than
+  // through an enclosing-scope binding. Each formal's direction and type is
+  // what marshals an output / inout / ref actual at that boundary (LRM 13.5),
+  // and the namespace's declaration of it is where it is stated. The call's
+  // result type is the enclosing expression's own type and is not recorded
+  // again here.
+  if (DeclaringNamespaceUnit(*sym) != nullptr) {
+    const hir::NamespaceSubroutineRef callee =
+        unit_lowerer.NamespaceSubroutineOf(*sym);
+    const hir::CalleeInterface& interface =
+        unit_lowerer.Unit()
+            .namespaces.SubroutineOf(callee.owner, callee.subroutine)
+            .prototype.interface;
     auto result_type = unit_lowerer.InternExpressionType(call, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
-    auto arguments = std::move(actuals).Through(*interface, frame, span);
+    auto arguments = std::move(actuals).Through(interface, frame, span);
     return hir::Expr{
         .type = *result_type,
         .data =
-            hir::CallExpr{
-                .callee =
-                    hir::NamespaceSubroutineRef{
-                        .unit_name = std::move(unit_name),
-                        .subroutine_name = std::string{sym->name},
-                        .interface = *std::move(interface)},
-                .arguments = std::move(arguments)},
+            hir::CallExpr{.callee = callee, .arguments = std::move(arguments)},
         .span = span,
     };
   }

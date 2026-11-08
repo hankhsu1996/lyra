@@ -29,10 +29,6 @@ auto ImportCalleeInterface(TypeImporter& importer, CalleeInterface interface)
     -> CalleeInterface {
   for (CalleeParam& param : interface.params) {
     param.type = importer.Import(param.type);
-    if (param.default_evaluator.has_value()) {
-      param.default_evaluator->result_type =
-          importer.Import(param.default_evaluator->result_type);
-    }
   }
   return interface;
 }
@@ -86,8 +82,10 @@ auto ImportScopeClass(TypeImporter& importer, ScopeClassSignature published)
     imported.members.Add(std::move(member));
   }
   for (const PublishedCallableId id : published.callables.Ids()) {
-    imported.callables.Add(
-        ImportCallable(importer, published.callables.Get(id)));
+    ScopeCallable callable = published.callables.Get(id);
+    callable.prototype =
+        ImportCallable(importer, std::move(callable.prototype));
+    imported.callables.Add(std::move(callable));
   }
   // A name a view defines by designating storage states the type each step of
   // its descent lands on, so those are types on the class like any other.
@@ -307,12 +305,11 @@ auto ReaderImporter(
 namespace {
 
 // `behavior` with the class introducing it taken into the pool `importer`
-// writes.
-auto ImportNamedBehavior(TypeImporter& importer, const NamedBehavior& behavior)
-    -> NamedBehavior {
-  return NamedBehavior{
-      .introducer = importer.ImportClass(behavior.introducer),
-      .name = behavior.name};
+// writes; the method's position is its class's own, the same in every unit.
+auto ImportBehavior(TypeImporter& importer, const ClassMethodTarget& behavior)
+    -> ClassMethodTarget {
+  return ClassMethodTarget{
+      .owner = importer.ImportClass(behavior.owner), .method = behavior.method};
 }
 
 }  // namespace
@@ -329,9 +326,11 @@ auto ImportClassDeclaration(
       .properties = ImportProperties(importer, declared.properties),
       .static_properties =
           ImportStaticProperties(importer, declared.static_properties),
-      .constructor =
-          declared.constructor.transform([&](const CalleeInterface& stated) {
-            return ImportCalleeInterface(importer, stated);
+      .constructor = declared.constructor.transform(
+          [&](const DeclaredConstructor& stated) {
+            return DeclaredConstructor{
+                .interface = ImportCalleeInterface(importer, stated.interface),
+                .defaults = stated.defaults};
           }),
       .methods = ImportMethods(importer, declared.methods),
       .instance_scope = declared.instance_scope,
@@ -339,16 +338,34 @@ auto ImportClassDeclaration(
   for (const ClassId iface : declared.implements) {
     cls.implements.push_back(importer.ImportClass(iface));
   }
-  const auto import_named = [&](const NamedBehavior& behavior) {
-    return ImportNamedBehavior(importer, behavior);
+  const auto import_behavior = [&](const ClassMethodTarget& behavior) {
+    return ImportBehavior(importer, behavior);
   };
   for (const ConformingBehavior& answered : declared.conforming) {
     cls.conforming.push_back(
         ConformingBehavior{
-            .interface_behavior = import_named(answered.interface_behavior),
-            .answered_by = answered.answered_by.transform(import_named)});
+            .interface_behavior = import_behavior(answered.interface_behavior),
+            .answered_by = answered.answered_by.transform(import_behavior)});
   }
   return cls;
+}
+
+auto ImportNamespaceDeclaration(
+    TypeImporter& importer, const NamespaceDeclaration& declared)
+    -> NamespaceDeclaration {
+  NamespaceDeclaration imported;
+  for (const NamespaceSubroutine& subroutine : declared.subroutines) {
+    imported.subroutines.Add(
+        NamespaceSubroutine{
+            .prototype = ImportCallable(importer, subroutine.prototype),
+            .defaults = subroutine.defaults});
+  }
+  for (const NamespaceVariable& variable : declared.variables) {
+    imported.variables.Add(
+        NamespaceVariable{
+            .name = variable.name, .type = importer.Import(variable.type)});
+  }
+  return imported;
 }
 
 auto ImportTypes(TypeImporter& importer, std::span<const TypeId> types)
@@ -396,7 +413,7 @@ auto ImportMethods(TypeImporter& importer, const DeclaredMethods& methods)
               return OverridesVirtual{
                   .is_pure = overriding.is_pure,
                   .overridden =
-                      ImportNamedBehavior(importer, overriding.overridden)};
+                      ImportBehavior(importer, overriding.overridden)};
             },
             [](const TypeAssociated& kept) -> MethodDispatch { return kept; },
             [](const OnObjectBeingBuilt& kept) -> MethodDispatch {
@@ -410,6 +427,7 @@ auto ImportMethods(TypeImporter& importer, const DeclaredMethods& methods)
     imported.Add(
         DeclaredMethod{
             .prototype = ImportCallable(importer, method.prototype),
+            .defaults = method.defaults,
             .dispatch = std::move(dispatch),
             .replaces = method.replaces,
             .makes = method.makes.transform([&](CovergroupId made) {

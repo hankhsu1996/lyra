@@ -1466,25 +1466,20 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
       binding->subroutine_id, *std::move(decl_or));
 
   // A static variable of a namespace unit's subroutine is one of the
-  // namespace's variables (LRM 6.21, 26.2), declared here with its initializer,
+  // namespace's variables (LRM 6.21, 26.2), defined here with its initializer,
   // which runs with theirs before any process starts (LRM 10.5).
   for (const KeptStatic& local : StaticsKeptBy(sym)) {
-    const auto span = frontend::PointSpanOf(local.var->location);
-    auto type = owner_->InternType(local.var->getType(), span);
-    if (!type) return std::unexpected(std::move(type.error()));
     std::optional<hir::ExprId> initializer;
     if (const slang::ast::Expression* init = local.var->getInitializer()) {
       auto lowered = LowerExpr(*init, frame);
       if (!lowered) return std::unexpected(std::move(lowered.error()));
       initializer = frame.Exprs().Add(*std::move(lowered));
     }
-    owner_->KeepNamespaceStatic(
-        hir::NamespaceStatic{
-            .name = local.name,
-            .type = *type,
-            .initializer = initializer,
-            .written_in =
-                owner_->LookupProceduralScope(NamedScopeAround(*local.var))});
+    owner_->DefineNamespaceVariable(
+        local.name, hir::NamespaceStatic{
+                        .initializer = initializer,
+                        .written_in = owner_->LookupProceduralScope(
+                            NamedScopeAround(*local.var))});
   }
 
   if (auto defaults = PopulateArgumentDefaults(sym, frame); !defaults) {

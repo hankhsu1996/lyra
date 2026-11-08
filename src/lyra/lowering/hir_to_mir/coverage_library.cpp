@@ -72,7 +72,7 @@ auto CoverageLibrary::ConstructorParamTypes(hir::ClassId cls) const
   std::vector<hir::TypeId> types;
   const hir::ClassDeclaration& record = unit_->classes.Declaration(cls);
   if (!record.constructor.has_value()) Unpublished("constructor");
-  for (const hir::CalleeParam& param : record.constructor->params) {
+  for (const hir::CalleeParam& param : record.constructor->interface.params) {
     types.push_back(param.type);
   }
   return types;

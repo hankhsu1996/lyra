@@ -281,6 +281,27 @@ Rules:
         it names a target outside it.
         Scope: conformance/.
 
+  A029  A text a HIR declaration carries is spelling, or it is listed. HIR
+        is where a frontend name becomes the compiler's identity, so after
+        AST-to-HIR a name is text a user reads, a symbol a target spells, or
+        the key a unit's boundary turns into an id once; nothing below finds a
+        declaration by it. Every text field of a HIR header -- a string, a
+        qualified name, a path -- is classed in HIR_TEXT_FIELDS: as spelling,
+        or as one a reader below AST-to-HIR still finds a declaration by,
+        which names what finds it. That second class only shrinks: a field
+        stops being found by name and leaves it, and a new field is classed
+        when it is written.
+        Scope: include/lyra/hir/*.hpp.
+
+  A030  Below AST-to-HIR nothing finds a declaration by name through HIR's
+        lookups, or through HIR-to-MIR's helpers that find one by its key's
+        text or its path: a call of one is in HIR_LOOKUPS_BELOW, listed with
+        what still finds that way, which only shrinks. The lists of helpers
+        are the ones known; a new kind of lookup joins them where it is
+        found.
+        Scope: HIR-to-MIR, MIR, MIR-to-LIR, LIR and the backends, sources
+        and headers.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -1377,6 +1398,228 @@ def check_a028(repo_root: Path) -> list[str]:
     return errors
 
 
+# Rule A029
+A029_TEXT_FIELD_PATTERN = re.compile(
+    r"^\s+(?:std::optional<|std::vector<)?"
+    r"(?:std::string|std::string_view|support::QualifiedName|support::DefPath)"
+    r">?\s+(\w+)\s*(?:=[^;]*)?;")
+A029_STRUCT_PATTERN = re.compile(r"^\s*(?:struct|class)\s+(\w+)\b[^;]*$")
+SPELLING = "spelling"
+# What still finds a declaration by the field's text below AST-to-HIR.
+FOUND_IN_COVERAGE = "found by name: a covergroup's items, bins and options"
+FOUND_IN_TYPES = "found by name: a type declaration's definition"
+FOUND_IN_SCOPES = "found by name: the class of a scope, by its path"
+FOUND_IN_UNITS = "found by name: a unit, a lowering or a body"
+FOUND_AT_RUN_TIME = "found by name: the run time finds it by this text"
+HIR_TEXT_FIELDS = {
+    ("array_iterator_method.hpp", "WithClause", "element_name"): SPELLING,
+    ("class_declaration.hpp", "DeclaredProperty", "name"): FOUND_IN_COVERAGE,
+    ("class_declaration.hpp", "DeclaredStatic", "name"): SPELLING,
+    ("class_declaration.hpp", "ClassDeclaration", "class_path"): SPELLING,
+    ("class_declaration.hpp", "ClassDeclaration", "instance_scope"):
+        FOUND_IN_SCOPES,
+    ("class_ref.hpp", "ClassKey", "unit_name"): SPELLING,
+    ("class_ref.hpp", "ClassKey", "class_path"): SPELLING,
+    ("clocking_block.hpp", "Clockvar", "name"): SPELLING,
+    ("clocking_block.hpp", "ClockingBlockDecl", "name"): SPELLING,
+    ("compilation_unit.hpp", "CompilationUnit", "name"): FOUND_IN_UNITS,
+    ("compilation_unit.hpp", "CompilationUnit", "body_name"): FOUND_IN_UNITS,
+    ("compilation_unit.hpp", "CompilationUnit", "source_name"): SPELLING,
+    ("compilation_unit.hpp", "CompilationUnit", "library_binding"): SPELLING,
+    ("covergroup.hpp", "BinConstruct", "name"): FOUND_IN_COVERAGE,
+    ("covergroup.hpp", "OptionSetting", "field"): FOUND_IN_COVERAGE,
+    ("covergroup.hpp", "Coverpoint", "name"): FOUND_IN_COVERAGE,
+    ("covergroup.hpp", "SelectBinsOf", "point"): FOUND_IN_COVERAGE,
+    ("covergroup.hpp", "SelectBinsOf", "bin"): FOUND_IN_COVERAGE,
+    ("covergroup.hpp", "CrossBin", "name"): SPELLING,
+    ("covergroup.hpp", "Cross", "name"): FOUND_IN_COVERAGE,
+    ("covergroup.hpp", "Cross", "targets"): FOUND_IN_COVERAGE,
+    ("covergroup_ref.hpp", "CovergroupKey", "unit_name"): SPELLING,
+    ("covergroup_ref.hpp", "CovergroupKey", "path"): SPELLING,
+    ("dumped_declaration.hpp", "DumpedDeclaration", "identifier"): SPELLING,
+    ("dumped_declaration.hpp", "DumpedBlock", "identifier"): SPELLING,
+    ("expr.hpp", "CovergroupMethodCallExpr", "item"): FOUND_IN_COVERAGE,
+    ("expr.hpp", "CovergroupOptionExpr", "item"): FOUND_IN_COVERAGE,
+    ("expr.hpp", "CovergroupOptionExpr", "field"): FOUND_IN_COVERAGE,
+    ("expr.hpp", "ConstraintBlockMode", "name"): FOUND_AT_RUN_TIME,
+    ("expr.hpp", "StaticConstraintBlockMode", "block"): FOUND_AT_RUN_TIME,
+    ("fixed_name.hpp", "NameBelowInstance", "text"): SPELLING,
+    ("fixed_name.hpp", "WholeName", "text"): SPELLING,
+    ("foreign_export.hpp", "ForeignExportDecl", "foreign_name"): SPELLING,
+    ("foreign_import.hpp", "ForeignImportDecl", "name"): SPELLING,
+    ("foreign_import.hpp", "ForeignImportDecl", "foreign_name"): SPELLING,
+    ("keyed_identities.hpp", "KeyedIdentities", "unit_name_"): FOUND_IN_UNITS,
+    ("lowering.hpp", "Lowering", "name"): FOUND_IN_UNITS,
+    ("lowering_ref.hpp", "LoweringRef", "unit"): FOUND_IN_UNITS,
+    ("lowering_ref.hpp", "LoweringRef", "lowering"): FOUND_IN_UNITS,
+    ("lowering_values.hpp", "PublishedParameter", "name"): SPELLING,
+    ("lowering_values.hpp", "PublishedParameter", "holder"): SPELLING,
+    ("namespace.hpp", "NamespaceKey", "unit_name"): SPELLING,
+    ("namespace.hpp", "NamespaceVariable", "name"): SPELLING,
+    ("pattern.hpp", "VariablePattern", "name"): SPELLING,
+    ("primary.hpp", "StringLiteral", "value"): SPELLING,
+    ("procedural_scope.hpp", "ProceduralScopeDecl", "source_name"): SPELLING,
+    ("procedural_var.hpp", "ProceduralVarDecl", "name"): SPELLING,
+    ("published_clocking.hpp", "PublishedClockingBlock", "name"): SPELLING,
+    ("published_covergroup.hpp", "PublishedCovergroupFormal", "name"):
+        SPELLING,
+    ("published_covergroup.hpp", "PublishedCoverpoint", "name"):
+        FOUND_IN_COVERAGE,
+    ("published_covergroup.hpp", "PublishedCovergroup", "path"):
+        FOUND_IN_SCOPES,
+    ("published_covergroup.hpp", "PublishedCovergroup", "crosses"):
+        FOUND_IN_COVERAGE,
+    ("published_member.hpp", "PublishedMember", "name"): SPELLING,
+    ("published_member.hpp", "PublishedMember", "holder"): SPELLING,
+    ("published_modport.hpp", "PublishedModportPort", "name"): SPELLING,
+    ("published_modport.hpp", "PublishedModport", "name"): SPELLING,
+    ("published_scope.hpp", "PublishedLoop", "name"): SPELLING,
+    ("published_scope.hpp", "PublishedDisableTarget", "path"): SPELLING,
+    ("published_scope.hpp", "ScopeClassSignature", "class_path"):
+        FOUND_IN_SCOPES,
+    ("scope_class.hpp", "ScopeClassKey", "unit_name"): SPELLING,
+    ("scope_class.hpp", "ScopeClassKey", "class_path"): SPELLING,
+    ("signature_reads.hpp", "UnitSignatureRead", "unit_name"): SPELLING,
+    ("signature_reads.hpp", "ValuesRead", "lowering"): SPELLING,
+    ("stmt.hpp", "Stmt", "label"): SPELLING,
+    ("structural_data_object.hpp", "StructuralDataObjectDecl", "name"):
+        SPELLING,
+    ("structural_scope.hpp", "InstanceMemberDecl", "instance_name"): SPELLING,
+    ("structural_scope.hpp", "InterfacePortDecl", "name"): SPELLING,
+    ("structural_scope.hpp", "StructuralScope", "source_name"): SPELLING,
+    ("subroutine.hpp", "SubroutineDecl", "name"): FOUND_AT_RUN_TIME,
+    ("subroutine_prototype.hpp", "SubroutinePrototype", "name"):
+        FOUND_IN_COVERAGE,
+    ("timing.hpp", "UnreportableReads", "why"): SPELLING,
+    ("type.hpp", "TypeDeclarationRef", "unit_name"): FOUND_IN_TYPES,
+    ("type.hpp", "TypeDeclarationRef", "path"): FOUND_IN_TYPES,
+    ("type.hpp", "PackedAggregateField", "name"): SPELLING,
+    ("type_definition.hpp", "EnumMember", "name"): FOUND_IN_COVERAGE,
+    ("type_definition.hpp", "UnpackedAggregateField", "name"):
+        FOUND_IN_COVERAGE,
+    ("unit_signature.hpp", "PortDecl", "name"): SPELLING,
+    ("unit_signature.hpp", "UnitSignature", "unit_name"): SPELLING,
+    ("unit_signatures.hpp", "UnitSignatures", "name"): SPELLING,
+    ("unit_signatures.hpp", "UnitSignatures", "names"): SPELLING,
+    ("unit_signatures.hpp", "SignatureReader", "reading_unit_"): SPELLING,
+}
+
+
+def a029_fields(text: str) -> list[tuple[int, str, str]]:
+    found = []
+    owner = "?"
+    for lineno, line in enumerate(text.splitlines(), 1):
+        declared = A029_STRUCT_PATTERN.match(line)
+        if declared:
+            owner = declared.group(1)
+        field = A029_TEXT_FIELD_PATTERN.match(line)
+        if field:
+            found.append((lineno, owner, field.group(1)))
+    return found
+
+
+def check_a029(repo_root: Path) -> list[str]:
+    errors = []
+    seen = set()
+    for path in sorted((repo_root / "include/lyra/hir").glob("*.hpp")):
+        rel = path.relative_to(repo_root)
+        for lineno, owner, field in a029_fields(path.read_text()):
+            key = (path.name, owner, field)
+            seen.add(key)
+            if key not in HIR_TEXT_FIELDS:
+                errors.append(
+                    f"  {rel}:{lineno}: A029 {owner}::{field} is text HIR "
+                    f"carries and is not classed: say it is spelling, or "
+                    f"which reader still finds a declaration by it")
+    for key in sorted(set(HIR_TEXT_FIELDS) - seen):
+        errors.append(
+            f"  include/lyra/hir/{key[0]}: A029 {key[1]}::{key[2]} is classed "
+            f"and no longer declared; drop it from HIR_TEXT_FIELDS")
+    return errors
+
+
+# Rule A030
+A030_LOOKUP_PATTERN = re.compile(
+    r"\b(Find(?:Method|Property|Static|Callable|Member|ViewName|"
+    r"DisableTarget|ClockingBlock|Parameter|Variable|Subroutine|Class|"
+    r"Covergroup|ScopeClass|Extern))\s*\(")
+A030_SCOPE = (
+    "src/lyra/lowering/hir_to_mir", "include/lyra/lowering/hir_to_mir",
+    "src/lyra/mir", "include/lyra/mir", "src/lyra/mir_transform",
+    "src/lyra/lowering/mir_to_lir", "include/lyra/lowering/mir_to_lir",
+    "src/lyra/lir", "include/lyra/lir", "src/lyra/backend",
+    "include/lyra/backend")
+# HIR-to-MIR's own helpers that find a declaration by the text of its key or
+# its path; their names mean something else below MIR, so they are looked for
+# in HIR-to-MIR alone.
+A030_HIR_TO_MIR_LOOKUP_PATTERN = re.compile(
+    r"\b(DefinitionOf|PublishedClassOf|InstanceClassesOf|"
+    r"InstanceCovergroupsOf|InstanceScopeOf)\s*\(")
+A030_HIR_TO_MIR_SCOPE = (
+    "src/lyra/lowering/hir_to_mir", "include/lyra/lowering/hir_to_mir")
+HIR_TO_MIR = "src/lyra/lowering/hir_to_mir/"
+HIR_TO_MIR_HEADER = "include/lyra/lowering/hir_to_mir/"
+HIR_LOOKUPS_BELOW = {
+    (HIR_TO_MIR + "coverage_library.cpp", "FindMethod"): FOUND_IN_COVERAGE,
+    (HIR_TO_MIR + "coverage_library.cpp", "FindProperty"): FOUND_IN_COVERAGE,
+    (HIR_TO_MIR + "class_decl_lowerer.cpp", "DefinitionOf"): FOUND_IN_TYPES,
+    (HIR_TO_MIR + "class_definition.cpp", "DefinitionOf"): FOUND_IN_TYPES,
+    (HIR_TO_MIR + "coverage_library.cpp", "DefinitionOf"): FOUND_IN_TYPES,
+    (HIR_TO_MIR + "covergroup_lowerer.cpp", "DefinitionOf"): FOUND_IN_TYPES,
+    (HIR_TO_MIR + "declared_initial_value.cpp", "DefinitionOf"):
+        FOUND_IN_TYPES,
+    (HIR_TO_MIR + "default_value.cpp", "DefinitionOf"): FOUND_IN_TYPES,
+    (HIR_TO_MIR + "expression/selects.cpp", "DefinitionOf"): FOUND_IN_TYPES,
+    (HIR_TO_MIR + "pattern.cpp", "DefinitionOf"): FOUND_IN_TYPES,
+    (HIR_TO_MIR + "pattern_rendering.cpp", "DefinitionOf"): FOUND_IN_TYPES,
+    (HIR_TO_MIR + "randomization.cpp", "DefinitionOf"): FOUND_IN_TYPES,
+    (HIR_TO_MIR + "select_position.cpp", "DefinitionOf"): FOUND_IN_TYPES,
+    (HIR_TO_MIR + "translate_type.cpp", "DefinitionOf"): FOUND_IN_TYPES,
+    (HIR_TO_MIR + "class_code.cpp", "PublishedClassOf"): FOUND_IN_SCOPES,
+    (HIR_TO_MIR + "covergroup_lowerer.cpp", "PublishedClassOf"):
+        FOUND_IN_SCOPES,
+    (HIR_TO_MIR + "covergroup_lowerer.cpp", "InstanceScopeOf"):
+        FOUND_IN_SCOPES,
+    (HIR_TO_MIR + "unit_lowerer.cpp", "PublishedClassOf"): FOUND_IN_SCOPES,
+    (HIR_TO_MIR + "unit_lowerer.cpp", "InstanceClassesOf"): FOUND_IN_SCOPES,
+    (HIR_TO_MIR + "unit_lowerer.cpp", "InstanceCovergroupsOf"):
+        FOUND_IN_SCOPES,
+    (HIR_TO_MIR + "unit_lowerer.cpp", "InstanceScopeOf"): FOUND_IN_SCOPES,
+    (HIR_TO_MIR_HEADER + "unit_lowerer.hpp", "PublishedClassOf"):
+        FOUND_IN_SCOPES,
+    (HIR_TO_MIR_HEADER + "unit_lowerer.hpp", "InstanceClassesOf"):
+        FOUND_IN_SCOPES,
+    (HIR_TO_MIR_HEADER + "unit_lowerer.hpp", "InstanceCovergroupsOf"):
+        FOUND_IN_SCOPES,
+    (HIR_TO_MIR_HEADER + "unit_lowerer.hpp", "InstanceScopeOf"):
+        FOUND_IN_SCOPES,
+}
+
+
+def check_a030(repo_root: Path) -> list[str]:
+    errors = []
+    seen = set()
+    scans = [(root, A030_LOOKUP_PATTERN) for root in A030_SCOPE]
+    scans += [(root, A030_HIR_TO_MIR_LOOKUP_PATTERN)
+              for root in A030_HIR_TO_MIR_SCOPE]
+    for root, pattern in scans:
+        for path, rel in iter_files(repo_root, root):
+            for lineno, line in enumerate(path.read_text().splitlines(), 1):
+                for lookup in pattern.findall(strip_comment(line)):
+                    key = (str(rel), lookup)
+                    seen.add(key)
+                    if key not in HIR_LOOKUPS_BELOW:
+                        errors.append(
+                            f"  {rel}:{lineno}: A030 {lookup} finds a "
+                            f"declaration by name below AST-to-HIR; name it "
+                            f"by the id AST-to-HIR gave it")
+    for key in sorted(set(HIR_LOOKUPS_BELOW) - seen):
+        errors.append(
+            f"  {key[0]}: A030 {key[1]} is listed and no longer called there; "
+            f"drop it from HIR_LOOKUPS_BELOW")
+    return errors
+
+
 # Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
@@ -1972,6 +2215,18 @@ def run_self_tests() -> bool:
             '    visibility = ["//tests:__subpackages__"],'),
         "A028 the suite's own targets, a load and a visibility are clean")
 
+    # A029
+    ok &= expect(
+        a029_fields("struct S {\n  std::optional<std::string> item;\n};")
+        == [(2, "S", "item")], "A029 optional text field")
+    ok &= expect(
+        a029_fields("struct S {\n  TypeId type;\n};") == [],
+        "A029 false-pos")
+    # A030
+    ok &= expect(A030_LOOKUP_PATTERN.search("hir::FindMethod(methods, n)"),
+                 "A030 lookup")
+    ok &= expect(not A030_LOOKUP_PATTERN.search("FindEvaluator(e)"),
+                 "A030 false-pos")
     return ok
 
 
@@ -2006,6 +2261,8 @@ CHECKS = [
     ("A026 front end's own fold read", check_a026),
     ("A027 expression type interned directly", check_a027),
     ("A028 conformance suite depends on Lyra", check_a028),
+    ("A029 HIR text field not classed", check_a029),
+    ("A030 declaration found by name below AST-to-HIR", check_a030),
 ]
 
 

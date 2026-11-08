@@ -642,20 +642,6 @@ auto LowerForeignImportDirect(
       result_type);
 }
 
-// The direction an import's formal is declared with, which a DPI-C import
-// spells as its C-side data flow (LRM 35.5.6).
-auto ParamDirectionOf(support::DpiDirection direction) -> hir::ParamDirection {
-  switch (direction) {
-    case support::DpiDirection::kInput:
-      return hir::ParamDirection::kInput;
-    case support::DpiDirection::kOutput:
-      return hir::ParamDirection::kOutput;
-    case support::DpiDirection::kInout:
-      return hir::ParamDirection::kInOut;
-  }
-  throw InternalError("ParamDirectionOf: unknown DpiDirection");
-}
-
 // Populates `closure`'s body with the DPI import boundary: each actual crossed
 // in its own shape -- by value, or through a boundary object the foreign call
 // reaches by pointer or by handle -- then the foreign call, then the read-back
@@ -712,8 +698,7 @@ auto PopulateForeignImportBoundary(
           "default names the scope evaluating it");
     }
     return EvaluateImportDefault(
-        lowerer, cframe, *ref.declaring_scope, i,
-        ParamDirectionOf(import.params[i].direction), evaluator_arguments(i));
+        lowerer, cframe, *ref.declaring_scope, i, evaluator_arguments(i));
   };
   const auto cross = [&](std::size_t i) -> diag::Result<void> {
     const hir::ExprId actual = operands[i];

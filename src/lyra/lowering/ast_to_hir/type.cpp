@@ -38,6 +38,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/type_definition.hpp"
+#include "lyra/lowering/ast_to_hir/class_methods.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/constraint_block.hpp"
 #include "lyra/lowering/ast_to_hir/covergroup_decl.hpp"
@@ -873,22 +874,50 @@ auto StaticBodiesOf(
 
 }  // namespace
 
-auto UnitLowerer::MakeClassMethodTarget(
-    hir::ClassId owner, const slang::ast::SubroutineSymbol& method)
-    -> hir::ClassMethodTarget {
-  return hir::ClassMethodTarget{
-      .owner = owner, .method = MethodPositionOf(owner, method.name)};
+auto UnitLowerer::MethodPositionIn(
+    const slang::ast::ClassType& owner, const slang::ast::Symbol& member)
+    -> hir::MethodId {
+  // A class `std` declares is Lyra's definition of it (LRM 15.3, 15.4, 9.7),
+  // whose member of the front end's builtin one's name is the one a call of it
+  // reaches; the name is the only thing the two declarations share.
+  const slang::ast::ClassType* definition = facts_.StdDefinitionOf(owner);
+  const slang::ast::ClassType& declaring =
+      definition != nullptr ? *definition : owner;
+  const slang::ast::Symbol* declared = &member;
+  if (definition != nullptr) {
+    declared = definition->find(member.name);
+    if (const auto* proto =
+            declared == nullptr
+                ? nullptr
+                : declared->as_if<slang::ast::MethodPrototypeSymbol>()) {
+      declared = proto->getSubroutine();
+    }
+    if (declared == nullptr) {
+      throw InternalError(
+          std::format(
+              "UnitLowerer::MethodPositionIn: Lyra's definition of '{}' "
+              "declares no '{}' -- please report this as a bug",
+              owner.name, member.name));
+    }
+  }
+  const ClassMethods& methods = MethodsOf(declaring);
+  if (const auto* block =
+          declared->as_if<slang::ast::ConstraintBlockSymbol>()) {
+    return methods.PositionOf(*block);
+  }
+  return methods.PositionOf(declared->as<slang::ast::SubroutineSymbol>());
+}
+
+auto UnitLowerer::MethodsOf(const slang::ast::ClassType& cls)
+    -> const ClassMethods& {
+  const auto known = class_methods_.find(&cls);
+  if (known != class_methods_.end()) return known->second;
+  return class_methods_.emplace(&cls, ClassMethodsOf(cls)).first->second;
 }
 
 // A member of a class is at the position its declaration gives it, found by
 // its name, whichever unit declares the class: a class declares at most one
 // member under a name.
-auto UnitLowerer::MethodPositionOf(hir::ClassId cls, std::string_view name)
-    -> hir::MethodId {
-  return Positioned(
-      cls, name, hir::FindMethod(DeclarationOf(cls).methods, name));
-}
-
 auto UnitLowerer::PropertyPositionOf(hir::ClassId cls, std::string_view name)
     -> hir::FieldId {
   return Positioned(
@@ -909,7 +938,8 @@ auto UnitLowerer::MakeClassMethodTarget(
     -> diag::Result<hir::ClassMethodTarget> {
   auto owner_id = ResolveClass(owner, span);
   if (!owner_id) return std::unexpected(std::move(owner_id.error()));
-  return MakeClassMethodTarget(*owner_id, method);
+  return hir::ClassMethodTarget{
+      .owner = *owner_id, .method = MethodPositionIn(owner, method)};
 }
 
 auto UnitLowerer::DeclaredMethodOf(
@@ -958,19 +988,9 @@ auto UnitLowerer::MakeCalleeInterface(
   for (const auto* formal : sym.getArguments()) {
     auto formal_type = InternType(formal->getType(), span);
     if (!formal_type) return std::unexpected(std::move(formal_type.error()));
-    std::optional<hir::DefaultEvaluator> default_evaluator;
-    if (formal->getDefaultValue() != nullptr && EvaluatesItsOwnDefaults(sym)) {
-      auto answered = InternDefaultType(*formal, span);
-      if (!answered) return std::unexpected(std::move(answered.error()));
-      default_evaluator = hir::DefaultEvaluator{
-          .name = ArgumentDefaultName(sym.name, formal->name),
-          .result_type = *answered};
-    }
     params.push_back(
         hir::CalleeParam{
-            .direction = ParamDirectionOf(*formal),
-            .type = *formal_type,
-            .default_evaluator = std::move(default_evaluator)});
+            .direction = ParamDirectionOf(*formal), .type = *formal_type});
   }
   return hir::CalleeInterface{
       .kind = ToHirSubroutineKind(sym.subroutineKind),
@@ -1003,9 +1023,7 @@ auto UnitLowerer::MakeEvaluatorInterface(
     if (!type) return std::unexpected(std::move(type.error()));
     params.push_back(
         hir::CalleeParam{
-            .direction = EvaluatorParamDirectionOf(*parameter),
-            .type = *type,
-            .default_evaluator = std::nullopt});
+            .direction = EvaluatorParamDirectionOf(*parameter), .type = *type});
   }
   return hir::CalleeInterface{
       .kind = hir::SubroutineKind::kFunction, .params = std::move(params)};
@@ -1195,72 +1213,18 @@ auto UnitLowerer::InternOwnClass(
             .type = *prop_type,
             .random = *random});
   }
-  // Every callable the class body declares, resolved to the subroutine that
-  // carries its declaration. SystemVerilog spells a definition two ways and
-  // they differ only in where the body sits: written inline, the class scope
-  // holds the subroutine; declared `extern`, the class scope holds a prototype
-  // and the definition sits outside the class body (LRM 8.24). A pure virtual
-  // prototype (LRM 8.21) is the one form with no definition behind it. The
-  // constructor is taken out of both: it is a construction-protocol fact the
-  // class holds beside its methods (LRM 8.7), not a slot in the method arena.
-  std::vector<const slang::ast::SubroutineSymbol*> defined_methods;
-  std::vector<const slang::ast::MethodPrototypeSymbol*> pure_prototypes;
-  const slang::ast::SubroutineSymbol* constructor_sym = nullptr;
-  for (const auto& method : cls.membersOfType<slang::ast::SubroutineSymbol>()) {
-    if (method.getParentScope() != &cls) {
-      continue;
-    }
-    // Every class carries methods the front end supplies itself, for its
-    // generator and its constraints (LRM 18.6, 18.8, 18.9, 18.13.3 --
-    // 18.13.5); none has a body to lower.
-    if (method.flags.has(slang::ast::MethodFlags::BuiltIn)) {
-      continue;
-    }
-    if (method.flags.has(slang::ast::MethodFlags::Constructor)) {
-      constructor_sym = &method;
-      continue;
-    }
-    defined_methods.push_back(&method);
-  }
-  for (const auto& proto :
-       cls.membersOfType<slang::ast::MethodPrototypeSymbol>()) {
-    if (proto.getParentScope() != &cls) {
-      continue;
-    }
-    const auto* subroutine = proto.getSubroutine();
-    if (subroutine == nullptr) {
-      throw InternalError(
-          "UnitLowerer::InternOwnClass: a class method prototype has no "
-          "subroutine slang normally materializes");
-    }
-    if (proto.flags.has(slang::ast::MethodFlags::Constructor)) {
-      constructor_sym = subroutine;
-      continue;
-    }
-    if (proto.flags.has(slang::ast::MethodFlags::Pure)) {
-      pure_prototypes.push_back(&proto);
-      continue;
-    }
-    defined_methods.push_back(subroutine);
-  }
-
+  // Every callable the class body declares, each at the position the class
+  // places it. The constructor is a construction-protocol fact the class holds
+  // beside its methods (LRM 8.7), not a slot in the method arena.
+  const ClassMethods& members = MethodsOf(cls);
+  const auto& defined_methods = members.defined;
+  const auto& pure_prototypes = members.pure_prototypes;
+  const slang::ast::SubroutineSymbol* constructor_sym = members.constructor;
   // A formal's default is evaluated in the class each time a call omits it
-  // (LRM 13.5.3), whatever object or scope the call is made from, so each is a
-  // method of the class a caller asks for. The call binds to the method the
-  // front end resolved, so the default is that method's and is not dispatched.
-  std::vector<std::pair<
-      const slang::ast::SubroutineSymbol*,
-      const slang::ast::FormalArgumentSymbol*>>
-      defaulted_formals;
-  const auto take_defaults = [&](const slang::ast::SubroutineSymbol& method) {
-    if (!EvaluatesItsOwnDefaults(method)) return;
-    for (const slang::ast::FormalArgumentSymbol* formal :
-         method.getArguments()) {
-      if (formal->getDefaultValue() != nullptr) {
-        defaulted_formals.emplace_back(&method, formal);
-      }
-    }
-  };
+  // (LRM 13.5.3), so each is a method of the class a caller asks for. The call
+  // binds to the method the front end resolved, so the default is that
+  // method's and is not dispatched.
+  const auto& defaulted_formals = members.defaulted_formals;
   // A static variable a method or the constructor declares is storage the
   // class keeps, as a static property is (LRM 6.21): one for the class whatever
   // object a call runs on. So the class declares it, after its properties,
@@ -1280,12 +1244,6 @@ auto UnitLowerer::InternOwnClass(
       DeclareClassStatic(*local.var, cls, replicating, std::move(local.name));
     }
   }
-  for (const auto* method : defined_methods) take_defaults(*method);
-  for (const auto* proto : pure_prototypes) {
-    take_defaults(*proto->getSubroutine());
-  }
-  if (constructor_sym != nullptr) take_defaults(*constructor_sym);
-
   // Take an identity for every method before any body lowers, so a body may
   // name a peer whatever order the source declared them in (LRM 13.7) and so a
   // method whose definition sits outside the class body is still nameable from
@@ -1299,19 +1257,15 @@ auto UnitLowerer::InternOwnClass(
   // overridden by a block of its name in a class extending this one (LRM
   // 18.5.2), so it takes a method's identity, after every method, and is
   // published as one.
-  std::vector<const slang::ast::ConstraintBlockSymbol*> constraint_blocks;
-  for (const auto& block :
-       cls.membersOfType<slang::ast::ConstraintBlockSymbol>()) {
-    if (block.getParentScope() != &cls) {
-      continue;
-    }
-    constraint_blocks.push_back(&block);
+  const auto& constraint_blocks = members.constraint_blocks;
+  for (std::size_t i = 0; i < constraint_blocks.size(); ++i) {
     decl.methods.Declare();
   }
 
-  // What this class declares, as every unit reads it, taken in the one order
-  // its own arenas were just built in, so the signature and the class cannot
-  // describe different positions. It names classes and types as this unit
+  // What this class declares, as every unit reads it, each method at the
+  // position the class's one ordering of its methods gives it, the one its
+  // code is held at too, so the signature and the class cannot describe
+  // different positions. It names classes and types as this unit
   // does; publishing it renames both to the signature's own. Which classes a
   // unit publishes is a separate question, settled where the signature is
   // derived.
@@ -1332,14 +1286,19 @@ auto UnitLowerer::InternOwnClass(
   // A class that declares no `new` has the implicit one, which takes nothing
   // (LRM 8.7).
   if (!cls.isInterface) {
-    hir::CalleeInterface entered{
-        .kind = hir::SubroutineKind::kFunction,
-        .params = {},
-        .track_caller = DeclaredInLibraryText(cls)};
+    hir::DeclaredConstructor entered{
+        .interface =
+            hir::CalleeInterface{
+                .kind = hir::SubroutineKind::kFunction,
+                .params = {},
+                .track_caller = DeclaredInLibraryText(cls)},
+        .defaults = {}};
     if (constructor_sym != nullptr) {
       auto declared = MakeCalleeInterface(*constructor_sym, span);
       if (!declared) return std::unexpected(std::move(declared.error()));
-      entered = *std::move(declared);
+      entered = hir::DeclaredConstructor{
+          .interface = *std::move(declared),
+          .defaults = members.DefaultsOf(*constructor_sym)};
     }
     declaration.constructor = std::move(entered);
   }
@@ -1350,11 +1309,12 @@ auto UnitLowerer::InternOwnClass(
   // behavior an interface class restates from one it extends is stated where
   // it was introduced.
   const auto named = [&](const slang::ast::Symbol& introducing)
-      -> diag::Result<hir::NamedBehavior> {
-    auto introducer = ResolveClass(OwningClassOf(introducing), span);
+      -> diag::Result<hir::ClassMethodTarget> {
+    const slang::ast::ClassType& owner = OwningClassOf(introducing);
+    auto introducer = ResolveClass(owner, span);
     if (!introducer) return std::unexpected(std::move(introducer.error()));
-    return hir::NamedBehavior{
-        .introducer = *introducer, .name = std::string{introducing.name}};
+    return hir::ClassMethodTarget{
+        .owner = *introducer, .method = MethodPositionIn(owner, introducing)};
   };
   // The front end lists, of each class, what it names and what those extend;
   // what the classes it extends implement is theirs, so the lineage is walked
@@ -1390,7 +1350,7 @@ auto UnitLowerer::InternOwnClass(
       }
       auto stated = named(*behavior);
       if (!stated) return std::unexpected(std::move(stated.error()));
-      std::optional<hir::NamedBehavior> answered_by;
+      std::optional<hir::ClassMethodTarget> answered_by;
       if (const slang::ast::SubroutineSymbol* answer =
               ImplementationOf(cls, behavior->name)) {
         auto answering = named(IntroducingOf(*answer));
@@ -1442,6 +1402,12 @@ auto UnitLowerer::InternOwnClass(
     }
     return LowerRandomizationHookName(method.name);
   };
+  // Each method is placed where the class's one ordering of its methods puts
+  // it, which is the position every unit counts for it.
+  std::vector<std::optional<hir::DeclaredMethod>> placed(members.size());
+  const auto place = [&](hir::MethodId position, hir::DeclaredMethod method) {
+    placed.at(position.value) = std::move(method);
+  };
   const auto publish_method = [&](const slang::ast::SubroutineSymbol& method,
                                   bool is_pure) -> diag::Result<void> {
     auto interface = MakeCalleeInterface(method, span);
@@ -1450,13 +1416,15 @@ auto UnitLowerer::InternOwnClass(
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     auto dispatch = dispatch_of(method, is_pure);
     if (!dispatch) return std::unexpected(std::move(dispatch.error()));
-    declaration.methods.Add(
+    place(
+        members.PositionOf(method),
         hir::DeclaredMethod{
             .prototype =
                 hir::SubroutinePrototype{
                     .name = std::string{method.name},
                     .interface = *std::move(interface),
                     .result_type = *result_type},
+            .defaults = members.DefaultsOf(method),
             .dispatch = *dispatch,
             .replaces = is_pure ? std::nullopt : hook_replaced(method),
             .makes = std::nullopt});
@@ -1493,7 +1461,12 @@ auto UnitLowerer::InternOwnClass(
     auto interface =
         MakeEvaluatorInterface(EvaluatorParametersOf(*method, *formal), span);
     if (!interface) return std::unexpected(std::move(interface.error()));
-    declaration.methods.Add(
+    // An evaluator is handed the formals before its own, which the call has
+    // already bound.
+    std::vector<std::optional<hir::MethodId>> evaluator_defaults(
+        interface->params.size());
+    place(
+        members.PositionOf(*formal),
         hir::DeclaredMethod{
             .prototype =
                 hir::SubroutinePrototype{
@@ -1501,6 +1474,7 @@ auto UnitLowerer::InternOwnClass(
                     .interface = *std::move(interface),
                     .result_type = *result_type,
                     .result_direction = ParamDirectionOf(*formal)},
+            .defaults = std::move(evaluator_defaults),
             .dispatch = evaluator_dispatch(*method),
             .replaces = std::nullopt,
             .makes = std::nullopt});
@@ -1518,7 +1492,8 @@ auto UnitLowerer::InternOwnClass(
       if (!overrides) return std::unexpected(std::move(overrides.error()));
       dispatch = *overrides;
     }
-    declaration.methods.Add(
+    place(
+        members.PositionOf(*block),
         hir::DeclaredMethod{
             .prototype =
                 hir::SubroutinePrototype{
@@ -1531,6 +1506,7 @@ auto UnitLowerer::InternOwnClass(
                                         : hir::SubroutineKind::kConstraintBlock,
                             .params = {}},
                     .result_type = *void_type},
+            .defaults = {},
             .dispatch = dispatch,
             .replaces = std::nullopt,
             .makes = std::nullopt});
@@ -1538,11 +1514,18 @@ auto UnitLowerer::InternOwnClass(
   // Each covergroup the class embeds is made by a method of the class that a
   // class extending it overrides where its covergroup extends this one (LRM
   // 19.4.1), after the methods the source declares.
-  for (const auto& covergroup :
-       cls.membersOfType<slang::ast::CovergroupType>()) {
-    auto factory = PublishedFactoryOf(covergroup, span);
+  for (const slang::ast::CovergroupType* covergroup : members.covergroups) {
+    auto factory = PublishedFactoryOf(*covergroup, span);
     if (!factory) return std::unexpected(std::move(factory.error()));
-    declaration.methods.Add(*std::move(factory));
+    place(members.PositionOf(*covergroup), *std::move(factory));
+  }
+  for (std::optional<hir::DeclaredMethod>& method : placed) {
+    if (!method.has_value()) {
+      throw InternalError(
+          "UnitLowerer::InternOwnClass: a position the class's methods count "
+          "out was given no method -- please report this as a bug");
+    }
+    declaration.methods.Add(*std::move(method));
   }
   // A copy at a path already declared declares the same class, which its first
   // copy has already stated.
@@ -1563,11 +1546,7 @@ auto UnitLowerer::InternOwnClass(
           .span = span,
           .replicating_scope = &replicating,
           .decl = std::move(decl_owner),
-          .defined_methods = std::move(defined_methods),
-          .pure_prototypes = std::move(pure_prototypes),
-          .constraint_blocks = std::move(constraint_blocks),
-          .defaulted_formals = std::move(defaulted_formals),
-          .constructor_sym = constructor_sym});
+          .members = &members});
   return id;
 }
 
@@ -1631,11 +1610,10 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   const slang::ast::ClassType& cls = *pending.cls;
   const diag::SourceSpan span = pending.span;
   hir::ClassDecl& decl = *pending.decl;
-  const std::vector<const slang::ast::SubroutineSymbol*>& defined_methods =
-      pending.defined_methods;
-  const std::vector<const slang::ast::MethodPrototypeSymbol*>& pure_prototypes =
-      pending.pure_prototypes;
-  const slang::ast::SubroutineSymbol* constructor_sym = pending.constructor_sym;
+  const ClassMethods& members = *pending.members;
+  const auto& defined_methods = members.defined;
+  const auto& pure_prototypes = members.pure_prototypes;
+  const slang::ast::SubroutineSymbol* constructor_sym = members.constructor;
   const WalkFrame class_frame =
       WalkFrame{}
           .WithDeclaringScope(
@@ -1646,8 +1624,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   for (const auto* method : defined_methods) {
     auto method_decl = LowerSubroutineDecl(*this, *method, class_frame);
     if (!method_decl) return std::unexpected(std::move(method_decl.error()));
-    decl.methods.Define(
-        MethodPositionOf(pending.id, method->name), *std::move(method_decl));
+    decl.methods.Define(members.PositionOf(*method), *std::move(method_decl));
   }
 
   // A pure virtual method (LRM 8.21) is a member of the class like any other,
@@ -1657,12 +1634,12 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     auto proto_decl = LowerMethodPrototypeDecl(*this, *proto, class_frame);
     if (!proto_decl) return std::unexpected(std::move(proto_decl.error()));
     decl.methods.Define(
-        MethodPositionOf(pending.id, proto->name), *std::move(proto_decl));
+        members.PositionOf(*proto->getSubroutine()), *std::move(proto_decl));
   }
 
-  for (const auto& [method, formal] : pending.defaulted_formals) {
+  for (const auto& [method, formal] : members.defaulted_formals) {
     std::string name = ArgumentDefaultName(method->name, formal->name);
-    const hir::MethodId position = MethodPositionOf(pending.id, name);
+    const hir::MethodId position = members.PositionOf(*formal);
     auto result_type = InternDefaultType(*formal, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     auto evaluator = LowerEvaluatorDecl(
@@ -1673,12 +1650,11 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     decl.methods.Define(position, *std::move(evaluator));
   }
 
-  for (const auto* block : pending.constraint_blocks) {
+  for (const auto* block : members.constraint_blocks) {
     auto block_decl =
         LowerConstraintBlockDecl(*this, cls, *block, class_frame, span);
     if (!block_decl) return std::unexpected(std::move(block_decl.error()));
-    decl.methods.Define(
-        MethodPositionOf(pending.id, block->name), *std::move(block_decl));
+    decl.methods.Define(members.PositionOf(*block), *std::move(block_decl));
   }
 
   // The class's `new` (LRM 8.7), lowered once every method identity exists so

@@ -96,7 +96,7 @@ auto PortDefault(
       .type = unit_lowerer.Unit()
                   .scope_classes.Get(child.scope_class)
                   .callables.Get(evaluate)
-                  .result_type,
+                  .prototype.result_type,
       .data =
           hir::CallExpr{
               .callee =

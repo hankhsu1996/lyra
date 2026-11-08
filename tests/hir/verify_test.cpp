@@ -14,6 +14,7 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/callee_interface.hpp"
 #include "lyra/hir/class_declaration.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/class_ref.hpp"
@@ -21,10 +22,13 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
+#include "lyra/hir/declared_method.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
+#include "lyra/hir/namespace.hpp"
+#include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/primary.hpp"
@@ -37,6 +41,7 @@
 #include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/hir/type.hpp"
@@ -670,6 +675,144 @@ TEST(HirVerifyTest, EveryReadOfAClassNeedsItsDeclaration) {
   refused(
       reading(readings.front().second, true, false),
       "the declaration of class 'C'", "Base");
+}
+
+// A behavior is named by the introducing method's position, and a callee's
+// evaluators by their positions beside its formals, so a declaration naming a
+// method that introduces no behavior, or stating evaluators that do not line
+// up with the formals, is refused, and the same declaration stated rightly is
+// accepted.
+TEST(HirVerifyTest, ADeclarationsPositionsNameWhatItsClassDeclares) {
+  // A unit holding the class `C` of two methods: `base`, which introduces a
+  // behavior where `introduces`, and `over`, which overrides it, taking one
+  // formal and stating `stated` evaluators for it.
+  const auto declaring = [](bool introduces, std::size_t stated) {
+    return UnitWithProcess([&](CompilationUnit& u, ProceduralBody&) {
+      const ClassId cls = u.classes.Import(
+          ClassKey{.unit_name = "P", .class_path = ClassPath("C")});
+      ClassDeclaration declared = DeclarationOf("C", std::nullopt);
+      const auto method = [&](std::string name, std::size_t formals,
+                              std::size_t defaults, MethodDispatch dispatch) {
+        CalleeInterface interface;
+        for (std::size_t i = 0; i < formals; ++i) {
+          interface.params.push_back(
+              CalleeParam{
+                  .direction = ParamDirection::kInput,
+                  .type = u.builtins.int_type});
+        }
+        declared.methods.Add(
+            DeclaredMethod{
+                .prototype =
+                    SubroutinePrototype{
+                        .name = std::move(name),
+                        .interface = std::move(interface),
+                        .result_type = u.builtins.void_type},
+                .defaults = std::vector<std::optional<MethodId>>(defaults),
+                .dispatch = std::move(dispatch),
+                .replaces = std::nullopt,
+                .makes = std::nullopt});
+      };
+      method(
+          "base", 0, 0,
+          introduces ? MethodDispatch{IntroducesVirtual{}}
+                     : MethodDispatch{NotVirtual{}});
+      method(
+          "over", 1, stated,
+          OverridesVirtual{
+              .is_pure = false,
+              .overridden =
+                  ClassMethodTarget{.owner = cls, .method = MethodId{0}}});
+      u.classes.SetDeclaration(cls, std::move(declared));
+      return std::vector<ExprId>{};
+    });
+  };
+  const auto refused = [](const CompilationUnit& unit, std::string_view says) {
+    try {
+      Verify(unit, {});
+      ADD_FAILURE() << "a unit whose declaration " << says << " was accepted";
+    } catch (const InternalError& error) {
+      const std::string message = error.what();
+      EXPECT_NE(message.find(says), std::string::npos) << message;
+    }
+  };
+  EXPECT_NO_THROW(Verify(declaring(true, 1), {}));
+  refused(
+      declaring(false, 1),
+      "names method 0 of class 'C' as a behavior, which introduces none");
+  refused(
+      declaring(true, 2),
+      "method 'over' of class 'C' states 2 defaults for 1 formals");
+}
+
+// A member of a namespace is named by the unit's entry for the namespace and
+// its position in what the namespace declares, so a reference naming an entry
+// the unit does not hold, or a position the namespace does not declare, is
+// refused, a variable's and a subroutine's alike.
+TEST(HirVerifyTest, ANamespaceMemberIsNamedThroughAnEntryTheUnitHolds) {
+  // A unit naming one variable and one subroutine of the namespace `P` it
+  // holds when `holds`, at positions `variable` and `subroutine`.
+  const auto naming = [](bool holds, std::uint32_t variable,
+                         std::uint32_t subroutine) {
+    return UnitWithProcess([&](CompilationUnit& u, ProceduralBody& b) {
+      NamespaceId owner{0};
+      if (holds) {
+        owner = u.namespaces.Enter(NamespaceKey{.unit_name = "P"}).first;
+        NamespaceDeclaration declared;
+        declared.variables.Add(
+            NamespaceVariable{
+                .name = support::UnqualifiedName("v"),
+                .type = u.builtins.int_type});
+        declared.subroutines.Add(
+            NamespaceSubroutine{
+                .prototype =
+                    SubroutinePrototype{
+                        .name = "f",
+                        .interface = {},
+                        .result_type = u.builtins.void_type},
+                .defaults = {}});
+        u.namespaces.SetDeclaration(owner, std::move(declared));
+      }
+      return std::vector<ExprId>{
+          b.exprs.Add(
+              Expr{
+                  .type = u.builtins.int_type,
+                  .data =
+                      PrimaryExpr{
+                          .data =
+                              NamespaceValueRef{
+                                  .owner = owner,
+                                  .variable = NamespaceVariableId{variable}}},
+                  .span = {}}),
+          b.exprs.Add(
+              Expr{
+                  .type = u.builtins.void_type,
+                  .data =
+                      CallExpr{
+                          .callee =
+                              NamespaceSubroutineRef{
+                                  .owner = owner,
+                                  .subroutine =
+                                      NamespaceSubroutineId{subroutine}},
+                          .arguments = {}},
+                  .span = {}})};
+    });
+  };
+  const auto refused = [](const CompilationUnit& unit, std::string_view names) {
+    try {
+      Verify(unit, {});
+      ADD_FAILURE() << "a unit naming " << names << " was accepted";
+    } catch (const InternalError& error) {
+      const std::string message = error.what();
+      EXPECT_NE(message.find(std::format("names {}", names)), std::string::npos)
+          << message;
+    }
+  };
+  EXPECT_NO_THROW(Verify(naming(true, 0, 0), {}));
+  refused(
+      naming(false, 0, 0), "namespace 0, which unit 'U' holds no declaration");
+  refused(naming(true, 1, 0), "variable 1 of namespace 'P', which declares 1");
+  refused(
+      naming(true, 0, 1), "subroutine 1 of namespace 'P', which declares 1");
 }
 
 // An id is a position in the arena of the scope that minted it, so a holder

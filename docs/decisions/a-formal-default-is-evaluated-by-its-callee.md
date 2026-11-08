@@ -9,7 +9,9 @@ property read the handle once per default and could be made on an object a defau
 
 ## Status
 
-Accepted.
+Accepted. Revised 2026-11-07: D1 named the evaluating function by a name made for it, which a call
+then looked up in the callee's declarer below the front end's layer; the declarer now states the
+function's position beside each formal.
 
 ## Requirement
 
@@ -42,8 +44,9 @@ in the SystemVerilog scope in which the import declaration occurs" (LRM 35.5.4).
 **D1. The callee evaluates the default.** Whatever declares a subroutine with a defaulted formal
 declares, per such formal, a function evaluating the default: the scope or namespace a subroutine or
 an import belongs to, or the class of a method or a constructor. The function is published beside
-the subroutine and named for it and the formal, and what a call reads of the callee names it beside
-the formal.
+the subroutine, and the declarer states beside each formal which of its own callables evaluates it,
+by that callable's position; a call reads that position off the callee's declaration. The function's
+name, made from the subroutine and the formal, is spelling only.
 
 **D2. The call states only that the default applies.** An omitted argument stands in the call as the
 callee's default and nothing of the expression is lowered where the call is, so a read analysis of

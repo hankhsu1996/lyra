@@ -1,7 +1,7 @@
 #pragma once
 
+#include <compare>
 #include <optional>
-#include <string>
 #include <variant>
 #include <vector>
 
@@ -13,6 +13,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/interface_member_access.hpp"
+#include "lyra/hir/namespace.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/randomization_hook.hpp"
 #include "lyra/hir/sampled_history.hpp"
@@ -173,19 +174,17 @@ struct ValueChangeRef {
   auto operator==(const ValueChangeRef&) const -> bool = default;
 };
 
-// Calls a subroutine of a namespace unit -- a package function or task (LRM
-// 26.3) -- by the unit and the subroutine's name, whichever unit's namespace
-// declares it, the declaring unit's own bodies included: a namespace has no
-// instance to reach it through, so it is never an enclosing-scope hop, and the
-// name is resolved at link time, the way an instantiated child names its unit.
-// `interface` is what the call passes and awaits, read off the declaring
-// unit's declarations where this is minted.
+// Calls a subroutine a namespace declares -- a package function or task (LRM
+// 26.3) -- by the namespace and the subroutine's position in what it declares,
+// the namespace's own bodies included: a namespace has no instance to reach it
+// through, so it is never an enclosing-scope hop. What the call passes and
+// awaits is the namespace's declaration of it.
 struct NamespaceSubroutineRef {
-  std::string unit_name;
-  std::string subroutine_name;
-  CalleeInterface interface;
+  NamespaceId owner;
+  NamespaceSubroutineId subroutine;
 
-  auto operator==(const NamespaceSubroutineRef&) const -> bool = default;
+  auto operator<=>(const NamespaceSubroutineRef&) const
+      -> std::strong_ordering = default;
 };
 
 // The object a call on another unit's instance is made on: one a route reaches,
@@ -237,11 +236,11 @@ struct PublishedDeclaringScope {
 };
 
 // A namespace -- a package or `$unit` scope -- which is never instantiated, so
-// no object stands for it, and whose evaluators a call names by the unit and
-// what it published of each.
+// no object stands for it, and whose evaluators a call names by their
+// positions in what it declares.
 struct NamespaceDeclaringScope {
-  std::string unit_name;
-  std::vector<std::optional<DefaultEvaluator>> defaults;
+  NamespaceId owner;
+  std::vector<std::optional<NamespaceSubroutineId>> defaults;
 
   auto operator==(const NamespaceDeclaringScope&) const -> bool = default;
 };

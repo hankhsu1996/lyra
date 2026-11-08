@@ -197,30 +197,23 @@ auto ReadMethodCallee(
           });
   const hir::DeclaredMethods& methods =
       classes.Declaration(callee.owner).methods;
-  const hir::CalleeInterface& interface =
-      methods.Get(callee.method).prototype.interface;
+  const hir::DeclaredMethod& declared = methods.Get(callee.method);
+  const hir::CalleeInterface& interface = declared.prototype.interface;
   std::vector<std::optional<MethodDefault>> defaults;
-  for (const hir::CalleeParam& param : interface.params) {
-    defaults.push_back(param.default_evaluator.transform(
-        [&](const hir::DefaultEvaluator& value) {
-          const std::optional<hir::MethodId> method =
-              hir::FindMethod(methods, value.name);
-          if (!method.has_value()) {
-            throw InternalError(
-                "ReadMethodCallee: a class declaring a formal's default "
-                "declares the method evaluating it");
-          }
-          return MethodDefault{
-              .evaluator =
-                  mir::Direct{
-                      .target = unit_lowerer.TranslateMethodTarget(
-                          hir::ClassMethodTarget{
-                              .owner = callee.owner, .method = *method})},
-              .type = unit_lowerer.TranslateType(value.result_type),
-              .passing = ResultPassingOf(param.direction),
-              .on_object = !std::holds_alternative<hir::TypeAssociated>(
-                  methods.Get(*method).dispatch)};
-        }));
+  for (const std::optional<hir::MethodId>& evaluator : declared.defaults) {
+    defaults.push_back(evaluator.transform([&](hir::MethodId method) {
+      const hir::DeclaredMethod& evaluating = methods.Get(method);
+      return MethodDefault{
+          .evaluator =
+              mir::Direct{
+                  .target = unit_lowerer.TranslateMethodTarget(
+                      hir::ClassMethodTarget{
+                          .owner = callee.owner, .method = method})},
+          .type = unit_lowerer.TranslateType(evaluating.prototype.result_type),
+          .passing = ResultPassingOf(evaluating.prototype.result_direction),
+          .on_object = !std::holds_alternative<hir::TypeAssociated>(
+              evaluating.dispatch)};
+    }));
   }
   return MethodCalleeFacts{
       .kind = interface.kind,
@@ -402,24 +395,32 @@ auto PlanSubroutineCall(
             return plan;
           },
           [&](const hir::NamespaceSubroutineRef& ref) -> Planned {
+            const hir::NamespaceDeclaration& declared =
+                unit_lowerer.Hir().namespaces.Declaration(ref.owner);
+            const hir::NamespaceSubroutine& listed =
+                declared.subroutines.Get(ref.subroutine);
+            const hir::CalleeInterface& interface = listed.prototype.interface;
             SubroutineCallee plan;
-            plan.kind = ref.interface.kind;
+            plan.kind = interface.kind;
             plan.result_type = result_type;
             plan.completion = BuildCompletionLayout(
-                CalleeFormalsOf(unit_lowerer, ref.interface), result_type);
+                CalleeFormalsOf(unit_lowerer, interface), result_type);
             plan.form = FormOfNamespaceSubroutine(unit_lowerer, ref);
-            for (const hir::CalleeParam& param : ref.interface.params) {
-              plan.defaults.push_back(param.default_evaluator.transform(
-                  [&](const hir::DefaultEvaluator& value) {
+            for (const std::optional<hir::NamespaceSubroutineId>& evaluator :
+                 listed.defaults) {
+              plan.defaults.push_back(
+                  evaluator.transform([&](hir::NamespaceSubroutineId callable) {
+                    const hir::SubroutinePrototype& evaluating =
+                        declared.subroutines.Get(callable).prototype;
                     return DefaultEvaluation{
                         .form = FormOfNamespaceSubroutine(
                             unit_lowerer,
                             hir::NamespaceSubroutineRef{
-                                .unit_name = ref.unit_name,
-                                .subroutine_name = value.name,
-                                .interface = {}}),
-                        .type = unit_lowerer.TranslateType(value.result_type),
-                        .passing = ResultPassingOf(param.direction)};
+                                .owner = ref.owner, .subroutine = callable}),
+                        .type =
+                            unit_lowerer.TranslateType(evaluating.result_type),
+                        .passing =
+                            ResultPassingOf(evaluating.result_direction)};
                   }));
             }
             return plan;
@@ -427,8 +428,9 @@ auto PlanSubroutineCall(
           [&](const hir::PublishedScopeMethodRef& ref) -> Planned {
             const hir::ScopeClassSignature& scope =
                 unit_lowerer.Hir().scope_classes.Get(ref.scope_class);
-            const hir::SubroutinePrototype& published =
+            const hir::ScopeCallable& listed =
                 scope.callables.Get(ref.callable);
+            const hir::SubroutinePrototype& published = listed.prototype;
             SubroutineCallee plan;
             plan.kind = published.interface.kind;
             plan.result_type = result_type;
@@ -436,25 +438,23 @@ auto PlanSubroutineCall(
                 CalleeFormalsOf(unit_lowerer, published.interface),
                 result_type);
             plan.form = FormOfPublishedSubroutine(unit_lowerer, ref);
-            for (const hir::CalleeParam& param : published.interface.params) {
-              plan.defaults.push_back(param.default_evaluator.transform(
-                  [&](const hir::DefaultEvaluator& value) {
-                    const std::optional<hir::PublishedCallableId> callable =
-                        scope.FindCallable(value.name);
-                    if (!callable.has_value()) {
-                      throw InternalError(
-                          "PlanSubroutineCall: a scope publishing a formal's "
-                          "default publishes the function evaluating it");
-                    }
+            for (const std::optional<hir::PublishedCallableId>& evaluator :
+                 listed.defaults) {
+              plan.defaults.push_back(
+                  evaluator.transform([&](hir::PublishedCallableId callable) {
+                    const hir::SubroutinePrototype& evaluating =
+                        scope.callables.Get(callable).prototype;
                     return DefaultEvaluation{
                         .form = FormOfPublishedSubroutine(
                             unit_lowerer,
                             hir::PublishedScopeMethodRef{
                                 .receiver = ref.receiver,
                                 .scope_class = ref.scope_class,
-                                .callable = *callable}),
-                        .type = unit_lowerer.TranslateType(value.result_type),
-                        .passing = ResultPassingOf(param.direction)};
+                                .callable = callable}),
+                        .type =
+                            unit_lowerer.TranslateType(evaluating.result_type),
+                        .passing =
+                            ResultPassingOf(evaluating.result_direction)};
                   }));
             }
             return plan;
@@ -898,8 +898,7 @@ template <ExprLowerer Lowerer>
 auto EvaluateImportDefault(
     Lowerer& lowerer, const WalkFrame& frame,
     const hir::ImportDeclaringScope& scope, std::size_t position,
-    hir::ParamDirection formal, std::span<const mir::ExprId> earlier)
-    -> diag::Result<EvaluatedDefault> {
+    std::span<const mir::ExprId> earlier) -> diag::Result<EvaluatedDefault> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   const auto named = [&](const auto& defaults) -> const auto& {
     if (position >= defaults.size() || !defaults[position].has_value()) {
@@ -928,7 +927,8 @@ auto EvaluateImportDefault(
             const hir::SubroutinePrototype& prototype =
                 unit_lowerer.Hir()
                     .scope_classes.Get(published.scope_class)
-                    .callables.Get(evaluator);
+                    .callables.Get(evaluator)
+                    .prototype;
             return DefaultEvaluation{
                 .form = FormOfPublishedSubroutine(
                     unit_lowerer,
@@ -940,16 +940,18 @@ auto EvaluateImportDefault(
                 .passing = ResultPassingOf(prototype.result_direction)};
           },
           [&](const hir::NamespaceDeclaringScope& space) {
-            const hir::DefaultEvaluator& evaluator = named(space.defaults);
+            const hir::NamespaceSubroutineId evaluator = named(space.defaults);
+            const hir::SubroutinePrototype& prototype =
+                unit_lowerer.Hir()
+                    .namespaces.SubroutineOf(space.owner, evaluator)
+                    .prototype;
             return DefaultEvaluation{
                 .form = FormOfNamespaceSubroutine(
                     unit_lowerer,
                     hir::NamespaceSubroutineRef{
-                        .unit_name = space.unit_name,
-                        .subroutine_name = evaluator.name,
-                        .interface = {}}),
-                .type = unit_lowerer.TranslateType(evaluator.result_type),
-                .passing = ResultPassingOf(formal)};
+                        .owner = space.owner, .subroutine = evaluator}),
+                .type = unit_lowerer.TranslateType(prototype.result_type),
+                .passing = ResultPassingOf(prototype.result_direction)};
           }},
       scope);
   auto handle = EvaluateHandle(lowerer, frame, evaluation.form);
@@ -964,12 +966,12 @@ auto EvaluateImportDefault(
 
 template auto EvaluateImportDefault(
     ProcessLowerer&, const WalkFrame&, const hir::ImportDeclaringScope&,
-    std::size_t, hir::ParamDirection, std::span<const mir::ExprId>)
+    std::size_t, std::span<const mir::ExprId>)
     -> diag::Result<EvaluatedDefault>;
 template auto EvaluateImportDefault(
     const StructuralScopeLowerer&, const WalkFrame&,
-    const hir::ImportDeclaringScope&, std::size_t, hir::ParamDirection,
-    std::span<const mir::ExprId>) -> diag::Result<EvaluatedDefault>;
+    const hir::ImportDeclaringScope&, std::size_t, std::span<const mir::ExprId>)
+    -> diag::Result<EvaluatedDefault>;
 
 template <ExprLowerer Lowerer>
 auto EmitBoundActual(
@@ -1565,20 +1567,19 @@ auto EmitConstructionActuals(
       lowerer, frame, layout.formals, actuals,
       [&](std::size_t position, std::span<const mir::ExprId> earlier)
           -> diag::Result<EvaluatedDefault> {
-        const std::optional<hir::DefaultEvaluator>& value =
-            declaration.constructor->params[position].default_evaluator;
-        const std::optional<hir::MethodId> method =
-            value.has_value()
-                ? hir::FindMethod(declaration.methods, value->name)
-                : std::nullopt;
+        const std::optional<hir::MethodId>& method =
+            declaration.constructor->defaults[position];
         if (!method.has_value()) {
           throw InternalError(
-              "EmitConstructionActuals: a class declaring a constructor's "
-              "default declares the method evaluating it");
+              "EmitConstructionActuals: a constructor's formal a construction "
+              "omits has a default the class evaluates");
         }
+        const hir::SubroutinePrototype& evaluating =
+            declaration.methods.Get(*method).prototype;
         std::vector<mir::ExprId> arguments(leading.begin(), leading.end());
         arguments.insert(arguments.end(), earlier.begin(), earlier.end());
-        const mir::TypeId type = unit_lowerer.TranslateType(value->result_type);
+        const mir::TypeId type =
+            unit_lowerer.TranslateType(evaluating.result_type);
         return EvaluatedDefault{
             .answer = BuildFunctionCall(
                 unit, frame,
@@ -1589,8 +1590,7 @@ auto EmitConstructionActuals(
                     .receiver = BuildObjectDeref(unit, block, object())},
                 std::move(arguments),
                 PassedTypeOf(
-                    unit, type,
-                    ResultPassingOf(layout.formals[position].direction))),
+                    unit, type, ResultPassingOf(evaluating.result_direction))),
             .type = type};
       });
   if (!bound) return std::unexpected(std::move(bound.error()));

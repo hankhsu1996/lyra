@@ -35,7 +35,7 @@ namespace {
 auto Namespace(std::string name) -> UnitSignature {
   UnitSignature signature;
   signature.unit_name = std::move(name);
-  signature.unit = PublishedNamespace{};
+  signature.unit = NamespaceDeclaration{};
   return signature;
 }
 
