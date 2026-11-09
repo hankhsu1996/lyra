@@ -53,6 +53,17 @@ auto CodeGenFunction::IsCoroutine() const -> bool {
 
 auto CodeGenFunction::BindParameters() -> void {
   for (std::size_t i = 0; i < fn_->params.size(); ++i) {
+    // A body is declared at the type every call of it crosses as, where a
+    // structure crosses as its fields, so one taking a structure would be
+    // handed each field as an argument of its own; no body the unit states
+    // takes one.
+    if (module_->Types()
+            .Map(fn_->values.Get(fn_->params[i]).type)
+            ->isStructTy()) {
+      throw InternalError(
+          "llvm codegen: a body takes a structure, which crosses as its "
+          "fields -- please report this as a bug");
+    }
     values_.emplace(fn_->params[i], value_->getArg(i));
   }
 }

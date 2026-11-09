@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -121,21 +120,6 @@ auto ProceduralVarRead(const hir::ProceduralBody& body, hir::ExprId id)
   return var->var;
 }
 
-// A call on the storage holding one assertion's attempts. Every one of them is
-// reached through its address, so the receiver is the member place and nothing
-// reads it as a value.
-auto AttemptsCall(
-    mir::Builder block, support::BuiltinFn fn, mir::ExprId attempts,
-    std::vector<mir::ExprId> arguments, mir::TypeId result) -> mir::ExprId {
-  return block.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Direct{.target = fn, .receiver = attempts},
-                  .arguments = std::move(arguments)},
-          .type = result});
-}
-
 auto Word(mir::Builder block, mir::TypeId type, std::uint64_t value)
     -> mir::ExprId {
   return block.Add(
@@ -209,16 +193,6 @@ void OrInto(
         unit, block, words[word], type,
         Op(unit, block, type, mir::BinaryOp::kBitwiseOr, lhs, rhs));
   }
-}
-
-void AppendIf(
-    mir::Builder block, mir::ExprId condition, mir::Block then_block) {
-  const mir::BlockId scope = block.AddScope(std::move(then_block));
-  block.AppendStmt(
-      mir::IfStmt{
-          .condition = condition,
-          .then_scope = scope,
-          .else_scope = std::nullopt});
 }
 
 // The two dispositions a concurrent assertion carries, read as what this
@@ -296,47 +270,6 @@ auto FailArmOf(
   return RunsNothing{};
 }
 
-// One arm of the action block as a callable of its own, answering the execution
-// it runs as: an arm is any procedural statement, so it may stop and resume
-// (LRM 16.3, 16.14.1). Both arms are the same for every attempt -- an assertion
-// local variable, which is what would make two attempts' statements differ, is
-// refused where it is read -- so an outcome starts one of two bodies and never
-// a per-attempt closure.
-auto LowerActionArm(
-    ProcessLowerer& action, const WalkFrame& parent, const ActionArm& arm)
-    -> diag::Result<mir::CallableCode> {
-  mir::CompilationUnit& unit = action.Owner().Unit();
-  mir::CallableCode code = mir::CallableCode::Defined(parent.span);
-  CallableBindings bindings(unit, code);
-  const mir::LocalId self_id = bindings.Declare(
-      ReceiverOrigin{}, parent.current_class.cls->self_pointer_type);
-  code.params = {self_id};
-  code.result_type = unit.builtins.coroutine_void;
-
-  const WalkFrame frame =
-      action.InRootScope(parent.WithBlock(&code.Body()).WithBindings(&bindings))
-          .WithRunsAsFunctionCall(false);
-
-  auto appended = std::visit(
-      Overloaded{
-          [&](const RunsStatements& statements) -> diag::Result<void> {
-            auto lowered = action.LowerStmt(
-                action.HirBody().stmts.Get(statements.stmt), frame);
-            if (!lowered) return std::unexpected(std::move(lowered.error()));
-            frame.Builder().AppendStmt(*std::move(lowered));
-            return {};
-          },
-          [&](const RunsDefaultReport& report) -> diag::Result<void> {
-            AppendDefaultReport(action, frame, report.directive);
-            return {};
-          },
-          [](const RunsNothing&) -> diag::Result<void> { return {}; }},
-      arm);
-  if (!appended) return std::unexpected(std::move(appended.error()));
-  frame.Builder().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  return code;
-}
-
 auto Choose(
     mir::Builder block, mir::TypeId type, mir::ExprId condition,
     mir::ExprId then_value, mir::ExprId else_value) -> mir::ExprId {
@@ -385,7 +318,7 @@ auto BuildPartAnswer(
     const ImplicationAnswersOf& instances) -> PartAnswer {
   const mir::TypeId type = unit.builtins.machine_word;
   const mir::TypeId bool_type = unit.builtins.machine_bool;
-  const auto hold = [&](mir::ExprId value) {
+  const auto in_local = [&](mir::ExprId value) {
     const mir::LocalId local = bindings.DeclareAnonymous(type);
     block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = value});
     return local;
@@ -403,7 +336,7 @@ auto BuildPartAnswer(
     return AnswerWord(block, type, value);
   };
   const auto reversed = [&](mir::LocalId operand) {
-    return hold(
+    return in_local(
         Op(unit, block, type, mir::BinaryOp::kSub,
            answer(support::PropertyAnswer::kHoldsStrongly), read(operand)));
   };
@@ -431,9 +364,9 @@ auto BuildPartAnswer(
               const mir::ExprId otherwise =
                   Choose(block, type, live, live_answer, fails);
               return PartAnswer{
-                  .answer = hold(
+                  .answer = in_local(
                       Choose(block, type, kept, holds_strongly, otherwise)),
-                  .nonvacuous = hold(Word(block, type, 1))};
+                  .nonvacuous = in_local(Word(block, type, 1))};
             },
             [&](const NegatedTerm& negated) {
               const PartAnswer& operand = held[negated.operand];
@@ -445,17 +378,19 @@ auto BuildPartAnswer(
               const PartAnswer& lhs = held[least.lhs];
               const PartAnswer& rhs = held[least.rhs];
               return PartAnswer{
-                  .answer = hold(extreme(
+                  .answer = in_local(extreme(
                       mir::BinaryOp::kLessThan, lhs.answer, rhs.answer)),
-                  .nonvacuous = hold(either(lhs.nonvacuous, rhs.nonvacuous))};
+                  .nonvacuous =
+                      in_local(either(lhs.nonvacuous, rhs.nonvacuous))};
             },
             [&](const GreatestTerm& greatest) {
               const PartAnswer& lhs = held[greatest.lhs];
               const PartAnswer& rhs = held[greatest.rhs];
               return PartAnswer{
-                  .answer = hold(extreme(
+                  .answer = in_local(extreme(
                       mir::BinaryOp::kGreaterThan, lhs.answer, rhs.answer)),
-                  .nonvacuous = hold(either(lhs.nonvacuous, rhs.nonvacuous))};
+                  .nonvacuous =
+                      in_local(either(lhs.nonvacuous, rhs.nonvacuous))};
             },
             [&](const ImpliesTerm& implies) {
               const PartAnswer& from = held[implies.from];
@@ -471,25 +406,26 @@ auto BuildPartAnswer(
                   Op(unit, block, type, mir::BinaryOp::kBitwiseAnd,
                      read(from.nonvacuous), read(to.nonvacuous));
               return PartAnswer{
-                  .answer = hold(extreme(
+                  .answer = in_local(extreme(
                       mir::BinaryOp::kGreaterThan, reversed(from.answer),
                       to.answer)),
-                  .nonvacuous = hold(Choose(
+                  .nonvacuous = in_local(Choose(
                       block, type, from_holds, both, Word(block, type, 0)))};
             },
             [&](const IffTerm& iff) {
               const PartAnswer& lhs = held[iff.lhs];
               const PartAnswer& rhs = held[iff.rhs];
-              const mir::LocalId forward = hold(extreme(
+              const mir::LocalId forward = in_local(extreme(
                   mir::BinaryOp::kGreaterThan, reversed(lhs.answer),
                   rhs.answer));
-              const mir::LocalId backward = hold(extreme(
+              const mir::LocalId backward = in_local(extreme(
                   mir::BinaryOp::kGreaterThan, reversed(rhs.answer),
                   lhs.answer));
               return PartAnswer{
-                  .answer = hold(
+                  .answer = in_local(
                       extreme(mir::BinaryOp::kLessThan, forward, backward)),
-                  .nonvacuous = hold(either(lhs.nonvacuous, rhs.nonvacuous))};
+                  .nonvacuous =
+                      in_local(either(lhs.nonvacuous, rhs.nonvacuous))};
             },
             [&](const ImplicationTerm& implication) {
               const mir::ExprId matched =
@@ -498,13 +434,13 @@ auto BuildPartAnswer(
               const mir::ExprId holds_strongly =
                   answer(support::PropertyAnswer::kHoldsStrongly);
               const mir::LocalId antecedent =
-                  hold(Choose(block, type, matched, holds, holds_strongly));
+                  in_local(Choose(block, type, matched, holds, holds_strongly));
               const mir::LocalId reached =
-                  hold(instances.answer(block, implication.implication));
+                  in_local(instances.answer(block, implication.implication));
               return PartAnswer{
-                  .answer = hold(
+                  .answer = in_local(
                       extreme(mir::BinaryOp::kLessThan, antecedent, reached)),
-                  .nonvacuous = hold(
+                  .nonvacuous = in_local(
                       instances.nonvacuous(block, implication.implication))};
             }},
         term);
@@ -547,73 +483,61 @@ auto StartsOf(const ImplicationSeed& seed, const AssertionAutomaton& automaton)
   return starts;
 }
 
-// The storage holding the attempts a tick steps, as the place a call on it acts
-// through, built in whichever block the call is made in.
-using AttemptsPlace = std::function<mir::ExprId(mir::Builder)>;
+// What a call on the storage holding an assertion's attempts, or on one of
+// them, acts through, built in whichever block the call is made in.
+using ReceiverBuilder = std::function<mir::ExprId(mir::Builder)>;
 
-// One tick of every evaluation in flight, for a tick already begun, as a block
-// run in the Observed region. Reading the design's Boolean expressions and
-// stepping the positions belong to one body because the second bounds the
-// first: only a position some live evaluation can reach this tick is read, and
-// each is read once however many evaluations reach it. The tick ends by
-// settling every attempt it answered.
-auto LowerTick(
-    ProcessLowerer& action, const WalkFrame& parent, CallableBindings& bindings,
-    const AttemptsPlace& attempts, const AssertionAutomaton& automaton)
-    -> diag::Result<mir::Block> {
-  mir::Block body;
-  const WalkFrame frame = parent.WithBlock(&body);
-  mir::Builder body_builder = frame.Builder();
+// One word of a position set, as what a call answers in `block`.
+using WordBuilder = std::function<mir::ExprId(mir::Builder, std::uint32_t)>;
+
+// The design's own Boolean expressions this body reads at a tick, as of the
+// Preponed region of its time step (LRM 16.5.1), and only where something
+// waits on them: every position `live` says an unstepped evaluation is at, and
+// the ones a seed would start, since every seed starts its instance at the tick
+// of the match. `satisfied_before` is what is already known of each word, and
+// `reads` says which positions this body reads -- the attempts' shared ones,
+// read once for every attempt, or one attempt's own, which read what it saved.
+auto DeclareSatisfiedPositions(
+    ProcessLowerer& action, const WalkFrame& frame, CallableBindings& bindings,
+    const WordBuilder& live, const WordBuilder& satisfied_before,
+    const AssertionAutomaton& automaton, const std::vector<bool>& reads)
+    -> diag::Result<std::vector<mir::LocalId>> {
+  mir::Builder body = frame.Builder();
   mir::CompilationUnit& unit = action.Owner().Unit();
   const mir::TypeId word_type = unit.builtins.machine_word;
-  const mir::TypeId index_type = unit.builtins.machine_int64;
-  const mir::TypeId void_type = unit.builtins.void_type;
   const PositionSet empty(automaton.words, 0);
 
-  const auto call = [&](mir::Builder block, support::BuiltinFn fn,
-                        std::vector<mir::ExprId> arguments,
-                        mir::TypeId result) {
-    return AttemptsCall(
-        block, fn, attempts(block), std::move(arguments), result);
-  };
-  const auto call_stmt = [&](mir::Builder block, support::BuiltinFn fn,
-                             std::vector<mir::ExprId> arguments) {
-    block.AppendStmt(
-        mir::ExprStmt{
-            .expr = call(block, fn, std::move(arguments), void_type)});
-  };
-  const auto bit_at = [&](std::size_t position) {
-    return PositionSetOf(static_cast<std::uint32_t>(position), automaton.words);
-  };
-
-  // What this tick has to read: every position an unstepped evaluation is live
-  // at, and the ones a seed would start, since every seed starts its instance
-  // at the tick of the match.
-  const std::vector<mir::LocalId> need =
-      DeclareWords(bindings, body_builder, word_type, empty);
+  const std::vector<mir::LocalId> satisfied =
+      DeclareWords(bindings, body, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     Assign(
-        unit, body_builder, need[word], word_type,
-        call(
-            body_builder, support::BuiltinFn::kEvaluationAttemptsLiveWord,
-            {Word(body_builder, word_type, word)}, word_type));
+        unit, body, satisfied[word], word_type, satisfied_before(body, word));
+  }
+  // The bound is read only by the positions read here, and each word of it is
+  // a call of the runtime the optimizer cannot drop, so with none read it is
+  // not asked for.
+  if (std::ranges::none_of(reads, [](bool read) { return read; })) {
+    return satisfied;
+  }
+
+  const std::vector<mir::LocalId> need =
+      DeclareWords(bindings, body, word_type, empty);
+  for (std::uint32_t word = 0; word < automaton.words; ++word) {
+    Assign(unit, body, need[word], word_type, live(body, word));
   }
   for (const ImplicationSeed& seed : automaton.seeds) {
     mir::Block reached;
     OrInto(
-        unit, body_builder.Into(reached), word_type, need,
-        StartsOf(seed, automaton));
-    const mir::ExprId condition = AnyOf(body_builder, unit, need, seed.matches);
-    AppendIf(body_builder, condition, std::move(reached));
+        unit, body.Into(reached), word_type, need, StartsOf(seed, automaton));
+    const mir::ExprId condition = AnyOf(body, unit, need, seed.matches);
+    body.AppendIfThen(condition, std::move(reached));
   }
 
-  // The design's own Boolean expressions, as of the Preponed region of this
-  // tick's time step (LRM 16.5.1), and only where something waits on them.
-  const std::vector<mir::LocalId> hold =
-      DeclareWords(bindings, body_builder, word_type, empty);
   for (std::size_t position = 0; position < automaton.positions.size();
        ++position) {
-    const PositionSet at = bit_at(position);
+    if (!reads[position]) continue;
+    const PositionSet at =
+        PositionSetOf(static_cast<std::uint32_t>(position), automaton.words);
     mir::Block reached;
     const WalkFrame sampled =
         frame.WithBlock(&reached).WithReadsAsOf(ReadsAsOf::kPreponed);
@@ -638,13 +562,52 @@ auto LowerTick(
     // A position with no conjunct matches whatever the design does there, so
     // its bit is set whenever it is reached.
     mir::Block held;
-    OrInto(unit, reached_builder.Into(held), word_type, hold, at);
+    OrInto(unit, reached_builder.Into(held), word_type, satisfied, at);
     const mir::ExprId all_held =
         reached_builder.ReadLocal(all_hold, unit.builtins.machine_bool);
-    AppendIf(reached_builder, all_held, std::move(held));
-    const mir::ExprId condition = AnyOf(body_builder, unit, need, at);
-    AppendIf(body_builder, condition, std::move(reached));
+    reached_builder.AppendIfThen(all_held, std::move(held));
+    const mir::ExprId condition = AnyOf(body, unit, need, at);
+    body.AppendIfThen(condition, std::move(reached));
   }
+  return satisfied;
+}
+
+// One tick of one attempt's evaluations, for a tick already begun, as a block
+// run in the Observed region. `satisfied` is every position whose Booleans hold
+// at this tick, those every attempt shares and the attempt's own, and reading a
+// selection's condition or a case's subject belongs here too, since the
+// evaluation that matched is the one reading it. The tick ends with every
+// evaluation answered, from the last back.
+auto LowerStepOfAttempt(
+    ProcessLowerer& action, const WalkFrame& parent, CallableBindings& bindings,
+    const ReceiverBuilder& attempt, const AssertionAutomaton& automaton,
+    const std::vector<mir::LocalId>& satisfied) -> diag::Result<mir::Block> {
+  mir::Block body;
+  const WalkFrame frame = parent.WithBlock(&body);
+  mir::Builder body_builder = frame.Builder();
+  mir::CompilationUnit& unit = action.Owner().Unit();
+  const mir::TypeId word_type = unit.builtins.machine_word;
+  const mir::TypeId index_type = unit.builtins.machine_int64;
+  const mir::TypeId void_type = unit.builtins.void_type;
+  const PositionSet empty(automaton.words, 0);
+
+  const auto call = [&](mir::Builder block, support::BuiltinFn fn,
+                        std::vector<mir::ExprId> arguments,
+                        mir::TypeId result) {
+    return block.Add(
+        mir::MakeCallExpr(
+            mir::Direct{.target = fn, .receiver = attempt(block)},
+            std::move(arguments), result));
+  };
+  const auto call_stmt = [&](mir::Builder block, support::BuiltinFn fn,
+                             std::vector<mir::ExprId> arguments) {
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = call(block, fn, std::move(arguments), void_type)});
+  };
+  const auto bit_at = [&](std::size_t position) {
+    return PositionSetOf(static_cast<std::uint32_t>(position), automaton.words);
+  };
 
   // Every evaluation this tick has not stepped, including the ones seeded
   // during the sweep, which is what reads a consequent at the very tick its
@@ -654,9 +617,8 @@ auto LowerTick(
       mir::LocalDeclStmt{
           .target = cursor,
           .init = call(
-              body_builder,
-              support::BuiltinFn::kEvaluationAttemptsNextUnstepped, {},
-              index_type)});
+              body_builder, support::BuiltinFn::kEvaluationAttemptNextUnstepped,
+              {}, index_type)});
 
   mir::Block sweep;
   mir::Builder sweep_builder = body_builder.Into(sweep);
@@ -666,7 +628,7 @@ auto LowerTick(
     Assign(
         unit, sweep_builder, bits[word], word_type,
         call(
-            sweep_builder, support::BuiltinFn::kEvaluationAttemptsBitsAt,
+            sweep_builder, support::BuiltinFn::kEvaluationAttemptBitsAt,
             {sweep_builder.ReadLocal(cursor, index_type),
              Word(sweep_builder, word_type, word)},
             word_type));
@@ -675,7 +637,7 @@ auto LowerTick(
       DeclareWords(bindings, sweep_builder, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     const mir::ExprId lhs = sweep_builder.ReadLocal(bits[word], word_type);
-    const mir::ExprId rhs = sweep_builder.ReadLocal(hold[word], word_type);
+    const mir::ExprId rhs = sweep_builder.ReadLocal(satisfied[word], word_type);
     Assign(
         unit, sweep_builder, matched[word], word_type,
         Op(unit, sweep_builder, word_type, mir::BinaryOp::kBitwiseAnd, lhs,
@@ -691,17 +653,17 @@ auto LowerTick(
         automaton.follow[position]);
     const mir::ExprId condition =
         AnyOf(sweep_builder, unit, matched, bit_at(position));
-    AppendIf(sweep_builder, condition, std::move(advanced));
+    sweep_builder.AppendIfThen(condition, std::move(advanced));
   }
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     call_stmt(
-        sweep_builder, support::BuiltinFn::kEvaluationAttemptsSetWord,
+        sweep_builder, support::BuiltinFn::kEvaluationAttemptSetWord,
         {sweep_builder.ReadLocal(cursor, index_type),
          Word(sweep_builder, word_type, word),
          sweep_builder.ReadLocal(next[word], word_type)});
   }
   call_stmt(
-      sweep_builder, support::BuiltinFn::kEvaluationAttemptsStep,
+      sweep_builder, support::BuiltinFn::kEvaluationAttemptStep,
       {sweep_builder.ReadLocal(cursor, index_type)});
 
   // An instance of `part` for `implication` of the evaluation just stepped,
@@ -710,12 +672,12 @@ auto LowerTick(
                              std::uint32_t part) {
     for (std::uint32_t word = 0; word < automaton.words; ++word) {
       call_stmt(
-          block, support::BuiltinFn::kEvaluationAttemptsSeedWord,
+          block, support::BuiltinFn::kEvaluationAttemptSeedWord,
           {Word(block, word_type, word),
            Word(block, word_type, automaton.parts[part].start[word])});
     }
     call_stmt(
-        block, support::BuiltinFn::kEvaluationAttemptsSeed,
+        block, support::BuiltinFn::kEvaluationAttemptSeed,
         {block.ReadLocal(cursor, index_type),
          Word(block, word_type, implication), Word(block, word_type, part)});
   };
@@ -816,12 +778,12 @@ auto LowerTick(
     if (!filled) return std::unexpected(std::move(filled.error()));
     const mir::ExprId condition =
         AnyOf(sweep_builder, unit, matched, seed.matches);
-    AppendIf(sweep_builder, condition, std::move(seeded));
+    sweep_builder.AppendIfThen(condition, std::move(seeded));
   }
   Assign(
       unit, sweep_builder, cursor, index_type,
       call(
-          sweep_builder, support::BuiltinFn::kEvaluationAttemptsNextUnstepped,
+          sweep_builder, support::BuiltinFn::kEvaluationAttemptNextUnstepped,
           {}, index_type));
   const mir::ExprId unstepped = body_builder.ReadLocal(cursor, index_type);
   const mir::ExprId first_index = Word(body_builder, index_type, 0);
@@ -836,7 +798,7 @@ auto LowerTick(
   // implication have answered before the evaluation holding it does.
   const mir::LocalId answering = bindings.DeclareAnonymous(index_type);
   const mir::ExprId count = call(
-      body_builder, support::BuiltinFn::kEvaluationAttemptsCount, {},
+      body_builder, support::BuiltinFn::kEvaluationAttemptCount, {},
       index_type);
   const mir::ExprId one = Word(body_builder, index_type, 1);
   body_builder.AppendStmt(
@@ -854,7 +816,7 @@ auto LowerTick(
     Assign(
         unit, resolve_builder, stepped[word], word_type,
         call(
-            resolve_builder, support::BuiltinFn::kEvaluationAttemptsBitsAt,
+            resolve_builder, support::BuiltinFn::kEvaluationAttemptBitsAt,
             {resolve_builder.ReadLocal(answering, index_type),
              Word(resolve_builder, word_type, word)},
             word_type));
@@ -869,10 +831,10 @@ auto LowerTick(
     };
   };
   const ImplicationAnswersOf instances{
-      .answer = of_instances(
-          support::BuiltinFn::kEvaluationAttemptsImplicationAnswer),
+      .answer =
+          of_instances(support::BuiltinFn::kEvaluationAttemptImplicationAnswer),
       .nonvacuous = of_instances(
-          support::BuiltinFn::kEvaluationAttemptsImplicationNonvacuous)};
+          support::BuiltinFn::kEvaluationAttemptImplicationNonvacuous)};
   std::vector<ValueArm> arms;
   arms.reserve(automaton.parts.size());
   for (std::size_t part = 0; part < automaton.parts.size(); ++part) {
@@ -886,7 +848,7 @@ auto LowerTick(
                   unit, bindings, answered, automaton.parts[part], stepped,
                   instances);
               call_stmt(
-                  answered, support::BuiltinFn::kEvaluationAttemptsResolve,
+                  answered, support::BuiltinFn::kEvaluationAttemptResolve,
                   {answered.ReadLocal(answering, index_type),
                    answered.ReadLocal(answer.answer, word_type),
                    answered.ReadLocal(answer.nonvacuous, word_type)});
@@ -896,7 +858,7 @@ auto LowerTick(
   auto dispatched = BuildValueSwitch(
       resolve_frame,
       call(
-          resolve_builder, support::BuiltinFn::kEvaluationAttemptsPartOf,
+          resolve_builder, support::BuiltinFn::kEvaluationAttemptPartOf,
           {resolve_builder.ReadLocal(answering, index_type)}, word_type),
       arms, std::nullopt);
   if (!dispatched) return std::unexpected(std::move(dispatched.error()));
@@ -914,10 +876,6 @@ auto LowerTick(
               Op(unit, body_builder, unit.builtins.machine_bool,
                  mir::BinaryOp::kGreaterEqual, unanswered, lowest_index),
           .scope = body_builder.AddScope(std::move(resolve))});
-
-  call_stmt(
-      body_builder, support::BuiltinFn::kEvaluationAttemptsSettle,
-      {body_builder.Add(BuildCurrentRuntimeCallExpr(action.Owner().Unit()))});
   return body;
 }
 
@@ -926,41 +884,21 @@ void AppendBlock(mir::Builder into, mir::Block block) {
   into.AppendStmt(mir::BlockStmt{.scope = into.AddScope(std::move(block))});
 }
 
-// Stages the start of the whole property as the seed the next attempt opens
-// on.
-void AppendSeed(
-    mir::Builder body, const mir::CompilationUnit& unit,
-    const AttemptsPlace& attempts, const AssertionAutomaton& automaton) {
-  const mir::TypeId word_type = unit.builtins.machine_word;
-  const mir::TypeId void_type = unit.builtins.void_type;
-  for (std::uint32_t word = 0; word < automaton.words; ++word) {
-    const mir::ExprId place = attempts(body);
-    body.AppendStmt(
-        mir::ExprStmt{
-            .expr = AttemptsCall(
-                body, support::BuiltinFn::kEvaluationAttemptsSeedWord, place,
-                {Word(body, word_type, word),
-                 Word(body, word_type, automaton.parts.front().start[word])},
-                void_type)});
-  }
-}
-
-// Opens an attempt on the start of the whole property for every one due.
-void AppendOpenMatured(
-    mir::Builder body, const mir::CompilationUnit& unit,
-    const AttemptsPlace& attempts, const AssertionAutomaton& automaton) {
-  AppendSeed(body, unit, attempts, automaton);
-  body.AppendStmt(
-      mir::ExprStmt{
-          .expr = AttemptsCall(
-              body, support::BuiltinFn::kEvaluationAttemptsOpenMatured,
-              attempts(body), {}, unit.builtins.void_type)});
+// A position set as the machine words a runtime entry reads it in.
+auto WordsOf(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    std::vector<mir::ExprId> words) -> mir::ExprId {
+  const mir::TypeId type =
+      mir::MachineArrayOf(unit.types, unit.builtins.machine_word, words.size());
+  return block.Add(
+      mir::Expr{
+          .data = mir::CompositeExpr{.parts = std::move(words)}, .type = type});
 }
 
 // Where an assertion's attempts lie, reached from `frame`'s object.
 auto AttemptsAt(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
-    const StaticCellBinding& attempts) -> AttemptsPlace {
+    const StaticCellBinding& attempts) -> ReceiverBuilder {
   return [&unit, &frame, &attempts](mir::Builder block) {
     const WalkFrame in = frame.WithBlock(&block.Body());
     return block.Add(BuildStaticStorageAccess(
@@ -968,38 +906,51 @@ auto AttemptsAt(
   };
 }
 
-// A call of `callable`, a function of the scope taking nothing past `self`, on
-// the object `frame` stands on.
-auto CallOwn(
-    const mir::CompilationUnit& unit, const WalkFrame& frame,
-    mir::Builder block, mir::CallableId callable) -> mir::ExprId {
-  return block.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target =
-                              mir::CallableTarget{
-                                  .owner = frame.current_class.id,
-                                  .slot = callable},
-                          .receiver = BuildObjectDeref(
-                              unit, block, block.Add(MakeSelfRefExpr(frame)))},
-                  .arguments = {}},
-          .type = unit.builtins.void_type});
+// The Booleans every attempt of an assertion shares, as the words a tick hands
+// each attempt's closure: the positions no saved value bears on, read once
+// at the tick for all of them, bounded by where any attempt is live.
+auto BuildSharedSatisfiedPositions(
+    ProcessLowerer& action, const WalkFrame& frame, CallableBindings& bindings,
+    const ReceiverBuilder& attempts, const AssertionAutomaton& automaton,
+    const std::vector<bool>& reads_saved) -> diag::Result<mir::ExprId> {
+  mir::CompilationUnit& unit = action.Owner().Unit();
+  const mir::TypeId word_type = unit.builtins.machine_word;
+  std::vector<bool> shared(reads_saved.size());
+  for (std::size_t position = 0; position < reads_saved.size(); ++position) {
+    shared[position] = !reads_saved[position];
+  }
+  auto satisfied = DeclareSatisfiedPositions(
+      action, frame, bindings,
+      [&](mir::Builder block, std::uint32_t word) {
+        return block.Add(
+            mir::MakeCallExpr(
+                mir::Direct{
+                    .target = support::BuiltinFn::kEvaluationAttemptsLiveWord,
+                    .receiver = attempts(block)},
+                {Word(block, word_type, word)}, word_type));
+      },
+      [&](mir::Builder block, std::uint32_t) {
+        return Word(block, word_type, 0);
+      },
+      automaton, shared);
+  if (!satisfied) return std::unexpected(std::move(satisfied.error()));
+  mir::Builder body = frame.Builder();
+  std::vector<mir::ExprId> words;
+  words.reserve(satisfied->size());
+  for (const mir::LocalId word : *satisfied) {
+    words.push_back(body.ReadLocal(word, word_type));
+  }
+  return WordsOf(unit, body, std::move(words));
 }
 
 // What a tick runs over an assertion's attempts, a function of the scope that
-// the storage runs at the tick and again where an attempt falls due later in
-// its time step. Where the disable condition holds, nothing begins and
-// everything is discarded (LRM 16.12); an attempt in flight is also preempted
-// where the condition changes, because the interval it is tested across is not
-// made of ticks. Otherwise every attempt due opens, and every evaluation the
-// tick has not yet stepped is stepped and the attempts it answered settled.
-auto LowerStep(
+// the storage runs at the tick and again where an attempt matures later in
+// its time step: the Booleans every attempt shares, read once, handed to each
+// attempt the tick has not yet stepped.
+auto LowerStepOverAttempts(
     ProcessLowerer& action, const WalkFrame& parent,
-    const StaticCellBinding& attempts, const hir::PropertySpec& spec,
-    const AssertionAutomaton& automaton) -> diag::Result<mir::CallableCode> {
+    const StaticCellBinding& attempts, const AssertionAutomaton& automaton,
+    const std::vector<bool>& reads_saved) -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = action.Owner().Unit();
   mir::CallableCode code = mir::CallableCode::Defined(parent.span);
   CallableBindings bindings(unit, code);
@@ -1010,31 +961,217 @@ auto LowerStep(
   const WalkFrame frame = action.InRootScope(
       parent.WithBlock(&code.Body()).WithBindings(&bindings));
   mir::Builder body = frame.Builder();
-  const AttemptsPlace place = AttemptsAt(unit, frame, attempts);
-
-  if (spec.disable.has_value()) {
-    auto condition = action.LowerExpr(
-        action.HirBody().exprs.Get(spec.disable->condition), frame);
-    if (!condition) return std::unexpected(std::move(condition.error()));
-    const mir::ExprId reduced =
-        ReduceToCondition(unit, body, body.Add(*std::move(condition)));
-    mir::Block discard;
-    mir::Builder discard_builder(discard, frame.span);
-    discard_builder.AppendStmt(
-        mir::ExprStmt{
-            .expr = AttemptsCall(
-                discard_builder,
-                support::BuiltinFn::kEvaluationAttemptsDisableTick,
-                place(discard_builder), {}, unit.builtins.void_type)});
-    discard_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-    AppendIf(body, reduced, std::move(discard));
-  }
-  AppendOpenMatured(body, unit, place, automaton);
-  auto ticked = LowerTick(action, frame, bindings, place, automaton);
-  if (!ticked) return std::unexpected(std::move(ticked.error()));
-  AppendBlock(body, *std::move(ticked));
+  const ReceiverBuilder place = AttemptsAt(unit, frame, attempts);
+  auto shared = BuildSharedSatisfiedPositions(
+      action, frame, bindings, place, automaton, reads_saved);
+  if (!shared) return std::unexpected(std::move(shared.error()));
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target = support::BuiltinFn::kEvaluationAttemptsRun,
+                      .receiver = place(body)},
+                  {*shared}, unit.builtins.void_type))});
   body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   return code;
+}
+
+// Starts the statement `arm` an attempt's answer selects, as an execution of
+// its own that may stop and resume (LRM 16.3, 16.14.1), from the attempt's
+// closure being lowered into `frame`: a closure of it, which reads what the
+// attempt saved as that closure does (LRM 16.14.6.1).
+auto LowerActionStartInto(
+    ProcessLowerer& action, const WalkFrame& frame, const ActionArm& arm,
+    diag::SourceSpan written_at) -> diag::Result<void> {
+  if (std::holds_alternative<RunsNothing>(arm)) return {};
+  mir::CompilationUnit& unit = action.Owner().Unit();
+  ClosureBuilder body(unit, frame, support::ClosureKind::kFnOnce);
+  const WalkFrame body_frame = body.Frame().WithRunsAsFunctionCall(false);
+  auto appended = std::visit(
+      Overloaded{
+          [&](const RunsStatements& statements) -> diag::Result<void> {
+            auto lowered = action.LowerStmt(
+                action.HirBody().stmts.Get(statements.stmt), body_frame);
+            if (!lowered) return std::unexpected(std::move(lowered.error()));
+            body.Body().AppendStmt(*std::move(lowered));
+            return {};
+          },
+          [&](const RunsDefaultReport& report) -> diag::Result<void> {
+            AppendDefaultReport(action, body.Body(), report.directive);
+            return {};
+          },
+          [](const RunsNothing&) -> diag::Result<void> { return {}; }},
+      arm);
+  if (!appended) return std::unexpected(std::move(appended.error()));
+  mir::Builder block = frame.Builder();
+  const mir::ExprId started = block.Add(body.BuildCallOnce());
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = BuildExecutionStart(
+              action.Owner(), frame, started,
+              support::BuiltinFn::kRunAssertionAction, written_at)});
+  return {};
+}
+
+// What one attempt's closure does where its assertion is evaluated against
+// it (LRM 16.14.6): `reads_saved` names the positions whose Booleans read a
+// value the attempt saved, and the statements each outcome selects where the
+// storage starts them -- an expect statement's process runs its own.
+struct AttemptCode {
+  const hir::PropertySpec* spec = nullptr;
+  const AssertionAutomaton* automaton = nullptr;
+  const std::vector<bool>* reads_saved = nullptr;
+  std::optional<ActionArm> pass;
+  std::optional<ActionArm> fail;
+  diag::SourceSpan written_at;
+};
+
+// The closure of one attempt, made where `frame` stands: the code of the
+// attempt bound to what it was made with, called for each event its storage
+// tells it of (`support::AttemptEvent`). A tick steps the attempt unless the
+// disable condition holds, which it answers with 1 (LRM 16.12); a disable test
+// answers whether the condition holds; an outcome starts the statement it
+// selects (LRM 16.14.1). `saved` is what a procedural assertion saved where
+// its instance was queued (LRM 16.14.6.1), read where the source wrote it.
+auto BuildAttemptClosure(
+    ProcessLowerer& action, const WalkFrame& frame, const AttemptCode& code,
+    std::span<const SavedValue> saved) -> diag::Result<mir::Expr> {
+  mir::CompilationUnit& unit = action.Owner().Unit();
+  const mir::TypeId word_type = unit.builtins.machine_word;
+  const mir::TypeId attempt_type =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kEvaluationAttempt);
+  const mir::TypeId attempt_pointer = unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = attempt_type,
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kMutable}});
+
+  ClosureBuilder closure(unit, frame, support::ClosureKind::kFn);
+  const mir::LocalId event = closure.AddParam(word_type);
+  const mir::LocalId attempt_param = closure.AddParam(attempt_pointer);
+  const WalkFrame body_frame = closure.Frame().WithSavedValues(saved);
+  mir::Builder body = body_frame.Builder();
+  const mir::LocalId answer =
+      DeclareLocal(body_frame, Word(body, word_type, 0));
+  const ReceiverBuilder attempt = [&unit, attempt_type, attempt_pointer,
+                                   attempt_param](mir::Builder block) {
+    return block.Deref(
+        unit.types, block.ReadLocal(attempt_param, attempt_pointer),
+        attempt_type);
+  };
+  // The disable condition, as of where the arm stands (LRM 16.12).
+  const auto disabled = [&](const WalkFrame& in) -> diag::Result<mir::ExprId> {
+    auto condition = action.LowerExpr(
+        action.HirBody().exprs.Get(code.spec->disable->condition), in);
+    if (!condition) return std::unexpected(std::move(condition.error()));
+    return ReduceToCondition(
+        unit, in.Builder(), in.Builder().Add(*std::move(condition)));
+  };
+  const auto answer_one = [&](mir::Builder block) {
+    Assign(unit, block, answer, word_type, Word(block, word_type, 1));
+  };
+
+  const ArmBody tick = [&](const WalkFrame& in) -> diag::Result<mir::Block> {
+    mir::Block block;
+    const WalkFrame at = in.WithBlock(&block);
+    mir::Block step;
+    const WalkFrame step_frame = at.WithBlock(&step);
+    CallableBindings& bindings = closure.Bindings();
+    const AssertionAutomaton& automaton = *code.automaton;
+    auto satisfied = DeclareSatisfiedPositions(
+        action, step_frame, bindings,
+        [&](mir::Builder words, std::uint32_t word) {
+          return words.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target = support::BuiltinFn::kEvaluationAttemptLiveWord,
+                      .receiver = attempt(words)},
+                  {Word(words, word_type, word)}, word_type));
+        },
+        [&](mir::Builder words, std::uint32_t word) {
+          return words.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target =
+                          support::BuiltinFn::kEvaluationAttemptSharedWord,
+                      .receiver = attempt(words)},
+                  {Word(words, word_type, word)}, word_type));
+        },
+        automaton, *code.reads_saved);
+    if (!satisfied) return std::unexpected(std::move(satisfied.error()));
+    auto ticked = LowerStepOfAttempt(
+        action, step_frame, bindings, attempt, automaton, *satisfied);
+    if (!ticked) return std::unexpected(std::move(ticked.error()));
+    AppendBlock(step_frame.Builder(), *std::move(ticked));
+    if (!code.spec->disable.has_value()) {
+      AppendBlock(at.Builder(), std::move(step));
+      return block;
+    }
+    // A disabled attempt is discarded and steps no further, and one
+    // that would start here starts disabled (LRM 16.12, 16.14.1).
+    auto condition = disabled(at);
+    if (!condition) return std::unexpected(std::move(condition.error()));
+    mir::Block discarded;
+    answer_one(at.Builder().Into(discarded));
+    mir::Builder at_builder = at.Builder();
+    at_builder.AppendStmt(
+        mir::IfStmt{
+            .condition = *condition,
+            .then_scope = at_builder.AddScope(std::move(discarded)),
+            .else_scope = at_builder.AddScope(std::move(step))});
+    return block;
+  };
+  const ArmBody disable_test =
+      [&](const WalkFrame& in) -> diag::Result<mir::Block> {
+    mir::Block block;
+    if (!code.spec->disable.has_value()) return block;
+    const WalkFrame at = in.WithBlock(&block);
+    auto condition = disabled(at);
+    if (!condition) return std::unexpected(std::move(condition.error()));
+    mir::Block held;
+    answer_one(at.Builder().Into(held));
+    at.Builder().AppendIfThen(*condition, std::move(held));
+    return block;
+  };
+  const auto outcome = [&](const std::optional<ActionArm>& arm) -> ArmBody {
+    return [&](const WalkFrame& in) -> diag::Result<mir::Block> {
+      mir::Block block;
+      if (!arm.has_value()) return block;
+      auto started = LowerActionStartInto(
+          action, in.WithBlock(&block), *arm, code.written_at);
+      if (!started) return std::unexpected(std::move(started.error()));
+      return block;
+    };
+  };
+  // What each event the storage calls the closure for runs.
+  const auto body_for = [&](support::AttemptEvent called) -> ArmBody {
+    switch (called) {
+      case support::AttemptEvent::kTick:
+        return tick;
+      case support::AttemptEvent::kDisableTest:
+        return disable_test;
+      case support::AttemptEvent::kSucceeded:
+        return outcome(code.pass);
+      case support::AttemptEvent::kFailed:
+        return outcome(code.fail);
+    }
+    throw InternalError("BuildAttemptClosure: unknown support::AttemptEvent");
+  };
+  std::vector<ValueArm> arms;
+  for (const support::AttemptEvent called :
+       {support::AttemptEvent::kTick, support::AttemptEvent::kDisableTest,
+        support::AttemptEvent::kSucceeded, support::AttemptEvent::kFailed}) {
+    arms.push_back(
+        ValueArm{
+            .values = {static_cast<std::int64_t>(called)},
+            .body = body_for(called)});
+  }
+  auto dispatched = BuildValueSwitch(
+      body_frame, body.ReadLocal(event, word_type), arms, std::nullopt);
+  if (!dispatched) return std::unexpected(std::move(dispatched.error()));
+  body.AppendStmt(*std::move(dispatched));
+  return closure.Build(body.ReadLocal(answer, word_type));
 }
 
 // LRM 16.12 disables an evaluation attempt if the disable condition is true at
@@ -1042,10 +1179,12 @@ auto LowerStep(
 // interval is not made of ticks, so the condition is watched for change rather
 // than read at the clock: a reset that rises and falls between two ticks is low
 // at every tick an attempt reads, and still preempts every attempt it spans.
+// Each attempt's closure tests it, since it may read what the attempt
+// saved.
 auto LowerDisableWatcher(
     ProcessLowerer& action, const WalkFrame& ctor_frame,
-    const StaticCellBinding& attempts, const hir::DisableCondition& disable)
-    -> diag::Result<mir::CallableDecl> {
+    const StaticCellBinding& attempts, const hir::DisableCondition& disable,
+    std::span<const hir::ExprId> saved) -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = action.Owner().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
 
@@ -1058,27 +1197,32 @@ auto LowerDisableWatcher(
   const WalkFrame body_frame =
       ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
   mir::Builder body_block_builder = body_frame.Builder();
-  // What the condition reads is stated beside it, in the action's own body.
-  auto waited = BuildValueChangeWaitStmt(
-      body_block_builder, body_frame, action, disable.sensitivity);
+  // An attempt reads its own saved copy of each variable it saved (LRM
+  // 16.14.6.1), so a later change to the variable reaches no attempt; only the
+  // rest of what the condition reads is watched.
+  std::vector<hir::SensitivityEntry> watched;
+  for (const hir::SensitivityEntry& entry : disable.sensitivity) {
+    const auto* var = std::get_if<hir::ProceduralVarRef>(&entry.cell);
+    const bool is_saved =
+        var != nullptr && std::ranges::any_of(saved, [&](hir::ExprId id) {
+          return ProceduralVarRead(action.HirBody(), id) == var->var;
+        });
+    if (!is_saved) watched.push_back(entry);
+  }
+  auto waited =
+      BuildValueChangeWaitStmt(body_block_builder, body_frame, action, watched);
   if (!waited) return std::unexpected(std::move(waited.error()));
   body_block_builder.AppendStmt(*std::move(waited));
-
-  auto condition = action.LowerExpr(
-      action.HirBody().exprs.Get(disable.condition), body_frame);
-  if (!condition) return std::unexpected(std::move(condition.error()));
-  const mir::ExprId reduced = ReduceToCondition(
-      unit, body_block_builder, body_block_builder.Add(*std::move(condition)));
-
-  mir::Block preempted;
-  mir::Builder preempted_builder(preempted, body_frame.span);
-  preempted_builder.AppendStmt(
+  body_block_builder.AppendStmt(
       mir::ExprStmt{
-          .expr = AttemptsCall(
-              preempted_builder, support::BuiltinFn::kEvaluationAttemptsDiscard,
-              AttemptsAt(unit, body_frame, attempts)(preempted_builder), {},
-              void_type)});
-  AppendIf(body_block_builder, reduced, std::move(preempted));
+          .expr = body_block_builder.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target =
+                          support::BuiltinFn::kEvaluationAttemptsTestDisable,
+                      .receiver = AttemptsAt(
+                          unit, body_frame, attempts)(body_block_builder)},
+                  {}, void_type))});
 
   mir::Builder entry_builder(code.Body(), body_frame.span);
   const mir::BlockId body_scope_id =
@@ -1102,15 +1246,15 @@ auto LowerDisableWatcher(
 // The process of an assertion's leading clock. LRM 16.5 evaluates an assertion
 // in the Observed region, so the process waits wherever any event wait waits
 // and the tick goes to Observed as a deferred effect -- nothing in the engine
-// learns what a concurrent assertion is. `at_each_tick` are the calls on the
-// attempts the process makes itself at each tick: a static assertion is the
-// statement reached at every tick of its clock (LRM 16.14.5), so its attempt
-// falls due there.
+// learns what a concurrent assertion is. A static assertion is the statement
+// reached at every tick of its clock (LRM 16.14.5), so where
+// `matured_at_each_tick` is given, an attempt of that code matures at each
+// tick, its closure made in the attempts.
 auto LowerProcess(
     ProcessLowerer& action, const StructuralScopeLowerer& lowerer,
     const WalkFrame& ctor_frame, const hir::EventControl& clock,
     const StaticCellBinding& attempts,
-    std::span<const support::BuiltinFn> at_each_tick)
+    const std::optional<AttemptCode>& matured_at_each_tick)
     -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
@@ -1123,8 +1267,8 @@ auto LowerProcess(
       bindings.Declare(ReceiverOrigin{}, self_ptr_type);
 
   mir::Block body_block;
-  const WalkFrame body_frame =
-      ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
+  const WalkFrame body_frame = action.InRootScope(
+      ctor_frame.WithBindings(&bindings).WithBlock(&body_block));
   mir::Builder body_block_builder = body_frame.Builder();
 
   // The clock's own expression lives in the assertion's body, beside the
@@ -1133,23 +1277,29 @@ auto LowerProcess(
   auto wait = BuildEventWaitStmt(action, body_frame, body_block_builder, clock);
   if (!wait) return std::unexpected(std::move(wait.error()));
   body_block_builder.AppendStmt(*std::move(wait));
-  for (const support::BuiltinFn fn : at_each_tick) {
-    body_block_builder.AppendStmt(
-        mir::ExprStmt{
-            .expr = AttemptsCall(
-                body_block_builder, fn,
-                AttemptsAt(unit, body_frame, attempts)(body_block_builder), {},
-                void_type)});
+  if (matured_at_each_tick.has_value()) {
+    auto made =
+        BuildAttemptClosure(action, body_frame, *matured_at_each_tick, {});
+    if (!made) return std::unexpected(std::move(made.error()));
+    const mir::ExprId committed = body_block_builder.Add(BuildEmplacedClosure(
+        unit, body_frame,
+        BuildStaticStorageAddress(
+            unit, body_block_builder, body_frame, attempts),
+        *std::move(made)));
+    body_block_builder.AppendStmt(mir::ExprStmt{.expr = committed});
   }
 
   ClosureBuilder closure(unit, body_frame, support::ClosureKind::kFn);
   RunDeferredBodyOnNoThread(lowerer.Owner(), body_frame, closure);
   closure.Body().AppendStmt(
       mir::ExprStmt{
-          .expr = AttemptsCall(
-              closure.Body(), support::BuiltinFn::kEvaluationAttemptsTick,
-              AttemptsAt(unit, closure.Frame(), attempts)(closure.Body()), {},
-              void_type)});
+          .expr = closure.Body().Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target = support::BuiltinFn::kEvaluationAttemptsTick,
+                      .receiver = AttemptsAt(
+                          unit, closure.Frame(), attempts)(closure.Body())},
+                  {}, void_type))});
 
   mir::Expr keeper = BuildRegionEffectsCallExpr(
       lowerer.Owner(), body_block_builder,
@@ -1186,55 +1336,6 @@ auto AddCallable(mir::Class& mir_class, mir::CallableCode code)
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt,
           .defining_unit = std::nullopt});
-}
-
-// The machinery of one assertion, from the body its expressions are written
-// in, each callable added to `mir_class`: the statements each outcome selects,
-// what a tick runs, its clock's process, and where the source wrote
-// `disable iff` the process watching that condition.
-auto LowerMachinery(
-    ProcessLowerer& action, const StructuralScopeLowerer& lowerer,
-    mir::Class& mir_class, const WalkFrame& ctor_frame,
-    const hir::ConcurrentAssertion& assertion,
-    std::span<const support::BuiltinFn> at_each_tick,
-    diag::SourceSpan written_at) -> diag::Result<InstalledConcurrentAssertion> {
-  const AssertionDispositions dispositions = DispositionsOf(assertion);
-  const hir::ProceduralBody& body = action.HirBody();
-  const AssertionAutomaton automaton =
-      BuildAssertionAutomaton(body, *dispositions.spec);
-  const StaticCellBinding& attempts =
-      action.AttemptsCellOf(dispositions.control);
-
-  auto pass = LowerActionArm(action, ctor_frame, PassArmOf(body, dispositions));
-  if (!pass) return std::unexpected(std::move(pass.error()));
-  auto fail = LowerActionArm(action, ctor_frame, FailArmOf(body, dispositions));
-  if (!fail) return std::unexpected(std::move(fail.error()));
-  auto step =
-      LowerStep(action, ctor_frame, attempts, *dispositions.spec, automaton);
-  if (!step) return std::unexpected(std::move(step.error()));
-
-  auto process = LowerProcess(
-      action, lowerer, ctor_frame, dispositions.spec->clock, attempts,
-      at_each_tick);
-  if (!process) return std::unexpected(std::move(process.error()));
-  std::vector<mir::CallableId> processes;
-  processes.push_back(mir_class.callables.Add(*std::move(process)));
-  if (dispositions.spec->disable.has_value()) {
-    auto watcher = LowerDisableWatcher(
-        action, ctor_frame, attempts, *dispositions.spec->disable);
-    if (!watcher) return std::unexpected(std::move(watcher.error()));
-    processes.push_back(mir_class.callables.Add(*std::move(watcher)));
-  }
-
-  return InstalledConcurrentAssertion{
-      .processes = std::move(processes),
-      .step = AddCallable(mir_class, *std::move(step)),
-      .pass_action = AddCallable(mir_class, *std::move(pass)),
-      .fail_action = AddCallable(mir_class, *std::move(fail)),
-      .words = automaton.words,
-      .written_at = written_at,
-      .control = action.ControlCellOf(dispositions.control),
-      .attempts = attempts};
 }
 
 // The automatic variables declared in the scopes around the statement whose
@@ -1294,32 +1395,31 @@ auto IsConstCast(hir::ConversionKind kind) -> bool {
   throw InternalError("IsConstCast: unknown hir::ConversionKind");
 }
 
-// LRM 16.14.6.1: whether a procedural concurrent assertion saves anything where
-// its statement is reached -- an automatic variable of the procedure that its
-// property, its disable condition or its action block reads, or a constant
-// cast in any of them. An attempt that begins with saved values is not yet
-// carried: every attempt of one storage reads each Boolean once a tick.
-auto SavesAnything(
-    ProcessLowerer& action,
+// LRM 16.14.6.1: what a procedural concurrent assertion saves where its
+// statement is reached -- each read of an automatic variable of the procedure
+// that its property, its disable condition or its action block makes, and
+// each constant cast in any of them, as the value it makes rather than the
+// variables under it. The attempt reads them as they were, every tick and in
+// its action block, as a lambda's by-value captures are read.
+auto SavedOperands(
+    const hir::ProceduralBody& body,
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
-    const hir::ConcurrentAssertion& assertion) -> bool {
-  const hir::ProceduralBody& body = action.HirBody();
+    const hir::ConcurrentAssertion& assertion) -> std::vector<hir::ExprId> {
   const AssertionDispositions dispositions = DispositionsOf(assertion);
   const std::vector<hir::ProceduralVarId> around =
       EnclosingAutomatics(body, scopes, dispositions.control);
-  bool saves = false;
+  std::vector<hir::ExprId> saved;
   const std::function<bool(hir::ExprId)> visit = [&](hir::ExprId id) {
-    if (saves) return false;
     if (const auto* conversion =
             std::get_if<hir::ConversionExpr>(&body.exprs.Get(id).data);
         conversion != nullptr && IsConstCast(conversion->kind)) {
-      saves = true;
+      saved.push_back(id);
       return false;
     }
     const std::optional<hir::ProceduralVarId> var = ProceduralVarRead(body, id);
     if (var.has_value() && std::ranges::find(around, *var) != around.end()) {
-      saves = true;
+      saved.push_back(id);
       return false;
     }
     return true;
@@ -1333,7 +1433,119 @@ auto SavesAnything(
        {dispositions.pass_stmt, dispositions.fail_stmt}) {
     if (arm.has_value()) WalkStmt(walk, *arm);
   }
-  return saves;
+  return saved;
+}
+
+// Which positions of `automaton` read a value of `saved`, and so are read by
+// each attempt rather than once for every attempt of the assertion.
+auto PositionsReadingSaved(
+    const hir::ProceduralBody& body, const AssertionAutomaton& automaton,
+    std::span<const hir::ExprId> saved) -> std::vector<bool> {
+  std::vector<bool> reads_saved(automaton.positions.size(), false);
+  for (std::size_t position = 0; position < reads_saved.size(); ++position) {
+    bool reads = false;
+    const std::function<bool(hir::ExprId)> visit = [&](hir::ExprId id) {
+      if (std::ranges::find(saved, id) != saved.end()) reads = true;
+      return !reads;
+    };
+    const OperandWalk walk{.body = &body, .visit = &visit};
+    for (const hir::ExprId conjunct : automaton.positions[position].conjuncts) {
+      walk(conjunct, hir::OperandSlot::kOperand);
+    }
+    reads_saved[position] = reads;
+  }
+  return reads_saved;
+}
+
+// What every lowering of one assertion statement reads of it: the property's
+// automaton, what a procedural one saves, and which positions read it.
+struct AnalyzedAssertion {
+  AssertionDispositions dispositions;
+  AssertionAutomaton automaton;
+  std::vector<hir::ExprId> saved;
+  std::vector<bool> reads_saved;
+};
+
+auto AnalyzeAssertion(
+    const hir::ProceduralBody& body, const hir::ConcurrentAssertion& assertion,
+    std::vector<hir::ExprId> saved) -> AnalyzedAssertion {
+  const AssertionDispositions dispositions = DispositionsOf(assertion);
+  AssertionAutomaton automaton =
+      BuildAssertionAutomaton(body, *dispositions.spec);
+  std::vector<bool> reads_saved = PositionsReadingSaved(body, automaton, saved);
+  return AnalyzedAssertion{
+      .dispositions = dispositions,
+      .automaton = std::move(automaton),
+      .saved = std::move(saved),
+      .reads_saved = std::move(reads_saved)};
+}
+
+// The same for an assertion a procedure holds as a statement, which saves what
+// it reads of the procedure's automatics and its constant casts (LRM
+// 16.14.6.1). The scope's machinery and the statement each ask, and both are
+// answered from the statement alone.
+auto AnalyzeProceduralAssertion(
+    const hir::ProceduralBody& body,
+    const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
+        scopes,
+    const hir::ConcurrentAssertion& assertion) -> AnalyzedAssertion {
+  return AnalyzeAssertion(
+      body, assertion, SavedOperands(body, scopes, assertion));
+}
+
+// The code of each attempt of an installed assertion, which starts the
+// statement its outcome selects.
+auto InstalledAttemptCode(
+    const hir::ProceduralBody& body, const AnalyzedAssertion& analyzed,
+    diag::SourceSpan written_at) -> AttemptCode {
+  return AttemptCode{
+      .spec = analyzed.dispositions.spec,
+      .automaton = &analyzed.automaton,
+      .reads_saved = &analyzed.reads_saved,
+      .pass = PassArmOf(body, analyzed.dispositions),
+      .fail = FailArmOf(body, analyzed.dispositions),
+      .written_at = written_at};
+}
+
+// The machinery of one assertion, from the body its expressions are written
+// in, each callable added to `mir_class`: what a tick runs, its clock's
+// process, and where the source wrote `disable iff` the process watching that
+// condition. A static assertion's process makes the closure of each
+// attempt it begins.
+auto LowerMachinery(
+    ProcessLowerer& action, const StructuralScopeLowerer& lowerer,
+    mir::Class& mir_class, const WalkFrame& ctor_frame,
+    const AnalyzedAssertion& analyzed,
+    const std::optional<AttemptCode>& matured_at_each_tick)
+    -> diag::Result<InstalledConcurrentAssertion> {
+  const AssertionDispositions& dispositions = analyzed.dispositions;
+  const StaticCellBinding& attempts =
+      action.AttemptsCellOf(dispositions.control);
+
+  auto step = LowerStepOverAttempts(
+      action, ctor_frame, attempts, analyzed.automaton, analyzed.reads_saved);
+  if (!step) return std::unexpected(std::move(step.error()));
+
+  auto process = LowerProcess(
+      action, lowerer, ctor_frame, dispositions.spec->clock, attempts,
+      matured_at_each_tick);
+  if (!process) return std::unexpected(std::move(process.error()));
+  std::vector<mir::CallableId> processes;
+  processes.push_back(mir_class.callables.Add(*std::move(process)));
+  if (dispositions.spec->disable.has_value()) {
+    auto watcher = LowerDisableWatcher(
+        action, ctor_frame, attempts, *dispositions.spec->disable,
+        analyzed.saved);
+    if (!watcher) return std::unexpected(std::move(watcher.error()));
+    processes.push_back(mir_class.callables.Add(*std::move(watcher)));
+  }
+
+  return InstalledConcurrentAssertion{
+      .processes = std::move(processes),
+      .step = AddCallable(mir_class, *std::move(step)),
+      .start = analyzed.automaton.parts.front().start,
+      .control = action.ControlCellOf(dispositions.control),
+      .attempts = attempts};
 }
 
 }  // namespace
@@ -1348,12 +1560,13 @@ auto LowerConcurrentAssertion(
       lowerer.Owner(), &lowerer, decl.action, std::nullopt, ctor_frame, scopes,
       statics);
   // A static assertion is the statement reached at every tick of its leading
-  // clock (LRM 16.14.5).
-  constexpr std::array kDueAtEveryTick{
-      support::BuiltinFn::kEvaluationAttemptsBeginAttempt};
+  // clock (LRM 16.14.5), and saves nothing, since nothing it reads is
+  // automatic and it is queued nowhere.
+  const AnalyzedAssertion analyzed =
+      AnalyzeAssertion(decl.action, decl.assertion, {});
   auto built = LowerMachinery(
-      action, lowerer, mir_class, ctor_frame, decl.assertion, kDueAtEveryTick,
-      decl.span);
+      action, lowerer, mir_class, ctor_frame, analyzed,
+      InstalledAttemptCode(decl.action, analyzed, decl.span));
   if (!built) return std::unexpected(std::move(built.error()));
 
   for (const StaticCellBinding& binding : statics) {
@@ -1368,21 +1581,15 @@ auto LowerProceduralConcurrentAssertion(
     StructuralScopeLowerer& lowerer, mir::Class& mir_class,
     const WalkFrame& ctor_frame, const DeclaredScopes& scopes,
     const StaticCellBindings& statics, const hir::ProceduralBody& body,
-    const hir::ConcurrentAssertion& assertion, diag::SourceSpan span)
+    const hir::ConcurrentAssertion& assertion)
     -> diag::Result<InstalledConcurrentAssertion> {
   ProcessLowerer action(
       lowerer.Owner(), &lowerer, body, std::nullopt, ctor_frame, scopes,
       statics);
-  if (SavesAnything(action, lowerer.HirScope().procedural_scopes, assertion)) {
-    return std::unexpected(
-        diag::Make(
-            span, diag::DiagCode::kUnsupportedStatementForm,
-            "a concurrent assertion in a procedure that reads an automatic "
-            "variable or a constant cast is not yet supported")
-            .WithNote("pass '--assertions skip' to leave it out"));
-  }
+  const AnalyzedAssertion analyzed = AnalyzeProceduralAssertion(
+      body, lowerer.HirScope().procedural_scopes, assertion);
   return LowerMachinery(
-      action, lowerer, mir_class, ctor_frame, assertion, {}, span);
+      action, lowerer, mir_class, ctor_frame, analyzed, std::nullopt);
 }
 
 auto LowerExpectStmt(
@@ -1392,8 +1599,11 @@ auto LowerExpectStmt(
   mir::CompilationUnit& unit = process.Owner().Unit();
   const mir::TypeId word_type = unit.builtins.machine_word;
   const mir::TypeId void_type = unit.builtins.void_type;
+  // An expect reads the process's automatic variables at their values as of
+  // the Observed region (LRM 16.5.1, 16.17), so it saves nothing.
   const AssertionAutomaton automaton =
       BuildAssertionAutomaton(process.HirBody(), expect.spec);
+  const std::vector<bool> reads_saved(automaton.positions.size(), false);
 
   // The wait decides each tick of the clock where it happens, so a clock whose
   // occurrence only the waiting process could decide has nothing to watch it.
@@ -1422,6 +1632,10 @@ auto LowerExpectStmt(
   auto disable_reads =
       BuildTriggerArray(scope_builder, inner, process, disable_leaves);
   if (!disable_reads) return std::unexpected(std::move(disable_reads.error()));
+  std::vector<mir::ExprId> start;
+  for (const std::uint64_t word : automaton.parts.front().start) {
+    start.push_back(Word(scope_builder, word_type, word));
+  }
   const mir::LocalId wait = DeclareLocal(
       inner,
       scope_builder.Add(
@@ -1431,8 +1645,8 @@ auto LowerExpectStmt(
               {scope_builder.Add(
                    BuildCurrentRuntimeCallExpr(process.Owner().Unit())),
                *clock, *disable_reads,
-               Word(scope_builder, word_type, automaton.words),
-               scope_builder.Add(ControlAddress(
+               WordsOf(unit, scope_builder, std::move(start)),
+               scope_builder.Add(BuildStaticStorageAddress(
                    unit, scope_builder, inner,
                    process.ControlCellOf(expect.control)))},
               unit.builtins.wait)));
@@ -1458,108 +1672,81 @@ auto LowerExpectStmt(
               {scope_builder.ReadLocal(wait_pointer, unit.builtins.wait_ptr)},
               attempts_pointer)));
   // The attempt, through the local `pointer` holding its address.
-  const auto attempts_at = [&](mir::LocalId pointer) -> AttemptsPlace {
+  const auto attempts_at = [&](mir::LocalId pointer) -> ReceiverBuilder {
     return
         [&unit, attempts_type, attempts_pointer, pointer](mir::Builder block) {
-          return block.Add(
-              mir::MakeDerefExpr(
-                  block.DerefOperand(
-                      unit.types, block.ReadLocal(pointer, attempts_pointer)),
-                  attempts_type));
+          return block.Deref(
+              unit.types, block.ReadLocal(pointer, attempts_pointer),
+              attempts_type);
         };
   };
-  const auto call_on_wait = [&](mir::Builder block, support::BuiltinFn fn,
-                                mir::LocalId pointer,
-                                std::vector<mir::ExprId> rest) {
-    std::vector<mir::ExprId> arguments{
-        block.ReadLocal(pointer, unit.builtins.wait_ptr)};
-    arguments.insert(arguments.end(), rest.begin(), rest.end());
-    block.AppendStmt(
-        mir::ExprStmt{
-            .expr = block.Add(
-                mir::MakeCallExpr(
-                    mir::Direct{.target = fn}, std::move(arguments),
-                    void_type))});
-  };
+
   // What the wait runs is code of this body and reads its frame -- what an
   // automatic variable or a `ref` formal holds when the Observed region
   // evaluates is what the property reads (LRM 16.5.1) -- so each is a closure
   // holding the addresses it reaches the evaluation through. The wait holds
   // both and is a local of the frame they read, so neither runs once what it
   // reads is gone.
-  const auto snapshot_into = [&](ClosureBuilder& closure, mir::LocalId held,
-                                 mir::TypeId type) {
-    const mir::LocalId pointer = closure.Bindings().DeclareAnonymous(type);
-    closure.Body().AppendStmt(
-        mir::LocalDeclStmt{
-            .target = pointer,
-            .init = SnapshotValueIntoClosure(
-                process.Owner(), inner, closure,
-                scope_builder.ReadLocal(held, type))});
-    return pointer;
-  };
-  // The disable condition, tested where the closure stands: held, the
-  // evaluation is disabled and the closure goes no further (LRM 16.12).
-  const auto test_disable = [&](ClosureBuilder& closure) -> diag::Result<void> {
-    if (!expect.spec.disable.has_value()) return {};
-    const mir::LocalId pointer =
-        snapshot_into(closure, wait_pointer, unit.builtins.wait_ptr);
-    auto condition = process.LowerExpr(
-        process.HirBody().exprs.Get(expect.spec.disable->condition),
-        closure.Frame());
-    if (!condition) return std::unexpected(std::move(condition.error()));
-    const mir::ExprId reduced = ReduceToCondition(
-        unit, closure.Body(), closure.Body().Add(*std::move(condition)));
-    mir::Block disabled;
-    mir::Builder disabled_builder(disabled, inner.span);
-    call_on_wait(
-        disabled_builder, support::BuiltinFn::kDisablePropertyEvaluation,
-        pointer, {});
-    disabled_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-    AppendIf(closure.Body(), reduced, std::move(disabled));
-    return {};
-  };
-
   ClosureBuilder step(unit, inner, support::ClosureKind::kFn);
-  if (auto tested = test_disable(step); !tested) {
-    return std::unexpected(std::move(tested.error()));
-  }
   const mir::LocalId step_attempts =
-      snapshot_into(step, attempts_held, attempts_pointer);
-  AppendOpenMatured(step.Body(), unit, attempts_at(step_attempts), automaton);
-  auto ticked = LowerTick(
+      step.Bindings().DeclareAnonymous(attempts_pointer);
+  step.Body().AppendStmt(
+      mir::LocalDeclStmt{
+          .target = step_attempts,
+          .init = SnapshotValueIntoClosure(
+              process.Owner(), inner, step,
+              scope_builder.ReadLocal(attempts_held, attempts_pointer))});
+  auto shared = BuildSharedSatisfiedPositions(
       process, step.Frame(), step.Bindings(), attempts_at(step_attempts),
-      automaton);
-  if (!ticked) return std::unexpected(std::move(ticked.error()));
-  AppendBlock(step.Body(), *std::move(ticked));
+      automaton, reads_saved);
+  if (!shared) return std::unexpected(std::move(shared.error()));
+  step.Body().AppendStmt(
+      mir::ExprStmt{
+          .expr = step.Body().Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target = support::BuiltinFn::kEvaluationAttemptsRun,
+                      .receiver = attempts_at(step_attempts)(step.Body())},
+                  {*shared}, void_type))});
   const mir::ExprId step_closure =
       BuildKeptClosure(unit, scope_builder, step.BuildVoid());
 
-  ClosureBuilder test(unit, inner, support::ClosureKind::kFn);
-  if (auto tested = test_disable(test); !tested) {
-    return std::unexpected(std::move(tested.error()));
-  }
-  const mir::ExprId test_closure =
-      BuildKeptClosure(unit, scope_builder, test.BuildVoid());
+  auto made = BuildAttemptClosure(
+      process, inner,
+      AttemptCode{
+          .spec = &expect.spec,
+          .automaton = &automaton,
+          .reads_saved = &reads_saved,
+          .pass = std::nullopt,
+          .fail = std::nullopt,
+          .written_at = span},
+      {});
+  if (!made) return std::unexpected(std::move(made.error()));
+  const mir::ExprId attempt_closure =
+      BuildKeptClosure(unit, scope_builder, *std::move(made));
 
-  call_on_wait(
-      scope_builder, support::BuiltinFn::kBindPropertyEvaluation, wait_pointer,
-      {step_closure, test_closure});
   // The first evaluation is at the next tick of the clock (LRM 16.17), which
   // only the wait just made hears.
   scope_builder.AppendStmt(
       mir::ExprStmt{
-          .expr = AttemptsCall(
-              scope_builder,
-              support::BuiltinFn::kEvaluationAttemptsBeginAttempt,
-              attempts_at(attempts_held)(scope_builder), {}, void_type)});
+          .expr = scope_builder.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target = support::BuiltinFn::kBindPropertyEvaluation},
+                  {scope_builder.ReadLocal(
+                       wait_pointer, unit.builtins.wait_ptr),
+                   step_closure, attempt_closure},
+                  void_type))});
   scope_builder.AppendStmt(BuildParkStmt(process.Owner(), scope_builder, wait));
 
   const auto answer_is = [&](mir::Builder block,
                              support::AttemptAnswer answer) {
-    const mir::ExprId lhs = AttemptsCall(
-        block, support::BuiltinFn::kEvaluationAttemptsAnswer,
-        attempts_at(attempts_held)(block), {}, word_type);
+    const mir::ExprId lhs = block.Add(
+        mir::MakeCallExpr(
+            mir::Direct{
+                .target = support::BuiltinFn::kEvaluationAttemptsAnswer,
+                .receiver = attempts_at(attempts_held)(block)},
+            {}, word_type));
     const mir::ExprId rhs =
         Word(block, word_type, static_cast<std::uint64_t>(answer));
     return Op(
@@ -1591,10 +1778,13 @@ auto LowerExpectStmt(
           .else_scope = answered_builder.AddScope(*std::move(pass))});
   scope_builder.AppendStmt(
       mir::IfStmt{
-          .condition = AttemptsCall(
-              scope_builder, support::BuiltinFn::kEvaluationAttemptsActionRuns,
-              attempts_at(attempts_held)(scope_builder), {},
-              unit.builtins.machine_bool),
+          .condition = scope_builder.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target =
+                          support::BuiltinFn::kEvaluationAttemptsActionRuns,
+                      .receiver = attempts_at(attempts_held)(scope_builder)},
+                  {}, unit.builtins.machine_bool)),
           .then_scope = scope_builder.AddScope(std::move(answered)),
           .else_scope = std::nullopt});
 
@@ -1609,71 +1799,76 @@ void AppendConcurrentAssertionInstall(
     const InstalledConcurrentAssertion& installed) {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Builder block = activate_frame.Builder();
-  const mir::TypeId void_type = unit.builtins.void_type;
+  const mir::TypeId word_type = unit.builtins.machine_word;
 
   // What a tick runs is the scope's own function, called in place.
   ClosureBuilder step(unit, activate_frame, support::ClosureKind::kFn);
   step.Body().AppendStmt(
       mir::ExprStmt{
-          .expr = CallOwn(unit, step.Frame(), step.Body(), installed.step)});
+          .expr = BuildOwnCallExpr(
+              unit, step.Frame(), installed.step, unit.builtins.void_type)});
   const mir::ExprId step_closure =
       BuildKeptClosure(unit, block, step.BuildVoid());
 
-  // Both arms are the same for every attempt, so the storage holds one of each
-  // and starts it once per attempt an outcome selects rather than being handed
-  // a closure per attempt.
-  const auto arm = [&](mir::CallableId target) {
-    ClosureBuilder closure(unit, activate_frame, support::ClosureKind::kFn);
-    closure.Body().AppendStmt(
-        mir::ExprStmt{
-            .expr = BuildExecutionStart(
-                lowerer.Owner(), closure.Frame(), target,
-                support::BuiltinFn::kRunAssertionAction,
-                installed.written_at)});
-    return BuildKeptClosure(unit, block, closure.BuildVoid());
-  };
-
+  std::vector<mir::ExprId> start;
+  for (const std::uint64_t word : installed.start) {
+    start.push_back(Word(block, word_type, word));
+  }
   const mir::ExprId attempts =
       AttemptsAt(unit, activate_frame, installed.attempts)(block);
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = AttemptsCall(
-              block, support::BuiltinFn::kEvaluationAttemptsInstall, attempts,
-              {block.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner().Unit())),
-               Word(block, unit.builtins.machine_word, installed.words),
-               step_closure, arm(installed.pass_action),
-               arm(installed.fail_action),
-               block.Add(ControlAddress(
-                   unit, block, activate_frame, installed.control))},
-              void_type)});
+          .expr = block.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target = support::BuiltinFn::kEvaluationAttemptsInstall,
+                      .receiver = attempts},
+                  {block.Add(
+                       BuildCurrentRuntimeCallExpr(lowerer.Owner().Unit())),
+                   WordsOf(unit, block, std::move(start)), step_closure,
+                   block.Add(BuildStaticStorageAddress(
+                       unit, block, activate_frame, installed.control))},
+                  unit.builtins.void_type))});
 }
 
 auto LowerProceduralConcurrentAssertionStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::ConcurrentAssertion& assertion) -> diag::Result<mir::Stmt> {
+    const hir::ConcurrentAssertion& assertion, diag::SourceSpan span)
+    -> diag::Result<mir::Stmt> {
   mir::CompilationUnit& unit = process.Owner().Unit();
-  const AssertionDispositions dispositions = DispositionsOf(assertion);
+  const hir::ProceduralBody& body = process.HirBody();
+  const AnalyzedAssertion analyzed = AnalyzeProceduralAssertion(
+      body, process.EnclosingScopeLowerer().HirScope().procedural_scopes,
+      assertion);
+  const AssertionDispositions& dispositions = analyzed.dispositions;
 
-  // A pending instance that matures is an attempt due (LRM 16.14.6).
+  // A pending instance that matures begins an attempt (LRM 16.14.6): its
+  // closure, made in the attempts, reading the values saved here.
   mir::Block scope;
   const WalkFrame scope_frame = frame.WithBlock(&scope);
   mir::Builder scope_builder = scope_frame.Builder();
+  auto saved = process.SaveValues(analyzed.saved, scope_frame);
+  if (!saved) return std::unexpected(std::move(saved.error()));
   ClosureBuilder instance(unit, scope_frame, support::ClosureKind::kFn);
+  auto made = BuildAttemptClosure(
+      process, instance.Frame(), InstalledAttemptCode(body, analyzed, span),
+      *saved);
+  if (!made) return std::unexpected(std::move(made.error()));
+  const StaticCellBinding& attempts =
+      process.AttemptsCellOf(dispositions.control);
   mir::Builder instance_body = instance.Body();
   instance_body.AppendStmt(
       mir::ExprStmt{
-          .expr = AttemptsCall(
-              instance_body,
-              support::BuiltinFn::kEvaluationAttemptsBeginAttempt,
-              AttemptsAt(
-                  unit, instance.Frame(),
-                  process.AttemptsCellOf(dispositions.control))(instance_body),
-              {}, unit.builtins.void_type)});
+          .expr = instance_body.Add(BuildEmplacedClosure(
+              unit, instance.Frame(),
+              BuildStaticStorageAddress(
+                  unit, instance_body, instance.Frame(), attempts),
+              *std::move(made)))});
 
   // The control keeps it in the Observed region, on the condition that no
   // flush point, `disable` of its label or of the process, or Kill reaches it
   // first (LRM 16.14.6.2, 16.14.6.4, 20.11).
-  mir::Expr keeper = ControlAddress(
+  mir::Expr keeper = BuildStaticStorageAddress(
       unit, scope_builder, scope_frame,
       process.ControlCellOf(dispositions.control));
   scope_builder.AppendStmt(

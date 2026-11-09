@@ -218,6 +218,14 @@ class ProcessLowerer {
   auto LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
       -> diag::Result<AccessPath>;
 
+  // Evaluates each of `saved` once, in order, where `statement` stands, each
+  // held in a binding of its own the bodies of the attempt reach by capture:
+  // what a procedural concurrent assertion saves where its statement is
+  // reached (LRM 16.14.6.1).
+  auto SaveValues(
+      std::span<const hir::ExprId> saved, const WalkFrame& statement)
+      -> diag::Result<std::vector<SavedValue>>;
+
   // Central statement dispatcher. One switch over `hir::Stmt::data` routing
   // each kind to its per-family handler.
   auto LowerStmt(const hir::Stmt& stmt, WalkFrame frame)

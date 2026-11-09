@@ -135,10 +135,11 @@ class CodeGenModule {
       -> llvm::FunctionCallee;
   // What a callee a call crosses to as `abi` arranges is handed ahead of the
   // storage its answer is built in, given the operands the call states. Each
-  // thing an entry is told of a type is a constant, so building the list
-  // emits nothing.
+  // thing an entry is told of a type is a constant; an operand that is a
+  // structure crosses as its fields, read off it where `builder` stands.
   auto BuildCallArgs(
-      const LlvmFnAbi& abi, std::span<llvm::Value* const> operands)
+      llvm::IRBuilderBase& builder, const LlvmFnAbi& abi,
+      std::span<llvm::Value* const> operands)
       -> diag::Result<std::vector<llvm::Value*>>;
   // What a callee is told of a type, as the arguments it crosses as, appended
   // to `args`.
@@ -146,8 +147,8 @@ class CodeGenModule {
       -> diag::Result<void>;
   // The arguments the operand `value` crosses as, appended to `args`.
   auto BuildCallArg(
-      const PassMode& mode, llvm::Value* value, std::vector<llvm::Value*>& args)
-      -> diag::Result<void>;
+      llvm::IRBuilderBase& builder, const PassMode& mode, llvm::Value* value,
+      std::vector<llvm::Value*>& args) -> diag::Result<void>;
   // One step of the life of a value of `type`, emitted where `builder`
   // stands, as the unit says it is carried out: a copy or a move takes where
   // the value lies and the storage it is built in, an assignment the storage

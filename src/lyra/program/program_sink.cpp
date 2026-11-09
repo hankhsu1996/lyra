@@ -222,8 +222,6 @@ void BindEngineEntries(const auto& add) {
       &lyra_rt_wait_on_property_evaluation);
   add("lyra_rt_attempts_of", &lyra_rt_attempts_of);
   add("lyra_rt_bind_property_evaluation", &lyra_rt_bind_property_evaluation);
-  add("lyra_rt_disable_property_evaluation",
-      &lyra_rt_disable_property_evaluation);
   add("lyra_rt_park_at", &lyra_rt_park_at);
   add("lyra_rt_read_report_empty", &lyra_rt_read_report_empty);
   add("lyra_rt_read_report_for_implicit_list",
@@ -764,42 +762,43 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_managedref_sampled_history_at);
   add("lyra_rt_evaluation_attempts_install",
       &lyra_rt_evaluation_attempts_install);
-  add("lyra_rt_evaluation_attempts_seed_word",
-      &lyra_rt_evaluation_attempts_seed_word);
-  add("lyra_rt_evaluation_attempts_begin_attempt",
-      &lyra_rt_evaluation_attempts_begin_attempt);
+  add("lyra_rt_evaluation_attempts_allocate",
+      &lyra_rt_evaluation_attempts_allocate);
+  add("lyra_rt_evaluation_attempts_commit",
+      &lyra_rt_evaluation_attempts_commit);
   add("lyra_rt_evaluation_attempts_tick", &lyra_rt_evaluation_attempts_tick);
-  add("lyra_rt_evaluation_attempts_open_matured",
-      &lyra_rt_evaluation_attempts_open_matured);
-  add("lyra_rt_evaluation_attempts_disable_tick",
-      &lyra_rt_evaluation_attempts_disable_tick);
-  add("lyra_rt_evaluation_attempts_discard",
-      &lyra_rt_evaluation_attempts_discard);
+  add("lyra_rt_evaluation_attempts_run", &lyra_rt_evaluation_attempts_run);
+  add("lyra_rt_evaluation_attempts_test_disable",
+      &lyra_rt_evaluation_attempts_test_disable);
   add("lyra_rt_evaluation_attempts_live_word",
       &lyra_rt_evaluation_attempts_live_word);
-  add("lyra_rt_evaluation_attempts_next_unstepped",
-      &lyra_rt_evaluation_attempts_next_unstepped);
-  add("lyra_rt_evaluation_attempts_bits_at",
-      &lyra_rt_evaluation_attempts_bits_at);
-  add("lyra_rt_evaluation_attempts_set_word",
-      &lyra_rt_evaluation_attempts_set_word);
-  add("lyra_rt_evaluation_attempts_step", &lyra_rt_evaluation_attempts_step);
-  add("lyra_rt_evaluation_attempts_seed", &lyra_rt_evaluation_attempts_seed);
-  add("lyra_rt_evaluation_attempts_count", &lyra_rt_evaluation_attempts_count);
-  add("lyra_rt_evaluation_attempts_part_of",
-      &lyra_rt_evaluation_attempts_part_of);
-  add("lyra_rt_evaluation_attempts_implication_answer",
-      &lyra_rt_evaluation_attempts_implication_answer);
-  add("lyra_rt_evaluation_attempts_implication_nonvacuous",
-      &lyra_rt_evaluation_attempts_implication_nonvacuous);
-  add("lyra_rt_evaluation_attempts_resolve",
-      &lyra_rt_evaluation_attempts_resolve);
-  add("lyra_rt_evaluation_attempts_settle",
-      &lyra_rt_evaluation_attempts_settle);
   add("lyra_rt_evaluation_attempts_answer",
       &lyra_rt_evaluation_attempts_answer);
   add("lyra_rt_evaluation_attempts_action_runs",
       &lyra_rt_evaluation_attempts_action_runs);
+  add("lyra_rt_evaluation_attempt_shared_word",
+      &lyra_rt_evaluation_attempt_shared_word);
+  add("lyra_rt_evaluation_attempt_live_word",
+      &lyra_rt_evaluation_attempt_live_word);
+  add("lyra_rt_evaluation_attempt_next_unstepped",
+      &lyra_rt_evaluation_attempt_next_unstepped);
+  add("lyra_rt_evaluation_attempt_bits_at",
+      &lyra_rt_evaluation_attempt_bits_at);
+  add("lyra_rt_evaluation_attempt_set_word",
+      &lyra_rt_evaluation_attempt_set_word);
+  add("lyra_rt_evaluation_attempt_step", &lyra_rt_evaluation_attempt_step);
+  add("lyra_rt_evaluation_attempt_seed_word",
+      &lyra_rt_evaluation_attempt_seed_word);
+  add("lyra_rt_evaluation_attempt_seed", &lyra_rt_evaluation_attempt_seed);
+  add("lyra_rt_evaluation_attempt_count", &lyra_rt_evaluation_attempt_count);
+  add("lyra_rt_evaluation_attempt_part_of",
+      &lyra_rt_evaluation_attempt_part_of);
+  add("lyra_rt_evaluation_attempt_implication_answer",
+      &lyra_rt_evaluation_attempt_implication_answer);
+  add("lyra_rt_evaluation_attempt_implication_nonvacuous",
+      &lyra_rt_evaluation_attempt_implication_nonvacuous);
+  add("lyra_rt_evaluation_attempt_resolve",
+      &lyra_rt_evaluation_attempt_resolve);
   add("lyra_rt_string_value_cell_alloc", &lyra_rt_string_value_cell_alloc);
   add("lyra_rt_string_value_cell_store", &lyra_rt_string_value_cell_store);
   add("lyra_rt_string_value_cell_load", &lyra_rt_string_value_cell_load);

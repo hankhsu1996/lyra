@@ -1,7 +1,5 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 
-#include <cstdint>
-
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -85,25 +83,27 @@ auto SnapshotPlaceIntoClosure(
       closure.Bindings().MakeBindingPlace(ref, closure.Body()));
 }
 
+auto DeclareSynthesizedLocal(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId value)
+    -> BindingOriginId {
+  mir::Builder block = frame.Builder();
+  // The site uniquely identifies this synthesized local, so several in one
+  // body never collide on origin. The local starts as the value itself (not a
+  // default then an assignment), so one of a type with no default value -- a
+  // `VariableRef<T>` over the target cell -- is materialized correctly.
+  const BindingOriginId origin = SynthesizedOrigin{
+      .owner_site = unit_lowerer.NextSynthesizedSite(), .ordinal = 0};
+  const mir::LocalId local =
+      frame.bindings->Declare(origin, block.Get(value).type);
+  block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = value});
+  return origin;
+}
+
 auto SnapshotBindingIntoClosure(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, mir::ExprId outer_expr) -> BodyBindingRef {
-  mir::Builder outer_block = outer_frame.Builder();
-  const mir::TypeId type = outer_block.Get(outer_expr).type;
-
-  // The site uniquely identifies this synthesized carrier, so several snapshots
-  // in one outer body never collide on origin. The temp initializes directly
-  // from the snapshotted expression (not a default-then-assign), so a carrier
-  // with no default value -- a `VariableRef<T>` over the target cell -- is
-  // materialized correctly.
-  const std::uint32_t site = unit_lowerer.NextSynthesizedSite();
-  const BindingOriginId origin =
-      SynthesizedOrigin{.owner_site = site, .ordinal = 0};
-  const mir::LocalId temp = outer_frame.bindings->Declare(origin, type);
-  outer_block.AppendStmt(
-      mir::LocalDeclStmt{.target = temp, .init = outer_expr});
-
-  return closure.Bindings().EnsureCarrier(origin);
+  return closure.Bindings().EnsureCarrier(
+      DeclareSynthesizedLocal(unit_lowerer, outer_frame, outer_expr));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

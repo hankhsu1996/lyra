@@ -56,6 +56,21 @@ auto BuildOwnFieldExpr(
           BuildObjectDeref(unit, block, self), field, type));
 }
 
+auto BuildOwnCallExpr(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::CallableId callable, mir::TypeId result) -> mir::ExprId {
+  mir::Builder block = frame.Builder();
+  const mir::ExprId self = block.Add(MakeSelfRefExpr(frame));
+  return block.Add(
+      mir::MakeCallExpr(
+          mir::Direct{
+              .target =
+                  mir::CallableTarget{
+                      .owner = frame.current_class.id, .slot = callable},
+              .receiver = BuildObjectDeref(unit, block, self)},
+          {}, result));
+}
+
 auto BuildObjectPointer(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId reaches)
     -> mir::ExprId {

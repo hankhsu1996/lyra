@@ -143,6 +143,24 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
   return mapped;
 }
 
+namespace {
+
+// The types an argument of `type` is handed over as, appended to `params`: a
+// structure's field types one after another, and any other type as itself --
+// what each call hands over once it expands its arguments, as clang's
+// `ABIArgInfo::Expand` expands a structure.
+void AppendExpandedTypes(llvm::Type* type, std::vector<llvm::Type*>& params) {
+  auto* structure = llvm::dyn_cast<llvm::StructType>(type);
+  if (structure == nullptr) {
+    params.push_back(type);
+    return;
+  }
+  params.insert(
+      params.end(), structure->element_begin(), structure->element_end());
+}
+
+}  // namespace
+
 auto CodeGenTypes::GetFunctionType(const LlvmFnAbi& abi)
     -> llvm::FunctionType* {
   // What an entry is told of a type crosses as machine values of its own: a
@@ -188,7 +206,7 @@ auto CodeGenTypes::GetFunctionType(const LlvmFnAbi& abi)
     if (i == abi.args.size()) {
       break;
     }
-    params.push_back(abi.args[i].type);
+    AppendExpandedTypes(abi.args[i].type, params);
     std::visit(
         Overloaded{
             [](const PassDirect&) {},

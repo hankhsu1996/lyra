@@ -7,6 +7,7 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/assertion_control.hpp"
@@ -159,6 +160,25 @@ auto BuildStaticStorageAccess(
                 .type = cell_type};
           }},
       home);
+}
+
+auto BuildStaticStorageAddress(
+    mir::CompilationUnit& unit, mir::Builder block, const WalkFrame& frame,
+    const StaticStorageHome& home, mir::TypeId cell_type) -> mir::Expr {
+  const mir::ExprId place = block.Add(BuildStaticStorageAccess(
+      unit, frame, home, cell_type, mir::EnclosingHops{}));
+  return mir::MakeAddressOfExpr(
+      place, unit.types.Intern(
+                 mir::Type{mir::PointerType{
+                     .pointee = cell_type,
+                     .ownership = mir::PointerOwnership::kBorrowed}}));
+}
+
+auto BuildStaticStorageAddress(
+    mir::CompilationUnit& unit, mir::Builder block, const WalkFrame& frame,
+    const StaticCellBinding& cell) -> mir::Expr {
+  return BuildStaticStorageAddress(
+      unit, block, frame, cell.home, cell.cell_type);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

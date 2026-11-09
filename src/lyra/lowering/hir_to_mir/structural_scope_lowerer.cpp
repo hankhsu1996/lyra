@@ -1202,35 +1202,13 @@ auto CreatingInstance(UnitLowerer& unit_lowerer, const WalkFrame& frame)
       frame, unit_lowerer.Unit(), frame.HopsToUnitRoot());
 }
 
-// The call of `body`, a callable of the scope `frame` stands on, answering
-// `result`.
-auto CallOnScope(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
-    mir::TypeId result) -> mir::ExprId {
-  mir::Builder block = frame.Builder();
-  const mir::ExprId body_self = BuildObjectDeref(
-      unit_lowerer.Unit(), block, block.Add(MakeSelfRefExpr(frame)));
-  return block.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target =
-                              mir::CallableTarget{
-                                  .owner = frame.current_class.id,
-                                  .slot = body},
-                          .receiver = body_self},
-                  .arguments = {}},
-          .type = result});
-}
-
 // The call of a process body, whose result is the execution it runs as.
 auto StartedBody(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body)
     -> mir::ExprId {
-  return CallOnScope(
-      unit_lowerer, frame, body, unit_lowerer.Unit().builtins.coroutine_void);
+  return BuildOwnCallExpr(
+      unit_lowerer.Unit(), frame, body,
+      unit_lowerer.Unit().builtins.coroutine_void);
 }
 
 // Registers a continuous driver, which, alone among static processes, may be
@@ -1279,8 +1257,8 @@ void AppendFinalRegistration(
   ClosureBuilder call(unit, activate_frame, support::ClosureKind::kFn);
   call.Body().AppendStmt(
       mir::ExprStmt{
-          .expr = CallOnScope(
-              unit_lowerer, call.Frame(), body, unit.builtins.void_type)});
+          .expr = BuildOwnCallExpr(
+              unit, call.Frame(), body, unit.builtins.void_type)});
   const mir::ExprId kept = BuildKeptClosure(unit, block, call.BuildVoid());
   block.AppendStmt(
       mir::ExprStmt{
@@ -2536,12 +2514,19 @@ auto DescribeDumped(
 auto BuildExecutionStart(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
     support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId {
+  return BuildExecutionStart(
+      unit_lowerer, frame, StartedBody(unit_lowerer, frame, body), start,
+      written_at);
+}
+
+auto BuildExecutionStart(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId started,
+    support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId {
   mir::Builder block = frame.Builder();
   return block.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = start},
-          {OwningScope(frame), CreatingInstance(unit_lowerer, frame),
-           StartedBody(unit_lowerer, frame, body),
+          {OwningScope(frame), CreatingInstance(unit_lowerer, frame), started,
            unit_lowerer.BuildSourceLocationAt(block, written_at)},
           unit_lowerer.Unit().builtins.void_type));
 }
@@ -3749,7 +3734,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
       if (!held.has_value()) continue;
       auto built = LowerProceduralConcurrentAssertion(
           *this, mir_class, ctor_frame.WithSpan(stmt.span), scopes_, statics,
-          p.body, *held, stmt.span);
+          p.body, *held);
       if (!built) return std::unexpected(std::move(built.error()));
       for (const mir::CallableId process : built->processes) {
         AppendProcessRegistration(

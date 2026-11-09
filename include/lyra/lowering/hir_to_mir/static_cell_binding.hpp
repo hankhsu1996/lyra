@@ -10,6 +10,7 @@
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/static_property_id.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
@@ -179,6 +180,19 @@ auto BindBodyStatics(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     const StaticStorageHome& home, mir::TypeId cell_type,
     mir::EnclosingHops hops) -> mir::Expr;
+
+// A borrowed pointer to the cell of type `cell_type` at `home`, reached from
+// where `frame`'s body stands, for what holds the cell past the statement that
+// reaches it. The access is added to `block`, and the pointer is answered
+// unadded, for the caller to place where it is consumed.
+[[nodiscard]] auto BuildStaticStorageAddress(
+    mir::CompilationUnit& unit, mir::Builder block, const WalkFrame& frame,
+    const StaticStorageHome& home, mir::TypeId cell_type) -> mir::Expr;
+
+// The same pointer to the cell `cell` binds.
+[[nodiscard]] auto BuildStaticStorageAddress(
+    mir::CompilationUnit& unit, mir::Builder block, const WalkFrame& frame,
+    const StaticCellBinding& cell) -> mir::Expr;
 
 // The field a static of a body in the design hierarchy took. Such a body is
 // replicated with its instance, so its cells are that instance's fields and no

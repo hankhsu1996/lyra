@@ -566,10 +566,9 @@ auto ConnectDataPort(
     // it (LRM 23.3.3.2); the child member is a read-only reference the parent
     // still rebinds at construction, which is a storage shape of its own and
     // not the rebindable plain `ref`.
-    case hir::PortDirection::kConstRef: {
+    case hir::PortDirection::kConstRef:
       return PortConnectionUnsupported(
           span, "connecting a 'const ref' port is not yet supported");
-    }
     case hir::PortDirection::kInOut: {
       // A bidirectional connection is not a directional edge: it states that
       // positions of the nets on both sides are one physical net, resolving

@@ -252,7 +252,8 @@ auto CodeGenModule::FourStateArg(const value::IntegralShape& shape)
 }
 
 auto CodeGenModule::BuildCallArgs(
-    const LlvmFnAbi& abi, std::span<llvm::Value* const> operands)
+    llvm::IRBuilderBase& builder, const LlvmFnAbi& abi,
+    std::span<llvm::Value* const> operands)
     -> diag::Result<std::vector<llvm::Value*>> {
   if (operands.size() != abi.args.size()) {
     throw InternalError(
@@ -299,7 +300,7 @@ auto CodeGenModule::BuildCallArgs(
     if (i == operands.size()) {
       break;
     }
-    auto crossed = BuildCallArg(abi.args[i].mode, operands[i], args);
+    auto crossed = BuildCallArg(builder, abi.args[i].mode, operands[i], args);
     if (!crossed) {
       return std::unexpected(std::move(crossed.error()));
     }
@@ -371,19 +372,43 @@ auto CodeGenModule::AppendTypeArg(
       told);
 }
 
+namespace {
+
+// The arguments `value` is handed over as, appended to `args`: a structure's
+// fields one after another, read off it where `builder` stands, and any other
+// value as itself. A structure is expanded, as clang's `ABIArgInfo::Expand`
+// expands one, so every argument a call hands over is a scalar or an address,
+// which lands where its own kind says on every target; one handed whole lands
+// where that target's rules for structures put it. The type a callee is
+// declared at is expanded the same way.
+void AppendExpandedArgs(
+    llvm::IRBuilderBase& builder, llvm::Value* value,
+    std::vector<llvm::Value*>& args) {
+  auto* structure = llvm::dyn_cast<llvm::StructType>(value->getType());
+  if (structure == nullptr) {
+    args.push_back(value);
+    return;
+  }
+  for (unsigned field = 0; field < structure->getNumElements(); ++field) {
+    args.push_back(builder.CreateExtractValue(value, {field}));
+  }
+}
+
+}  // namespace
+
 auto CodeGenModule::BuildCallArg(
-    const PassMode& mode, llvm::Value* value, std::vector<llvm::Value*>& args)
-    -> diag::Result<void> {
+    llvm::IRBuilderBase& builder, const PassMode& mode, llvm::Value* value,
+    std::vector<llvm::Value*>& args) -> diag::Result<void> {
   return std::visit(
       Overloaded{
           [&](const PassDirect&) -> diag::Result<void> {
-            args.push_back(value);
+            AppendExpandedArgs(builder, value, args);
             return {};
           },
           [&](const PassWithExtent& with) -> diag::Result<void> {
             const value::IntegralShape shape =
                 types_.RequiredIntegralShapeOf(with.type);
-            args.push_back(value);
+            AppendExpandedArgs(builder, value, args);
             args.push_back(WidthArg(shape));
             args.push_back(FourStateArg(shape));
             return {};
@@ -391,7 +416,7 @@ auto CodeGenModule::BuildCallArg(
           [&](const PassWithShape& with) -> diag::Result<void> {
             const value::IntegralShape shape =
                 types_.RequiredIntegralShapeOf(with.type);
-            args.push_back(value);
+            AppendExpandedArgs(builder, value, args);
             args.push_back(WidthArg(shape));
             args.push_back(
                 llvm::ConstantInt::getBool(
@@ -404,12 +429,12 @@ auto CodeGenModule::BuildCallArg(
             if (!type_object) {
               return std::unexpected(std::move(type_object.error()));
             }
-            args.push_back(value);
+            AppendExpandedArgs(builder, value, args);
             args.push_back(*type_object);
             return {};
           },
           [&](const PassWithWidth& with) -> diag::Result<void> {
-            args.push_back(value);
+            AppendExpandedArgs(builder, value, args);
             args.push_back(WidthArg(types_.RequiredIntegralShapeOf(with.type)));
             return {};
           }},
@@ -548,7 +573,7 @@ auto CodeGenModule::EmitLibraryStep(
   const LlvmFnAbi abi = AtMachineTypes(
       *this,
       ArrangeLibraryStep(unit_->types, type, object, op, operands.size()), ret);
-  auto crossed = BuildCallArgs(abi, operands);
+  auto crossed = BuildCallArgs(builder, abi, operands);
   if (!crossed) {
     return std::unexpected(std::move(crossed.error()));
   }
@@ -1119,7 +1144,7 @@ auto CodeGenModule::BuildMemberStorage(
       *this, ArrangeMemberBuild(*unit_, type, storage),
       ReturnDirect{.type = result});
   const std::array<llvm::Value*, 1> operands{at};
-  auto args = BuildCallArgs(abi, operands);
+  auto args = BuildCallArgs(builder, abi, operands);
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }

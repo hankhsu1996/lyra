@@ -29,12 +29,33 @@ enum class PropertyAnswer : std::uint8_t {
 };
 
 // What one attempt as a whole has come to so far: pending until its answer
-// reaches either end of the order. An expect statement's process reads it to
-// learn whether to go on and which arm to run (LRM 16.17).
+// reaches either end of the order, or disabled, which is neither a success nor
+// a failure (LRM 16.12). An expect statement's process reads it to learn
+// whether to go on and which arm to run, and is never woken by a disabled one
+// (LRM 16.17).
 enum class AttemptAnswer : std::uint8_t {
   kPending,
   kHolds,
   kFails,
+  kDisabled,
+};
+
+// What the closure of one attempt of a concurrent assertion is called for
+// (LRM 16.14.6). The closure is the code of the attempt bound to the values it
+// was made with -- those a procedural assertion saved where it was queued (LRM
+// 16.14.6.1) -- so whatever reads those values is asked of it: a tick of its
+// clock, a test of its disable condition between ticks (LRM 16.12), and the
+// statement its answer selects (LRM 16.14.1).
+enum class AttemptEvent : std::uint8_t {
+  // The clock ticked: step the attempt's evaluations, unless the disable
+  // condition holds, which the call answers with 1.
+  kTick,
+  // What the disable condition reads changed: answers 1 where it holds.
+  kDisableTest,
+  // The attempt succeeded, and its pass statement may run: start it.
+  kSucceeded,
+  // The attempt failed, and its fail statement may run: start it.
+  kFailed,
 };
 
 }  // namespace lyra::support

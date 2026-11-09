@@ -91,11 +91,13 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           },
           [&](const hir::ConcurrentAssertStmt& a) {
             return LowerProceduralConcurrentAssertionStmt(
-                *this, frame, stmt.label, hir::ConcurrentAssertion{a});
+                *this, frame, stmt.label, hir::ConcurrentAssertion{a},
+                stmt.span);
           },
           [&](const hir::ConcurrentCoverStmt& c) {
             return LowerProceduralConcurrentAssertionStmt(
-                *this, frame, stmt.label, hir::ConcurrentAssertion{c});
+                *this, frame, stmt.label, hir::ConcurrentAssertion{c},
+                stmt.span);
           },
           [&](const hir::ExpectStmt& e) {
             return LowerExpectStmt(*this, frame, stmt.label, e, stmt.span);

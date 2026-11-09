@@ -6,8 +6,8 @@
 // array's element that lies in a union's member: a union is one storage its
 // members are alternative readings of, with no required representation (LRM
 // 7.3), so what lies in a member has no storage of its own while another
-// member may be what the union holds. Lyra takes the stricter reading and
-// refuses a part below a union's member as it refuses the member.
+// member may be what the union holds. Lyra takes the stricter reading, in the
+// front end it pins, and refuses a part below a union's member as the member.
 module Top;
   typedef struct { int x; int y; } s_t;
   typedef union { s_t s; int words [2]; } u_t;

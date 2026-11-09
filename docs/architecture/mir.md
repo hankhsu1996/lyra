@@ -211,11 +211,12 @@ what the construct means.
   conversion into the legalized phase, so every backend keeps such a value off the stack by
   translating what it is given. Making the evaluation order explicit asks no value's size; deciding
   where each value lies is the step after it. A closure kept past the statement building it is made
-  where its keeper keeps it: a deferred effect is made by a placement new-expression in storage the
-  effects of the region that holds it hand out, and committed to them in the same expression, as
-  C++'s `emplace` builds an element where its container holds it; a closure any other keeper holds
-  in a box that keeper takes. Every body MIR holds is concrete: an operation over many types is
-  built per site or per type by the lowering, never stated as a generic function.
+  where its keeper keeps it: one whose keeper hands out storage for it -- a region's deferred
+  effects, an assertion's control, a concurrent assertion's attempts -- is made there by a placement
+  new-expression and committed to the keeper in the same expression, as C++'s `emplace` builds an
+  element where its container holds it; a closure any other keeper holds in a box that keeper takes.
+  Every body MIR holds is concrete: an operation over many types is built per site or per type by
+  the lowering, never stated as a generic function.
 - Who owns each value and until when, stated by the nodes that take values and the scopes that hold
   them, as clang's AST and rustc's THIR state it, and never by a node per copy or per end. A read of
   a place makes a value of its own, independent of the place, as its type copies it: a handle's copy

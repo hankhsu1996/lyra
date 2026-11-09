@@ -11,13 +11,22 @@ analyzed representation means. Where neither the standard nor that representatio
 what an accepted text does, Lyra chooses the simplest behaviour. An error of analysis is corrected
 in the front end, and an error of execution or a missing capability is corrected in Lyra.**
 
-**One kind of accepted text is refused by Lyra: a text the standard forbids, or does not settle,
-whose meaning no rule of the standard for the nearest text it allows supplies.** Giving one a
-meaning would be designing semantics the standard declined to give, and every tool that did so would
-answer differently. Lyra refuses it where it reads the front end's representation, before any
-lowering, as an error saying in words what the language does not allow, and records the ruling
-below. A forbidden text whose meaning the nearest allowed text does supply is carried out as the
-front end analyzed it.
+**A text the standard forbids that the front end accepts, and whose meaning no rule of the standard
+for the nearest text it allows supplies, is the front end's to refuse, and is refused in the version
+of it Lyra pins.** A missing diagnostic is an error of analysis like any other, and a check of it in
+Lyra would be the second set of rules this page rules out; where the front end already checks the
+neighbouring texts, the check belongs beside them. A forbidden text whose meaning the nearest
+allowed text does supply is carried out as the front end analyzed it, and one the front end accepts
+because other tools read it so is a compatibility choice its options decide (consequence 6).
+
+**A text the standard does not settle, whose meaning no rule supplies, is refused too, under the
+stricter reading.** The front end is not wrong to accept it, and giving it a meaning would be
+designing semantics the standard declined to give, which every tool would answer differently. The
+reading is taken in the front end where the front end's own check is the one every use of the text
+passes through -- what a reference may name, for one -- since a check kept in Lyra would have to
+list the uses and would miss the next. Otherwise Lyra refuses it where it reads the front end's
+representation, before any lowering, as an error saying in words what the language does not allow.
+Either way the ruling is recorded below.
 
 The responsibilities are split three ways.
 
@@ -36,8 +45,8 @@ shape a tree happens to take is not part of it. Lowering keeps every decision th
 even for a text the standard leaves undefined, and decides only what the front end left open.
 
 The goal is that a text the standard allows is accepted and does what the standard says. A case that
-fails it is a defect, either the front end's (reported upstream) or Lyra's (a bug, or a gap reported
-as one).
+fails it is a defect, either the front end's (fixed in the version Lyra pins, and reported upstream)
+or Lyra's (a bug, or a gap reported as one).
 
 Lyra adds no rule of its own accepting a text because a design runs on some other simulator. Tools
 that take a text the standard forbids do not agree on which texts or on what they mean, so a rule
@@ -78,10 +87,10 @@ Consequences:
    carries it out is its record. It becomes a ruling below only where the choice changes what the
    program computes, and a ruling never records the front end's behaviour in full.
 5. **What goes upstream is decided by evidence, not by severity.** A suspected analysis error, a
-   missing diagnostic, or a meaning that contradicts the standard is reported with the clause and a
-   reduction. A text the front end accepts deliberately as an extension is not a defect for being
-   nonstandard. For a text the standard does not settle, Lyra's position in that discussion is the
-   stricter reading.
+   missing diagnostic, or a meaning that contradicts the standard is fixed in the version Lyra pins
+   and reported with the clause and a reduction. A text the front end accepts deliberately as an
+   extension is not a defect for being nonstandard. For a text the standard does not settle, Lyra's
+   position in that discussion is the stricter reading.
 6. **A caller may select a named compatibility mode or front end option** (`--compat`, or an option
    for a single reading, such as `--allow-hierarchical-const`). Lyra applies the corresponding
    analysis rules and stands behind the mode as it does the default. It does not promise to behave

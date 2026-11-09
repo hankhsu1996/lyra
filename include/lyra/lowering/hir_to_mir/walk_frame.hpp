@@ -12,6 +12,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/fixed_name.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
@@ -51,6 +52,14 @@ struct NormalCleanup {
 struct ArgumentsEvaluatedEarlier {
   std::span<const hir::ExprId> operands;
   const WalkFrame* statement = nullptr;
+};
+
+// One value a procedural concurrent assertion saved where its statement was
+// reached (LRM 16.14.6.1): the expression the source wrote, and the binding
+// holding its value, which a body made later reaches by capture.
+struct SavedValue {
+  hir::ExprId expr;
+  BindingOriginId origin;
 };
 
 // A class the walk is in or can climb to, and the identity it was minted
@@ -234,6 +243,11 @@ struct WalkFrame {
   // by-value arguments that statement evaluates. Null elsewhere.
   const ArgumentsEvaluatedEarlier* arguments_evaluated_earlier = nullptr;
 
+  // What a procedural concurrent assertion saved, for the bodies of its
+  // attempt, where each use of a saved expression names the saved value (LRM
+  // 16.14.6.1). Empty elsewhere.
+  std::span<const SavedValue> saved_values;
+
   // The local holding the problem of the call of `randomize()` a constraint is
   // stated to (LRM 18.5, 18.7), in a constraint block's body or the
   // constraints written with a call. Absent anywhere no constraint is lowered.
@@ -342,6 +356,13 @@ struct WalkFrame {
       const ArgumentsEvaluatedEarlier* arguments) const -> WalkFrame {
     WalkFrame next = *this;
     next.arguments_evaluated_earlier = arguments;
+    return next;
+  }
+
+  [[nodiscard]] auto WithSavedValues(std::span<const SavedValue> saved) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.saved_values = saved;
     return next;
   }
 

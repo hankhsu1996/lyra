@@ -124,6 +124,12 @@ auto ParametersOf(std::span<const Spelled> spelled) -> std::vector<Parameter> {
   parameters.reserve(spelled.size());
   for (std::size_t at = 0; at < spelled.size(); ++at) {
     const Spelled& p = spelled[at];
+    // A run of values crosses as where it lies and then how many there are,
+    // `_count` after its name: one value handed in two parameters.
+    if (at > 0 && p.type == "std::uint64_t" &&
+        p.name == std::string(spelled[at - 1].name) + "_count") {
+      continue;
+    }
     const bool pointer = p.type.contains('*');
     Hands hands = Hands::kValue;
     if (!pointer && p.type.contains("std::int64_t") && names_a_width(at)) {

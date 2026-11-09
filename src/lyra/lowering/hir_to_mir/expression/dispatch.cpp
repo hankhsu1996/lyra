@@ -557,31 +557,67 @@ auto IsArgumentEvaluatedEarlier(
       });
 }
 
-// Where the argument `expr` lies as the statement evaluated it: lowered where
-// the statement is, held in a local there, and carried into the body the call
-// is made in, as a C++ lambda's init-capture is.
-auto ArgumentEvaluatedEarlier(
-    ProcessLowerer& lowerer, const hir::Expr& expr, const WalkFrame& frame)
-    -> diag::Result<mir::Expr> {
-  const WalkFrame& statement = *frame.arguments_evaluated_earlier->statement;
+// `expr` lowered where `statement` stands and held there in a local a body
+// made later reaches by capture.
+auto EvaluatedAtStatement(
+    ProcessLowerer& lowerer, const hir::Expr& expr, const WalkFrame& statement)
+    -> diag::Result<BindingOriginId> {
   auto value = lowerer.LowerExpr(expr, statement);
   if (!value) return std::unexpected(std::move(value.error()));
   mir::Builder at = statement.Builder();
-  const mir::ExprId held =
-      at.AsValue(lowerer.Owner().Unit().types, at.Add(*std::move(value)));
-  const BindingOriginId origin = SynthesizedOrigin{
-      .owner_site = lowerer.Owner().NextSynthesizedSite(), .ordinal = 0};
-  const mir::LocalId local =
-      statement.bindings->Declare(origin, at.Get(held).type);
-  at.AppendStmt(mir::LocalDeclStmt{.target = local, .init = held});
+  return DeclareSynthesizedLocal(
+      lowerer.Owner(), statement,
+      at.AsValue(lowerer.Owner().Unit().types, at.Add(*std::move(value))));
+}
+
+// Where the argument `expr` lies as the statement evaluated it, in the body
+// the call is made in.
+auto ArgumentEvaluatedEarlier(
+    ProcessLowerer& lowerer, const hir::Expr& expr, const WalkFrame& frame)
+    -> diag::Result<mir::Expr> {
+  auto origin = EvaluatedAtStatement(
+      lowerer, expr, *frame.arguments_evaluated_earlier->statement);
+  if (!origin) return std::unexpected(std::move(origin.error()));
   return frame.bindings->MakeBindingPlace(
-      frame.bindings->EnsureCarrier(origin), frame.Builder());
+      frame.bindings->EnsureCarrier(*origin), frame.Builder());
+}
+
+// The value a procedural concurrent assertion saved as `expr`, if it saved
+// one, where it lies in the body `frame` lowers: every use of the expression
+// names it, a reference formal binding it included (LRM 16.14.6.1).
+auto SavedPlace(
+    const ProcessLowerer& lowerer, const hir::Expr& expr,
+    const WalkFrame& frame) -> std::optional<mir::Expr> {
+  for (const SavedValue& saved : frame.saved_values) {
+    if (&lowerer.HirBody().exprs.Get(saved.expr) == &expr) {
+      return frame.bindings->MakeBindingPlace(
+          frame.bindings->EnsureCarrier(saved.origin), frame.Builder());
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace
 
+auto ProcessLowerer::SaveValues(
+    std::span<const hir::ExprId> saved, const WalkFrame& statement)
+    -> diag::Result<std::vector<SavedValue>> {
+  std::vector<SavedValue> values;
+  values.reserve(saved.size());
+  for (const hir::ExprId expr : saved) {
+    auto origin =
+        EvaluatedAtStatement(*this, HirBody().exprs.Get(expr), statement);
+    if (!origin) return std::unexpected(std::move(origin.error()));
+    values.push_back(SavedValue{.expr = expr, .origin = *origin});
+  }
+  return values;
+}
+
 auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
+  if (std::optional<mir::Expr> saved = SavedPlace(*this, expr, frame)) {
+    return frame.Builder().AsValue(Owner().Unit().types, *std::move(saved));
+  }
   if (IsArgumentEvaluatedEarlier(*this, expr, frame)) {
     auto place = ArgumentEvaluatedEarlier(*this, expr, frame);
     if (!place) return std::unexpected(std::move(place.error()));
@@ -592,6 +628,9 @@ auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
 
 auto ProcessLowerer::LowerAsPlace(const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
+  if (std::optional<mir::Expr> saved = SavedPlace(*this, expr, frame)) {
+    return *std::move(saved);
+  }
   if (IsArgumentEvaluatedEarlier(*this, expr, frame)) {
     return ArgumentEvaluatedEarlier(*this, expr, frame);
   }
@@ -610,6 +649,12 @@ auto ProcessLowerer::LowerAccessPath(const hir::Expr& expr, WalkFrame frame)
 
 auto ProcessLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<AccessPath> {
+  // A value the statement saved is named where the body reaches it, so a
+  // reference formal bound to it reaches that value (LRM 13.5.2, 16.14.6.1).
+  if (std::optional<mir::Expr> saved = SavedPlace(*this, expr, frame)) {
+    return AccessPath{
+        .owner = frame.Builder().Add(*std::move(saved)), .descent = {}};
+  }
   return LowerLhsExprImpl(*this, expr, frame);
 }
 

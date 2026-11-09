@@ -8,6 +8,7 @@
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -76,6 +77,13 @@ auto BuildOwnFieldExpr(
     const mir::CompilationUnit& unit, mir::Builder block,
     const WalkFrame& frame, mir::ClassFieldTarget field, mir::TypeId type)
     -> mir::ExprId;
+
+// A call of `callable`, a function of the class of the object `frame`'s body
+// runs on that takes nothing past `self`, made on that object and answering
+// `result`, added to the frame's block.
+auto BuildOwnCallExpr(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::CallableId callable, mir::TypeId result) -> mir::ExprId;
 
 // A borrowed pointer to the object `reaches` designates -- a handle, a
 // pointer, or a write in progress -- as a call dispatching on the object or

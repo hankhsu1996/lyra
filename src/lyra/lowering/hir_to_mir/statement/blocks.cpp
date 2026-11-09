@@ -104,15 +104,8 @@ auto CancellationTarget(
   mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Builder block = frame.Builder();
   const mir::TypeId target_type = CancellationTargetType(unit);
-  const mir::ExprId member = block.Add(BuildStaticStorageAccess(
-      unit, frame, target, target_type, mir::EnclosingHops{}));
   return block.Add(
-      mir::Expr{
-          .data = mir::AddressOfExpr{.operand = member},
-          .type = unit.types.Intern(
-              mir::Type{mir::PointerType{
-                  .pointee = target_type,
-                  .ownership = mir::PointerOwnership::kBorrowed}})});
+      BuildStaticStorageAddress(unit, block, frame, target, target_type));
 }
 
 auto NamedTarget(

@@ -24,8 +24,6 @@ auto MachineKindName(MachineKind kind) -> std::string_view {
       return "float";
     case MachineKind::kDouble:
       return "double";
-    case MachineKind::kAggregate:
-      return "aggregate";
   }
   throw InternalError("support::MachineKindName: unknown MachineKind");
 }

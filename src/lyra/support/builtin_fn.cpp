@@ -62,6 +62,8 @@ constexpr MachineSignature kCondition =
     MachineSignatureOf<ConditionSignature>::Get();
 constexpr MachineSignature kWatch = MachineSignatureOf<WatchSignature>::Get();
 constexpr MachineSignature kOrder = MachineSignatureOf<OrderSignature>::Get();
+constexpr MachineSignature kAttemptClosure =
+    MachineSignatureOf<AttemptClosureSignature>::Get();
 
 // The bounds of a callable an entry asks of: it calls it at one of the
 // signatures above, many times through a shared view (`Fn`), many times as its
@@ -81,6 +83,16 @@ constexpr CallableBounds kEffectFnOnceWhileItsAnswerIsHeld{
     .kept = CallableHold::kWhileItsAnswerIsHeld};
 constexpr CallableBounds kEffectFnOncePastTheCaller{
     .trait = CalledClosure{.asks = ClosureKind::kFnOnce, .signature = kEffect},
+    .kept = CallableHold::kPastTheCaller};
+constexpr CallableBounds kAttemptClosureFnMutWhileItsAnswerIsHeld{
+    .trait =
+        CalledClosure{
+            .asks = ClosureKind::kFnMut, .signature = kAttemptClosure},
+    .kept = CallableHold::kWhileItsAnswerIsHeld};
+constexpr CallableBounds kAttemptClosureFnMutPastTheCaller{
+    .trait =
+        CalledClosure{
+            .asks = ClosureKind::kFnMut, .signature = kAttemptClosure},
     .kept = CallableHold::kPastTheCaller};
 constexpr CallableBounds kConditionFnWhileItsAnswerIsHeld{
     .trait = CalledClosure{.asks = ClosureKind::kFn, .signature = kCondition},
@@ -572,98 +584,37 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "evaluation_attempts_install",
           .declaration = Method{"Install"},
           .takes_the_location = false,
-          .callables = {
-              kEffectFnPastTheCaller, kEffectFnPastTheCaller,
-              kEffectFnPastTheCaller}};
-    case BuiltinFn::kEvaluationAttemptsSeedWord:
+          .callables = {kEffectFnPastTheCaller}};
+    case BuiltinFn::kEvaluationAttemptsAllocate:
       return {
-          .name = "evaluation_attempts_seed_word",
-          .declaration = Method{"SeedWord"},
+          .name = "evaluation_attempts_allocate",
+          .declaration = AllocationFunction{},
           .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsBeginAttempt:
+    case BuiltinFn::kEvaluationAttemptsCommit:
       return {
-          .name = "evaluation_attempts_begin_attempt",
-          .declaration = Method{"BeginAttempt"},
-          .takes_the_location = false};
+          .name = "evaluation_attempts_commit",
+          .declaration = Method{"Commit"},
+          .takes_the_location = false,
+          .callables = {kAttemptClosureFnMutPastTheCaller}};
     case BuiltinFn::kEvaluationAttemptsTick:
       return {
           .name = "evaluation_attempts_tick",
           .declaration = Method{"Tick"},
           .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsOpenMatured:
+    case BuiltinFn::kEvaluationAttemptsRun:
       return {
-          .name = "evaluation_attempts_open_matured",
-          .declaration = Method{"OpenMatured"},
+          .name = "evaluation_attempts_run",
+          .declaration = Method{"Run"},
           .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsDisableTick:
+    case BuiltinFn::kEvaluationAttemptsTestDisable:
       return {
-          .name = "evaluation_attempts_disable_tick",
-          .declaration = Method{"DisableTick"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsDiscard:
-      return {
-          .name = "evaluation_attempts_discard",
-          .declaration = Method{"Discard"},
+          .name = "evaluation_attempts_test_disable",
+          .declaration = Method{"TestDisable"},
           .takes_the_location = false};
     case BuiltinFn::kEvaluationAttemptsLiveWord:
       return {
           .name = "evaluation_attempts_live_word",
           .declaration = Method{"LiveWord"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsNextUnstepped:
-      return {
-          .name = "evaluation_attempts_next_unstepped",
-          .declaration = Method{"NextUnstepped"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsBitsAt:
-      return {
-          .name = "evaluation_attempts_bits_at",
-          .declaration = Method{"BitsAt"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsSetWord:
-      return {
-          .name = "evaluation_attempts_set_word",
-          .declaration = Method{"SetWord"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsStep:
-      return {
-          .name = "evaluation_attempts_step",
-          .declaration = Method{"Step"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsSeed:
-      return {
-          .name = "evaluation_attempts_seed",
-          .declaration = Method{"Seed"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsCount:
-      return {
-          .name = "evaluation_attempts_count",
-          .declaration = Method{"Count"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsPartOf:
-      return {
-          .name = "evaluation_attempts_part_of",
-          .declaration = Method{"PartOf"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsImplicationAnswer:
-      return {
-          .name = "evaluation_attempts_implication_answer",
-          .declaration = Method{"ImplicationAnswer"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsImplicationNonvacuous:
-      return {
-          .name = "evaluation_attempts_implication_nonvacuous",
-          .declaration = Method{"ImplicationNonvacuous"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsResolve:
-      return {
-          .name = "evaluation_attempts_resolve",
-          .declaration = Method{"Resolve"},
-          .takes_the_location = false};
-    case BuiltinFn::kEvaluationAttemptsSettle:
-      return {
-          .name = "evaluation_attempts_settle",
-          .declaration = Method{"Settle"},
           .takes_the_location = false};
     case BuiltinFn::kEvaluationAttemptsAnswer:
       return {
@@ -674,6 +625,71 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "evaluation_attempts_action_runs",
           .declaration = Method{"ActionRuns"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptSharedWord:
+      return {
+          .name = "evaluation_attempt_shared_word",
+          .declaration = Method{"SharedWord"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptLiveWord:
+      return {
+          .name = "evaluation_attempt_live_word",
+          .declaration = Method{"LiveWord"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptNextUnstepped:
+      return {
+          .name = "evaluation_attempt_next_unstepped",
+          .declaration = Method{"NextUnstepped"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptBitsAt:
+      return {
+          .name = "evaluation_attempt_bits_at",
+          .declaration = Method{"BitsAt"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptSetWord:
+      return {
+          .name = "evaluation_attempt_set_word",
+          .declaration = Method{"SetWord"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptStep:
+      return {
+          .name = "evaluation_attempt_step",
+          .declaration = Method{"Step"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptSeedWord:
+      return {
+          .name = "evaluation_attempt_seed_word",
+          .declaration = Method{"SeedWord"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptSeed:
+      return {
+          .name = "evaluation_attempt_seed",
+          .declaration = Method{"Seed"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptCount:
+      return {
+          .name = "evaluation_attempt_count",
+          .declaration = Method{"Count"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptPartOf:
+      return {
+          .name = "evaluation_attempt_part_of",
+          .declaration = Method{"PartOf"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptImplicationAnswer:
+      return {
+          .name = "evaluation_attempt_implication_answer",
+          .declaration = Method{"ImplicationAnswer"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptImplicationNonvacuous:
+      return {
+          .name = "evaluation_attempt_implication_nonvacuous",
+          .declaration = Method{"ImplicationNonvacuous"},
+          .takes_the_location = false};
+    case BuiltinFn::kEvaluationAttemptResolve:
+      return {
+          .name = "evaluation_attempt_resolve",
+          .declaration = Method{"Resolve"},
           .takes_the_location = false};
     case BuiltinFn::kWaitOnPropertyEvaluation:
       return {
@@ -692,12 +708,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = RuntimeFunction("BindPropertyEvaluation"),
           .takes_the_location = false,
           .callables = {
-              kEffectFnWhileItsAnswerIsHeld, kEffectFnWhileItsAnswerIsHeld}};
-    case BuiltinFn::kDisablePropertyEvaluation:
-      return {
-          .name = "disable_property_evaluation",
-          .declaration = RuntimeFunction("DisablePropertyEvaluation"),
-          .takes_the_location = false};
+              kEffectFnWhileItsAnswerIsHeld,
+              kAttemptClosureFnMutWhileItsAnswerIsHeld}};
     case BuiltinFn::kTimerBind:
       return {
           .name = "timer_bind",

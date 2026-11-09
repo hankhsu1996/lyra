@@ -97,8 +97,8 @@ void KeepViolationReport(
     hir::ControlledAssertionId control, mir::Expr body) {
   mir::CompilationUnit& unit = process.Owner().Unit();
   mir::Builder block = frame.Builder();
-  mir::Expr keeper =
-      ControlAddress(unit, block, frame, process.ControlCellOf(control));
+  mir::Expr keeper = BuildStaticStorageAddress(
+      unit, block, frame, process.ControlCellOf(control));
   const mir::ExprId kept = block.Add(
       BuildEmplacedClosure(unit, frame, std::move(keeper), std::move(body)));
   block.AppendStmt(mir::ExprStmt{.expr = kept});

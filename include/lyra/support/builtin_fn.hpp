@@ -224,61 +224,64 @@ enum class BuiltinFn : std::uint16_t {
   kSampledHistoryInstall,
   kSampledHistoryPush,
   kSampledHistoryAt,
-  // LRM 16.14.1 concurrent assertion evaluation, all reached through the
-  // storage that holds one property's attempts. `Install` fixes how wide a
-  // position set is, what a tick runs, the statements an outcome selects and
-  // the assertion's control (LRM 20.11). `BeginAttempt` says an attempt is due
-  // and `Tick` that the leading clock ticked, and whichever comes second in a
-  // time step runs the tick (LRM 16.14.5, 16.14.6). What the tick runs opens
-  // every due attempt on the staged seed with `OpenMatured`, where its control
-  // lets one begin; `DisableTick` is the tick with the disable condition true,
-  // which discards every attempt and every one due, and `Discard` the condition
-  // coming true between ticks, which
-  // discards the attempts in flight alone (LRM 16.12). `LiveWord`
-  // bounds the Boolean expressions the tick has to read, `NextUnstepped` walks
-  // the evaluations the tick still owes a step, and `BitsAt` / `SetWord` /
-  // `Step` read a position set, replace it with its successor, and mark it
-  // stepped. `Seed` starts an instance of what an implication, a followed-by or
-  // a selection asks, as an instance of one implication of the evaluation
-  // whose antecedent matched. `Count` / `PartOf` / `ImplicationAnswer` /
-  // `ImplicationNonvacuous` / `Resolve` answer every evaluation from the last
-  // back: how many there are, which part of the property one answers for, the
-  // least answer an implication's instances reached and whether any was
-  // nonvacuous (LRM 16.14.8), and its own answer and vacuity. `Settle` answers
-  // every attempt the tick resolved, submitting an installed assertion's
-  // statements to Reactive where its control allowed them, and `Answer` and
-  // `ActionRuns` read what the one attempt an expect statement holds came to,
-  // and whether the arm that answer selects may run.
+  // LRM 16.14.1 concurrent assertion evaluation, reached through the storage
+  // that holds one property's attempts. `Install` fixes the positions the
+  // whole property starts at, what a tick runs and the assertion's control
+  // (LRM 20.11). `Allocate` hands out storage for one attempt's closure and
+  // `Commit` says the attempt it begins has matured; `Tick` says the leading
+  // clock ticked and runs the tick, which a commit later in the same time step
+  // runs again for the attempt it opens (LRM 16.14.5, 16.14.6). What the tick
+  // runs reads, bounded by `LiveWord`, the Booleans
+  // every attempt shares, and `Run` steps each attempt's closure with them,
+  // settling those that answered and starting the statement each answer
+  // selects in Reactive where its control allowed it. `TestDisable` asks each
+  // closure whether its disable condition holds between ticks (LRM 16.12).
+  // `Answer` and `ActionRuns` read what the one attempt an expect statement
+  // holds came to, and whether the arm that answer selects may run.
   kEvaluationAttemptsInstall,
-  kEvaluationAttemptsSeedWord,
-  kEvaluationAttemptsBeginAttempt,
+  kEvaluationAttemptsAllocate,
+  kEvaluationAttemptsCommit,
   kEvaluationAttemptsTick,
-  kEvaluationAttemptsOpenMatured,
-  kEvaluationAttemptsDisableTick,
-  kEvaluationAttemptsDiscard,
+  kEvaluationAttemptsRun,
+  kEvaluationAttemptsTestDisable,
   kEvaluationAttemptsLiveWord,
-  kEvaluationAttemptsNextUnstepped,
-  kEvaluationAttemptsBitsAt,
-  kEvaluationAttemptsSetWord,
-  kEvaluationAttemptsStep,
-  kEvaluationAttemptsSeed,
-  kEvaluationAttemptsCount,
-  kEvaluationAttemptsPartOf,
-  kEvaluationAttemptsImplicationAnswer,
-  kEvaluationAttemptsImplicationNonvacuous,
-  kEvaluationAttemptsResolve,
-  kEvaluationAttemptsSettle,
   kEvaluationAttemptsAnswer,
   kEvaluationAttemptsActionRuns,
+  // One attempt, reached through the pointer its closure is handed.
+  // `SharedWord` reads the Booleans every attempt shares at this tick, as the
+  // step was handed them, and `LiveWord` bounds the Boolean expressions the
+  // step has to read. `NextUnstepped` walks the evaluations the tick still
+  // owes a step, and `BitsAt` / `SetWord` / `Step` read a position set,
+  // replace it with its successor, and mark it stepped. `SeedWord` stages a
+  // set and `Seed` starts on it an instance of what an implication, a
+  // followed-by or a selection asks, as an instance of one implication of the
+  // evaluation whose antecedent matched. `Count` / `PartOf` /
+  // `ImplicationAnswer` / `ImplicationNonvacuous` / `Resolve` answer every
+  // evaluation from the last back: how many there are, which part of the
+  // property one answers for, the
+  // least answer an implication's instances reached and whether any was
+  // nonvacuous (LRM 16.14.8), and its own answer and vacuity.
+  kEvaluationAttemptSharedWord,
+  kEvaluationAttemptLiveWord,
+  kEvaluationAttemptNextUnstepped,
+  kEvaluationAttemptBitsAt,
+  kEvaluationAttemptSetWord,
+  kEvaluationAttemptStep,
+  kEvaluationAttemptSeedWord,
+  kEvaluationAttemptSeed,
+  kEvaluationAttemptCount,
+  kEvaluationAttemptPartOf,
+  kEvaluationAttemptImplicationAnswer,
+  kEvaluationAttemptImplicationNonvacuous,
+  kEvaluationAttemptResolve,
   // LRM 16.17 the wait an expect statement stops at, which watches the clock
   // and the disable condition and holds the one attempt the statement began;
-  // that attempt, reached through the wait; the tick and the disable test the
-  // wait runs, which are closures of the waiting body and so are handed to it
-  // once it exists; and the disable condition having held.
+  // that attempt, reached through the wait; and the tick the wait runs and the
+  // attempt's closure, closures of the waiting body and so handed to it
+  // once it exists.
   kWaitOnPropertyEvaluation,
   kAttemptsOf,
   kBindPropertyEvaluation,
-  kDisablePropertyEvaluation,
   // LRM 10.3.3 the timer a delayed continuous assignment propagates through.
   // `Bind` names, once, what firing does; `Arm` schedules the one event
   // pending, some steps of the scope's precision from now, in place of the one

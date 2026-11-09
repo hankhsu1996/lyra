@@ -123,11 +123,12 @@ Stated positively: each fixes one rule, and what is allowed or forbidden follows
     (`F: FnMut(bool) -> bool + 'static`), so the runtime entry's own declaration states them, once,
     and the unit's verification holds what is handed to it to them, reading the kind and the
     signature off the erased type handed. A body the entry starts rather than calls has no
-    signature, and the declaration says it is started instead. A closure made in a keeper of
-    deferred effects is no erased callable in the unit at all: the keeper's commit takes a pointer
-    to the concrete closure made in its storage and holds it by the part every closure opens with,
-    so the verification reads the kind and the signature off the closure itself and holds them to
-    what the commit's declaration asks.
+    signature, and the declaration says it is started instead. A closure made in storage its keeper
+    hands out -- a region's deferred effects, an assertion's control or attempts -- is no erased
+    callable in the unit at all: the keeper's commit takes a pointer to the concrete closure made in
+    its storage and holds it by the part every closure opens with, so the verification reads the
+    kind and the signature off the closure itself and holds them to what the commit's declaration
+    asks.
 
 11. **A closure value has exactly one owner at every moment, and every way out of that owner ends it
     exactly once.** The owner is the frame that made it, the box it was made in, whatever took that

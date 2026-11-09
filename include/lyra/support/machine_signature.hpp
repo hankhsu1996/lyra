@@ -23,8 +23,6 @@ enum class MachineKind : std::uint8_t {
   kInt64,
   kFloat,
   kDouble,
-  // A structure passed whole, which crosses as its own fields.
-  kAggregate,
 };
 
 // The machine kind a C++ parameter or answer of type `T` crosses as, as the
@@ -43,8 +41,6 @@ constexpr auto MachineKindOf() -> MachineKind {
     return MachineKind::kFloat;
   } else if constexpr (std::is_same_v<T, double>) {
     return MachineKind::kDouble;
-  } else if constexpr (std::is_class_v<T>) {
-    return MachineKind::kAggregate;
   } else {
     static_assert(
         std::is_integral_v<T> || std::is_enum_v<T>,
@@ -69,7 +65,7 @@ constexpr auto MachineKindOf() -> MachineKind {
 class MachineSignature {
  public:
   // The most values any function of the library takes.
-  static constexpr std::size_t kMostTaken = 12;
+  static constexpr std::size_t kMostTaken = 16;
 
   constexpr MachineSignature(
       MachineKind returns, std::initializer_list<MachineKind> takes)
