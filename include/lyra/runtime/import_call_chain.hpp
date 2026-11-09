@@ -45,7 +45,8 @@ struct ForeignControl {
 // that this execution must stop (LRM 35.9 item c), a control task the foreign
 // side asked for through VPI to run as the call returns (LRM 38.4), and where
 // the design wrote the call, which is where what foreign code does wrong under
-// it is reported.
+// it is reported and what it is told when it asks for its caller (LRM Annex
+// H.9.3).
 // Each is a fact of the call rather than of the execution: a call reached from
 // inside another has its own. The call's location is kept rather than bound,
 // since an imported task can suspend inside its foreign call.

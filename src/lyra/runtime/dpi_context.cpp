@@ -21,6 +21,7 @@
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/sim_time.hpp"
+#include "svdpi.h"
 
 namespace lyra::runtime {
 
@@ -181,17 +182,6 @@ void RequireAContextImportCall(RuntimeEffects& effects) {
 
 namespace {
 
-// The svdpi time value (Annex H `svTimeVal` == `s_vpi_time`), laid out here so
-// the runtime need not include the vendored header. `svGetTime` fills the
-// integer simulation-time form.
-struct SvTimeVal {
-  std::int32_t type;
-  std::uint32_t high;
-  std::uint32_t low;
-  double real;
-};
-constexpr std::int32_t kVpiSimTime = 2;
-
 // The scope handles this run has given foreign code, which answer the name and
 // user-data queries.
 auto Handles() -> lyra::runtime::DpiScopeHandles& {
@@ -221,7 +211,7 @@ auto Effects() -> lyra::runtime::RuntimeEffects& {
 // Resolves a time-query scope handle: a null handle is legal (the query is at
 // the simulation level), a non-null one must have been handed out. Returns
 // false for any other, which the query reports as an error.
-auto ResolveTimeScope(void* scope, const lyra::runtime::Scope** resolved)
+auto ResolveTimeScope(svScope scope, const lyra::runtime::Scope** resolved)
     -> bool {
   if (scope == nullptr) {
     *resolved = nullptr;
@@ -261,26 +251,27 @@ auto EffectiveTimePowers(
 
 }  // namespace
 
-// The Annex H context, time and disable surface, linked into the simulation
-// binary and resolved against the user's C by name. `svScope` is `void*`; a
-// handle is a `runtime::Scope*` the C layer handed out. The current scope is
-// the innermost entry of the running import call chain; the handles handed out
-// answer the name and user-data queries; a time query reports the scope's
-// effective unit or precision, or the simulation-level value for a null scope;
-// and the two disable entries are how foreign code reads and answers the
-// protocol of LRM 35.9. Every entry that answers a scope hands it out, which is
-// what makes it one foreign code may pass back. Errors follow the svdpi
-// contract -- a null handle, null out slot, or invalid handle yields the
-// documented null / -1 -- and nothing here throws across the C boundary.
+// The Annex H context, caller, time and disable surface, linked into the
+// simulation binary and resolved against the user's C by name. An `svScope` is
+// a `runtime::Scope*` the C layer handed out. The current scope, and the
+// caller's place, are those of the innermost entry of the running import call
+// chain; the handles handed out answer the name and user-data queries; a
+// time query reports the scope's effective unit or precision, or the
+// simulation-level value for a null scope; and the two disable entries are how
+// foreign code reads and answers the protocol of LRM 35.9. Every entry that
+// answers a scope hands it out, which is what makes it one foreign code may
+// pass back. Errors follow the svdpi contract -- a null handle, null out slot,
+// or invalid handle yields the documented null / -1 -- and nothing here throws
+// across the C boundary.
 extern "C" {
 
-auto svGetScope() -> void* {
+auto svGetScope() -> svScope {
   return HandOut(lyra::runtime::CurrentDpiScope());
 }
 
 // Whether the address is a scope is decided here, where it arrives, because
 // only a scope this run handed out is one (LRM Annex H.9.3).
-auto svSetScope(void* scope) -> void* {
+auto svSetScope(const svScope scope) -> svScope {
   auto* given = static_cast<lyra::runtime::Scope*>(scope);
   const lyra::runtime::CurrentDpiHandle installed =
       given == nullptr || Handles().IsIssued(given)
@@ -290,26 +281,45 @@ auto svSetScope(void* scope) -> void* {
   return HandOut(lyra::runtime::ReplaceDpiScope(installed));
 }
 
-auto svGetNameFromScope(void* scope) -> const char* {
+auto svGetNameFromScope(const svScope scope) -> const char* {
   return Handles().NameOf(static_cast<const lyra::runtime::Scope*>(scope));
 }
 
-auto svGetScopeFromName(const char* name) -> void* {
-  return name == nullptr ? nullptr
-                         : Handles().Issue(Handles().ScopeOfName(name));
+auto svGetScopeFromName(const char* scopeName) -> svScope {
+  return scopeName == nullptr
+             ? nullptr
+             : Handles().Issue(Handles().ScopeOfName(scopeName));
 }
 
-auto svPutUserData(void* scope, void* key, void* data) -> int {
+auto svPutUserData(const svScope scope, void* userKey, void* userData) -> int {
   return Handles().PutUserData(
-      static_cast<const lyra::runtime::Scope*>(scope), key, data);
+      static_cast<const lyra::runtime::Scope*>(scope), userKey, userData);
 }
 
-auto svGetUserData(void* scope, void* key) -> void* {
+auto svGetUserData(const svScope scope, void* userKey) -> void* {
   return Handles().GetUserData(
-      static_cast<const lyra::runtime::Scope*>(scope), key);
+      static_cast<const lyra::runtime::Scope*>(scope), userKey);
 }
 
-auto svGetTime(void* scope, void* time) -> int {
+// Where the design wrote the context import call running now, which the call
+// chain keeps for every such call (LRM Annex H.9.3). Outside one there is no
+// call to answer for, and a call the design did not write has no place.
+auto svGetCallerInfo(const char** fileName, int* lineNumber) -> int {
+  const lyra::runtime::RunningState* running = Effects().TryRunning();
+  if (running == nullptr || !running->import_calls.InsideACall()) {
+    return 0;
+  }
+  const lyra::base::SourceLocation written_at =
+      running->import_calls.WrittenAt();
+  if (!written_at.IsValid()) {
+    return 0;
+  }
+  *fileName = written_at.File();
+  *lineNumber = static_cast<int>(written_at.Line());
+  return 1;
+}
+
+auto svGetTime(const svScope scope, svTimeVal* time) -> int {
   if (time == nullptr) {
     return -1;
   }
@@ -319,17 +329,17 @@ auto svGetTime(void* scope, void* time) -> int {
   }
   const std::int8_t global = Effects().GlobalPrecisionPower();
   const lyra::SimDuration divisor = lyra::runtime::TimeUnitDivisor(
-      EffectiveTimePowers(resolved, global).unit, global);
+      static_cast<std::int8_t>(EffectiveTimePowers(resolved, global).unit),
+      global);
   const std::uint64_t scaled = Effects().Now() / divisor;
-  auto* out = static_cast<SvTimeVal*>(time);
-  out->type = kVpiSimTime;
-  out->high = static_cast<std::uint32_t>(scaled >> 32U);
-  out->low = static_cast<std::uint32_t>(scaled & 0xFFFFFFFFU);
-  out->real = 0.0;
+  time->type = sv_sim_time;
+  time->high = static_cast<std::uint32_t>(scaled >> 32U);
+  time->low = static_cast<std::uint32_t>(scaled & 0xFFFFFFFFU);
+  time->real = 0.0;
   return 0;
 }
 
-auto svGetTimeUnit(void* scope, void* time_unit) -> int {
+auto svGetTimeUnit(const svScope scope, std::int32_t* time_unit) -> int {
   if (time_unit == nullptr) {
     return -1;
   }
@@ -337,12 +347,13 @@ auto svGetTimeUnit(void* scope, void* time_unit) -> int {
   if (!ResolveTimeScope(scope, &resolved)) {
     return -1;
   }
-  *static_cast<std::int32_t*>(time_unit) =
+  *time_unit =
       EffectiveTimePowers(resolved, Effects().GlobalPrecisionPower()).unit;
   return 0;
 }
 
-auto svGetTimePrecision(void* scope, void* time_precision) -> int {
+auto svGetTimePrecision(const svScope scope, std::int32_t* time_precision)
+    -> int {
   if (time_precision == nullptr) {
     return -1;
   }
@@ -350,7 +361,7 @@ auto svGetTimePrecision(void* scope, void* time_precision) -> int {
   if (!ResolveTimeScope(scope, &resolved)) {
     return -1;
   }
-  *static_cast<std::int32_t*>(time_precision) =
+  *time_precision =
       EffectiveTimePowers(resolved, Effects().GlobalPrecisionPower()).precision;
   return 0;
 }

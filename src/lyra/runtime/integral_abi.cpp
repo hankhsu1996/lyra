@@ -13,11 +13,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/support/integral_operation.hpp"
-#include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_operation.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/string.hpp"
+#include "svdpi.h"
 
 namespace lyra::runtime {
 

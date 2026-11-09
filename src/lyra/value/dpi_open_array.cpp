@@ -13,6 +13,7 @@
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "svdpi.h"
 
 namespace lyra::value {
 
@@ -150,13 +151,13 @@ namespace {
 
 using lyra::value::DpiOpenArray;
 
-[[nodiscard]] auto Array(void* handle) -> DpiOpenArray* {
+[[nodiscard]] auto Array(svOpenArrayHandle handle) -> DpiOpenArray* {
   return static_cast<DpiOpenArray*>(handle);
 }
 
 // The declared bounds a query reports, or the empty range for a null handle --
 // the svdpi surface answers rather than faults.
-[[nodiscard]] auto Bounds(void* handle, int dimension)
+[[nodiscard]] auto Bounds(svOpenArrayHandle handle, int dimension)
     -> lyra::value::UnpackedRange {
   if (handle == nullptr) {
     return lyra::value::UnpackedRange{.left = 0, .right = -1};
@@ -171,7 +172,7 @@ using lyra::value::DpiOpenArray;
 // can fail to exist -- a null handle, an index outside its dimension, the wrong
 // index count, the other state domain -- so no entry tests those separately.
 template <typename Word, typename... Indices>
-[[nodiscard]] auto ElementOf(void* handle, Indices... indices)
+[[nodiscard]] auto ElementOf(svOpenArrayHandle handle, Indices... indices)
     -> std::span<Word> {
   const std::array<int, sizeof...(Indices)> at{indices...};
   return handle == nullptr ? std::span<Word>{}
@@ -179,7 +180,8 @@ template <typename Word, typename... Indices>
 }
 
 template <typename... Indices>
-[[nodiscard]] auto AddressOf(void* handle, Indices... indices) -> void* {
+[[nodiscard]] auto AddressOf(svOpenArrayHandle handle, Indices... indices)
+    -> void* {
   const std::array<int, sizeof...(Indices)> at{indices...};
   return handle == nullptr ? nullptr : Array(handle)->ElementAddress(at);
 }
@@ -209,34 +211,25 @@ void CopyIn(std::span<Word> destination, const Word* source) {
   }
 }
 
-// A one-bit element's `svBit` / `svLogic` scalar encoding (Annex H.10.1.1):
-// `value | unknown << 1`, read from and written to the element's first group.
-[[nodiscard]] auto ScalarBitOf(std::span<svBitVecVal> element)
-    -> unsigned char {
-  return element.empty() ? 0U
-                         : static_cast<unsigned char>(element.front() & 1U);
+// A one-bit element's `svBit` / `svLogic` scalar is the select of its bit 0
+// (Annex H.10.1.1, H.11.5).
+[[nodiscard]] auto ScalarBitOf(std::span<svBitVecVal> element) -> svBit {
+  return element.empty() ? 0U : svGetBitselBit(element.data(), 0);
 }
 
-[[nodiscard]] auto ScalarLogicOf(std::span<svLogicVecVal> element)
-    -> unsigned char {
-  if (element.empty()) {
-    return 0U;
-  }
-  const svLogicVecVal& group = element.front();
-  return static_cast<unsigned char>(
-      (group.aval & 1U) | ((group.bval & 1U) << 1U));
+[[nodiscard]] auto ScalarLogicOf(std::span<svLogicVecVal> element) -> svLogic {
+  return element.empty() ? 0U : svGetBitselLogic(element.data(), 0);
 }
 
-void PutScalarBit(std::span<svBitVecVal> element, unsigned char value) {
+void PutScalarBit(std::span<svBitVecVal> element, svBit value) {
   if (!element.empty()) {
-    element.front() = value & 1U;
+    svPutBitselBit(element.data(), 0, value);
   }
 }
 
-void PutScalarLogic(std::span<svLogicVecVal> element, unsigned char value) {
+void PutScalarLogic(std::span<svLogicVecVal> element, svLogic value) {
   if (!element.empty()) {
-    element.front().aval = value & 1U;
-    element.front().bval = (value >> 1U) & 1U;
+    svPutBitselLogic(element.data(), 0, value);
   }
 }
 
@@ -256,164 +249,174 @@ void PutScalarLogic(std::span<svLogicVecVal> element, unsigned char value) {
 // instead, so no such entry is published here.
 extern "C" {
 
-auto svDimensions(void* handle) -> int {
-  return handle == nullptr ? 0 : Array(handle)->Dimensions();
+auto svDimensions(const svOpenArrayHandle h) -> int {
+  return h == nullptr ? 0 : Array(h)->Dimensions();
 }
 
-auto svLeft(void* handle, int d) -> int {
-  return static_cast<int>(Bounds(handle, d).left);
+auto svLeft(const svOpenArrayHandle h, int d) -> int {
+  return static_cast<int>(Bounds(h, d).left);
 }
 
-auto svRight(void* handle, int d) -> int {
-  return static_cast<int>(Bounds(handle, d).right);
+auto svRight(const svOpenArrayHandle h, int d) -> int {
+  return static_cast<int>(Bounds(h, d).right);
 }
 
-auto svLow(void* handle, int d) -> int {
-  return static_cast<int>(Bounds(handle, d).Low());
+auto svLow(const svOpenArrayHandle h, int d) -> int {
+  return static_cast<int>(Bounds(h, d).Low());
 }
 
-auto svHigh(void* handle, int d) -> int {
-  return static_cast<int>(Bounds(handle, d).High());
+auto svHigh(const svOpenArrayHandle h, int d) -> int {
+  return static_cast<int>(Bounds(h, d).High());
 }
 
-auto svIncrement(void* handle, int d) -> int {
-  return Bounds(handle, d).IsAscending() ? -1 : 1;
+auto svIncrement(const svOpenArrayHandle h, int d) -> int {
+  return Bounds(h, d).IsAscending() ? -1 : 1;
 }
 
-auto svSize(void* handle, int d) -> int {
-  return static_cast<int>(Bounds(handle, d).Count());
+auto svSize(const svOpenArrayHandle h, int d) -> int {
+  return static_cast<int>(Bounds(h, d).Count());
 }
 
-auto svGetArrayPtr(void* handle) -> void* {
-  return handle == nullptr ? nullptr : Array(handle)->Image();
+auto svGetArrayPtr(const svOpenArrayHandle h) -> void* {
+  return h == nullptr ? nullptr : Array(h)->Image();
 }
 
-auto svSizeOfArray(void* handle) -> int {
-  return handle == nullptr
-             ? 0
-             : static_cast<int>(Array(handle)->ImageSizeInBytes());
+auto svSizeOfArray(const svOpenArrayHandle h) -> int {
+  return h == nullptr ? 0 : static_cast<int>(Array(h)->ImageSizeInBytes());
 }
 
-auto svGetArrElemPtr1(void* handle, int i1) -> void* {
-  return AddressOf(handle, i1);
+auto svGetArrElemPtr1(const svOpenArrayHandle h, int indx1) -> void* {
+  return AddressOf(h, indx1);
 }
 
-auto svGetArrElemPtr2(void* handle, int i1, int i2) -> void* {
-  return AddressOf(handle, i1, i2);
+auto svGetArrElemPtr2(const svOpenArrayHandle h, int indx1, int indx2)
+    -> void* {
+  return AddressOf(h, indx1, indx2);
 }
 
-auto svGetArrElemPtr3(void* handle, int i1, int i2, int i3) -> void* {
-  return AddressOf(handle, i1, i2, i3);
+auto svGetArrElemPtr3(
+    const svOpenArrayHandle h, int indx1, int indx2, int indx3) -> void* {
+  return AddressOf(h, indx1, indx2, indx3);
 }
 
-auto svGetBitArrElem1VecVal(svBitVecVal* d, void* handle, int i1) -> void {
-  CopyOut(ElementOf<svBitVecVal>(handle, i1), d);
+void svGetBitArrElem1VecVal(
+    svBitVecVal* d, const svOpenArrayHandle s, int indx1) {
+  CopyOut(ElementOf<svBitVecVal>(s, indx1), d);
 }
 
-auto svGetBitArrElem2VecVal(svBitVecVal* d, void* handle, int i1, int i2)
-    -> void {
-  CopyOut(ElementOf<svBitVecVal>(handle, i1, i2), d);
+void svGetBitArrElem2VecVal(
+    svBitVecVal* d, const svOpenArrayHandle s, int indx1, int indx2) {
+  CopyOut(ElementOf<svBitVecVal>(s, indx1, indx2), d);
 }
 
-auto svGetBitArrElem3VecVal(
-    svBitVecVal* d, void* handle, int i1, int i2, int i3) -> void {
-  CopyOut(ElementOf<svBitVecVal>(handle, i1, i2, i3), d);
+void svGetBitArrElem3VecVal(
+    svBitVecVal* d, const svOpenArrayHandle s, int indx1, int indx2,
+    int indx3) {
+  CopyOut(ElementOf<svBitVecVal>(s, indx1, indx2, indx3), d);
 }
 
-auto svGetLogicArrElem1VecVal(svLogicVecVal* d, void* handle, int i1) -> void {
-  CopyOut(ElementOf<svLogicVecVal>(handle, i1), d);
+void svGetLogicArrElem1VecVal(
+    svLogicVecVal* d, const svOpenArrayHandle s, int indx1) {
+  CopyOut(ElementOf<svLogicVecVal>(s, indx1), d);
 }
 
-auto svGetLogicArrElem2VecVal(svLogicVecVal* d, void* handle, int i1, int i2)
-    -> void {
-  CopyOut(ElementOf<svLogicVecVal>(handle, i1, i2), d);
+void svGetLogicArrElem2VecVal(
+    svLogicVecVal* d, const svOpenArrayHandle s, int indx1, int indx2) {
+  CopyOut(ElementOf<svLogicVecVal>(s, indx1, indx2), d);
 }
 
-auto svGetLogicArrElem3VecVal(
-    svLogicVecVal* d, void* handle, int i1, int i2, int i3) -> void {
-  CopyOut(ElementOf<svLogicVecVal>(handle, i1, i2, i3), d);
+void svGetLogicArrElem3VecVal(
+    svLogicVecVal* d, const svOpenArrayHandle s, int indx1, int indx2,
+    int indx3) {
+  CopyOut(ElementOf<svLogicVecVal>(s, indx1, indx2, indx3), d);
 }
 
-auto svPutBitArrElem1VecVal(void* handle, const svBitVecVal* s, int i1)
-    -> void {
-  CopyIn(ElementOf<svBitVecVal>(handle, i1), s);
+void svPutBitArrElem1VecVal(
+    const svOpenArrayHandle d, const svBitVecVal* s, int indx1) {
+  CopyIn(ElementOf<svBitVecVal>(d, indx1), s);
 }
 
-auto svPutBitArrElem2VecVal(void* handle, const svBitVecVal* s, int i1, int i2)
-    -> void {
-  CopyIn(ElementOf<svBitVecVal>(handle, i1, i2), s);
+void svPutBitArrElem2VecVal(
+    const svOpenArrayHandle d, const svBitVecVal* s, int indx1, int indx2) {
+  CopyIn(ElementOf<svBitVecVal>(d, indx1, indx2), s);
 }
 
-auto svPutBitArrElem3VecVal(
-    void* handle, const svBitVecVal* s, int i1, int i2, int i3) -> void {
-  CopyIn(ElementOf<svBitVecVal>(handle, i1, i2, i3), s);
+void svPutBitArrElem3VecVal(
+    const svOpenArrayHandle d, const svBitVecVal* s, int indx1, int indx2,
+    int indx3) {
+  CopyIn(ElementOf<svBitVecVal>(d, indx1, indx2, indx3), s);
 }
 
-auto svPutLogicArrElem1VecVal(void* handle, const svLogicVecVal* s, int i1)
-    -> void {
-  CopyIn(ElementOf<svLogicVecVal>(handle, i1), s);
+void svPutLogicArrElem1VecVal(
+    const svOpenArrayHandle d, const svLogicVecVal* s, int indx1) {
+  CopyIn(ElementOf<svLogicVecVal>(d, indx1), s);
 }
 
-auto svPutLogicArrElem2VecVal(
-    void* handle, const svLogicVecVal* s, int i1, int i2) -> void {
-  CopyIn(ElementOf<svLogicVecVal>(handle, i1, i2), s);
+void svPutLogicArrElem2VecVal(
+    const svOpenArrayHandle d, const svLogicVecVal* s, int indx1, int indx2) {
+  CopyIn(ElementOf<svLogicVecVal>(d, indx1, indx2), s);
 }
 
-auto svPutLogicArrElem3VecVal(
-    void* handle, const svLogicVecVal* s, int i1, int i2, int i3) -> void {
-  CopyIn(ElementOf<svLogicVecVal>(handle, i1, i2, i3), s);
+void svPutLogicArrElem3VecVal(
+    const svOpenArrayHandle d, const svLogicVecVal* s, int indx1, int indx2,
+    int indx3) {
+  CopyIn(ElementOf<svLogicVecVal>(d, indx1, indx2, indx3), s);
 }
 
-auto svGetBitArrElem1(void* handle, int i1) -> unsigned char {
-  return ScalarBitOf(ElementOf<svBitVecVal>(handle, i1));
+auto svGetBitArrElem1(const svOpenArrayHandle s, int indx1) -> svBit {
+  return ScalarBitOf(ElementOf<svBitVecVal>(s, indx1));
 }
 
-auto svGetBitArrElem2(void* handle, int i1, int i2) -> unsigned char {
-  return ScalarBitOf(ElementOf<svBitVecVal>(handle, i1, i2));
+auto svGetBitArrElem2(const svOpenArrayHandle s, int indx1, int indx2)
+    -> svBit {
+  return ScalarBitOf(ElementOf<svBitVecVal>(s, indx1, indx2));
 }
 
-auto svGetBitArrElem3(void* handle, int i1, int i2, int i3) -> unsigned char {
-  return ScalarBitOf(ElementOf<svBitVecVal>(handle, i1, i2, i3));
+auto svGetBitArrElem3(
+    const svOpenArrayHandle s, int indx1, int indx2, int indx3) -> svBit {
+  return ScalarBitOf(ElementOf<svBitVecVal>(s, indx1, indx2, indx3));
 }
 
-auto svGetLogicArrElem1(void* handle, int i1) -> unsigned char {
-  return ScalarLogicOf(ElementOf<svLogicVecVal>(handle, i1));
+auto svGetLogicArrElem1(const svOpenArrayHandle s, int indx1) -> svLogic {
+  return ScalarLogicOf(ElementOf<svLogicVecVal>(s, indx1));
 }
 
-auto svGetLogicArrElem2(void* handle, int i1, int i2) -> unsigned char {
-  return ScalarLogicOf(ElementOf<svLogicVecVal>(handle, i1, i2));
+auto svGetLogicArrElem2(const svOpenArrayHandle s, int indx1, int indx2)
+    -> svLogic {
+  return ScalarLogicOf(ElementOf<svLogicVecVal>(s, indx1, indx2));
 }
 
-auto svGetLogicArrElem3(void* handle, int i1, int i2, int i3) -> unsigned char {
-  return ScalarLogicOf(ElementOf<svLogicVecVal>(handle, i1, i2, i3));
+auto svGetLogicArrElem3(
+    const svOpenArrayHandle s, int indx1, int indx2, int indx3) -> svLogic {
+  return ScalarLogicOf(ElementOf<svLogicVecVal>(s, indx1, indx2, indx3));
 }
 
-auto svPutBitArrElem1(void* handle, unsigned char value, int i1) -> void {
-  PutScalarBit(ElementOf<svBitVecVal>(handle, i1), value);
+void svPutBitArrElem1(const svOpenArrayHandle d, svBit value, int indx1) {
+  PutScalarBit(ElementOf<svBitVecVal>(d, indx1), value);
 }
 
-auto svPutBitArrElem2(void* handle, unsigned char value, int i1, int i2)
-    -> void {
-  PutScalarBit(ElementOf<svBitVecVal>(handle, i1, i2), value);
+void svPutBitArrElem2(
+    const svOpenArrayHandle d, svBit value, int indx1, int indx2) {
+  PutScalarBit(ElementOf<svBitVecVal>(d, indx1, indx2), value);
 }
 
-auto svPutBitArrElem3(void* handle, unsigned char value, int i1, int i2, int i3)
-    -> void {
-  PutScalarBit(ElementOf<svBitVecVal>(handle, i1, i2, i3), value);
+void svPutBitArrElem3(
+    const svOpenArrayHandle d, svBit value, int indx1, int indx2, int indx3) {
+  PutScalarBit(ElementOf<svBitVecVal>(d, indx1, indx2, indx3), value);
 }
 
-auto svPutLogicArrElem1(void* handle, unsigned char value, int i1) -> void {
-  PutScalarLogic(ElementOf<svLogicVecVal>(handle, i1), value);
+void svPutLogicArrElem1(const svOpenArrayHandle d, svLogic value, int indx1) {
+  PutScalarLogic(ElementOf<svLogicVecVal>(d, indx1), value);
 }
 
-auto svPutLogicArrElem2(void* handle, unsigned char value, int i1, int i2)
-    -> void {
-  PutScalarLogic(ElementOf<svLogicVecVal>(handle, i1, i2), value);
+void svPutLogicArrElem2(
+    const svOpenArrayHandle d, svLogic value, int indx1, int indx2) {
+  PutScalarLogic(ElementOf<svLogicVecVal>(d, indx1, indx2), value);
 }
 
-auto svPutLogicArrElem3(
-    void* handle, unsigned char value, int i1, int i2, int i3) -> void {
-  PutScalarLogic(ElementOf<svLogicVecVal>(handle, i1, i2, i3), value);
+void svPutLogicArrElem3(
+    const svOpenArrayHandle d, svLogic value, int indx1, int indx2, int indx3) {
+  PutScalarLogic(ElementOf<svLogicVecVal>(d, indx1, indx2, indx3), value);
 }
 
 }  // extern "C"

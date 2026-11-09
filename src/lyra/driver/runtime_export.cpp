@@ -203,9 +203,7 @@ auto ExportRuntimeTree(
     const RuntimeLocation& runtime, const std::filesystem::path& dest_dir,
     LinkTimeOptimization link_time, support::Sanitizer sanitizer)
     -> diag::Result<void> {
-  if (auto r = CopyTree(
-          runtime.include_root / "lyra",
-          dest_dir / kRuntimeIncludeDir / "lyra");
+  if (auto r = CopyTree(runtime.include_root, dest_dir / kRuntimeIncludeDir);
       !r) {
     return r;
   }

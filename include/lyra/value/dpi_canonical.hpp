@@ -8,21 +8,13 @@
 
 #include "lyra/value/integral_fwd.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "svdpi.h"
 
-// The DPI-C ABI names an emitted artifact needs, spelled here so it compiles
-// without the standard header while still agreeing with a user's svdpi.h at the
-// ABI level. The canonical representation of packed values (LRM Annex H.7.7 /
-// H.10.1.2) is a sequence of 32-bit groups: a `svBitVecVal` group is 32 bits of
-// a 2-state value; a `svLogicVecVal` group is 32 bits of a 4-state value, with
-// `aval` the value plane and `bval` the unknown (X/Z) plane -- the two planes a
-// value is held as, split into 32-bit groups. An open array crosses as an
-// opaque handle instead (LRM Annex H.8.6).
-using svBitVecVal = std::uint32_t;
-struct svLogicVecVal {
-  std::uint32_t aval;
-  std::uint32_t bval;
-};
-using svOpenArrayHandle = void*;
+// The canonical representation of packed values (LRM Annex H.7.7, H.10.1.2) is
+// a sequence of 32-bit groups: a `svBitVecVal` group is 32 bits of a 2-state
+// value, and a `svLogicVecVal` group 32 bits of a 4-state value, with `aval`
+// the value plane and `bval` the unknown (x and z) plane -- the two planes a
+// value is held as, split into 32-bit groups.
 
 namespace lyra::value {
 
@@ -47,11 +39,11 @@ namespace detail {
 // A 1-bit value as an `svLogic` (LRM Annex H.10.1.1), which is the number its
 // scalar is.
 [[nodiscard]] constexpr auto ToSvLogic(AnyConstIntegralView auto sv)
-    -> unsigned char {
+    -> svLogic {
   return std::to_underlying(LeastSignificantBit(sv));
 }
 template <IntegralValue T>
-[[nodiscard]] constexpr auto ToSvLogic(const T& sv) -> unsigned char {
+[[nodiscard]] constexpr auto ToSvLogic(const T& sv) -> svLogic {
   return ToSvLogic(sv.View());
 }
 
@@ -137,7 +129,7 @@ template <
     PlaneWord WrittenWord, std::size_t kWrittenValueWords,
     std::size_t kWrittenUnknownWords>
 constexpr void FromSvLogic(
-    unsigned char encoded,
+    svLogic encoded,
     IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> out) {
   const svLogicVecVal group{
       .aval = (encoded >> kScalarValueBit) & 1U,
@@ -145,7 +137,7 @@ constexpr void FromSvLogic(
   ReadCanonicalLogicGroups(std::span<const svLogicVecVal>{&group, 1U}, out);
 }
 template <IntegralValue R>
-[[nodiscard]] constexpr auto FromSvLogic(unsigned char encoded) -> R {
+[[nodiscard]] constexpr auto FromSvLogic(svLogic encoded) -> R {
   R out = R::Zero();
   FromSvLogic(encoded, out.MutableView());
   return out;

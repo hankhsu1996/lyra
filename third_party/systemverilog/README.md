@@ -19,8 +19,8 @@ published 28 February 2024) and kept identical but for the corrections recorded 
 define the standard C ABI contract between SystemVerilog simulators and user
 DPI and VPI code.
 
-`vpi_user.h`, `vpi_compatibility.h` and `sv_vpi_user.h` were taken from the
-source code listings of Annexes K, L and M of the standard's PDF, and checked
+`svdpi.h`, `vpi_user.h`, `vpi_compatibility.h` and `sv_vpi_user.h` were taken
+from the source code listings of Annexes I, K, L and M of the standard's PDF, and checked
 token by token against those listings. Four changes were made, each where the
 PDF's typesetting broke a line or a character, or the listing left out what its
 own clause says:
@@ -68,5 +68,7 @@ Prohibited changes:
 
 Every header is shipped beside a program's generated DPI-C header, so a user's
 foreign sources compile against the standard declarations. The runtime defines
-the VPI routines it has against `vpi_user.h` itself, so the compiler holds each
-definition to the standard's prototype.
+the DPI and VPI routines it has against `svdpi.h` and `vpi_user.h` themselves,
+so the compiler holds each definition to the standard's prototype. The runtime
+also holds the canonical representation of a packed value in `svdpi.h`'s own
+types, so `svdpi.h` ships among the runtime's headers too.
