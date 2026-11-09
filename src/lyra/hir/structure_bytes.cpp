@@ -540,11 +540,10 @@ class Writer {
       formals(covergroup.sample_formals);
       Optional(covergroup.embedding, [&](ClassId id) { Class(id); });
       List(covergroup.coverpoints, [&](const PublishedCoverpoint& point) {
-        Text(point.name);
         Type(point.value_type);
         Class(point.library_class);
       });
-      List(covergroup.crosses, [&](const std::string& cross) { Text(cross); });
+      Number(covergroup.cross_count);
       Optional(covergroup.base, [&](CovergroupId id) { Covergroup(id); });
     });
   }

@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -23,6 +24,7 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
+#include "lyra/hir/coverage_library.hpp"
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr.hpp"
@@ -1631,6 +1633,124 @@ void VerifyDeclaredDefaults(
   }
 }
 
+// Whether `ancestor` is `of` or a covergroup `of` extends, along what the unit
+// holds of each (LRM 19.4.1).
+auto IsOrExtends(
+    const CompilationUnit& unit, CovergroupId of, CovergroupId ancestor)
+    -> bool {
+  for (std::optional<CovergroupId> at = of; at.has_value();) {
+    if (*at == ancestor) return true;
+    if (at->value >= unit.covergroups.size() ||
+        !unit.covergroups.IsPublished(*at)) {
+      return false;
+    }
+    at = unit.covergroups.Published(*at).base;
+  }
+  return false;
+}
+
+// The covergroup declaring the item `item` names.
+auto CovergroupOf(const CoverageItemRef& item) -> CovergroupId {
+  return std::visit(
+      Overloaded{
+          [](const CoverpointRef& point) { return point.covergroup; },
+          [](const CrossRef& cross) { return cross.covergroup; }},
+      item);
+}
+
+// Adds one line to `lines` where `item` names a covergroup the unit holds no
+// declaration of, or a place that covergroup's declaration lacks.
+void RequireCoverageItem(
+    const CompilationUnit& unit, const CoverageItemRef& item, const auto& by,
+    std::vector<std::string>& lines) {
+  const auto [covergroup, place, is_cross] = std::visit(
+      Overloaded{
+          [](const CoverpointRef& point) {
+            return std::tuple{point.covergroup, point.coverpoint.value, false};
+          },
+          [](const CrossRef& cross) {
+            return std::tuple{cross.covergroup, cross.cross.value, true};
+          }},
+      item);
+  const std::string_view kind = is_cross ? "cross" : "coverpoint";
+  if (covergroup.value >= unit.covergroups.size() ||
+      !unit.covergroups.IsPublished(covergroup)) {
+    lines.push_back(
+        std::format(
+            "hir verify: {} names a {} of covergroup {}, of which the unit "
+            "holds no declaration",
+            by(), kind, covergroup.value));
+    return;
+  }
+  const PublishedCovergroup& published = unit.covergroups.Published(covergroup);
+  if (place >=
+      (is_cross ? published.cross_count : published.coverpoints.size())) {
+    lines.push_back(
+        std::format(
+            "hir verify: {} names {} {} of covergroup '{}', which declares no "
+            "such {}",
+            by(), kind, place,
+            support::DisplayOf(unit.covergroups.PathOf(covergroup)), kind));
+  }
+}
+
+// Adds one line to `lines` where `item` is no item `through` declares or
+// extends one declaring it, which is how it reaches the items it names (LRM
+// 19.4.1).
+void RequireItemThrough(
+    const CompilationUnit& unit, CovergroupId through,
+    const CoverageItemRef& item, const auto& by,
+    std::vector<std::string>& lines) {
+  RequireCoverageItem(unit, item, by, lines);
+  const CovergroupId owner = CovergroupOf(item);
+  if (!IsOrExtends(unit, through, owner)) {
+    lines.push_back(
+        std::format(
+            "hir verify: {} names an item of covergroup {} through covergroup "
+            "{}, which neither is nor extends it",
+            by(), owner.value, through.value));
+  }
+}
+
+// Adds one line to `lines` for each item a use of a covergroup in `exprs`
+// names that is no item of that covergroup or of one it extends.
+void ReportCoverageItems(
+    const CompilationUnit& unit, const base::Arena<Expr, ExprId>& exprs,
+    const auto& where, std::vector<std::string>& lines) {
+  const auto check = [&](CovergroupId covergroup,
+                         const std::optional<CoverageItemRef>& item) {
+    if (item.has_value()) {
+      RequireItemThrough(unit, covergroup, *item, where, lines);
+    }
+  };
+  for (const ExprId id : exprs.Ids()) {
+    const ExprData& data = exprs.Get(id).data;
+    if (const auto* call = std::get_if<CovergroupMethodCallExpr>(&data)) {
+      check(call->covergroup, call->item);
+    } else if (const auto* option = std::get_if<CovergroupOptionExpr>(&data)) {
+      check(option->covergroup, option->item);
+    }
+  }
+}
+
+// Adds one line to `lines` for each class of the coverage library the unit
+// resolved members of that it holds no declaration of; a read of a class
+// closes over the classes it extends, which declare the rest of its members.
+void VerifyCoverageLibrary(
+    const CompilationUnit& unit, const CoverageLibraryMembers& library,
+    std::vector<std::string>& lines) {
+  const auto by = [] { return std::string{"the coverage library"}; };
+  for (const ClassId cls :
+       {library.registry.cls, library.group_type.cls,
+        library.group_instance.cls, library.item.cls, library.coverpoint.cls,
+        library.cross.cls, library.selection.cls}) {
+    RequireDeclaration(unit, cls, by, lines);
+  }
+  for (const auto& entry : library.coverpoint_classes) {
+    RequireDeclaration(unit, entry.first, by, lines);
+  }
+}
+
 // What a class declares is read with what it extends and the interface classes
 // it names, since its layout and its tables read theirs. A covergroup is laid
 // out from the class embedding it and is counted by its coverpoints' classes,
@@ -1669,13 +1789,7 @@ void VerifyClassReadsOfDeclarations(
     }
   }
   if (unit.coverage_library.has_value()) {
-    const CoverageLibraryRefs& library = *unit.coverage_library;
-    const auto by = [] { return std::string{"the coverage library"}; };
-    for (const ClassId cls :
-         {library.registry, library.group_type, library.group_instance,
-          library.cross, library.selection}) {
-      RequireDeclaration(unit, cls, by, lines);
-    }
+    VerifyCoverageLibrary(unit, *unit.coverage_library, lines);
   }
 }
 
@@ -1750,6 +1864,7 @@ void VerifyBody(
   ReportClassReads(unit, reaches, where, lines);
   ReportNamespaceMembers(unit, reaches, where, lines);
   ReportDriveReceivers(body.exprs, where, lines);
+  ReportCoverageItems(unit, body.exprs, where, lines);
 }
 
 void VerifySubroutine(
@@ -1907,6 +2022,72 @@ void ReachCross(const Cross& cross, const auto& reach) {
   }
 }
 
+// Adds one line to `lines` for each item `group` names that its declaration
+// or a covergroup it extends lacks: a cross's coverpoints, a coverpoint
+// `binsof` selects and the construct whose bins it selects, and what an item
+// replaces, which is an item of the same kind of a covergroup it extends (LRM
+// 19.4.1). Its own declaration publishes as many items as it declares.
+void VerifyCovergroupItems(
+    const CompilationUnit& unit, CovergroupId id, const CovergroupDecl& group,
+    std::vector<std::string>& lines) {
+  const auto by = [&] {
+    return std::format(
+        "covergroup '{}' in unit '{}'",
+        support::DisplayOf(unit.covergroups.PathOf(id)), unit.name);
+  };
+  const PublishedCovergroup& published = unit.covergroups.Published(id);
+  if (published.coverpoints.size() != group.coverpoints.size() ||
+      published.cross_count != group.crosses.size()) {
+    lines.push_back(
+        std::format(
+            "hir verify: {} publishes {} coverpoints and {} crosses and "
+            "declares {} and {}",
+            by(), published.coverpoints.size(), published.cross_count,
+            group.coverpoints.size(), group.crosses.size()));
+  }
+  const auto named = [&](const CoverageItemRef& item) {
+    RequireItemThrough(unit, id, item, by, lines);
+  };
+  const auto replaced = [&](const CoverageItemRef& item) {
+    named(item);
+    if (CovergroupOf(item) == id) {
+      lines.push_back(
+          std::format(
+              "hir verify: {} replaces an item of its own declaration", by()));
+    }
+  };
+  for (const Coverpoint& point : group.coverpoints) {
+    if (point.replaces.has_value()) replaced(*point.replaces);
+  }
+  for (const Cross& cross : group.crosses) {
+    if (cross.replaces.has_value()) replaced(*cross.replaces);
+    for (const CoverpointRef& target : cross.targets) named(target);
+    for (const CrossSelectId select : cross.selects.Ids()) {
+      const auto* binsof =
+          std::get_if<SelectBinsOf>(&cross.selects.Get(select));
+      if (binsof == nullptr) continue;
+      named(binsof->point);
+      if (!std::ranges::contains(cross.targets, binsof->point)) {
+        lines.push_back(
+            std::format(
+                "hir verify: {} selects the bins of a coverpoint its cross "
+                "does not cross",
+                by()));
+      }
+      if (binsof->construct.has_value() && binsof->point.covergroup == id &&
+          binsof->point.coverpoint.value < group.coverpoints.size() &&
+          binsof->construct->value >=
+              group.coverpoints.Get(binsof->point.coverpoint).bins.size()) {
+        lines.push_back(
+            std::format(
+                "hir verify: {} selects the bins of construct {}, which its "
+                "coverpoint lacks",
+                by(), binsof->construct->value));
+      }
+    }
+  }
+}
+
 // A covergroup holds every expression it evaluates in its own body, outside any
 // statement: what it samples, its bins, its options and its sampling event.
 void VerifyCovergroup(
@@ -1951,6 +2132,8 @@ void VerifyCovergroup(
             support::DisplayOf(unit.covergroups.PathOf(id)), unit.name);
       },
       lines);
+
+  VerifyCovergroupItems(unit, id, group, lines);
 }
 
 void ReachFromDataObjects(ArenaReaches& reaches, const StructuralScope& scope) {

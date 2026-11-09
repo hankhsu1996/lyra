@@ -45,6 +45,7 @@
 #include "lyra/lowering/ast_to_hir/bodies.hpp"
 #include "lyra/lowering/ast_to_hir/class_methods.hpp"
 #include "lyra/lowering/ast_to_hir/climb.hpp"
+#include "lyra/lowering/ast_to_hir/coverage_items.hpp"
 #include "lyra/lowering/ast_to_hir/coverage_library.hpp"
 #include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/elaborated_instances.hpp"
@@ -1095,6 +1096,30 @@ class UnitLowerer {
   // The classes of the coverage library this unit names, recorded once
   // anything of this unit is a covergroup or reads one's coverage (LRM 19).
   auto NameCoverageLibrary(diag::SourceSpan span) -> diag::Result<void>;
+
+  // `counting`, the class counting the values of one of this unit's
+  // coverpoints (LRM 19.5.7), whose methods the unit calls.
+  void NameCoverpointClass(
+      const slang::ast::ClassType& counting, hir::ClassId id);
+
+  // Every member of the library the unit's covergroups are written over, each
+  // resolved once, once the bodies have lowered and the declarations of the
+  // library's classes can be read; nothing where the unit names no library.
+  void ResolveCoverageLibrary();
+
+  // The coverpoints and crosses `body` declares, counted as every unit counts
+  // them.
+  [[nodiscard]] auto ItemsOf(const slang::ast::CovergroupBodySymbol& body)
+      -> const CoverageItems&;
+
+  // A coverpoint or a cross, by the covergroup declaring it and its place
+  // there (LRM 19.5, 19.6).
+  auto CoverpointRefOf(
+      const slang::ast::CoverpointSymbol& point, diag::SourceSpan span)
+      -> diag::Result<hir::CoverpointRef>;
+  auto CrossRefOf(
+      const slang::ast::CoverCrossSymbol& cross, diag::SourceSpan span)
+      -> diag::Result<hir::CrossRef>;
 
   // What a class `std` declares, or one of its methods, stands for: Lyra's
   // definition of it. Any other class or method stands for itself.
@@ -2163,6 +2188,13 @@ class UnitLowerer {
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   std::unordered_map<const slang::ast::ClassType*, ClassMethods> class_methods_;
+  std::unordered_map<const slang::ast::CovergroupBodySymbol*, CoverageItems>
+      coverage_items_;
+  // Whether the unit names the coverage library, and each class counting one
+  // of its coverpoints, in the order they were named.
+  bool names_coverage_library_ = false;
+  std::vector<std::pair<const slang::ast::ClassType*, hir::ClassId>>
+      coverpoint_classes_;
   // The identity of every class this unit's lowering has resolved, so the walk
   // up slang's parent chain finding the unit declaring a class runs once per
   // class.

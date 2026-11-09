@@ -1,6 +1,8 @@
 #include "lyra/lowering/ast_to_hir/covergroup_decl.hpp"
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <format>
 #include <optional>
@@ -23,13 +25,17 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
+#include "lyra/lowering/ast_to_hir/coverage_items.hpp"
 #include "lyra/lowering/ast_to_hir/coverage_library.hpp"
 #include "lyra/lowering/ast_to_hir/fixed_name.hpp"
+#include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
@@ -80,32 +86,6 @@ auto IteratorsOf(const slang::ast::Expression& filter)
   FindsIterators finder;
   filter.visit(finder);
   return finder.found;
-}
-
-// The name of each coverpoint and each cross the covergroup declares, in
-// source order. An item the source gave no name is named only for its report
-// and the database (LRM 19.5), by a name holding a space, which no identifier
-// does, escaped ones included (LRM 5.6.1), so no label of the source can be it.
-struct ItemNames {
-  std::vector<std::string> coverpoints;
-  std::vector<std::string> crosses;
-};
-
-auto ItemNamesOf(const slang::ast::CovergroupBodySymbol& body) -> ItemNames {
-  ItemNames names;
-  std::size_t unnamed = 0;
-  const auto name_of = [&](const slang::ast::Symbol& item,
-                           std::string_view kind) -> std::string {
-    if (!item.name.empty()) return std::string{item.name};
-    return std::format("{} {}", kind, unnamed++);
-  };
-  for (const auto& point : body.membersOfType<slang::ast::CoverpointSymbol>()) {
-    names.coverpoints.push_back(name_of(point, "coverpoint"));
-  }
-  for (const auto& cross : body.membersOfType<slang::ast::CoverCrossSymbol>()) {
-    names.crosses.push_back(name_of(cross, "cross"));
-  }
-  return names;
 }
 
 // The covergroup `covergroup` extends, where it extends one (LRM 19.4.1).
@@ -245,24 +225,29 @@ class DeclBuilder {
     decl_.sampling = *std::move(sampling);
 
     const slang::ast::CovergroupBodySymbol& body = covergroup_->getBody();
-    auto options = Options(body.options);
+    auto options = Options(body.options, OptionsHolder::kCovergroup);
     if (!options) return std::unexpected(std::move(options.error()));
     decl_.options = *std::move(options);
-    ItemNames names = ItemNamesOf(body);
-    std::size_t point_index = 0;
-    for (const auto& point :
-         body.membersOfType<slang::ast::CoverpointSymbol>()) {
-      auto lowered =
-          Coverpoint(point, std::move(names.coverpoints[point_index++]));
-      if (!lowered) return std::unexpected(std::move(lowered.error()));
-      decl_.coverpoints.push_back(*std::move(lowered));
+    // An item the source named nothing is numbered after those of the
+    // covergroups this one extends, as the lineage holds them.
+    std::size_t unnamed_above = 0;
+    for (std::size_t level = 0; level + 1 < lineage.size(); ++level) {
+      unnamed_above =
+          ReportNamesOf(
+              owner_->ItemsOf(lineage[level]->getBody()), unnamed_above)
+              .unnamed;
     }
-    std::size_t cross_index = 0;
-    for (const auto& cross :
-         body.membersOfType<slang::ast::CoverCrossSymbol>()) {
-      auto lowered = Cross(cross, std::move(names.crosses[cross_index++]));
+    const CoverageItems& items = owner_->ItemsOf(body);
+    const ReportNames names = ReportNamesOf(items, unnamed_above);
+    for (std::size_t i = 0; i < items.coverpoints.size(); ++i) {
+      auto lowered = Coverpoint(*items.coverpoints[i], names.coverpoints[i]);
       if (!lowered) return std::unexpected(std::move(lowered.error()));
-      decl_.crosses.push_back(*std::move(lowered));
+      decl_.coverpoints.Add(*std::move(lowered));
+    }
+    for (std::size_t i = 0; i < items.crosses.size(); ++i) {
+      auto lowered = Cross(*items.crosses[i], names.crosses[i]);
+      if (!lowered) return std::unexpected(std::move(lowered.error()));
+      decl_.crosses.Add(*std::move(lowered));
     }
     decl_.body.root_scope = frame_.SealScope(std::move(root_));
     decl_.span = span_;
@@ -326,8 +311,9 @@ class DeclBuilder {
     return hir::CoverageSampling{std::move(at_blocks)};
   }
 
-  auto Options(std::span<const slang::ast::CoverageOptionSetter> setters)
-      -> diag::Result<std::vector<hir::OptionSetting>> {
+  auto Options(
+      std::span<const slang::ast::CoverageOptionSetter> setters,
+      OptionsHolder holder) -> diag::Result<std::vector<hir::OptionSetting>> {
     std::vector<hir::OptionSetting> options;
     for (const slang::ast::CoverageOptionSetter& setter : setters) {
       const auto& assigned =
@@ -337,7 +323,9 @@ class DeclBuilder {
       options.push_back(
           hir::OptionSetting{
               .type_option = setter.isTypeOption(),
-              .field = std::string{setter.getName()},
+              .member = OptionMemberOf(
+                  owner_->Coverage(), holder, setter.isTypeOption(),
+                  setter.getName()),
               .value = *value});
     }
     return options;
@@ -507,13 +495,30 @@ class DeclBuilder {
         .form = *std::move(form)};
   }
 
+  // The item of the same kind and name a covergroup this one extends declares,
+  // nearest it along the lineage, which this one's item replaces in the count
+  // (LRM 19.4.1); nothing for an item with no name the source can write.
+  template <typename Item>
+  auto ReplacedItem(
+      const Item& item, std::vector<const Item*> CoverageItems::* of)
+      -> const Item* {
+    if (item.name.empty()) return nullptr;
+    for (const slang::ast::CovergroupType* base = BaseOf(*covergroup_);
+         base != nullptr; base = BaseOf(*base)) {
+      for (const Item* candidate : owner_->ItemsOf(base->getBody()).*of) {
+        if (candidate->name == item.name) return candidate;
+      }
+    }
+    return nullptr;
+  }
+
   auto Coverpoint(const slang::ast::CoverpointSymbol& point, std::string name)
       -> diag::Result<hir::Coverpoint> {
     auto expression = AddLowered(point.getCoverageExpr());
     if (!expression) return std::unexpected(std::move(expression.error()));
     auto iff = Optional(point.getIffExpr());
     if (!iff) return std::unexpected(std::move(iff.error()));
-    auto options = Options(point.options);
+    auto options = Options(point.options, OptionsHolder::kCoverpoint);
     if (!options) return std::unexpected(std::move(options.error()));
     std::vector<hir::BinConstruct> bins;
     for (const auto& bin :
@@ -522,12 +527,20 @@ class DeclBuilder {
       if (!construct) return std::unexpected(std::move(construct.error()));
       bins.push_back(*std::move(construct));
     }
+    std::optional<hir::CoverpointRef> replaces;
+    if (const auto* replaced =
+            ReplacedItem(point, &CoverageItems::coverpoints)) {
+      auto ref = owner_->CoverpointRefOf(*replaced, span_);
+      if (!ref) return std::unexpected(std::move(ref.error()));
+      replaces = *ref;
+    }
     return hir::Coverpoint{
         .name = std::move(name),
         .expression = *expression,
         .iff = *iff,
         .options = *std::move(options),
-        .bins = std::move(bins)};
+        .bins = std::move(bins),
+        .replaces = replaces};
   }
 
   auto Matches(const slang::ast::Expression* matches)
@@ -553,17 +566,48 @@ class DeclBuilder {
       case slang::ast::BinsSelectExprKind::Condition: {
         const auto& condition = expr.as<slang::ast::ConditionBinsSelectExpr>();
         const slang::ast::Symbol* target = &condition.target;
-        std::optional<std::string> bin;
-        if (target->kind == slang::ast::SymbolKind::CoverageBin) {
-          bin = std::string{target->name};
+        const diag::SourceSpan at =
+            expr.syntax != nullptr
+                ? frontend::SpanOf(expr.syntax->sourceRange())
+                : span_;
+        // The front end warns of a cross named here where it is told to
+        // tolerate it, and hands the cross over (LRM 19.6.1 names a
+        // coverpoint or one of its bins).
+        if (target->kind == slang::ast::SymbolKind::CoverCross) {
+          return diag::Fail(
+              at, diag::DiagCode::kErrorInvalidFrontendSemantics,
+              "'binsof' names the cross '{}', and selects only a coverpoint's "
+              "bins",
+              target->name);
+        }
+        std::optional<hir::BinConstructId> construct;
+        if (const auto* bin = target->as_if<slang::ast::CoverageBinSymbol>()) {
+          construct = BinConstructOf(*bin);
           target = &target->getParentScope()->asSymbol();
         }
+        const auto& selected = target->as<slang::ast::CoverpointSymbol>();
+        // A cross's bins are sets of its tuples, which no bin of a coverpoint
+        // it does not cross names (LRM 19.6.1).
+        if (!std::ranges::contains(cross.targets, &selected)) {
+          return std::unexpected(
+              diag::Make(
+                  at, diag::DiagCode::kErrorBinsofOutsideItsCross,
+                  base::DiagMessage(
+                      "'binsof' selects the bins of '{}', which the cross "
+                      "'{}' does not cross",
+                      selected.name, cross.name))
+                  .WithNote(
+                      "a cross bin selects tuples of the cross, so 'binsof' "
+                      "names one of the coverpoints it crosses"));
+        }
+        auto point = owner_->CoverpointRefOf(selected, at);
+        if (!point) return std::unexpected(std::move(point.error()));
         auto intersect = Elements(condition.intersects);
         if (!intersect) return std::unexpected(std::move(intersect.error()));
         return add(
             hir::SelectBinsOf{
-                .point = std::string{target->name},
-                .bin = std::move(bin),
+                .point = *point,
+                .construct = construct,
                 .intersect = *std::move(intersect)});
       }
       case slang::ast::BinsSelectExprKind::Unary: {
@@ -662,14 +706,22 @@ class DeclBuilder {
         .iff = std::nullopt,
         .options = {},
         .selects = {},
-        .bins = {}};
+        .bins = {},
+        .replaces = std::nullopt};
     for (const slang::ast::CoverpointSymbol* target : cross.targets) {
-      lowered.targets.emplace_back(target->name);
+      auto point = owner_->CoverpointRefOf(*target, span_);
+      if (!point) return std::unexpected(std::move(point.error()));
+      lowered.targets.push_back(*point);
+    }
+    if (const auto* replaced = ReplacedItem(cross, &CoverageItems::crosses)) {
+      auto ref = owner_->CrossRefOf(*replaced, span_);
+      if (!ref) return std::unexpected(std::move(ref.error()));
+      lowered.replaces = *ref;
     }
     auto iff = Optional(cross.getIffExpr());
     if (!iff) return std::unexpected(std::move(iff.error()));
     lowered.iff = *iff;
-    auto options = Options(cross.options);
+    auto options = Options(cross.options, OptionsHolder::kCross);
     if (!options) return std::unexpected(std::move(options.error()));
     lowered.options = *std::move(options);
     for (const auto& body :
@@ -860,7 +912,7 @@ auto UnitLowerer::PublishedCovergroupOf(
       .sample_formals = {},
       .embedding = std::nullopt,
       .coverpoints = {},
-      .crosses = {},
+      .cross_count = 0,
       .base = std::nullopt};
   for (const slang::ast::FormalArgumentSymbol* declared : FormalsOf(first)) {
     auto lowered = formal(*declared);
@@ -878,27 +930,24 @@ auto UnitLowerer::PublishedCovergroupOf(
     if (!embedding_id) return std::unexpected(std::move(embedding_id.error()));
     published.embedding = *embedding_id;
   }
-  const slang::ast::CovergroupBodySymbol& body = covergroup.getBody();
-  ItemNames names = ItemNamesOf(body);
-  std::size_t point_index = 0;
-  for (const auto& point : body.membersOfType<slang::ast::CoverpointSymbol>()) {
+  const CoverageItems& items = ItemsOf(covergroup.getBody());
+  for (const slang::ast::CoverpointSymbol* point : items.coverpoints) {
     const slang::ast::ClassType& counted_by =
-        CoverpointClassOf(Coverage(), point);
+        CoverpointClassOf(Coverage(), *point);
     auto library_class = ResolveClass(counted_by, span);
     if (!library_class)
       return std::unexpected(std::move(library_class.error()));
     // The coverpoint is an object of this class, made and sampled through its
     // methods, so the class is read.
     ReadDeclarationLater(*library_class);
+    NameCoverpointClass(counted_by, *library_class);
     auto value_type = InternType(ValueTypeOf(counted_by), span);
     if (!value_type) return std::unexpected(std::move(value_type.error()));
     published.coverpoints.push_back(
         hir::PublishedCoverpoint{
-            .name = std::move(names.coverpoints[point_index++]),
-            .value_type = *value_type,
-            .library_class = *library_class});
+            .value_type = *value_type, .library_class = *library_class});
   }
-  published.crosses = std::move(names.crosses);
+  published.cross_count = static_cast<std::uint32_t>(items.crosses.size());
   if (const slang::ast::CovergroupType* base = BaseOf(covergroup)) {
     auto base_id = ResolveCovergroup(*base, span);
     if (!base_id) return std::unexpected(std::move(base_id.error()));
@@ -981,35 +1030,272 @@ auto UnitLowerer::PublishedFactoryOf(
 
 auto UnitLowerer::NameCoverageLibrary(diag::SourceSpan span)
     -> diag::Result<void> {
-  if (unit_.coverage_library.has_value()) return {};
+  if (names_coverage_library_) return {};
   const CoverageLibrary& library = Coverage();
   // A covergroup is lowered into calls of these classes' methods and objects
   // of them, so each is read, not only named.
-  const auto named =
-      [&](const slang::ast::ClassType& cls) -> diag::Result<hir::ClassId> {
-    auto id = ResolveClass(cls, span);
-    if (id) ReadDeclarationLater(*id);
-    return id;
-  };
-  auto registry = named(*library.registry);
-  if (!registry) return std::unexpected(std::move(registry.error()));
-  auto group_type = named(*library.group_type);
-  if (!group_type) return std::unexpected(std::move(group_type.error()));
-  auto group_instance = named(*library.group_instance);
-  if (!group_instance) {
-    return std::unexpected(std::move(group_instance.error()));
+  for (const slang::ast::ClassType* cls :
+       {library.registry, library.group_type, library.group_instance,
+        library.item, library.coverpoint, library.cross, library.selection}) {
+    auto id = ResolveClass(*cls, span);
+    if (!id) return std::unexpected(std::move(id.error()));
+    ReadDeclarationLater(*id);
   }
-  auto cross = named(*library.cross);
-  if (!cross) return std::unexpected(std::move(cross.error()));
-  auto selection = named(*library.selection);
-  if (!selection) return std::unexpected(std::move(selection.error()));
-  unit_.coverage_library = hir::CoverageLibraryRefs{
-      .registry = *std::move(registry),
-      .group_type = *std::move(group_type),
-      .group_instance = *std::move(group_instance),
-      .cross = *std::move(cross),
-      .selection = *std::move(selection)};
+  names_coverage_library_ = true;
   return {};
+}
+
+void UnitLowerer::NameCoverpointClass(
+    const slang::ast::ClassType& counting, hir::ClassId id) {
+  if (std::ranges::contains(
+          coverpoint_classes_, &counting,
+          [](const auto& named) { return named.first; })) {
+    return;
+  }
+  coverpoint_classes_.emplace_back(&counting, id);
+}
+
+void UnitLowerer::ResolveCoverageLibrary() {
+  if (!names_coverage_library_) return;
+  const CoverageLibrary& library = Coverage();
+  const diag::SourceSpan span{};
+  // The library is Lyra's own text, so a member it lacks or a class it cannot
+  // name is a defect of Lyra's.
+  const auto member = [](const slang::ast::ClassType& cls,
+                         std::string_view name) -> LibraryMember {
+    const std::optional<LibraryMember> found = FindLibraryMember(cls, name);
+    if (!found.has_value()) {
+      throw InternalError(
+          std::format(
+              "Lyra's coverage library declares no member '{}' of the class "
+              "'{}'",
+              name, cls.name));
+    }
+    return *found;
+  };
+  const auto required = [&](auto resolved, std::string_view name) {
+    if (!resolved) {
+      throw InternalError(
+          std::format(
+              "the coverage library's member '{}' names nothing this unit can "
+              "name -- please report this as a bug",
+              name));
+    }
+    return *resolved;
+  };
+  const auto cls = [&](const slang::ast::ClassType& library_class) {
+    return required(ResolveClass(library_class, span), library_class.name);
+  };
+  const auto method = [&](const slang::ast::ClassType& library_class,
+                          std::string_view name) {
+    const LibraryMember found = member(library_class, name);
+    return required(
+        MakeClassMethodTarget(
+            *found.owner, found.member->as<slang::ast::SubroutineSymbol>(),
+            span),
+        name);
+  };
+  const auto property = [&](const slang::ast::ClassType& library_class,
+                            std::string_view name) {
+    const LibraryMember found = member(library_class, name);
+    return required(
+        MakeClassPropertyTarget(
+            *found.owner, found.member->as<slang::ast::ClassPropertySymbol>(),
+            span),
+        name);
+  };
+  const auto enumerator = [&](std::string_view enumeration,
+                              std::string_view value) {
+    const slang::ast::EnumValueSymbol& declared =
+        LibraryEnumeratorOf(library, enumeration, value);
+    return hir::LibraryEnumerator{
+        .type = required(InternType(declared.getType(), span), value),
+        .value = LowerSVIntToIntegralConstant(declared.getValue().integer())};
+  };
+  hir::CoverageLibraryMembers members{
+      .registry =
+          {
+              .cls = cls(*library.registry),
+              .type_named = method(*library.registry, "type_named"),
+              .claim_database_writing =
+                  method(*library.registry, "claim_database_writing"),
+              .write_database = method(*library.registry, "write_database"),
+              .get_coverage = method(*library.registry, "get_coverage"),
+              .set_coverage_db_name =
+                  method(*library.registry, "set_coverage_db_name"),
+              .load_coverage_db = method(*library.registry, "load_coverage_db"),
+          },
+      .group_type =
+          {
+              .cls = cls(*library.group_type),
+              .make_instance = method(*library.group_type, "make_instance"),
+              .declare_coverpoint =
+                  method(*library.group_type, "declare_coverpoint"),
+              .declare_cross = method(*library.group_type, "declare_cross"),
+              .declare_replaced =
+                  method(*library.group_type, "declare_replaced"),
+              .get_coverage = method(*library.group_type, "get_coverage"),
+              .coverage = method(*library.group_type, "coverage"),
+              .get_item_coverage =
+                  method(*library.group_type, "get_item_coverage"),
+              .item_coverage = method(*library.group_type, "item_coverage"),
+              .declared = property(*library.group_type, "declared"),
+              .type_option = property(*library.group_type, "type_option"),
+              .coverpoint_type_options =
+                  property(*library.group_type, "coverpoint_type_options"),
+              .cross_type_options =
+                  property(*library.group_type, "cross_type_options"),
+          },
+      .group_instance =
+          {
+              .cls = cls(*library.group_instance),
+              .strobed = method(*library.group_instance, "strobed"),
+              .claim_strobe = method(*library.group_instance, "claim_strobe"),
+              .strobe_taken = method(*library.group_instance, "strobe_taken"),
+              .get_inst_coverage =
+                  method(*library.group_instance, "get_inst_coverage"),
+              .inst_coverage = method(*library.group_instance, "inst_coverage"),
+              .set_inst_name = method(*library.group_instance, "set_inst_name"),
+              .start = method(*library.group_instance, "start"),
+              .stop = method(*library.group_instance, "stop"),
+              .option = property(*library.group_instance, "option"),
+              .block_event = property(*library.group_instance, "block_event"),
+              .collecting = property(*library.group_instance, "collecting"),
+          },
+      .item =
+          {
+              .cls = cls(*library.item),
+              .get_inst_coverage = method(*library.item, "get_inst_coverage"),
+              .inst_coverage = method(*library.item, "inst_coverage"),
+              .start = method(*library.item, "start"),
+              .stop = method(*library.item, "stop"),
+          },
+      .coverpoint =
+          {
+              .cls = cls(*library.coverpoint),
+              .all_numbers = method(*library.coverpoint, "all_numbers"),
+              .numbers_of_construct =
+                  method(*library.coverpoint, "numbers_of_construct"),
+              .skip = method(*library.coverpoint, "skip"),
+              .option = property(*library.coverpoint, "option"),
+          },
+      .cross =
+          {
+              .cls = cls(*library.cross),
+              .cross_coverpoint = method(*library.cross, "cross_coverpoint"),
+              .add_bin = method(*library.cross, "add_bin"),
+              .finish = method(*library.cross, "finish"),
+              .sample = method(*library.cross, "sample"),
+              .gate = method(*library.cross, "gate"),
+              .select_all = method(*library.cross, "select_all"),
+              .select_numbers = method(*library.cross, "select_numbers"),
+              .select_outside = method(*library.cross, "select_outside"),
+              .both_numbers = method(*library.cross, "both_numbers"),
+              .begin_filter = method(*library.cross, "begin_filter"),
+              .candidate_tuples = method(*library.cross, "candidate_tuples"),
+              .offer = method(*library.cross, "offer"),
+              .component = method(*library.cross, "component"),
+              .end_filter = method(*library.cross, "end_filter"),
+              .value_component = method(*library.cross, "value_component"),
+              .end_value_tuple = method(*library.cross, "end_value_tuple"),
+              .option = property(*library.cross, "option"),
+          },
+      .selection =
+          {
+              .cls = cls(*library.selection),
+              .both = method(*library.selection, "both"),
+              .either = method(*library.selection, "either"),
+          },
+      .enumerators =
+          {.bins = enumerator("coverage_bin_kind", "COVERAGE_BINS"),
+           .ignore_bins =
+               enumerator("coverage_bin_kind", "COVERAGE_IGNORE_BINS"),
+           .illegal_bins =
+               enumerator("coverage_bin_kind", "COVERAGE_ILLEGAL_BINS"),
+           .one_bin = enumerator("coverage_bin_array", "COVERAGE_ONE_BIN"),
+           .bin_per_value =
+               enumerator("coverage_bin_array", "COVERAGE_BIN_PER_VALUE"),
+           .fixed_bins =
+               enumerator("coverage_bin_array", "COVERAGE_FIXED_BINS"),
+           .once = enumerator("coverage_repetition", "COVERAGE_ONCE"),
+           .consecutive =
+               enumerator("coverage_repetition", "COVERAGE_CONSECUTIVE"),
+           .go_to = enumerator("coverage_repetition", "COVERAGE_GOTO"),
+           .nonconsecutive =
+               enumerator("coverage_repetition", "COVERAGE_NONCONSECUTIVE")},
+      .coverpoint_classes = {}};
+  for (const auto& [counting, id] : coverpoint_classes_) {
+    const auto of = [&](std::string_view name) {
+      return method(*counting, name);
+    };
+    std::optional<hir::IntegralCoverpointClassMembers> integral;
+    // The real coverpoint has none of what only an integral one takes.
+    if (counting != library.real_coverpoint) {
+      integral = hir::IntegralCoverpointClassMembers{
+          .add_wildcard = of("add_wildcard"),
+          .add_default_sequence_bin = of("add_default_sequence_bin"),
+          .begin_transition_bins = of("begin_transition_bins"),
+          .begin_sequence = of("begin_sequence"),
+          .begin_step = of("begin_step"),
+          .end_step = of("end_step"),
+          .end_sequence = of("end_sequence"),
+          .end_transition_bins = of("end_transition_bins"),
+          .pending_values = of("pending_values"),
+          .keep_value = of("keep_value"),
+          .name_enumeration_value = of("name_enumeration_value"),
+          .values_in_bin = of("values_in_bin"),
+      };
+    }
+    members.coverpoint_classes.emplace(
+        id, hir::CoverpointClassMembers{
+                .add_value = of("add_value"),
+                .add_every_value = of("add_every_value"),
+                .add_range = of("add_range"),
+                .add_range_from_least = of("add_range_from_least"),
+                .add_range_to_greatest = of("add_range_to_greatest"),
+                .add_tolerance = of("add_tolerance"),
+                .add_default_bin = of("add_default_bin"),
+                .begin_bins = of("begin_bins"),
+                .end_bins = of("end_bins"),
+                .finish = of("finish"),
+                .sample = of("sample"),
+                .gate = of("gate"),
+                .begin_selection = of("begin_selection"),
+                .selected_bins = of("selected_bins"),
+                .numbers_containing = of("numbers_containing"),
+                .text_of = of("text_of"),
+                .integral = std::move(integral)});
+  }
+  unit_.coverage_library = std::move(members);
+}
+
+auto UnitLowerer::ItemsOf(const slang::ast::CovergroupBodySymbol& body)
+    -> const CoverageItems& {
+  const auto [it, entered] = coverage_items_.try_emplace(&body);
+  if (entered) it->second = CoverageItemsOf(body);
+  return it->second;
+}
+
+auto UnitLowerer::CoverpointRefOf(
+    const slang::ast::CoverpointSymbol& point, diag::SourceSpan span)
+    -> diag::Result<hir::CoverpointRef> {
+  const slang::ast::CovergroupType& declaring = CovergroupDeclaring(point);
+  auto covergroup = ResolveCovergroup(declaring, span);
+  if (!covergroup) return std::unexpected(std::move(covergroup.error()));
+  return hir::CoverpointRef{
+      .covergroup = *covergroup,
+      .coverpoint = ItemsOf(declaring.getBody()).PositionOf(point)};
+}
+
+auto UnitLowerer::CrossRefOf(
+    const slang::ast::CoverCrossSymbol& cross, diag::SourceSpan span)
+    -> diag::Result<hir::CrossRef> {
+  const slang::ast::CovergroupType& declaring = CovergroupDeclaring(cross);
+  auto covergroup = ResolveCovergroup(declaring, span);
+  if (!covergroup) return std::unexpected(std::move(covergroup.error()));
+  return hir::CrossRef{
+      .covergroup = *covergroup,
+      .cross = ItemsOf(declaring.getBody()).PositionOf(cross)};
 }
 
 auto InheritedCovergroupProperty(const slang::ast::ClassPropertySymbol& prop)

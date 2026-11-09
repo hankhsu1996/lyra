@@ -116,14 +116,18 @@ virtual class coverage_item;
   // The type of the covergroup whose instance holds it, which keeps its type
   // options (LRM 19.7).
   protected covergroup_type_id type_id;
+  // Its place among every item of the covergroup's lineage, which its type's
+  // options for it are kept by.
+  protected int position;
 
-  // `counted` is clear for an item a covergroup extending another declares
-  // again: built and sampled still, for the crosses over it, but no part of
-  // what the instance covers (LRM 19.4.1).
-  function new(covergroup_instance group, string name, bit counted);
+  // An item a covergroup extending another replaces is built and sampled
+  // still, for the crosses over it, but is no part of what the instance covers
+  // (LRM 19.4.1); the instance's type says which items those are.
+  function new(covergroup_instance group, string name, int position);
     this.name = name;
+    this.position = position;
     type_id = group.type_id;
-    if (counted) group.add(this);
+    if (coverage_registry::type_at(type_id).counts(position)) group.add(position, this);
   endfunction
 
   pure virtual function int weight();
@@ -197,34 +201,53 @@ endclass
 // A coverpoint as a cross sees it (LRM 19.6): its bins that count, numbered,
 // and which of them the last sample hit.
 virtual class coverage_coverpoint extends coverage_item;
+  coverpoint_option option;
   // The numbers of the counting bins the last sample hit, empty where the
   // sample did not count.
   int hits[$];
 
-  function new(covergroup_instance group, string name, bit counted);
-    super.new(group, name, counted);
+  function new(covergroup_instance group, string name, int position);
+    super.new(group, name, position);
+    option.weight = 1;
+    option.goal = 100;
+    option.comment = "";
+    option.at_least = group.option.at_least;
+    option.auto_bin_max = group.option.auto_bin_max;
+    option.detect_overlap = group.option.detect_overlap;
+  endfunction
+
+  virtual function int weight();
+    return option.weight;
+  endfunction
+
+  virtual function int goal();
+    return option.goal;
+  endfunction
+
+  virtual function int at_least();
+    return option.at_least;
   endfunction
 
   pure virtual function int normal_bin_count();
   pure virtual function string normal_bin_name(int index);
-  // The numbers of the counting bins named `name`: one bin, or every bin of an
-  // array of bins.
-  pure virtual function void bins_named(string bin_name, ref int indices[$]);
+  // The numbers of the counting bins the bin construct numbered `construct`
+  // made: one bin, or every bin of an array of bins.
+  pure virtual function void bins_of_construct(int construct, ref int indices[$]);
   // How many values one counting bin holds, or -1 where it holds more than
   // can be counted.
   pure virtual function longint bin_size(int index);
 
-  // What `binsof` names (LRM 19.6.1): every counting bin, or those of one
-  // name.
+  // What `binsof` names (LRM 19.6.1): every counting bin, or those one bin
+  // construct made.
   function coverage_bin_numbers all_numbers();
     coverage_bin_numbers numbers;
     for (int i = 0; i < normal_bin_count(); i++) numbers.push_back(i);
     return numbers;
   endfunction
 
-  function coverage_bin_numbers numbers_named(string bin_name);
+  function coverage_bin_numbers numbers_of_construct(int construct);
     coverage_bin_numbers numbers;
-    bins_named(bin_name, numbers);
+    bins_of_construct(construct, numbers);
     return numbers;
   endfunction
 
@@ -296,7 +319,6 @@ class integral_coverpoint #(type T = int) extends coverage_coverpoint;
     int first_index;
   } transition_bin_t;
 
-  coverpoint_option option;
   local key_t sign_flip;
   local value_bin_t value_bins[$];
   local longint per_value_counts[int][key_t];
@@ -326,27 +348,9 @@ class integral_coverpoint #(type T = int) extends coverage_coverpoint;
   local step_t pending_steps[$];
   local step_t pending_sequences[$][$];
 
-  function new(covergroup_instance group, string name, bit counted);
-    super.new(group, name, counted);
-    option.weight = 1;
-    option.goal = 100;
-    option.comment = "";
-    option.at_least = group.option.at_least;
-    option.auto_bin_max = group.option.auto_bin_max;
-    option.detect_overlap = group.option.detect_overlap;
+  function new(covergroup_instance group, string name, int position);
+    super.new(group, name, position);
     sign_flip = (T'(-1) < T'(0)) ? key_t'(1) << ($bits(T) - 1) : '0;
-  endfunction
-
-  virtual function int weight();
-    return option.weight;
-  endfunction
-
-  virtual function int goal();
-    return option.goal;
-  endfunction
-
-  virtual function int at_least();
-    return option.at_least;
   endfunction
 
   local function key_t key_of(T value);
@@ -1037,19 +1041,16 @@ class integral_coverpoint #(type T = int) extends coverage_coverpoint;
     return "";
   endfunction
 
-  virtual function void bins_named(string bin_name, ref int indices[$]);
+  virtual function void bins_of_construct(int construct, ref int indices[$]);
     foreach (value_bins[i]) begin
       int width;
-      if (value_bins[i].kind != COVERAGE_BINS) continue;
-      if (value_bins[i].name != bin_name &&
-          !(value_bins[i].name.len() > bin_name.len() &&
-            value_bins[i].name.substr(0, bin_name.len()) == {bin_name, "["}))
+      if (value_bins[i].kind != COVERAGE_BINS || value_bins[i].construct != construct)
         continue;
       width = value_bins[i].per_value ? int'(size_of(value_bins[i].spans)) : 1;
       for (int w = 0; w < width; w++) indices.push_back(value_bins[i].first_index + w);
     end
     foreach (transition_bins[i])
-      if (transition_bins[i].kind == COVERAGE_BINS && transition_bins[i].name == bin_name)
+      if (transition_bins[i].kind == COVERAGE_BINS && transition_bins[i].construct == construct)
         indices.push_back(transition_bins[i].first_index);
   endfunction
 
@@ -1227,7 +1228,6 @@ class real_coverpoint extends coverage_coverpoint;
     longint count;
   } real_bin_t;
 
-  coverpoint_option option;
   local real_bin_t real_bins[$];
   local string pending_name;
   local int pending_construct;
@@ -1237,26 +1237,8 @@ class real_coverpoint extends coverage_coverpoint;
   local interval_t pending[$];
   local int counting;
 
-  function new(covergroup_instance group, string name, bit counted);
-    super.new(group, name, counted);
-    option.weight = 1;
-    option.goal = 100;
-    option.comment = "";
-    option.at_least = group.option.at_least;
-    option.auto_bin_max = group.option.auto_bin_max;
-    option.detect_overlap = group.option.detect_overlap;
-  endfunction
-
-  virtual function int weight();
-    return option.weight;
-  endfunction
-
-  virtual function int goal();
-    return option.goal;
-  endfunction
-
-  virtual function int at_least();
-    return option.at_least;
+  function new(covergroup_instance group, string name, int position);
+    super.new(group, name, position);
   endfunction
 
   static function string spell(real value);
@@ -1266,7 +1248,7 @@ class real_coverpoint extends coverage_coverpoint;
 
   local function real interval_size();
     covergroup_type group_type = coverage_registry::type_at(type_id);
-    return group_type.coverpoint_type_options[name].real_interval;
+    return group_type.coverpoint_type_options[position].real_interval;
   endfunction
 
   // The bins being given: their name, what they count toward, how many bins
@@ -1450,14 +1432,11 @@ class real_coverpoint extends coverage_coverpoint;
     return "";
   endfunction
 
-  virtual function void bins_named(string bin_name, ref int indices[$]);
+  virtual function void bins_of_construct(int construct, ref int indices[$]);
     int at = 0;
     foreach (real_bins[i]) begin
       if (real_bins[i].kind != COVERAGE_BINS) continue;
-      if (real_bins[i].name == bin_name ||
-          (real_bins[i].name.len() > bin_name.len() &&
-           real_bins[i].name.substr(0, bin_name.len()) == {bin_name, "["}))
-        indices.push_back(at);
+      if (real_bins[i].construct == construct) indices.push_back(at);
       at++;
     end
   endfunction
@@ -1580,8 +1559,8 @@ class coverage_cross extends coverage_item;
   local string pending_text;
   local coverage_selection filtering;
 
-  function new(covergroup_instance group, string name, bit counted);
-    super.new(group, name, counted);
+  function new(covergroup_instance group, string name, int position);
+    super.new(group, name, position);
     option.weight = 1;
     option.goal = 100;
     option.comment = "";
@@ -1862,7 +1841,9 @@ endclass
 class covergroup_instance;
   covergroup_option option;
   covergroup_type_id type_id;
-  coverage_item items[$];
+  // Its coverpoints and crosses that count toward it, by their places among
+  // every item of the covergroup's lineage.
+  coverage_item items[int];
   bit collecting = 1;
   // Told where a block the instance is sampled at begins or ends, for a
   // covergroup a class embeds (LRM 19.3).
@@ -1884,8 +1865,8 @@ class covergroup_instance;
     option.get_inst_coverage = 0;
   endfunction
 
-  function void add(coverage_item item);
-    items.push_back(item);
+  function void add(int position, coverage_item item);
+    items[position] = item;
   endfunction
 
   function void set_inst_name(string name);
@@ -1941,11 +1922,6 @@ class covergroup_instance;
     return get_inst_coverage(covered, total);
   endfunction
 
-  function coverage_item item_named(string name);
-    foreach (items[i]) if (items[i].name == name) return items[i];
-    return null;
-  endfunction
-
   // Whether the instance is sampled once a time slot, in its Postponed
   // region, however often its event occurs there (LRM 19.7, `strobe`).
   function bit strobed();
@@ -1993,8 +1969,12 @@ class covergroup_type;
   string name;
   covergroup_type_id id;
   covergroup_type_option type_option;
-  coverpoint_type_option coverpoint_type_options[string];
-  cross_type_option cross_type_options[string];
+  // The type options of each coverpoint and cross of the lineage and, for each
+  // that counts toward the type, the name it is reported by, all by its place
+  // among every item of the covergroup's lineage.
+  coverpoint_type_option coverpoint_type_options[int];
+  cross_type_option cross_type_options[int];
+  string counted_item_names[int];
   covergroup_instance instances[$];
   // Counts read back from a database (LRM 19.9), by item and bin name.
   longint loaded[string][string];
@@ -2014,19 +1994,48 @@ class covergroup_type;
     type_option.real_interval = 1.0;
   endfunction
 
-  function void declare_coverpoint(string item);
-    if (coverpoint_type_options.exists(item)) return;
-    coverpoint_type_options[item].weight = 1;
-    coverpoint_type_options[item].goal = 100;
-    coverpoint_type_options[item].comment = "";
-    coverpoint_type_options[item].real_interval = type_option.real_interval;
+  // An item of the lineage at `position`, which counts toward the type unless
+  // an extension declares it replaced (LRM 19.4.1); a replaced one keeps its
+  // options, which its bins are built by.
+  function void declare_coverpoint(int position, string name);
+    counted_item_names[position] = name;
+    coverpoint_type_options[position].weight = 1;
+    coverpoint_type_options[position].goal = 100;
+    coverpoint_type_options[position].comment = "";
+    coverpoint_type_options[position].real_interval = type_option.real_interval;
   endfunction
 
-  function void declare_cross(string item);
-    if (cross_type_options.exists(item)) return;
-    cross_type_options[item].weight = 1;
-    cross_type_options[item].goal = 100;
-    cross_type_options[item].comment = "";
+  function void declare_cross(int position, string name);
+    counted_item_names[position] = name;
+    cross_type_options[position].weight = 1;
+    cross_type_options[position].goal = 100;
+    cross_type_options[position].comment = "";
+  endfunction
+
+  // The item at `position`, of a covergroup the type extends, is replaced by
+  // one of the type's own and no longer counts toward the type (LRM 19.4.1).
+  function void declare_replaced(int position);
+    counted_item_names.delete(position);
+  endfunction
+
+  // Whether the item at `position` counts toward the type.
+  function bit counts(int position);
+    return counted_item_names.exists(position);
+  endfunction
+
+  // The type weight of the item at `position` (LRM 19.7.1).
+  local function int item_weight(int position);
+    if (coverpoint_type_options.exists(position)) return coverpoint_type_options[position].weight;
+    if (cross_type_options.exists(position)) return cross_type_options[position].weight;
+    return 1;
+  endfunction
+
+  // The place of the counting item named `name`, which is how what a database
+  // read back meets the items of this run (LRM 19.9); -1 where no item of the
+  // type has that name.
+  local function int place_named(string name);
+    foreach (counted_item_names[k]) if (counted_item_names[k] == name) return k;
+    return -1;
   endfunction
 
   function covergroup_instance make_instance();
@@ -2040,22 +2049,21 @@ class covergroup_type;
   // a bin covered where its counts sum to the largest `at_least` of them
   // (merging), or the instances' coverages weighted by the item's own weight
   // in each (LRM 19.11.3).
-  function real get_item_coverage(string item, ref int covered, ref int total);
+  function real get_item_coverage(int position, ref int covered, ref int total);
     covered = 0;
     total = 0;
     if (type_option.merge_instances) begin
       longint counts[string];
       int least = 1;
-      bit any = 0;
       foreach (instances[i]) begin
-        coverage_item found = instances[i].item_named(item);
-        if (found == null) continue;
-        any = 1;
+        coverage_item found;
+        if (!instances[i].items.exists(position)) continue;
+        found = instances[i].items[position];
         found.counts_by_name(counts);
         if (found.at_least() > least) least = found.at_least();
       end
-      if (loaded.exists(item)) begin
-        longint read_back[string] = loaded[item];
+      if (counted_item_names.exists(position) && loaded.exists(counted_item_names[position])) begin
+        longint read_back[string] = loaded[counted_item_names[position]];
         foreach (read_back[b]) counts[b] = counts.exists(b) ? counts[b] + read_back[b] : read_back[b];
       end
       foreach (counts[b]) begin
@@ -2068,10 +2076,11 @@ class covergroup_type;
       real weighted = 0.0;
       longint weights = 0;
       foreach (instances[i]) begin
-        coverage_item found = instances[i].item_named(item);
+        coverage_item found;
         int item_covered;
         int item_total;
-        if (found == null) continue;
+        if (!instances[i].items.exists(position)) continue;
+        found = instances[i].items[position];
         found.parts(item_covered, item_total);
         covered += item_covered;
         total += item_total;
@@ -2084,6 +2093,19 @@ class covergroup_type;
     end
   endfunction
 
+  // The coverage of an item a database read back that no item of this run is,
+  // its bins merged by name (LRM 19.9, 19.11.3).
+  local function real loaded_item_coverage(string item, ref int covered, ref int total);
+    longint read_back[string] = loaded[item];
+    covered = 0;
+    total = 0;
+    foreach (read_back[b]) begin
+      total++;
+      if (read_back[b] >= 1) covered++;
+    end
+    return coverage_item::ratio(covered, total, 1);
+  endfunction
+
   // `get_coverage` (LRM 19.8, 19.11.3).
   function real get_coverage(ref int covered, ref int total);
     covered = 0;
@@ -2091,26 +2113,28 @@ class covergroup_type;
     if (type_option.merge_instances) begin
       real weighted = 0.0;
       longint weights = 0;
-      string items[$];
-      bit seen[string];
-      foreach (instances[i]) for (int j = 0; j < instances[i].items.size(); j++)
-        if (!seen.exists(instances[i].items[j].name)) begin
-          seen[instances[i].items[j].name] = 1;
-          items.push_back(instances[i].items[j].name);
-        end
-      foreach (loaded[item]) if (!seen.exists(item)) items.push_back(item);
-      foreach (items[k]) begin
+      foreach (counted_item_names[k]) begin
         int item_covered;
         int item_total;
-        int item_weight = coverpoint_type_options.exists(items[k]) ?
-            coverpoint_type_options[items[k]].weight :
-            cross_type_options.exists(items[k]) ? cross_type_options[items[k]].weight : 1;
-        real value = get_item_coverage(items[k], item_covered, item_total);
+        int weight = item_weight(k);
+        real value = get_item_coverage(k, item_covered, item_total);
         covered += item_covered;
         total += item_total;
-        if (item_total == 0 || item_weight == 0) continue;
-        weighted += item_weight * value;
-        weights += item_weight;
+        if (item_total == 0 || weight == 0) continue;
+        weighted += weight * value;
+        weights += weight;
+      end
+      foreach (loaded[item]) begin
+        int item_covered;
+        int item_total;
+        real value;
+        if (place_named(item) >= 0) continue;
+        value = loaded_item_coverage(item, item_covered, item_total);
+        covered += item_covered;
+        total += item_total;
+        if (item_total == 0) continue;
+        weighted += value;
+        weights++;
       end
       if (weights == 0) begin
         covered = 0;
@@ -2159,10 +2183,10 @@ class covergroup_type;
   endfunction
 
   // `get_coverage` of one coverpoint or cross over every instance.
-  function real item_coverage(string item);
+  function real item_coverage(int position);
     int covered;
     int total;
-    return get_item_coverage(item, covered, total);
+    return get_item_coverage(position, covered, total);
   endfunction
 
   // What was read back from a database, as one instance of weight 1 whose
@@ -2176,9 +2200,8 @@ class covergroup_type;
     foreach (loaded[item]) begin
       int item_covered = 0;
       int item_total = 0;
-      int item_weight = coverpoint_type_options.exists(item) ?
-          coverpoint_type_options[item].weight :
-          cross_type_options.exists(item) ? cross_type_options[item].weight : 1;
+      int place = place_named(item);
+      int weight = place >= 0 ? item_weight(place) : 1;
       longint read_back[string] = loaded[item];
       foreach (read_back[b]) begin
         item_total++;
@@ -2186,9 +2209,9 @@ class covergroup_type;
       end
       covered += item_covered;
       total += item_total;
-      if (item_total == 0 || item_weight == 0) continue;
-      weighted += item_weight * 100.0 * item_covered / item_total;
-      weights += item_weight;
+      if (item_total == 0 || weight == 0) continue;
+      weighted += weight * 100.0 * item_covered / item_total;
+      weights += weight;
     end
     if (weights == 0) return 0.0;
     return weighted / weights;

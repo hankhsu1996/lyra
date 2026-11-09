@@ -253,6 +253,25 @@ auto FormatCovergroup(CovergroupId id) -> std::string {
   return std::format("Covergroup[{}]", id.value);
 }
 
+auto FormatCoverpoint(const CoverpointRef& point) -> std::string {
+  return std::format(
+      "{}.Coverpoint[{}]", FormatCovergroup(point.covergroup),
+      point.coverpoint.value);
+}
+
+auto FormatCross(const CrossRef& cross) -> std::string {
+  return std::format(
+      "{}.Cross[{}]", FormatCovergroup(cross.covergroup), cross.cross.value);
+}
+
+auto FormatCoverageItem(const CoverageItemRef& item) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const CoverpointRef& point) { return FormatCoverpoint(point); },
+          [](const CrossRef& cross) { return FormatCross(cross); }},
+      item);
+}
+
 auto CovergroupMethodLabel(CovergroupMethod method) -> std::string_view {
   switch (method) {
     case CovergroupMethod::kSample:
@@ -1765,9 +1784,9 @@ class HirDumper {
             },
             [](const CovergroupOptionExpr& o) -> std::string {
               return std::format(
-                  "CovergroupOptionExpr covergroup={} {} {}",
+                  "CovergroupOptionExpr covergroup={} {} member={}",
                   FormatCovergroup(o.covergroup),
-                  FormatCovergroupReach(o.receiver, o.item), o.field);
+                  FormatCovergroupReach(o.receiver, o.item), o.member.value);
             },
             [](const RandomizeExpr& r) -> std::string {
               const std::string with =
@@ -2042,8 +2061,9 @@ class HirDumper {
     for (const OptionSetting& option : options) {
       Line(
           std::format(
-              "{}.{} = Expr[{}]", option.type_option ? "type_option" : "option",
-              option.field, option.value.value));
+              "{}.Member[{}] = Expr[{}]",
+              option.type_option ? "type_option" : "option",
+              option.member.value, option.value.value));
     }
   }
 
@@ -2105,8 +2125,10 @@ class HirDumper {
             [](const SelectAll&) -> std::string { return "all"; },
             [](const SelectBinsOf& b) -> std::string {
               std::string text = std::format(
-                  "binsof({}{})", b.point,
-                  b.bin.has_value() ? "." + *b.bin : std::string{});
+                  "binsof({}{})", FormatCoverpoint(b.point),
+                  b.construct.has_value()
+                      ? std::format(".Bins[{}]", b.construct->value)
+                      : std::string{});
               if (!b.intersect.empty()) {
                 text += std::format(
                     " intersect {{{}}}", FormatBinElements(b.intersect));
@@ -2179,8 +2201,11 @@ class HirDumper {
     for (const Coverpoint& point : c.coverpoints) {
       Line(
           std::format(
-              "coverpoint \"{}\" : Expr[{}]{}", point.name,
-              point.expression.value, FormatGuard(point.iff)));
+              "coverpoint \"{}\" : Expr[{}]{}{}", point.name,
+              point.expression.value, FormatGuard(point.iff),
+              point.replaces.has_value()
+                  ? " replaces " + FormatCoverpoint(*point.replaces)
+                  : std::string{}));
       Indent();
       DumpOptions(point.options);
       for (const BinConstruct& bin : point.bins) DumpBinConstruct(bin);
@@ -2188,14 +2213,17 @@ class HirDumper {
     }
     for (const Cross& cross : c.crosses) {
       std::string targets;
-      for (const std::string& target : cross.targets) {
+      for (const CoverpointRef& target : cross.targets) {
         if (!targets.empty()) targets += ", ";
-        targets += target;
+        targets += FormatCoverpoint(target);
       }
       Line(
           std::format(
-              "cross \"{}\" [{}]{}", cross.name, targets,
-              FormatGuard(cross.iff)));
+              "cross \"{}\" [{}]{}{}", cross.name, targets,
+              FormatGuard(cross.iff),
+              cross.replaces.has_value()
+                  ? " replaces " + FormatCross(*cross.replaces)
+                  : std::string{}));
       Indent();
       DumpOptions(cross.options);
       for (const CrossSelectId id : cross.selects.Ids()) {
@@ -2310,7 +2338,7 @@ class HirDumper {
   // type where no instance is named, and on one of its items where one is.
   static auto FormatCovergroupReach(
       const CovergroupReceiver& receiver,
-      const std::optional<std::string>& item) -> std::string {
+      const std::optional<CoverageItemRef>& item) -> std::string {
     std::string reach = std::visit(
         Overloaded{
             [](const CovergroupInstanceReceiver& r) {
@@ -2321,7 +2349,9 @@ class HirDumper {
                   "type {}", FormatDeclaringInstance(r.declaring_instance));
             }},
         receiver);
-    if (item.has_value()) reach += std::format(" item={}", *item);
+    if (item.has_value()) {
+      reach += std::format(" item={}", FormatCoverageItem(*item));
+    }
     return reach;
   }
 

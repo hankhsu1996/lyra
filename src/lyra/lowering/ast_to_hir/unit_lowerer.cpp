@@ -227,6 +227,7 @@ auto UnitLowerer::LowerBodies(
   if (auto covergroups = ReadSignaturesOfNamedCovergroups(); !covergroups) {
     return std::unexpected(std::move(covergroups.error()));
   }
+  ResolveCoverageLibrary();
   ReadPendingDeclarations();
   ReadTypeDefinitions();
   hir::Verify(unit_, own->construction);

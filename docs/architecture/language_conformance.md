@@ -448,6 +448,28 @@ formal's default, a `ref` port's connection -- and where the scope randomize fun
 variable (18.12), which it writes where it lies. Pass the whole union, or pass the member to an
 `inout` formal, which copies it in and out (13.5) and runs.
 
+#### A cross bin selecting the bins of a coverpoint the cross does not cross
+
+```systemverilog
+covergroup cg;
+  pa: coverpoint a;
+  pb: coverpoint b;
+  pc: coverpoint c;
+  ab: cross pa, pb {
+    bins s = binsof(pc);
+  }
+endgroup
+```
+
+19.6.1: "A cross coverage bin associates a name and a count with a set of cross products", and "The
+binsof construct yields the bins of its expression, which can be either a coverage point ... or a
+coverage point bin." A cross product is a tuple of one bin of each coverpoint the cross crosses, so
+`binsof(pc)` names bins that are no component of any tuple of `ab`. No clause says which tuples they
+select, all or none, and no allowed text lends one a meaning. Not settled.
+
+The front end accepts it with no diagnostic. Lyra refuses it where the cross bin is declared: cross
+`pc` as well, or select by a coverpoint the cross crosses.
+
 ### Not settled by the standard, so refused
 
 #### One module described twice

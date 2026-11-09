@@ -11,12 +11,12 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/id_range.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/fixed_name.hpp"
@@ -150,7 +150,8 @@ struct DefaultSequenceBins {
 using BinForm =
     std::variant<ValueBins, TransitionBins, DefaultBins, DefaultSequenceBins>;
 
-// One bin construct of a coverpoint, in the order the source declares them.
+// One bin construct of a coverpoint, in the order the source declares them,
+// named for its report and the database.
 struct BinConstruct {
   std::string name;
   BinKind kind = BinKind::kBins;
@@ -160,26 +161,30 @@ struct BinConstruct {
   auto operator==(const BinConstruct&) const -> bool = default;
 };
 
-// `option.<field> = value` or `type_option.<field> = value` written in a
-// covergroup, a coverpoint or a cross (LRM 19.7).
+// `option.<member> = value` or `type_option.<member> = value` written in a
+// covergroup, a coverpoint or a cross (LRM 19.7): the member at `member` of the
+// library's structure for that one's options.
 struct OptionSetting {
   bool type_option = false;
-  std::string field;
+  base::ComponentIndex member;
   ExprId value;
 
   auto operator==(const OptionSetting&) const -> bool = default;
 };
 
-// A coverpoint (LRM 19.5): the expression sampled, its guard, its options and
-// its bins. A coverpoint the source gave no label is named by the compiler, by
-// a name no identifier can spell. What counts its values is published with
-// the covergroup, at the coverpoint's position.
+// A coverpoint (LRM 19.5): the expression sampled, its guard, its options, its
+// bins, and the coverpoint of a covergroup it extends that it replaces in the
+// count (LRM 19.4.1). Its name is what its report and the database print; one
+// the source gave no label and no variable names is named by the compiler, by
+// a name no identifier can spell (LRM 19.5). What counts its values is
+// published with the covergroup, at the coverpoint's place.
 struct Coverpoint {
   std::string name;
   ExprId expression;
   std::optional<ExprId> iff;
   std::vector<OptionSetting> options;
   std::vector<BinConstruct> bins;
+  std::optional<CoverpointRef> replaces;
 
   auto operator==(const Coverpoint&) const -> bool = default;
 };
@@ -199,10 +204,11 @@ struct SelectAll {
 };
 
 // `binsof(cp)` or `binsof(cp.bin)`, `intersect` a range list where written: the
-// tuples whose component of the coverpoint `point` names is a bin it names.
+// tuples whose component of the coverpoint `point` is a bin of it, or one the
+// bin construct `construct` made.
 struct SelectBinsOf {
-  std::string point;
-  std::optional<std::string> bin;
+  CoverpointRef point;
+  std::optional<BinConstructId> construct;
   std::vector<BinElement> intersect;
 
   auto operator==(const SelectBinsOf&) const -> bool = default;
@@ -275,15 +281,17 @@ struct CrossBin {
   auto operator==(const CrossBin&) const -> bool = default;
 };
 
-// A cross (LRM 19.6) of coverpoints of the same covergroup or of the one it
-// extends, named as the source names them.
+// A cross (LRM 19.6) of coverpoints of the same covergroup or of one it
+// extends, and the cross of a covergroup it extends that it replaces in the
+// count (LRM 19.4.1). Its name is what its report and the database print.
 struct Cross {
   std::string name;
-  std::vector<std::string> targets;
+  std::vector<CoverpointRef> targets;
   std::optional<ExprId> iff;
   std::vector<OptionSetting> options;
   base::Arena<CrossSelect, CrossSelectId> selects;
   std::vector<CrossBin> bins;
+  std::optional<CrossRef> replaces;
 
   auto operator==(const Cross&) const -> bool = default;
 };
@@ -341,16 +349,16 @@ struct CovergroupFormal {
 //
 // A covergroup a class embeds (LRM 19.4) reads the embedding object's members
 // through `embedding`, the object it is made by. One extending another (LRM
-// 19.4.1) names `base`, takes its formals and coverpoints, and lists only what
-// it adds or declares again.
+// 19.4.1) names `base`, takes its formals and items, and lists only the items
+// it declares, each naming the one it replaces.
 struct CovergroupDecl {
   std::vector<CovergroupFormal> formals;
   std::vector<CovergroupFormal> sample_formals;
   std::optional<ProceduralVarId> embedding;
   CoverageSampling sampling;
   std::vector<OptionSetting> options;
-  std::vector<Coverpoint> coverpoints;
-  std::vector<Cross> crosses;
+  base::Arena<Coverpoint, CoverpointId> coverpoints;
+  base::Arena<Cross, CrossId> crosses;
   std::optional<CovergroupId> base;
   ProceduralBody body;
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
@@ -360,19 +368,6 @@ struct CovergroupDecl {
   diag::SourceSpan span;
 
   auto operator==(const CovergroupDecl&) const -> bool = default;
-};
-
-// The classes of the coverage library every covergroup of a unit is written
-// over in the step to MIR (LRM 19), as that unit names them, as a language
-// names the library items its constructs stand on.
-struct CoverageLibraryRefs {
-  ClassId registry;
-  ClassId group_type;
-  ClassId group_instance;
-  ClassId cross;
-  ClassId selection;
-
-  auto operator==(const CoverageLibraryRefs&) const -> bool = default;
 };
 
 // Every covergroup type one compilation unit names: the ones it declares and
