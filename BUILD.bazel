@@ -43,6 +43,16 @@ shipped_headers(
     visibility = ["//visibility:public"],
 )
 
+# The standard's DPI header, at the root of the same surface: the runtime's own
+# headers spell the canonical representation in it (LRM Annex I).
+shipped_headers(
+    name = "runtime_surface_svdpi",
+    hdrs = ["//third_party/systemverilog:svdpi.h"],
+    root = "runtime_surface",
+    strip_prefix = "third_party/systemverilog",
+    visibility = ["//visibility:public"],
+)
+
 refresh_compile_commands(
     name = "refresh_compile_commands",
     exclude_external_sources = True,
@@ -170,6 +180,7 @@ cc_library(
     deps = [
         ":base",
         ":support",
+        "//third_party/systemverilog:svdpi",
     ],
 )
 
@@ -202,6 +213,7 @@ cc_library(
         ":base",
         ":support",
         ":value",
+        "//third_party/systemverilog:svdpi",
         "//third_party/systemverilog:vpi",
         "@boost.context//:boost.context",
         "@cadical",
@@ -617,6 +629,7 @@ cc_binary(
         ":cpp_runtime_address_sanitized",
         ":runtime_sources",
         ":runtime_surface",
+        ":runtime_surface_svdpi",
         ":third_party_licenses",
         "//third_party/systemverilog:headers",
     ],

@@ -11,6 +11,7 @@
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "svdpi.h"
 
 namespace lyra::value {
 

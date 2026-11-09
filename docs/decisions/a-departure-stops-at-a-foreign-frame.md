@@ -188,7 +188,7 @@ D8. When the run itself ends, nothing is handed control. A foreign call that nev
   frame that lands nothing carries nothing.
 - `../architecture/activation.md` -- the two-step termination for an execution that cannot be torn
   down where it stands.
-- [vpi-routines-are-defined-against-the-standard-s-headers](vpi-routines-are-defined-against-the-standard-s-headers.md)
+- [foreign-interface-routines-are-defined-against-the-standard-s-headers](foreign-interface-routines-are-defined-against-the-standard-s-headers.md)
   -- the control foreign code asks for through VPI, which D5 carries out.
 - IEEE 1800-2023: 35.8 (an exported task's return value), 35.9 (the disable protocol, its four
   items, and the checks a simulator owes), 35.5.3 (only a context import may reach an export), 9.6.2

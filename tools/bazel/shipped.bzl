@@ -107,14 +107,14 @@ def _shipped_headers_impl(ctx):
 
 shipped_headers = rule(
     implementation = _shipped_headers_impl,
-    doc = """Gathers `hdrs` under a root holding them and nothing else.
+    doc = """Gathers `hdrs` under a root holding only what such targets stage there.
 
 Whoever ships the surface names it here, and a tool that reaches one of these
 files can take the root around it without reaching anything this build did not
 put there.""",
     attrs = {
         "hdrs": attr.label_list(
-            allow_files = [".hpp"],
+            allow_files = [".h", ".hpp"],
             doc = "The headers the surface consists of.",
             mandatory = True,
         ),

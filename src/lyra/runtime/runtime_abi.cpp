@@ -112,6 +112,7 @@
 #include "lyra/value/unpacked_range.hpp"
 #include "lyra/value/wide.hpp"
 #include "lyra/value/witnessed_elem.hpp"
+#include "svdpi.h"
 
 namespace lyra::runtime {
 

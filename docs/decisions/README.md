@@ -1111,12 +1111,15 @@ the detail lives in the entry itself.
   foreign code asks for through VPI is carried out at the same boundary; and the disabled state is
   asked apart from the gate, for a disable or a kill only, so the run's end holds foreign code to
   nothing and an exported task whose execution ended the run waits out the run.
-- [vpi-routines-are-defined-against-the-standard-s-headers](vpi-routines-are-defined-against-the-standard-s-headers.md)
-  -- the runtime defines each VPI routine against the standard's own headers, and one not provided
-  is not defined, so an application calling it fails to link; save and restart are never provided;
-  the variadic routines are C; `vpi_control` is carried out upon the innermost context import's
-  return; every compatibility mode's bound names are defined. Stubs answering an error, `<cstdarg>`
-  in the runtime, and acting where `vpi_control` is called are rejected.
+- [foreign-interface-routines-are-defined-against-the-standard-s-headers](foreign-interface-routines-are-defined-against-the-standard-s-headers.md)
+  -- the runtime defines each DPI and VPI routine against the standard's own headers, and one not
+  provided is not defined, so an application calling it fails to link; save and restart are never
+  provided; the variadic routines are C; `vpi_control` is carried out upon the innermost context
+  import's return; every compatibility mode's bound names are defined; the canonical representation
+  is `svdpi.h`'s own types, shipped among the runtime's headers; `svGetCallerInfo` answers where the
+  running context import was written. Stubs answering an error, `<cstdarg>` in the runtime, acting
+  where `vpi_control` is called, and a copy of the canonical types are rejected. Revised 2026-11-09:
+  the DPI routines.
 
 ### Compile-time model and specialization
 

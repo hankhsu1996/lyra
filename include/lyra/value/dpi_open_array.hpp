@@ -10,6 +10,7 @@
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/unpacked_range.hpp"
+#include "svdpi.h"
 
 namespace lyra::value {
 

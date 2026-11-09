@@ -22,11 +22,20 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# The runtime spells the canonical representation in it and defines the routines
+# it declares, so the declarations hold its definitions to the standard's
+# prototypes.
 cc_library(
     name = "svdpi",
     hdrs = ["svdpi.h"],
     includes = ["."],
     visibility = ["//visibility:public"],
+)
+
+# Shipped beside the runtime's own headers, which include it.
+exports_files(
+    ["svdpi.h"],
+    visibility = ["//:__pkg__"],
 )
 
 # The runtime defines the routines these declare, so the declarations hold its
