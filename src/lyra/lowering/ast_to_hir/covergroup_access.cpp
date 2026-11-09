@@ -22,6 +22,7 @@
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/lowering/ast_to_hir/coverage_library.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -112,9 +113,32 @@ auto CovergroupOf(const Reached& reached) -> const slang::ast::CovergroupType& {
   return *reached.at.covergroup;
 }
 
-auto ItemName(const Reached& reached) -> std::optional<std::string> {
-  if (reached.at.item == nullptr) return std::nullopt;
-  return std::string{reached.at.item->name};
+// The coverpoint or the cross a reach is for, absent where it is for the
+// covergroup itself.
+auto ItemOf(
+    UnitLowerer& unit_lowerer, const Reached& reached, diag::SourceSpan span)
+    -> diag::Result<std::optional<hir::CoverageItemRef>> {
+  if (reached.at.item == nullptr) {
+    return std::optional<hir::CoverageItemRef>{};
+  }
+  if (const auto* point =
+          reached.at.item->as_if<slang::ast::CoverpointSymbol>()) {
+    auto ref = unit_lowerer.CoverpointRefOf(*point, span);
+    if (!ref) return std::unexpected(std::move(ref.error()));
+    return std::optional<hir::CoverageItemRef>{*ref};
+  }
+  auto ref = unit_lowerer.CrossRefOf(
+      reached.at.item->as<slang::ast::CoverCrossSymbol>(), span);
+  if (!ref) return std::unexpected(std::move(ref.error()));
+  return std::optional<hir::CoverageItemRef>{*ref};
+}
+
+// What holds the options a reach is for (LRM 19.7).
+auto OptionsHolderOf(const Reached& reached) -> OptionsHolder {
+  if (reached.at.item == nullptr) return OptionsHolder::kCovergroup;
+  return reached.at.item->kind == slang::ast::SymbolKind::Coverpoint
+             ? OptionsHolder::kCoverpoint
+             : OptionsHolder::kCross;
 }
 
 auto MethodOf(std::string_view name) -> hir::CovergroupMethod {
@@ -217,14 +241,18 @@ auto LowerCoverageOption(
           ? TypeReceiver(unit_lowerer, CovergroupOf(reached), frame, span)
           : InstanceReceiver(lowerer, frame, *reached.instance);
   if (!receiver) return std::unexpected(std::move(receiver.error()));
+  auto item = ItemOf(unit_lowerer, reached, span);
+  if (!item) return std::unexpected(std::move(item.error()));
   return hir::Expr{
       .type = *type_id,
       .data =
           hir::CovergroupOptionExpr{
               .covergroup = *std::move(covergroup),
               .receiver = *std::move(receiver),
-              .item = ItemName(reached),
-              .field = std::string{field}},
+              .item = *item,
+              .member = OptionMemberOf(
+                  unit_lowerer.Coverage(), OptionsHolderOf(reached),
+                  type_option, field)},
       .span = span};
 }
 
@@ -323,6 +351,8 @@ auto LowerCovergroupMethodCall(
       of_type ? TypeReceiver(unit_lowerer, CovergroupOf(reached), frame, span)
               : InstanceReceiver(lowerer, frame, *reached.instance);
   if (!receiver) return std::unexpected(std::move(receiver.error()));
+  auto item = ItemOf(unit_lowerer, reached, span);
+  if (!item) return std::unexpected(std::move(item.error()));
   // The counts a coverage query is handed are left to their defaults where
   // the source wrote none.
   if ((kind == hir::CovergroupMethod::kGetCoverage ||
@@ -336,7 +366,7 @@ auto LowerCovergroupMethodCall(
           hir::CovergroupMethodCallExpr{
               .covergroup = *std::move(covergroup),
               .receiver = *std::move(receiver),
-              .item = ItemName(reached),
+              .item = *item,
               .method = kind,
               .arguments = std::move(arguments)},
       .span = span};

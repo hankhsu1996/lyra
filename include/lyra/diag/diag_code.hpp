@@ -44,6 +44,9 @@ enum class DiagCode : std::uint32_t {
   // standard lends a meaning to: a union's member, or a part of one, passed by
   // reference (LRM 13.5.2).
   kErrorUnionPartPassedByReference,
+  // The front end accepted a cross bin selecting `binsof` a coverpoint the
+  // cross does not cross, which the standard gives no meaning (LRM 19.6.1).
+  kErrorBinsofOutsideItsCross,
 
   kHostInvalidCliArgs,
   kHostInvalidManifest,

@@ -19,59 +19,60 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-namespace {
-
-[[noreturn]] void Unpublished(std::string_view what) {
-  throw InternalError(
-      std::format(
-          "the coverage library published no {}, which every covergroup's "
-          "class is written over -- please report this as a bug",
-          what));
-}
-
-}  // namespace
-
 CoverageLibrary::CoverageLibrary(const hir::CompilationUnit& unit)
-    : unit_(&unit), refs_(&*unit.coverage_library) {
+    : unit_(&unit), members_(&*unit.coverage_library) {
 }
 
-auto CoverageLibrary::MethodOf(hir::ClassId cls, std::string_view name) const
+auto CoverageLibrary::CoverpointClass(hir::ClassId counted_by) const
+    -> const hir::CoverpointClassMembers& {
+  const auto found = members_->coverpoint_classes.find(counted_by);
+  if (found == members_->coverpoint_classes.end()) {
+    throw InternalError(
+        "the unit resolved no members of a class counting one of its "
+        "coverpoints -- please report this as a bug");
+  }
+  return found->second;
+}
+
+auto CoverageLibrary::IntegralCoverpointClass(hir::ClassId counted_by) const
+    -> const hir::IntegralCoverpointClassMembers& {
+  const std::optional<hir::IntegralCoverpointClassMembers>& integral =
+      CoverpointClass(counted_by).integral;
+  if (!integral.has_value()) {
+    throw InternalError(
+        "a real coverpoint was given what only an integral one takes, which "
+        "the front end refuses -- please report this as a bug");
+  }
+  return *integral;
+}
+
+auto CoverageLibrary::MethodOf(const hir::ClassMethodTarget& target) const
     -> Method {
-  for (std::optional<hir::ClassId> at = cls; at.has_value();
-       at = unit_->classes.BaseOf(*at)) {
-    const hir::DeclaredMethods& methods =
-        unit_->classes.Declaration(*at).methods;
-    if (const std::optional<hir::MethodId> method =
-            hir::FindMethod(methods, name)) {
-      return Method{
-          .callee = hir::ClassMethodTarget{.owner = *at, .method = *method},
-          .prototype = methods.Get(*method).prototype};
-    }
-  }
-  Unpublished(std::format("method '{}'", name));
+  return Method{
+      .callee = target,
+      .prototype = unit_->classes.Declaration(target.owner)
+                       .methods.Get(target.method)
+                       .prototype};
 }
 
-auto CoverageLibrary::PropertyOf(hir::ClassId cls, std::string_view name) const
+auto CoverageLibrary::PropertyOf(const hir::ClassPropertyTarget& target) const
     -> Property {
-  for (std::optional<hir::ClassId> at = cls; at.has_value();
-       at = unit_->classes.BaseOf(*at)) {
-    const hir::DeclaredProperties& properties =
-        unit_->classes.Declaration(*at).properties;
-    if (const std::optional<hir::FieldId> field =
-            hir::FindProperty(properties, name)) {
-      return Property{
-          .target = hir::ClassPropertyTarget{.owner = *at, .field = *field},
-          .type = properties.Get(*field).type};
-    }
-  }
-  Unpublished(std::format("property '{}'", name));
+  return Property{
+      .target = target,
+      .type = unit_->classes.Declaration(target.owner)
+                  .properties.Get(target.field)
+                  .type};
 }
 
 auto CoverageLibrary::ConstructorParamTypes(hir::ClassId cls) const
     -> std::vector<hir::TypeId> {
   std::vector<hir::TypeId> types;
   const hir::ClassDeclaration& record = unit_->classes.Declaration(cls);
-  if (!record.constructor.has_value()) Unpublished("constructor");
+  if (!record.constructor.has_value()) {
+    throw InternalError(
+        "the coverage library published no constructor, which every "
+        "covergroup's class is written over -- please report this as a bug");
+  }
   for (const hir::CalleeParam& param : record.constructor->interface.params) {
     types.push_back(param.type);
   }
@@ -80,19 +81,6 @@ auto CoverageLibrary::ConstructorParamTypes(hir::ClassId cls) const
 
 auto CoverageLibrary::TakesDeclaringInstance(hir::ClassId cls) const -> bool {
   return unit_->classes.Declaration(cls).instance_scope.has_value();
-}
-
-auto CoverageLibrary::EnumeratorOf(hir::TypeId type, std::string_view name)
-    const -> const hir::IntegralConstant& {
-  const auto* enumeration = unit_->types.Get(type).As<hir::EnumType>();
-  if (enumeration == nullptr) {
-    Unpublished(std::format("enumeration holding '{}'", name));
-  }
-  for (const hir::EnumMember& member :
-       unit_->DefinitionOf(*enumeration).members) {
-    if (member.name == name) return member.value;
-  }
-  Unpublished(std::format("enumerator '{}'", name));
 }
 
 auto CovergroupLayoutOf(const hir::PublishedCovergroup& published)
@@ -119,7 +107,7 @@ auto CovergroupLayoutOf(const hir::PublishedCovergroup& published)
         add(std::format("__coverpoint_{}", i),
             CoverpointProperty{.coverpoint = static_cast<std::uint32_t>(i)}));
   }
-  for (std::size_t i = 0; i < published.crosses.size(); ++i) {
+  for (std::size_t i = 0; i < published.cross_count; ++i) {
     layout.crosses.push_back(
         add(std::format("__cross_{}", i),
             CrossProperty{.cross = static_cast<std::uint32_t>(i)}));
@@ -127,37 +115,49 @@ auto CovergroupLayoutOf(const hir::PublishedCovergroup& published)
   return layout;
 }
 
-auto LibraryKindOf(hir::BinKind kind) -> std::string_view {
+auto LibraryKindOf(
+    const hir::CoverageEnumerators& enumerators, hir::BinKind kind)
+    -> const hir::LibraryEnumerator& {
   switch (kind) {
     case hir::BinKind::kBins:
-      return "COVERAGE_BINS";
+      return enumerators.bins;
     case hir::BinKind::kIgnoreBins:
-      return "COVERAGE_IGNORE_BINS";
+      return enumerators.ignore_bins;
     case hir::BinKind::kIllegalBins:
-      return "COVERAGE_ILLEGAL_BINS";
+      return enumerators.illegal_bins;
   }
   throw InternalError("LibraryKindOf: unknown kind of bins");
 }
 
-auto LibraryArrayOf(const hir::BinArray& array) -> std::string_view {
+auto LibraryArrayOf(
+    const hir::CoverageEnumerators& enumerators, const hir::BinArray& array)
+    -> const hir::LibraryEnumerator& {
   return std::visit(
       Overloaded{
-          [](const hir::OneBin&) { return "COVERAGE_ONE_BIN"; },
-          [](const hir::BinPerValue&) { return "COVERAGE_BIN_PER_VALUE"; },
-          [](const hir::FixedBins&) { return "COVERAGE_FIXED_BINS"; }},
+          [&](const hir::OneBin&) -> const hir::LibraryEnumerator& {
+            return enumerators.one_bin;
+          },
+          [&](const hir::BinPerValue&) -> const hir::LibraryEnumerator& {
+            return enumerators.bin_per_value;
+          },
+          [&](const hir::FixedBins&) -> const hir::LibraryEnumerator& {
+            return enumerators.fixed_bins;
+          }},
       array);
 }
 
-auto LibraryRepetitionOf(hir::StepRepetition repetition) -> std::string_view {
+auto LibraryRepetitionOf(
+    const hir::CoverageEnumerators& enumerators, hir::StepRepetition repetition)
+    -> const hir::LibraryEnumerator& {
   switch (repetition) {
     case hir::StepRepetition::kOnce:
-      return "COVERAGE_ONCE";
+      return enumerators.once;
     case hir::StepRepetition::kConsecutive:
-      return "COVERAGE_CONSECUTIVE";
+      return enumerators.consecutive;
     case hir::StepRepetition::kGoTo:
-      return "COVERAGE_GOTO";
+      return enumerators.go_to;
     case hir::StepRepetition::kNonconsecutive:
-      return "COVERAGE_NONCONSECUTIVE";
+      return enumerators.nonconsecutive;
   }
   throw InternalError("LibraryRepetitionOf: unknown kind of repetition");
 }

@@ -10,8 +10,8 @@
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/coverage_library.hpp"
 #include "lyra/hir/covergroup.hpp"
-#include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/published_covergroup.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
@@ -20,33 +20,39 @@
 namespace lyra::lowering::hir_to_mir {
 
 // The coverage library every covergroup's class is written over (LRM 19), as
-// one unit reaches it: the records of its classes this unit read, and the
-// declarations of those the unit holds itself -- a coverpoint's class
-// specialized on a type of this unit's (LRM 8.25).
+// one unit reaches it: each member the unit resolved where it named the
+// library, with what the unit holds of the class declaring it.
 class CoverageLibrary {
  public:
   explicit CoverageLibrary(const hir::CompilationUnit& unit);
 
-  [[nodiscard]] auto Refs() const -> const hir::CoverageLibraryRefs& {
-    return *refs_;
+  [[nodiscard]] auto Members() const -> const hir::CoverageLibraryMembers& {
+    return *members_;
   }
 
-  // A method of `cls` or of a class it extends, as a call names it.
+  // The members of `counted_by`, the class counting one of the unit's
+  // coverpoints, and those of them only an integral coverpoint's class has.
+  [[nodiscard]] auto CoverpointClass(hir::ClassId counted_by) const
+      -> const hir::CoverpointClassMembers&;
+  [[nodiscard]] auto IntegralCoverpointClass(hir::ClassId counted_by) const
+      -> const hir::IntegralCoverpointClassMembers&;
+
+  // A method of the library, as a call names it.
   struct Method {
     hir::ClassMethodTarget callee;
     hir::SubroutinePrototype prototype;
   };
 
-  [[nodiscard]] auto MethodOf(hir::ClassId cls, std::string_view name) const
+  [[nodiscard]] auto MethodOf(const hir::ClassMethodTarget& target) const
       -> Method;
 
-  // A property of `cls` or of a class it extends.
+  // A property of the library, and the type it holds.
   struct Property {
     hir::ClassPropertyTarget target;
     hir::TypeId type;
   };
 
-  [[nodiscard]] auto PropertyOf(hir::ClassId cls, std::string_view name) const
+  [[nodiscard]] auto PropertyOf(const hir::ClassPropertyTarget& target) const
       -> Property;
 
   // The type of each formal of `cls`'s constructor.
@@ -57,14 +63,9 @@ class CoverageLibrary {
   // 6.22).
   [[nodiscard]] auto TakesDeclaringInstance(hir::ClassId cls) const -> bool;
 
-  // The value the enumerator `name` of the library's enumeration `type`
-  // stands for.
-  [[nodiscard]] auto EnumeratorOf(hir::TypeId type, std::string_view name) const
-      -> const hir::IntegralConstant&;
-
  private:
   const hir::CompilationUnit* unit_;
-  const hir::CoverageLibraryRefs* refs_;
+  const hir::CoverageLibraryMembers* members_;
 };
 
 // What one property of a covergroup's class holds: the object embedding it,
@@ -122,18 +123,16 @@ inline constexpr std::string_view kCovergroupMakeRecord = "__make_record";
 inline constexpr std::string_view kCovergroupTypeRecord = "__type";
 inline constexpr std::string_view kCovergroupDeclareType = "__declare_type";
 
-// What a bin construct counts toward, as the library's `coverage_bin_kind`
-// names it.
-[[nodiscard]] auto LibraryKindOf(hir::BinKind kind) -> std::string_view;
-
-// How many bins one construct makes, as the library's `coverage_bin_array`
-// names it.
-[[nodiscard]] auto LibraryArrayOf(const hir::BinArray& array)
-    -> std::string_view;
-
-// How a transition step repeats, as the library's `coverage_repetition` names
-// it.
-[[nodiscard]] auto LibraryRepetitionOf(hir::StepRepetition repetition)
-    -> std::string_view;
+// The library's enumerator for what a bin construct counts toward, for how many
+// bins it makes, and for how a transition step repeats.
+[[nodiscard]] auto LibraryKindOf(
+    const hir::CoverageEnumerators& enumerators, hir::BinKind kind)
+    -> const hir::LibraryEnumerator&;
+[[nodiscard]] auto LibraryArrayOf(
+    const hir::CoverageEnumerators& enumerators, const hir::BinArray& array)
+    -> const hir::LibraryEnumerator&;
+[[nodiscard]] auto LibraryRepetitionOf(
+    const hir::CoverageEnumerators& enumerators, hir::StepRepetition repetition)
+    -> const hir::LibraryEnumerator&;
 
 }  // namespace lyra::lowering::hir_to_mir

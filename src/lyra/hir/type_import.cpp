@@ -88,7 +88,6 @@ auto TypeImporter::Import(const PublishedCovergroup& published)
   for (const PublishedCoverpoint& point : published.coverpoints) {
     coverpoints.push_back(
         PublishedCoverpoint{
-            .name = point.name,
             .value_type = Import(point.value_type),
             .library_class = ImportClass(point.library_class)});
   }
@@ -99,7 +98,7 @@ auto TypeImporter::Import(const PublishedCovergroup& published)
       .embedding = published.embedding.transform(
           [&](ClassId cls) { return ImportClass(cls); }),
       .coverpoints = std::move(coverpoints),
-      .crosses = published.crosses,
+      .cross_count = published.cross_count,
       .base = published.base.transform(
           [&](CovergroupId base) { return ImportCovergroup(base); })};
 }

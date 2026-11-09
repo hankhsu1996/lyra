@@ -1,10 +1,13 @@
 #include "lyra/lowering/ast_to_hir/coverage_library.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <format>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <slang/ast/ASTContext.h>
 #include <slang/ast/Compilation.h>
@@ -117,7 +120,10 @@ auto DefineCoverageClasses(
     return std::nullopt;
   }
   CoverageLibrary library;
+  library.unit = unit;
   library.registry = &DefinedClass(*unit, "coverage_registry");
+  library.item = &DefinedClass(*unit, "coverage_item");
+  library.coverpoint = &DefinedClass(*unit, "coverage_coverpoint");
   library.group_type = &DefinedClass(*unit, "covergroup_type");
   library.group_instance = &DefinedClass(*unit, "covergroup_instance");
   library.cross = &DefinedClass(*unit, "coverage_cross");
@@ -149,6 +155,87 @@ auto CoverpointClassOf(
             point.name));
   }
   return *it->second;
+}
+
+auto FindLibraryMember(const slang::ast::ClassType& cls, std::string_view name)
+    -> std::optional<LibraryMember> {
+  for (const slang::ast::ClassType* at = &cls; at != nullptr;) {
+    // A class's scope finds what it inherits too, so the class owning the
+    // member is the one whose scope declares it.
+    if (const slang::ast::Symbol* found = at->find(name);
+        found != nullptr &&
+        (found->kind == slang::ast::SymbolKind::Subroutine ||
+         found->kind == slang::ast::SymbolKind::ClassProperty)) {
+      return LibraryMember{
+          .owner =
+              &found->getParentScope()->asSymbol().as<slang::ast::ClassType>(),
+          .member = found};
+    }
+    const slang::ast::Type* base = at->getBaseClass();
+    at = base == nullptr
+             ? nullptr
+             : base->getCanonicalType().as_if<slang::ast::ClassType>();
+  }
+  return std::nullopt;
+}
+
+namespace {
+
+// The type the library declares under `name`, where it is a `T`.
+template <typename T>
+auto LibraryTypeNamed(const CoverageLibrary& library, std::string_view name)
+    -> const T* {
+  const slang::ast::Symbol* declared = library.unit->find(name);
+  const auto* alias = declared == nullptr
+                          ? nullptr
+                          : declared->as_if<slang::ast::TypeAliasType>();
+  return alias == nullptr ? nullptr : alias->getCanonicalType().as_if<T>();
+}
+
+}  // namespace
+
+auto LibraryEnumeratorOf(
+    const CoverageLibrary& library, std::string_view enumeration,
+    std::string_view value) -> const slang::ast::EnumValueSymbol& {
+  if (const auto* type =
+          LibraryTypeNamed<slang::ast::EnumType>(library, enumeration)) {
+    for (const auto& member : type->values()) {
+      if (member.name == value) return member;
+    }
+  }
+  throw InternalError(
+      std::format(
+          "Lyra's coverage library declares no enumerator '{}' of '{}'", value,
+          enumeration));
+}
+
+auto OptionMemberOf(
+    const CoverageLibrary& library, OptionsHolder holder, bool type_option,
+    std::string_view name) -> base::ComponentIndex {
+  const std::string_view structure = [&] {
+    switch (holder) {
+      case OptionsHolder::kCovergroup:
+        return type_option ? "covergroup_type_option" : "covergroup_option";
+      case OptionsHolder::kCoverpoint:
+        return type_option ? "coverpoint_type_option" : "coverpoint_option";
+      case OptionsHolder::kCross:
+        return type_option ? "cross_type_option" : "cross_option";
+    }
+    throw InternalError("OptionMemberOf: options of no holder");
+  }();
+  if (const auto* fields = LibraryTypeNamed<slang::ast::UnpackedStructType>(
+          library, structure)) {
+    for (std::size_t i = 0; i < fields->fields.size(); ++i) {
+      if (fields->fields[i]->name == name) {
+        return base::ComponentIndex{static_cast<std::uint32_t>(i)};
+      }
+    }
+  }
+  throw InternalError(
+      std::format(
+          "Lyra's coverage library's '{}' has no member '{}', which the "
+          "standard's options have (LRM 19.10)",
+          structure, name));
 }
 
 }  // namespace lyra::lowering::ast_to_hir

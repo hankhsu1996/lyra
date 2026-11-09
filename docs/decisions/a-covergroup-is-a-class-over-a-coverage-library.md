@@ -1,6 +1,10 @@
 # A covergroup is a class over a coverage library
 
-Date: 2026-10-22 Status: accepted.
+Date: 2026-10-22 Status: accepted. Revised 2026-11-08: D3 had the front end's option structures be
+the library's typedefs, which they are not, and D8 had each class tell its base, by constructor
+arguments, which of the base's items it declares again, which left an item two covergroups up
+counting and let an item of the other kind replace one; the type's record now states which items
+count. D9 is new.
 
 ## Context
 
@@ -76,8 +80,9 @@ names, is the instance's, named by the covergroup's hierarchical name (LRM 23.6)
 is written as is one for every instance. One a package or `$unit` declares is one type, named by its
 declaration. Revised 2026-10-30: the record was named by the declaration everywhere, which merged
 the covergroups of every instance of a module into one type. The front end's `option` and
-`type_option` structures are the library's typedefs, so `g.option.weight` is a field of the record
-read and written in place.
+`type_option` structures are its own, alike the library's typedefs in their members' names alone, so
+a member the source names is the library structure's member of that name, found where names are
+resolved (D9), and `g.option.weight` is that member of the record, read and written in place.
 
 **D4. A clocking event samples inside its occurrence.** LRM 19.3 samples "the instant the clocking
 event takes place, as if the process triggering the event were to call the built-in sample()
@@ -131,17 +136,37 @@ its base's arguments and items, and each class holds only what its own declarati
 extension of a covergroup of another unit is laid out from what that unit published. The first class
 of the lineage makes the instance's record and starts the sampling, once; the record is of the
 object's own type, which a virtual method of the lineage answers, since dispatch during construction
-reaches the object's class (LRM 8.17 NOTE 2). Each class states for its base which of the base's
-items it declares again: the base builds those uncounted, still sampled for its crosses, rather than
-having them taken out of the count afterwards. The base sets its options first and the extension its
-own after, which override them; `sample` is virtual and the extension's samples the base's first.
-The embedding class makes the covergroup through a virtual method of its own, published with its
-methods, which a class extending it overrides, so the base's `new` makes the extension. The
-extension's instance replaces the base's, and every class of the lineage names that one instance
-(LRM 19.4.1), so the variable the extending class declares is the base's: it holds no storage of its
-own, which its class's construction would otherwise reset after the base's `new` made the instance
-(LRM 8.7), and a use reaching what only the extension declares sees the instance as one of the
-extension.
+reaches the object's class (LRM 8.17 NOTE 2). An item replaces the item of the same kind and name
+nearest it up the lineage, which no longer counts (LRM 19.4.1: a coverpoint replaces a coverpoint,
+and a cross counts "unless there is a cross with the same name"). Which items count is a fact of the
+type, since a derived covergroup and its base are separate types (LRM 19.4.1), so the type's record
+states it: its declaration declares the base's items, then its own, then each it replaces, and an
+item built for an instance asks its type whether it counts, the record being declared before any
+item is built. A replaced item is built and sampled still, for the crosses over it. No constructor
+is told which items count: that would be a hidden argument saying what the object's type says. The
+base sets its options first and the extension its own after, which override them; `sample` is
+virtual and the extension's samples the base's first. The embedding class makes the covergroup
+through a virtual method of its own, published with its methods, which a class extending it
+overrides, so the base's `new` makes the extension. The extension's instance replaces the base's,
+and every class of the lineage names that one instance (LRM 19.4.1), so the variable the extending
+class declares is the base's: it holds no storage of its own, which its class's construction would
+otherwise reset after the base's `new` made the instance (LRM 8.7), and a use reaching what only the
+extension declares sees the instance as one of the extension.
+
+**D9. Every part of a covergroup is named by its declaration, settled where names are resolved.** A
+coverpoint and a cross are named by the covergroup declaring them and their place there, and a bin
+construct by its place in its coverpoint, as a member of a class is named by the class and its
+place; each place is counted from the front end's declaration, so the unit declaring a covergroup
+and every unit naming one of its items count alike. Which item a derived one replaces (D8) is found
+once, along the lineage, as clang's `Sema::AddOverriddenMethods` finds an overridden method by name
+over every base and records it. The library's members a covergroup's class calls or reads are
+resolved once, where the unit names the library, into the identities the unit holds them by, each a
+field named as the library names it, as clang's `Sema` keeps the `std::type_info` it looked up once;
+filling every field in one place makes a member left out a build error rather than an entry missing
+at run time. An item's name is what its report and the database print; the run time is handed an
+item's place among every item of its lineage and a bin construct's number, and finds by name only
+the bins of instances merged (LRM 19.11.3 compares them by name) and what a database read back holds
+(LRM 19.9).
 
 ## Rejected
 

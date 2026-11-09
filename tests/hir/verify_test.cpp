@@ -20,6 +20,7 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
+#include "lyra/hir/coverage_library.hpp"
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/declared_method.hpp"
@@ -318,12 +319,10 @@ struct Built {
   ScopeConstruction construction;
 };
 
-auto UnitBuilding(
-    const std::function<Generate(CompilationUnit&)>& counting,
+auto Building(
+    Built built, Generate generate,
     std::vector<std::optional<std::uint32_t>> places,
-    std::optional<bool> handed_an_index = std::nullopt) -> Built {
-  Built built{.unit = CompilationUnit("U", "U"), .construction = {}};
-  Generate generate = counting(built.unit);
+    std::optional<bool> handed_an_index) -> Built {
   BlockBody body;
   if (handed_an_index.value_or(
           std::holds_alternative<BlocksRepeat>(generate.counting))) {
@@ -348,8 +347,25 @@ auto UnitBuilding(
   return built;
 }
 
-auto Single(CompilationUnit&) -> Generate {
-  return Generate{.counting = SingleBlock{}};
+// A unit whose one generate counts as `counting` makes it in that unit.
+auto UnitBuilding(
+    const std::function<Generate(CompilationUnit&)>& counting,
+    std::vector<std::optional<std::uint32_t>> places,
+    std::optional<bool> handed_an_index = std::nullopt) -> Built {
+  Built built{.unit = CompilationUnit("U", "U"), .construction = {}};
+  Generate generate = counting(built.unit);
+  return Building(
+      std::move(built), std::move(generate), std::move(places),
+      handed_an_index);
+}
+
+// A unit whose one generate stands alone, which needs nothing of the unit.
+auto UnitBuilding(
+    SingleBlock single, std::vector<std::optional<std::uint32_t>> places,
+    std::optional<bool> handed_an_index = std::nullopt) -> Built {
+  return Building(
+      Built{.unit = CompilationUnit("U", "U"), .construction = {}},
+      Generate{.counting = single}, std::move(places), handed_an_index);
 }
 
 auto Loop(CompilationUnit& unit) -> Generate {
@@ -383,7 +399,7 @@ TEST(HirVerifyTest, AConstructionBuildsWhatEachGenerateCountsOut) {
   const auto verify = [](const Built& built) {
     Verify(built.unit, built.construction);
   };
-  EXPECT_NO_THROW(verify(UnitBuilding(Single, {0})));
+  EXPECT_NO_THROW(verify(UnitBuilding(SingleBlock{}, {0})));
   EXPECT_NO_THROW(verify(UnitBuilding(Loop, {0, 0, 0})));
   EXPECT_NO_THROW(verify(UnitBuilding(Loop, {})));
   EXPECT_NO_THROW(verify(UnitBuilding(Choice, {std::nullopt, 0})));
@@ -398,9 +414,10 @@ TEST(HirVerifyTest, AConstructionBuildsWhatEachGenerateCountsOut) {
       EXPECT_NE(message.find(says), std::string::npos) << message;
     }
   };
-  refused(UnitBuilding(Single, {}), "builds other than its one block");
+  refused(UnitBuilding(SingleBlock{}, {}), "builds other than its one block");
   refused(
-      UnitBuilding(Single, {std::nullopt}), "builds other than its one block");
+      UnitBuilding(SingleBlock{}, {std::nullopt}),
+      "builds other than its one block");
   refused(
       UnitBuilding(Loop, {0, std::nullopt}), "counts out a block of no body");
   refused(
@@ -409,10 +426,11 @@ TEST(HirVerifyTest, AConstructionBuildsWhatEachGenerateCountsOut) {
   refused(
       UnitBuilding(Choice, {0, 0}),
       "builds other than one of the alternatives written");
-  refused(UnitBuilding(Single, {1}), "builds a body the unit does not hold");
+  refused(
+      UnitBuilding(SingleBlock{}, {1}), "builds a body the unit does not hold");
 
   refused(
-      UnitBuilding(Single, {0}, true),
+      UnitBuilding(SingleBlock{}, {0}, true),
       "builds a body handed other than its loop's index");
   refused(
       UnitBuilding(Loop, {0}, false),
@@ -480,12 +498,11 @@ auto CovergroupReading(
       .sample_formals = {},
       .embedding = embedding,
       .coverpoints = {},
-      .crosses = {},
+      .cross_count = 0,
       .base = std::nullopt};
   for (const ClassId cls : counting) {
     published.coverpoints.push_back(
-        PublishedCoverpoint{
-            .name = "p", .value_type = TypeId{0}, .library_class = cls});
+        PublishedCoverpoint{.value_type = TypeId{0}, .library_class = cls});
   }
   return published;
 }
@@ -622,12 +639,15 @@ TEST(HirVerifyTest, EveryReadOfAClassNeedsItsDeclaration) {
        }},
       {"the coverage library",
        [](CompilationUnit& u, ProceduralBody&, ClassId cls) {
-         u.coverage_library = CoverageLibraryRefs{
-             .registry = cls,
-             .group_type = cls,
-             .group_instance = cls,
-             .cross = cls,
-             .selection = cls};
+         CoverageLibraryMembers library;
+         for (ClassId* member :
+              {&library.registry.cls, &library.group_type.cls,
+               &library.group_instance.cls, &library.item.cls,
+               &library.coverpoint.cls, &library.cross.cls,
+               &library.selection.cls}) {
+           *member = cls;
+         }
+         u.coverage_library = std::move(library);
          return std::vector<ExprId>{};
        }},
   };
@@ -813,6 +833,154 @@ TEST(HirVerifyTest, ANamespaceMemberIsNamedThroughAnEntryTheUnitHolds) {
   refused(naming(true, 1, 0), "variable 1 of namespace 'P', which declares 1");
   refused(
       naming(true, 0, 1), "subroutine 1 of namespace 'P', which declares 1");
+}
+
+// A coverpoint or a cross is named by the covergroup declaring it and its
+// place there, so a use naming a covergroup the unit holds no declaration of,
+// a place that covergroup does not declare, or an item of a covergroup the one
+// it is reached through neither is nor extends, is refused.
+TEST(HirVerifyTest, ACoverageItemIsNamedThroughACovergroupTheUnitHolds) {
+  // A unit reaching the type of the covergroup `g`, which it holds a
+  // declaration of where `holds` and which declares one coverpoint, for the
+  // item at place `place` of `g` where `own`, and of the covergroup `h`
+  // otherwise.
+  const auto naming = [](bool holds, std::uint32_t place, bool own) {
+    return UnitWithProcess([&](CompilationUnit& u, ProceduralBody& b) {
+      const ClassId counting = u.classes.Import(
+          ClassKey{.unit_name = "P", .class_path = ClassPath("counting")});
+      u.classes.SetDeclaration(
+          counting, DeclarationOf("counting", std::nullopt));
+      const auto covergroup = [&](std::string_view name, bool declared) {
+        const CovergroupId id = u.covergroups.Import(
+            CovergroupKey{
+                .unit_name = "P",
+                .path = support::DefPath{
+                    .data = {support::ClassStep{
+                        .name = std::string{name},
+                        .arguments = std::nullopt}}}});
+        if (declared) {
+          u.covergroups.Publish(
+              id, PublishedCovergroup{
+                      .path = {},
+                      .formals = {},
+                      .sample_formals = {},
+                      .embedding = std::nullopt,
+                      .coverpoints = {PublishedCoverpoint{
+                          .value_type = u.builtins.int_type,
+                          .library_class = counting}},
+                      .cross_count = 0,
+                      .base = std::nullopt});
+        }
+        return id;
+      };
+      const CovergroupId g = covergroup("g", holds);
+      const CovergroupId h = covergroup("h", true);
+      return std::vector<ExprId>{b.exprs.Add(
+          Expr{
+              .type = u.builtins.void_type,
+              .data =
+                  CovergroupMethodCallExpr{
+                      .covergroup = g,
+                      .receiver =
+                          CovergroupTypeReceiver{
+                              .declaring_instance = std::nullopt},
+                      .item =
+                          CoverpointRef{
+                              .covergroup = own ? g : h,
+                              .coverpoint = CoverpointId{place}},
+                      .method = CovergroupMethod::kGetCoverage,
+                      .arguments = {}},
+              .span = {}})};
+    });
+  };
+  const auto refused = [](const CompilationUnit& unit, std::string_view says) {
+    try {
+      Verify(unit, {});
+      ADD_FAILURE() << "a unit whose use " << says << " was accepted";
+    } catch (const InternalError& error) {
+      const std::string message = error.what();
+      EXPECT_NE(message.find(says), std::string::npos) << message;
+    }
+  };
+  EXPECT_NO_THROW(Verify(naming(true, 0, true), {}));
+  refused(
+      naming(false, 0, true),
+      "names a coverpoint of covergroup 0, of which the unit holds no "
+      "declaration");
+  refused(
+      naming(true, 1, true),
+      "names coverpoint 1 of covergroup 'g', which declares no such "
+      "coverpoint");
+  refused(
+      naming(true, 0, false),
+      "names an item of covergroup 1 through covergroup 0, which neither is "
+      "nor extends it");
+}
+
+// An item a covergroup declares replaces an item of a covergroup it extends
+// (LRM 19.4.1), so one naming an item of a covergroup it does not extend, or
+// of its own declaration, is refused.
+TEST(HirVerifyTest, AnItemReplacesOneOfACovergroupItExtends) {
+  // A unit declaring the covergroup `g`, which extends `h` where `extends`,
+  // and whose one coverpoint replaces the coverpoint of `h`, or of `g` itself
+  // where `own`.
+  const auto replacing = [](bool extends, bool own) {
+    CompilationUnit u("U", "U");
+    const ClassId counting = u.classes.Import(
+        ClassKey{.unit_name = "P", .class_path = ClassPath("counting")});
+    u.classes.SetDeclaration(counting, DeclarationOf("counting", std::nullopt));
+    const auto published = [&](std::optional<CovergroupId> base) {
+      return PublishedCovergroup{
+          .path = {},
+          .formals = {},
+          .sample_formals = {},
+          .embedding = std::nullopt,
+          .coverpoints = {PublishedCoverpoint{
+              .value_type = u.builtins.int_type, .library_class = counting}},
+          .cross_count = 0,
+          .base = base};
+    };
+    const CovergroupId h = u.covergroups.Import(
+        CovergroupKey{.unit_name = "P", .path = ClassPath("h")});
+    u.covergroups.Publish(h, published(std::nullopt));
+    const CovergroupId g = u.covergroups.DeclareOwn(ClassPath("g"));
+    u.covergroups.Publish(
+        g, published(extends ? std::optional{h} : std::nullopt));
+    CovergroupDecl decl;
+    const ExprId sampled = decl.body.exprs.Add(
+        Expr{
+            .type = u.builtins.int_type,
+            .data = PrimaryExpr{.data = NullLiteral{}},
+            .span = {}});
+    decl.coverpoints.Add(
+        Coverpoint{
+            .name = "p",
+            .expression = sampled,
+            .iff = std::nullopt,
+            .options = {},
+            .bins = {},
+            .replaces = CoverpointRef{
+                .covergroup = own ? g : h, .coverpoint = CoverpointId{0}}});
+    if (extends) decl.base = h;
+    u.root_scope.replicated_covergroups.push_back(
+        ReplicatedCovergroup{.id = g, .code = std::move(decl)});
+    return u;
+  };
+  const auto refused = [](const CompilationUnit& unit, std::string_view says) {
+    try {
+      Verify(unit, {});
+      ADD_FAILURE() << "a covergroup whose item " << says << " was accepted";
+    } catch (const InternalError& error) {
+      const std::string message = error.what();
+      EXPECT_NE(message.find(says), std::string::npos) << message;
+    }
+  };
+  EXPECT_NO_THROW(Verify(replacing(true, false), {}));
+  refused(
+      replacing(false, false),
+      "names an item of covergroup 0 through covergroup 1, which neither is "
+      "nor extends it");
+  refused(replacing(true, true), "replaces an item of its own declaration");
 }
 
 // An id is a position in the arena of the scope that minted it, so a holder

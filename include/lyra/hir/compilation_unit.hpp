@@ -10,6 +10,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/class_registry.hpp"
+#include "lyra/hir/coverage_library.hpp"
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/fixed_name.hpp"
@@ -119,7 +120,7 @@ struct CompilationUnit {
   CovergroupRegistry covergroups;
   // What every covergroup this unit declares or names is written over, present
   // where there is one.
-  std::optional<CoverageLibraryRefs> coverage_library;
+  std::optional<CoverageLibraryMembers> coverage_library;
   // Every class of a scope of the design hierarchy this unit names: the ones it
   // publishes of its own scopes, and each one of another unit's scope it
   // reaches an object of, recorded where that unit's signature was consumed.

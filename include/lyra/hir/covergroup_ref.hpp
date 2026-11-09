@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <variant>
 
 #include "lyra/base/hash.hpp"
 #include "lyra/base/pool_id.hpp"
@@ -38,6 +39,48 @@ struct CovergroupKey {
     }
   };
 };
+
+// A coverpoint, a cross or a bin construct, by where its declaration holds it:
+// the place among a covergroup's coverpoints, among its crosses, and among a
+// coverpoint's bin constructs, in the order the source declares them.
+struct CoverpointId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const CoverpointId&) const -> std::strong_ordering = default;
+};
+
+struct CrossId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const CrossId&) const -> std::strong_ordering = default;
+};
+
+struct BinConstructId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const BinConstructId&) const
+      -> std::strong_ordering = default;
+};
+
+// A coverpoint or a cross (LRM 19.5, 19.6): the covergroup declaring it and
+// its place there, whichever unit declares the covergroup, as a member of a
+// class is named by the class and its place.
+struct CoverpointRef {
+  CovergroupId covergroup;
+  CoverpointId coverpoint;
+
+  auto operator<=>(const CoverpointRef&) const
+      -> std::strong_ordering = default;
+};
+
+struct CrossRef {
+  CovergroupId covergroup;
+  CrossId cross;
+
+  auto operator<=>(const CrossRef&) const -> std::strong_ordering = default;
+};
+
+using CoverageItemRef = std::variant<CoverpointRef, CrossRef>;
 
 // A method every covergroup has (LRM 19.8), and every coverpoint and cross of
 // one where it applies: `get_coverage` and `get_inst_coverage` of each, and

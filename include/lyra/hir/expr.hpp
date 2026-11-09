@@ -363,21 +363,22 @@ using CovergroupReceiver =
 struct CovergroupMethodCallExpr {
   CovergroupId covergroup;
   CovergroupReceiver receiver;
-  std::optional<std::string> item;
+  std::optional<CoverageItemRef> item;
   CovergroupMethod method = CovergroupMethod::kSample;
   std::vector<std::optional<ExprId>> arguments;
 
   auto operator==(const CovergroupMethodCallExpr&) const -> bool = default;
 };
 
-// `option.<field>` of a covergroup instance, or of one of its coverpoints or
-// crosses where `item` names one, or `type_option.<field>` of its type (LRM
-// 19.7, 19.10), read and written as a variable is.
+// `option.<member>` of a covergroup instance, or of one of its coverpoints or
+// crosses where `item` names one, or `type_option.<member>` of its type (LRM
+// 19.7, 19.10), read and written as a variable is: the member at `member` of
+// the library's structure for those options.
 struct CovergroupOptionExpr {
   CovergroupId covergroup;
   CovergroupReceiver receiver;
-  std::optional<std::string> item;
-  std::string field;
+  std::optional<CoverageItemRef> item;
+  base::ComponentIndex member;
 
   auto operator==(const CovergroupOptionExpr&) const -> bool = default;
 };

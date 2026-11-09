@@ -1406,14 +1406,13 @@ A029_TEXT_FIELD_PATTERN = re.compile(
 A029_STRUCT_PATTERN = re.compile(r"^\s*(?:struct|class)\s+(\w+)\b[^;]*$")
 SPELLING = "spelling"
 # What still finds a declaration by the field's text below AST-to-HIR.
-FOUND_IN_COVERAGE = "found by name: a covergroup's items, bins and options"
 FOUND_IN_TYPES = "found by name: a type declaration's definition"
 FOUND_IN_SCOPES = "found by name: the class of a scope, by its path"
 FOUND_IN_UNITS = "found by name: a unit, a lowering or a body"
 FOUND_AT_RUN_TIME = "found by name: the run time finds it by this text"
 HIR_TEXT_FIELDS = {
     ("array_iterator_method.hpp", "WithClause", "element_name"): SPELLING,
-    ("class_declaration.hpp", "DeclaredProperty", "name"): FOUND_IN_COVERAGE,
+    ("class_declaration.hpp", "DeclaredProperty", "name"): SPELLING,
     ("class_declaration.hpp", "DeclaredStatic", "name"): SPELLING,
     ("class_declaration.hpp", "ClassDeclaration", "class_path"): SPELLING,
     ("class_declaration.hpp", "ClassDeclaration", "instance_scope"):
@@ -1426,21 +1425,14 @@ HIR_TEXT_FIELDS = {
     ("compilation_unit.hpp", "CompilationUnit", "body_name"): FOUND_IN_UNITS,
     ("compilation_unit.hpp", "CompilationUnit", "source_name"): SPELLING,
     ("compilation_unit.hpp", "CompilationUnit", "library_binding"): SPELLING,
-    ("covergroup.hpp", "BinConstruct", "name"): FOUND_IN_COVERAGE,
-    ("covergroup.hpp", "OptionSetting", "field"): FOUND_IN_COVERAGE,
-    ("covergroup.hpp", "Coverpoint", "name"): FOUND_IN_COVERAGE,
-    ("covergroup.hpp", "SelectBinsOf", "point"): FOUND_IN_COVERAGE,
-    ("covergroup.hpp", "SelectBinsOf", "bin"): FOUND_IN_COVERAGE,
+    ("covergroup.hpp", "BinConstruct", "name"): SPELLING,
+    ("covergroup.hpp", "Coverpoint", "name"): SPELLING,
     ("covergroup.hpp", "CrossBin", "name"): SPELLING,
-    ("covergroup.hpp", "Cross", "name"): FOUND_IN_COVERAGE,
-    ("covergroup.hpp", "Cross", "targets"): FOUND_IN_COVERAGE,
+    ("covergroup.hpp", "Cross", "name"): SPELLING,
     ("covergroup_ref.hpp", "CovergroupKey", "unit_name"): SPELLING,
     ("covergroup_ref.hpp", "CovergroupKey", "path"): SPELLING,
     ("dumped_declaration.hpp", "DumpedDeclaration", "identifier"): SPELLING,
     ("dumped_declaration.hpp", "DumpedBlock", "identifier"): SPELLING,
-    ("expr.hpp", "CovergroupMethodCallExpr", "item"): FOUND_IN_COVERAGE,
-    ("expr.hpp", "CovergroupOptionExpr", "item"): FOUND_IN_COVERAGE,
-    ("expr.hpp", "CovergroupOptionExpr", "field"): FOUND_IN_COVERAGE,
     ("expr.hpp", "ConstraintBlockMode", "name"): FOUND_AT_RUN_TIME,
     ("expr.hpp", "StaticConstraintBlockMode", "block"): FOUND_AT_RUN_TIME,
     ("fixed_name.hpp", "NameBelowInstance", "text"): SPELLING,
@@ -1463,12 +1455,8 @@ HIR_TEXT_FIELDS = {
     ("published_clocking.hpp", "PublishedClockingBlock", "name"): SPELLING,
     ("published_covergroup.hpp", "PublishedCovergroupFormal", "name"):
         SPELLING,
-    ("published_covergroup.hpp", "PublishedCoverpoint", "name"):
-        FOUND_IN_COVERAGE,
     ("published_covergroup.hpp", "PublishedCovergroup", "path"):
         FOUND_IN_SCOPES,
-    ("published_covergroup.hpp", "PublishedCovergroup", "crosses"):
-        FOUND_IN_COVERAGE,
     ("published_member.hpp", "PublishedMember", "name"): SPELLING,
     ("published_member.hpp", "PublishedMember", "holder"): SPELLING,
     ("published_modport.hpp", "PublishedModportPort", "name"): SPELLING,
@@ -1488,15 +1476,13 @@ HIR_TEXT_FIELDS = {
     ("structural_scope.hpp", "InterfacePortDecl", "name"): SPELLING,
     ("structural_scope.hpp", "StructuralScope", "source_name"): SPELLING,
     ("subroutine.hpp", "SubroutineDecl", "name"): FOUND_AT_RUN_TIME,
-    ("subroutine_prototype.hpp", "SubroutinePrototype", "name"):
-        FOUND_IN_COVERAGE,
+    ("subroutine_prototype.hpp", "SubroutinePrototype", "name"): SPELLING,
     ("timing.hpp", "UnreportableReads", "why"): SPELLING,
     ("type.hpp", "TypeDeclarationRef", "unit_name"): FOUND_IN_TYPES,
     ("type.hpp", "TypeDeclarationRef", "path"): FOUND_IN_TYPES,
     ("type.hpp", "PackedAggregateField", "name"): SPELLING,
-    ("type_definition.hpp", "EnumMember", "name"): FOUND_IN_COVERAGE,
-    ("type_definition.hpp", "UnpackedAggregateField", "name"):
-        FOUND_IN_COVERAGE,
+    ("type_definition.hpp", "EnumMember", "name"): SPELLING,
+    ("type_definition.hpp", "UnpackedAggregateField", "name"): SPELLING,
     ("unit_signature.hpp", "PortDecl", "name"): SPELLING,
     ("unit_signature.hpp", "UnitSignature", "unit_name"): SPELLING,
     ("unit_signatures.hpp", "UnitSignatures", "name"): SPELLING,
@@ -1560,11 +1546,8 @@ A030_HIR_TO_MIR_SCOPE = (
 HIR_TO_MIR = "src/lyra/lowering/hir_to_mir/"
 HIR_TO_MIR_HEADER = "include/lyra/lowering/hir_to_mir/"
 HIR_LOOKUPS_BELOW = {
-    (HIR_TO_MIR + "coverage_library.cpp", "FindMethod"): FOUND_IN_COVERAGE,
-    (HIR_TO_MIR + "coverage_library.cpp", "FindProperty"): FOUND_IN_COVERAGE,
     (HIR_TO_MIR + "class_decl_lowerer.cpp", "DefinitionOf"): FOUND_IN_TYPES,
     (HIR_TO_MIR + "class_definition.cpp", "DefinitionOf"): FOUND_IN_TYPES,
-    (HIR_TO_MIR + "coverage_library.cpp", "DefinitionOf"): FOUND_IN_TYPES,
     (HIR_TO_MIR + "covergroup_lowerer.cpp", "DefinitionOf"): FOUND_IN_TYPES,
     (HIR_TO_MIR + "declared_initial_value.cpp", "DefinitionOf"):
         FOUND_IN_TYPES,
