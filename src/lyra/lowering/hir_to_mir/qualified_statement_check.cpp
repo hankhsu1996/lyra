@@ -62,13 +62,15 @@ auto KeywordOf(hir::UniquePriorityCheck check) -> std::string_view {
   throw InternalError("KeywordOf: unknown HIR UniquePriorityCheck");
 }
 
-// Formats the report text already staged in `block` and hands it to the
-// diagnostic broker at warning severity (LRM 20.10), placed where `block`
-// builds from -- the qualified statement -- so the report names where the
-// statement is written rather than where the report matured.
+// Formats the report text and hands it to the diagnostic broker at warning
+// severity (LRM 20.10), in the block `frame` builds into, placed where that
+// block builds from -- the qualified statement -- so the report names where
+// the statement is written, and its scope, rather than where the report
+// matured.
 void AppendReportEmit(
-    mir::CompilationUnit& unit, mir::Builder block,
+    mir::CompilationUnit& unit, const WalkFrame& frame,
     std::vector<RuntimePrintItem> items) {
+  mir::Builder block = frame.Builder();
   // The text is fixed-format decimal, so no %t directive is possible and the
   // time-unit power is unread.
   const mir::ExprId items_array =
@@ -80,8 +82,7 @@ void AppendReportEmit(
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.Add(BuildReportCallExpr(
-              unit, support::BuiltinFn::kEmitWarning, diagnostic_id,
-              text_id))});
+              unit, frame, support::kWarningReport, diagnostic_id, text_id))});
 }
 
 // A pending violation report is scheduled where the check was decided and
@@ -115,7 +116,7 @@ auto BuildReportScope(
   ClosureBuilder closure(unit, scope_frame, support::ClosureKind::kFn);
   std::vector<RuntimePrintItem> items;
   items.emplace_back(RuntimePrintLiteral{.text = std::move(text)});
-  AppendReportEmit(unit, closure.Body(), std::move(items));
+  AppendReportEmit(unit, closure.Frame(), std::move(items));
   KeepViolationReport(process, scope_frame, control, closure.BuildVoid());
   return scope;
 }

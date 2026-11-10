@@ -2408,27 +2408,59 @@ auto lyra_rt_diagnostic(void* runtime) -> void* {
 }
 
 void lyra_rt_emit_info(
-    void* dispatcher, const void* text, const void* location) {
+    void* dispatcher, const void* text, const void* scope,
+    const void* location) {
   static_cast<DiagnosticDispatcher*>(dispatcher)
-      ->EmitInfo(Read<String>(text), SourceLocationAt(location));
+      ->EmitInfo(
+          Read<String>(text), Read<String>(scope), SourceLocationAt(location));
 }
 
 void lyra_rt_emit_warning(
-    void* dispatcher, const void* text, const void* location) {
+    void* dispatcher, const void* text, const void* scope,
+    const void* location) {
   static_cast<DiagnosticDispatcher*>(dispatcher)
-      ->EmitWarning(Read<String>(text), SourceLocationAt(location));
+      ->EmitWarning(
+          Read<String>(text), Read<String>(scope), SourceLocationAt(location));
 }
 
 void lyra_rt_emit_error(
-    void* dispatcher, const void* text, const void* location) {
+    void* dispatcher, const void* text, const void* scope,
+    const void* location) {
   static_cast<DiagnosticDispatcher*>(dispatcher)
-      ->EmitError(Read<String>(text), SourceLocationAt(location));
+      ->EmitError(
+          Read<String>(text), Read<String>(scope), SourceLocationAt(location));
 }
 
 void lyra_rt_emit_fatal(
+    void* dispatcher, const void* text, const void* scope,
+    const void* location) {
+  static_cast<DiagnosticDispatcher*>(dispatcher)
+      ->EmitFatal(
+          Read<String>(text), Read<String>(scope), SourceLocationAt(location));
+}
+
+void lyra_rt_emit_info_at_caller(
     void* dispatcher, const void* text, const void* location) {
   static_cast<DiagnosticDispatcher*>(dispatcher)
-      ->EmitFatal(Read<String>(text), SourceLocationAt(location));
+      ->EmitInfoAtCaller(Read<String>(text), SourceLocationAt(location));
+}
+
+void lyra_rt_emit_warning_at_caller(
+    void* dispatcher, const void* text, const void* location) {
+  static_cast<DiagnosticDispatcher*>(dispatcher)
+      ->EmitWarningAtCaller(Read<String>(text), SourceLocationAt(location));
+}
+
+void lyra_rt_emit_error_at_caller(
+    void* dispatcher, const void* text, const void* location) {
+  static_cast<DiagnosticDispatcher*>(dispatcher)
+      ->EmitErrorAtCaller(Read<String>(text), SourceLocationAt(location));
+}
+
+void lyra_rt_emit_fatal_at_caller(
+    void* dispatcher, const void* text, const void* location) {
+  static_cast<DiagnosticDispatcher*>(dispatcher)
+      ->EmitFatalAtCaller(Read<String>(text), SourceLocationAt(location));
 }
 
 void lyra_rt_record_coverage(void* runtime, const void* site, bool succeeded) {

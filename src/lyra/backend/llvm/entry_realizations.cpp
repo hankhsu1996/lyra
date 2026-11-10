@@ -1106,6 +1106,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEmitWarning:
     case support::BuiltinFn::kEmitError:
     case support::BuiltinFn::kEmitFatal:
+    case support::BuiltinFn::kEmitInfoAtCaller:
+    case support::BuiltinFn::kEmitWarningAtCaller:
+    case support::BuiltinFn::kEmitErrorAtCaller:
+    case support::BuiltinFn::kEmitFatalAtCaller:
     case support::BuiltinFn::kRecordCoverage:
     case support::BuiltinFn::kTimeFormat:
     case support::BuiltinFn::kSetTimeFormat:

@@ -10,7 +10,6 @@
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/lowering/hir_to_mir/assertion_control.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
@@ -20,7 +19,6 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/support/assertion_control.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -55,10 +53,10 @@ auto LowerArmIntoScope(
 }
 
 auto BuildDefaultReportScope(
-    ProcessLowerer& process, mir::Builder block,
+    ProcessLowerer& process, const WalkFrame& frame,
     hir::AssertionDirective directive) -> mir::Block {
   mir::Block report;
-  AppendDefaultReport(process, block.Into(report), directive);
+  AppendDefaultReport(process, frame.WithBlock(&report), directive);
   return report;
 }
 
@@ -206,7 +204,7 @@ auto BuildDeferredFailArm(
     return BuildDeferredSubmit(
         process, frame, a.timing, a.control,
         [&](ClosureBuilder& body, const WalkFrame&) -> diag::Result<void> {
-          AppendDefaultReport(process, body.Body(), a.directive);
+          AppendDefaultReport(process, body.Frame(), a.directive);
           return {};
         });
   }
@@ -244,10 +242,10 @@ void AppendRecordCoverage(
 }  // namespace
 
 void AppendDefaultReport(
-    ProcessLowerer& process, mir::Builder block,
+    ProcessLowerer& process, const WalkFrame& frame,
     hir::AssertionDirective directive) {
   AppendToolReportStmt(
-      process.Owner().Unit(), block, support::BuiltinFn::kEmitError,
+      process.Owner().Unit(), frame, support::kErrorReport,
       FailureText(directive));
 }
 
@@ -289,7 +287,7 @@ auto LowerAssertStmt(
     if (a.fail_stmt.has_value()) {
       fail_or = LowerStmtIntoChildScope(process, checked_frame, *a.fail_stmt);
     } else {
-      fail_or = BuildDefaultReportScope(process, block, a.directive);
+      fail_or = BuildDefaultReportScope(process, checked_frame, a.directive);
     }
   }
   if (!fail_or) return std::unexpected(std::move(fail_or.error()));

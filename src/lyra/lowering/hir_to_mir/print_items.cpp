@@ -21,17 +21,12 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/primary.hpp"
-#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
-#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -262,53 +257,6 @@ auto BuildRuntimeFormatOperand(
   throw InternalError("BuildRuntimeFormatOperand: unknown pattern reading");
 }
 
-// The string LRM 21.2.1.5 `%m` names: the hierarchical name of the scope the
-// directive was written in -- the innermost named block around it when there
-// is one (LRM 9.3.5), a task or function when the directive sits in one (LRM
-// 23.9), and the body's own scope otherwise. Everything of that name below the
-// instance holding the declaration is fixed by the text, so it is a constant;
-// one compiled body serves every instance, so the instance's own name is the
-// instance's to answer, at run time. Where no instance holds the declaration
-// -- a package, `$unit`, a class declared in either -- the constant is the
-// whole name. A deferred caller ($strobe, an NBA) reaches the instance the way
-// it reaches the rest of its operands, so a delayed fire still reads the
-// issuing scope's name.
-template <ExprLowerer Lowerer>
-auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
-    -> mir::ExprId {
-  if (frame.scope_name == nullptr) {
-    throw InternalError(
-        "BuildHierarchicalNameExpr: a construct was lowered in no scope a "
-        "name is known for");
-  }
-  auto& unit = lowerer.Owner().Unit();
-  mir::Builder block = frame.Builder();
-  return std::visit(
-      Overloaded{
-          [&](const hir::WholeName& name) {
-            return BuildStringValueExpr(unit, block, name.text);
-          },
-          [&](const hir::NameBelowInstance& name) {
-            const mir::ExprId instance = BuildEnclosingScopeReceiver(
-                frame, unit, mir::EnclosingHops{name.scopes_out});
-            const mir::ExprId below =
-                BuildStringValueExpr(unit, block, name.text);
-            return block.Add(
-                mir::Expr{
-                    .data =
-                        mir::CallExpr{
-                            .callee =
-                                mir::Direct{
-                                    .target =
-                                        support::BuiltinFn::kHierarchicalPathOf,
-                                    .receiver = BuildObjectDeref(
-                                        unit, block, instance)},
-                            .arguments = {below}},
-                    .type = unit.builtins.string});
-          }},
-      *frame.scope_name);
-}
-
 // The string LRM 33.7 `%l` names: the library and cell of the text the
 // directive was written in. Every instance of that text has the same one, so
 // it is a constant of the unit and nothing is asked of the run.
@@ -335,7 +283,7 @@ auto LowerPrintItemForDirective(
       // The directive takes no operand, so it leaves the operand cursor where
       // it found it, and it takes no modifier either.
       return RuntimePrintValue(
-          BuildHierarchicalNameExpr(lowerer, frame),
+          BuildHierarchicalNameExpr(lowerer.Owner().Unit(), frame),
           FormatSpec(value::FormatKind::kString, value::FormatModifiers{}));
 
     case value::FormatDirective::Role::kLibraryBinding:
@@ -591,7 +539,8 @@ auto BuildRuntimeFormatCallExpr(
   // The hierarchical name a `%m` renders, the library and cell a `%l` renders
   // and the scope's time unit a `%t` scales against are facts of the call site,
   // not of the format text, so they reach the parse as operands.
-  const mir::ExprId path_id = BuildHierarchicalNameExpr(lowerer, step_frame);
+  const mir::ExprId path_id =
+      BuildHierarchicalNameExpr(lowerer.Owner().Unit(), step_frame);
   const mir::ExprId binding_id = BuildLibraryBindingExpr(lowerer, step_frame);
 
   const mir::ExprId runtime_id =

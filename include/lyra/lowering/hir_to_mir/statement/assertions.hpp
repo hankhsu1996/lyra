@@ -13,18 +13,18 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/builder.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 // With no fail statement, what a false result selects is the tool's own report,
 // which the standard fixes at error severity (LRM 16.3, 16.14.1). A pass
-// statement does not take its place. The emit goes into `block`, which is a
-// fresh scope for a simple assertion, the deferred closure body for a deferred
-// one, and the fail action for a concurrent one.
+// statement does not take its place. The emit goes into the block `frame`
+// builds into, which is a fresh scope for a simple assertion, the deferred
+// closure body for a deferred one, and the fail action for a concurrent one,
+// and names the scope the assertion is written in.
 void AppendDefaultReport(
-    ProcessLowerer& process, mir::Builder block,
+    ProcessLowerer& process, const WalkFrame& frame,
     hir::AssertionDirective directive);
 
 // Whether an action arm carries a statement to run. An omitted pass arm arrives

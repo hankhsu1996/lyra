@@ -9,13 +9,18 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Lower a severity task, $info / $warning / $error / $fatal (LRM 20.10): its
-// message is formatted as the print family formats one and reported at the
-// task's severity. A $fatal then ends the run, and that call is the returned
-// expression; for the others it is the report.
+// Lower a severity task that leaves the run going, $info / $warning / $error
+// (LRM 20.10): its message is formatted as the print family formats one and
+// reported at the task's severity, and the report is the returned expression.
 auto LowerDiagnosticSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const support::DiagnosticSystemSubroutineInfo& info)
+    -> diag::Result<mir::Expr>;
+
+// Lower $fatal (LRM 20.10): the report is a statement of its own, and the
+// implicit $finish after it is the returned expression.
+auto LowerFatalSystemSubroutineCall(
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

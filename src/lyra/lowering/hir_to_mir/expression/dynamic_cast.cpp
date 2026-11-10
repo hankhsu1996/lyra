@@ -51,9 +51,9 @@ auto LowerHirDynamicCastExpr(
   // assignment it asked for did not happen. It is the design's own error rather
   // than a limit of this compiler, and the standard leaves the destination
   // holding what it held, which is a state the run goes on from.
-  const auto report_invalid = [&](mir::Builder into) {
+  const auto report_invalid = [&](const WalkFrame& into) {
     AppendToolReportStmt(
-        unit, into, support::BuiltinFn::kEmitError,
+        unit, into, support::kErrorReport,
         base::DiagMessage(
             "the '$cast' assignment is invalid, so the destination is left "
             "unchanged"));
@@ -66,7 +66,7 @@ auto LowerHirDynamicCastExpr(
   if (std::holds_alternative<hir::NoAssignmentAllowed>(c.validity)) {
     body.AppendStmt(mir::ExprStmt{.expr = source});
     if (c.on_invalid == hir::InvalidAssignmentHandling::kReported) {
-      report_invalid(body);
+      report_invalid(steps.Frame());
     }
     return steps.Build(mir::BuildIntLiteral(unit, body, 0));
   }
@@ -91,7 +91,7 @@ auto LowerHirDynamicCastExpr(
             {reference, source}, unit.builtins.machine_bool));
     if (c.on_invalid == hir::InvalidAssignmentHandling::kReported) {
       mir::Block invalid;
-      report_invalid(body.Into(invalid));
+      report_invalid(steps.Frame().WithBlock(&invalid));
       body.AppendStmt(
           mir::IfStmt{
               .condition = BuildLogicalNot(unit, body, received),
@@ -251,7 +251,7 @@ auto LowerHirDynamicCastExpr(
   std::optional<mir::BlockId> invalid_scope;
   if (c.on_invalid == hir::InvalidAssignmentHandling::kReported) {
     mir::Block invalid;
-    report_invalid(body.Into(invalid));
+    report_invalid(steps.Frame().WithBlock(&invalid));
     invalid_scope = body.AddScope(std::move(invalid));
   }
 

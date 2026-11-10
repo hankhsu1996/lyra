@@ -252,7 +252,7 @@ auto LowerActionArm(
             return {};
           },
           [&](const RunsDefaultReport& report) -> diag::Result<void> {
-            AppendDefaultReport(action, frame.Builder(), report.directive);
+            AppendDefaultReport(action, frame, report.directive);
             return {};
           },
           [](const RunsNothing&) -> diag::Result<void> { return {}; }},
@@ -1347,8 +1347,8 @@ auto LowerExpectStmt(
   diag::Result<mir::Block> fail = mir::Block{};
   if (!expect.fail_stmt.has_value()) {
     AppendToolReportStmt(
-        process.Owner().Unit(), inner.Builder().Into(*fail),
-        support::BuiltinFn::kEmitError, base::DiagMessage("expect failed"));
+        process.Owner().Unit(), inner.WithBlock(&*fail), support::kErrorReport,
+        base::DiagMessage("expect failed"));
   } else if (HasRealArm(process.HirBody(), expect.fail_stmt)) {
     fail = LowerStmtIntoChildScope(process, inner, *expect.fail_stmt);
   }

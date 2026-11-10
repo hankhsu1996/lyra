@@ -10,6 +10,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -149,32 +150,55 @@ struct DelayRead {
 // `diagnostic` builtin. Returns the call detached; the caller interns it. The
 // engine handle is interned into `block` as a child.
 // LRM 20.10 `$info` / `$warning` / `$error` thread the resulting handle as
-// the receiver of their severity-fixed Emit methods, and so does the report a
-// tool issues on its own behalf.
+// the receiver of their severity-fixed report methods, and so does the report
+// a tool issues on its own behalf.
 [[nodiscard]] auto BuildDiagnosticCallExpr(
     const mir::CompilationUnit& unit, mir::Builder block) -> mir::Expr;
 
-// The call handing one report to the diagnostic broker at `severity` (LRM
-// 20.10): the text already formatted. Where the report is placed is where the
-// call is written, which every call of an entry that reports is handed.
-// Composing the text is where reports differ -- a severity task formats the
-// design's own values, while a report the tool writes on its own behalf has
-// fixed words -- and issuing one is where they do not. Returned detached,
-// because the severity that ends the run has a statement of its own to follow
-// it.
-[[nodiscard]] auto BuildReportCallExpr(
-    const mir::CompilationUnit& unit, support::BuiltinFn severity,
-    mir::ExprId diagnostic_id, mir::ExprId text_id) -> mir::Expr;
+// The hierarchical name of the instance `out` scopes out from where `frame`
+// stands, followed by `below`, the part of a name below that instance which
+// its text fixes (LRM 23.6). One compiled body serves every instance, so the
+// instance's own name is the instance's to answer, at run time. Built in the
+// block `frame` builds into.
+[[nodiscard]] auto BuildNameBelowInstanceExpr(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::EnclosingHops out, std::string below) -> mir::ExprId;
 
-// Appends the statement issuing one severity-fixed report whose text the tool
-// composed rather than the design, placed where `block` builds from. Every
-// report Lyra writes on its own behalf is this one statement -- an assertion
-// that failed with no action block of its own, an assignment a destination's
-// type did not admit -- because what separates them is the severity and the
-// words and nothing else.
+// The string LRM 21.2.1.5 `%m` names, and LRM 20.10 has a severity task's
+// report name: the hierarchical name of the scope `frame` lowers in -- the
+// innermost named block around it when there is one (LRM 9.3.5), a task or
+// function when it sits in one (LRM 23.9), and the body's own scope otherwise.
+// Where no instance holds the declaration -- a package, `$unit`, a class
+// declared in either -- the whole name is a constant. A deferred caller
+// ($strobe, an NBA) reaches the instance the way it reaches the rest of its
+// operands, so a delayed fire still reads the issuing scope's name. Built in
+// the block `frame` builds into.
+[[nodiscard]] auto BuildHierarchicalNameExpr(
+    const mir::CompilationUnit& unit, const WalkFrame& frame) -> mir::ExprId;
+
+// The call handing one report to the diagnostic broker through `entries` (LRM
+// 20.10): the text already formatted, and, in the design's own code, the name
+// of the scope the call is written in, built in the block `frame` builds into.
+// Where the report is placed is where the call is written, which every call of
+// an entry that reports is handed. Composing the text is where reports differ
+// -- a severity task formats the design's own values, while a report the tool
+// writes on its own behalf has fixed words -- and issuing one is where they do
+// not. Returned detached, because the severity that ends the run has a
+// statement of its own to follow it.
+[[nodiscard]] auto BuildReportCallExpr(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    support::ReportEntries entries, mir::ExprId diagnostic_id,
+    mir::ExprId text_id) -> mir::Expr;
+
+// Appends to the block `frame` builds into the statement issuing one
+// severity-fixed report whose text the tool composed rather than the design.
+// Every report Lyra writes on its own behalf is this one statement -- an
+// assertion that failed with no action block of its own, an assignment a
+// destination's type did not admit -- because what separates them is the
+// severity and the words and nothing else.
 void AppendToolReportStmt(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    support::BuiltinFn severity, base::DiagMessage text);
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    support::ReportEntries entries, base::DiagMessage text);
 
 // Builds the format-text expression `value::Format(items,
 // runtime.TimeFormat())`: a value-layer free call over the print-item array

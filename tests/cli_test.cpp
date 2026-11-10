@@ -1605,7 +1605,10 @@ TEST(LyraManifest, ReportsNoInputAndWhyThereIsNone) {
 // a wait, and a severity task, each name their own line, and a report raised
 // inside the tool's own text -- the library classes of LRM 15 -- names the
 // design's call that reached it, since the library's lines mean nothing to
-// whoever wrote the call. Both backends place every report alike.
+// whoever wrote the call. A report the design's code makes names the scope
+// that code is written in, a named block here (LRM 20.10), and a failure the
+// tool raises names the procedure that was running. Both backends place every
+// report alike.
 TEST(LyraRun, AReportIsPlacedAtTheStatementThatMadeIt) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -1632,7 +1635,7 @@ TEST(LyraRun, AReportIsPlacedAtTheStatementThatMadeIt) {
       "  int x = 2;\n"
       "  e_t e;\n"
       "  D d;\n"
-      "  initial begin\n"
+      "  initial begin : b\n"
       "    $info(\"first\");\n"
       "    $warning(\"second\");\n"
       "    s.get(-1);\n"
@@ -1657,8 +1660,8 @@ TEST(LyraRun, AReportIsPlacedAtTheStatementThatMadeIt) {
     EXPECT_THAT(run, ExitedWithCode(Ne(0)))
         << backend << ": " << run.stderr_text;
     for (const std::string_view placed :
-         {"placed.sv:16:5: info: first\nnote: in 'Test' at time 0",
-          "placed.sv:17:5: warning: second\nnote: in 'Test' at time 0",
+         {"placed.sv:16:5: info: first\nnote: in 'Test.b' at time 0",
+          "placed.sv:17:5: warning: second\nnote: in 'Test.b' at time 0",
           "placed.sv:18:5: error: a 'semaphore' cannot be asked for a negative "
           "number of keys\nnote: in 'Test' at time 0",
           "placed.sv:21:5: warning: a bounded queue grew past its declared "
@@ -1667,10 +1670,11 @@ TEST(LyraRun, AReportIsPlacedAtTheStatementThatMadeIt) {
           "placed.sv:22:5: error: '$readmemh' cannot open the file "
           "'no_such_file.mem'\nnote: in 'Test' at time 0",
           "placed.sv:23:5: warning: 'unique' violation; no case item "
-          "matched\nnote: in 'Test' at time 0",
-          "placed.sv:27:5: error: assertion failed\nnote: in 'Test' at time 0",
+          "matched\nnote: in 'Test.b' at time 0",
+          "placed.sv:27:5: error: assertion failed\nnote: in 'Test.b' at time "
+          "0",
           "placed.sv:28:5: error: the '$cast' assignment is invalid, so the "
-          "destination is left unchanged\nnote: in 'Test' at time 0",
+          "destination is left unchanged\nnote: in 'Test.b' at time 0",
           "placed.sv:30:21: error: a member reached through a null object "
           "handle\nnote: in 'Test' at time 1"}) {
       EXPECT_NE(run.stderr_text.find(placed), std::string::npos)

@@ -84,6 +84,10 @@ auto LowerSystemSubroutineCallStmtForm(
               -> std::optional<diag::Result<mir::Stmt>> {
             return std::nullopt;
           },
+          [](const support::FatalSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
           [](const support::ScanSystemSubroutineInfo&)
               -> std::optional<diag::Result<mir::Stmt>> {
             return std::nullopt;

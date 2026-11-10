@@ -2,12 +2,14 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/source_location.hpp"
+#include "lyra/base/time.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -21,25 +23,29 @@ enum class Severity : std::uint8_t {
   kFatal,
 };
 
-// LRM 20.10 severity emit surface. The four EmitX methods are the
-// generated-code entry points: each takes a pre-formatted body string (from
-// `runtime.Format(items)`) and where the call is written, which the program
-// hands over last as every operation that can fail is handed it, and writes
-// at its fixed severity. Each call generates its report (LRM 20.10), however
-// often one place is reached.
+// LRM 20.10 severity emit surface. The four EmitX methods, and the four
+// EmitXAtCaller methods below them, are the generated-code entry points: each
+// EmitX takes a pre-formatted body string (from
+// `runtime.Format(items)`), the hierarchical name of the scope the call is
+// written in, and where the call is written, which the program hands over last
+// as every operation that can fail is handed it, and writes at its fixed
+// severity. Each call generates its report (LRM 20.10), however often one place
+// is reached.
 //
-// LRM 20.10 also requires every report to say where in the design and when it
-// was made. Those are facts of the moment rather than of the call, so they are
-// asked of the run as each report is written rather than carried in an operand.
+// LRM 20.10 also requires every report to say when it was made. That is a fact
+// of the moment rather than of the call, so it is asked of the run as each
+// report is written rather than carried in an operand.
 class DiagnosticDispatcher {
  public:
-  // Where in the design and when a report is being made, as the run answers it.
+  // When a report is made, and the procedure it is made under, as the run
+  // answers them.
   struct Context {
-    // The instance the report is made in and the simulation time, as the
-    // phrase a note says them in.
-    std::string where;
-    // Where the procedure the report is made under is written; no place where
-    // none is running or no source text states it.
+    // The scope the procedure runs in; none for a namespace's initializer and
+    // for an action it started.
+    std::optional<std::string> scope;
+    SimTime time = 0;
+    // Where the procedure is written; no place where none is running or no
+    // source text states it.
     base::SourceLocation written_at{};
   };
   using ContextSource = std::function<Context()>;
@@ -53,14 +59,35 @@ class DiagnosticDispatcher {
   // installed rather than taken at construction.
   void SetContextSource(ContextSource context);
 
-  void EmitInfo(const lyra::value::String& text, base::SourceLocation at);
-  void EmitWarning(const lyra::value::String& text, base::SourceLocation at);
-  void EmitError(const lyra::value::String& text, base::SourceLocation at);
-  void EmitFatal(const lyra::value::String& text, base::SourceLocation at);
+  void EmitInfo(
+      const lyra::value::String& text, const lyra::value::String& scope,
+      base::SourceLocation at);
+  void EmitWarning(
+      const lyra::value::String& text, const lyra::value::String& scope,
+      base::SourceLocation at);
+  void EmitError(
+      const lyra::value::String& text, const lyra::value::String& scope,
+      base::SourceLocation at);
+  void EmitFatal(
+      const lyra::value::String& text, const lyra::value::String& scope,
+      base::SourceLocation at);
+
+  // The same reports made by a body that reports at its caller: its scopes
+  // mean nothing to the design's author, so each names the procedure that was
+  // running, as a failure the tool raises does.
+  void EmitInfoAtCaller(
+      const lyra::value::String& text, base::SourceLocation at);
+  void EmitWarningAtCaller(
+      const lyra::value::String& text, base::SourceLocation at);
+  void EmitErrorAtCaller(
+      const lyra::value::String& text, base::SourceLocation at);
+  void EmitFatalAtCaller(
+      const lyra::value::String& text, base::SourceLocation at);
 
   // A report the tool writes for the design: placed where the operation being
-  // carried out was written, which is what is bound. `notes` follow it, each a
-  // line of its own, after the one saying where and when.
+  // carried out was written, which is what is bound, and naming the scope of
+  // the procedure that was running, as a panic names its thread. `notes`
+  // follow it, each a line of its own, after the one saying where and when.
   void Report(
       Severity severity, const base::DiagMessage& message,
       std::span<const base::DiagMessage> notes = {});
@@ -89,9 +116,21 @@ class DiagnosticDispatcher {
   [[nodiscard]] auto ReportedFatal() const -> bool;
 
  private:
+  // A report the design's code makes, naming the scope that code is written
+  // in.
+  void EmitInScope(
+      Severity severity, std::string_view body, std::string_view scope,
+      base::SourceLocation at);
+  // A report of the tool's own, opening with `word` and naming the procedure it
+  // is made under.
+  void EmitUnderProcedure(
+      Severity severity, std::string_view word, base::SourceLocation at,
+      std::string_view body, std::span<const base::DiagMessage> notes);
+  // `scope` is what the note names, none where the report is made in no scope.
   void Emit(
       Severity severity, std::string_view word, base::SourceLocation at,
-      std::string_view body, std::span<const base::DiagMessage> notes = {});
+      std::string_view body, std::optional<std::string_view> scope,
+      SimTime time, std::span<const base::DiagMessage> notes);
   void Write(std::string_view text);
 
   FileTable* files_;

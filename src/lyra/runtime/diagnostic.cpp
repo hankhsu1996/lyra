@@ -63,29 +63,58 @@ void DiagnosticDispatcher::SetContextSource(ContextSource context) {
 }
 
 void DiagnosticDispatcher::EmitInfo(
-    const lyra::value::String& text, base::SourceLocation at) {
-  Emit(Severity::kInfo, SeverityText(Severity::kInfo), at, text.View());
+    const lyra::value::String& text, const lyra::value::String& scope,
+    base::SourceLocation at) {
+  EmitInScope(Severity::kInfo, text.View(), scope.View(), at);
 }
 
 void DiagnosticDispatcher::EmitWarning(
-    const lyra::value::String& text, base::SourceLocation at) {
-  Emit(Severity::kWarning, SeverityText(Severity::kWarning), at, text.View());
+    const lyra::value::String& text, const lyra::value::String& scope,
+    base::SourceLocation at) {
+  EmitInScope(Severity::kWarning, text.View(), scope.View(), at);
 }
 
 void DiagnosticDispatcher::EmitError(
-    const lyra::value::String& text, base::SourceLocation at) {
-  Emit(Severity::kError, SeverityText(Severity::kError), at, text.View());
+    const lyra::value::String& text, const lyra::value::String& scope,
+    base::SourceLocation at) {
+  EmitInScope(Severity::kError, text.View(), scope.View(), at);
 }
 
 void DiagnosticDispatcher::EmitFatal(
+    const lyra::value::String& text, const lyra::value::String& scope,
+    base::SourceLocation at) {
+  EmitInScope(Severity::kFatal, text.View(), scope.View(), at);
+}
+
+void DiagnosticDispatcher::EmitInfoAtCaller(
     const lyra::value::String& text, base::SourceLocation at) {
-  Emit(Severity::kFatal, SeverityText(Severity::kFatal), at, text.View());
+  EmitUnderProcedure(
+      Severity::kInfo, SeverityText(Severity::kInfo), at, text.View(), {});
+}
+
+void DiagnosticDispatcher::EmitWarningAtCaller(
+    const lyra::value::String& text, base::SourceLocation at) {
+  EmitUnderProcedure(
+      Severity::kWarning, SeverityText(Severity::kWarning), at, text.View(),
+      {});
+}
+
+void DiagnosticDispatcher::EmitErrorAtCaller(
+    const lyra::value::String& text, base::SourceLocation at) {
+  EmitUnderProcedure(
+      Severity::kError, SeverityText(Severity::kError), at, text.View(), {});
+}
+
+void DiagnosticDispatcher::EmitFatalAtCaller(
+    const lyra::value::String& text, base::SourceLocation at) {
+  EmitUnderProcedure(
+      Severity::kFatal, SeverityText(Severity::kFatal), at, text.View(), {});
 }
 
 void DiagnosticDispatcher::Report(
     Severity severity, const base::DiagMessage& message,
     std::span<const base::DiagMessage> notes) {
-  Emit(
+  EmitUnderProcedure(
       severity, ToolSeverityText(severity),
       base::BoundSourceLocation(message.Text()), message.Text(), notes);
 }
@@ -94,7 +123,7 @@ void DiagnosticDispatcher::Report(
     base::NoSourceLocation no_location, Severity severity,
     const base::DiagMessage& message,
     std::span<const base::DiagMessage> notes) {
-  Emit(
+  EmitUnderProcedure(
       severity, ToolSeverityText(severity),
       static_cast<base::SourceLocation>(no_location), message.Text(), notes);
 }
@@ -102,7 +131,8 @@ void DiagnosticDispatcher::Report(
 void DiagnosticDispatcher::ReportAt(
     base::SourceLocation at, Severity severity,
     const base::DiagMessage& message) {
-  Emit(severity, ToolSeverityText(severity), at, message.Text());
+  EmitUnderProcedure(
+      severity, ToolSeverityText(severity), at, message.Text(), {});
 }
 
 void DiagnosticDispatcher::Line(std::string_view line) {
@@ -113,28 +143,46 @@ auto DiagnosticDispatcher::ReportedFatal() const -> bool {
   return reported_fatal_;
 }
 
-void DiagnosticDispatcher::Emit(
+// The report the design's code makes names the scope that code is written in,
+// which is the call's to state (LRM 20.10), and the time, which is the run's.
+void DiagnosticDispatcher::EmitInScope(
+    Severity severity, std::string_view body, std::string_view scope,
+    base::SourceLocation at) {
+  Emit(
+      severity, SeverityText(severity), at, body, scope,
+      context_ ? context_().time : 0, {});
+}
+
+// A report of the tool's own is placed where the operation it is about was
+// written. One about no place -- the tool failed the design under no statement
+// of its own -- is placed where the procedure it is made under is written.
+void DiagnosticDispatcher::EmitUnderProcedure(
     Severity severity, std::string_view word, base::SourceLocation at,
     std::string_view body, std::span<const base::DiagMessage> notes) {
+  const Context context = context_ ? context_() : Context{};
+  Emit(
+      severity, word, at.IsValid() ? at : context.written_at, body,
+      context.scope, context.time, notes);
+}
+
+void DiagnosticDispatcher::Emit(
+    Severity severity, std::string_view word, base::SourceLocation at,
+    std::string_view body, std::optional<std::string_view> scope, SimTime time,
+    std::span<const base::DiagMessage> notes) {
   if (severity == Severity::kFatal) {
     reported_fatal_ = true;
   }
-  // A report is placed where the operation it is about was written. One about
-  // no place -- the tool failed the design under no statement of its own -- is
-  // placed where the procedure it is made under is written; which instance
-  // and what time are context, so they are a note of their own.
-  const std::optional<Context> context =
-      context_ ? std::optional{context_()} : std::nullopt;
-  const std::string place =
-      SourceLocationText(at.IsValid() || !context ? at : context->written_at);
+  const std::string place = SourceLocationText(at);
 
+  // Which scope and what time are context, so they are a note of their own.
   std::string text;
   if (!place.empty()) {
     text += std::format("{}: ", place);
   }
   text += std::format("{}: {}\n", word, body);
-  if (context) {
-    text += std::format("note: {}\n", context->where);
+  if (context_) {
+    text += scope ? std::format("note: in '{}' at time {}\n", *scope, time)
+                  : std::format("note: at time {}\n", time);
   }
   for (const base::DiagMessage& note : notes) {
     text += std::format("note: {}\n", note.Text());
