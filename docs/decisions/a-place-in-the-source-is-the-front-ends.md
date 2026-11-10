@@ -103,9 +103,27 @@ themselves are unchanged where the compiler counts, decides an exit status and r
 refuses.
 
 The same holds while a design runs: a report the tool makes of its own opens with one of the three
-words, placed at the statement that failed, with the instance and the time in a note after it. Only
-the line a design's own severity task prints keeps the severity that task names (LRM 20.10), since
-that line is the design's. The form of the text after the word is `docs/messages.md`'s.
+words, placed at the statement that failed, with a scope and the time in a note after it. Only the
+line a design's own severity task prints keeps the severity that task names (LRM 20.10), since that
+line is the design's. The form of the text after the word is `docs/messages.md`'s.
+
+Which scope the note names depends on who made the report. A report the design's code makes -- a
+severity task, the `$error` an assertion with no fail action calls, a `unique` violation, a `$cast`
+called as a task -- names the scope that code is written in, which LRM 20.10 asks of a severity
+task. That is the name `%m` gives there (LRM 21.2.1.5), so the call hands it as an operand built the
+way `%m` builds it: one compiled body serves every instance, so the instance's part of the name is
+read from the body's own object as it runs and only the text below it is fixed. The file and line
+are a constant of the call (D4) and the scope cannot be, which is why the two arrive apart, as
+Verilator's generated call of `vl_warn` hands the hierarchical name beside its file and line. A
+failure the tool raises names the procedure that was running, as Rust's panic names its thread:
+handing a scope to every operation that can fail would cost an operand on every such call, for a
+report the standard does not ask a scope of. Until 2026-11-09 this record said "the instance",
+meaning the running procedure's, so a severity task in a named block, a function, or a task of
+another instance named the procedure's instance instead of its own scope. A body that reports at its
+caller -- the tool's own text, such as a library class of LRM 15 or the coverage library, and a body
+written for a declaration the source gave none, such as an `extern forkjoin` task no module defines
+(LRM 25.7.4) -- has no scope its reader wrote, so a report it makes names the procedure that was
+running, as a failure the tool raises does.
 
 ### D4. A program is handed where each operation that can fail was written
 

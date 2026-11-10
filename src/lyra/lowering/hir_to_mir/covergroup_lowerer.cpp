@@ -764,24 +764,11 @@ class ClassWriter {
     return std::visit(
         Overloaded{
             [&](const hir::NameBelowInstance& below) {
-              const mir::ExprId instance = BuildEnclosingScopeReceiver(
-                  e.Frame(), Unit(), mir::EnclosingHops{below.scopes_out});
-              return e.Block().Add(
-                  mir::Expr{
-                      .data =
-                          mir::CallExpr{
-                              .callee =
-                                  mir::Direct{
-                                      .target = support::BuiltinFn::
-                                          kHierarchicalPathOf,
-                                      .receiver = BuildObjectDeref(
-                                          Unit(), e.Block(), instance)},
-                              .arguments = {e.String(
-                                  below.text.empty()
-                                      ? own_name
-                                      : std::format(
-                                            "{}.{}", below.text, own_name))}},
-                      .type = Unit().builtins.string});
+              return BuildNameBelowInstanceExpr(
+                  Unit(), e.Frame(), mir::EnclosingHops{below.scopes_out},
+                  below.text.empty()
+                      ? own_name
+                      : std::format("{}.{}", below.text, own_name));
             },
             [&](const hir::WholeName&) {
               const std::string& home = u_->Hir().source_name;

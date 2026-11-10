@@ -1,33 +1,57 @@
-// @reports: info line=21 time=37 scope=Top.probe message="a probe report"
+// @reports: info line=40 time=37 scope=Top.probe message="a probe report"
+// @reports: info line=46 time=40 scope=Top.named message="in a named block"
+// @reports: info line=48 scope=Top.named.inner message="in a nested block"
+// @reports: info line=50 scope=Top.named.labeled message="in a labeled one"
+// @reports: warning line=22 scope=Top.other.warn message="in another's task"
+// @reports: info line=34 scope=Top.note message="in a function"
+// @reports: error line=26 scope=Top.other.check
 //
 // Every severity system task prints a tool-specific message, and that message
 // shall include the file name and line number of the call, the hierarchical
 // name of the scope the call is made in, and the simulation run time at which
-// it is made (LRM 20.10). A program cannot read a message about itself, so the
-// two the program can name for itself are checked here -- the scope `%m`
-// resolves to (LRM 21.2.1.5) and the time `$time` returns -- and the claim
-// above is that the report carries them.
+// it is made (LRM 20.10). The scope is where the call is written, so it is the
+// one `%m` names there (LRM 21.2.1.5): the innermost named block or labeled
+// statement around it (LRM 9.3.5), the task or function it sits in, and the
+// instance holding that, whichever procedure made the call. A task of another
+// instance called by its hierarchical name is that instance's (LRM 23.6), and
+// an assertion with no fail action calls `$error` where it is written (LRM
+// 20.10). A program cannot read a message about itself, so the claims above
+// are that each report carries them.
+module Other;
+  task warn();
+    $warning("in another's task");
+  endtask
+
+  task check(bit holds);
+    assert (holds);
+  endtask
+endmodule
+
 module Top;
-  string scope_name;
-  int reported_at;
+  Other other ();
+
+  function automatic void note();
+    $info("in a function");
+  endfunction
 
   if (1) begin : probe
     initial begin
-      scope_name = "not yet reported";
-      reported_at = 9;
       #37;
-      scope_name = $sformatf("%m");
-      reported_at = $time;
       $info("a probe report");
     end
   end
 
-  final begin
-    if (scope_name != "Top.probe")
-      $fatal(1, "the reporting scope was '%s', expected Top.probe",
-             scope_name);
-    if (reported_at !== 37)
-      $fatal(1, "the report was made at %0d, expected 37", reported_at);
+  initial begin : named
+    #40;
+    $info("in a named block");
+    begin : inner
+      $info("in a nested block");
+    end
+    labeled : $info("in a labeled one");
+    other.warn();
+    note();
+    $display("Ready for the report");
+    other.check(0);
     $display("All checks passed");
   end
 endmodule

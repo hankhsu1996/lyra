@@ -182,8 +182,8 @@ auto ReadSimulationControl(std::string_view body)
   return std::nullopt;
 }
 
-// The context a report's following note gives: the scope its procedure runs
-// in, where it has one, and the time.
+// The context a report's following note gives: the scope it names, where it
+// names one, and the time.
 void ReadContext(std::string_view body, ObservedReport& report) {
   constexpr std::string_view kIn = "in '";
   constexpr std::string_view kAt = "at time ";

@@ -1359,6 +1359,22 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "emit_error", .declaration = Method{"EmitError"}};
     case BuiltinFn::kEmitFatal:
       return {.name = "emit_fatal", .declaration = Method{"EmitFatal"}};
+    case BuiltinFn::kEmitInfoAtCaller:
+      return {
+          .name = "emit_info_at_caller",
+          .declaration = Method{"EmitInfoAtCaller"}};
+    case BuiltinFn::kEmitWarningAtCaller:
+      return {
+          .name = "emit_warning_at_caller",
+          .declaration = Method{"EmitWarningAtCaller"}};
+    case BuiltinFn::kEmitErrorAtCaller:
+      return {
+          .name = "emit_error_at_caller",
+          .declaration = Method{"EmitErrorAtCaller"}};
+    case BuiltinFn::kEmitFatalAtCaller:
+      return {
+          .name = "emit_fatal_at_caller",
+          .declaration = Method{"EmitFatalAtCaller"}};
     case BuiltinFn::kRecordCoverage:
       return {
           .name = "record_coverage",

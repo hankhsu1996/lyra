@@ -71,13 +71,16 @@ struct TerminationSystemSubroutineInfo {
 // ignored.
 struct ProgramControlSystemSubroutineInfo {};
 
-// LRM 20.10 severity-fixed diagnostic tasks. The MIR-side identity is the
-// `BuiltinFn` Emit method on the diagnostic broker; the descriptor stores it
-// directly so the lowering reads `info.builtin_fn` and routes the runtime
-// call without a parallel severity enum.
+// LRM 20.10 severity-fixed diagnostic tasks that leave the run going. The
+// descriptor names the entries its severity reports through, so the lowering
+// routes the runtime call without a parallel severity enum.
 struct DiagnosticSystemSubroutineInfo {
-  BuiltinFn builtin_fn;
+  ReportEntries report;
 };
+
+// LRM 20.10 `$fatal`, which takes a finish number before its message and ends
+// the run with an implicit `$finish` after the report.
+struct FatalSystemSubroutineInfo {};
 
 // The MIR-side callee identity for the SV system task. The same closed
 // namespace `BuiltinFn` carries every recognized runtime entry; descriptors
@@ -340,15 +343,16 @@ struct AssertionControlSystemSubroutineInfo {
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
     ProgramControlSystemSubroutineInfo, DiagnosticSystemSubroutineInfo,
-    FileIOSystemSubroutineInfo, ScanSystemSubroutineInfo,
-    SFormatSystemSubroutineInfo, TimeSystemSubroutineInfo,
-    TimeFormatSystemSubroutineInfo, PrintTimescaleSystemSubroutineInfo,
-    PlusargsSystemSubroutineInfo, MemFileSystemSubroutineInfo,
-    BitVectorSystemSubroutineInfo, HostCommandSystemSubroutineInfo,
-    RandomSystemSubroutineInfo, DistributionSystemSubroutineInfo,
-    SampledValueSystemSubroutineInfo, ValueChangeSystemSubroutineInfo,
-    PastValueSystemSubroutineInfo, ValueDumpSystemSubroutineInfo,
-    CoverageDatabaseSystemSubroutineInfo, AssertionControlSystemSubroutineInfo>;
+    FatalSystemSubroutineInfo, FileIOSystemSubroutineInfo,
+    ScanSystemSubroutineInfo, SFormatSystemSubroutineInfo,
+    TimeSystemSubroutineInfo, TimeFormatSystemSubroutineInfo,
+    PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo,
+    MemFileSystemSubroutineInfo, BitVectorSystemSubroutineInfo,
+    HostCommandSystemSubroutineInfo, RandomSystemSubroutineInfo,
+    DistributionSystemSubroutineInfo, SampledValueSystemSubroutineInfo,
+    ValueChangeSystemSubroutineInfo, PastValueSystemSubroutineInfo,
+    ValueDumpSystemSubroutineInfo, CoverageDatabaseSystemSubroutineInfo,
+    AssertionControlSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -566,25 +570,21 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$info",
         .kind = SystemSubroutineKind::kFunction,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
-        .semantic =
-            DiagnosticSystemSubroutineInfo{.builtin_fn = BuiltinFn::kEmitInfo},
+        .semantic = DiagnosticSystemSubroutineInfo{.report = kInfoReport},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{18},
         .name = "$warning",
         .kind = SystemSubroutineKind::kFunction,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
-        .semantic =
-            DiagnosticSystemSubroutineInfo{
-                .builtin_fn = BuiltinFn::kEmitWarning},
+        .semantic = DiagnosticSystemSubroutineInfo{.report = kWarningReport},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{19},
         .name = "$error",
         .kind = SystemSubroutineKind::kFunction,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
-        .semantic =
-            DiagnosticSystemSubroutineInfo{.builtin_fn = BuiltinFn::kEmitError},
+        .semantic = DiagnosticSystemSubroutineInfo{.report = kErrorReport},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{20},
@@ -901,8 +901,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fatal",
         .kind = SystemSubroutineKind::kFunction,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
-        .semantic =
-            DiagnosticSystemSubroutineInfo{.builtin_fn = BuiltinFn::kEmitFatal},
+        .semantic = FatalSystemSubroutineInfo{},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{54},

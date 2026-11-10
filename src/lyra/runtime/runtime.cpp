@@ -297,13 +297,11 @@ void Runtime::ReportSimulationControl(
 auto Runtime::ReportContext() const -> DiagnosticDispatcher::Context {
   const ProcedureContext& procedure = RunningProcedure();
   return {
-      .where = procedure.scope == nullptr
-                   ? std::format("at time {}", now_.load())
-                   : std::format(
-                         "in '{}' at time {}",
-                         std::string_view{
-                             procedure.scope->HierarchicalPath().View()},
-                         now_.load()),
+      .scope = procedure.scope == nullptr
+                   ? std::nullopt
+                   : std::optional<std::string>{std::string{
+                         procedure.scope->HierarchicalPath().View()}},
+      .time = now_.load(),
       .written_at = procedure.written_at};
 }
 

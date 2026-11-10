@@ -354,7 +354,7 @@ class Runtime final : public RuntimeEffects {
   // activity at time zero, so a run-time error raised by either is the design's
   // and ends the run the same way one raised later does.
   void RunSimulation();
-  // LRM 20.10: where in the design and when a report is being made.
+  // When a report is being made, and the procedure it is made under.
   [[nodiscard]] auto ReportContext() const -> DiagnosticDispatcher::Context;
   // LRM 16.3 requires a tool to report immediate cover results at the end of
   // simulation where it offers no assertion API to ask for them on demand.

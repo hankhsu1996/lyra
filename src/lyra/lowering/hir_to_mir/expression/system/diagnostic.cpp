@@ -13,7 +13,6 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/builder.hpp"
-#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -25,11 +24,11 @@ namespace {
 
 // The report a severity task makes: its message formatted from the items at
 // `items_offset` on, with decimal as the bare-argument radix (LRM 20.10,
-// 21.2.1.4), handed to the diagnostic dispatcher at the severity `entry`
+// 21.2.1.4), handed to the diagnostic dispatcher at the severity `entries`
 // names.
 auto BuildReportCall(
     ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call,
-    support::BuiltinFn entry, std::size_t items_offset)
+    support::ReportEntries entries, std::size_t items_offset)
     -> diag::Result<mir::Expr> {
   auto items_or = BuildDisplayListPrintItems(
       process, frame, call, support::PrintRadix::kDecimal, items_offset);
@@ -44,7 +43,7 @@ auto BuildReportCall(
       block.Add(BuildFormatCallExpr(unit, block, items_array));
   const mir::ExprId diagnostic_id =
       block.Add(BuildDiagnosticCallExpr(unit, block));
-  return BuildReportCallExpr(unit, entry, diagnostic_id, text_id);
+  return BuildReportCallExpr(unit, frame, entries, diagnostic_id, text_id);
 }
 
 }  // namespace
@@ -53,10 +52,12 @@ auto LowerDiagnosticSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const support::DiagnosticSystemSubroutineInfo& info)
     -> diag::Result<mir::Expr> {
-  if (info.builtin_fn != support::BuiltinFn::kEmitFatal) {
-    return BuildReportCall(process, frame, call, info.builtin_fn, 0);
-  }
+  return BuildReportCall(process, frame, call, info.report, 0);
+}
 
+auto LowerFatalSystemSubroutineCall(
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
+    -> diag::Result<mir::Expr> {
   // $fatal takes its first argument as the finish number (LRM 20.10), held in
   // a local before the message's arguments are evaluated, and ends the run
   // with an implicit $finish after the report. The report is a statement of
@@ -66,7 +67,8 @@ auto LowerDiagnosticSystemSubroutineCall(
   if (!finish_number) return std::unexpected(std::move(finish_number.error()));
   const mir::ExprId held = EvaluatedOnce(frame, *finish_number);
   auto reported = BuildReportCall(
-      process, frame, call, info.builtin_fn, call.arguments.empty() ? 0 : 1);
+      process, frame, call, support::kFatalReport,
+      call.arguments.empty() ? 0 : 1);
   if (!reported) return std::unexpected(std::move(reported.error()));
   mir::Builder block = frame.Builder();
   block.AppendStmt(mir::ExprStmt{.expr = block.Add(*std::move(reported))});

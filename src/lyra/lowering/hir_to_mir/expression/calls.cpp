@@ -164,6 +164,14 @@ auto LowerSystemSubroutineCall(
               return RejectStructuralEffect(span);
             }
           },
+          [&](const support::FatalSystemSubroutineInfo&)
+              -> diag::Result<mir::Expr> {
+            if constexpr (kProcedural) {
+              return LowerFatalSystemSubroutineCall(lowerer, frame, call);
+            } else {
+              return RejectStructuralEffect(span);
+            }
+          },
           [&](const support::FileIOSystemSubroutineInfo& file_io)
               -> diag::Result<mir::Expr> {
             if constexpr (kProcedural) {

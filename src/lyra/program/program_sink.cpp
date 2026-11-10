@@ -79,6 +79,10 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_emit_warning", &lyra_rt_emit_warning);
   add("lyra_rt_emit_error", &lyra_rt_emit_error);
   add("lyra_rt_emit_fatal", &lyra_rt_emit_fatal);
+  add("lyra_rt_emit_info_at_caller", &lyra_rt_emit_info_at_caller);
+  add("lyra_rt_emit_warning_at_caller", &lyra_rt_emit_warning_at_caller);
+  add("lyra_rt_emit_error_at_caller", &lyra_rt_emit_error_at_caller);
+  add("lyra_rt_emit_fatal_at_caller", &lyra_rt_emit_fatal_at_caller);
   add("lyra_rt_record_coverage", &lyra_rt_record_coverage);
   add("lyra_rt_enter_coroutine", &lyra_rt_enter_coroutine);
   add("lyra_rt_enter_reaction_running_first",

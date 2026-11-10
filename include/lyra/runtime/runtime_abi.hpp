@@ -183,19 +183,33 @@ void lyra_rt_writeln(void* files, std::int64_t descriptor, void* text);
 void lyra_rt_write(void* files, std::int64_t descriptor, void* text);
 
 // The severity-fixed diagnostic channel (LRM 20.10). The dispatcher is reached
-// from the runtime once, then emitted to; `text` is already formatted, and
-// where the call is written is handed over as to every entry that reports for
-// the design, which locates the report. One entry per severity, so the
-// generated module names the severity it means and no severity tag crosses the
-// boundary.
+// from the runtime once, then emitted to; `text` is already formatted, `scope`
+// is the hierarchical name of the scope the call is written in, and where the
+// call is written is handed over as to every entry that reports for the
+// design, which locates the report. One entry per severity, so the generated
+// module names the severity it means and no severity tag crosses the boundary.
 auto lyra_rt_diagnostic(void* runtime) -> void*;
 void lyra_rt_emit_info(
-    void* dispatcher, const void* text, const void* location);
+    void* dispatcher, const void* text, const void* scope,
+    const void* location);
 void lyra_rt_emit_warning(
-    void* dispatcher, const void* text, const void* location);
+    void* dispatcher, const void* text, const void* scope,
+    const void* location);
 void lyra_rt_emit_error(
-    void* dispatcher, const void* text, const void* location);
+    void* dispatcher, const void* text, const void* scope,
+    const void* location);
 void lyra_rt_emit_fatal(
+    void* dispatcher, const void* text, const void* scope,
+    const void* location);
+// The same reports made by a body that reports at its caller, which name the
+// procedure that was running.
+void lyra_rt_emit_info_at_caller(
+    void* dispatcher, const void* text, const void* location);
+void lyra_rt_emit_warning_at_caller(
+    void* dispatcher, const void* text, const void* location);
+void lyra_rt_emit_error_at_caller(
+    void* dispatcher, const void* text, const void* location);
+void lyra_rt_emit_fatal_at_caller(
     void* dispatcher, const void* text, const void* location);
 
 // LRM 16.3 immediate cover result: one evaluation of the cover statement at

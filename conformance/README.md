@@ -230,7 +230,7 @@ severity it names and no other: a case's own failing check is a `$fatal`, and it
 the error a case asks for.
 
 ```systemverilog
-// @reports: info line=21 time=37 scope=Top.probe message="a probe report"
+// @reports: info line=40 time=37 scope=Top.probe message="a probe report"
 ```
 
 **A claim is met by the report of the statement that should issue it, and no other.** Each report a

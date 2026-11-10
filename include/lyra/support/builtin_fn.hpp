@@ -680,15 +680,23 @@ enum class BuiltinFn : std::uint16_t {
   // Diagnostic subsystem accessor and severity-fixed emit operations.
   // `Diagnostic` is a `RuntimeEffects` method returning the
   // `DiagnosticDispatcher` broker. `EmitInfo` / `EmitWarning` / `EmitError` /
-  // `EmitFatal` are dispatcher methods taking a pre-formatted text (LRM 20.10),
-  // one method per severity rather than a single emit-with-tag, mirroring the
-  // `Write` / `Writeln` split. `EmitFatal` pairs with a subsequent `Finish`
-  // call to realize the LRM 20.10 "implicit $finish" requirement.
+  // `EmitFatal` are dispatcher methods taking a pre-formatted text and the name
+  // of the scope the call is written in (LRM 20.10), one method per severity
+  // rather than a single emit-with-tag, mirroring the `Write` / `Writeln`
+  // split. `EmitFatal` pairs with a subsequent `Finish` call to realize the LRM
+  // 20.10 "implicit $finish" requirement.
   kDiagnostic,
   kEmitInfo,
   kEmitWarning,
   kEmitError,
   kEmitFatal,
+  // The same reports, made by a body that reports at its caller, whose scopes
+  // mean nothing to the design's author: each names the procedure that was
+  // running, as a failure the tool raises does.
+  kEmitInfoAtCaller,
+  kEmitWarningAtCaller,
+  kEmitErrorAtCaller,
+  kEmitFatalAtCaller,
   // LRM 16.3 immediate cover result. One entry records an evaluation together
   // with whether it succeeded, rather than one entry per outcome, because the
   // two counts the standard asks a tool to report are not independent: a
@@ -1548,6 +1556,28 @@ enum class BuiltinFn : std::uint16_t {
   // item rather than as a context-dependent format kind.
   kHierarchicalPathOf,
 };
+
+// The two entries of the diagnostic broker a report at one severity is made
+// through (LRM 20.10): one naming the scope the call is written in, for the
+// design's own code, and one naming the procedure that was running, for a body
+// that reports at its caller, none of whose scopes the design's author wrote.
+struct ReportEntries {
+  BuiltinFn in_scope;
+  BuiltinFn at_caller;
+};
+
+inline constexpr ReportEntries kInfoReport{
+    .in_scope = BuiltinFn::kEmitInfo,
+    .at_caller = BuiltinFn::kEmitInfoAtCaller};
+inline constexpr ReportEntries kWarningReport{
+    .in_scope = BuiltinFn::kEmitWarning,
+    .at_caller = BuiltinFn::kEmitWarningAtCaller};
+inline constexpr ReportEntries kErrorReport{
+    .in_scope = BuiltinFn::kEmitError,
+    .at_caller = BuiltinFn::kEmitErrorAtCaller};
+inline constexpr ReportEntries kFatalReport{
+    .in_scope = BuiltinFn::kEmitFatal,
+    .at_caller = BuiltinFn::kEmitFatalAtCaller};
 
 // A function the library declares in a scope of its own: the scope, and the
 // function's name in it. The object the entry acts on, where it has one, is its

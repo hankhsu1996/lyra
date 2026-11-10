@@ -3,11 +3,17 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/hir/fixed_name.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
@@ -208,29 +214,84 @@ auto BuildDiagnosticCallExpr(
       .type = unit.builtins.diagnostic};
 }
 
+auto BuildNameBelowInstanceExpr(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::EnclosingHops out, std::string below) -> mir::ExprId {
+  mir::Builder block = frame.Builder();
+  const mir::ExprId instance = BuildEnclosingScopeReceiver(frame, unit, out);
+  const mir::ExprId below_id =
+      BuildStringValueExpr(unit, block, std::move(below));
+  return block.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kHierarchicalPathOf,
+                          .receiver = BuildObjectDeref(unit, block, instance)},
+                  .arguments = {below_id}},
+          .type = unit.builtins.string});
+}
+
+auto BuildHierarchicalNameExpr(
+    const mir::CompilationUnit& unit, const WalkFrame& frame) -> mir::ExprId {
+  if (frame.scope_name == nullptr) {
+    throw InternalError(
+        "BuildHierarchicalNameExpr: a construct was lowered in no scope a "
+        "name is known for");
+  }
+  return std::visit(
+      Overloaded{
+          [&](const hir::WholeName& name) {
+            return BuildStringValueExpr(unit, frame.Builder(), name.text);
+          },
+          [&](const hir::NameBelowInstance& name) {
+            return BuildNameBelowInstanceExpr(
+                unit, frame, mir::EnclosingHops{name.scopes_out}, name.text);
+          }},
+      *frame.scope_name);
+}
+
 auto BuildReportCallExpr(
-    const mir::CompilationUnit& unit, support::BuiltinFn severity,
-    mir::ExprId diagnostic_id, mir::ExprId text_id) -> mir::Expr {
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    support::ReportEntries entries, mir::ExprId diagnostic_id,
+    mir::ExprId text_id) -> mir::Expr {
+  // A body that reports at its caller is the tool's own text, or one written
+  // for a declaration the source gave none, so none of its scopes is one the
+  // design's author wrote.
+  if (frame.bindings->Provides(CallerLocationOrigin{})) {
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target = entries.at_caller, .receiver = diagnostic_id},
+                .arguments = {text_id}},
+        .type = unit.builtins.void_type};
+  }
+  const mir::ExprId scope_id = BuildHierarchicalNameExpr(unit, frame);
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee =
-                  mir::Direct{.target = severity, .receiver = diagnostic_id},
-              .arguments = {text_id}},
+                  mir::Direct{
+                      .target = entries.in_scope, .receiver = diagnostic_id},
+              .arguments = {text_id, scope_id}},
       .type = unit.builtins.void_type};
 }
 
 void AppendToolReportStmt(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    support::BuiltinFn severity, base::DiagMessage text) {
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    support::ReportEntries entries, base::DiagMessage text) {
+  mir::Builder block = frame.Builder();
   const mir::ExprId diagnostic_id =
       block.Add(BuildDiagnosticCallExpr(unit, block));
   const mir::ExprId text_id =
       BuildStringValueExpr(unit, block, std::move(text).TakeText());
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = block.Add(
-              BuildReportCallExpr(unit, severity, diagnostic_id, text_id))});
+          .expr = block.Add(BuildReportCallExpr(
+              unit, frame, entries, diagnostic_id, text_id))});
 }
 
 auto BuildFormatCallExpr(
