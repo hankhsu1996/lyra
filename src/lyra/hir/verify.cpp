@@ -49,6 +49,7 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
@@ -1439,14 +1440,14 @@ void ReportNamespaceFormals(
 // a subroutine of its scope for every subroutine.
 void VerifyNamespaceDefinition(
     const CompilationUnit& unit, std::vector<std::string>& lines) {
-  if (unit.namespace_definition.has_value() !=
-      (unit.role == UnitRole::kNamespace)) {
+  const bool is_namespace = !hir::RootsAnObject(unit.definition);
+  if (unit.namespace_definition.has_value() != is_namespace) {
     lines.push_back(
         std::format(
             "hir verify: unit '{}' {} what a namespace defines, and {} one",
             unit.name,
             unit.namespace_definition.has_value() ? "holds" : "lacks",
-            unit.role == UnitRole::kNamespace ? "is" : "is not"));
+            is_namespace ? "is" : "is not"));
     return;
   }
   if (!unit.namespace_definition.has_value()) return;
@@ -2351,7 +2352,7 @@ void VerifyConstruction(
               }
             },
             [&](const BlocksChoose& chosen) {
-              if (places.size() != chosen.alternatives ||
+              if (places.size() != chosen.alternatives.size() ||
                   std::ranges::count_if(places, [](const BlockConstruction& p) {
                     return p.body.has_value();
                   }) > 1) {
@@ -2603,10 +2604,7 @@ void Verify(
   for (const BlockBodyId id : unit.block_bodies.Ids()) {
     VerifyScope(
         unit, unit.block_bodies.Get(id).scope,
-        std::format(
-            "block body {} '{}' of unit '{}'", id.value,
-            unit.block_bodies.Get(id).scope.source_name, unit.name),
-        lines);
+        std::format("block body {} of unit '{}'", id.value, unit.name), lines);
   }
   VerifyConstruction(
       unit, unit.root_scope, construction,

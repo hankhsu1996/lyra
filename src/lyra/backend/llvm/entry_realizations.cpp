@@ -1134,7 +1134,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kValuePlusargs:
     case support::BuiltinFn::kValuePlusargsString:
     case support::BuiltinFn::kDumpFile:
-    case support::BuiltinFn::kDumpVars:
     case support::BuiltinFn::kDumpVarsLevels:
     case support::BuiltinFn::kDumpVarsOf:
     case support::BuiltinFn::kDumpVarsOfVariable:
@@ -1150,8 +1149,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDumpPortsLimit:
     case support::BuiltinFn::kDumpPortsFlush:
     case support::BuiltinFn::kDescribeEvent:
-    case support::BuiltinFn::kBeginDescribedBlock:
-    case support::BuiltinFn::kEndDescribedBlock:
     case support::BuiltinFn::kRunHostCommand:
     case support::BuiltinFn::kRunNullHostCommand:
     case support::BuiltinFn::kDelay:
@@ -1278,6 +1275,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kBeforeForeignCodeRuns:
     case support::BuiltinFn::kHandStringToForeignCaller:
     case support::BuiltinFn::kClaimNamespaceInitialize:
+    case support::BuiltinFn::kRegisterNamespace:
     case support::BuiltinFn::kCurrentExportScope:
     case support::BuiltinFn::kFindExportEntry:
     case support::BuiltinFn::kRunForeignTaskOnFiber:

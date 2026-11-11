@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "lyra/backend/cpp/naming.hpp"
-#include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"

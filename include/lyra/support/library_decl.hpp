@@ -70,7 +70,8 @@ enum class LibraryDecl : std::uint8_t {
   // LRM 20.4.3 how `%t` prints, as `$timeformat` last set it.
   kTimeFormat,
   // LRM 23.3.3.5 / 27.6 the identity a child of the hierarchy carries from
-  // its construction: its base name and its index in each dimension.
+  // its construction: the declaration it fills and its index in each
+  // dimension.
   kHierarchySegment,
   // LRM 9.4.2 one leaf of a value-change wait: the cell, the bits of its
   // encoding the wait reads, and what decides whether a change there is an
@@ -158,7 +159,10 @@ enum class LibraryDecl : std::uint8_t {
   // reads.
   kObjectDefinition,
   kScopeInfo,
-  kScopeMetadata,
+  kDefinitionRecord,
+  kElaboratedScopeRecord,
+  kLexicalScopeRecord,
+  kScopeDeclarations,
   kScopeCallable,
   kClassObjectInfo,
   kInterfaceRow,
@@ -167,7 +171,6 @@ enum class LibraryDecl : std::uint8_t {
   kInstantiation,
   kGeneratePlaces,
   kDumpEntry,
-  kDumpBlock,
   kSourceLocation,
   kSourceLocationRecord,
 
@@ -730,7 +733,7 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
     case LibraryDecl::kHierarchySegment: {
       static constexpr LibraryDeclData kHierarchySegment = kBuiltBy(
           kPayload(
-              "hierarchy segment", "hierarchy_segment", kWordsNeedingEnd(56),
+              "hierarchy segment", "hierarchy_segment", kWordsNeedingEnd(32),
               "lyra::runtime::HierarchySegment"),
           LibraryConstructor{.entry = BuiltinFn::kHierarchySegmentMake});
       return &kHierarchySegment;
@@ -920,10 +923,25 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
           kNamedByAddress("scope info", "lyra::abi::ScopeInfo");
       return &kScopeInfo;
     }
-    case LibraryDecl::kScopeMetadata: {
-      static constexpr LibraryDeclData kScopeMetadata =
-          kNamedByAddress("scope metadata", "lyra::abi::ScopeMetadata");
-      return &kScopeMetadata;
+    case LibraryDecl::kDefinitionRecord: {
+      static constexpr LibraryDeclData kDefinitionRecord =
+          kNamedByAddress("definition record", "lyra::abi::DefinitionRecord");
+      return &kDefinitionRecord;
+    }
+    case LibraryDecl::kElaboratedScopeRecord: {
+      static constexpr LibraryDeclData kElaboratedScopeRecord = kNamedByAddress(
+          "elaborated scope record", "lyra::abi::ElaboratedScopeRecord");
+      return &kElaboratedScopeRecord;
+    }
+    case LibraryDecl::kLexicalScopeRecord: {
+      static constexpr LibraryDeclData kLexicalScopeRecord = kNamedByAddress(
+          "lexical scope record", "lyra::abi::LexicalScopeRecord");
+      return &kLexicalScopeRecord;
+    }
+    case LibraryDecl::kScopeDeclarations: {
+      static constexpr LibraryDeclData kScopeDeclarations =
+          kNamedByAddress("scope declarations", "lyra::abi::ScopeDeclarations");
+      return &kScopeDeclarations;
     }
     case LibraryDecl::kScopeCallable: {
       static constexpr LibraryDeclData kScopeCallable =
@@ -964,11 +982,6 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       static constexpr LibraryDeclData kDumpEntry =
           kNamedByAddress("dump entry", "lyra::abi::DumpEntry");
       return &kDumpEntry;
-    }
-    case LibraryDecl::kDumpBlock: {
-      static constexpr LibraryDeclData kDumpBlock =
-          kNamedByAddress("dump block", "lyra::abi::DumpBlock");
-      return &kDumpBlock;
     }
     // One word, the address of the constant a unit states for the location,
     // which a copy holds whole and a member holds as that word.

@@ -10,7 +10,6 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
-#include "lyra/base/time.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/callable.hpp"
@@ -18,6 +17,7 @@
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
@@ -25,11 +25,21 @@
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
-#include "lyra/support/dump_kind.hpp"
 #include "lyra/support/library_callback.hpp"
-#include "lyra/support/scope_execution.hpp"
 
 namespace lyra::mir {
+
+// What a scope of the design hierarchy states of itself (LRM 37.10, 37.12):
+// the record of the definition it comes from, and the record of each scope it
+// declares that the run builds and of each it builds nothing for, in the order
+// it lists them, each a constant of the unit.
+struct ScopeDeclarations {
+  ConstantId definition;
+  std::vector<ConstantId> elaborated;
+  std::vector<ConstantId> lexical;
+
+  auto operator==(const ScopeDeclarations&) const -> bool = default;
+};
 
 // A class static property (LRM 8.9): a named, mutable type-associated storage
 // cell the class owns, shared by every instance.
@@ -181,19 +191,10 @@ struct Class {
   bool is_final = false;
   bool is_interface = false;
   TypeId self_pointer_type;
-  // The time unit and precision of the time scope a class standing in the
-  // design hierarchy realizes (LRM 3.14.2.2), which the runtime is told where
-  // the class is declared, so the engine can take the design-global minimum
-  // (LRM 3.14.3) and delays scale to it. A class the source declares is no
-  // time scope, and nothing reads this of one.
-  TimeResolution time_resolution;
-  // How the runtime runs what an instance of a class standing in the design
-  // hierarchy starts (LRM 24.3.1), told where its timescale is.
-  support::ScopeExecution execution = support::ScopeExecution::kDesign;
-  // The kind of scope a value dump records an instance of a class standing in
-  // the design hierarchy as (LRM 21.7.2.1): a unit's instance is a module, and
-  // a block a scope holds is a begin.
-  support::DumpScopeKind dumped_as = support::DumpScopeKind::kModule;
+  // What a class realizing a scope of the design hierarchy states of its
+  // instances, which the class's own definition points the runtime at. Absent
+  // for every other class.
+  std::optional<ScopeDeclarations> scope_declarations;
   base::Arena<FieldDecl, FieldId> fields;
   // The identifiers the source wrote for storage this class holds, each paired
   // with the field it reaches. A declared variable, an instance and a signal a

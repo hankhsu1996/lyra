@@ -17,6 +17,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/source_location.hpp"
 #include "lyra/runtime/dump_writer.hpp"
+#include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/value_dumps.hpp"
 
 namespace {
@@ -25,12 +26,13 @@ using lyra::SimulationError;
 using lyra::abi::DumpEntry;
 using lyra::runtime::DumpCheckpoint;
 using lyra::runtime::DumpCode;
+using lyra::runtime::DumpScopeKind;
 using lyra::runtime::DumpSelection;
 using lyra::runtime::DumpValue;
 using lyra::runtime::DumpWriter;
+using lyra::runtime::Scope;
 using lyra::runtime::ValueDump;
 using lyra::runtime::ValueDumps;
-using lyra::support::DumpScopeKind;
 
 // What a format was handed, one line a call, and what it does meanwhile:
 // waits at its first checkpoint until `opened` is set, and refuses everything
@@ -172,7 +174,9 @@ TEST(ValueDumpTest, AnEndingReturnsOnceTheFileIsEndedWhereTheRunWas) {
     Handed handed;
     ValueDumps dumps({});
     const std::unique_ptr<ValueDump> dump = DumpWritingTo(handed);
-    dump->Start(DumpSelection{}, {}, 0, dumps);
+    // A design with no tops, so the dump declares nothing.
+    Scope root;
+    dump->Start(DumpSelection{}, root, 0, dumps);
     dump->Off(3);
     dump->FinishAtEnding(ending_at);
     std::vector<std::string> expected = {

@@ -18,9 +18,12 @@
 #include "lyra/abi/library_records.hpp"
 #include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/base/time.hpp"
 #include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/scope_instantiations.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/library_entry_body.hpp"
@@ -40,6 +43,7 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/scope_kind.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -65,8 +69,8 @@ namespace {
 // hierarchy is built of, exporting one task as `bump` (LRM 35.5):
 //
 //   const array<ScopeCallable, 1> exports = {{{"bump", &Mid::bump_entry}}};
-//   const ScopeInfo info =
-//       {{unit, precision, ...}, ConstantSpan(&exports), ...};
+//   const ScopeInfo info = {{&definition, ConstantSpan(&declared)},
+//                           ConstantSpan(&exports), ...};
 //   const array<InterfaceRow, 0> rows = {};
 //   const ObjectDefinition Mid::definition =
 //       {nullptr, &info, nullptr, &Mid::end, ConstantSpan(&rows),
@@ -112,6 +116,14 @@ auto Function(
       mir::FunctionRef{
           .body = mir::CallableTarget{.owner = id, .slot = callable}},
       mir::FunctionTypeOf(unit.types, cls.callables.Get(callable).code));
+}
+
+// What the address of a record of the library's structure `Record` is a value
+// of.
+template <typename Record>
+auto RecordPointerType(const mir::CompilationUnit& unit) -> mir::TypeId {
+  return ReadOnlyPointerTo(
+      unit, mir::LibraryTypeOf(unit.types, abi::LibraryDeclOf<Record>()));
 }
 
 // The address of `constant`, a constant of the unit.
@@ -219,29 +231,50 @@ void SetEntries(
   }
 }
 
+// What a scope states of itself, as the record the library reads it from: the
+// address of the record of its definition, and a view of the addresses of the
+// records of the scopes it declares, of each family.
+auto ScopeDeclarationsRecord(
+    const mir::CompilationUnit& unit,
+    const mir::ScopeDeclarations& scope_declarations)
+    -> mir::LibraryRecordBuilder<abi::ScopeDeclarations> {
+  using abi::ScopeDeclarations;
+  const auto addresses_of = [&](const std::vector<mir::ConstantId>& records) {
+    std::vector<mir::ConstantValue> addresses;
+    addresses.reserve(records.size());
+    for (const mir::ConstantId record : records) {
+      addresses.push_back(AddressOf(unit, record));
+    }
+    return addresses;
+  };
+  mir::LibraryRecordBuilder<ScopeDeclarations> record(unit);
+  record.Set(
+      &ScopeDeclarations::definition,
+      AddressOf(unit, scope_declarations.definition));
+  record.Set(
+      &ScopeDeclarations::elaborated,
+      mir::ViewOf(
+          unit, RecordPointerType<abi::ElaboratedScopeRecord>(unit),
+          addresses_of(scope_declarations.elaborated)));
+  record.Set(
+      &ScopeDeclarations::lexical,
+      mir::ViewOf(
+          unit, RecordPointerType<abi::LexicalScopeRecord>(unit),
+          addresses_of(scope_declarations.lexical)));
+  return record;
+}
+
 // What a class of the design hierarchy states of its instances, as a constant
-// of the unit, and its address: its timescale and how what an instance starts
-// is run, what a dump records it as, the bodies its exports name, then the
-// body of each of its phases.
+// of the unit, and its address: what they state of themselves, the bodies its
+// exports name, then the body of each of its phases.
 auto ScopeInfoAddress(
     const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
     const LibraryBodies& bodies) -> mir::ConstantValue {
   using abi::ScopeInfo;
-  using abi::ScopeMetadata;
-  mir::LibraryRecordBuilder<ScopeMetadata> metadata(unit);
-  metadata.Set(
-      &ScopeMetadata::time_unit_power, Number(cls.time_resolution.unit_power));
-  metadata.Set(
-      &ScopeMetadata::time_precision_power,
-      Number(cls.time_resolution.precision_power));
-  metadata.Set(
-      &ScopeMetadata::execution,
-      Number(static_cast<std::uint8_t>(cls.execution)));
-  metadata.Set(
-      &ScopeMetadata::dumped_as,
-      Number(static_cast<std::uint8_t>(cls.dumped_as)));
   mir::LibraryRecordBuilder<ScopeInfo> info(unit);
-  info.Set(&ScopeInfo::metadata, std::move(metadata).Build());
+  info.Set(
+      &ScopeInfo::scope_declarations,
+      ScopeDeclarationsRecord(unit, *cls.scope_declarations).Build());
   info.Set(
       &ScopeInfo::exports,
       Table<abi::ScopeCallable>(unit, cls.exports.size(), [&](std::size_t i) {
@@ -257,28 +290,78 @@ auto ScopeInfoAddress(
   return AddressOf(unit, std::move(info).Intern());
 }
 
-// The address of `constant`, a constant of the unit, as a value of `block`.
-auto AddressIn(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    mir::ConstantId constant) -> mir::ExprId {
-  const mir::TypeId type = unit.constants.Get(constant).type;
-  return block.Add(
-      mir::MakeAddressOfExpr(
-          block.Add(
-              mir::Expr{
-                  .data =
-                      mir::ReferenceExpr{
-                          .target = mir::ConstantRef{.constant = constant}},
-                  .type = type}),
-          ReadOnlyPointerTo(unit, type)));
+// What a definition record states of a definition of one form: its kind, and
+// each directive in force where it was written that a definition of the form
+// has, a record's own value standing for one it does not have. A class
+// lowered alone and a text of the tool's are no scope of the run, so no record
+// is made of them.
+struct RecordedDefinition {
+  support::DefinitionKind kind = support::DefinitionKind::kModule;
+  support::DefaultNetType default_net_type = support::DefaultNetType::kWire;
+  support::UnconnectedDrive unconnected_drive =
+      support::UnconnectedDrive::kNone;
+  bool celldefine = false;
+  bool automatic = false;
+};
+
+auto DefinitionKindOf(hir::DesignElementKind kind) -> support::DefinitionKind {
+  switch (kind) {
+    case hir::DesignElementKind::kModule:
+      return support::DefinitionKind::kModule;
+    case hir::DesignElementKind::kInterface:
+      return support::DefinitionKind::kInterface;
+    case hir::DesignElementKind::kProgram:
+      return support::DefinitionKind::kProgram;
+  }
+  throw InternalError("DefinitionKindOf: a design element of no kind");
+}
+
+auto RecordedDefinitionOf(const hir::DefinitionForm& form)
+    -> RecordedDefinition {
+  return std::visit(
+      Overloaded{
+          [](const hir::DesignElementDefinition& element) {
+            return RecordedDefinition{
+                .kind = DefinitionKindOf(element.kind),
+                .default_net_type = element.default_net_type,
+                .unconnected_drive = element.unconnected_drive,
+                .celldefine = element.celldefine,
+                .automatic = element.automatic};
+          },
+          [](const hir::PackageDefinition& package) {
+            return RecordedDefinition{
+                .kind = support::DefinitionKind::kPackage,
+                .default_net_type = package.default_net_type,
+                .automatic = package.automatic};
+          },
+          [](const hir::CompilationUnitScope&) {
+            return RecordedDefinition{
+                .kind = support::DefinitionKind::kCompilationUnit};
+          },
+          [](const hir::DesignRoot&) {
+            return RecordedDefinition{
+                .kind = support::DefinitionKind::kDesignRoot};
+          },
+          [](const hir::ClassSpecialization&) -> RecordedDefinition {
+            throw InternalError(
+                "RecordedDefinitionOf: a class lowered alone is no scope of "
+                "the run");
+          },
+          [](const hir::ToolText&) -> RecordedDefinition {
+            throw InternalError(
+                "RecordedDefinitionOf: a text of the tool's is no scope of "
+                "the run");
+          }},
+      form);
 }
 
 }  // namespace
 
-//   {"count", 7, 0, 8, kReg, 1, 1, kInput, 2}
+//   {&blk, "count", 7, 0, 8, kReg, 1, 1, kInput, 2}
 auto DumpEntryAddress(
     const mir::CompilationUnit& unit, mir::Builder block,
-    const hir::DumpedDeclaration& declaration) -> mir::ExprId {
+    const hir::DumpedDeclaration& declaration,
+    std::optional<mir::ConstantId> enclosing) -> mir::ExprId {
   using abi::DumpEntry;
   const hir::DumpedDeclaration::Range range = declaration.range.value_or(
       hir::DumpedDeclaration::Range{.left = 0, .right = 0});
@@ -286,6 +369,9 @@ auto DumpEntryAddress(
       hir::DumpedDeclaration::Port{
           .direction = support::DumpPortDirection::kInput, .position = 0});
   mir::LibraryRecordBuilder<DumpEntry> entry(unit);
+  entry.Set(
+      &DumpEntry::enclosing,
+      enclosing.has_value() ? AddressOf(unit, *enclosing) : Null());
   entry.Set(&DumpEntry::identifier, Name(declaration.identifier));
   entry.Set(&DumpEntry::left, Number(range.left));
   entry.Set(&DumpEntry::right, Number(range.right));
@@ -299,18 +385,96 @@ auto DumpEntryAddress(
       &DumpEntry::port_direction,
       Number(static_cast<std::uint8_t>(port.direction)));
   entry.Set(&DumpEntry::port_position, Number(port.position));
-  return AddressIn(unit, block, std::move(entry).Intern());
+  return ConstantAddressIn(unit, block, std::move(entry).Intern());
 }
 
-//   {"blk", kBegin}
-auto DumpBlockAddress(
+//   {"Top", "work", "Top", -9, -12, 1, kModule, kWire, kNone, 0, 0}
+auto DefinitionRecordConstant(
+    const mir::CompilationUnit& unit, const hir::CompilationUnit& hir)
+    -> mir::ConstantId {
+  using abi::DefinitionRecord;
+  const hir::UnitDefinition& definition = hir.definition;
+  const TimeResolution& time = hir.root_scope.time_resolution;
+  mir::LibraryRecordBuilder<DefinitionRecord> record(unit);
+  record.Set(&DefinitionRecord::name, Name(hir.source_name));
+  record.Set(&DefinitionRecord::library, Name(definition.library));
+  record.Set(&DefinitionRecord::cell, Name(definition.cell));
+  record.Set(&DefinitionRecord::time_unit_power, Number(time.unit_power));
+  record.Set(
+      &DefinitionRecord::time_precision_power, Number(time.precision_power));
+  record.Set(
+      &DefinitionRecord::time_stated,
+      Number(hir.root_scope.time_resolution_stated ? 1 : 0));
+  const RecordedDefinition recorded = RecordedDefinitionOf(definition.form);
+  record.Set(
+      &DefinitionRecord::kind,
+      Number(static_cast<std::uint8_t>(recorded.kind)));
+  record.Set(
+      &DefinitionRecord::default_net_type,
+      Number(static_cast<std::uint8_t>(recorded.default_net_type)));
+  record.Set(
+      &DefinitionRecord::unconnected_drive,
+      Number(static_cast<std::uint8_t>(recorded.unconnected_drive)));
+  record.Set(
+      &DefinitionRecord::celldefine, Number(recorded.celldefine ? 1 : 0));
+  record.Set(&DefinitionRecord::automatic, Number(recorded.automatic ? 1 : 0));
+  return std::move(record).Intern();
+}
+
+//   {&definition, {&run, &step}}
+auto ScopeDeclarationsAddress(
     const mir::CompilationUnit& unit, mir::Builder block,
-    const hir::DumpedBlock& dumped) -> mir::ExprId {
-  using abi::DumpBlock;
-  mir::LibraryRecordBuilder<DumpBlock> entry(unit);
-  entry.Set(&DumpBlock::identifier, Name(dumped.identifier));
-  entry.Set(&DumpBlock::kind, Number(static_cast<std::uint8_t>(dumped.kind)));
-  return AddressIn(unit, block, std::move(entry).Intern());
+    const mir::ScopeDeclarations& scope_declarations) -> mir::ExprId {
+  return ConstantAddressIn(
+      unit, block, ScopeDeclarationsRecord(unit, scope_declarations).Intern());
+}
+
+//   {"u", kModuleArray, 0}
+auto ElaboratedScopeRecordConstant(
+    const mir::CompilationUnit& unit, support::ElaboratedScopeKind kind,
+    const std::string& name, bool implicitly_named) -> mir::ConstantId {
+  using abi::ElaboratedScopeRecord;
+  mir::LibraryRecordBuilder<ElaboratedScopeRecord> record(unit);
+  record.Set(&ElaboratedScopeRecord::name, Name(name));
+  record.Set(
+      &ElaboratedScopeRecord::kind, Number(static_cast<std::uint8_t>(kind)));
+  record.Set(
+      &ElaboratedScopeRecord::implicitly_named,
+      Number(implicitly_named ? 1 : 0));
+  return std::move(record).Intern();
+}
+
+//   {"blk", &enclosing, 3, kBegin}
+auto LexicalScopeRecordConstant(
+    const mir::CompilationUnit& unit, support::LexicalScopeKind kind,
+    const std::optional<std::string>& name,
+    std::optional<mir::ConstantId> enclosing, std::uint32_t position)
+    -> mir::ConstantId {
+  using abi::LexicalScopeRecord;
+  mir::LibraryRecordBuilder<LexicalScopeRecord> record(unit);
+  record.Set(&LexicalScopeRecord::name, Name(name.value_or("")));
+  record.Set(
+      &LexicalScopeRecord::enclosing,
+      enclosing.has_value() ? AddressOf(unit, *enclosing) : Null());
+  record.Set(&LexicalScopeRecord::position, Number(position));
+  record.Set(
+      &LexicalScopeRecord::kind, Number(static_cast<std::uint8_t>(kind)));
+  return std::move(record).Intern();
+}
+
+auto ConstantAddressIn(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ConstantId constant) -> mir::ExprId {
+  const mir::TypeId type = unit.constants.Get(constant).type;
+  return block.Add(
+      mir::MakeAddressOfExpr(
+          block.Add(
+              mir::Expr{
+                  .data =
+                      mir::ReferenceExpr{
+                          .target = mir::ConstantRef{.constant = constant}},
+                  .type = type}),
+          ReadOnlyPointerTo(unit, type)));
 }
 
 namespace {
@@ -637,9 +801,6 @@ class ConstructionTables {
 struct LineageFacts {
   bool is_interface = false;
   bool is_class_object = false;
-  // Whether instances of the class stand in the design hierarchy and are built
-  // of it, which a body for its first phase says.
-  bool stands_in_hierarchy = false;
   // The body answering each callback the library makes on an object of the
   // class.
   LibraryBodies bodies;
@@ -728,7 +889,6 @@ auto FactsOf(
   LineageFacts facts{
       .is_interface = cls.is_interface,
       .is_class_object = false,
-      .stands_in_hierarchy = false,
       .bodies = {},
       .dispatch = {},
       .interface_tables = {}};
@@ -739,11 +899,9 @@ auto FactsOf(
   facts.is_class_object =
       root.has_value() &&
       std::holds_alternative<mir::ClassObjectRootRef>(*root);
-  // Only a class an instance is built of gives its phases a body; what a unit
-  // published of its object is built of no instance alone.
-  facts.stands_in_hierarchy =
-      mir::CallbackBodyOf(unit, id, kScopePhases.front().second).has_value();
-  if (facts.stands_in_hierarchy) {
+  // A class whose instances are scopes of the hierarchy runs the phases on
+  // them; what a unit published of its object has no instance of its own.
+  if (cls.scope_declarations.has_value()) {
     AddBodies(facts.bodies, unit, id, kScopePhases, prototypes);
   }
   if (facts.is_class_object) {
@@ -855,8 +1013,9 @@ auto DefinitionOf(
       base.has_value() ? DefinitionAddress(unit, *base) : Null());
   definition.Set(
       &ObjectDefinition::scope,
-      facts.stands_in_hierarchy ? ScopeInfoAddress(unit, id, cls, facts.bodies)
-                                : Null());
+      cls.scope_declarations.has_value()
+          ? ScopeInfoAddress(unit, id, cls, facts.bodies)
+          : Null());
   definition.Set(
       &ObjectDefinition::class_object,
       facts.is_class_object ? ClassObjectInfoAddress(unit, facts.bodies)
@@ -965,7 +1124,8 @@ void StateObjectDefinitions(mir::CompilationUnit& unit) {
 auto BlockEntryType(const mir::CompilationUnit& unit, bool handed_its_index)
     -> mir::TypeId {
   std::vector<mir::TypeId> params{
-      unit.builtins.scope_ptr, mir::ConstructionTablePointer(unit.types)};
+      unit.builtins.scope_ptr, unit.builtins.hierarchy_segment,
+      mir::ConstructionTablePointer(unit.types)};
   if (handed_its_index) params.push_back(unit.builtins.integer);
   const mir::TypeId owned = unit.types.Intern(
       mir::Type{mir::PointerType{

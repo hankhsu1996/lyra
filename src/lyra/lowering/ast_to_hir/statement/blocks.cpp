@@ -9,6 +9,10 @@
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/statements/MiscStatements.h>
+#include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/syntax/AllSyntax.h>
+#include <slang/syntax/SyntaxKind.h>
+#include <slang/syntax/SyntaxNode.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_scope.hpp"
@@ -32,9 +36,10 @@ auto SourceBlockName(const slang::ast::StatementBlockSymbol* symbol)
 }
 
 // The lexical declaration scope a `begin` / `fork` opens (LRM 9.3.4 / 9.3.2).
-// Every one of them opens exactly one, whether or not the source named it and
-// whether or not it declares anything -- those are properties of the scope, not
-// conditions on its existence.
+// Every one of them opens exactly one: of the construct's kind where the front
+// end made the block a scope, which it does where the source named it or it
+// directly declares an item (LRM 9.3.4, 37.12 detail 1), and one no name can
+// reach where it made none.
 //
 // Whether the source named it is asked once, and that one answer decides both
 // halves: the name the scope carries, and where its identity comes from. A
@@ -50,7 +55,9 @@ class ProceduralScope {
       const slang::ast::StatementBlockSymbol* symbol,
       hir::ProceduralScopeKind kind)
       : ProceduralScope(
-            proc, enclosing, symbol, kind, SourceBlockName(symbol)) {
+            proc, enclosing, symbol,
+            symbol == nullptr ? hir::ProceduralScopeKind::kImplicit : kind,
+            SourceBlockName(symbol)) {
   }
 
   ProceduralScope(const ProceduralScope&) = delete;
@@ -82,12 +89,74 @@ class ProceduralScope {
                 : enclosing.ProceduralScopes().Declare(),
             kind, std::move(source_name)),
         frame_(enclosing.WithOpenScope(&open_)) {
+    // A block the front end made a scope of that the source gave no name
+    // mints its identity here, and records it by the block, so what a value
+    // dump records of the block lies within it.
+    if (symbol != nullptr && !open_.source_name.has_value()) {
+      proc.Owner().DeclareProceduralScope(
+          *symbol, enclosing.ProceduralScopeOwner(), open_.id);
+    }
   }
 
   WalkFrame enclosing_;
   OpenProceduralScope open_;
   WalkFrame frame_;
 };
+
+// What opened a sequential block: a `for` loop declaring its own variables, a
+// `foreach` loop, which LRM 12.7.1 and 12.7.3 make an implicit block around the
+// loop, or a `begin ... end` the source wrote or a statement label opened (LRM
+// 9.3.5).
+auto SequentialKindOf(const slang::ast::BlockStatement& block)
+    -> hir::ProceduralScopeKind {
+  const slang::syntax::SyntaxNode* syntax =
+      block.blockSymbol != nullptr ? block.blockSymbol->getSyntax() : nullptr;
+  if (syntax == nullptr) return hir::ProceduralScopeKind::kBegin;
+  // A label on a `for` declaring no variable opens a block of its own around
+  // the loop (LRM 9.3.5), whose syntax the front end still gives as the
+  // loop's, so the two are told apart as the front end tells them: by whether
+  // the loop's first initializer declares a variable.
+  if (syntax->kind == slang::syntax::SyntaxKind::ForLoopStatement) {
+    const auto& loop = syntax->as<slang::syntax::ForLoopStatementSyntax>();
+    if (!loop.initializers.empty() &&
+        loop.initializers[0]->kind ==
+            slang::syntax::SyntaxKind::ForVariableDeclaration) {
+      return hir::ProceduralScopeKind::kFor;
+    }
+  }
+  if (syntax->kind == slang::syntax::SyntaxKind::ForeachLoopStatement) {
+    return hir::ProceduralScopeKind::kForeach;
+  }
+  return hir::ProceduralScopeKind::kBegin;
+}
+
+// The join keyword a fork's block kind is (LRM 9.3.2 Table 9-1).
+auto JoinModeOf(slang::ast::StatementBlockKind kind) -> hir::JoinMode {
+  switch (kind) {
+    case slang::ast::StatementBlockKind::JoinAll:
+      return hir::JoinMode::kAll;
+    case slang::ast::StatementBlockKind::JoinAny:
+      return hir::JoinMode::kAny;
+    case slang::ast::StatementBlockKind::JoinNone:
+      return hir::JoinMode::kNone;
+    case slang::ast::StatementBlockKind::Sequential:
+      break;
+  }
+  throw InternalError("JoinModeOf: a sequential block is no fork");
+}
+
+// The kind of scope a fork joining as `mode` opens.
+auto ForkScopeKind(hir::JoinMode mode) -> hir::ProceduralScopeKind {
+  switch (mode) {
+    case hir::JoinMode::kAll:
+      return hir::ProceduralScopeKind::kForkJoin;
+    case hir::JoinMode::kAny:
+      return hir::ProceduralScopeKind::kForkJoinAny;
+    case hir::JoinMode::kNone:
+      return hir::ProceduralScopeKind::kForkJoinNone;
+  }
+  throw InternalError("ForkScopeKind: unknown join mode");
+}
 
 // LRM 9.3.2 parallel block. Each parallel statement becomes one branch. A
 // function body cannot suspend, so the frontend rejects `join` / `join_any`
@@ -96,20 +165,8 @@ auto LowerForkStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::BlockStatement& block, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  hir::JoinMode mode = hir::JoinMode::kAll;
-  switch (block.blockKind) {
-    case slang::ast::StatementBlockKind::JoinAll:
-      mode = hir::JoinMode::kAll;
-      break;
-    case slang::ast::StatementBlockKind::JoinAny:
-      mode = hir::JoinMode::kAny;
-      break;
-    case slang::ast::StatementBlockKind::JoinNone:
-      mode = hir::JoinMode::kNone;
-      break;
-    case slang::ast::StatementBlockKind::Sequential:
-      throw InternalError("LowerForkStmt: called on a sequential block");
-  }
+  const hir::JoinMode mode = JoinModeOf(block.blockKind);
+  const hir::ProceduralScopeKind kind = ForkScopeKind(mode);
 
   std::vector<const slang::ast::Statement*> body_stmts;
   if (block.body.kind == slang::ast::StatementKind::List) {
@@ -126,8 +183,7 @@ auto LowerForkStmt(
   // lexical declaration scope owns those locals; they lower in the parent
   // execution context but attach to the fork scope, and only the branches enter
   // the fork-branch execution scope.
-  ProceduralScope scope(
-      proc, frame, block.blockSymbol, hir::ProceduralScopeKind::kFork);
+  ProceduralScope scope(proc, frame, block.blockSymbol, kind);
   const WalkFrame& fork_scope_frame = scope.Frame();
   if (block.blockSymbol != nullptr) {
     auto constants =
@@ -185,8 +241,8 @@ auto LowerStatementListStmt(
   // in the difference between a name outside reaching it and not.
   const hir::ProceduralScopeId scope = frame.SealScope(
       OpenProceduralScope{
-          frame.ProceduralScopes().Declare(), hir::ProceduralScopeKind::kBlock,
-          std::nullopt});
+          frame.ProceduralScopes().Declare(),
+          hir::ProceduralScopeKind::kImplicit, std::nullopt});
 
   std::vector<hir::StmtId> kids;
   kids.reserve(list.list.size());
@@ -211,7 +267,7 @@ auto LowerBlockStmt(
     return LowerForkStmt(proc, frame, block, span);
   }
   ProceduralScope scope(
-      proc, frame, block.blockSymbol, hir::ProceduralScopeKind::kBlock);
+      proc, frame, block.blockSymbol, SequentialKindOf(block));
   const WalkFrame& body_frame = scope.Frame();
   if (block.blockSymbol != nullptr) {
     auto constants =

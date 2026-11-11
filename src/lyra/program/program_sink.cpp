@@ -118,6 +118,7 @@ void BindEngineEntries(const auto& add) {
       &lyra_rt_hand_string_to_foreign_caller);
   add("lyra_rt_claim_namespace_initialize",
       &lyra_rt_claim_namespace_initialize);
+  add("lyra_rt_register_namespace", &lyra_rt_register_namespace);
   add("lyra_rt_current_export_scope", &lyra_rt_current_export_scope);
   add("lyra_rt_find_export_entry", &lyra_rt_find_export_entry);
   add("lyra_rt_run_foreign_task_on_fiber", &lyra_rt_run_foreign_task_on_fiber);
@@ -264,7 +265,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_run_null_host_command", &lyra_rt_run_null_host_command);
   add("lyra_rt_test_plusargs", &lyra_rt_test_plusargs);
   add("lyra_rt_dump_file", &lyra_rt_dump_file);
-  add("lyra_rt_dump_vars", &lyra_rt_dump_vars);
   add("lyra_rt_dump_vars_levels", &lyra_rt_dump_vars_levels);
   add("lyra_rt_dump_vars_of", &lyra_rt_dump_vars_of);
   add("lyra_rt_dump_vars_of_variable", &lyra_rt_dump_vars_of_variable);
@@ -316,8 +316,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_real_ref_describe", &lyra_rt_real_ref_describe);
   add("lyra_rt_shortreal_ref_describe", &lyra_rt_shortreal_ref_describe);
   add("lyra_rt_describe_event", &lyra_rt_describe_event);
-  add("lyra_rt_begin_described_block", &lyra_rt_begin_described_block);
-  add("lyra_rt_end_described_block", &lyra_rt_end_described_block);
   add("lyra_rt_integral_value_plusargs", &lyra_rt_integral_value_plusargs);
   add("lyra_rt_string_value_plusargs", &lyra_rt_string_value_plusargs);
   add("lyra_rt_urandom", &lyra_rt_urandom);

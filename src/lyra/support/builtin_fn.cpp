@@ -1501,11 +1501,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "dump_file",
           .declaration = RuntimeFunction("DumpFile"),
           .takes_the_runtime_handle = true};
-    case BuiltinFn::kDumpVars:
-      return {
-          .name = "dump_vars",
-          .declaration = RuntimeFunction("DumpVars"),
-          .takes_the_runtime_handle = true};
     case BuiltinFn::kDumpVarsLevels:
       return {
           .name = "dump_vars_levels",
@@ -1596,18 +1591,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "describe_event",
           .declaration = RuntimeFunction("DescribeTo"),
-          .takes_the_runtime_handle = true,
-          .takes_the_location = false};
-    case BuiltinFn::kBeginDescribedBlock:
-      return {
-          .name = "begin_described_block",
-          .declaration = RuntimeFunction("BeginDescribedBlock"),
-          .takes_the_runtime_handle = true,
-          .takes_the_location = false};
-    case BuiltinFn::kEndDescribedBlock:
-      return {
-          .name = "end_described_block",
-          .declaration = RuntimeFunction("EndDescribedBlock"),
           .takes_the_runtime_handle = true,
           .takes_the_location = false};
     case BuiltinFn::kTestPlusargs:
@@ -2658,6 +2641,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "claim_namespace_initialize",
           .declaration = RuntimeFunction("ClaimNamespaceInitialization"),
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false};
+    case BuiltinFn::kRegisterNamespace:
+      return {
+          .name = "register_namespace",
+          .declaration = RuntimeFunction("RegisterNamespace"),
           .takes_the_runtime_handle = true,
           .takes_the_location = false};
     case BuiltinFn::kToInt64:

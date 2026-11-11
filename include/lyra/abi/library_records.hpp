@@ -18,7 +18,11 @@ constexpr void ForEachLibraryRecord(const Visit& visit) {
   using Decl = support::LibraryDecl;
   visit.template operator()<ObjectDefinition>(Decl::kObjectDefinition);
   visit.template operator()<ScopeInfo>(Decl::kScopeInfo);
-  visit.template operator()<ScopeMetadata>(Decl::kScopeMetadata);
+  visit.template operator()<DefinitionRecord>(Decl::kDefinitionRecord);
+  visit.template operator()<ElaboratedScopeRecord>(
+      Decl::kElaboratedScopeRecord);
+  visit.template operator()<LexicalScopeRecord>(Decl::kLexicalScopeRecord);
+  visit.template operator()<ScopeDeclarations>(Decl::kScopeDeclarations);
   visit.template operator()<ScopeCallable>(Decl::kScopeCallable);
   visit.template operator()<ClassObjectInfo>(Decl::kClassObjectInfo);
   visit.template operator()<InterfaceRow>(Decl::kInterfaceRow);
@@ -27,7 +31,6 @@ constexpr void ForEachLibraryRecord(const Visit& visit) {
   visit.template operator()<Instantiation>(Decl::kInstantiation);
   visit.template operator()<GeneratePlaces>(Decl::kGeneratePlaces);
   visit.template operator()<DumpEntry>(Decl::kDumpEntry);
-  visit.template operator()<DumpBlock>(Decl::kDumpBlock);
   visit.template operator()<base::SourceLocation::Impl>(
       Decl::kSourceLocationRecord);
   visit.template operator()<value::Enumeration>(Decl::kEnumeration);

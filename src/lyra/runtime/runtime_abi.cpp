@@ -1997,9 +1997,10 @@ auto SourceLocationAt(const void* location) -> base::SourceLocation {
 }  // namespace lyra::runtime
 
 using lyra::abi::ConstructionTable;
-using lyra::abi::DumpBlock;
 using lyra::abi::DumpEntry;
+using lyra::abi::ElaboratedScopeRecord;
 using lyra::abi::ObjectDefinition;
+using lyra::abi::ScopeDeclarations;
 using lyra::runtime::Activation;
 using lyra::runtime::AdoptClosure;
 using lyra::runtime::AdoptObject;
@@ -2012,7 +2013,6 @@ using lyra::runtime::AssertionControl;
 using lyra::runtime::AssignDesignatedArraySlice;
 using lyra::runtime::AssignDesignatedSlice;
 using lyra::runtime::AttemptsOf;
-using lyra::runtime::BeginDescribedBlock;
 using lyra::runtime::BindPropertyEvaluation;
 using lyra::runtime::Bit16;
 using lyra::runtime::Bit32;
@@ -2067,13 +2067,11 @@ using lyra::runtime::DumpPortsLimit;
 using lyra::runtime::DumpPortsOf;
 using lyra::runtime::DumpPortsOff;
 using lyra::runtime::DumpPortsOn;
-using lyra::runtime::DumpVars;
 using lyra::runtime::DumpVarsLevels;
 using lyra::runtime::DumpVarsOf;
 using lyra::runtime::DumpVarsOfVariable;
 using lyra::runtime::Emplace;
 using lyra::runtime::EndClosure;
-using lyra::runtime::EndDescribedBlock;
 using lyra::runtime::EnterCancellationTarget;
 using lyra::runtime::ErasedAt;
 using lyra::runtime::ErasedDesignation;
@@ -3625,9 +3623,6 @@ void lyra_rt_dump_file(void* runtime, const void* name, const void* location) {
       *static_cast<RuntimeEffects*>(runtime), Read<String>(name),
       SourceLocationAt(location));
 }
-void lyra_rt_dump_vars(void* runtime, const void* location) {
-  DumpVars(*static_cast<RuntimeEffects*>(runtime), SourceLocationAt(location));
-}
 void lyra_rt_dump_vars_levels(
     void* runtime, std::int64_t levels, const void* location) {
   DumpVarsLevels(
@@ -3893,14 +3888,6 @@ void lyra_rt_describe_event(void* event, void* runtime, const void* entry) {
       *static_cast<RuntimeEffects*>(runtime),
       static_cast<const DumpEntry*>(entry));
 }
-void lyra_rt_begin_described_block(void* runtime, const void* block) {
-  BeginDescribedBlock(
-      *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpBlock*>(block));
-}
-void lyra_rt_end_described_block(void* runtime) {
-  EndDescribedBlock(*static_cast<RuntimeEffects*>(runtime));
-}
 
 auto lyra_rt_test_plusargs(void* runtime, const void* user_string, void* out)
     -> void* {
@@ -4140,6 +4127,12 @@ auto lyra_rt_claim_namespace_initialize(void* runtime, const char* name)
       *static_cast<RuntimeEffects*>(runtime), name);
 }
 
+void lyra_rt_register_namespace(void* runtime, const void* scope_declarations) {
+  RegisterNamespace(
+      *static_cast<RuntimeEffects*>(runtime),
+      static_cast<const ScopeDeclarations*>(scope_declarations));
+}
+
 auto lyra_rt_current_export_scope() -> void* {
   return CurrentExportScope();
 }
@@ -4177,11 +4170,11 @@ void lyra_rt_run_exported_task_to_completion(void* activation) {
   }
 }
 
-auto lyra_rt_hierarchy_segment_make(void* label, LyraSpan indices, void* out)
-    -> void* {
+auto lyra_rt_hierarchy_segment_make(
+    const void* declaration, LyraSpan indices, void* out) -> void* {
   return std::construct_at(
       static_cast<HierarchySegment*>(out),
-      std::string(static_cast<const char*>(label)),
+      static_cast<const ElaboratedScopeRecord*>(declaration),
       lyra::runtime::MachineIntsOf(indices));
 }
 
@@ -4339,11 +4332,10 @@ auto lyra_rt_enumeration_prev(
 }
 
 auto lyra_rt_run_program(
-    std::int32_t argc, char** argv, void* (*make)(void*, const void*),
-    const void* name) -> std::int32_t {
+    std::int32_t argc, char** argv, void* (*make)(void*, const void*))
+    -> std::int32_t {
   return RunDesignRoot(
-      argc, argv, std::string_view{static_cast<const char*>(name)},
-      [make](Scope* parent, HierarchySegment segment) {
+      argc, argv, [make](Scope* parent, HierarchySegment segment) {
         return lyra::runtime::OwnedObject<Scope>(
             static_cast<Scope*>(make(parent, &segment)));
       });

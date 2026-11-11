@@ -9,7 +9,6 @@
 #include <string_view>
 #include <variant>
 
-#include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/support/def_path.hpp"
@@ -178,10 +177,6 @@ void WriteOne(TargetText& out, const MintedAppliedName& name) {
     Write(out, name.disambiguator, "_");
   }
   Write(out, SourceName{.name = name.source});
-}
-
-void WriteOne(TargetText& out, NameLiteral literal) {
-  WriteCStringLiteral(literal.name, out);
 }
 
 void WriteOne(TargetText& out, const EntryName& name) {

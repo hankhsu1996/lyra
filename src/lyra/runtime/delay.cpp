@@ -12,6 +12,7 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/sim_time.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -21,22 +22,6 @@ namespace lyra::runtime {
 
 namespace {
 
-// Multiplies by a power of ten, capping at the widest duration rather than
-// wrapping. The cap is not defensive: LRM 9.4.1 gives a negative delay the
-// value of its own bits read as an unsigned integer, which is a wait no
-// simulation reaches, and wrapping would turn exactly that into a short one.
-auto ScaleByPowerOfTen(SimDuration value, int exponent) noexcept
-    -> SimDuration {
-  SimDuration result = value;
-  for (int i = 0; i < exponent; ++i) {
-    if (result > std::numeric_limits<SimDuration>::max() / 10) {
-      return std::numeric_limits<SimDuration>::max();
-    }
-    result *= 10;
-  }
-  return result;
-}
-
 // Adds a duration to a time, capping rather than wrapping: a deadline past the
 // end of the time axis has to stay past it, or the longest wait the language
 // can name comes back round as an imminent one.
@@ -45,17 +30,6 @@ auto DeadlineAfter(SimTime now, SimDuration duration) noexcept -> SimTime {
     return std::numeric_limits<SimTime>::max();
   }
   return now + duration;
-}
-
-// Scales `ticks`, expressed in `from_power` precision steps, up to the engine's
-// `global_power` tick (LRM 3.14.3). `from_power >= global_power` because the
-// global precision is the finest in the design, so the factor is a non-negative
-// power of ten. A single-precision design has `from_power == global_power` and
-// the factor is one.
-auto ScaleToGlobalTicks(
-    SimDuration ticks, std::int8_t from_power,
-    std::int8_t global_power) noexcept -> SimDuration {
-  return ScaleByPowerOfTen(ticks, from_power - global_power);
 }
 
 // A delay of some time: the process resumes at the deadline it was given, and
@@ -146,7 +120,7 @@ auto DelayTicks(
   if (value::HasUnknown(duration)) {
     return 0;
   }
-  return ScaleByPowerOfTen(
+  return MultiplyByPowerOfTen(
       static_cast<SimDuration>(value::ToInt64(duration)),
       static_cast<int>(unit_power - precision_power));
 }
@@ -176,8 +150,7 @@ auto DelayDeadline(
     -> SimTime {
   return DeadlineAfter(
       runtime.Now(),
-      ScaleToGlobalTicks(
-          ticks, precision_power, runtime.GlobalPrecisionPower()));
+      StepsToTicks(ticks, precision_power, runtime.GlobalPrecisionPower()));
 }
 
 auto DeadlineAfterAmount(

@@ -754,7 +754,6 @@ enum class BuiltinFn : std::uint16_t {
   // form `$dumpvars` takes is its own entry, so which a call means is settled
   // here rather than by counting its arguments.
   kDumpFile,
-  kDumpVars,
   kDumpVarsLevels,
   kDumpVarsOf,
   kDumpVarsOfVariable,
@@ -774,14 +773,11 @@ enum class BuiltinFn : std::uint16_t {
   kDumpPortsFlush,
   // LRM 21.7.1.2: what an instance describes of itself to a dump starting, in
   // the order listed: one member -- a variable, a net, a port -- with the
-  // constant stating its declaration, a named event, and the opening and the
-  // closing of a named block, task or function the instance declares, around
-  // its static variables. Each reaches the describer the starting dump
+  // constant stating its declaration and the named block, task or function it
+  // lies in, and a named event. Each reaches the describer the starting dump
   // installed through the runtime handle.
   kDescribe,
   kDescribeEvent,
-  kBeginDescribedBlock,
-  kEndDescribedBlock,
   // LRM 21.6 command-line plusargs. Free functions on `lyra::runtime` that
   // take the runtime handle plus SV `string` operands; the value form also
   // takes the destination's value and completes with it beside the answer. A
@@ -1309,6 +1305,9 @@ enum class BuiltinFn : std::uint16_t {
   // true once and false afterwards, and taking the claim before descending is
   // what ends a cycle among them.
   kClaimNamespaceInitialize,
+  // A namespace's storage is being installed, so the run holds it among the
+  // objects the design brought up (LRM 37.10), with what it states of itself.
+  kRegisterNamespace,
   // The inner step of a value conversion: reading the source out as a machine
   // integer. HIR-to-MIR dispatches on the (src, dst) type pair and emits a
   // `CallExpr` to the matching entry, which the backend renders with no
@@ -1550,8 +1549,8 @@ enum class BuiltinFn : std::uint16_t {
   kSelfHandle,
   // LRM 21.2.1.5 `%m` source: yields, as an SV `string`, the hierarchical name
   // of what its argument names inside the receiver scope. Walks `Parent()`
-  // from the receiver up to the implicit root, joins the name of each scope a
-  // path can reach with `.`, and joins the argument after them where it names
+  // from the receiver up to the implicit root, joins the name of each scope
+  // below the root with `.`, and joins the argument after them where it names
   // anything. `%m` lowering reads the result as an ordinary value-string print
   // item rather than as a context-dependent format kind.
   kHierarchicalPathOf,

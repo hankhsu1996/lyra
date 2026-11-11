@@ -24,7 +24,8 @@ struct DpiParamAbi {
 
 // A subroutine declared `import "DPI-C"` (LRM 35.4). It has no SV body, so it
 // is a bodyless external callable, not a body-bearing structural subroutine.
-// The foreign linkage name, the pure property, whether it is a task or a
+// Its name is the one it declares, as a hierarchical name writes it (LRM
+// 23.6). The foreign linkage name, the pure property, whether it is a task or a
 // function (LRM 35.5), whether it is a context import (LRM 35.5.3), and the ABI
 // projection of the signature are resolved once here (where slang types are
 // available) and are the sole downstream source for the import; no layer below

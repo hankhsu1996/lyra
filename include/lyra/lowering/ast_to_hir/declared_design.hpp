@@ -11,6 +11,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/hir/lowering.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/support/assertion_policy.hpp"
 
@@ -56,6 +57,8 @@ struct TopLevelUnit {
   // That identifier as a hierarchical name writes it (LRM 23.6), which is what
   // the top reports as its own name.
   std::string name_in_a_path;
+  // The kind of design element it is an instance of.
+  hir::DesignElementKind instantiated = hir::DesignElementKind::kModule;
   // The unit it is an instance of, which names its published class.
   std::string unit_name;
   // The lowering it is built from, by that lowering's name.

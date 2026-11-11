@@ -680,7 +680,7 @@ auto SynthesizeDefaultConstructor(
   body.root_scope = class_frame.SealScope(
       OpenProceduralScope{
           class_frame.ProceduralScopes().Declare(),
-          hir::ProceduralScopeKind::kSubroutineRoot, std::string{"new"}});
+          hir::ProceduralScopeKind::kFunction, std::string{"new"}});
   return hir::SubroutineDecl{
       .name = "new",
       .kind = hir::SubroutineKind::kFunction,
@@ -825,7 +825,7 @@ auto LowerConstraintBlockDecl(
   ProcessLowerer lowerer(unit_lowerer, block);
   OpenProceduralScope root{
       unit_lowerer.LookupProceduralScope(block),
-      hir::ProceduralScopeKind::kSubroutineRoot, NameInAPath(block)};
+      hir::ProceduralScopeKind::kConstraintBlock, NameInAPath(block)};
   const WalkFrame frame =
       class_frame.WithProceduralBody(&body).WithOpenScope(&root);
   const bool is_pure = block.flags.has(slang::ast::ConstraintBlockFlags::Pure);

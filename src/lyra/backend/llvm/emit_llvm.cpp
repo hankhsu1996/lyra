@@ -4,10 +4,8 @@
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constant.h>
-#include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
-#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
@@ -73,23 +71,15 @@ auto EmitProgramEntry(const lir::CompilationUnit& design_root)
                   design_root.name, design_root.body_name, std::nullopt),
               llvm::FunctionType::get(ptr_ty, {ptr_ty, ptr_ty}, false))
           .getCallee());
-  llvm::Constant* const label_bytes =
-      llvm::ConstantDataArray::getString(*context, design_root.name, true);
-  auto* const label = llvm::cast<llvm::GlobalVariable>(
-      module->getOrInsertGlobal("root_label", label_bytes->getType()));
-  label->setLinkage(llvm::GlobalValue::PrivateLinkage);
-  label->setConstant(true);
-  label->setInitializer(label_bytes);
-
   auto* const entry = llvm::Function::Create(
       llvm::FunctionType::get(int_ty, {int_ty, ptr_ty}, false),
       llvm::Function::ExternalLinkage, kProgramEntrySymbol, module.get());
   llvm::IRBuilder<> builder(llvm::BasicBlock::Create(*context, "", entry));
   const llvm::FunctionCallee run = module->getOrInsertFunction(
       RuntimeSymbol(RuntimeOp::kRunProgram),
-      llvm::FunctionType::get(int_ty, {int_ty, ptr_ty, ptr_ty, ptr_ty}, false));
-  builder.CreateRet(builder.CreateCall(
-      run, {entry->getArg(0), entry->getArg(1), make_root, label}));
+      llvm::FunctionType::get(int_ty, {int_ty, ptr_ty, ptr_ty}, false));
+  builder.CreateRet(
+      builder.CreateCall(run, {entry->getArg(0), entry->getArg(1), make_root}));
   return EmittedModule{std::move(context), std::move(module)};
 }
 

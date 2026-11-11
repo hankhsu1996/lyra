@@ -371,6 +371,7 @@ auto UnitBuilding(
 auto Loop(CompilationUnit& unit) -> Generate {
   return Generate{
       .counting = BlocksRepeat{
+          .declared = {},
           .variable = {},
           .initial = AddLeaf(unit),
           .condition = AddLeaf(unit),
@@ -386,7 +387,7 @@ auto Choice(CompilationUnit& unit) -> Generate {
           .condition = AddLeaf(unit),
           .holds = AlternativeStands{.position = 0},
           .fails = AlternativeStands{.position = 1}});
-  chosen.alternatives = 2;
+  chosen.alternatives = {GenerateBlockName{}, GenerateBlockName{}};
   return Generate{.counting = std::move(chosen)};
 }
 

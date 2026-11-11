@@ -2481,6 +2481,9 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
                        << "    #10 a = 4'h4;\n"
                        << "    #10 a = 4'h5;\n"
                        << "  end\n"
+                       << "  initial begin : \\esc.blk\n"
+                       << "    static logic [3:0] e = 4'h6;\n"
+                       << "  end\n"
                        << "endmodule\n";
   const auto owning = dir / "owning.sv";
   std::ofstream(owning) << "module Test;\n"
@@ -2493,6 +2496,36 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
                         << "\");\n"
                         << "    $dumpvars(0, a);\n"
                         << "    #10 a = 4'h3;\n"
+                        << "  end\n"
+                        << "endmodule\n";
+
+  // `$dumpvars` naming nothing is the whole design, whatever another call in
+  // the same step names (LRM 21.7.1.2).
+  const auto whole_and_one = dir / "whole_and_one.sv";
+  std::ofstream(whole_and_one)
+      << "module Test;\n"
+      << "  logic [3:0] a = 4'h1;\n"
+      << "  logic [3:0] b = 4'h2;\n"
+      << "  initial begin\n"
+      << "    $dumpfile(\"" << (dir / "whole_and_one.txt").string() << "\");\n"
+      << "    $dumpvars;\n"
+      << "    $dumpvars(0, a);\n"
+      << "  end\n"
+      << "endmodule\n";
+
+  // What a block the source gave no name declares, and a named block inside
+  // it, is recorded under the named scopes around it, which add no part for
+  // that block, as `%m` prints it; no name given to the dump option reaches
+  // either (LRM 9.3.4).
+  const auto blocks = dir / "blocks.sv";
+  std::ofstream(blocks) << "module Test;\n"
+                        << "  initial begin : nb\n"
+                        << "    begin\n"
+                        << "      static logic [3:0] un = 4'h5;\n"
+                        << "      begin : deep\n"
+                        << "        static logic [3:0] dv = 4'h6;\n"
+                        << "      end\n"
+                        << "    end\n"
                         << "  end\n"
                         << "endmodule\n";
 
@@ -2537,6 +2570,65 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
     const std::string text = read(file);
     EXPECT_TRUE(has(text, "0ns Test.b = 0010")) << text;
     EXPECT_FALSE(has(text, "Test.a")) << text;
+  }
+  {
+    // A path is read as a hierarchical name is written (LRM 23.6), so a
+    // block's escaped name takes its terminating space, and a path written
+    // without it, or one naming nothing at all, names nothing and is ignored.
+    const auto file = dir / "escaped.txt";
+    const auto ran =
+        run(quiet, {"+lyra+dump=" + file.string(),
+                    "+lyra+dump+scope=Test.\\esc.blk .e",
+                    "+lyra+dump+scope=", "+lyra+dump+scope=Test.esc.blk.e"});
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+    const std::string text = read(file);
+    EXPECT_TRUE(has(text, "= 0110")) << text;
+    EXPECT_FALSE(has(text, "Test.a")) << text;
+    EXPECT_TRUE(has(ran.stderr_text, "the dump scope '' names no instance"))
+        << ran.stderr_text;
+    EXPECT_TRUE(
+        has(ran.stderr_text, "the dump scope 'Test.esc.blk.e' names no"))
+        << ran.stderr_text;
+  }
+  {
+    // A path that is ignored selects nothing, so options that all are
+    // ignored record nothing at all rather than the whole design.
+    const auto file = dir / "nothing.txt";
+    const auto ran =
+        run(quiet, {"+lyra+dump=" + file.string(), "+lyra+dump+scope="});
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+    const std::string text = read(file);
+    EXPECT_FALSE(has(text, "Test.a")) << text;
+    EXPECT_FALSE(has(text, "Test.b")) << text;
+  }
+  {
+    const auto file = dir / "blocks.txt";
+    const auto ran = run(blocks, {"+lyra+dump=" + file.string()});
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+    const std::string text = read(file);
+    EXPECT_TRUE(has(text, "0ns Test.nb.un = 0101")) << text;
+    EXPECT_TRUE(has(text, "0ns Test.nb.deep.dv = 0110")) << text;
+  }
+  {
+    const auto file = dir / "blocks_named.txt";
+    const auto ran =
+        run(blocks,
+            {"+lyra+dump=" + file.string(), "+lyra+dump+scope=Test.nb.deep.dv",
+             "+lyra+dump+scope=Test.nb.un"});
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+    EXPECT_FALSE(has(read(file), "Test.nb.")) << read(file);
+    EXPECT_TRUE(
+        has(ran.stderr_text, "the dump scope 'Test.nb.deep.dv' names no"))
+        << ran.stderr_text;
+    EXPECT_TRUE(has(ran.stderr_text, "the dump scope 'Test.nb.un' names no"))
+        << ran.stderr_text;
+  }
+  {
+    const auto ran = run(whole_and_one, {});
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+    const std::string text = read(dir / "whole_and_one.txt");
+    EXPECT_TRUE(has(text, "0ns Test.a = 0001")) << text;
+    EXPECT_TRUE(has(text, "0ns Test.b = 0010")) << text;
   }
   {
     // Windows that overlap, nest and meet are one stretch: the dump is on
@@ -2587,7 +2679,8 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
 // by the name that element was declared under (LRM 20.4.2, whose example
 // prints `a_dat` for module `a_dat`). Two instances whose parameters make them
 // two compiled units are still one design element, so both print one name, and
-// nothing a run prints tells which units the compiler made.
+// nothing a run prints tells which units the compiler made. Called in the
+// compilation unit's scope it names that scope as LRM 3.12.1 does, `$unit`.
 TEST(LyraRun, PrintTimescaleNamesTheDesignElementAsDeclared) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -2595,7 +2688,10 @@ TEST(LyraRun, PrintTimescaleNamesTheDesignElementAsDeclared) {
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
 
   const auto src = *tmp_or / "test.sv";
-  std::ofstream(src) << "`timescale 1ns / 1ps\n"
+  std::ofstream(src) << "function automatic void in_unit();\n"
+                     << "  $printtimescale;\n"
+                     << "endfunction\n"
+                     << "`timescale 1ns / 1ps\n"
                      << "module Halved #(parameter int P = 2);\n"
                      << "  logic [P/2:0] held;\n"
                      << "  initial $printtimescale;\n"
@@ -2603,6 +2699,7 @@ TEST(LyraRun, PrintTimescaleNamesTheDesignElementAsDeclared) {
                      << "module Test;\n"
                      << "  Halved #(.P(2)) narrow ();\n"
                      << "  Halved #(.P(4)) wide ();\n"
+                     << "  initial in_unit();\n"
                      << "endmodule\n";
 
   const std::vector<std::string> args = {
@@ -2621,6 +2718,9 @@ TEST(LyraRun, PrintTimescaleNamesTheDesignElementAsDeclared) {
   ASSERT_NE(first, std::string::npos) << "stdout: " << run.stdout_text;
   EXPECT_NE(
       run.stdout_text.find(kNamed, first + kNamed.size()), std::string::npos)
+      << "stdout: " << run.stdout_text;
+  EXPECT_NE(
+      run.stdout_text.find("Time scale of ($unit) is "), std::string::npos)
       << "stdout: " << run.stdout_text;
 }
 

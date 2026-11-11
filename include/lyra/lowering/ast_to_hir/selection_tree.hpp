@@ -40,12 +40,12 @@ class SelectionTree {
       std::span<const slang::ast::GenerateSelection> path,
       std::uint32_t position) -> diag::Result<void>;
 
-  // The compiled form over the `alternatives` positions placed. Children come
-  // before the choices holding them so a branch never names one that does not
-  // exist yet. The outermost is always a choice, because a construct is what
-  // puts alternatives here at all.
-  [[nodiscard]] auto Compose(std::uint32_t alternatives) const
-      -> hir::BlocksChoose;
+  // The compiled form over the `alternatives` placed, each named as it stands
+  // at its position. Children come before the choices holding them so a
+  // branch never names one that does not exist yet. The outermost is always a
+  // choice, because a construct is what puts alternatives here at all.
+  [[nodiscard]] auto Compose(std::vector<hir::GenerateBlockName> alternatives)
+      const -> hir::BlocksChoose;
 
  private:
   // Nothing stands here until something is placed, which is what the first

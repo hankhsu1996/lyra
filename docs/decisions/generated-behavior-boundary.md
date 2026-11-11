@@ -12,11 +12,12 @@ SV-virtual dispatch goes through tables laid out at compile time, so no definiti
 dispatch table. There is no `construct` entry and no allocator handed to the runtime. The C++
 backend builds its own class as `new` does, and so does the execution backend: the class's own
 allocation takes the storage, and the class's constructor is entered typed on it. The metadata is
-the time unit and precision alone. A phase with no work is a body with no statements rather than a
-library no-op, and a class no instance is built of states no program at all. The rejection of a
-generated Itanium vtable is answered there, and the generic-instance end state of Phase 2 is
-withdrawn, since each backend builds a scope as an instance of its own class, laid out at compile
-time, as clang does.
+the record of the definition each scope comes from, one constant per class, which states the scopes
+the class declares beside it (`a-scope-is-named-by-its-declaration.md` D1). A phase with no work is
+a body with no statements rather than a library no-op, and a class no instance is built of states no
+program at all. The rejection of a generated Itanium vtable is answered there, and the
+generic-instance end state of Phase 2 is withdrawn, since each backend builds a scope as an instance
+of its own class, laid out at compile time, as clang does.
 
 ## Context
 

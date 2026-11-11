@@ -29,8 +29,10 @@
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/base/write_all.hpp"
+#include "lyra/runtime/dump_scope_kind.hpp"
 #include "lyra/runtime/dump_writer.hpp"
 #include "lyra/runtime/file.hpp"
+#include "lyra/runtime/hierarchical_name.hpp"
 #include "lyra/runtime/hierarchy_levels.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
@@ -99,16 +101,6 @@ auto DumpProbe::Referent() const -> value::ObjectRef {
 }
 Describer::~Describer() = default;
 
-void Describer::BeginBlock(const abi::DumpBlock& block) {
-  enclosing_.push_back(&block);
-  Entered();
-}
-
-void Describer::EndBlock() {
-  Leaving();
-  enclosing_.pop_back();
-}
-
 DumpWatch::DumpWatch(
     ValueDump& dump, DumpCode code, std::unique_ptr<DumpProbe> probe)
     : dump_(&dump), code_(code), probe_(std::move(probe)) {
@@ -146,7 +138,7 @@ void DumpWatch::Reached() {
 namespace {
 
 struct ScopeCommand {
-  support::DumpScopeKind kind;
+  DumpScopeKind kind;
   std::string name;
 };
 struct UpscopeCommand {};
@@ -685,9 +677,7 @@ class SelectionDescriber final : public Describer {
       : output_(&output), dump_(&dump), watches_(&watches) {
   }
 
-  void Walk(const DumpSelection& selection, std::span<Scope* const> roots) {
-    const bool whole =
-        selection.instances.empty() && selection.variables.empty();
+  void Walk(const DumpSelection& selection, Scope& root) {
     for (const DumpSelection::Instances& named : selection.instances) {
       std::int64_t& levels = levels_[named.scope];
       levels = std::max(levels, LevelsNamed(named.levels));
@@ -695,10 +685,7 @@ class SelectionDescriber final : public Describer {
     variables_ = selection.variables;
     // A top's own scope is the outermost a dump declares: the root above the
     // tops is no scope of the design (LRM 23.3.1).
-    for (Scope* root : roots) {
-      root->ForEachChild(
-          [&](Scope& top) { WalkScope(top, whole ? kEveryLevel : 0); });
-    }
+    root.ForEachChild([&](Scope& top) { WalkScope(top, 0); });
   }
 
   void Var(
@@ -706,6 +693,7 @@ class SelectionDescriber final : public Describer {
     if (!Records(probe->Member())) {
       return;
     }
+    MoveToScopesAround(entry);
     OpenPending();
     const auto [known, inserted] =
         codes_.try_emplace(probe->Identity(), DumpCode{});
@@ -721,13 +709,29 @@ class SelectionDescriber final : public Describer {
   }
 
  private:
-  void Entered() override {
-    const abi::DumpBlock& block = *Enclosing().back();
-    pending_.push_back({.kind = block.Kind(), .name = block.identifier});
+  // Leaves the named scopes the last thing recorded lay in that this one does
+  // not, and enters those it lies in that the last did not.
+  void MoveToScopesAround(const abi::DumpEntry& entry) {
+    // A scope the source gave no name is one a dump declares no scope for (LRM
+    // 21.7.2.3).
+    const std::vector<const abi::LexicalScopeRecord*> around =
+        NamedEnclosingScopes(entry.enclosing);
+    const auto common = static_cast<std::size_t>(
+        std::ranges::mismatch(blocks_, around).in1 - blocks_.begin());
+    LeaveBlocksDownTo(common);
+    for (std::size_t i = common; i < around.size(); ++i) {
+      blocks_.push_back(around[i]);
+      pending_.push_back(
+          {.kind = DumpScopeKindOf(around[i]->Kind()),
+           .name = around[i]->name});
+    }
   }
 
-  void Leaving() override {
-    CloseScope();
+  void LeaveBlocksDownTo(std::size_t count) {
+    while (blocks_.size() > count) {
+      blocks_.pop_back();
+      CloseScope();
+    }
   }
 
   // `remaining` is how many levels of instances from this scope down are
@@ -736,20 +740,17 @@ class SelectionDescriber final : public Describer {
     if (const auto named = levels_.find(&scope); named != levels_.end()) {
       remaining = std::max(remaining, named->second);
     }
-    const support::DumpScopeKind kind = scope.Info().metadata.DumpedAs();
-    const bool addressable = scope.IsAddressable();
-    if (addressable) {
-      pending_.push_back({.kind = kind, .name = scope.DisplaySegment()});
-    }
+    pending_.push_back(
+        {.kind = DumpScopeKindOf(scope.Segment().Declaration().Kind()),
+         .name = scope.DisplaySegment()});
     whole_ = remaining > 0;
     if (whole_ || !variables_.empty()) {
       scope.Describe();
+      LeaveBlocksDownTo(0);
     }
     scope.ForEachChild(
         [&](Scope& child) { WalkScope(child, LevelsBelow(child, remaining)); });
-    if (addressable) {
-      CloseScope();
-    }
+    CloseScope();
   }
 
   [[nodiscard]] auto Records(const void* member) const -> bool {
@@ -774,18 +775,16 @@ class SelectionDescriber final : public Describer {
     pending_.pop_back();
   }
 
-  struct PendingScope {
-    support::DumpScopeKind kind;
-    std::string name;
-  };
-
   DumpOutput* output_;
   ValueDump* dump_;
   std::vector<std::unique_ptr<DumpWatch>>* watches_;
   std::unordered_map<const Scope*, std::int64_t> levels_;
   std::vector<const void*> variables_;
   std::unordered_map<const void*, DumpCode> codes_;
-  std::vector<PendingScope> pending_;
+  std::vector<ScopeCommand> pending_;
+  // The named scopes of the instance being described that the last thing
+  // recorded lay in, outermost first, each among `pending_`.
+  std::vector<const abi::LexicalScopeRecord*> blocks_;
   std::size_t opened_ = 0;
   bool whole_ = false;
 };
@@ -814,7 +813,7 @@ class PortDescriber final : public Describer {
       }
       output_->Send(
           ScopeCommand{
-              .kind = support::DumpScopeKind::kModule,
+              .kind = DumpScopeKind::kModule,
               .name = std::string(instance->HierarchicalPath().View())});
       for (Port& port : ports_) {
         const DumpCode code{static_cast<std::uint32_t>(watches_->size())};
@@ -891,12 +890,12 @@ ValueDump::ValueDump(
 ValueDump::~ValueDump() = default;
 
 void ValueDump::Start(
-    const DumpSelection& selection, std::span<Scope* const> roots, SimTime now,
+    const DumpSelection& selection, Scope& root, SimTime now,
     ValueDumps& dumps) {
   SelectionDescriber describer(*output_, *this, watches_);
   {
     const ValueDumps::InstalledDescriber installed(dumps, describer);
-    describer.Walk(selection, roots);
+    describer.Walk(selection, root);
   }
   Begin(now);
 }

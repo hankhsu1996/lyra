@@ -11,6 +11,7 @@
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/hierarchical_name.hpp"
 #include "lyra/runtime/value_dump.hpp"
 #include "lyra/value/string.hpp"
 
@@ -59,10 +60,9 @@ class ValueDumps {
 
   // LRM 21.7.1.1.
   void DumpFile(const value::String& name);
-  // LRM 21.7.1.2: the whole design, `levels` of it from its tops, an instance
-  // and `levels` below it, or one variable, by the member it is of the
-  // instance declaring it.
-  void DumpVars();
+  // LRM 21.7.1.2: `levels` of the design from its tops, an instance and
+  // `levels` below it, or one variable, by the member it is of the instance
+  // declaring it; 0 levels is every level.
   void DumpVarsLevels(std::int64_t levels);
   void DumpVarsOf(std::int64_t levels, Scope& instance);
   void DumpVarsOfVariable(const void* member);
@@ -149,8 +149,8 @@ class ValueDumps {
   [[nodiscard]] auto OptionSelection() -> DumpSelection;
   // The member of `instance` that is the variable it declares under `name`,
   // none where it declares none.
-  [[nodiscard]] auto FindVariable(Scope& instance, std::string_view name)
-      -> const void*;
+  [[nodiscard]] auto FindVariable(
+      Scope& instance, std::span<const NamePart> name) -> const void*;
   void OpenWindowsFrom(std::size_t index);
   // Has `act` act on each dump of ports `name` names: at once on one that has
   // started, and on one whose `$dumpports` ran in this time step once it
@@ -197,7 +197,6 @@ class ValueDumps {
 void DumpFile(
     RuntimeEffects& runtime, const value::String& name,
     base::SourceLocation at);
-void DumpVars(RuntimeEffects& runtime, base::SourceLocation at);
 void DumpVarsLevels(
     RuntimeEffects& runtime, std::int64_t levels, base::SourceLocation at);
 void DumpVarsOf(

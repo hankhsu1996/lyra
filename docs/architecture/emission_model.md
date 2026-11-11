@@ -106,9 +106,10 @@ many of them it works on at a time.
    lowering adds -- a slot per route, process state, the homes of closures. A referrer compiles
    against the published part alone, reads a member at its offset there and calls a subroutine
    through the object, and never needs the object's size, because the element's own entry makes
-   every object of it. Nothing about a scope is answered by name at run time: a scope keeps its
-   hierarchy segment for `%m` and a scope class keeps its DPI-C export table, and neither is a
-   lookup a route reaches.
+   every object of it. No route reaches a scope by name: a scope keeps its hierarchy segment, and a
+   scope class the records of the scopes it declares and its DPI-C export table, for the names `%m`
+   prints and foreign code gives and takes (LRM 35.5.3, 38.21), and none of them is a lookup a route
+   reaches.
 7. **A change recompiles exactly the referrers whose artifact names a part that changed.** A change
    confined to a unit's bodies changes only its realization, so it changes no signature and
    recompiles no referrer. A change to a declaration changes what the unit publishes and recompiles
@@ -189,11 +190,12 @@ many of them it works on at a time.
 - A referrer's artifact that depends on another unit's object size or on any offset past its
   published members. Those move with the unit's bodies, so depending on them would make a body edit
   recompile every referrer.
-- A run-time by-name lookup emitted for any hierarchical name: a scope registering its declarations
-  under their names, a child searched for by name, a name table on a scope or a class, or a string
-  carried by a route. It replaces a compile-time check with an unchecked cast, surfaces a misspelt
-  name or a type that differs between instances at run time, and makes every instance pay a
-  registration per declaration. The access is typed against the published class instead.
+- A run-time by-name lookup emitted for a hierarchical name the design writes: a scope registering
+  its declarations under their names, a child searched for by name, a name table on a scope or a
+  class, or a string carried by a route. It replaces a compile-time check with an unchecked cast,
+  surfaces a misspelt name or a type that differs between instances at run time, and makes every
+  instance pay a registration per declaration. The access is typed against the published class
+  instead.
 - A referrer that has to know how many classes realize a published class, or which one an object is,
   to reach a published subroutine. That count follows the bodies, so it would put a body edit in
   every referrer's header; the referrer calls the published class's method on the object and the
@@ -339,14 +341,15 @@ includes the package's header, and the linker binds the one definition. Reading,
 on the cell's change all reach that same linked cell directly -- there is no route, no per-instance
 endpoint to seal, and no SDK step, again because a package has no instance identity. Its LRM 10.5
 initialization is not a per-instance constructor action but two receiver-less callables the design
-root invokes during the Initialize phase, before the top modules initialize: one installs every
-package's cells (declared type and default) design-wide, then one runs each package's value
-initializers -- so a value initializer that reads another package's cell always reaches installed
-storage. The LRM leaves the relative order of initializers unspecified, and no party computes one:
-the root calls every package in a stable order, each initializer takes its package's one bring-up
-before descending, and a package whose own initializers read another calls that one first. The order
-is therefore those calls executed, which makes a cyclic dependency terminate on a default rather
-than fail and leaves nothing reading across units to decide it.
+root invokes: its constructor, before it builds the top modules, installs every package's cells
+(declared type and default) design-wide, and its Initialize phase, before the top modules
+initialize, runs each package's value initializers -- so a value initializer that reads another
+package's cell always reaches installed storage. The LRM leaves the relative order of initializers
+unspecified, and no party computes one: the root calls every package in a stable order, each
+initializer takes its package's one bring-up before descending, and a package whose own initializers
+read another calls that one first. The order is therefore those calls executed, which makes a cyclic
+dependency terminate on a default rather than fail and leaves nothing reading across units to decide
+it.
 
 Any artifact that aggregates multiple units' bodies into one is forbidden, however a build step
 packages the emitted sources: the per-unit artifact boundary and the typed-step rules above are the

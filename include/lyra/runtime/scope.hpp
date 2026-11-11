@@ -49,22 +49,23 @@ class Scope : public GcObject {
   [[nodiscard]] auto Parent() const -> const Scope* {
     return parent_;
   }
+  [[nodiscard]] auto Parent() -> Scope* {
+    return parent_;
+  }
 
-  // The scope's structural identity at this level: the parent-side label
-  // plus per-dimension indices (empty for a scalar, `{i}` for a generate-for
-  // iteration, `{i, j}` for a multi-dim instance array). Fixed at
-  // construction and never observed before then.
+  // The scope's structural identity at this level: the declaration of its
+  // parent's class it fills, plus per-dimension indices (empty for a scalar,
+  // `{i}` for a generate-for iteration, `{i, j}` for a multi-dim instance
+  // array). Fixed at construction and never observed before then.
   [[nodiscard]] auto Segment() const -> const HierarchySegment&;
 
   // The LRM 27.6 display form of `Segment()` -- `loop[0]`, `m`, `gblk`.
   [[nodiscard]] auto DisplaySegment() const -> std::string;
 
   // Joins each ancestor's display segment with `.`, ordered from the outermost
-  // inward (LRM 23.6). A scope the source never named contributes nothing,
-  // which is what keeps it off every hierarchical path without taking it out
-  // of the tree. The walk stops at the implicit `$root` so multi-top output
-  // reads `Top.mid.x` rather than `$root.Top.mid.x`. Walked on demand: the
-  // object tree is sealed by Activate.
+  // inward (LRM 23.6). The walk stops at the implicit `$root` so multi-top
+  // output reads `Top.mid.x` rather than `$root.Top.mid.x`. Walked on demand:
+  // the object tree is sealed by Activate.
   [[nodiscard]] auto HierarchicalPath() const -> lyra::value::String;
 
   // The hierarchical name of what `below` names inside this scope: this
@@ -73,8 +74,9 @@ class Scope : public GcObject {
   [[nodiscard]] auto HierarchicalPathOf(const lyra::value::String& below) const
       -> lyra::value::String;
 
-  // What this scope's class states of its instances: its timescale, the
-  // DPI-C exports an instance answers, and what it does in each phase.
+  // What this scope's class states of its instances: what they state of
+  // themselves, the DPI-C exports an instance answers, and what it does in each
+  // phase.
   [[nodiscard]] auto Info() const -> const abi::ScopeInfo& {
     return *RequireScopeClass(definition)->scope;
   }
@@ -84,15 +86,6 @@ class Scope : public GcObject {
   // descend; returns it as a borrowed handle. Called once the child is built,
   // so a thrown constructor leaves nothing half-attached.
   static auto Attach(OwnedObject<Scope> child) -> Scope*;
-
-  // Whether this scope carries a source-visible SV name. `$root` is
-  // built with an empty `HierarchySegment` base name, and so is any scope the
-  // source gave no name; every other scope gets its SV identifier as the base
-  // name. A hierarchical path leaves the unnamed ones
-  // out (LRM 23.6).
-  [[nodiscard]] auto IsAddressable() const -> bool {
-    return !segment_.BaseName().empty();
-  }
 
   // Where a hierarchical name leaving this instance starts: the nearest scope
   // above this one whose class is `cls` or extends it, or past the topmost of
@@ -108,21 +101,26 @@ class Scope : public GcObject {
   // default seed, which is what keeps one instance's draws out of another's.
   [[nodiscard]] auto InitializationSeeds() -> InitializationRng&;
 
-  // The scope's declared time precision as a power of ten (LRM Table 20-2),
-  // read from its metadata; a scope with no timescale of its own reports the
-  // unspecified sentinel. The engine takes the minimum across the tree to fix
-  // the design-global precision (LRM 3.14.3).
-  [[nodiscard]] auto TimePrecisionPower() const -> std::int8_t {
-    return Info().metadata.time_precision_power;
+  // The definition the scope comes from and the scopes it declares (LRM
+  // 37.10, 37.12).
+  [[nodiscard]] auto Declarations() const -> const abi::ScopeDeclarations& {
+    return Info().scope_declarations;
+  }
+  [[nodiscard]] auto Definition() const -> const abi::DefinitionRecord& {
+    return *Declarations().definition;
   }
 
-  // The scope's time unit as a power of ten (LRM Table 20-2), read from its
-  // metadata: an addressable scope reports its own or inherited timescale, a
-  // scope with none of its own the unspecified sentinel. Read by the DPI
-  // `svGetTimeUnit` query and to scale `svGetTime` to the scope (LRM 35.5.3,
-  // Annex H).
+  // The scope's time precision as a power of ten (LRM Table 20-2): its
+  // definition's own, the one it inherits, or the default where the source
+  // states none (LRM 3.14.2.3).
+  [[nodiscard]] auto TimePrecisionPower() const -> std::int8_t {
+    return Definition().time_precision_power;
+  }
+
+  // The scope's time unit as a power of ten (LRM Table 20-2), as its
+  // precision is.
   [[nodiscard]] auto TimeUnitPower() const -> std::int8_t {
-    return Info().metadata.time_unit_power;
+    return Definition().time_unit_power;
   }
 
   // Per-scope lifecycle entries. Each runs what this scope's class does in one

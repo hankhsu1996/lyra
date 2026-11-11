@@ -1,7 +1,6 @@
 #include "lyra/runtime/value_dumps.hpp"
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <charconv>
 #include <cstdint>
@@ -22,8 +21,10 @@
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/dump_writer.hpp"
 #include "lyra/runtime/file.hpp"
+#include "lyra/runtime/hierarchical_name.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/scope.hpp"
+#include "lyra/runtime/sim_time.hpp"
 #include "lyra/runtime/value_dump.hpp"
 #include "lyra/support/region.hpp"
 #include "lyra/value/string.hpp"
@@ -81,8 +82,8 @@ auto TicksOf(std::string_view text, std::int8_t precision_power)
   } else {
     return std::nullopt;
   }
-  for (int power = unit_power; power > precision_power; --power) {
-    count *= 10;
+  if (unit_power > precision_power) {
+    count = MultiplyByPowerOfTen(count, unit_power - precision_power);
   }
   for (int power = unit_power; power < precision_power; ++power) {
     if (count % 10 != 0) {
@@ -93,24 +94,20 @@ auto TicksOf(std::string_view text, std::int8_t precision_power)
   return count;
 }
 
-// Finds, while one instance describes itself, the member that is the thing it
-// declares under `name`: its identifier, after the names of the named blocks,
-// tasks and functions it lies in, joined by `.` as a hierarchical name joins
-// them.
-class NameFinder final : public Describer {
+// Finds, while one instance describes itself, the member that is the variable
+// it declares in `enclosing`, or directly where that is none, under
+// `identifier`, compared as an identifier (LRM 5.6.1).
+class VariableFinder final : public Describer {
  public:
-  explicit NameFinder(std::string_view name) : name_(name) {
+  VariableFinder(
+      const abi::LexicalScopeRecord* enclosing, std::string_view identifier)
+      : enclosing_(enclosing), identifier_(identifier) {
   }
 
   void Var(
       const abi::DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
-    std::string path;
-    for (const abi::DumpBlock* block : Enclosing()) {
-      path += block->identifier;
-      path.push_back('.');
-    }
-    path += entry.identifier;
-    if (path == name_) {
+    if (entry.enclosing == enclosing_ &&
+        IdentifierOf(entry.identifier) == identifier_) {
       found_ = probe->Member();
     }
   }
@@ -120,22 +117,10 @@ class NameFinder final : public Describer {
   }
 
  private:
-  std::string_view name_;
+  const abi::LexicalScopeRecord* enclosing_;
+  std::string_view identifier_;
   const void* found_ = nullptr;
 };
-
-// The child of `scope` whose name as a hierarchical path writes it is
-// `segment`, none where it has none.
-auto ChildNamed(Scope& scope, std::string_view segment) -> Scope* {
-  Scope* found = nullptr;
-  scope.ForEachChild([&](Scope& child) {
-    if (found == nullptr && child.IsAddressable() &&
-        child.DisplaySegment() == segment) {
-      found = &child;
-    }
-  });
-  return found;
-}
 
 }  // namespace
 
@@ -309,13 +294,6 @@ void ValueDumps::DumpFile(const value::String& name) {
     return;
   }
   design_file_ = std::string(name.View());
-}
-
-void ValueDumps::DumpVars() {
-  if (!DesignActs()) {
-    return;
-  }
-  Select(runtime_->Now());
 }
 
 // Levels alone count from the design's tops.
@@ -546,8 +524,7 @@ void ValueDumps::Start(
   if (limit_.has_value()) {
     dump_->Limit(*limit_);
   }
-  const std::array<Scope*, 1> roots{root_};
-  dump_->Start(selection, roots, now, *this);
+  dump_->Start(selection, *root_, now, *this);
   OpenWindowsFrom(0);
 }
 
@@ -577,43 +554,66 @@ void ValueDumps::OpenWindowsFrom(std::size_t index) {
 }
 
 // Each path names an instance, walked down from the tops by the names its
-// scopes are written with, or a variable of the instance it stops at.
+// scopes are written with, or a variable of the instance it stops at; one
+// naming neither, an empty one among them, is reported and ignored.
 auto ValueDumps::OptionSelection() -> DumpSelection {
   DumpSelection selection;
+  // No path at all is the whole design, as `$dumpvars` naming nothing is.
+  if (option_scopes_.empty()) {
+    root_->ForEachChild([&](Scope& top) {
+      selection.instances.push_back({.scope = &top, .levels = 0});
+    });
+  }
   for (const NamedScope& named : option_scopes_) {
-    Scope* instance = root_;
-    std::string_view rest = named.path;
-    while (!rest.empty()) {
-      const std::string_view segment = rest.substr(0, rest.find('.'));
-      Scope* child = ChildNamed(*instance, segment);
-      if (child == nullptr) {
-        break;
-      }
-      instance = child;
-      rest.remove_prefix(std::min(rest.size(), segment.size() + 1));
-    }
-    if (rest.empty()) {
-      selection.instances.push_back(
-          {.scope = instance, .levels = named.levels});
+    const auto ignored = [&] {
+      // An option of the run's own command line, which no statement wrote.
+      runtime_->Diagnostic().Report(
+          base::kNoSourceLocation, Severity::kWarning,
+          base::DiagMessage(
+              "the dump scope '{}' names no instance or variable; it is "
+              "ignored",
+              named.path));
+    };
+    const std::optional<HierarchicalName> read =
+        ReadHierarchicalName(named.path);
+    if (!read.has_value() || read->package.has_value() || read->parts.empty()) {
+      ignored();
       continue;
     }
-    if (const void* member = FindVariable(*instance, rest); member != nullptr) {
+    const std::span<const NamePart> parts = read->parts;
+    const ScopeReached reached = LongestNamedPrefix(*root_, parts);
+    const std::span<const NamePart> rest = parts.subspan(reached.parts);
+    if (rest.empty()) {
+      selection.instances.push_back(
+          {.scope = reached.scope, .levels = named.levels});
+      continue;
+    }
+    if (const void* member = FindVariable(*reached.scope, rest);
+        member != nullptr) {
       selection.variables.push_back(member);
       continue;
     }
-    // An option of the run's own command line, which no statement wrote.
-    runtime_->Diagnostic().Report(
-        base::kNoSourceLocation, Severity::kWarning,
-        base::DiagMessage(
-            "the dump scope '{}' names no instance or variable; it is ignored",
-            named.path));
+    ignored();
   }
   return selection;
 }
 
-auto ValueDumps::FindVariable(Scope& instance, std::string_view name) -> const
-    void* {
-  NameFinder finder(name);
+// The leading parts name the blocks, tasks and functions the variable lies in,
+// outermost first, each reached as a name reaches a declaration (LRM 9.3.4),
+// and the last names the variable.
+auto ValueDumps::FindVariable(Scope& instance, std::span<const NamePart> name)
+    -> const void* {
+  if (std::ranges::any_of(
+          name, [](const NamePart& part) { return !part.indices.empty(); })) {
+    return nullptr;
+  }
+  const abi::LexicalScopeRecord* enclosing = nullptr;
+  for (const NamePart& part : name.first(name.size() - 1)) {
+    enclosing = LexicalDeclarationNamed(
+        instance.Declarations().lexical.Entries(), enclosing, part.identifier);
+    if (enclosing == nullptr) return nullptr;
+  }
+  VariableFinder finder(enclosing, name.back().identifier);
   const InstalledDescriber installed(*this, finder);
   instance.Describe();
   return finder.Found();
@@ -624,11 +624,6 @@ void DumpFile(
     base::SourceLocation at) {
   const base::SourceLocationScope bound(at);
   runtime.Dumps().DumpFile(name);
-}
-
-void DumpVars(RuntimeEffects& runtime, base::SourceLocation at) {
-  const base::SourceLocationScope bound(at);
-  runtime.Dumps().DumpVars();
 }
 
 void DumpVarsLevels(

@@ -274,19 +274,6 @@ void WriteOne(TargetText& out, const CppName& name);
   return SourceName{.name = name};
 }
 
-// A source name as a string the library reads, `"a.b"`: the name a design
-// reports itself by. It keeps the source's own spelling, as a C string literal,
-// rather than becoming an identifier.
-struct NameLiteral {
-  std::string_view name;
-};
-
-void WriteOne(TargetText& out, NameLiteral literal);
-
-[[nodiscard]] inline auto CppNameLiteral(std::string_view name) -> NameLiteral {
-  return NameLiteral{.name = name};
-}
-
 // The namespace a unit's declarations live in, named after the unit: unit `Top`
 // is `namespace Top`. Sites call this rather than spelling the unit name, so
 // the reader can tell a namespace from a class.

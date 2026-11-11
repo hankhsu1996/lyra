@@ -45,6 +45,10 @@
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/value/format.hpp"
 
+namespace lyra::abi {
+struct ScopeDeclarations;
+}  // namespace lyra::abi
+
 namespace lyra::runtime {
 
 class Design;
@@ -141,6 +145,12 @@ class Runtime final : public RuntimeEffects {
   // against is the design, so the boundary that stands the run up reads it from
   // here rather than from whoever happened to allocate the tree.
   [[nodiscard]] auto DesignRoot() -> Scope&;
+  // The packages and compilation units' scopes the bound design brought up,
+  // each one object of its own beside the instance tree (LRM 37.10), in the
+  // order their storage was installed.
+  [[nodiscard]] auto Namespaces() const
+      -> std::span<const abi::ScopeDeclarations* const>;
+  void RegisterNamespace(const abi::ScopeDeclarations& scope_declarations);
   auto Run() -> int;
 
   // The simulation reached its end -- the design asked (LRM 20.2), or a
@@ -298,8 +308,8 @@ class Runtime final : public RuntimeEffects {
   auto AdvanceToNextSlot() -> bool;
 
   void EnsureReadyToRun();
-  // LRM 3.14.3: design-global tick is the minimum declared precision across
-  // the tree.
+  // LRM 3.14.3: the design-global tick is the minimum precision the tree's
+  // scopes and the registered namespaces declare.
   void ResolveGlobalTimePrecision();
   void WalkResolve(Scope& scope);
   void WalkInitialize(Scope& scope);
@@ -449,6 +459,7 @@ class Runtime final : public RuntimeEffects {
   // its readers got there first, so what orders them is this map plus the calls
   // each one makes, and no party holds the whole graph.
   std::unordered_map<std::string, InitializationRng> namespace_seeds_;
+  std::vector<const abi::ScopeDeclarations*> namespaces_;
   std::atomic<SimTime> now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
   value::TimeFormat time_format_;
@@ -551,5 +562,10 @@ void LeaveStaticInit(RuntimeEffects& runtime);
 // and this parks nobody.
 auto ClaimNamespaceInitialization(RuntimeEffects& runtime, const char* name)
     -> std::int64_t;
+
+// A namespace's storage is being installed, which is where the design brings
+// it up, so it is one of the run's from here.
+void RegisterNamespace(
+    RuntimeEffects& runtime, const abi::ScopeDeclarations* scope_declarations);
 
 }  // namespace lyra::runtime

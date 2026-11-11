@@ -12,12 +12,12 @@ Accepted
 
 The `$unit` compilation-unit scope (LRM 3.12.1) holds declarations that lie outside any design
 element. Lyra models that scope as an ordinary namespace unit -- the same rootless unit a package
-is, with no source name of its own. Every other unit publishes a name a referrer recomputes from the
-same slang facts with no shared table: a package its declared name, a module its specialization name
-(`specialization-identity.md`). The anonymous unit has neither a declared name nor parameters, so it
-needs its own naming rule. This entry pins that rule and records why the tempting alternative --
-give the unit a design-wide id -- is the forbidden shape, not the fix, so the question does not get
-re-litigated at the next cross-unit-identity site.
+is, known to its source only as `$unit`, which every such scope shares. Every other unit publishes a
+name a referrer recomputes from the same slang facts with no shared table: a package its declared
+name, a module its specialization name (`specialization-identity.md`). The anonymous unit has
+neither a declared name nor parameters, so it needs its own naming rule. This entry pins that rule
+and records why the tempting alternative -- give the unit a design-wide id -- is the forbidden
+shape, not the fix, so the question does not get re-litigated at the next cross-unit-identity site.
 
 ## The tension this addresses
 

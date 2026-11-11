@@ -8,6 +8,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/lir/counts.hpp"
 #include "lyra/lir/verify.hpp"
 #include "lyra/lowering/hir_to_mir/type_operation_body.hpp"
@@ -50,8 +51,8 @@ auto LowerUnitToSemantic(
   const profiling::TimeTraceScope span(
       "lower to MIR", [&] { return unit.body_name; });
   lowering::hir_to_mir::UnitLowerer lowerer(unit, sources);
-  auto semantic = hir::RootsAnObject(unit.role) ? lowerer.RunObjectRoot()
-                                                : lowerer.RunNamespace();
+  auto semantic = hir::RootsAnObject(unit.definition) ? lowerer.RunObjectRoot()
+                                                      : lowerer.RunNamespace();
   if (!semantic) {
     return semantic;
   }

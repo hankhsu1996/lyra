@@ -305,6 +305,10 @@ auto lyra_rt_hand_string_to_foreign_caller(void* runtime, const void* text)
 
 auto lyra_rt_claim_namespace_initialize(void* runtime, const char* name)
     -> std::int64_t;
+// A package or a compilation unit's scope is one object of the run (LRM
+// 37.10); installing its storage is where it hands the run what it states of
+// itself.
+void lyra_rt_register_namespace(void* runtime, const void* scope_declarations);
 
 // What one program-global export symbol resolves against (LRM 35.4, 35.5.3):
 // the scope the foreign call chain currently holds, and the entry that scope
@@ -996,7 +1000,6 @@ auto lyra_rt_run_null_host_command(void* out) -> void*;
 // address, and a variable by the address of the member it is of the instance
 // declaring it.
 void lyra_rt_dump_file(void* runtime, const void* name, const void* location);
-void lyra_rt_dump_vars(void* runtime, const void* location);
 void lyra_rt_dump_vars_levels(
     void* runtime, std::int64_t levels, const void* location);
 void lyra_rt_dump_vars_of(
@@ -1021,8 +1024,8 @@ void lyra_rt_dump_ports_flush(void* runtime, const void* name);
 
 // What an instance describes of itself to a dump starting (LRM 21.7.1.2): one
 // member, by the wrapper it is and the domain of what it holds, with the
-// constant stating its declaration; an event variable; and the bracket around
-// the static variables of a named block, task or function.
+// constant stating its declaration, which names the block, task or function
+// it lies in; and an event variable.
 void lyra_rt_bit8_cell_describe(void* cell, void* runtime, const void* entry);
 void lyra_rt_bit16_cell_describe(void* cell, void* runtime, const void* entry);
 void lyra_rt_bit32_cell_describe(void* cell, void* runtime, const void* entry);
@@ -1080,8 +1083,6 @@ void lyra_rt_real_ref_describe(
 void lyra_rt_shortreal_ref_describe(
     void* reference, void* runtime, const void* entry);
 void lyra_rt_describe_event(void* event, void* runtime, const void* entry);
-void lyra_rt_begin_described_block(void* runtime, const void* block);
-void lyra_rt_end_described_block(void* runtime);
 
 // Whether the simulation's own arguments carry a plusarg with the given prefix
 // (LRM 21.6). Those arguments are the runtime's, so only the prefix crosses, as
@@ -1144,11 +1145,11 @@ auto lyra_rt_dist_erlang(
     std::int64_t seed, std::int64_t stages, std::int64_t mean,
     const void* location, const void* answer_type, void* out) -> void*;
 
-// Builds a scope's structural identity from its base label and per-dimension
-// indices (a span of machine integers, empty for a scalar), in storage the
-// caller gives.
-auto lyra_rt_hierarchy_segment_make(void* label, LyraSpan indices, void* out)
-    -> void*;
+// Builds a scope's structural identity from the declaration it fills, a
+// record of the declaring scope's class, and per-dimension indices (a span of
+// machine integers, empty for a scalar), in storage the caller gives.
+auto lyra_rt_hierarchy_segment_make(
+    const void* declaration, LyraSpan indices, void* out) -> void*;
 
 // The hierarchical name of what `below` names inside the scope (LRM 21.2.1.5;
 // the `%m` source), as a string built in storage the caller gives.
@@ -1199,13 +1200,12 @@ auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
     -> void*;
 
 // Where a program starts, answering its exit status: the arguments it was
-// started with, the entry its design root's unit builds its object through --
-// given the scope it is built under and the identity it is reached by, an
-// instance built with `new` that this library then owns -- and the label the
-// root carries as the artifact's own NUL-terminated constant.
+// started with, and the entry its design root's unit builds its object
+// through -- given the scope it is built under and the identity it is reached
+// by, an instance built with `new` that this library then owns.
 auto lyra_rt_run_program(
-    std::int32_t argc, char** argv, void* (*make)(void*, const void*),
-    const void* name) -> std::int32_t;
+    std::int32_t argc, char** argv, void* (*make)(void*, const void*))
+    -> std::int32_t;
 
 // How the instance at instantiation `at` of a construction table is made: the
 // entry making it, and the table it is constructed with.

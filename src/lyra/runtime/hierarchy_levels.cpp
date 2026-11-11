@@ -5,7 +5,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/scope.hpp"
-#include "lyra/support/dump_kind.hpp"
+#include "lyra/support/scope_kind.hpp"
 
 namespace lyra::runtime {
 
@@ -14,16 +14,20 @@ auto LevelsNamed(std::int64_t levels) -> std::int64_t {
 }
 
 auto CountsAsLevel(const Scope& scope) -> bool {
-  switch (scope.Info().metadata.DumpedAs()) {
-    case support::DumpScopeKind::kModule:
+  switch (scope.Segment().Declaration().Kind()) {
+    case support::ElaboratedScopeKind::kModule:
+    case support::ElaboratedScopeKind::kInterface:
+    case support::ElaboratedScopeKind::kProgram:
+    case support::ElaboratedScopeKind::kModuleArray:
+    case support::ElaboratedScopeKind::kInterfaceArray:
+    case support::ElaboratedScopeKind::kProgramArray:
       return true;
-    case support::DumpScopeKind::kTask:
-    case support::DumpScopeKind::kFunction:
-    case support::DumpScopeKind::kBegin:
-    case support::DumpScopeKind::kFork:
+    case support::ElaboratedScopeKind::kGenerateBlock:
+    case support::ElaboratedScopeKind::kGenerateLoop:
+    case support::ElaboratedScopeKind::kDesignRoot:
       return false;
   }
-  throw InternalError("CountsAsLevel: unknown scope kind");
+  throw InternalError("CountsAsLevel: unknown kind");
 }
 
 auto LevelsBelow(const Scope& child, std::int64_t remaining) -> std::int64_t {

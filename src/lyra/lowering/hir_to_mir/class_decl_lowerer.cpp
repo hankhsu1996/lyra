@@ -21,6 +21,7 @@
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
@@ -356,9 +357,7 @@ auto ClassDeclLowerer::DeclareShape(
       .implements = std::move(implements),
       .self_pointer_type = self_pointer_type,
       .declaring_instance = std::nullopt,
-      .time_resolution = {},
-      .execution = {},
-      .dumped_as = {},
+      .scope_declarations = std::nullopt,
       .ctor_prefix_params = {},
       .fields = {},
       .named_fields = {},
@@ -1140,7 +1139,7 @@ auto ClassDeclLowerer::PopulateBodies(
   // A class a design element's unit declares keeps its code in the body
   // realizing the scope its object's instance is, and is itself what every
   // body of the unit states alike.
-  if (hir::RootsAnObject(unit_lowerer.Hir().role)) {
+  if (hir::RootsAnObject(unit_lowerer.Hir().definition)) {
     MoveCodeIntoBody(
         unit_lowerer, class_id_, mir_class, declaring_frame,
         declaring_scope_->PublishedClassId());

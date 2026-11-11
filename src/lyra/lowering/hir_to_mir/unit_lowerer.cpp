@@ -32,6 +32,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
@@ -44,10 +45,12 @@
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/scope_table.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -66,6 +69,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_callback.hpp"
 #include "lyra/support/library_decl.hpp"
@@ -563,10 +567,6 @@ auto UnitLowerer::SettlePublishedScope(
   shape.identity = signature.class_path;
   shape.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
   shape.self_pointer_type = SelfPointerTo(published);
-  // It is the unit's object as other units see it, so it is the same time
-  // scope (LRM 3.14.2.2) as the classes extending it, which is the unit's.
-  shape.time_resolution = hir_->root_scope.time_resolution;
-  shape.execution = ScopeExecution();
   // Each published subroutine is a virtual method it introduces, its identity
   // reserved here at the position the signature gave the subroutine, so a body
   // reaching another instance of this unit calls it by position before any
@@ -1014,25 +1014,15 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
   }
 }
 
-auto UnitLowerer::ScopeExecution() const -> support::ScopeExecution {
-  switch (hir_->role) {
-    case hir::UnitRole::kModuleOrInterface:
-      return support::ScopeExecution::kDesign;
-    case hir::UnitRole::kProgram:
-      return support::ScopeExecution::kProgram;
-    case hir::UnitRole::kNamespace:
-      throw InternalError(
-          "UnitLowerer::ScopeExecution: a namespace has no instance to start "
-          "anything in");
-  }
-  throw InternalError("UnitLowerer::ScopeExecution: a unit of no role");
-}
-
 auto UnitLowerer::RunObjectRoot() -> diag::Result<mir::CompilationUnit> {
   if (auto root = PopulateModuleRoot(std::nullopt); !root) {
     return std::unexpected(std::move(root.error()));
   }
   return std::move(unit_);
+}
+
+auto UnitLowerer::DefinitionConstant() const -> mir::ConstantId {
+  return DefinitionRecordConstant(unit_, *hir_);
 }
 
 auto UnitLowerer::RunDesignRoot(DesignRootInputs design_root)
@@ -1175,6 +1165,27 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   const WalkFrame install_frame =
       namespace_frame.WithBlock(&install_code.Body())
           .WithBindings(&install_bindings);
+
+  // A package and the compilation unit's scope are each one object of the run
+  // beside the instance tree (LRM 37.10), and installing its storage is where
+  // the design brings it up, so that is where it hands the library what it
+  // states of itself: the definition it is and the scopes it declares (LRM
+  // 37.12). A class lowered alone and a text of the tool's are no such object.
+  if (hir::IsNamespaceObject(hir_->definition)) {
+    const ScopeTable declared = StateScopeTable(unit_, *hir_, scope);
+    mir::Builder install(install_code.Body(), namespace_frame.span);
+    const mir::ExprId info = ScopeDeclarationsAddress(
+        unit_, install,
+        mir::ScopeDeclarations{
+            .definition = DefinitionConstant(),
+            .elaborated = declared.elaborated,
+            .lexical = declared.lexical});
+    install.AppendStmt(
+        mir::ExprStmt{
+            .expr = install.Add(BuildBuiltinMethodCall(
+                unit_, install, support::BuiltinFn::kRegisterNamespace,
+                std::nullopt, {info}, unit_.builtins.void_type))});
+  }
 
   mir::CallableCode value_code =
       mir::CallableCode::Defined(namespace_frame.span);

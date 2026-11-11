@@ -18,10 +18,10 @@ namespace {
 using lyra::abi::DumpEntry;
 using lyra::runtime::DumpCheckpoint;
 using lyra::runtime::DumpCode;
+using lyra::runtime::DumpScopeKind;
 using lyra::runtime::DumpTriggered;
 using lyra::runtime::DumpUnknown;
 using lyra::runtime::DumpWriter;
-using lyra::support::DumpScopeKind;
 using lyra::support::DumpVarKind;
 using lyra::value::ConstIntegralView;
 

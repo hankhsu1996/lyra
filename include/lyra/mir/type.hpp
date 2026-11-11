@@ -216,7 +216,7 @@ struct VoidType {
 };
 
 // The type of an instance of a class some compilation unit declares -- a module
-// instance, a named generate scope, an interface, or a SystemVerilog class --
+// instance, a generate scope, an interface, or a SystemVerilog class --
 // named by the class's identity in this unit's registry, one per class
 // whichever unit defines it. Reaching a member is a separate act from naming
 // the type.

@@ -22,6 +22,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_import.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
@@ -30,6 +31,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir_transform/transform.hpp"
+#include "lyra/support/scope_kind.hpp"
 
 namespace lyra::compiler {
 
@@ -95,14 +97,16 @@ auto BuildDesignRootHir(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::SignatureReader& signatures) -> hir::Lowering {
   hir::Lowering lowered{
-      .name = std::string{kDesignRootUnitName},
+      .name = std::string{support::kDesignRootName},
       .construction = {},
       .body =
           hir::CompilationUnit{
-              std::string{kDesignRootUnitName},
-              std::string{kDesignRootUnitName}},
+              std::string{support::kDesignRootName},
+              std::string{support::kDesignRootName}},
       .reads = {}};
   hir::CompilationUnit& root = lowered.body;
+  root.definition =
+      hir::UnitDefinition{.library = {}, .cell = {}, .form = hir::DesignRoot{}};
   // Like any module, its object is published as the class an instance of the
   // unit is, and what it publishes is every instance it builds (LRM 23.6).
   hir::ScopeClassSignature published{
@@ -151,6 +155,7 @@ auto BuildDesignRootHir(
     root.root_scope.instance_members.Define(
         instance, hir::InstanceMemberDecl{
                       .instance_name = top.name_in_a_path,
+                      .instantiated = top.instantiated,
                       .array_dims = {},
                       .alternatives = {hir::InstanceAlternative{
                           .scope_class = scope_class,
@@ -264,7 +269,7 @@ auto SynthesizeDesignRoot(
   // whole design and is built again whenever anything is: what it reads of the
   // published signatures decides nothing about whether it is.
   const hir::SignatureReader signatures = hir::SignatureReader::Untracked(
-      published, std::string{kDesignRootUnitName});
+      published, std::string{support::kDesignRootName});
   hir::Lowering root_hir = BuildDesignRootHir(tops, signatures);
   instantiations.by_lowering.emplace(
       root_hir.name, lowering::hir_to_mir::LoweringMade::Of(root_hir));

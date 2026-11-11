@@ -2,7 +2,7 @@
 
 **Definition.** The MIR compile-time entity that owns members, nested classes, parameters,
 processes, and methods, and whose constructor builds the object graph; a compilation unit's body and
-each named generate scope lower to a class governed by the same member rules.
+each generate scope lower to a class governed by the same member rules.
 
 **Contrast.** Not a _block_ (a process / method / constructor body, which owns locals and the
 procedural statements that run in the simulation context). Not the _object graph_ (the runtime tree

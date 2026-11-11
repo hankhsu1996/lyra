@@ -17,6 +17,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -379,7 +380,7 @@ auto LowerContinuousDrive(
     // show what the drive gives, so no net shows its source in its place.
     const auto* whole = std::get_if<AccessPath>(&named->form);
     const std::optional<support::BuiltinFn> carried =
-        delay.has_value() || hir::IsProgram(lowerer.Owner().Hir().role) ||
+        delay.has_value() || hir::IsProgram(lowerer.Owner().Hir().definition) ||
                 whole == nullptr || !whole->descent.empty() ||
                 !drivers.front().has_value()
             ? std::nullopt

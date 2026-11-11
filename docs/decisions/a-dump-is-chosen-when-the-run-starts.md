@@ -2,7 +2,8 @@
 
 ## Date
 
-2026-10-19
+2026-10-19 (revised 2026-11-09: each recorded variable names the declaration it lies in, and a scope
+is recorded as what the declaration it fills is)
 
 ## Status
 
@@ -60,9 +61,11 @@ A class of the design hierarchy is compiled with one more method beside its elab
 which states each data object the class declares that a dump may record -- a variable, a net, a
 port, a named event, the static variables of a named block, task or function -- as a constant
 holding its name, its kind, its width, its declared range and, for a port, its direction and
-position, together with the member that holds it. The runtime walks its own object tree and asks
-each instance it selects to describe itself; nothing is listed for child scopes, which the tree
-already holds.
+position, and the declaration of the block, task or function it lies in, which the class states once
+among the scopes it declares, together with the member that holds it. The runtime walks its own
+object tree and asks each instance it selects to describe itself; nothing is listed for child
+scopes, which the tree already holds, and nothing opens or closes a block, which the declaration
+each variable names already places.
 
 It is a method rather than a table of offsets because no layer below MIR states a member's offset as
 a constant, and C++ guarantees `offsetof` only for a standard-layout class, which a scope class with
@@ -147,14 +150,16 @@ nor which side of a port drives it, so an input is written in the characters of 
 drive, an output in those of the device's, and an inout, whose driver is not told apart, in those of
 a port of unknown direction (LRM 21.7.4.3.1).
 
-### D7. What a scope is recorded as is a constant of its class
+### D7. What a scope is recorded as is a constant of the class declaring it
 
-Whether an instance is recorded as a module or a block (LRM 21.7.2.1 `scope_type`) is known when its
-class is declared, so it is held with the class's other constant properties, beside its timescale. A
-unit's own instance is a module and a generate block is a block. A named procedural block has no
-class and no object, so the scope holding it describes it as a `begin` scope of its own. A level
-`$dumpvars` counts is an instance. A block belongs to the instance holding it, so
-`$dumpvars(1, top)` records the variables of `top`'s generate blocks as well as its own.
+Whether a scope is recorded as a module, a block, a fork, a task or a function (LRM 21.7.2.1
+`scope_type`) is what the declaration it fills is, which the class of the scope declaring it states:
+an instance is a module and a generate block is a block. A named procedural block, a task and a
+function have no object, so a variable declared in one names its declaration, and the dump opens a
+scope of that declaration's kind around the first variable it records there; a scope nothing is
+recorded in is not written. A level `$dumpvars` counts is an instance. A block belongs to the
+instance holding it, so `$dumpvars(1, top)` records the variables of `top`'s generate blocks as well
+as its own.
 
 ## Rejected alternatives
 

@@ -61,17 +61,17 @@ auto FstVarType(support::DumpVarKind kind) -> fstVarType {
   throw InternalError("FstVarType: unknown kind");
 }
 
-auto FstScopeType(support::DumpScopeKind kind) -> fstScopeType {
+auto FstScopeType(DumpScopeKind kind) -> fstScopeType {
   switch (kind) {
-    case support::DumpScopeKind::kModule:
+    case DumpScopeKind::kModule:
       return FST_ST_VCD_MODULE;
-    case support::DumpScopeKind::kTask:
+    case DumpScopeKind::kTask:
       return FST_ST_VCD_TASK;
-    case support::DumpScopeKind::kFunction:
+    case DumpScopeKind::kFunction:
       return FST_ST_VCD_FUNCTION;
-    case support::DumpScopeKind::kBegin:
+    case DumpScopeKind::kBegin:
       return FST_ST_VCD_BEGIN;
-    case support::DumpScopeKind::kFork:
+    case DumpScopeKind::kFork:
       return FST_ST_VCD_FORK;
   }
   throw InternalError("FstScopeType: unknown kind");
@@ -100,7 +100,7 @@ class FstWriter final : public DumpWriter {
     fstWriterSetTimescale(context_, precision_power);
   }
 
-  void Scope(support::DumpScopeKind kind, std::string_view name) override {
+  void Scope(DumpScopeKind kind, std::string_view name) override {
     const std::string owned(name);
     fstWriterSetScope(context_, FstScopeType(kind), owned.c_str(), nullptr);
   }

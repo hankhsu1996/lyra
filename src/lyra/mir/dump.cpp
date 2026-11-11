@@ -938,6 +938,23 @@ class MirDumper {
           std::format(
               "DeclaringInstance: Callable[{}]", s.declaring_instance->value));
     }
+    if (s.scope_declarations.has_value()) {
+      const auto listed = [](const std::vector<ConstantId>& records) {
+        std::string text;
+        for (const ConstantId record : records) {
+          if (!text.empty()) text += ", ";
+          text += std::format("Constant[{}]", record.value);
+        }
+        return text;
+      };
+      Line(
+          std::format(
+              "ScopeDeclarations: definition=Constant[{}] elaborated=[{}] "
+              "lexical=[{}]",
+              s.scope_declarations->definition.value,
+              listed(s.scope_declarations->elaborated),
+              listed(s.scope_declarations->lexical)));
+    }
     for (const InterfaceReach& named : s.interface_reaches) {
       Line(
           std::format(

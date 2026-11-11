@@ -21,6 +21,7 @@
 #include "lyra/mir_transform/pass.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/status/status.hpp"
+#include "lyra/support/scope_kind.hpp"
 
 namespace lyra::compiler {
 
@@ -152,7 +153,7 @@ auto LowerToSemantic(
     return std::nullopt;
   }
 
-  const auto in_unit = diag::FailureContext::InUnit(kDesignRootUnitName);
+  const auto in_unit = diag::FailureContext::InUnit(support::kDesignRootName);
   auto root = [&] {
     const profiling::StageScope stage("design root");
     return SynthesizeDesignRoot(
@@ -191,7 +192,7 @@ auto LowerToExecutable(
     return std::nullopt;
   }
 
-  const auto in_unit = diag::FailureContext::InUnit(kDesignRootUnitName);
+  const auto in_unit = diag::FailureContext::InUnit(support::kDesignRootName);
   auto root = [&] {
     const profiling::StageScope stage("lower root to LIR");
     return LowerUnitToExecutable(

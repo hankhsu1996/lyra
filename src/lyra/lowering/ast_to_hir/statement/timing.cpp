@@ -346,7 +346,7 @@ auto LowerIntraAssignmentStmt(
 
   auto& body = *frame.current_procedural_body;
   OpenProceduralScope scope{
-      frame.ProceduralScopes().Declare(), hir::ProceduralScopeKind::kBlock,
+      frame.ProceduralScopes().Declare(), hir::ProceduralScopeKind::kImplicit,
       std::nullopt};
   const WalkFrame inner = frame.WithOpenScope(&scope);
 

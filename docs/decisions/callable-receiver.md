@@ -110,19 +110,18 @@ read from the receiver's type.
 
 ### Child-instance construction receiver triple
 
-When a parent scope instantiates an owned child or external-unit child, the call carries the
-parent's `self`, the child's structural `HierarchySegment` (label plus per-dim elaborated indices),
-and the engine handle as the first three arguments before any user-supplied structural parameters.
-The MIR shape is one explicit `CallExpr` against `ConstructorCallee` whose result type is
-`unique_ptr<Child>` and whose arguments are `[self, segment, services, structural_args...]`. The
-render is mechanical: it reads the unique-pointer result type and emits
-`std::make_unique<Child>(self, HierarchySegment{...}, services, structural_args...)`. After the
-construction returns its `unique_ptr<Child>` -- assigned to the slot for a scalar member, pushed
-into the vector for an array element -- an explicit attach call hands it to the runtime tree, under
-the parent its construction was given. Identity rides on the child (its segment is the single source
-of `%m` and debug output); the parent never re-states the label or indices. Neither the receiver
-triple nor the attach call lives in any stmt-kind dispatch; both are ordinary `CallExpr` nodes, and
-every backend reads them the same way.
+When a parent scope builds a child -- an instance or a generate block -- the call carries the
+parent's `self`, the child's structural `HierarchySegment` (the declaration it fills plus per-dim
+elaborated indices) and the construction table the child is built with as the first three arguments,
+before what the child takes at construction. The MIR shape is one indirect `CallExpr` through the
+entry the parent's construction table holds for that child, whose arguments are
+`[self, segment, table, structural_args...]` and whose result is an owning pointer to the child.
+After it returns -- assigned to the slot for a scalar member, pushed into the vector for an array
+element -- an explicit attach call hands it to the runtime tree, under the parent its construction
+was given. Identity rides on the child (its segment is the single source of `%m` and debug output);
+the parent never re-states the label or indices. Neither the receiver triple nor the attach call
+lives in any stmt-kind dispatch; both are ordinary `CallExpr` nodes, and every backend reads them
+the same way.
 
 ### Why always include `self`, not derive from "body touches class state"
 

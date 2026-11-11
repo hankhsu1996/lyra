@@ -85,8 +85,8 @@ class DumpProbe {
 };
 
 // What an instance of the design hierarchy is described to (LRM 21.7.1.2): the
-// things it declares that a dump may record, in the order it declares them,
-// with the named scopes it declares around their static variables. The
+// things it declares that a dump may record, in the order it declares them.
+// Each entry names the named block, task or function it lies in, if any. The
 // instances below it are described on their own.
 class Describer {
  public:
@@ -99,26 +99,6 @@ class Describer {
 
   virtual void Var(
       const abi::DumpEntry& entry, std::unique_ptr<DumpProbe> probe) = 0;
-  void BeginBlock(const abi::DumpBlock& block);
-  void EndBlock();
-
- protected:
-  // The named scopes around what is being described, outermost first.
-  [[nodiscard]] auto Enclosing() const
-      -> std::span<const abi::DumpBlock* const> {
-    return enclosing_;
-  }
-
- private:
-  // A named scope was entered, which is now the innermost of `Enclosing`, or
-  // the innermost is about to be left. A describer that records nothing of
-  // the scopes themselves has nothing to do on either.
-  virtual void Entered() {
-  }
-  virtual void Leaving() {
-  }
-
-  std::vector<const abi::DumpBlock*> enclosing_;
 };
 
 // One thing a running dump records: enrolled on its place for as long as the
@@ -164,7 +144,7 @@ class DumpWatch {
 // What a dump records (LRM 21.7.1.2): each instance named and as many levels
 // of the hierarchy below it as asked for, none meaning every level, and each
 // variable named on its own, by the member it is of the instance declaring
-// it. Nothing named is the whole design.
+// it.
 struct DumpSelection {
   struct Instances {
     Scope* scope;
@@ -205,12 +185,12 @@ class ValueDump {
   auto operator=(ValueDump&&) -> ValueDump& = delete;
   ~ValueDump();
 
-  // Declares what `selection` names under `roots`, the design's top scopes,
-  // records its first values, and records every change from now on. Each
-  // instance describes itself to the describer `dumps` holds meanwhile.
+  // Declares what `selection` names among the tops below `root`, records its
+  // first values, and records every change from now on. Each instance
+  // describes itself to the describer `dumps` holds meanwhile.
   void Start(
-      const DumpSelection& selection, std::span<Scope* const> roots,
-      SimTime now, ValueDumps& dumps);
+      const DumpSelection& selection, Scope& root, SimTime now,
+      ValueDumps& dumps);
   // The same for the ports `selection` names, each instance a scope of its
   // own named by its hierarchical name and its ports in the order its
   // declaration gives them (LRM 21.7.4.2).

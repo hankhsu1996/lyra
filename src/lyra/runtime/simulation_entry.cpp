@@ -100,9 +100,7 @@ constexpr std::string_view kOutOfMemory =
 // declaration is weak and nothing is registered.
 #pragma weak __sanitizer_set_death_callback
 
-auto RunDesignRoot(
-    int argc, char** argv, std::string_view root_name, const RootFactory& make)
-    -> int {
+auto RunDesignRoot(int argc, char** argv, const RootFactory& make) -> int {
   // Every ending the process can still act on -- a fault, a report of the
   // checker, and, for as long as the run lasts, a signal from outside --
   // delivers what the run had finished before it ends: what the design wrote,
@@ -135,8 +133,7 @@ auto RunDesignRoot(
   // to reach, so it is reported and the run never starts.
   try {
     runtime.BindDesign(
-        std::make_unique<Design>(
-            make(nullptr, HierarchySegment{std::string{root_name}, {}})));
+        std::make_unique<Design>(make(nullptr, HierarchySegment{})));
   } catch (const std::exception&) {
     ReportRaisedError(runtime, std::current_exception());
     return EXIT_FAILURE;

@@ -138,7 +138,7 @@ auto ProcessLowerer::RunConcurrentAssertion(
   if (named_block != nullptr) {
     labelled.emplace(
         owner_->LookupProceduralScope(*named_block),
-        hir::ProceduralScopeKind::kBlock, NameInAPath(*named_block));
+        hir::ProceduralScopeKind::kBegin, NameInAPath(*named_block));
   }
   const WalkFrame frame =
       labelled.has_value() ? root_frame.WithOpenScope(&*labelled) : root_frame;

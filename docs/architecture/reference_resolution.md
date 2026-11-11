@@ -146,8 +146,10 @@ resolution serves both accessing the target's value and observing its changes.
   scope or class carrying a table of subroutine or member names, or a route carrying a string for
   the runtime to match. A name resolved that way surfaces a misspelling or a type that differs
   between instances at run time or not at all, leaves an unchecked cast where a compile-time check
-  belonged, and makes every instance pay a registration per declaration. A scope's hierarchy segment
-  for `%m` and a class's DPI-C export table are not this: neither resolves a hierarchical name.
+  belonged, and makes every instance pay a registration per declaration. A scope's hierarchy
+  segment, the declarations a scope class states and its DPI-C export table are not this: none
+  resolves a hierarchical name the design writes, and a name from outside the design is read by the
+  one search `hierarchy_and_generate.md` describes.
 - A reference shape per direction or per lexical form (as separate species). One semantic shape; one
   route decomposition.
 - Resolution driven from the target's side: the referenced unit wiring, pushing, or storing its own

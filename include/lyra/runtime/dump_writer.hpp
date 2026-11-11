@@ -9,7 +9,7 @@
 
 #include "lyra/abi/records.hpp"
 #include "lyra/base/time.hpp"
-#include "lyra/support/dump_kind.hpp"
+#include "lyra/runtime/dump_scope_kind.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
@@ -68,7 +68,7 @@ class DumpWriter {
   // The design's time precision as a power of ten (LRM 3.14.3), which every
   // time the dump states is a count of.
   virtual void Timescale(std::int8_t precision_power) = 0;
-  virtual void Scope(support::DumpScopeKind kind, std::string_view name) = 0;
+  virtual void Scope(DumpScopeKind kind, std::string_view name) = 0;
   virtual void Upscope() = 0;
   virtual void Var(DumpCode code, const abi::DumpEntry& entry) = 0;
   // Several names may stand for one thing (LRM 21.7.2.3 `$var` b): a port and
