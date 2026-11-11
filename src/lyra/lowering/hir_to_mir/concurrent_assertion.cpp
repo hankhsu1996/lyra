@@ -1784,6 +1784,8 @@ auto LowerProceduralConcurrentAssertionStmt(
   auto saved = process.SaveValues(analyzed.saved, scope_frame);
   if (!saved) return std::unexpected(std::move(saved.error()));
   ClosureBuilder instance(unit, scope_frame, support::ClosureKind::kFn);
+  // It matures in the Observed region, where no process runs it.
+  RunDeferredBodyOnNoThread(process.Owner(), scope_frame, instance);
   if (auto due = AppendAttemptBecomingDue(
           process, instance.Frame(), InstalledAttemptCode(body, analyzed, span),
           *saved, process.AttemptsCellOf(dispositions.control));
