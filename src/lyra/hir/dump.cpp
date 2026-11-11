@@ -1121,6 +1121,8 @@ class HirDumper {
         return "explicit";
       case ConversionKind::kBitstreamCast:
         return "bitstream-cast";
+      case ConversionKind::kConstCast:
+        return "const-cast";
     }
     throw InternalError("HirDumper::FormatConversionKind: unknown kind");
   }
@@ -1285,12 +1287,14 @@ class HirDumper {
                       : std::string{});
             },
             [](const PastValueRef& p) -> std::string {
-              return std::format("PastValue history={}", p.history.value);
+              return std::format(
+                  "PastValue clock={}", FormatEventControl(p.clock));
             },
             [](const ValueChangeRef& v) -> std::string {
               return std::format(
-                  "ValueChange history={} reading={}", v.history.value,
-                  support::ValueChangeReadingName(v.reading));
+                  "ValueChange reading={} clock={}",
+                  support::ValueChangeReadingName(v.reading),
+                  FormatEventControl(v.clock));
             },
             [this](const ForeignImportRef& f) -> std::string {
               const auto& decl = unit_->foreign_imports.Get(f.id);
@@ -2671,16 +2675,6 @@ class HirDumper {
       Dedent();
     }
     DumpPatterns(s.patterns);
-    for (const SampledHistoryId id : s.sampled_histories.Ids()) {
-      const auto& h = s.sampled_histories.Get(id);
-      Line(
-          std::format(
-              "SampledHistory[{}] subject=Expr[{}] depth=Expr[{}]", id.value,
-              h.subject.value, h.depth.value));
-      Indent();
-      Line(std::format("clock: {}", FormatEventControl(h.clock)));
-      Dedent();
-    }
     for (const std::string& name : s.declared_classes) {
       Line(std::format("DeclaredClass '{}'", name));
     }

@@ -192,6 +192,69 @@ auto BuildPassCommitStmt(
 
 }  // namespace
 
+auto ClockingInputReadBy(
+    const StructuralScopeLowerer& scope, const hir::Expr& expr)
+    -> std::optional<ClockingInputRef> {
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
+  const auto* routed = primary == nullptr
+                           ? nullptr
+                           : std::get_if<hir::RoutedValueRef>(&primary->data);
+  if (routed == nullptr) return std::nullopt;
+  const hir::StructuralScope& hir_scope = scope.HirScope();
+  const hir::ValueRoute& route = hir_scope.routes.values.Get(routed->id);
+  const auto* own = std::get_if<hir::InUnitBase>(&route.base);
+  const auto* leaf = std::get_if<hir::StructuralDataObjectLeaf>(&route.leaf);
+  if (own == nullptr || own->hops.value != 0 || !route.steps.empty() ||
+      leaf == nullptr) {
+    return std::nullopt;
+  }
+  for (const hir::ClockingBlockId block : hir_scope.clocking_blocks.Ids()) {
+    const hir::ClockingBlockDecl& decl = hir_scope.clocking_blocks.Get(block);
+    for (const hir::ClockvarId at : decl.clockvars.Ids()) {
+      const hir::Clockvar& clockvar = decl.clockvars.Get(at);
+      if (clockvar.input.has_value() &&
+          clockvar.input->sample == leaf->object) {
+        return ClockingInputRef{.block = block, .clockvar = at};
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+auto LowerClockingSample(
+    const StructuralScopeLowerer& scope, const WalkFrame& frame,
+    ClockingInputRef input) -> diag::Result<mir::Expr> {
+  const hir::StructuralScope& hir_scope = scope.HirScope();
+  const hir::Clockvar& clockvar =
+      hir_scope.clocking_blocks.Get(input.block).clockvars.Get(input.clockvar);
+  return std::visit(
+      Overloaded{
+          // `#1step` takes the signal's sampled value (LRM 16.5.1).
+          [&](const hir::OneStepSkew&) -> diag::Result<mir::Expr> {
+            return scope.LowerExpr(
+                hir_scope.exprs.Get(clockvar.signal),
+                frame.WithReadsAsOf(ReadsAsOf::kPreponed));
+          },
+          // A delay takes the copy kept that far behind the signal.
+          [&](const hir::DelaySkew&) -> diag::Result<mir::Expr> {
+            const mir::TypeId type = scope.Owner().TranslateType(
+                hir_scope.structural_data_objects.Get(clockvar.input->sample)
+                    .type);
+            mir::Builder block = frame.Builder();
+            return mir::MakeCopyExpr(
+                block.Add(block.WrapperContents(
+                    scope.Owner().Unit().types,
+                    OwnCell(
+                        scope, block, frame,
+                        *scope.ClockingFieldsOf(input.block)
+                             .clockvars.Get(input.clockvar)
+                             .copy),
+                    type)),
+                type);
+          }},
+      clockvar.input->skew);
+}
+
 auto LowerClockingSampler(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     hir::ClockingBlockId id) -> diag::Result<mir::CallableDecl> {
@@ -199,27 +262,6 @@ auto LowerClockingSampler(
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const hir::ClockingBlockDecl& block = hir_scope.clocking_blocks.Get(id);
   const ClockingFields& fields = lowerer.ClockingFieldsOf(id);
-  // The value an input takes at the event: its signal over its leaves'
-  // sampled values for `#1step`, and the copy kept that far behind it for a
-  // delay.
-  const auto sampled = [&](hir::ClockvarId at, const hir::Clockvar& clockvar,
-                           mir::Builder into, const WalkFrame& frame,
-                           mir::TypeId type) -> diag::Result<mir::ExprId> {
-    return std::visit(
-        Overloaded{
-            [&](const hir::OneStepSkew&) -> diag::Result<mir::ExprId> {
-              auto value = lowerer.LowerExpr(
-                  hir_scope.exprs.Get(clockvar.signal),
-                  frame.WithReadsAsOf(ReadsAsOf::kPreponed));
-              if (!value) return std::unexpected(std::move(value.error()));
-              return into.Add(*std::move(value));
-            },
-            [&](const hir::DelaySkew&) -> diag::Result<mir::ExprId> {
-              return ReadOwnCell(
-                  lowerer, into, frame, *fields.clockvars.Get(at).copy, type);
-            }},
-        clockvar.input->skew);
-  };
   return ScopeExecution(
       lowerer, ctor_frame, block.span,
       [&](const WalkFrame& each) -> diag::Result<void> {
@@ -236,16 +278,15 @@ auto LowerClockingSampler(
         for (const hir::ClockvarId at : block.clockvars.Ids()) {
           const hir::Clockvar& clockvar = block.clockvars.Get(at);
           if (!clockvar.input.has_value()) continue;
-          const mir::TypeId type = lowerer.Owner().TranslateType(
-              hir_scope.structural_data_objects.Get(clockvar.input->sample)
-                  .type);
           mir::Builder into = observed.Body();
-          auto value = sampled(at, clockvar, into, observed_frame, type);
+          auto value = LowerClockingSample(
+              lowerer, observed_frame,
+              ClockingInputRef{.block = id, .clockvar = at});
           if (!value) return std::unexpected(std::move(value.error()));
           StoreOwnCell(
               lowerer, into, observed_frame,
               lowerer.TranslateStructuralDataObject(clockvar.input->sample),
-              *value);
+              into.Add(*std::move(value)));
         }
         TriggerOwnEvent(
             lowerer, observed_frame,

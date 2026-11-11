@@ -345,7 +345,7 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     const LlvmFnAbi abi = AtMachineTypes(
         *module_, entry.abi, ReturnDirect{.type = module_->Types().Void()});
     const std::array<llvm::Value*, 2> values{storage, value};
-    auto args = module_->BuildCallArgs(abi, values);
+    auto args = module_->BuildCallArgs(builder_, abi, values);
     if (!args) {
       return std::unexpected(std::move(args.error()));
     }
@@ -677,7 +677,7 @@ auto CodeGenFunction::ArrayElementAddress(
   builder_.SetInsertPoint(nowhere);
   const LlvmFnAbi abi =
       AtMachineTypes(*module_, step.no_element.abi, ReturnDirect{.type = ptr});
-  auto args = module_->BuildCallArgs(abi, {});
+  auto args = module_->BuildCallArgs(builder_, abi, {});
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -855,7 +855,7 @@ auto CodeGenFunction::LowerEntryBinary(
   const std::array<llvm::Value*, 2> values{*lhs, *rhs};
   const auto call = [&](ReturnInfo ret) -> diag::Result<llvm::CallInst*> {
     const LlvmFnAbi abi = AtMachineTypes(*module_, entry.abi, ret);
-    auto args = module_->BuildCallArgs(abi, values);
+    auto args = module_->BuildCallArgs(builder_, abi, values);
     if (!args) {
       return std::unexpected(std::move(args.error()));
     }
@@ -1339,7 +1339,7 @@ auto CodeGenFunction::ResolveCall(
   if (!abi) {
     return std::unexpected(std::move(abi.error()));
   }
-  auto args = module_->BuildCallArgs(*abi, operands);
+  auto args = module_->BuildCallArgs(builder_, *abi, operands);
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -1664,7 +1664,7 @@ auto CodeGenFunction::LowerDesignatedBitsWrite(
   const std::array<llvm::Value*, 4> operands{
       *designation, OuterBitsParts(std::span(*parts).first(parts->size() - 1)),
       parts->back().start.value, *written};
-  auto args = module_->BuildCallArgs(*abi, operands);
+  auto args = module_->BuildCallArgs(builder_, *abi, operands);
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -1708,7 +1708,7 @@ auto CodeGenFunction::LowerBitsStore(const lir::BitsStoreInstr& store)
   const std::array<llvm::Value*, 4> operands{
       at, OuterBitsParts(std::span(*parts).first(parts->size() - 1)),
       parts->back().start.value, *written};
-  auto args = module_->BuildCallArgs(abi, operands);
+  auto args = module_->BuildCallArgs(builder_, abi, operands);
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
@@ -1982,7 +1982,7 @@ auto CodeGenFunction::SelectorArgs(
         LlvmArgAbi{
             .type = module_->Types().Map(OperandType(operands[i])),
             .mode = modes[i]});
-    auto crossed = module_->BuildCallArg(modes[i], *lowered, args);
+    auto crossed = module_->BuildCallArg(builder_, modes[i], *lowered, args);
     if (!crossed) {
       return std::unexpected(std::move(crossed.error()));
     }

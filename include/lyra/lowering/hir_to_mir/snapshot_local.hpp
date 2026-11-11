@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -42,6 +43,13 @@ void AssignLocal(
 // declaration holds -- a pointer, a machine integer -- is held the same way.
 [[nodiscard]] auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value)
     -> mir::ExprId;
+
+// Declares a local of the block `frame` is lowering, started as `value`, under
+// a fresh synthesized origin, which is how a body made later reaches it by
+// capture, as a C++ lambda's init-capture names the value it was handed.
+[[nodiscard]] auto DeclareSynthesizedLocal(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId value)
+    -> BindingOriginId;
 
 // Freezes an outer expression's value into a closure's environment: hoists it
 // into a temp local of the block `outer_frame` is lowering, which ends with

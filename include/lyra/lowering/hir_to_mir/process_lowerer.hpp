@@ -12,6 +12,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/registry.hpp"
 #include "lyra/base/symbol_table.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -25,12 +26,14 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
+#include "lyra/lowering/hir_to_mir/kept_piece.hpp"
 #include "lyra/lowering/hir_to_mir/passing.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -132,6 +135,13 @@ class ProcessLowerer {
               [&](hir::ProceduralVarId var) { MapProceduralVar(var, binding); },
               [&](const AssertionControlCell& control) {
                 controls_.emplace(control.assertion, binding);
+              },
+              [&](const ConcurrentAttemptsCell& attempts) {
+                attempts_.emplace(attempts.assertion, binding);
+              },
+              [&](const SampledHistoryCell& kept) {
+                kept_histories_.Add(
+                    kept.call, kept.kept, binding.home, binding.cell_type);
               }},
           binding.of);
     }
@@ -214,6 +224,14 @@ class ProcessLowerer {
   // before it lands appended where the statement is reached.
   auto LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
       -> diag::Result<AccessPath>;
+
+  // Evaluates each of `saved` once, in order, where `statement` stands, each
+  // held in a binding of its own the bodies of the attempt reach by capture:
+  // what a procedural concurrent assertion saves where its statement is
+  // reached (LRM 16.14.6.1).
+  auto SaveValues(
+      std::span<const hir::ExprId> saved, const WalkFrame& statement)
+      -> diag::Result<std::vector<SavedValue>>;
 
   // Central statement dispatcher. One switch over `hir::Stmt::data` routing
   // each kind to its per-family handler.
@@ -354,9 +372,19 @@ class ProcessLowerer {
   // it acts through, built in `frame`'s block.
   [[nodiscard]] auto ControlCellOf(hir::ControlledAssertionId assertion) const
       -> const StaticCellBinding&;
+  // The cell holding the attempts a concurrent assertion statement of this
+  // body has in flight, where whatever replicates the statement holds them.
+  [[nodiscard]] auto AttemptsCellOf(hir::ControlledAssertionId assertion) const
+      -> const StaticCellBinding&;
   [[nodiscard]] auto ControlPlace(
       const WalkFrame& frame, hir::ControlledAssertionId assertion) const
       -> mir::ExprId;
+
+  // Where the sampled value functions of this body keep the pieces of their
+  // operands (LRM 16.9.3).
+  [[nodiscard]] auto Histories() const -> const KeptHistories& {
+    return kept_histories_;
+  }
 
   // A `ref` formal `var`, declared `declared`: it names its actual's storage,
   // which reports its own writes (LRM 13.5.2), so it is the parameter itself,
@@ -511,6 +539,9 @@ class ProcessLowerer {
   base::SymbolTable<hir::ProceduralVarId, ProceduralVarBinding> bindings_;
   // The cell each controlled statement of the body was given, by its id.
   std::map<hir::ControlledAssertionId, StaticCellBinding> controls_;
+  std::map<hir::ControlledAssertionId, StaticCellBinding> attempts_;
+  // The cells each sampled value function of the body keeps its pieces in.
+  KeptHistories kept_histories_;
 
   // The result type of the body being lowered, set before its body walks. It
   // is the call protocol, so every return site reads what its completion

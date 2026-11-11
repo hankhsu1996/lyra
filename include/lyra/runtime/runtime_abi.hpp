@@ -71,14 +71,15 @@
 // the library that takes a place hands it on; one over code compiled for every
 // type binds it for the extent of the call, so each path opens one scope.
 //
+// A run of values crosses as two values, where they lie and how many there
+// are, never as a structure holding both: every value here crosses as a
+// scalar or an address, which lands where its own kind says on every target,
+// while a structure passed whole lands where that target's rules for
+// structures put it, which a generated module does not reproduce.
+//
 // Definitions wrap the runtime; a host resolves these symbols when it loads a
 // generated module (JIT-compiled, AOT-linked, or interpreted).
 extern "C" {
-
-struct LyraSpan {
-  void* data;
-  std::uint64_t count;
-};
 
 // One part of an integral value that bits a write is handed lie in: where it
 // starts within the part before it -- the value itself for the first --
@@ -150,8 +151,8 @@ auto lyra_rt_file_read(
     void* out) -> void*;
 auto lyra_rt_file_read_memory(
     void* files, const void* dest, const void* dest_type, std::int64_t fd,
-    LyraSpan bounds, std::int64_t start, std::int64_t count,
-    const void* answer_type, void* out) -> void*;
+    void* bounds, std::uint64_t bounds_count, std::int64_t start,
+    std::int64_t count, const void* answer_type, void* out) -> void*;
 auto lyra_rt_file_seek(
     void* files, std::int64_t fd, std::int64_t offset, std::int64_t operation,
     void* out) -> void*;
@@ -177,8 +178,8 @@ auto lyra_rt_string_default(void* out) -> void*;
 // A print item writing the text of a string as it is.
 auto lyra_rt_text_print_item_make(const void* text, void* out) -> void*;
 auto lyra_rt_format(
-    LyraSpan items, const void* time_format, const void* location, void* out)
-    -> void*;
+    void* items, std::uint64_t items_count, const void* time_format,
+    const void* location, void* out) -> void*;
 void lyra_rt_writeln(void* files, std::int64_t descriptor, void* text);
 void lyra_rt_write(void* files, std::int64_t descriptor, void* text);
 
@@ -337,10 +338,13 @@ void lyra_rt_run_exported_task_to_completion(void* activation);
 // spawning process blocks or terminates. `spawn_all` is `join_none`, whose
 // parent never waits and so answers nothing; the other two answer the parent's
 // wait for its join, built in storage the caller gives.
-void lyra_rt_spawn_all(void* runtime, LyraSpan branches);
-auto lyra_rt_fork_wait_all(void* runtime, LyraSpan branches, void* out)
+void lyra_rt_spawn_all(
+    void* runtime, void* branches, std::uint64_t branches_count);
+auto lyra_rt_fork_wait_all(
+    void* runtime, void* branches, std::uint64_t branches_count, void* out)
     -> void*;
-auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches, void* out)
+auto lyra_rt_fork_wait_first(
+    void* runtime, void* branches, std::uint64_t branches_count, void* out)
     -> void*;
 
 // LRM 9.6.1 `wait fork` and 9.6.3 `disable fork`. Both read the executing
@@ -662,9 +666,10 @@ void lyra_rt_assertion_control_commit(const void* control, void* made);
 void lyra_rt_submit_at_run_end(void* runtime, void* closure);
 
 // What the assertion control tasks set for one statement (LRM 20.11).
-// `register_in` and `register` make it one the tasks select under the run's
-// `effects`, held by the instance `scope` or by none, as a statement of Table
-// 20-6 `type` stating Table 20-7 `directive`, 0 where it states none;
+// `describe` states it is the control of a statement of Table 20-6 `type`
+// stating Table 20-7 `directive`, 0 where it states none, where its storage is
+// constructed. `register_in` and `register` make it one the tasks select under
+// the run's `effects`, held by the instance `scope` or by none;
 // `register_within` makes it one a task naming `block` selects under the same
 // `effects`. `allowed` is what an execution beginning now may do, as
 // `support::kAssertion*` bits. `submit_observed` and `submit_final` queue a
@@ -672,11 +677,11 @@ void lyra_rt_submit_at_run_end(void* runtime, void* closure);
 // once the report matures (LRM 16.4), each taking ownership of the coroutine
 // `body` points at, built where the statement is; `location` is where an
 // observed one is written, which its refusal in the Postponed region names.
+void lyra_rt_assertion_control_describe(
+    void* control, std::uint64_t type, std::uint64_t directive);
 void lyra_rt_assertion_control_register_in(
-    void* control, void* effects, void* scope, std::uint64_t type,
-    std::uint64_t directive);
-void lyra_rt_assertion_control_register(
-    void* control, void* effects, std::uint64_t type, std::uint64_t directive);
+    void* control, void* effects, void* scope);
+void lyra_rt_assertion_control_register(void* control, void* effects);
 void lyra_rt_assertion_control_register_within(
     void* control, void* effects, const void* block);
 auto lyra_rt_assertion_control_allowed(const void* control) -> std::uint64_t;
@@ -818,8 +823,9 @@ void lyra_rt_timer_arm(
 // cross as machine integers, like every runtime scalar. The leaf is built in
 // storage the caller gives.
 auto lyra_rt_trigger_make(
-    void* place, const void* observation, LyraSpan steps,
-    std::int64_t lsb_bit_offset, std::int64_t bit_width, void* out) -> void*;
+    void* place, const void* observation, void* steps,
+    std::uint64_t steps_count, std::int64_t lsb_bit_offset,
+    std::int64_t bit_width, void* out) -> void*;
 
 // What decides whether reaching a wait is an event for it (LRM 9.4.2). Two
 // halves, and one entry per combination the language makes of them, so the
@@ -852,27 +858,30 @@ auto lyra_rt_observation_fires(const void* observation) -> std::int64_t;
 // waits for the next occurrence (LRM 9.7). Each takes what its reports hold,
 // leaving them empty for the next evaluation.
 auto lyra_rt_wait_recollecting(
-    LyraSpan reports, LyraSpan observations, void* out) -> void*;
-auto lyra_rt_wait_until(LyraSpan reports, void* out) -> void*;
+    void* reports, std::uint64_t reports_count, void* observations,
+    std::uint64_t observations_count, void* out) -> void*;
+auto lyra_rt_wait_until(void* reports, std::uint64_t reports_count, void* out)
+    -> void*;
 
 // A wait for what happens at one of `triggers` to be an event for it (LRM
 // 9.4.2 / 9.4.2.2 / 15.5.2), or at one leaf of the implicit list a report
 // settled (LRM 9.2.2.2.1). An empty span means "never wake up".
-auto lyra_rt_wait_on(LyraSpan triggers, void* out) -> void*;
+auto lyra_rt_wait_on(void* triggers, std::uint64_t triggers_count, void* out)
+    -> void*;
 auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void*;
 
 // The wait an expect statement stops at (LRM 16.17): it watches `clock` and
-// `disable_reads` and holds the one attempt the statement began over position
-// sets `words` wide, which `attempts_of` answers and every
-// `evaluation_attempts` entry below acts on. `bind_property_evaluation` gives
-// it the tick and the disable test it runs, each a closure of the waiting body,
-// and `disable_property_evaluation` is the disable condition having held.
+// `disable_reads` and holds the one attempt the statement began, over a
+// property that starts at the positions `start`, which `attempts_of` answers
+// and the `evaluation_attempts` entries below act on.
+// `bind_property_evaluation` gives it the tick it runs and the closure of its
+// one attempt, each a closure of the waiting body.
 auto lyra_rt_wait_on_property_evaluation(
-    void* runtime, LyraSpan clock, LyraSpan disable_reads, std::uint64_t words,
+    void* runtime, void* clock, std::uint64_t clock_count, void* disable_reads,
+    std::uint64_t disable_reads_count, void* start, std::uint64_t start_count,
     const void* control, void* out) -> void*;
 auto lyra_rt_attempts_of(void* wait) -> void*;
-void lyra_rt_bind_property_evaluation(void* wait, void* step, void* test);
-void lyra_rt_disable_property_evaluation(void* wait);
+void lyra_rt_bind_property_evaluation(void* wait, void* step, void* closure);
 
 // Every wait above is built in storage the caller gives, and every stop is
 // this, at one of them, answering whether the caller must give up control.
@@ -894,12 +903,12 @@ auto lyra_rt_park_at(void* runtime, void* wait) -> bool;
 auto lyra_rt_read_report_empty(void* out) -> void*;
 auto lyra_rt_read_report_for_implicit_list(void* out) -> void*;
 void lyra_rt_read_report_add(
-    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width) noexcept;
+    void* report, void* place, void* steps, std::uint64_t steps_count,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width) noexcept;
 void lyra_rt_read_report_add_object(void* report, void* object);
 void lyra_rt_read_report_add_write(
-    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width) noexcept;
+    void* report, void* place, void* steps, std::uint64_t steps_count,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width) noexcept;
 void lyra_rt_read_report_settle_as_implicit_list(void* report);
 auto lyra_rt_read_report_enter(void* report) noexcept -> std::int64_t;
 void lyra_rt_read_report_leave(void* report) noexcept;
@@ -1149,7 +1158,8 @@ auto lyra_rt_dist_erlang(
 // record of the declaring scope's class, and per-dimension indices (a span of
 // machine integers, empty for a scalar), in storage the caller gives.
 auto lyra_rt_hierarchy_segment_make(
-    const void* declaration, LyraSpan indices, void* out) -> void*;
+    const void* declaration, void* indices, std::uint64_t indices_count,
+    void* out) -> void*;
 
 // The hierarchical name of what `below` names inside the scope (LRM 21.2.1.5;
 // the `%m` source), as a string built in storage the caller gives.
@@ -1183,8 +1193,8 @@ auto lyra_rt_loop_blocks_at(const void* blocks, std::int64_t index) -> void*;
 // position writes nothing.
 void lyra_rt_insert_bits(
     void* whole, std::int64_t whole_width, bool whole_is_four_state,
-    LyraSpan outer_parts, const void* start, const void* bits,
-    std::int64_t bits_width, bool bits_are_four_state);
+    void* outer_parts, std::uint64_t outer_parts_count, const void* start,
+    const void* bits, std::int64_t bits_width, bool bits_are_four_state);
 
 // The sequence of handles a declaration standing for several objects builds,
 // in the order its coordinates count, and the handle at a position in one. A
@@ -1194,7 +1204,7 @@ void lyra_rt_insert_bits(
 // so a sequence starts from the handles already in hand and is extended once
 // per object after that; what the owner keeps is the last answer, and until it
 // does nothing else names the sequence being extended.
-auto lyra_rt_sequence_make(LyraSpan handles) -> void*;
+auto lyra_rt_sequence_make(void* handles, std::uint64_t handles_count) -> void*;
 auto lyra_rt_sequence_extend(void* sequence, void* element) -> void*;
 auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
     -> void*;
@@ -1452,105 +1462,120 @@ void lyra_rt_shortreal_ref_end_takeover(
 // `install` fills it with the expression's default sampled value and fixes how
 // far back it reaches, so a read has no empty case and nothing counts ticks;
 // `push` records what a tick settled, dropping the entry no read can name; and
-// `at` answers with what the tick a read names settled, counting back from 1
-// for the most recent.
+// `at` answers where the history keeps what the tick a read names settled,
+// counting back from 1 for the most recent.
 void lyra_rt_string_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_string_sampled_history_push(void* history, const void* value);
 auto lyra_rt_string_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 void lyra_rt_real_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_real_sampled_history_push(void* history, const void* value);
 auto lyra_rt_real_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 void lyra_rt_shortreal_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_shortreal_sampled_history_push(void* history, const void* value);
 auto lyra_rt_shortreal_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 void lyra_rt_laidout_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth,
     const void* default_value_type);
 void lyra_rt_laidout_sampled_history_push(void* history, const void* value);
 auto lyra_rt_laidout_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 void lyra_rt_dynarray_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_dynarray_sampled_history_push(void* history, const void* value);
 auto lyra_rt_dynarray_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 void lyra_rt_queue_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_queue_sampled_history_push(void* history, const void* value);
 auto lyra_rt_queue_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 void lyra_rt_assocarray_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_assocarray_sampled_history_push(void* history, const void* value);
 auto lyra_rt_assocarray_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 void lyra_rt_managedref_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_managedref_sampled_history_push(void* history, const void* value);
 auto lyra_rt_managedref_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 
 // What one concurrent assertion has in flight (LRM 16.14.1), reached only
 // through the storage's own address. These carry machine words rather than
 // values of the design, which is why one entry serves every assertion.
 //
-// `install` fixes how wide a position set is, the statements an outcome
-// selects and the assertion's control. `open_attempt` opens an attempt on the
-// staged seed. A tick opens with `begin_tick`, or with `disable_tick` where the
-// disable condition held; `live_word` bounds the Boolean expressions the tick
-// has to read, and `next_unstepped` walks the evaluations it still owes a step,
-// answering -1 when none is left. `bits_at`, `set_word` and `step` read one
-// evaluation's position set, replace it with its successor, and mark it
-// stepped; `seed_word` stages the set a new evaluation starts from and `seed`
-// opens one on it as an instance of one implication of another. `count`,
-// `part_of`, `implication_answer`, `implication_nonvacuous` and `resolve`
-// answer each evaluation from the last back: how many there are, which part of
-// the property one answers for, the least answer an implication's instances
-// reached and whether any was nonvacuous, and what it answered and whether
-// that was nonvacuous. `settle` answers every attempt the tick resolved, and
-// `answer` and `action_runs` read what the one attempt an expect statement
-// holds came to and whether the arm it selects may run.
+// `install` fixes the positions the whole property starts at, what a tick runs
+// and the assertion's control. `allocate` hands out storage for one attempt's
+// closure, which the code making it builds in place, and `commit` says the
+// attempt it begins has matured; `tick` says the leading clock ticked and
+// runs the tick, which a commit later in the same time step runs again. What
+// the tick runs reads, bounded by `live_word`, the Booleans every attempt
+// shares, and `run` steps each attempt's closure with them and settles those
+// that answered. `test_disable` asks each closure whether its disable condition
+// holds. `answer` and `action_runs` read what the one attempt an expect
+// statement holds came to and whether the arm it selects may run.
 void lyra_rt_evaluation_attempts_install(
-    void* attempts, void* effects, std::uint64_t words, void* pass_action,
-    void* fail_action, void* control);
-void lyra_rt_evaluation_attempts_seed_word(
-    void* attempts, std::uint64_t word, std::uint64_t bits);
-void lyra_rt_evaluation_attempts_open_attempt(void* attempts);
-void lyra_rt_evaluation_attempts_begin_tick(void* attempts);
-void lyra_rt_evaluation_attempts_disable_tick(void* attempts);
+    void* attempts, void* effects, void* start, std::uint64_t start_count,
+    void* step, void* control);
+auto lyra_rt_evaluation_attempts_allocate(
+    void* attempts, std::uint64_t size, std::uint64_t alignment) -> void*;
+void lyra_rt_evaluation_attempts_commit(void* attempts, void* made);
+void lyra_rt_evaluation_attempts_tick(void* attempts);
+void lyra_rt_evaluation_attempts_run(
+    void* attempts, void* shared, std::uint64_t shared_count);
+void lyra_rt_evaluation_attempts_test_disable(void* attempts);
 auto lyra_rt_evaluation_attempts_live_word(
     const void* attempts, std::uint64_t word) -> std::uint64_t;
-auto lyra_rt_evaluation_attempts_next_unstepped(void* attempts) -> std::int64_t;
-auto lyra_rt_evaluation_attempts_bits_at(
-    const void* attempts, std::int64_t index, std::uint64_t word)
-    -> std::uint64_t;
-void lyra_rt_evaluation_attempts_set_word(
-    void* attempts, std::int64_t index, std::uint64_t word, std::uint64_t bits);
-void lyra_rt_evaluation_attempts_step(void* attempts, std::int64_t index);
-void lyra_rt_evaluation_attempts_seed(
-    void* attempts, std::int64_t index, std::uint64_t implication,
-    std::uint64_t part);
-auto lyra_rt_evaluation_attempts_count(const void* attempts) -> std::int64_t;
-auto lyra_rt_evaluation_attempts_part_of(
-    const void* attempts, std::int64_t index) -> std::uint64_t;
-auto lyra_rt_evaluation_attempts_implication_answer(
-    const void* attempts, std::int64_t index, std::uint64_t implication)
-    -> std::uint64_t;
-auto lyra_rt_evaluation_attempts_implication_nonvacuous(
-    const void* attempts, std::int64_t index, std::uint64_t implication)
-    -> std::uint64_t;
-void lyra_rt_evaluation_attempts_resolve(
-    void* attempts, std::int64_t index, std::uint64_t answer,
-    std::uint64_t nonvacuous);
-void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects);
 auto lyra_rt_evaluation_attempts_answer(const void* attempts) -> std::uint64_t;
 auto lyra_rt_evaluation_attempts_action_runs(const void* attempts) -> bool;
+
+// One attempt, as its closure steps it. `shared_word` reads the Booleans
+// every attempt shares at this tick, as the step was handed them. `live_word`
+// bounds the Boolean expressions the step has to read, and `next_unstepped`
+// walks the evaluations it still owes a step, answering -1 when none is left.
+// `bits_at`, `set_word` and `step` read one evaluation's position set,
+// replace it with its successor, and mark it stepped; `seed_word` stages the
+// set a new evaluation starts from and `seed` opens one on it as an instance of
+// one implication of another.
+// `count`, `part_of`, `implication_answer`, `implication_nonvacuous` and
+// `resolve` answer each evaluation from the last back: how many there are,
+// which part of the property one answers for, the least answer an
+// implication's instances reached and whether any was nonvacuous, and what it
+// answered and whether that was nonvacuous.
+auto lyra_rt_evaluation_attempt_shared_word(
+    const void* attempt, std::uint64_t word) -> std::uint64_t;
+auto lyra_rt_evaluation_attempt_live_word(
+    const void* attempt, std::uint64_t word) -> std::uint64_t;
+auto lyra_rt_evaluation_attempt_next_unstepped(void* attempt) -> std::int64_t;
+auto lyra_rt_evaluation_attempt_bits_at(
+    const void* attempt, std::int64_t index, std::uint64_t word)
+    -> std::uint64_t;
+void lyra_rt_evaluation_attempt_set_word(
+    void* attempt, std::int64_t index, std::uint64_t word, std::uint64_t bits);
+void lyra_rt_evaluation_attempt_step(void* attempt, std::int64_t index);
+void lyra_rt_evaluation_attempt_seed_word(
+    void* attempt, std::uint64_t word, std::uint64_t bits);
+void lyra_rt_evaluation_attempt_seed(
+    void* attempt, std::int64_t index, std::uint64_t implication,
+    std::uint64_t part);
+auto lyra_rt_evaluation_attempt_count(const void* attempt) -> std::int64_t;
+auto lyra_rt_evaluation_attempt_part_of(const void* attempt, std::int64_t index)
+    -> std::uint64_t;
+auto lyra_rt_evaluation_attempt_implication_answer(
+    const void* attempt, std::int64_t index, std::uint64_t implication)
+    -> std::uint64_t;
+auto lyra_rt_evaluation_attempt_implication_nonvacuous(
+    const void* attempt, std::int64_t index, std::uint64_t implication)
+    -> std::uint64_t;
+void lyra_rt_evaluation_attempt_resolve(
+    void* attempt, std::int64_t index, std::uint64_t answer,
+    std::uint64_t nonvacuous);
 
 // A value a body holds across a suspension (LRM 9.4) -- what a call it awaits
 // completes with. The cell lives in the running activation's store, so the
@@ -1626,7 +1651,8 @@ auto lyra_rt_string_scan_string(
     void* out) -> void*;
 
 auto lyra_rt_string_add(const void* lhs, const void* rhs, void* out) -> void*;
-auto lyra_rt_string_concat(LyraSpan parts, void* out) -> void*;
+auto lyra_rt_string_concat(void* parts, std::uint64_t parts_count, void* out)
+    -> void*;
 auto lyra_rt_replicate_string(
     const void* operand, std::int64_t count, void* out) -> void*;
 auto lyra_rt_string_eq(const void* lhs, const void* rhs) -> std::uint8_t;
@@ -1824,8 +1850,8 @@ auto lyra_rt_dynamic_array_new_copy(
 auto lyra_rt_dynarray_default(const void* answer_element_type, void* out)
     -> void*;
 auto lyra_rt_dynarray_from_list(
-    LyraSpan unit, std::int64_t count, const void* location,
-    const void* answer_element_type, void* out) -> void*;
+    void* unit, std::uint64_t unit_count, std::int64_t count,
+    const void* location, const void* answer_element_type, void* out) -> void*;
 // LRM 7.6: one unpacked array kind taking another's elements. The entry names
 // both representations because the source is read through the one it has and
 // the result is built in the one the destination declares. A fixed-size
@@ -1905,7 +1931,8 @@ auto lyra_rt_dynarray_value_cell_load(void* cell) noexcept -> void*;
 // copies of `unit` down one after another until the array is full (LRM 10.9.1):
 // how many times is the type's to say, since it fixes the element count.
 auto lyra_rt_laidout_from_elements(
-    LyraSpan unit, const void* answer_type, void* out) -> void*;
+    void* unit, std::uint64_t unit_count, const void* answer_type, void* out)
+    -> void*;
 auto lyra_rt_dynarray_unpacked_array_from_array(
     const void* source, const void* location, const void* answer_type,
     void* out) -> void*;
@@ -2085,8 +2112,8 @@ void lyra_rt_managedref_driver_set(void* driver, const void* value);
 // delete each change the queue where it lies.
 auto lyra_rt_queue_default(const void* answer_type, void* out) -> void*;
 auto lyra_rt_queue_from_list(
-    LyraSpan unit, std::int64_t count, const void* location,
-    const void* answer_type, void* out) -> void*;
+    void* unit, std::uint64_t unit_count, std::int64_t count,
+    const void* location, const void* answer_type, void* out) -> void*;
 auto lyra_rt_queue_queue_from_array(
     const void* source, const void* location, const void* answer_type,
     void* out) -> void*;
@@ -2187,8 +2214,9 @@ auto lyra_rt_assocarray_default(
     const void* key_index_order, const void* answer_element_type, void* out)
     -> void*;
 auto lyra_rt_assocarray_from_entries(
-    LyraSpan entries, const void* entry_type, const void* key_index_order,
-    const void* answer_element_type, void* out) -> void*;
+    void* entries, std::uint64_t entries_count, const void* entry_type,
+    const void* key_index_order, const void* answer_element_type, void* out)
+    -> void*;
 auto lyra_rt_assocarray_assoc_with_default(
     const void* array, const void* stated_default, void* out) -> void*;
 // Whether the array was given a value of its own for an absent index, and the
@@ -2310,32 +2338,33 @@ void lyra_rt_queue_reverse(void* receiver);
 // own, handed the enumeration's members ahead of the file name, since only a
 // member's value is a word of it (LRM 21.4.2).
 auto lyra_rt_laidout_read_mem(
-    void* runtime, const void* memory, const void* name, LyraSpan dims,
-    std::int64_t base, std::int64_t start, const void* location,
-    const void* memory_type, const void* answer_type, void* out) -> void*;
+    void* runtime, const void* memory, const void* name, void* dims,
+    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
+    const void* location, const void* memory_type, const void* answer_type,
+    void* out) -> void*;
 auto lyra_rt_laidout_read_mem_within(
-    void* runtime, const void* memory, const void* name, LyraSpan dims,
-    std::int64_t base, std::int64_t start, std::int64_t finish,
-    const void* location, const void* memory_type, const void* answer_type,
-    void* out) -> void*;
-auto lyra_rt_laidout_read_enumerated_mem(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
-    const void* location, const void* memory_type, const void* answer_type,
-    void* out) -> void*;
-auto lyra_rt_laidout_read_enumerated_mem_within(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
+    void* runtime, const void* memory, const void* name, void* dims,
+    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
     std::int64_t finish, const void* location, const void* memory_type,
     const void* answer_type, void* out) -> void*;
+auto lyra_rt_laidout_read_enumerated_mem(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, void* dims, std::uint64_t dims_count, std::int64_t base,
+    std::int64_t start, const void* location, const void* memory_type,
+    const void* answer_type, void* out) -> void*;
+auto lyra_rt_laidout_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, void* dims, std::uint64_t dims_count, std::int64_t base,
+    std::int64_t start, std::int64_t finish, const void* location,
+    const void* memory_type, const void* answer_type, void* out) -> void*;
 void lyra_rt_laidout_write_mem(
-    void* runtime, const void* memory, const void* name, LyraSpan dims,
-    std::int64_t base, std::int64_t start, const void* location,
-    const void* memory_type);
-void lyra_rt_laidout_write_mem_within(
-    void* runtime, const void* memory, const void* name, LyraSpan dims,
-    std::int64_t base, std::int64_t start, std::int64_t finish,
+    void* runtime, const void* memory, const void* name, void* dims,
+    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
     const void* location, const void* memory_type);
+void lyra_rt_laidout_write_mem_within(
+    void* runtime, const void* memory, const void* name, void* dims,
+    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
+    std::int64_t finish, const void* location, const void* memory_type);
 auto lyra_rt_dynarray_read_mem(
     void* runtime, const void* memory, const void* name, std::int64_t base,
     std::int64_t start, const void* location, const void* answer_type,
@@ -2677,9 +2706,10 @@ auto lyra_rt_managedref_print_item_make(
 // the call site, so they arrive as operands rather than being reached from
 // here.
 auto lyra_rt_format_runtime(
-    const void* format, LyraSpan args, const void* scope_path,
-    const void* library_binding, const void* time_format,
-    std::int64_t timeunit_power, const void* location, void* out) -> void*;
+    const void* format, void* args, std::uint64_t args_count,
+    const void* scope_path, const void* library_binding,
+    const void* time_format, std::int64_t timeunit_power, const void* location,
+    void* out) -> void*;
 auto lyra_rt_integral_format_arg_make(
     const void* value, std::int64_t value_width, bool value_is_signed,
     bool value_is_four_state, void* out) -> void*;
@@ -2743,8 +2773,8 @@ auto lyra_rt_to_sv_logic(
 // `answer_type`: fixed-size unpacked arrays down to integral elements, each
 // layer's count a fact of that type.
 auto lyra_rt_dpi_open_array_make(
-    const void* sv, const void* sv_type, LyraSpan bounds,
-    bool addressable_elements, void* out) -> void*;
+    const void* sv, const void* sv_type, void* bounds,
+    std::uint64_t bounds_count, bool addressable_elements, void* out) -> void*;
 auto lyra_rt_dpi_open_array_handle(void* image) -> void*;
 auto lyra_rt_dpi_open_array_value(
     const void* image, const void* answer_type, void* out) -> void*;
@@ -3241,12 +3271,12 @@ void lyra_rt_bit8_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_bit8_sampled_history_push(void* history, const void* value);
 auto lyra_rt_bit8_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 auto lyra_rt_bit8_land(const void* designation) noexcept -> void*;
 void lyra_rt_bit8_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state);
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state);
 void lyra_rt_bit8_net_construct(std::int64_t width, void* storage);
 void lyra_rt_bit8_net_destroy(void* storage);
 void lyra_rt_bit8_net_initialize_tri_state(
@@ -3320,12 +3350,12 @@ void lyra_rt_bit16_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_bit16_sampled_history_push(void* history, const void* value);
 auto lyra_rt_bit16_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 auto lyra_rt_bit16_land(const void* designation) noexcept -> void*;
 void lyra_rt_bit16_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state);
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state);
 void lyra_rt_bit16_net_construct(std::int64_t width, void* storage);
 void lyra_rt_bit16_net_destroy(void* storage);
 void lyra_rt_bit16_net_initialize_tri_state(
@@ -3399,12 +3429,12 @@ void lyra_rt_bit32_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_bit32_sampled_history_push(void* history, const void* value);
 auto lyra_rt_bit32_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 auto lyra_rt_bit32_land(const void* designation) noexcept -> void*;
 void lyra_rt_bit32_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state);
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state);
 void lyra_rt_bit32_net_construct(std::int64_t width, void* storage);
 void lyra_rt_bit32_net_destroy(void* storage);
 void lyra_rt_bit32_net_initialize_tri_state(
@@ -3478,12 +3508,12 @@ void lyra_rt_bit64_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_bit64_sampled_history_push(void* history, const void* value);
 auto lyra_rt_bit64_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 auto lyra_rt_bit64_land(const void* designation) noexcept -> void*;
 void lyra_rt_bit64_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state);
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state);
 void lyra_rt_bit64_net_construct(std::int64_t width, void* storage);
 void lyra_rt_bit64_net_destroy(void* storage);
 void lyra_rt_bit64_net_initialize_tri_state(
@@ -3557,12 +3587,12 @@ void lyra_rt_logic8_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_logic8_sampled_history_push(void* history, const void* value);
 auto lyra_rt_logic8_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 auto lyra_rt_logic8_land(const void* designation) noexcept -> void*;
 void lyra_rt_logic8_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state);
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state);
 void lyra_rt_logic8_net_construct(std::int64_t width, void* storage);
 void lyra_rt_logic8_net_destroy(void* storage);
 void lyra_rt_logic8_net_initialize_tri_state(
@@ -3637,12 +3667,12 @@ void lyra_rt_logic16_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_logic16_sampled_history_push(void* history, const void* value);
 auto lyra_rt_logic16_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 auto lyra_rt_logic16_land(const void* designation) noexcept -> void*;
 void lyra_rt_logic16_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state);
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state);
 void lyra_rt_logic16_net_construct(std::int64_t width, void* storage);
 void lyra_rt_logic16_net_destroy(void* storage);
 void lyra_rt_logic16_net_initialize_tri_state(
@@ -3717,12 +3747,12 @@ void lyra_rt_logic32_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_logic32_sampled_history_push(void* history, const void* value);
 auto lyra_rt_logic32_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 auto lyra_rt_logic32_land(const void* designation) noexcept -> void*;
 void lyra_rt_logic32_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state);
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state);
 void lyra_rt_logic32_net_construct(std::int64_t width, void* storage);
 void lyra_rt_logic32_net_destroy(void* storage);
 void lyra_rt_logic32_net_initialize_tri_state(
@@ -3797,12 +3827,12 @@ void lyra_rt_logic64_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth);
 void lyra_rt_logic64_sampled_history_push(void* history, const void* value);
 auto lyra_rt_logic64_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 auto lyra_rt_logic64_land(const void* designation) noexcept -> void*;
 void lyra_rt_logic64_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state);
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state);
 void lyra_rt_logic64_net_construct(std::int64_t width, void* storage);
 void lyra_rt_logic64_net_destroy(void* storage);
 void lyra_rt_logic64_net_initialize_tri_state(
@@ -3901,13 +3931,13 @@ void lyra_rt_bit_wide_sampled_history_install(
     std::int64_t depth);
 void lyra_rt_bit_wide_sampled_history_push(void* history, const void* value);
 auto lyra_rt_bit_wide_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 auto lyra_rt_bit_wide_land(const void* designation, std::int64_t width) noexcept
     -> void*;
 void lyra_rt_bit_wide_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state);
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state);
 void lyra_rt_bit_wide_net_construct(std::int64_t width, void* storage);
 void lyra_rt_bit_wide_net_destroy(void* storage);
 void lyra_rt_bit_wide_net_initialize_tri_state(
@@ -3987,13 +4017,13 @@ void lyra_rt_logic_wide_sampled_history_install(
     std::int64_t depth);
 void lyra_rt_logic_wide_sampled_history_push(void* history, const void* value);
 auto lyra_rt_logic_wide_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void*;
+    const void* history, std::int64_t ticks_back) -> const void*;
 auto lyra_rt_logic_wide_land(
     const void* designation, std::int64_t width) noexcept -> void*;
 void lyra_rt_logic_wide_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state);
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state);
 void lyra_rt_logic_wide_net_construct(std::int64_t width, void* storage);
 void lyra_rt_logic_wide_net_destroy(void* storage);
 void lyra_rt_logic_wide_net_initialize_tri_state(

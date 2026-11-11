@@ -224,55 +224,64 @@ enum class BuiltinFn : std::uint16_t {
   kSampledHistoryInstall,
   kSampledHistoryPush,
   kSampledHistoryAt,
-  // LRM 16.14.1 concurrent assertion evaluation, all reached through the
-  // storage that holds one property's attempts. `Install` fixes how wide a
-  // position set is, the statements an outcome selects and the assertion's
-  // control (LRM 20.11). `OpenAttempt` opens an attempt on the staged seed,
-  // where its control lets one begin, and `BeginTick` makes every evaluation
-  // one the tick has not stepped; `DisableTick` is the tick with the disable
-  // condition true, which discards every attempt (LRM 16.12). `LiveWord`
-  // bounds the Boolean expressions the tick has to read, `NextUnstepped` walks
-  // the evaluations the tick still owes a step, and `BitsAt` / `SetWord` /
-  // `Step` read a position set, replace it with its successor, and mark it
-  // stepped. `Seed` starts an instance of what an implication, a followed-by or
-  // a selection asks, as an instance of one implication of the evaluation
-  // whose antecedent matched. `Count` / `PartOf` / `ImplicationAnswer` /
-  // `ImplicationNonvacuous` / `Resolve` answer every evaluation from the last
-  // back: how many there are, which part of the property one answers for, the
-  // least answer an implication's instances reached and whether any was
-  // nonvacuous (LRM 16.14.8), and its own answer and vacuity. `Settle` answers
-  // every attempt the tick resolved, submitting an installed assertion's
-  // statements to Reactive where its control allowed them, and `Answer` and
-  // `ActionRuns` read what the one attempt an expect statement holds came to,
-  // and whether the arm that answer selects may run.
+  // LRM 16.14.1 concurrent assertion evaluation, reached through the storage
+  // that holds one property's attempts. `Install` fixes the positions the
+  // whole property starts at, what a tick runs and the assertion's control
+  // (LRM 20.11). `Allocate` hands out storage for one attempt's closure and
+  // `Commit` says the attempt it begins has matured; `Tick` says the leading
+  // clock ticked and runs the tick, which a commit later in the same time step
+  // runs again for the attempt it opens (LRM 16.14.5, 16.14.6). What the tick
+  // runs reads, bounded by `LiveWord`, the Booleans every attempt shares, and
+  // `Run` steps each attempt's closure with them, settling those that answered
+  // and starting the statement each answer selects in Reactive where its
+  // control allowed it. `TestDisable` asks each closure whether its disable
+  // condition holds between ticks (LRM 16.12).
+  // `Answer` and `ActionRuns` read what the one attempt an expect statement
+  // holds came to, and whether the arm that answer selects may run.
   kEvaluationAttemptsInstall,
-  kEvaluationAttemptsSeedWord,
-  kEvaluationAttemptsOpenAttempt,
-  kEvaluationAttemptsBeginTick,
-  kEvaluationAttemptsDisableTick,
+  kEvaluationAttemptsAllocate,
+  kEvaluationAttemptsCommit,
+  kEvaluationAttemptsTick,
+  kEvaluationAttemptsRun,
+  kEvaluationAttemptsTestDisable,
   kEvaluationAttemptsLiveWord,
-  kEvaluationAttemptsNextUnstepped,
-  kEvaluationAttemptsBitsAt,
-  kEvaluationAttemptsSetWord,
-  kEvaluationAttemptsStep,
-  kEvaluationAttemptsSeed,
-  kEvaluationAttemptsCount,
-  kEvaluationAttemptsPartOf,
-  kEvaluationAttemptsImplicationAnswer,
-  kEvaluationAttemptsImplicationNonvacuous,
-  kEvaluationAttemptsResolve,
-  kEvaluationAttemptsSettle,
   kEvaluationAttemptsAnswer,
   kEvaluationAttemptsActionRuns,
+  // One attempt, reached through the pointer its closure is handed.
+  // `SharedWord` reads the Booleans every attempt shares at this tick, as the
+  // step was handed them, and `LiveWord` bounds the Boolean expressions the
+  // step has to read. `NextUnstepped` walks the evaluations the tick still
+  // owes a step, and `BitsAt` / `SetWord` / `Step` read a position set,
+  // replace it with its successor, and mark it stepped. `SeedWord` stages a
+  // set and `Seed` starts on it an instance of what an implication, a
+  // followed-by or a selection asks, as an instance of one implication of the
+  // evaluation whose antecedent matched. `Count` / `PartOf` /
+  // `ImplicationAnswer` / `ImplicationNonvacuous` / `Resolve` answer every
+  // evaluation from the last back: how many there are, which part of the
+  // property one answers for, the least answer an implication's instances
+  // reached and whether any was nonvacuous (LRM 16.14.8), and its own answer
+  // and vacuity.
+  kEvaluationAttemptSharedWord,
+  kEvaluationAttemptLiveWord,
+  kEvaluationAttemptNextUnstepped,
+  kEvaluationAttemptBitsAt,
+  kEvaluationAttemptSetWord,
+  kEvaluationAttemptStep,
+  kEvaluationAttemptSeedWord,
+  kEvaluationAttemptSeed,
+  kEvaluationAttemptCount,
+  kEvaluationAttemptPartOf,
+  kEvaluationAttemptImplicationAnswer,
+  kEvaluationAttemptImplicationNonvacuous,
+  kEvaluationAttemptResolve,
   // LRM 16.17 the wait an expect statement stops at, which watches the clock
   // and the disable condition and holds the one attempt the statement began;
-  // that attempt, reached through the wait; the tick and the disable test the
-  // wait runs, which are closures of the waiting body and so are handed to it
-  // once it exists; and the disable condition having held.
+  // that attempt, reached through the wait; and the tick the wait runs and the
+  // attempt's closure, closures of the waiting body and so handed to it
+  // once it exists.
   kWaitOnPropertyEvaluation,
   kAttemptsOf,
   kBindPropertyEvaluation,
-  kDisablePropertyEvaluation,
   // LRM 10.3.3 the timer a delayed continuous assignment propagates through.
   // `Bind` names, once, what firing does; `Arm` schedules the one event
   // pending, some steps of the scope's precision from now, in place of the one
@@ -609,7 +618,9 @@ enum class BuiltinFn : std::uint16_t {
   kAssertionControlAllocate,
   kAssertionControlCommit,
   // LRM 20.11 what the assertion control tasks set for one statement.
-  // `RegisterIn` and `Register` make it one the tasks select, held by an
+  // `Describe` states which statement it controls, where its storage is
+  // constructed; `RegisterIn` and `Register` make it one the tasks select, held
+  // by an
   // instance or by none, `RegisterWithin` one a task naming a block it stands
   // in selects; `Allowed` is what an execution beginning now may do, as
   // `support::kAssertion*` bits. `SubmitObserved` and `SubmitFinal` queue a
@@ -619,6 +630,7 @@ enum class BuiltinFn : std::uint16_t {
   // ride the executing process's deferred report queue, which the runtime
   // reads ambiently. The observed form takes where it is written, and is
   // refused once the slot is in its Postponed region.
+  kAssertionControlDescribe,
   kAssertionControlRegisterIn,
   kAssertionControlRegister,
   kAssertionControlRegisterWithin,
@@ -1730,7 +1742,7 @@ class OperandReadings : public PerOperand<OperandReading, 6> {
 // them -- an operand gathering several, the branches a fork starts, is one --
 // as a Rust callee states its bounds on each callable parameter. An entry
 // handed none states none.
-using CallableOperands = PerOperand<CallableBounds, 2>;
+using CallableOperands = PerOperand<CallableBounds, 3>;
 
 // What an entry is told of the type it answers at, beyond the storage its
 // answer is laid out in.

@@ -1202,35 +1202,13 @@ auto CreatingInstance(UnitLowerer& unit_lowerer, const WalkFrame& frame)
       frame, unit_lowerer.Unit(), frame.HopsToUnitRoot());
 }
 
-// The call of `body`, a callable of the scope `frame` stands on, answering
-// `result`.
-auto CallOnScope(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
-    mir::TypeId result) -> mir::ExprId {
-  mir::Builder block = frame.Builder();
-  const mir::ExprId body_self = BuildObjectDeref(
-      unit_lowerer.Unit(), block, block.Add(MakeSelfRefExpr(frame)));
-  return block.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target =
-                              mir::CallableTarget{
-                                  .owner = frame.current_class.id,
-                                  .slot = body},
-                          .receiver = body_self},
-                  .arguments = {}},
-          .type = result});
-}
-
 // The call of a process body, whose result is the execution it runs as.
 auto StartedBody(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body)
     -> mir::ExprId {
-  return CallOnScope(
-      unit_lowerer, frame, body, unit_lowerer.Unit().builtins.coroutine_void);
+  return BuildOwnCallExpr(
+      unit_lowerer.Unit(), frame, body,
+      unit_lowerer.Unit().builtins.coroutine_void);
 }
 
 // Registers a continuous driver, which, alone among static processes, may be
@@ -1279,8 +1257,8 @@ void AppendFinalRegistration(
   ClosureBuilder call(unit, activate_frame, support::ClosureKind::kFn);
   call.Body().AppendStmt(
       mir::ExprStmt{
-          .expr = CallOnScope(
-              unit_lowerer, call.Frame(), body, unit.builtins.void_type)});
+          .expr = BuildOwnCallExpr(
+              unit, call.Frame(), body, unit.builtins.void_type)});
   const mir::ExprId kept = BuildKeptClosure(unit, block, call.BuildVoid());
   block.AppendStmt(
       mir::ExprStmt{
@@ -2536,12 +2514,19 @@ auto DescribeDumped(
 auto BuildExecutionStart(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
     support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId {
+  return BuildExecutionStart(
+      unit_lowerer, frame, StartedBody(unit_lowerer, frame, body), start,
+      written_at);
+}
+
+auto BuildExecutionStart(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId started,
+    support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId {
   mir::Builder block = frame.Builder();
   return block.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = start},
-          {OwningScope(frame), CreatingInstance(unit_lowerer, frame),
-           StartedBody(unit_lowerer, frame, body),
+          {OwningScope(frame), CreatingInstance(unit_lowerer, frame), started,
            unit_lowerer.BuildSourceLocationAt(block, written_at)},
           unit_lowerer.Unit().builtins.void_type));
 }
@@ -2822,26 +2807,23 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   data_object_fields_ = {
       hir_scope.structural_data_objects.size(), settled(data_object_fields)};
 
-  // A history is storage nothing outside this scope names, so the unit
-  // publishes nothing about it: what reaches it is the scope's own activation,
-  // its sampler, and the reads that asked for it (LRM 16.9.3). Its value type
-  // is the subject's own, because what a tick keeps is what that expression
-  // settled.
-  std::vector<mir::FieldId> sampled_history_fields;
-  sampled_history_fields.reserve(hir_scope.sampled_histories.size());
-  for (const hir::SampledHistoryId id : hir_scope.sampled_histories.Ids()) {
-    const hir::SampledHistoryDecl& history =
-        hir_scope.sampled_histories.Get(id);
-    const mir::TypeId value_type =
-        unit_lowerer.TranslateType(hir_scope.exprs.Get(history.subject).type);
-    sampled_history_fields.push_back(
-        shape.AddField(unit_lowerer.Unit().types.Intern(
-            mir::Type{mir::LibraryType{
-                .decl = support::LibraryDecl::kSampledHistory,
-                .args = {value_type}}})));
+  // What the scope's own sampled value functions keep is storage nothing
+  // outside this scope names, so the unit publishes nothing about it: what
+  // reaches it is the scope's own activation, its sampler, and the reads that
+  // asked for it (LRM 16.9.3). Each piece's value type is the piece's own.
+  for (const hir::ExprId call : SampledValueCalls(hir_scope.exprs)) {
+    for (KeptPiece& kept : KeptPieces(hir_scope, call)) {
+      const mir::TypeId cell_type = SampledHistoryTypeOf(
+          unit_lowerer, hir_scope.exprs.Get(kept.piece).type);
+      const mir::FieldId field = shape.AddField(cell_type);
+      kept_histories_.Add(
+          call, std::move(kept),
+          InstanceFieldHome{
+              .field =
+                  mir::ClassFieldTarget{.owner = class_id_, .slot = field}},
+          cell_type);
+    }
   }
-  sampled_history_fields_ = {
-      hir_scope.sampled_histories.size(), std::move(sampled_history_fields)};
 
   // What a clocking block counts its clocking event in, the copy each input
   // skewed by a delay reads, and what an output onto a variable puts its value
@@ -2893,22 +2875,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     }
   }
 
-  // What an assertion has in flight is storage nothing outside this scope
-  // names either: an attempt is started by the clock and read by the tick that
-  // advances it, both of which are this scope's own (LRM 16.14.1). The type
-  // carries nothing, because how wide a position set is and which statements an
-  // outcome selects are fixed by filling the storage rather than by naming it.
-  std::vector<mir::FieldId> concurrent_assertion_fields;
-  concurrent_assertion_fields.reserve(hir_scope.concurrent_assertions.size());
-  for (std::size_t i = 0; i < hir_scope.concurrent_assertions.size(); ++i) {
-    concurrent_assertion_fields.push_back(shape.AddField(
-        mir::LibraryTypeOf(
-            unit_lowerer.Unit().types,
-            support::LibraryDecl::kEvaluationAttempts)));
-  }
-  concurrent_assertion_fields_ = {
-      hir_scope.concurrent_assertions.size(),
-      std::move(concurrent_assertion_fields)};
   instance_member_fields_ = {
       hir_scope.instance_members.size(), settled(instance_fields)};
   interface_port_fields_ = {
@@ -3672,7 +3638,10 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     for (const StaticCellBinding& binding : declared.statics) {
       auto integ = IntegrateStaticInitializer(
           subroutine_lowerer, src.body,
-          StorageBringUp{.install = install_frame, .value = init_frame},
+          StorageBringUp{
+              .construct = ctor_frame,
+              .install = install_frame,
+              .value = init_frame},
           binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
@@ -3746,9 +3715,30 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
             .name = std::move(entry.linkage.foreign_name), .body = entry_id});
   }
 
+  // A concurrent assertion a procedure holds keeps its machinery on the scope,
+  // as a declared one does; the statement only says where an attempt falls
+  // due (LRM 16.14.6).
+  std::vector<InstalledConcurrentAssertion> installed_assertions;
   for (const hir::ProcessId id : hir_scope.processes.Ids()) {
     const auto& p = hir_scope.processes.Get(id);
     const StaticCellBindings& statics = process_static_bindings_.Get(id);
+    for (const hir::StmtId stmt_id : p.body.stmts.Ids()) {
+      const hir::Stmt& stmt = p.body.stmts.Get(stmt_id);
+      const std::optional<hir::ConcurrentAssertion> held =
+          hir::ConcurrentAssertionOf(stmt.data);
+      if (!held.has_value()) continue;
+      auto built = LowerProceduralConcurrentAssertion(
+          *this, mir_class, ctor_frame.WithSpan(stmt.span), scopes_, statics,
+          p.body, *held);
+      if (!built) return std::unexpected(std::move(built.error()));
+      for (const mir::CallableId process : built->processes) {
+        AppendProcessRegistration(
+            unit_lowerer, activate_frame, process,
+            support::BuiltinFn::kRegisterAlways, stmt.span);
+      }
+      installed_assertions.push_back(*std::move(built));
+    }
+
     // What the procedure's body is built of, beyond its statements, is lowered
     // from the procedure.
     ProcessLowerer process_lowerer(
@@ -3796,7 +3786,10 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     for (const StaticCellBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
           process_lowerer, p.body,
-          StorageBringUp{.install = install_frame, .value = init_frame},
+          StorageBringUp{
+              .construct = ctor_frame,
+              .install = install_frame,
+              .value = init_frame},
           binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
@@ -3830,24 +3823,6 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
         CreatingInstance(unit_lowerer, activate_frame), body, assign.span);
   }
 
-  // One sampler per history, not one per clocking event. Two histories under
-  // one event could share the wait, but deciding that two clocks are the same
-  // event means comparing lowered expressions for equality -- and a wrong
-  // answer there records one expression's ticks against another's clock, which
-  // no test would obviously catch. What sharing would save is a wait.
-  for (const hir::SampledHistoryId id : hir_scope.sampled_histories.Ids()) {
-    auto sampler_or = LowerSampledHistorySampler(
-        *this, ctor_frame, id, hir_scope.sampled_histories.Get(id));
-    if (!sampler_or) return std::unexpected(std::move(sampler_or.error()));
-    const mir::CallableId body =
-        mir_class.callables.Add(std::move(*sampler_or));
-    // A sampler is the tool's own, kept for the sampled value functions that
-    // read its history, and it stands where what it samples is written.
-    AppendProcessRegistration(
-        unit_lowerer, activate_frame, body, support::BuiltinFn::kRegisterAlways,
-        hir_scope.exprs.Get(hir_scope.sampled_histories.Get(id).subject).span);
-  }
-
   if (auto r = InstallClockingBlocks(
           *this,
           ClockingBodyFrames{
@@ -3865,25 +3840,24 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   // stand on is this scope's own.
   for (ClassDeclLowerer& class_lowerer : class_lowerers_) {
     auto class_r = class_lowerer.PopulateBodies(
-        ctor_frame,
-        StorageBringUp{.install = install_frame, .value = init_frame});
+        ctor_frame, StorageBringUp{
+                        .construct = ctor_frame,
+                        .install = install_frame,
+                        .value = init_frame});
     if (!class_r) return std::unexpected(std::move(class_r.error()));
   }
   for (CovergroupLowerer& covergroup_lowerer : covergroup_lowerers_) {
     auto covergroup_r = covergroup_lowerer.PopulateBodies(
-        ctor_frame,
-        StorageBringUp{.install = install_frame, .value = init_frame});
+        ctor_frame, StorageBringUp{
+                        .construct = ctor_frame,
+                        .install = install_frame,
+                        .value = init_frame});
     if (!covergroup_r) return std::unexpected(std::move(covergroup_r.error()));
   }
 
-  // One process per assertion and clocking event, for the same reason a
-  // sampler is one per history: two assertions under one event could share the
-  // wait, and deciding that two clocks are the same event means comparing
-  // lowered expressions for equality.
-  std::vector<
-      std::pair<hir::ConcurrentAssertionId, InstalledConcurrentAssertion>>
-      installed_assertions;
-  installed_assertions.reserve(hir_scope.concurrent_assertions.size());
+  // One process per assertion and clocking event: two assertions under one
+  // event could share the wait, and deciding that two clocks are the same
+  // event means comparing lowered expressions for equality.
   for (const hir::ConcurrentAssertionId id :
        hir_scope.concurrent_assertions.Ids()) {
     const hir::ConcurrentAssertionDecl& assertion =
@@ -3891,16 +3865,17 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     auto installed = LowerConcurrentAssertion(
         *this, mir_class, ctor_frame.WithSpan(assertion.span),
         StorageBringUp{
+            .construct = ctor_frame.WithSpan(assertion.span),
             .install = install_frame.WithSpan(assertion.span),
             .value = init_frame.WithSpan(assertion.span)},
-        scopes_, assertion_static_bindings_.Get(id), id, assertion);
+        scopes_, assertion_static_bindings_.Get(id), assertion);
     if (!installed) return std::unexpected(std::move(installed.error()));
     for (const mir::CallableId process : installed->processes) {
       AppendProcessRegistration(
           unit_lowerer, activate_frame, process,
           support::BuiltinFn::kRegisterAlways, assertion.span);
     }
-    installed_assertions.emplace_back(id, *installed);
+    installed_assertions.push_back(*std::move(installed));
   }
 
   for (const hir::GenerateId gen : hir_scope.generates.Ids()) {
@@ -3933,40 +3908,66 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
                 mir::MakeCellArmSamplingCallExpr(cell, void_type))});
   }
 
-  // Every history is filled here, once its subject's cells are armed above.
-  // What the subject evaluates to now is the expression's default sampled value
-  // (LRM 16.5.1), which is the answer the standard requires of a read that
-  // reaches further back than the ticks that have happened -- so a history that
-  // starts full has no empty case and keeps no count of them.
-  for (const hir::SampledHistoryId id : hir_scope.sampled_histories.Ids()) {
-    const hir::SampledHistoryDecl& history =
-        hir_scope.sampled_histories.Get(id);
-    const hir::Expr& subject = hir_scope.exprs.Get(history.subject);
-    const WalkFrame sampled =
-        activate_frame.WithReadsAsOf(ReadsAsOf::kPreponed);
-    auto subject_or = LowerExpr(subject, sampled);
-    if (!subject_or) return std::unexpected(std::move(subject_or.error()));
-    const mir::ExprId value = activate_block.Add(*std::move(subject_or));
-    auto depth_or =
-        LowerExpr(hir_scope.exprs.Get(history.depth), activate_frame);
-    if (!depth_or) return std::unexpected(std::move(depth_or.error()));
-    const mir::ExprId depth = BuildToInt64Call(
-        unit_lowerer.Unit(), activate_block,
-        activate_block.Add(*std::move(depth_or)));
-    activate_block.AppendStmt(
-        mir::ExprStmt{
-            .expr = activate_block.Add(
-                mir::MakeSampledHistoryInstallCallExpr(
-                    BuildSampledHistoryExpr(
-                        activate_block, activate_frame, *this, id),
-                    value, depth, void_type))});
+  // What every sampled value function of the scope and of its bodies keeps is
+  // kept from here, once the cells its pieces read are armed above (LRM
+  // 16.9.3). One process per function, not one per clocking event: two under
+  // one event could share the wait, but deciding that two clocks are the same
+  // event means comparing lowered expressions for equality -- and a wrong
+  // answer there records one function's ticks against another's clock, which
+  // no test would obviously catch. What sharing would save is a wait.
+  const auto keep_histories = [&](auto& reader) -> diag::Result<void> {
+    auto samplers =
+        KeepSampledHistories(reader, mir_class, ctor_frame, activate_frame);
+    if (!samplers) return std::unexpected(std::move(samplers.error()));
+    // A sampler is the tool's own, kept for the call that reads its history,
+    // and it stands where that call is written.
+    for (const HistorySampler& sampler : *samplers) {
+      AppendProcessRegistration(
+          unit_lowerer, activate_frame, sampler.body,
+          support::BuiltinFn::kRegisterAlways, sampler.written_at);
+    }
+    return {};
+  };
+  if (auto kept = keep_histories(std::as_const(*this)); !kept) {
+    return std::unexpected(std::move(kept.error()));
+  }
+  for (const hir::ProcessId id : hir_scope.processes.Ids()) {
+    const hir::Process& p = hir_scope.processes.Get(id);
+    ProcessLowerer reader(
+        unit_lowerer, this, p.body, p.root_stmt, ctor_frame.WithSpan(p.span),
+        scopes_, process_static_bindings_.Get(id));
+    if (auto kept = keep_histories(reader); !kept) {
+      return std::unexpected(std::move(kept.error()));
+    }
+  }
+  for (const hir::StructuralSubroutineId id :
+       hir_scope.structural_subroutines.Ids()) {
+    const hir::SubroutineDecl& src = hir_scope.structural_subroutines.Get(id);
+    ProcessLowerer reader(
+        unit_lowerer, this, src.body, src.root_stmt, ctor_frame, scopes_,
+        declared_subroutines_.Get(id).statics);
+    if (auto kept = keep_histories(reader); !kept) {
+      return std::unexpected(std::move(kept.error()));
+    }
+  }
+  for (const hir::ConcurrentAssertionId id :
+       hir_scope.concurrent_assertions.Ids()) {
+    const hir::ConcurrentAssertionDecl& assertion =
+        hir_scope.concurrent_assertions.Get(id);
+    ProcessLowerer reader(
+        unit_lowerer, this, assertion.action, std::nullopt,
+        ctor_frame.WithSpan(assertion.span), scopes_,
+        assertion_static_bindings_.Get(id));
+    if (auto kept = keep_histories(reader); !kept) {
+      return std::unexpected(std::move(kept.error()));
+    }
   }
 
   // Every assertion's storage is filled here too. Nothing about one needs an
   // earlier phase -- what it reads it reaches through cells sealed since Seal
   // -- and the sampling those cells answer from is armed just above.
-  for (const auto& [id, installed] : installed_assertions) {
-    AppendConcurrentAssertionInstall(*this, activate_frame, id, installed);
+  for (const InstalledConcurrentAssertion& installed : installed_assertions) {
+    AppendConcurrentAssertionInstall(*this, activate_frame, installed);
   }
 
   ctor_code.params.clear();

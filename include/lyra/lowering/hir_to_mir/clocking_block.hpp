@@ -4,11 +4,34 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/clocking_block_id.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
+#include "lyra/mir/expr.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+// An input of one of a scope's clocking blocks.
+struct ClockingInputRef {
+  hir::ClockingBlockId block;
+  hir::ClockvarId clockvar;
+};
+
+// The input of a clocking block of `scope` itself that `expr` reads, where it
+// reads one by its name and nothing more. Absent for every other expression.
+[[nodiscard]] auto ClockingInputReadBy(
+    const StructuralScopeLowerer& scope, const hir::Expr& expr)
+    -> std::optional<ClockingInputRef>;
+
+// The value `input` takes at its block's clocking event (LRM 14.13), which is
+// also what a sampled value of the input is (LRM 16.5.1): its signal's sampled
+// value for `#1step`, and the copy kept that far behind the signal for a
+// delay. It is computed where `frame` lowers rather than read from the input's
+// own cell, which the block writes in the Observed region of that event.
+[[nodiscard]] auto LowerClockingSample(
+    const StructuralScopeLowerer& scope, const WalkFrame& frame,
+    ClockingInputRef input) -> diag::Result<mir::Expr>;
 
 // What a clocking block does at each occurrence of its clocking event (LRM
 // 14.7: one copy per instance of its scope, like an always procedure): count

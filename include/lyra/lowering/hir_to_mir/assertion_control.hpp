@@ -28,13 +28,4 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId allowed,
     std::uint64_t what) -> mir::ExprId;
 
-// The address of a statement's control, for what keeps it past the statement:
-// a concurrent assertion's attempts and a violation report, which a Kill
-// reaches through it, and an expect's wait, which reads from it which arm the
-// answer may run (LRM 20.11). It is answered unadded, for the caller to place
-// where it is consumed.
-[[nodiscard]] auto ControlAddress(
-    mir::CompilationUnit& unit, mir::Builder block, const WalkFrame& frame,
-    const StaticCellBinding& control) -> mir::Expr;
-
 }  // namespace lyra::lowering::hir_to_mir

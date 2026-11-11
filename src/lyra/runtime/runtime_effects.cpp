@@ -260,8 +260,7 @@ auto RuntimeEffects::ViolationReportEffects() -> DeferredEffects* {
 }
 
 void RuntimeEffects::KeepViolationReport(
-    void* made, const AssertionControl& control) {
-  DeferredEffects& matures_in = *ViolationReportEffects();
+    void* made, DeferredEffects& matures_in, const AssertionControl& control) {
   const CapturedControl queued_under{
       .control = &control, .generation = control.Generation()};
   // Once the simulation is over no region runs, so the report matures as it is
@@ -282,6 +281,19 @@ void RuntimeEffects::KeepViolationReport(
     if (validity.Holds() && queued_under.Holds()) {
       report.Call();
     }
+  });
+}
+
+void RuntimeEffects::KeepPendingInstance(
+    void* made, DeferredEffects& observed, const AssertionControl& control) {
+  const CapturedControl queued_under{
+      .control = &control, .generation = control.Generation()};
+  // Maturing tests every source once and drops the record, so what the
+  // instance then starts is beyond any later flush or `disable` (LRM
+  // 16.14.6.4).
+  observed.Emplace([validity = AssertionReportValidity(*this), queued_under,
+                    instance = observed.Take(made)] {
+    if (validity.Holds() && queued_under.Holds()) instance.Call();
   });
 }
 

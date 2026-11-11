@@ -1,15 +1,20 @@
 #pragma once
 
+#include <map>
 #include <span>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/static_property_id.hpp"
+#include "lyra/hir/type_id.hpp"
+#include "lyra/lowering/hir_to_mir/kept_piece.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
@@ -116,14 +121,36 @@ struct AssertionControlCell {
   std::vector<hir::ProceduralScopeId> within;
 };
 
-// The cell one static-lifetime body variable, or one statement's assertion
-// control, became. `cell_type` is the type the home was declared with -- a
-// variable's observable-cell type, the control's own type for a control --
-// settled once here so no reader recomputes it. `scope` is the scope declaring
-// it, which a variable's initializer is written in though it runs apart from
-// every activation of that scope (LRM 6.21).
+// The attempts one concurrent assertion statement has in flight (LRM 16.14.1),
+// which live as long as its control: whatever replicates the statement holds
+// them, whether the statement is a declaration of the scope or stands in a
+// procedure (LRM 16.14.6).
+struct ConcurrentAttemptsCell {
+  hir::ControlledAssertionId assertion;
+};
+
+// What the sampled value function `call` of the body keeps of one piece of its
+// operand, a value per tick of its clock (LRM 16.9.3). It has to have been
+// kept at every tick whether or not the body reached the call then, so it
+// lives as the body's other static storage does.
+struct SampledHistoryCell {
+  hir::ExprId call;
+  KeptPiece kept;
+};
+
+// The cell one static-lifetime body variable, one statement's assertion
+// control, one concurrent assertion's attempts, or one kept piece of a sampled
+// value function's operand became. `cell_type` is the type the home was
+// declared with -- a variable's observable-cell type, and for the others the
+// library type that holds them -- settled once here so no reader recomputes
+// it. `scope` is the
+// scope declaring it, which a variable's initializer is written in though it
+// runs apart from every activation of that scope (LRM 6.21).
 struct StaticCellBinding {
-  std::variant<hir::ProceduralVarId, AssertionControlCell> of;
+  std::variant<
+      hir::ProceduralVarId, AssertionControlCell, ConcurrentAttemptsCell,
+      SampledHistoryCell>
+      of;
   hir::ProceduralScopeId scope;
   StaticStorageHome home;
   mir::TypeId cell_type;
@@ -143,10 +170,11 @@ using StaticCellBindings = std::vector<StaticCellBinding>;
     const StaticStorageOwner& owner, mir::TypeId cell_type)
     -> StaticStorageHome;
 
-// Gives every static-lifetime variable one body declares, and every statement
-// of it the assertion control tasks select, its cell in `owner`. The walk
-// descends the body's scope tree because that is where the declarations are --
-// a scope lists what it declares.
+// Gives every static-lifetime variable one body declares, every statement of
+// it the assertion control tasks select, and every piece its sampled value
+// functions keep, its cell in `owner`. The walk descends the body's scope tree
+// because that is where the declarations are -- a scope lists what it
+// declares.
 //
 // Sibling callables sharing a source identifier, and nested blocks repeating
 // one, need nothing done to stay distinct: each cell is a position in the pool
@@ -158,6 +186,11 @@ auto BindBodyStatics(
     const StaticStorageOwner& owner, const hir::ProceduralBody& body)
     -> StaticCellBindings;
 
+// The type of what keeps the past values of a piece of type `value`, one per
+// tick of a clock, as deep as its reads reach (LRM 16.9.3).
+[[nodiscard]] auto SampledHistoryTypeOf(
+    const UnitLowerer& unit_lowerer, hir::TypeId value) -> mir::TypeId;
+
 // The expression a body reaches one of these cells through. Each home is one
 // access from where the body stands: a field off the instance `hops` out from
 // the one this body counts from, the cell its class owns, or the cell the
@@ -168,6 +201,48 @@ auto BindBodyStatics(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     const StaticStorageHome& home, mir::TypeId cell_type,
     mir::EnclosingHops hops) -> mir::Expr;
+
+// A borrowed pointer to the cell of type `cell_type` at `home`, reached from
+// where `frame`'s body stands, for what holds the cell past the statement that
+// reaches it. The access is added to `block`, and the pointer is answered
+// unadded, for the caller to place where it is consumed.
+[[nodiscard]] auto BuildStaticStorageAddress(
+    mir::CompilationUnit& unit, mir::Builder block, const WalkFrame& frame,
+    const StaticStorageHome& home, mir::TypeId cell_type) -> mir::Expr;
+
+// The same pointer to the cell `cell` binds.
+[[nodiscard]] auto BuildStaticStorageAddress(
+    mir::CompilationUnit& unit, mir::Builder block, const WalkFrame& frame,
+    const StaticCellBinding& cell) -> mir::Expr;
+
+// Where the sampled value functions of one body, or among one scope's own
+// expressions, keep each piece of their operands (LRM 16.9.3), by call: a cell
+// of the body's static storage, or a field of the scope's instance, each a
+// home a body reaches as it reaches any other static cell.
+class KeptHistories {
+ public:
+  void Add(
+      hir::ExprId call, KeptPiece kept, StaticStorageHome home,
+      mir::TypeId cell_type);
+
+  // The pieces `call` keeps, none where its operand keeps none.
+  [[nodiscard]] auto PiecesOf(hir::ExprId call) const -> std::vector<KeptPiece>;
+
+  // The cell keeping `kept` for `call`, as the place a call on it acts
+  // through, reached from where `frame`'s body stands.
+  [[nodiscard]] auto CellOf(
+      const mir::CompilationUnit& unit, const WalkFrame& frame,
+      hir::ExprId call, const KeptPiece& kept) const -> mir::Expr;
+
+ private:
+  struct Cell {
+    KeptPiece kept;
+    StaticStorageHome home;
+    mir::TypeId cell_type;
+  };
+
+  std::map<hir::ExprId, std::vector<Cell>> by_call_;
+};
 
 // The field a static of a body in the design hierarchy took. Such a body is
 // replicated with its instance, so its cells are that instance's fields and no

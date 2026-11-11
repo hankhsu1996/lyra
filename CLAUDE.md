@@ -91,11 +91,13 @@ defined as 1 beside the front end's `__slang__` (`docs/decisions/project-file.md
 Lyra targets **IEEE 1800-2023**, defaulting the front end to `--std 1800-2023` and to its own
 reading of the standard. Language analysis is the front end's alone. Lyra takes the text it accepts
 at the severity it gives, except where the standard leaves the choice to the tool, and except a text
-the standard forbids or does not settle that no rule of it gives a meaning, which Lyra refuses where
-it reads the front end's representation. Lowering never judges legality again, and an analysis error
-is corrected in the front end, never in Lyra's settings. A caller may select a tolerant reading by
-name (`--compat all`). `docs/architecture/language_conformance.md` holds the rule and every disputed
-text ruled on so far. Testing a 2023 feature against slang directly needs `--std 1800-2023`.
+the standard forbids or does not settle that no rule of it gives a meaning, which is refused in the
+front end Lyra pins, or, for an unsettled text no single check of the front end's reaches, where
+Lyra reads the front end's representation. Lowering never judges legality again, and an analysis
+error is corrected in the front end, never in Lyra's settings. A caller may select a tolerant
+reading by name (`--compat all`). `docs/architecture/language_conformance.md` holds the rule and
+every disputed text ruled on so far. Testing a 2023 feature against slang directly needs
+`--std 1800-2023`.
 
 ## Architecture
 

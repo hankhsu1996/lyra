@@ -1001,10 +1001,12 @@ struct Expr {
       .type = void_type};
 }
 
-// What the tick `ticks_back` ticks before this one settled, counting from 1 for
-// the most recent (LRM 16.9.3).
+// Where the history keeps what the tick `ticks_back` ticks before this one
+// settled, counting from 1 for the most recent (LRM 16.9.3): a reference of
+// type `reference` to the kept value, which a read reaches through where it
+// lies, as a read of a sampled value does.
 [[nodiscard]] inline auto MakeSampledHistoryAtCallExpr(
-    ExprId history, ExprId ticks_back, TypeId value) -> Expr {
+    ExprId history, ExprId ticks_back, TypeId reference) -> Expr {
   return Expr{
       .data =
           CallExpr{
@@ -1013,7 +1015,7 @@ struct Expr {
                       .target = support::BuiltinFn::kSampledHistoryAt,
                       .receiver = history},
               .arguments = {ticks_back}},
-      .type = value};
+      .type = reference};
 }
 
 // Installs what a capability wrapper's declaration gives it, once at

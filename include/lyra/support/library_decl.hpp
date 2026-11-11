@@ -140,11 +140,17 @@ enum class LibraryDecl : std::uint8_t {
   // it reaches is fixed by filling it, so it is no argument.
   kSampledHistory,
   // LRM 16.14.1 what one concurrent assertion has in flight: an attempt per
-  // tick its clock reached and has not answered.
+  // tick its clock reached and has not answered, and those matured and not
+  // yet begun. An attempt's closure is made in the storage it hands out and
+  // kept there, as a region's deferred effects keep theirs.
   kEvaluationAttempts,
+  // LRM 16.14.1 one of those attempts, which its closure is handed while
+  // it steps it and reaches only where it lies.
+  kEvaluationAttempt,
   // LRM 20.11 what the assertion control tasks set for one assertion, expect
   // statement or violation report. It is also where the statement's violation
-  // reports are kept until they mature (LRM 12.4.2.1), as a region's deferred
+  // reports (LRM 12.4.2.1) and a procedural concurrent assertion's pending
+  // instances (LRM 16.14.6) are kept until they mature, as a region's deferred
   // effects keep theirs.
   kAssertionControl,
   // LRM 27.4 the blocks one loop generate built, each under the value its
@@ -887,10 +893,21 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       return &kSampledHistory;
     }
     case LibraryDecl::kEvaluationAttempts: {
-      static constexpr LibraryDeclData kEvaluationAttempts = kKeptObject(
-          "concurrent assertion attempts", "evaluation_attempts",
-          "lyra::runtime::EvaluationAttempts");
+      static constexpr LibraryDeclData kEvaluationAttempts = [] {
+        LibraryDeclData declaration = kKeptObject(
+            "concurrent assertion attempts", "evaluation_attempts",
+            "lyra::runtime::EvaluationAttempts");
+        declaration.keeper = KeeperEntries{
+            .allocate = BuiltinFn::kEvaluationAttemptsAllocate,
+            .commit = BuiltinFn::kEvaluationAttemptsCommit};
+        return declaration;
+      }();
       return &kEvaluationAttempts;
+    }
+    case LibraryDecl::kEvaluationAttempt: {
+      static constexpr LibraryDeclData kEvaluationAttempt = kKeptStorage(
+          "concurrent assertion attempt", "lyra::runtime::EvaluationAttempt");
+      return &kEvaluationAttempt;
     }
     case LibraryDecl::kAssertionControl: {
       static constexpr LibraryDeclData kAssertionControl = [] {

@@ -212,9 +212,17 @@ auto StartGeneratedProcess(void* out, GeneratedCoroutine body) -> void* {
 // The branches one `fork` spawned, taken out of the storage the spawning body
 // built them in. The engine outlives that body's statement, so it takes rather
 // than borrows, exactly as a region takes a submitted closure.
-auto TakeBranches(LyraSpan branches) -> std::vector<Coroutine<void>> {
-  const std::span<Coroutine<void>* const> handles(
-      static_cast<Coroutine<void>* const*>(branches.data), branches.count);
+// A run of `count` values of `T` this call does not own, which crosses as
+// where it lies and how many there are.
+template <typename T>
+auto SpanAt(void* first, std::uint64_t count) -> std::span<T> {
+  return {static_cast<T*>(first), count};
+}
+
+auto TakeBranches(void* branches, std::uint64_t branches_count)
+    -> std::vector<Coroutine<void>> {
+  const std::span<Coroutine<void>* const> handles =
+      SpanAt<Coroutine<void>* const>(branches, branches_count);
   std::vector<Coroutine<void>> taken;
   taken.reserve(handles.size());
   for (Coroutine<void>* handle : handles) {
@@ -1214,10 +1222,10 @@ auto ElementInto(void* out, const value::ValueType& type, const void* element)
 // entry is the product of the two, of `entry_type`, which states each one's
 // type, so nothing here converts either.
 void StoreLiteralEntries(
-    value::RuntimeAssociativeArray& array, LyraSpan entries,
-    const value::TupleType& entry_type) {
-  const std::span<const void* const> handles(
-      static_cast<const void* const*>(entries.data), entries.count);
+    value::RuntimeAssociativeArray& array, void* entries,
+    std::uint64_t entries_count, const value::TupleType& entry_type) {
+  const std::span<const void* const> handles =
+      SpanAt<const void* const>(entries, entries_count);
   const value::TupleComponent& index = entry_type.Components()[0];
   for (const void* entry : handles) {
     const void* const stated = entry_type.ComponentAt(entry, 0);
@@ -1251,12 +1259,12 @@ auto NewCount(std::int64_t count, base::SourceLocation at) -> std::size_t {
 // enumerated element list is this with a count of one, which is why a uniform
 // array, a replicated pattern and a plain list all reach one entry. Each handle
 // is an element where the literal laid it out, which the container copies.
-auto ReplicateHandles(LyraSpan unit, std::int64_t count)
+auto ReplicateHandles(void* unit, std::uint64_t unit_count, std::int64_t count)
     -> std::vector<const void*> {
-  const std::span<const void* const> handles(
-      static_cast<const void* const*>(unit.data), unit.count);
+  const std::span<const void* const> handles =
+      SpanAt<const void* const>(unit, unit_count);
   std::vector<const void*> collected;
-  collected.reserve(unit.count * static_cast<std::size_t>(count));
+  collected.reserve(unit_count * static_cast<std::size_t>(count));
   for (std::int64_t i = 0; i < count; ++i) {
     collected.insert(collected.end(), handles.begin(), handles.end());
   }
@@ -1285,11 +1293,6 @@ auto ElementHandles(const void* array, const void* type)
 template <typename Container>
 auto ElementHandles(const Container& array) -> std::vector<const void*> {
   return ElementHandles(&array, value::LibraryTypeOf<Container>());
-}
-
-// A sequence of machine integers, which crosses as the integers themselves.
-auto MachineIntsOf(LyraSpan values) -> std::span<const std::int64_t> {
-  return {static_cast<const std::int64_t*>(values.data), values.count};
 }
 
 // What a body hands over when something longer-lived takes a closure: the box
@@ -1761,30 +1764,6 @@ void ReadImageBack(
   }
 }
 
-// The steps of a part's path cross as a run of machine integers.
-auto StepsAt(LyraSpan steps) -> std::span<const std::int64_t> {
-  return {static_cast<const std::int64_t*>(steps.data), steps.count};
-}
-
-// An event control's leaves cross as a span of pointers to values this call
-// does not own, and the wait reads them there.
-auto TriggerHandles(LyraSpan triggers) -> std::span<const Trigger* const> {
-  return {static_cast<const Trigger* const*>(triggers.data), triggers.count};
-}
-
-// A collecting wait's reports cross the same way, one per event expression,
-// and so do the observations deciding it.
-auto ReportHandles(LyraSpan reports) -> std::span<ReadReport* const> {
-  return {static_cast<ReadReport* const*>(reports.data), reports.count};
-}
-
-auto ObservationHandles(LyraSpan observations)
-    -> std::span<const Observation* const> {
-  return {
-      static_cast<const Observation* const*>(observations.data),
-      observations.count};
-}
-
 // The layouts an integral value no wider than a word has, each named by the
 // widest type laid out that way. A holder over one of these holds a value of
 // every integral type of that layout, as the bytes its type lays it out in.
@@ -1856,15 +1835,14 @@ struct ResolvedBitRange {
 // None where a start names no position, and none where the bits are left no
 // position of the value.
 auto ResolveBitRange(
-    std::int64_t width, LyraSpan outer_parts, const void* start,
-    std::int64_t count) -> std::optional<ResolvedBitRange> {
+    std::int64_t width, void* outer_parts, std::uint64_t outer_parts_count,
+    const void* start, std::int64_t count) -> std::optional<ResolvedBitRange> {
   const auto whole = static_cast<std::uint64_t>(width);
   std::int64_t at = 0;
   std::optional<value::BitPositions> window =
       value::BitPositions{.lsb = 0, .width = whole};
-  for (const LyraBitsPart& part : std::span<const LyraBitsPart>(
-           static_cast<const LyraBitsPart*>(outer_parts.data),
-           outer_parts.count)) {
+  for (const LyraBitsPart& part :
+       SpanAt<const LyraBitsPart>(outer_parts, outer_parts_count)) {
     const std::optional<std::int64_t> named = PositionNamedAt(part.start);
     if (!named.has_value()) {
       return std::nullopt;
@@ -1912,11 +1890,11 @@ void InsertBitsInto(
 // moved.
 template <value::IntegralValue T>
 void InsertDesignatedBits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t count,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t count, bool bits_are_four_state) {
   const std::optional<ResolvedBitRange> range =
-      ResolveBitRange(width, outer_parts, start, count);
+      ResolveBitRange(width, outer_parts, outer_parts_count, start, count);
   if (!range.has_value()) {
     return;
   }
@@ -1940,11 +1918,11 @@ void InsertDesignatedBits(
 // the bits it reaches, and only where anything reads what it did.
 template <value::HeldAsWords T>
 void InsertDesignatedWideBits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t count,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t count, bool bits_are_four_state) {
   const std::optional<ResolvedBitRange> range =
-      ResolveBitRange(width, outer_parts, start, count);
+      ResolveBitRange(width, outer_parts, outer_parts_count, start, count);
   if (!range.has_value()) {
     return;
   }
@@ -1966,11 +1944,11 @@ void InsertDesignatedWideBits(
 // Bits written into an integral value `width` bits wide lying at `bytes`,
 // which nothing is told of (LRM 11.5.1).
 void InsertBitsAt(
-    void* bytes, std::int64_t width, bool is_four_state, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t count,
-    bool bits_are_four_state) {
+    void* bytes, std::int64_t width, bool is_four_state, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t count, bool bits_are_four_state) {
   const std::optional<ResolvedBitRange> range =
-      ResolveBitRange(width, outer_parts, start, count);
+      ResolveBitRange(width, outer_parts, outer_parts_count, start, count);
   if (!range.has_value()) {
     return;
   }
@@ -2049,7 +2027,6 @@ using lyra::runtime::DesignateArrayElement;
 using lyra::runtime::DesignateElement;
 using lyra::runtime::DesignationAt;
 using lyra::runtime::DiagnosticDispatcher;
-using lyra::runtime::DisablePropertyEvaluation;
 using lyra::runtime::DriveFromNet;
 using lyra::runtime::DriveFromReference;
 using lyra::runtime::DriveFromVariable;
@@ -2077,6 +2054,7 @@ using lyra::runtime::ErasedAt;
 using lyra::runtime::ErasedDesignation;
 using lyra::runtime::ErasedObjectWrite;
 using lyra::runtime::ErasedReference;
+using lyra::runtime::EvaluationAttempt;
 using lyra::runtime::EvaluationAttempts;
 using lyra::runtime::EventSourceOf;
 using lyra::runtime::FileTable;
@@ -2113,7 +2091,6 @@ using lyra::runtime::NetReportsTo;
 using lyra::runtime::NumberAt;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
-using lyra::runtime::ObservationHandles;
 using lyra::runtime::OpenCellWrite;
 using lyra::runtime::OpenDriverWrite;
 using lyra::runtime::OpenRefWrite;
@@ -2151,7 +2128,6 @@ using lyra::runtime::RefReportsTo;
 using lyra::runtime::RefSampledGet;
 using lyra::runtime::RefSet;
 using lyra::runtime::RefuseReport;
-using lyra::runtime::ReportHandles;
 using lyra::runtime::ResolvedNet;
 using lyra::runtime::ResumeInNbaRegion;
 using lyra::runtime::ResumeInRegionAfter;
@@ -2168,6 +2144,7 @@ using lyra::runtime::SharedPointer;
 using lyra::runtime::ShowSource;
 using lyra::runtime::SimTimeInUnit;
 using lyra::runtime::SourceLocationAt;
+using lyra::runtime::SpanAt;
 using lyra::runtime::SpawnAll;
 using lyra::runtime::STimeInUnit;
 using lyra::runtime::TailRefSampledGet;
@@ -2175,7 +2152,6 @@ using lyra::runtime::TakeBranches;
 using lyra::runtime::TestPlusargs;
 using lyra::runtime::Timer;
 using lyra::runtime::Trigger;
-using lyra::runtime::TriggerHandles;
 using lyra::runtime::ValueCell;
 using lyra::runtime::ValueCellAt;
 using lyra::runtime::ValueCellFor;
@@ -2299,11 +2275,11 @@ auto lyra_rt_file_read(
 
 auto lyra_rt_file_read_memory(
     void* files, const void* dest, const void* dest_type, std::int64_t fd,
-    LyraSpan bounds, std::int64_t start, std::int64_t count,
-    const void* answer_type, void* out) -> void* {
+    void* bounds, std::uint64_t bounds_count, std::int64_t start,
+    std::int64_t count, const void* answer_type, void* out) -> void* {
   LaidOutValue memory = OwnedLaidOutCopy(dest, dest_type);
-  const std::vector<UnpackedRange> dims =
-      lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(bounds));
+  const std::vector<UnpackedRange> dims = lyra::value::UnpackedRangesOf(
+      SpanAt<const std::int64_t>(bounds, bounds_count));
   const UnpackedRange range = dims.front();
   const lyra::value::IntegralValueType& word_type =
       *lyra::value::MemoryLeaf(memory, dims, range.Low(), 0).type;
@@ -2376,12 +2352,11 @@ auto lyra_rt_text_print_item_make(const void* text, void* out) -> void* {
 }
 
 auto lyra_rt_format(
-    LyraSpan items, const void* time_format, const void* location, void* out)
-    -> void* {
-  std::span<PrintItem*> handles(
-      static_cast<PrintItem**>(items.data), items.count);
+    void* items, std::uint64_t items_count, const void* time_format,
+    const void* location, void* out) -> void* {
+  const std::span<PrintItem*> handles = SpanAt<PrintItem*>(items, items_count);
   std::vector<PrintItem> collected;
-  collected.reserve(items.count);
+  collected.reserve(items_count);
   for (PrintItem* handle : handles) {
     collected.push_back(*handle);
   }
@@ -2526,23 +2501,26 @@ void lyra_rt_release_coroutine(void* runtime) {
   }
 }
 
-void lyra_rt_spawn_all(void* runtime, LyraSpan branches) {
+void lyra_rt_spawn_all(
+    void* runtime, void* branches, std::uint64_t branches_count) {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  std::vector<Coroutine<void>> taken = TakeBranches(branches);
+  std::vector<Coroutine<void>> taken = TakeBranches(branches, branches_count);
   SpawnAll(svc, std::span<Coroutine<void>>{taken});
 }
 
-auto lyra_rt_fork_wait_all(void* runtime, LyraSpan branches, void* out)
+auto lyra_rt_fork_wait_all(
+    void* runtime, void* branches, std::uint64_t branches_count, void* out)
     -> void* {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  std::vector<Coroutine<void>> taken = TakeBranches(branches);
+  std::vector<Coroutine<void>> taken = TakeBranches(branches, branches_count);
   return Emplace(out, ForkWaitAll(svc, std::span<Coroutine<void>>{taken}));
 }
 
-auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches, void* out)
+auto lyra_rt_fork_wait_first(
+    void* runtime, void* branches, std::uint64_t branches_count, void* out)
     -> void* {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  std::vector<Coroutine<void>> taken = TakeBranches(branches);
+  std::vector<Coroutine<void>> taken = TakeBranches(branches, branches_count);
   return Emplace(out, ForkWaitFirst(svc, std::span<Coroutine<void>>{taken}));
 }
 
@@ -3174,18 +3152,20 @@ void lyra_rt_assertion_control_commit(const void* control, void* made) {
   static_cast<const AssertionControl*>(control)->Commit(made);
 }
 
-void lyra_rt_assertion_control_register_in(
-    void* control, void* effects, void* scope, std::uint64_t type,
-    std::uint64_t directive) {
-  static_cast<AssertionControl*>(control)->RegisterIn(
-      *static_cast<RuntimeEffects*>(effects), static_cast<Scope*>(scope), type,
-      directive);
+void lyra_rt_assertion_control_describe(
+    void* control, std::uint64_t type, std::uint64_t directive) {
+  static_cast<AssertionControl*>(control)->Describe(type, directive);
 }
 
-void lyra_rt_assertion_control_register(
-    void* control, void* effects, std::uint64_t type, std::uint64_t directive) {
+void lyra_rt_assertion_control_register_in(
+    void* control, void* effects, void* scope) {
+  static_cast<AssertionControl*>(control)->RegisterIn(
+      *static_cast<RuntimeEffects*>(effects), static_cast<Scope*>(scope));
+}
+
+void lyra_rt_assertion_control_register(void* control, void* effects) {
   static_cast<AssertionControl*>(control)->Register(
-      *static_cast<RuntimeEffects*>(effects), type, directive);
+      *static_cast<RuntimeEffects*>(effects));
 }
 
 void lyra_rt_assertion_control_register_within(
@@ -3316,12 +3296,14 @@ void lyra_rt_timer_arm(
 // What crosses is the place's one word, which the wrapper the place is reached
 // through answered.
 auto lyra_rt_trigger_make(
-    void* place, const void* observation, LyraSpan steps,
-    std::int64_t lsb_bit_offset, std::int64_t bit_width, void* out) -> void* {
+    void* place, const void* observation, void* steps,
+    std::uint64_t steps_count, std::int64_t lsb_bit_offset,
+    std::int64_t bit_width, void* out) -> void* {
   return Emplace(
       out, Trigger(
                WatchedPlace::FromWord(place), Read<Observation>(observation),
-               lyra::runtime::StepsAt(steps), lsb_bit_offset, bit_width));
+               SpanAt<const std::int64_t>(steps, steps_count), lsb_bit_offset,
+               bit_width));
 }
 
 auto lyra_rt_observation_on_reaching(void* out) -> void* {
@@ -3347,18 +3329,25 @@ auto lyra_rt_observation_fires(const void* observation) -> std::int64_t {
 }
 
 auto lyra_rt_wait_recollecting(
-    LyraSpan reports, LyraSpan observations, void* out) -> void* {
+    void* reports, std::uint64_t reports_count, void* observations,
+    std::uint64_t observations_count, void* out) -> void* {
   return Emplace(
-      out, WaitRecollecting(
-               ReportHandles(reports), ObservationHandles(observations)));
+      out,
+      WaitRecollecting(
+          SpanAt<ReadReport* const>(reports, reports_count),
+          SpanAt<const Observation* const>(observations, observations_count)));
 }
 
-auto lyra_rt_wait_until(LyraSpan reports, void* out) -> void* {
-  return Emplace(out, WaitUntil(ReportHandles(reports)));
+auto lyra_rt_wait_until(void* reports, std::uint64_t reports_count, void* out)
+    -> void* {
+  return Emplace(
+      out, WaitUntil(SpanAt<ReadReport* const>(reports, reports_count)));
 }
 
-auto lyra_rt_wait_on(LyraSpan triggers, void* out) -> void* {
-  return Emplace(out, WaitOn(TriggerHandles(triggers)));
+auto lyra_rt_wait_on(void* triggers, std::uint64_t triggers_count, void* out)
+    -> void* {
+  return Emplace(
+      out, WaitOn(SpanAt<const Trigger* const>(triggers, triggers_count)));
 }
 
 auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void* {
@@ -3367,12 +3356,15 @@ auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void* {
 }
 
 auto lyra_rt_wait_on_property_evaluation(
-    void* runtime, LyraSpan clock, LyraSpan disable_reads, std::uint64_t words,
+    void* runtime, void* clock, std::uint64_t clock_count, void* disable_reads,
+    std::uint64_t disable_reads_count, void* start, std::uint64_t start_count,
     const void* control, void* out) -> void* {
   return Emplace(
       out, WaitOnPropertyEvaluation(
-               *static_cast<RuntimeEffects*>(runtime), TriggerHandles(clock),
-               TriggerHandles(disable_reads), words,
+               *static_cast<RuntimeEffects*>(runtime),
+               SpanAt<const Trigger* const>(clock, clock_count),
+               SpanAt<const Trigger* const>(disable_reads, disable_reads_count),
+               SpanAt<const std::uint64_t>(start, start_count),
                static_cast<const AssertionControl*>(control)));
 }
 
@@ -3380,15 +3372,12 @@ auto lyra_rt_attempts_of(void* wait) -> void* {
   return AttemptsOf(static_cast<Wait*>(wait));
 }
 
-void lyra_rt_bind_property_evaluation(void* wait, void* step, void* test) {
+void lyra_rt_bind_property_evaluation(void* wait, void* step, void* closure) {
   BindPropertyEvaluation(
       static_cast<Wait*>(wait),
       AdoptClosure<lyra::support::EffectSignature>(step),
-      AdoptClosure<lyra::support::EffectSignature>(test));
-}
-
-void lyra_rt_disable_property_evaluation(void* wait) {
-  DisablePropertyEvaluation(static_cast<Wait*>(wait));
+      lyra::runtime::EvaluationAttempt::Closure(
+          static_cast<lyra::runtime::ClosureValue*>(closure)));
 }
 
 auto lyra_rt_park_at(void* runtime, void* wait) -> bool {
@@ -3405,11 +3394,12 @@ auto lyra_rt_read_report_for_implicit_list(void* out) -> void* {
 }
 
 void lyra_rt_read_report_add(
-    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width) noexcept {
+    void* report, void* place, void* steps, std::uint64_t steps_count,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width) noexcept {
   static_cast<ReadReport*>(report)->Add(
-      WatchedPlace::FromWord(place), lyra::runtime::StepsAt(steps),
-      lsb_bit_offset, bit_width);
+      WatchedPlace::FromWord(place),
+      SpanAt<const std::int64_t>(steps, steps_count), lsb_bit_offset,
+      bit_width);
 }
 
 void lyra_rt_read_report_add_object(void* report, void* object) {
@@ -3417,11 +3407,12 @@ void lyra_rt_read_report_add_object(void* report, void* object) {
 }
 
 void lyra_rt_read_report_add_write(
-    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width) noexcept {
+    void* report, void* place, void* steps, std::uint64_t steps_count,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width) noexcept {
   static_cast<ReadReport*>(report)->AddWrite(
-      WatchedPlace::FromWord(place), lyra::runtime::StepsAt(steps),
-      lsb_bit_offset, bit_width);
+      WatchedPlace::FromWord(place),
+      SpanAt<const std::int64_t>(steps, steps_count), lsb_bit_offset,
+      bit_width);
 }
 
 void lyra_rt_read_report_settle_as_implicit_list(void* report) {
@@ -4171,11 +4162,12 @@ void lyra_rt_run_exported_task_to_completion(void* activation) {
 }
 
 auto lyra_rt_hierarchy_segment_make(
-    const void* declaration, LyraSpan indices, void* out) -> void* {
+    const void* declaration, void* indices, std::uint64_t indices_count,
+    void* out) -> void* {
   return std::construct_at(
       static_cast<HierarchySegment*>(out),
       static_cast<const ElaboratedScopeRecord*>(declaration),
-      lyra::runtime::MachineIntsOf(indices));
+      SpanAt<const std::int64_t>(indices, indices_count));
 }
 
 auto lyra_rt_hierarchical_path_of(void* self, const void* below, void* out)
@@ -4196,11 +4188,11 @@ auto lyra_rt_attach_scope(void* child) -> void* {
 
 void lyra_rt_insert_bits(
     void* whole, std::int64_t whole_width, bool whole_is_four_state,
-    LyraSpan outer_parts, const void* start, const void* bits,
-    std::int64_t bits_width, bool bits_are_four_state) {
+    void* outer_parts, std::uint64_t outer_parts_count, const void* start,
+    const void* bits, std::int64_t bits_width, bool bits_are_four_state) {
   lyra::runtime::InsertBitsAt(
-      whole, whole_width, whole_is_four_state, outer_parts, start, bits,
-      bits_width, bits_are_four_state);
+      whole, whole_width, whole_is_four_state, outer_parts, outer_parts_count,
+      start, bits, bits_width, bits_are_four_state);
 }
 
 auto lyra_rt_enclosing_scope(void* self, const void* definition) -> void* {
@@ -4216,9 +4208,10 @@ auto lyra_rt_loop_blocks_at(const void* blocks, std::int64_t index) -> void* {
   return static_cast<const LoopBlocks*>(blocks)->At(index);
 }
 
-auto lyra_rt_sequence_make(LyraSpan handles) -> void* {
-  const std::span<void* const> raw(
-      static_cast<void* const*>(handles.data), handles.count);
+auto lyra_rt_sequence_make(void* handles, std::uint64_t handles_count)
+    -> void* {
+  const std::span<void* const> raw =
+      SpanAt<void* const>(handles, handles_count);
   return ProgramLifetime(std::vector<void*>(raw.begin(), raw.end()));
 }
 
@@ -4858,9 +4851,9 @@ void lyra_rt_string_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_string_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<String>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<String>*>(history)->At(ticks_back));
 }
 
 void lyra_rt_real_sampled_history_install(
@@ -4874,9 +4867,9 @@ void lyra_rt_real_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_real_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Real>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Real>*>(history)->At(ticks_back));
 }
 
 void lyra_rt_shortreal_sampled_history_install(
@@ -4891,9 +4884,8 @@ void lyra_rt_shortreal_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_shortreal_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<ShortReal>*>(history)->At(ticks_back));
 }
 
@@ -4910,10 +4902,10 @@ void lyra_rt_laidout_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_laidout_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<LaidOutValue>*>(history)->At(
-               ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<LaidOutValue>*>(history)->At(
+          ticks_back));
 }
 
 void lyra_rt_dynarray_sampled_history_install(
@@ -4928,10 +4920,10 @@ void lyra_rt_dynarray_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_dynarray_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<RuntimeDynamicArray>*>(history)->At(
-               ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<RuntimeDynamicArray>*>(history)->At(
+          ticks_back));
 }
 
 void lyra_rt_queue_sampled_history_install(
@@ -4946,10 +4938,10 @@ void lyra_rt_queue_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_queue_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<RuntimeQueue>*>(history)->At(
-               ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<RuntimeQueue>*>(history)->At(
+          ticks_back));
 }
 
 void lyra_rt_assocarray_sampled_history_install(
@@ -4964,9 +4956,8 @@ void lyra_rt_assocarray_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_assocarray_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<RuntimeAssociativeArray>*>(history)->At(
           ticks_back));
 }
@@ -4987,104 +4978,48 @@ void lyra_rt_managedref_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_managedref_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<ObjectRef>*>(history)->At(ticks_back));
 }
 
 void lyra_rt_evaluation_attempts_install(
-    void* attempts, void* effects, std::uint64_t words, void* pass_action,
-    void* fail_action, void* control) {
+    void* attempts, void* effects, void* start, std::uint64_t start_count,
+    void* step, void* control) {
   static_cast<EvaluationAttempts*>(attempts)->Install(
-      *static_cast<RuntimeEffects*>(effects), words,
-      AdoptClosure<lyra::support::EffectSignature>(pass_action),
-      AdoptClosure<lyra::support::EffectSignature>(fail_action),
+      *static_cast<RuntimeEffects*>(effects),
+      SpanAt<const std::uint64_t>(start, start_count),
+      AdoptClosure<lyra::support::EffectSignature>(step),
       static_cast<AssertionControl*>(control));
 }
 
-void lyra_rt_evaluation_attempts_seed_word(
-    void* attempts, std::uint64_t word, std::uint64_t bits) {
-  static_cast<EvaluationAttempts*>(attempts)->SeedWord(word, bits);
+auto lyra_rt_evaluation_attempts_allocate(
+    void* attempts, std::uint64_t size, std::uint64_t alignment) -> void* {
+  return static_cast<const EvaluationAttempts*>(attempts)->Allocate(
+      size, alignment);
 }
 
-void lyra_rt_evaluation_attempts_open_attempt(void* attempts) {
-  static_cast<EvaluationAttempts*>(attempts)->OpenAttempt();
+void lyra_rt_evaluation_attempts_commit(void* attempts, void* made) {
+  static_cast<EvaluationAttempts*>(attempts)->Commit(made);
 }
 
-void lyra_rt_evaluation_attempts_begin_tick(void* attempts) {
-  static_cast<EvaluationAttempts*>(attempts)->BeginTick();
+void lyra_rt_evaluation_attempts_tick(void* attempts) {
+  static_cast<EvaluationAttempts*>(attempts)->Tick();
 }
 
-void lyra_rt_evaluation_attempts_disable_tick(void* attempts) {
-  static_cast<EvaluationAttempts*>(attempts)->DisableTick();
+void lyra_rt_evaluation_attempts_run(
+    void* attempts, void* shared, std::uint64_t shared_count) {
+  static_cast<EvaluationAttempts*>(attempts)->Run(
+      SpanAt<const std::uint64_t>(shared, shared_count));
+}
+
+void lyra_rt_evaluation_attempts_test_disable(void* attempts) {
+  static_cast<EvaluationAttempts*>(attempts)->TestDisable();
 }
 
 auto lyra_rt_evaluation_attempts_live_word(
     const void* attempts, std::uint64_t word) -> std::uint64_t {
   return static_cast<const EvaluationAttempts*>(attempts)->LiveWord(word);
-}
-
-auto lyra_rt_evaluation_attempts_next_unstepped(void* attempts)
-    -> std::int64_t {
-  return static_cast<EvaluationAttempts*>(attempts)->NextUnstepped();
-}
-
-auto lyra_rt_evaluation_attempts_bits_at(
-    const void* attempts, std::int64_t index, std::uint64_t word)
-    -> std::uint64_t {
-  return static_cast<const EvaluationAttempts*>(attempts)->BitsAt(index, word);
-}
-
-void lyra_rt_evaluation_attempts_set_word(
-    void* attempts, std::int64_t index, std::uint64_t word,
-    std::uint64_t bits) {
-  static_cast<EvaluationAttempts*>(attempts)->SetWord(index, word, bits);
-}
-
-void lyra_rt_evaluation_attempts_step(void* attempts, std::int64_t index) {
-  static_cast<EvaluationAttempts*>(attempts)->Step(index);
-}
-
-void lyra_rt_evaluation_attempts_seed(
-    void* attempts, std::int64_t index, std::uint64_t implication,
-    std::uint64_t part) {
-  static_cast<EvaluationAttempts*>(attempts)->Seed(index, implication, part);
-}
-
-auto lyra_rt_evaluation_attempts_count(const void* attempts) -> std::int64_t {
-  return static_cast<const EvaluationAttempts*>(attempts)->Count();
-}
-
-auto lyra_rt_evaluation_attempts_part_of(
-    const void* attempts, std::int64_t index) -> std::uint64_t {
-  return static_cast<const EvaluationAttempts*>(attempts)->PartOf(index);
-}
-
-auto lyra_rt_evaluation_attempts_implication_answer(
-    const void* attempts, std::int64_t index, std::uint64_t implication)
-    -> std::uint64_t {
-  return static_cast<const EvaluationAttempts*>(attempts)->ImplicationAnswer(
-      index, implication);
-}
-
-auto lyra_rt_evaluation_attempts_implication_nonvacuous(
-    const void* attempts, std::int64_t index, std::uint64_t implication)
-    -> std::uint64_t {
-  return static_cast<const EvaluationAttempts*>(attempts)
-      ->ImplicationNonvacuous(index, implication);
-}
-
-void lyra_rt_evaluation_attempts_resolve(
-    void* attempts, std::int64_t index, std::uint64_t answer,
-    std::uint64_t nonvacuous) {
-  static_cast<EvaluationAttempts*>(attempts)->Resolve(
-      index, answer, nonvacuous);
-}
-
-void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects) {
-  static_cast<EvaluationAttempts*>(attempts)->Settle(
-      *static_cast<RuntimeEffects*>(effects));
 }
 
 auto lyra_rt_evaluation_attempts_answer(const void* attempts) -> std::uint64_t {
@@ -5093,6 +5028,75 @@ auto lyra_rt_evaluation_attempts_answer(const void* attempts) -> std::uint64_t {
 
 auto lyra_rt_evaluation_attempts_action_runs(const void* attempts) -> bool {
   return static_cast<const EvaluationAttempts*>(attempts)->ActionRuns();
+}
+
+auto lyra_rt_evaluation_attempt_shared_word(
+    const void* attempt, std::uint64_t word) -> std::uint64_t {
+  return static_cast<const EvaluationAttempt*>(attempt)->SharedWord(word);
+}
+
+auto lyra_rt_evaluation_attempt_live_word(
+    const void* attempt, std::uint64_t word) -> std::uint64_t {
+  return static_cast<const EvaluationAttempt*>(attempt)->LiveWord(word);
+}
+
+auto lyra_rt_evaluation_attempt_next_unstepped(void* attempt) -> std::int64_t {
+  return static_cast<EvaluationAttempt*>(attempt)->NextUnstepped();
+}
+
+auto lyra_rt_evaluation_attempt_bits_at(
+    const void* attempt, std::int64_t index, std::uint64_t word)
+    -> std::uint64_t {
+  return static_cast<const EvaluationAttempt*>(attempt)->BitsAt(index, word);
+}
+
+void lyra_rt_evaluation_attempt_set_word(
+    void* attempt, std::int64_t index, std::uint64_t word, std::uint64_t bits) {
+  static_cast<EvaluationAttempt*>(attempt)->SetWord(index, word, bits);
+}
+
+void lyra_rt_evaluation_attempt_step(void* attempt, std::int64_t index) {
+  static_cast<EvaluationAttempt*>(attempt)->Step(index);
+}
+
+void lyra_rt_evaluation_attempt_seed_word(
+    void* attempt, std::uint64_t word, std::uint64_t bits) {
+  static_cast<EvaluationAttempt*>(attempt)->SeedWord(word, bits);
+}
+
+void lyra_rt_evaluation_attempt_seed(
+    void* attempt, std::int64_t index, std::uint64_t implication,
+    std::uint64_t part) {
+  static_cast<EvaluationAttempt*>(attempt)->Seed(index, implication, part);
+}
+
+auto lyra_rt_evaluation_attempt_count(const void* attempt) -> std::int64_t {
+  return static_cast<const EvaluationAttempt*>(attempt)->Count();
+}
+
+auto lyra_rt_evaluation_attempt_part_of(const void* attempt, std::int64_t index)
+    -> std::uint64_t {
+  return static_cast<const EvaluationAttempt*>(attempt)->PartOf(index);
+}
+
+auto lyra_rt_evaluation_attempt_implication_answer(
+    const void* attempt, std::int64_t index, std::uint64_t implication)
+    -> std::uint64_t {
+  return static_cast<const EvaluationAttempt*>(attempt)->ImplicationAnswer(
+      index, implication);
+}
+
+auto lyra_rt_evaluation_attempt_implication_nonvacuous(
+    const void* attempt, std::int64_t index, std::uint64_t implication)
+    -> std::uint64_t {
+  return static_cast<const EvaluationAttempt*>(attempt)->ImplicationNonvacuous(
+      index, implication);
+}
+
+void lyra_rt_evaluation_attempt_resolve(
+    void* attempt, std::int64_t index, std::uint64_t answer,
+    std::uint64_t nonvacuous) {
+  static_cast<EvaluationAttempt*>(attempt)->Resolve(index, answer, nonvacuous);
 }
 
 // What a body that awaits a call holds of its answer across the suspension. The
@@ -5172,9 +5176,10 @@ auto lyra_rt_string_substr(
                Read<lyra::value::Position>(last)));
 }
 
-auto lyra_rt_string_concat(LyraSpan parts, void* out) -> void* {
-  const std::span<const void* const> handles(
-      static_cast<const void* const*>(parts.data), parts.count);
+auto lyra_rt_string_concat(void* parts, std::uint64_t parts_count, void* out)
+    -> void* {
+  const std::span<const void* const> handles =
+      SpanAt<const void* const>(parts, parts_count);
   return Emplace(
       out, String::Concat(handles.size(), [&](std::size_t i) -> const String& {
         return Read<String>(handles[i]);
@@ -5785,13 +5790,13 @@ auto lyra_rt_dynarray_default(const void* answer_element_type, void* out)
 }
 
 auto lyra_rt_dynarray_from_list(
-    LyraSpan unit, std::int64_t count, const void* location,
-    const void* answer_element_type, void* out) -> void* {
+    void* unit, std::uint64_t unit_count, std::int64_t count,
+    const void* location, const void* answer_element_type, void* out) -> void* {
   const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, RuntimeDynamicArray::FromElements(
                lyra::runtime::ElementTypeAt(answer_element_type),
-               lyra::runtime::ReplicateHandles(unit, count)));
+               lyra::runtime::ReplicateHandles(unit, unit_count, count)));
 }
 
 auto lyra_rt_laidout_dynamic_array_from_array(
@@ -5974,10 +5979,11 @@ auto lyra_rt_dynarray_value_cell_load(void* cell) noexcept -> void* {
 // array's type fixes how many elements that is, so a unit that does not fill
 // it a whole number of times is a call no lowering states.
 auto lyra_rt_laidout_from_elements(
-    LyraSpan unit, const void* answer_type, void* out) -> void* {
+    void* unit, std::uint64_t unit_count, const void* answer_type, void* out)
+    -> void* {
   const lyra::value::FixedArrayType& type = ArrayTypeAt(answer_type);
-  const std::span<const void* const> handles(
-      static_cast<const void* const*>(unit.data), unit.count);
+  const std::span<const void* const> handles =
+      SpanAt<const void* const>(unit, unit_count);
   if (handles.empty() || type.Count() % handles.size() != 0) {
     throw lyra::InternalError(
         std::format(
@@ -6842,13 +6848,13 @@ auto lyra_rt_queue_default(const void* answer_type, void* out) -> void* {
 }
 
 auto lyra_rt_queue_from_list(
-    LyraSpan unit, std::int64_t count, const void* location,
-    const void* answer_type, void* out) -> void* {
+    void* unit, std::uint64_t unit_count, std::int64_t count,
+    const void* location, const void* answer_type, void* out) -> void* {
   const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   return Emplace(
       out, RuntimeQueue::FromElements(
                QueueTypeAt(answer_type),
-               lyra::runtime::ReplicateHandles(unit, count)));
+               lyra::runtime::ReplicateHandles(unit, unit_count, count)));
 }
 
 auto lyra_rt_queue_queue_from_array(
@@ -7099,13 +7105,14 @@ auto lyra_rt_assocarray_default(
 // neither in advance. The order the index type imposes (LRM 7.8) is the one
 // the array holds its entries in.
 auto lyra_rt_assocarray_from_entries(
-    LyraSpan entries, const void* entry_type, const void* key_index_order,
-    const void* answer_element_type, void* out) -> void* {
+    void* entries, std::uint64_t entries_count, const void* entry_type,
+    const void* key_index_order, const void* answer_element_type, void* out)
+    -> void* {
   RuntimeAssociativeArray array(
       lyra::runtime::IndexOrderAt(key_index_order),
       lyra::runtime::ElementTypeAt(answer_element_type));
   lyra::runtime::StoreLiteralEntries(
-      array, entries, lyra::runtime::TupleTypeAt(entry_type));
+      array, entries, entries_count, lyra::runtime::TupleTypeAt(entry_type));
   return Emplace(out, std::move(array));
 }
 
@@ -7373,59 +7380,26 @@ void lyra_rt_queue_reverse(void* receiver) {
 }
 
 auto lyra_rt_laidout_read_mem(
-    void* runtime, const void* memory, const void* name, LyraSpan dims,
-    std::int64_t base, std::int64_t start, const void* location,
-    const void* memory_type, const void* answer_type, void* out) -> void* {
+    void* runtime, const void* memory, const void* name, void* dims,
+    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
+    const void* location, const void* memory_type, const void* answer_type,
+    void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::TupleTypeAt(answer_type),
       lyra::runtime::Single(
           lyra::runtime::ReadUnpackedMemory(
               *static_cast<RuntimeEffects*>(runtime),
               OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
-              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
+              lyra::value::UnpackedRangesOf(
+                  SpanAt<const std::int64_t>(dims, dims_count)),
               base, start, std::nullopt,
               lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
               SourceLocationAt(location))));
 }
 
 auto lyra_rt_laidout_read_mem_within(
-    void* runtime, const void* memory, const void* name, LyraSpan dims,
-    std::int64_t base, std::int64_t start, std::int64_t finish,
-    const void* location, const void* memory_type, const void* answer_type,
-    void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadUnpackedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
-              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
-              base, start, finish,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_laidout_read_enumerated_mem(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
-    const void* location, const void* memory_type, const void* answer_type,
-    void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadUnpackedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
-              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
-              base, start, std::nullopt,
-              lyra::runtime::WordValues{
-                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_laidout_read_enumerated_mem_within(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, LyraSpan dims, std::int64_t base, std::int64_t start,
+    void* runtime, const void* memory, const void* name, void* dims,
+    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
     std::int64_t finish, const void* location, const void* memory_type,
     const void* answer_type, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
@@ -7434,7 +7408,45 @@ auto lyra_rt_laidout_read_enumerated_mem_within(
           lyra::runtime::ReadUnpackedMemory(
               *static_cast<RuntimeEffects*>(runtime),
               OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
-              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
+              lyra::value::UnpackedRangesOf(
+                  SpanAt<const std::int64_t>(dims, dims_count)),
+              base, start, finish,
+              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
+              SourceLocationAt(location))));
+}
+
+auto lyra_rt_laidout_read_enumerated_mem(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, void* dims, std::uint64_t dims_count, std::int64_t base,
+    std::int64_t start, const void* location, const void* memory_type,
+    const void* answer_type, void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadUnpackedMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
+              lyra::value::UnpackedRangesOf(
+                  SpanAt<const std::int64_t>(dims, dims_count)),
+              base, start, std::nullopt,
+              lyra::runtime::WordValues{
+                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
+              SourceLocationAt(location))));
+}
+
+auto lyra_rt_laidout_read_enumerated_mem_within(
+    void* runtime, const void* memory, const void* enumeration,
+    const void* name, void* dims, std::uint64_t dims_count, std::int64_t base,
+    std::int64_t start, std::int64_t finish, const void* location,
+    const void* memory_type, const void* answer_type, void* out) -> void* {
+  return lyra::runtime::EmplaceCompletion(
+      out, lyra::runtime::TupleTypeAt(answer_type),
+      lyra::runtime::Single(
+          lyra::runtime::ReadUnpackedMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
+              lyra::value::UnpackedRangesOf(
+                  SpanAt<const std::int64_t>(dims, dims_count)),
               base, start, finish,
               lyra::runtime::WordValues{
                   lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
@@ -7442,25 +7454,27 @@ auto lyra_rt_laidout_read_enumerated_mem_within(
 }
 
 void lyra_rt_laidout_write_mem(
-    void* runtime, const void* memory, const void* name, LyraSpan dims,
-    std::int64_t base, std::int64_t start, const void* location,
-    const void* memory_type) {
-  lyra::runtime::WriteUnpackedMemory(
-      *static_cast<RuntimeEffects*>(runtime), ArrayAt(memory, memory_type),
-      Read<String>(name),
-      lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)), base,
-      start, std::nullopt, SourceLocationAt(location));
-}
-
-void lyra_rt_laidout_write_mem_within(
-    void* runtime, const void* memory, const void* name, LyraSpan dims,
-    std::int64_t base, std::int64_t start, std::int64_t finish,
+    void* runtime, const void* memory, const void* name, void* dims,
+    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
     const void* location, const void* memory_type) {
   lyra::runtime::WriteUnpackedMemory(
       *static_cast<RuntimeEffects*>(runtime), ArrayAt(memory, memory_type),
       Read<String>(name),
-      lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)), base,
-      start, finish, SourceLocationAt(location));
+      lyra::value::UnpackedRangesOf(
+          SpanAt<const std::int64_t>(dims, dims_count)),
+      base, start, std::nullopt, SourceLocationAt(location));
+}
+
+void lyra_rt_laidout_write_mem_within(
+    void* runtime, const void* memory, const void* name, void* dims,
+    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
+    std::int64_t finish, const void* location, const void* memory_type) {
+  lyra::runtime::WriteUnpackedMemory(
+      *static_cast<RuntimeEffects*>(runtime), ArrayAt(memory, memory_type),
+      Read<String>(name),
+      lyra::value::UnpackedRangesOf(
+          SpanAt<const std::int64_t>(dims, dims_count)),
+      base, start, finish, SourceLocationAt(location));
 }
 
 auto lyra_rt_dynarray_read_mem(
@@ -7705,11 +7719,12 @@ void lyra_rt_assocarray_write_mem_within(
 }
 
 auto lyra_rt_format_runtime(
-    const void* format, LyraSpan args, const void* scope_path,
-    const void* library_binding, const void* time_format,
-    std::int64_t timeunit_power, const void* location, void* out) -> void* {
-  const std::span<const void* const> handles{
-      static_cast<const void* const*>(args.data), args.count};
+    const void* format, void* args, std::uint64_t args_count,
+    const void* scope_path, const void* library_binding,
+    const void* time_format, std::int64_t timeunit_power, const void* location,
+    void* out) -> void* {
+  const std::span<const void* const> handles =
+      SpanAt<const void* const>(args, args_count);
   std::vector<FormatArg> arguments(handles.size());
   std::ranges::transform(handles, arguments.begin(), [](const void* handle) {
     return *static_cast<const FormatArg*>(handle);
@@ -7805,10 +7820,10 @@ auto lyra_rt_to_sv_logic(
 // else. What the image needs of the actual's type is the type of one element,
 // which the actual's own type reaches under its unpacked layers.
 auto lyra_rt_dpi_open_array_make(
-    const void* sv, const void* sv_type, LyraSpan bounds,
-    bool addressable_elements, void* out) -> void* {
+    const void* sv, const void* sv_type, void* bounds,
+    std::uint64_t bounds_count, bool addressable_elements, void* out) -> void* {
   const std::span<const std::int64_t> declared =
-      lyra::runtime::MachineIntsOf(bounds);
+      SpanAt<const std::int64_t>(bounds, bounds_count);
   const std::vector<UnpackedRange> dims =
       lyra::value::UnpackedRangesOf(declared);
   const lyra::value::ValueType& type = lyra::runtime::TypeAt(sv_type);
@@ -9032,20 +9047,20 @@ void lyra_rt_bit8_sampled_history_push(void* history, const void* value) {
   HistoryAt<Bit8>(history).Push(Read<Bit8>(value));
 }
 auto lyra_rt_bit8_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Bit8>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Bit8>*>(history)->At(ticks_back));
 }
 auto lyra_rt_bit8_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit8>(designation);
 }
 void lyra_rt_bit8_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state) {
   InsertDesignatedBits<Bit8>(
-      designation, width, outer_parts, start, bits, bits_width,
-      bits_are_four_state);
+      designation, width, outer_parts, outer_parts_count, start, bits,
+      bits_width, bits_are_four_state);
 }
 void lyra_rt_bit8_net_construct(std::int64_t width, void* storage) {
   BuildAt<ResolvedNet<Bit8>>(storage, static_cast<std::uint64_t>(width));
@@ -9212,20 +9227,20 @@ void lyra_rt_bit16_sampled_history_push(void* history, const void* value) {
   HistoryAt<Bit16>(history).Push(Read<Bit16>(value));
 }
 auto lyra_rt_bit16_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Bit16>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Bit16>*>(history)->At(ticks_back));
 }
 auto lyra_rt_bit16_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit16>(designation);
 }
 void lyra_rt_bit16_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state) {
   InsertDesignatedBits<Bit16>(
-      designation, width, outer_parts, start, bits, bits_width,
-      bits_are_four_state);
+      designation, width, outer_parts, outer_parts_count, start, bits,
+      bits_width, bits_are_four_state);
 }
 void lyra_rt_bit16_net_construct(std::int64_t width, void* storage) {
   BuildAt<ResolvedNet<Bit16>>(storage, static_cast<std::uint64_t>(width));
@@ -9393,20 +9408,20 @@ void lyra_rt_bit32_sampled_history_push(void* history, const void* value) {
   HistoryAt<Bit32>(history).Push(Read<Bit32>(value));
 }
 auto lyra_rt_bit32_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Bit32>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Bit32>*>(history)->At(ticks_back));
 }
 auto lyra_rt_bit32_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit32>(designation);
 }
 void lyra_rt_bit32_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state) {
   InsertDesignatedBits<Bit32>(
-      designation, width, outer_parts, start, bits, bits_width,
-      bits_are_four_state);
+      designation, width, outer_parts, outer_parts_count, start, bits,
+      bits_width, bits_are_four_state);
 }
 void lyra_rt_bit32_net_construct(std::int64_t width, void* storage) {
   BuildAt<ResolvedNet<Bit32>>(storage, static_cast<std::uint64_t>(width));
@@ -9574,20 +9589,20 @@ void lyra_rt_bit64_sampled_history_push(void* history, const void* value) {
   HistoryAt<Bit64>(history).Push(Read<Bit64>(value));
 }
 auto lyra_rt_bit64_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Bit64>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Bit64>*>(history)->At(ticks_back));
 }
 auto lyra_rt_bit64_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit64>(designation);
 }
 void lyra_rt_bit64_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state) {
   InsertDesignatedBits<Bit64>(
-      designation, width, outer_parts, start, bits, bits_width,
-      bits_are_four_state);
+      designation, width, outer_parts, outer_parts_count, start, bits,
+      bits_width, bits_are_four_state);
 }
 void lyra_rt_bit64_net_construct(std::int64_t width, void* storage) {
   BuildAt<ResolvedNet<Bit64>>(storage, static_cast<std::uint64_t>(width));
@@ -9757,20 +9772,20 @@ void lyra_rt_logic8_sampled_history_push(void* history, const void* value) {
   HistoryAt<Logic8>(history).Push(Read<Logic8>(value));
 }
 auto lyra_rt_logic8_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Logic8>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Logic8>*>(history)->At(ticks_back));
 }
 auto lyra_rt_logic8_land(const void* designation) noexcept -> void* {
   return LandDesignation<Logic8>(designation);
 }
 void lyra_rt_logic8_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state) {
   InsertDesignatedBits<Logic8>(
-      designation, width, outer_parts, start, bits, bits_width,
-      bits_are_four_state);
+      designation, width, outer_parts, outer_parts_count, start, bits,
+      bits_width, bits_are_four_state);
 }
 void lyra_rt_logic8_net_construct(std::int64_t width, void* storage) {
   BuildAt<ResolvedNet<Logic8>>(storage, static_cast<std::uint64_t>(width));
@@ -9940,21 +9955,20 @@ void lyra_rt_logic16_sampled_history_push(void* history, const void* value) {
   HistoryAt<Logic16>(history).Push(Read<Logic16>(value));
 }
 auto lyra_rt_logic16_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<Logic16>*>(history)->At(ticks_back));
 }
 auto lyra_rt_logic16_land(const void* designation) noexcept -> void* {
   return LandDesignation<Logic16>(designation);
 }
 void lyra_rt_logic16_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state) {
   InsertDesignatedBits<Logic16>(
-      designation, width, outer_parts, start, bits, bits_width,
-      bits_are_four_state);
+      designation, width, outer_parts, outer_parts_count, start, bits,
+      bits_width, bits_are_four_state);
 }
 void lyra_rt_logic16_net_construct(std::int64_t width, void* storage) {
   BuildAt<ResolvedNet<Logic16>>(storage, static_cast<std::uint64_t>(width));
@@ -10125,21 +10139,20 @@ void lyra_rt_logic32_sampled_history_push(void* history, const void* value) {
   HistoryAt<Logic32>(history).Push(Read<Logic32>(value));
 }
 auto lyra_rt_logic32_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<Logic32>*>(history)->At(ticks_back));
 }
 auto lyra_rt_logic32_land(const void* designation) noexcept -> void* {
   return LandDesignation<Logic32>(designation);
 }
 void lyra_rt_logic32_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state) {
   InsertDesignatedBits<Logic32>(
-      designation, width, outer_parts, start, bits, bits_width,
-      bits_are_four_state);
+      designation, width, outer_parts, outer_parts_count, start, bits,
+      bits_width, bits_are_four_state);
 }
 void lyra_rt_logic32_net_construct(std::int64_t width, void* storage) {
   BuildAt<ResolvedNet<Logic32>>(storage, static_cast<std::uint64_t>(width));
@@ -10310,21 +10323,20 @@ void lyra_rt_logic64_sampled_history_push(void* history, const void* value) {
   HistoryAt<Logic64>(history).Push(Read<Logic64>(value));
 }
 auto lyra_rt_logic64_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<Logic64>*>(history)->At(ticks_back));
 }
 auto lyra_rt_logic64_land(const void* designation) noexcept -> void* {
   return LandDesignation<Logic64>(designation);
 }
 void lyra_rt_logic64_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state) {
   InsertDesignatedBits<Logic64>(
-      designation, width, outer_parts, start, bits, bits_width,
-      bits_are_four_state);
+      designation, width, outer_parts, outer_parts_count, start, bits,
+      bits_width, bits_are_four_state);
 }
 void lyra_rt_logic64_net_construct(std::int64_t width, void* storage) {
   BuildAt<ResolvedNet<Logic64>>(storage, static_cast<std::uint64_t>(width));
@@ -10506,9 +10518,8 @@ void lyra_rt_bit_wide_sampled_history_push(void* history, const void* value) {
   HistoryAt<BitWide>(history).PushBytes(value);
 }
 auto lyra_rt_bit_wide_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<BitWide>*>(history)->At(ticks_back));
 }
 auto lyra_rt_bit_wide_land(const void* designation, std::int64_t width) noexcept
@@ -10516,12 +10527,12 @@ auto lyra_rt_bit_wide_land(const void* designation, std::int64_t width) noexcept
   return lyra::runtime::LandWideDesignation<BitWide>(designation, width);
 }
 void lyra_rt_bit_wide_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state) {
   lyra::runtime::InsertDesignatedWideBits<BitWide>(
-      designation, width, outer_parts, start, bits, bits_width,
-      bits_are_four_state);
+      designation, width, outer_parts, outer_parts_count, start, bits,
+      bits_width, bits_are_four_state);
 }
 void lyra_rt_bit_wide_net_construct(std::int64_t width, void* storage) {
   BuildAt<ResolvedNet<BitWide>>(storage, static_cast<std::uint64_t>(width));
@@ -10705,9 +10716,8 @@ void lyra_rt_logic_wide_sampled_history_push(void* history, const void* value) {
   HistoryAt<LogicWide>(history).PushBytes(value);
 }
 auto lyra_rt_logic_wide_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<LogicWide>*>(history)->At(ticks_back));
 }
 auto lyra_rt_logic_wide_land(
@@ -10715,12 +10725,12 @@ auto lyra_rt_logic_wide_land(
   return lyra::runtime::LandWideDesignation<LogicWide>(designation, width);
 }
 void lyra_rt_logic_wide_insert_designated_bits(
-    const void* designation, std::int64_t width, LyraSpan outer_parts,
-    const void* start, const void* bits, std::int64_t bits_width,
-    bool bits_are_four_state) {
+    const void* designation, std::int64_t width, void* outer_parts,
+    std::uint64_t outer_parts_count, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state) {
   lyra::runtime::InsertDesignatedWideBits<LogicWide>(
-      designation, width, outer_parts, start, bits, bits_width,
-      bits_are_four_state);
+      designation, width, outer_parts, outer_parts_count, start, bits,
+      bits_width, bits_are_four_state);
 }
 void lyra_rt_logic_wide_net_construct(std::int64_t width, void* storage) {
   BuildAt<ResolvedNet<LogicWide>>(storage, static_cast<std::uint64_t>(width));

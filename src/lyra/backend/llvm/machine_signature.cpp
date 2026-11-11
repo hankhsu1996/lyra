@@ -32,10 +32,6 @@ auto ToLlvmType(llvm::LLVMContext& context, support::MachineKind kind)
       return llvm::Type::getFloatTy(context);
     case MachineKind::kDouble:
       return llvm::Type::getDoubleTy(context);
-    case MachineKind::kAggregate:
-      throw InternalError(
-          "llvm codegen: a structure crosses as its own fields, which its "
-          "machine kind does not state -- please report this as a bug");
   }
   throw InternalError("llvm codegen: unknown machine kind");
 }
@@ -65,9 +61,6 @@ auto MachineKindOf(llvm::Type* type) -> std::optional<support::MachineKind> {
   }
   if (type->isDoubleTy()) {
     return MachineKind::kDouble;
-  }
-  if (type->isStructTy()) {
-    return MachineKind::kAggregate;
   }
   return std::nullopt;
 }

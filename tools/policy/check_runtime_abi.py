@@ -37,15 +37,6 @@ Rules:
         representation, and one this backend does not realize publishes none;
         neither has a prototype to read the answer off.
 
-  R007  An entry takes a span only while two integer argument registers are
-        still free for it. The generated module hands a span over as its two
-        words and places each on its own, while the host's C ABI places a
-        struct that no longer fits the remaining registers wholly on the
-        stack. Past the sixth word the two disagree: the runtime reads the
-        pointer from one place and the length from another, and the length it
-        reads was never one. Nothing else sees it, because the call links and
-        the entry is well-formed on both sides.
-
   R008  Whether an entry can raise is stated once, the same way as R004.
         Its runtime entry declaration says a call to it only returns, and its
         prototype is `noexcept`; a call site builds no landing for the first,
@@ -117,13 +108,6 @@ RE_TABLE_NAME = re.compile(r'kIntegralEntriesSymbol\s*=\s*"(lyra_rt_\w+)"')
 RE_TABLE_DEFINITION = re.compile(
     r"^constinit const [\w:]+\s+(lyra_rt_\w+)\s*=", re.MULTILINE)
 
-# How many integer argument registers the host's calling convention has
-# (System V AMD64), what a span is spelled as, and the parameter types that go
-# in floating-point registers instead and so take none of them.
-INTEGER_ARGUMENT_REGISTERS = 6
-SPAN_PARAMETER = "LyraSpan"
-FLOAT_PARAMETERS = {"double", "float"}
-
 HANDLE_PARAMETER = "runtime"
 HANDLE_PROPERTY = ".takes_the_runtime_handle = true"
 REPORT_PARAMETER = "evaluation"
@@ -178,7 +162,6 @@ class Abi(NamedTuple):
     location_rows: dict[str, bool] = {}
     return_rows: dict[str, bool] = {}
     misplaced_locations: list[Entry] = []
-    spilled_spans: list[Entry] = []
     table_named: list[str] = []
     table_defined: list[str] = []
 
@@ -285,27 +268,6 @@ def non_raisers_of(text: str) -> set[str]:
     }
 
 
-def spilled_spans_of(text: str) -> list[Entry]:
-    """The declared entries taking a span no integer register pair is left for.
-
-    A parameter takes one integer register unless it is a floating-point value,
-    which takes none of them, or a span, which takes two.
-    """
-    spilled = []
-    for prototype in prototypes_of(text):
-        used = 0
-        for parameter in prototype.parameters:
-            words = set(re.findall(r"\w+", parameter))
-            if SPAN_PARAMETER in words:
-                if used + 2 > INTEGER_ARGUMENT_REGISTERS:
-                    spilled.append(Entry(prototype.name, prototype.line))
-                    break
-                used += 2
-            elif "*" in parameter or not words & FLOAT_PARAMETERS:
-                used += 1
-    return spilled
-
-
 def rows_of(text: str, states: str) -> dict[str, bool]:
     """Each runtime entry, against whether its row states `states`."""
     rows = {}
@@ -403,15 +365,6 @@ def check_agreement(
     return errors
 
 
-def check_r007(abi: Abi) -> list[str]:
-    return [
-        f"  {HEADER}:{entry.line}: R007 '{entry.name}' takes a span after the "
-        f"integer argument registers are spent, so the runtime reads its length "
-        f"from somewhere the generated module did not put it"
-        for entry in abi.spilled_spans
-    ]
-
-
 def check_r004(abi: Abi) -> list[str]:
     return check_agreement(
         abi, "R004", abi.handle_rows, abi.handle_takers,
@@ -478,8 +431,7 @@ def load(root: Path) -> Abi:
         handle_rows=rows_of(entries, HANDLE_PROPERTY),
         report_rows=rows_of(entries, REPORT_PROPERTY),
         location_rows=location_rows_of(entries),
-        return_rows=rows_of(entries, RETURN_PROPERTY),
-        spilled_spans=spilled_spans_of(header))
+        return_rows=rows_of(entries, RETURN_PROPERTY))
 
 
 def run_self_tests() -> bool:
@@ -661,30 +613,6 @@ def run_self_tests() -> bool:
         not check_r008(abi(header=raises_none, entries=says_returns)),
         "R008 is silent when the two sides agree")
 
-    ok &= expect(
-        not spilled_spans_of(
-            "auto lyra_rt_a(const void* p, LyraSpan a, LyraSpan b) -> void*;"),
-        "a span with a register pair left for it is not reported")
-    ok &= expect(
-        [e.name for e in spilled_spans_of(
-            "auto lyra_rt_a(\n    const void* p, LyraSpan a, LyraSpan b,\n"
-            "    LyraSpan c) -> void*;")] == ["lyra_rt_a"],
-        "a span past the sixth integer register is reported")
-    ok &= expect(
-        not spilled_spans_of(
-            "auto lyra_rt_a(double x, double y, LyraSpan a, LyraSpan b,\n"
-            "    LyraSpan c) -> void*;"),
-        "a floating-point parameter takes no integer register")
-    ok &= expect(
-        len(spilled_spans_of(
-            "auto lyra_rt_a(double* x, void* y, void* z, LyraSpan a, "
-            "LyraSpan b) -> void*;")) == 1,
-        "a pointer to a floating-point value takes an integer register")
-    ok &= expect(
-        len(check_r007(Abi([], [], [], spilled_spans=[Entry("lyra_rt_a", 1)])))
-        == 1,
-        "R007 reports each entry it was handed")
-
     named = 'kIntegralEntriesSymbol =\n    "lyra_rt_t";'
     defines = (
         "extern constinit const lyra::runtime::IntegralEntries\n"
@@ -731,7 +659,7 @@ def main() -> int:
     abi = load(Path(__file__).resolve().parents[2])
     failures = (
         check_r001(abi) + check_r002(abi) + check_r003(abi) + check_r004(abi)
-        + check_r007(abi) + check_r008(abi) + check_r009(abi)
+        + check_r008(abi) + check_r009(abi)
         + check_r010(abi) + check_r011(abi))
 
     if failures:

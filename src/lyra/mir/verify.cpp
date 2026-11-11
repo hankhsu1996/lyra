@@ -2934,10 +2934,6 @@ auto CrossesAs(
       return floating(support::FloatWidth::k32);
     case support::MachineKind::kDouble:
       return floating(support::FloatWidth::k64);
-    // A closure is called with machine values one at a time, so no structure
-    // crosses whole.
-    case support::MachineKind::kAggregate:
-      return false;
   }
   throw InternalError("mir verify: unknown MachineKind");
 }

@@ -1,9 +1,11 @@
 // @rejected:
 //
-// The scope randomize function assigns random values to the variables it is
-// handed (LRM 18.12), where they lie, as a write through a reference would. A
-// member of an unpacked union is not among what may be passed by reference
-// (LRM 13.5.2), and Lyra holds what scope randomize names to that list.
+// The scope randomize function is handed a list of variable identifiers (LRM
+// 18.12), and the front end Lyra pins accepts a member or an element of one as
+// an extension. A union is one storage its members are alternative readings of
+// (LRM 7.3), so what lies in a member has no storage of its own to randomize,
+// as LRM 18.4 says an unpacked union shall not be declared random at all, and
+// the front end refuses it.
 module Top;
   typedef union { int a; int b; } u_t;
   u_t v;

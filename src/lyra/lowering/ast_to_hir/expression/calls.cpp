@@ -10,6 +10,7 @@
 #include <variant>
 #include <vector>
 
+#include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/Lookup.h>
@@ -24,7 +25,6 @@
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
-#include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/numeric/SVInt.h>
 #include <slang/syntax/AllSyntax.h>
@@ -40,7 +40,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/published_callable.hpp"
-#include "lyra/hir/sampled_history.hpp"
 #include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
@@ -184,46 +183,12 @@ template <typename Lowerer>
 auto RecordSampledCells(
     Lowerer& lowerer, const WalkFrame& frame,
     const slang::ast::CallExpression& call, diag::SourceSpan span)
-    -> diag::Result<SampledReads> {
+    -> diag::Result<void> {
   if (call.arguments().empty()) {
     throw InternalError(
         "AST->HIR sampled value: no operand to take a sampled value of");
   }
   return ArmSampledReads(lowerer.Owner(), frame, *call.arguments()[0], span);
-}
-
-// What a value change function answers of a value that is the same at every
-// tick: that it is stable, and so that it neither rose, fell nor changed (LRM
-// 16.9.3).
-auto UnchangedAnswer(
-    const UnitLowerer& unit_lowerer, support::ValueChangeReading reading,
-    diag::SourceSpan span) -> hir::Expr {
-  const bool holds = [&] {
-    switch (reading) {
-      case support::ValueChangeReading::kUnchanged:
-        return true;
-      case support::ValueChangeReading::kRoseToOne:
-      case support::ValueChangeReading::kFellToZero:
-      case support::ValueChangeReading::kChanged:
-        return false;
-    }
-    throw InternalError("UnchangedAnswer: unknown ValueChangeReading");
-  }();
-  return hir::Expr{
-      .type = unit_lowerer.Unit().builtins.scalar_bit,
-      .data =
-          hir::PrimaryExpr{
-              .data =
-                  hir::IntegerLiteral{
-                      .value =
-                          hir::IntegralConstant{
-                              .value_words = {holds ? 1ULL : 0ULL},
-                              .state_words = {},
-                              .width = 1,
-                              .signedness = hir::Signedness::kUnsigned,
-                              .state_kind =
-                                  hir::IntegralStateKind::kTwoState}}},
-      .span = span};
 }
 
 // The argument the source wrote at `position`, or nothing where it wrote none.
@@ -267,11 +232,8 @@ auto ResolveClockingEvent(
       name);
 }
 
-// How far back a read reaches: the expression the source wrote, or the 1 the
-// standard defaults it to (LRM 16.9.3). Two readers need this same distance --
-// the read itself, and the history whose entries have to go back that far --
-// and they are built into different arenas, so each asks for its own and puts
-// it where it belongs.
+// How far back `$past` reaches: the expression the source wrote, or the 1 the
+// standard defaults it to (LRM 16.9.3).
 template <typename Lowerer>
 auto LowerTicksBack(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression* ticks_back,
@@ -283,81 +245,59 @@ auto LowerTicksBack(
   return lowerer.LowerExpr(*ticks_back, frame);
 }
 
-// What a sampled value function needs from the scope it is read in, once its
-// expression's cells are armed: the scope has to keep a history of that
-// expression under the event this call counts ticks of. The call then names
-// that history, since which event it is was settled here.
-//
-// The subject and the event are lowered into the scope's own arena rather than
-// the reader's: nothing the source wrote evaluates them, and what does is a
-// process synthesized a layer down, the way a continuous assignment's
-// expression is already carried.
+// The event a sampled value function counts the ticks of, written at
+// `clock_arg` or settled where the call is, gated by `gate` where `$past` was
+// given one. The gate belongs to the event, and the event already carries a
+// qualifier of exactly that shape -- the LRM 9.4.2.3 `iff`, read where an
+// occurrence happens -- so it composes with whatever the event stated rather
+// than needing a place of its own. An entry the source already qualified
+// admits a tick only where both hold, and each entry reads the gate for
+// itself. It is lowered where the call is, since the gate may read what only
+// that body names.
 template <typename Lowerer>
-auto RecordSampledHistory(
+auto LowerSampledClock(
     Lowerer& lowerer, const WalkFrame& frame,
     const slang::ast::CallExpression& call, std::size_t clock_arg,
-    const slang::ast::Expression* ticks_back,
     const slang::ast::Expression* gate, std::string_view name,
-    diag::SourceSpan span) -> diag::Result<hir::SampledHistoryId> {
+    diag::SourceSpan span) -> diag::Result<hir::EventControl> {
   auto clock_or =
       ResolveClockingEvent(lowerer, frame, call, clock_arg, name, span);
   if (!clock_or) return std::unexpected(std::move(clock_or.error()));
-
-  WalkFrame scope_frame = frame;
-  scope_frame.current_exprs = &frame.current_structural_scope->exprs;
-
-  auto subject_or = lowerer.LowerExpr(*call.arguments()[0], scope_frame);
-  if (!subject_or) return std::unexpected(std::move(subject_or.error()));
-
-  auto event_or = LowerEventControl(lowerer, scope_frame, *clock_or, span);
+  auto event_or = LowerEventControl(lowerer, frame, *clock_or, span);
   if (!event_or) return std::unexpected(std::move(event_or.error()));
-  // The gate belongs to the event, and the event already carries a qualifier
-  // of exactly that shape -- the LRM 9.4.2.3 `iff`, read where an occurrence
-  // happens -- so it composes with whatever the event stated rather than
-  // needing a place of its own. An entry the source already qualified admits
-  // a tick only where both hold, and each entry reads the gate for itself.
-  if (gate != nullptr) {
-    for (hir::EventEntry& entry : event_or->entries) {
-      auto gate_or = lowerer.LowerExpr(*gate, scope_frame);
-      if (!gate_or) return std::unexpected(std::move(gate_or.error()));
-      const hir::ExprId gate_id = scope_frame.Exprs().Add(*std::move(gate_or));
-      if (!entry.condition.has_value()) {
-        entry.condition = gate_id;
-        continue;
-      }
-      entry.condition = scope_frame.Exprs().Add(
-          hir::Expr{
-              .type = lowerer.Owner().Unit().builtins.scalar_bit,
-              .data =
-                  hir::BinaryExpr{
-                      .op = hir::BinaryOp::kLogicalAnd,
-                      .lhs = *entry.condition,
-                      .rhs = gate_id},
-              .span = span,
-          });
+  if (gate == nullptr) return event_or;
+  for (hir::EventEntry& entry : event_or->entries) {
+    auto gate_or = lowerer.LowerExpr(*gate, frame);
+    if (!gate_or) return std::unexpected(std::move(gate_or.error()));
+    const hir::ExprId gate_id = frame.Exprs().Add(*std::move(gate_or));
+    if (!entry.condition.has_value()) {
+      entry.condition = gate_id;
+      continue;
     }
+    entry.condition = frame.Exprs().Add(
+        hir::Expr{
+            .type = lowerer.Owner().Unit().builtins.scalar_bit,
+            .data =
+                hir::BinaryExpr{
+                    .op = hir::BinaryOp::kLogicalAnd,
+                    .lhs = *entry.condition,
+                    .rhs = gate_id},
+            .span = span,
+        });
   }
-  auto depth_or = LowerTicksBack(lowerer, scope_frame, ticks_back, span);
-  if (!depth_or) return std::unexpected(std::move(depth_or.error()));
-  return frame.current_structural_scope->sampled_histories.Add(
-      hir::SampledHistoryDecl{
-          .subject = scope_frame.Exprs().Add(*std::move(subject_or)),
-          .clock = *event_or,
-          .depth = scope_frame.Exprs().Add(*std::move(depth_or)),
-      });
+  return event_or;
 }
 
 // A sampled value function that reaches across the ticks of a clocking event
 // (LRM 16.9.3), where the call is one. Absent for everything else.
 //
-// It answers from a history the scope keeps rather than from the cell, so the
-// call names that history, and which of the two shapes it is decides what else
-// it carries. That also decides which of the source's arguments are values at
-// all: the tick count, the gate and the event are read where the history is
-// declared rather than evaluated where the call stands, and `$past` evaluates
-// nothing there at all. So this resolves before the generic argument loop and
-// lowers the one operand a value change function still reads, for the same
-// reason the LRM 20.6 / 20.7 queries do.
+// The call holds its operand, lowered where the call is, since it is
+// evaluated there as the sampled value of an earlier tick, and the event whose
+// ticks it counts, which is evaluated at each tick by what keeps the values of
+// those ticks rather than where the call stands. `$past` states its operand,
+// how far back, the gate and the event; a value change function its operand
+// and the event (LRM 16.9.3). So this resolves before the generic argument
+// loop, for the same reason the LRM 20.6 / 20.7 queries do.
 template <ExprLowerer Lowerer>
 auto LowerSampledHistoryExpr(
     Lowerer& lowerer, const WalkFrame& frame,
@@ -380,77 +320,67 @@ auto LowerSampledHistoryExpr(
     return std::optional<hir::Expr>{std::nullopt};
   }
 
-  // Arming is the same requirement `$sampled` has, and the same check reports
-  // an expression reading storage this scope cannot name.
-  auto operand_reads = RecordSampledCells(lowerer, frame, call, span);
-  if (!operand_reads) {
-    return std::unexpected(std::move(operand_reads.error()));
-  }
-  // An operand reading only constants and variables that answer with their
-  // current value has that value at every tick, the past ones included (LRM
-  // 16.5.1), so no history has anything to keep: `$past` is the operand as it
-  // stands, and it never changed.
-  if (operand_reads->armed == 0) {
-    if (past) {
-      auto operand_or = lowerer.LowerExpr(*call.arguments()[0], frame);
-      if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-      return std::optional<hir::Expr>{*std::move(operand_or)};
-    }
-    return std::optional<hir::Expr>{
-        UnchangedAnswer(lowerer.Owner(), change->reading, span)};
-  }
-  if (operand_reads->current != 0) {
+  // LRM 16.5.1: a past value of an event's or a sequence's triggered state is
+  // sampled in the Postponed region of the past tick, not at the tick where a
+  // history takes what it keeps.
+  bool reads_triggered = false;
+  call.arguments()[0]->visit(
+      slang::ast::makeVisitor([&](auto& visitor,
+                                  const slang::ast::CallExpression& inner) {
+        if (inner.isSystemCall() && inner.getSubroutineName() == "triggered") {
+          reads_triggered = true;
+        }
+        visitor.visitDefault(inner);
+      }));
+  if (reads_triggered) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "'{}' of an expression reading both an automatic variable and one "
-        "the design element holds is not yet supported",
+        "'{}' of an event's or a sequence's triggered state is not yet "
+        "supported",
         name);
   }
 
-  if (past) {
-    // `$past` states its operand first, then how far back, then the gate, then
-    // the event (LRM 16.9.3).
-    const slang::ast::Expression* ticks_back = WrittenArgument(call, 1);
-    auto history_or = RecordSampledHistory(
-        lowerer, frame, call, 3, ticks_back, WrittenArgument(call, 2), name,
-        span);
-    if (!history_or) return std::unexpected(std::move(history_or.error()));
-    auto read_depth_or = LowerTicksBack(lowerer, frame, ticks_back, span);
-    if (!read_depth_or) {
-      return std::unexpected(std::move(read_depth_or.error()));
-    }
-    // The result follows the operand's type, and the operand that survives is
-    // the history's subject -- the same expression, lowered where the process
-    // that settles it will read it.
-    const hir::StructuralScope& scope = *frame.current_structural_scope;
+  // Arming is the same requirement `$sampled` has, and the same check reports
+  // an expression reading storage this scope cannot name.
+  if (auto armed = RecordSampledCells(lowerer, frame, call, span); !armed) {
+    return std::unexpected(std::move(armed.error()));
+  }
+
+  auto operand_or = lowerer.LowerExpr(*call.arguments()[0], frame);
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  const hir::ExprId operand = frame.Exprs().Add(*std::move(operand_or));
+
+  if (change != nullptr) {
+    auto clock_or =
+        LowerSampledClock(lowerer, frame, call, 1, nullptr, name, span);
+    if (!clock_or) return std::unexpected(std::move(clock_or.error()));
     return std::optional<hir::Expr>{hir::Expr{
-        .type =
-            scope.exprs.Get(scope.sampled_histories.Get(*history_or).subject)
-                .type,
+        .type = lowerer.Owner().Unit().builtins.scalar_bit,
         .data =
             hir::CallExpr{
-                .callee = hir::PastValueRef{.history = *history_or},
-                .arguments = {frame.Exprs().Add(*std::move(read_depth_or))}},
+                .callee =
+                    hir::ValueChangeRef{
+                        .clock = *std::move(clock_or),
+                        .reading = change->reading},
+                .arguments = {operand},
+            },
         .span = span,
     }};
   }
-
-  // A value change function takes its event second and gates nothing: only
-  // `$past` carries a gating expression (LRM 16.9.3).
-  auto history_or = RecordSampledHistory(
-      lowerer, frame, call, 1, nullptr, nullptr, name, span);
-  if (!history_or) return std::unexpected(std::move(history_or.error()));
-  auto operand_or = lowerer.LowerExpr(*call.arguments()[0], frame);
-  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  auto ticks_or =
+      LowerTicksBack(lowerer, frame, WrittenArgument(call, 1), span);
+  if (!ticks_or) return std::unexpected(std::move(ticks_or.error()));
+  const hir::ExprId ticks = frame.Exprs().Add(*std::move(ticks_or));
+  auto clock_or = LowerSampledClock(
+      lowerer, frame, call, 3, WrittenArgument(call, 2), name, span);
+  if (!clock_or) return std::unexpected(std::move(clock_or.error()));
+  // The result follows the operand's type.
   return std::optional<hir::Expr>{hir::Expr{
-      .type = lowerer.Owner().Unit().builtins.scalar_bit,
+      .type = frame.Exprs().Get(operand).type,
       .data =
           hir::CallExpr{
-              .callee =
-                  hir::ValueChangeRef{
-                      .history = *history_or, .reading = change->reading},
-              .arguments = {frame.Exprs().Add(*std::move(operand_or))},
-          },
+              .callee = hir::PastValueRef{.clock = *std::move(clock_or)},
+              .arguments = {operand, ticks}},
       .span = span,
   }};
 }

@@ -11,13 +11,22 @@ analyzed representation means. Where neither the standard nor that representatio
 what an accepted text does, Lyra chooses the simplest behaviour. An error of analysis is corrected
 in the front end, and an error of execution or a missing capability is corrected in Lyra.**
 
-**One kind of accepted text is refused by Lyra: a text the standard forbids, or does not settle,
-whose meaning no rule of the standard for the nearest text it allows supplies.** Giving one a
-meaning would be designing semantics the standard declined to give, and every tool that did so would
-answer differently. Lyra refuses it where it reads the front end's representation, before any
-lowering, as an error saying in words what the language does not allow, and records the ruling
-below. A forbidden text whose meaning the nearest allowed text does supply is carried out as the
-front end analyzed it.
+**A text the standard forbids that the front end accepts, and whose meaning no rule of the standard
+for the nearest text it allows supplies, is the front end's to refuse, and is refused in the version
+of it Lyra pins.** A missing diagnostic is an error of analysis like any other, and a check of it in
+Lyra would be the second set of rules this page rules out; where the front end already checks the
+neighbouring texts, the check belongs beside them. A forbidden text whose meaning the nearest
+allowed text does supply is carried out as the front end analyzed it, and one the front end accepts
+because other tools read it so is a compatibility choice its options decide (consequence 6).
+
+**A text the standard does not settle, whose meaning no rule supplies, is refused too, under the
+stricter reading.** The front end is not wrong to accept it, and giving it a meaning would be
+designing semantics the standard declined to give, which every tool would answer differently. The
+reading is taken in the front end where the front end's own check is the one every use of the text
+passes through -- what a reference may name, for one -- since a check kept in Lyra would have to
+list the uses and would miss the next. Otherwise Lyra refuses it where it reads the front end's
+representation, before any lowering, as an error saying in words what the language does not allow.
+Either way the ruling is recorded below.
 
 The responsibilities are split three ways.
 
@@ -36,8 +45,8 @@ shape a tree happens to take is not part of it. Lowering keeps every decision th
 even for a text the standard leaves undefined, and decides only what the front end left open.
 
 The goal is that a text the standard allows is accepted and does what the standard says. A case that
-fails it is a defect, either the front end's (reported upstream) or Lyra's (a bug, or a gap reported
-as one).
+fails it is a defect, either the front end's (fixed in the version Lyra pins, and reported upstream)
+or Lyra's (a bug, or a gap reported as one).
 
 Lyra adds no rule of its own accepting a text because a design runs on some other simulator. Tools
 that take a text the standard forbids do not agree on which texts or on what they mean, so a rule
@@ -78,10 +87,10 @@ Consequences:
    carries it out is its record. It becomes a ruling below only where the choice changes what the
    program computes, and a ruling never records the front end's behaviour in full.
 5. **What goes upstream is decided by evidence, not by severity.** A suspected analysis error, a
-   missing diagnostic, or a meaning that contradicts the standard is reported with the clause and a
-   reduction. A text the front end accepts deliberately as an extension is not a defect for being
-   nonstandard. For a text the standard does not settle, Lyra's position in that discussion is the
-   stricter reading.
+   missing diagnostic, or a meaning that contradicts the standard is fixed in the version Lyra pins
+   and reported with the clause and a reduction. A text the front end accepts deliberately as an
+   extension is not a defect for being nonstandard. For a text the standard does not settle, Lyra's
+   position in that discussion is the stricter reading.
 6. **A caller may select a named compatibility mode or front end option** (`--compat`, or an option
    for a single reading, such as `--allow-hierarchical-const`). Lyra applies the corresponding
    analysis rules and stands behind the mode as it does the default. It does not promise to behave
@@ -107,8 +116,8 @@ of the clause, and its source can be read for the clause it relies on. It is nev
 ruling: a tool that accepts says only that it accepts.
 
 A design that is wrong is its author's to correct, and whoever builds it without being able to edit
-it asks for the reading it relies on by name (consequence 6). A front end that is wrong is reported
-upstream. Neither is answered by changing what Lyra accepts.
+it asks for the reading it relies on by name (consequence 6). A front end that is wrong is fixed in
+the version Lyra pins and reported upstream. Neither is answered by changing what Lyra accepts.
 
 A forbidden text is not always worth refusing outright. Where all three of these hold, the author is
 not reported to, and the text is run when a caller asks for it, as an extension of the standard
@@ -260,6 +269,20 @@ writes where it lies. No allowed text lends either a meaning: a reference names 
 for as long as it is held, and a union's storage is read as another type whenever another member
 writes it (7.3.2), or ends and holds another member when a tagged union is assigned (11.9). Pass the
 whole union, or pass the member to an `inout` formal, which copies it in and out (13.5) and runs.
+
+#### A write in an expression of a concurrent assertion
+
+```systemverilog
+int q[$];
+assert property (@(posedge clk) q.pop_front() > 0);
+```
+
+16.6: "evaluation of an expression shall not have any side effects (e.g., the increment and
+decrement operators are not allowed)", for the expressions that appear in concurrent assertions. A
+method that removes an element from its queue is one, as an increment is. The front end refuses an
+increment there, and a call with an output, inout or `ref` argument, which the same list of 16.6
+forbids; the front end Lyra pins counts the queue a pop is called on as such an argument, so the pop
+is refused by the same check. Read the element and remove it in a procedure instead.
 
 ### Forbidden, run as an extension when asked
 
@@ -528,6 +551,26 @@ that difficulty as well; the standard says so of those positions and not of this
 member through an interface port, which is not a hierarchical name (see `$bits` of a member reached
 through an interface port, below), or give the width its own parameter. A design whose author reads
 it the other way is built with `--allow-hierarchical-const`.
+
+#### A write in the argument of a sampled value function in procedural code
+
+```systemverilog
+always @(posedge clk) begin
+  r <= $past(x++);
+  r <= $stable(q.pop_front());
+end
+```
+
+16.9.3 lets a sampled value function be called in procedural code, and 16.6's rule that an
+expression have no side effects is stated for the expressions of concurrent assertions, which does
+not say whether such an argument is one. No allowed text lends the write a meaning: 16.5.1 computes
+the sampled value of an expression from the sampled values of its operands, so a variable the
+argument names stands for what it held at the tick read, which is fixed. Writing it is writing to a
+by-copy capture of a lambda that is not `mutable` in C++, or of an `Fn` closure in Rust, which both
+refuse; read as a temporary instead, the write would run and change nothing. Lyra takes the stricter
+reading, in the front end it pins, which binds this argument as an expression of an assertion
+wherever the call stands and already holds it to 16.6's rule on output and `ref` arguments; the
+write is refused beside that rule. Make the write a statement of its own.
 
 ### Not settled by the standard, accepted by the front end
 
@@ -950,6 +993,54 @@ what the Postponed region forbids. A final deferred assertion matures and acts i
 region it is reached in, as 16.4.1 schedules its action. In a final procedure a violation report and
 a final deferred assertion mature, and act, as they are made, and an observed deferred assertion is
 refused as in the Postponed region.
+
+#### A past value of an automatic variable before the ticks it reaches exist
+
+```systemverilog
+always @(posedge clk)
+  for (int i = 0; i < 4; i++)
+    r[i] <= $past(b[i]);   // at the first tick: b's default at index i, or at index 0?
+```
+
+16.9.3 says "If there do not exist k strictly prior time steps in which the event ev iff expression2
+occurred, then the value returned from the `$past` function is the default sampled value of
+expression1", and 16.5.1 defines that default "recursively by evaluating the expression using the
+default sampled values of its component subexpressions and variables", where "the default sampled
+value of any other variable or net is the default value of the corresponding type" -- so `i`, read
+that way, is 0. 16.5.1 also says "When a past or a future value of an automatic variable is
+referenced by a sampled value function, the current value of the automatic variable is taken
+instead", and the same of a constant cast, with no exception for a tick that has not happened. Each
+sentence reads as the whole answer, and neither names the other.
+
+Lyra reads an automatic variable, a constant cast and a value a procedural assertion saved as they
+are now at every tick, the first included: before the ticks a read reaches, each static variable the
+operand reads answers its default sampled value and the rest of the operand is evaluated as at any
+other tick. It is one rule for every tick, where the other reading switches the meaning of `i` at
+the first one; it is the only reading under which the clause's own loop example answers bit `i` of
+`b` at every tick; and it is the one that needs no count of the ticks so far.
+
+#### When a call in a past value is made
+
+```systemverilog
+function automatic int plus_g(int v); return v + g; endfunction
+always @(posedge clk) begin
+  r <= $past(plus_g(cnt));   // g as of the earlier tick, or as it is now?
+  t <= $past($time);         // the earlier tick's time, or the read's?
+end
+```
+
+16.5.1 says that to evaluate the sampled value of an expression holding a function call, "the
+function is called on the sampled values of its arguments at the time of the expression evaluation";
+16.9.3 says `$past` returns "the sampled value of expression1 in a particular time step strictly
+prior". Read one way, the call is made where the past value is read, over its arguments' past
+values; read the other, it was made at that earlier time step. The two agree for any function whose
+answer follows only its arguments, and differ for one that reads a variable by its own name, or the
+time.
+
+Lyra makes the call where the past value is read. It is what "the time of the expression evaluation"
+says when the expression is evaluated at the read, and it is the reading under which a call is made
+once, where the source wrote it, rather than at every tick of the clock whether or not any read
+follows, which would also be when a function with an effect had that effect.
 
 ### Allowed
 

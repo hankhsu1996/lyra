@@ -16,10 +16,10 @@
 #include "lyra/hir/namespace.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/randomization_hook.hpp"
-#include "lyra/hir/sampled_history.hpp"
 #include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_id.hpp"
+#include "lyra/hir/timing.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -142,33 +142,32 @@ struct ArrayIteratorMethodRef {
 };
 
 // The two shapes a sampled value function that reaches across the ticks of a
-// clocking event takes (LRM 16.9.3). Both name a history, because which event's
-// ticks the call counts is settled where the source is, by that clause's
-// ordered rules, and none of that survives into a lower layer.
+// clocking event takes (LRM 16.9.3). Each holds the event whose ticks it
+// counts, because which event that is was settled where the source is, by that
+// clause's ordered rules, and none of that survives into a lower layer; where
+// `$past` was given a gate, the event already carries it as the LRM 9.4.2.3
+// qualifier, since the gate decides which ticks count rather than what is
+// read. The operand is the call's first argument, evaluated where the call
+// stands as the sampled value of an earlier tick (LRM 16.5.1); what keeps the
+// values of those ticks is worked out from the call itself, which is that
+// history's identity.
 //
 // `$sampled` is neither. It names no event, so it reads the cell directly and
 // stays an ordinary system subroutine call.
 
-// `$past`: the value one tick of that event settled. The operand is not an
-// argument of this call -- it is the history's subject, evaluated at the tick
-// rather than here -- but how far back to reach is, and it is the call's one
-// argument: the expression the source wrote there, or the 1 it defaults to
-// (LRM 16.9.3). That clause requires the expression to settle before the
-// program runs, which says its value is known and not that this has to hold it:
-// a history answers by counting back through entries it already has, so a
-// different distance is the same history reached at another offset.
+// `$past`: the operand, then the tick count -- the expression the source wrote
+// there or the 1 it defaults to, settled before the program runs.
 struct PastValueRef {
-  SampledHistoryId history;
+  EventControl clock;
 
   auto operator==(const PastValueRef&) const -> bool = default;
 };
 
-// `$rose`, `$fell`, `$stable`, `$changed`: a comparison between the sampled
-// value of the current time step and the one the most recent strictly prior
-// tick settled. The current side is still evaluated where the call stands, so
-// this one keeps the operand as its argument.
+// `$rose`, `$fell`, `$stable`, `$changed`: the operand's sampled value in the
+// current time step against the one of the most recent strictly prior tick.
+// The operand is its one argument.
 struct ValueChangeRef {
-  SampledHistoryId history;
+  EventControl clock;
   support::ValueChangeReading reading = support::ValueChangeReading::kRoseToOne;
 
   auto operator==(const ValueChangeRef&) const -> bool = default;

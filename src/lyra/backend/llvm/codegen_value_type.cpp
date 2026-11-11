@@ -143,7 +143,6 @@ auto CodeGenValueTypes::Body(
     case support::MachineKind::kInt64:
     case support::MachineKind::kFloat:
     case support::MachineKind::kDouble:
-    case support::MachineKind::kAggregate:
       b.CreateRet(answered);
       break;
   }

@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -242,16 +243,11 @@ auto RunEveryDefinition(
   mir::Block loop;
   const WalkFrame each = starter.WithBlock(&loop);
   mir::Builder step = each.Builder();
-  const BindingOriginId taken_origin = SynthesizedOrigin{
-      .owner_site = unit_lowerer.NextSynthesizedSite(), .ordinal = 0};
-  const mir::LocalId taken =
-      each.bindings->Declare(taken_origin, binding.handle);
-  step.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = taken,
-          .init = step.Add(BuildBuiltinMethodCall(
-              unit, step, support::BuiltinFn::kPopFront,
-              step.LocalPlace(left, queue), {}, binding.handle))});
+  const BindingOriginId taken_origin = DeclareSynthesizedLocal(
+      unit_lowerer, each,
+      step.Add(BuildBuiltinMethodCall(
+          unit, step, support::BuiltinFn::kPopFront,
+          step.LocalPlace(left, queue), {}, binding.handle)));
   ClosureBuilder running(unit, each, support::ClosureKind::kFnOnce);
   const WalkFrame branch = running.Frame().WithRunsAsFunctionCall(false);
   mir::Builder in_branch = branch.Builder();

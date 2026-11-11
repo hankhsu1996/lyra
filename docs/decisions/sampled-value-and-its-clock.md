@@ -31,7 +31,9 @@ is evaluated over whatever its leaves kept.
 
 The clause carves out three exceptions, and each is a _current_ value rather than a sampled one: an
 automatic variable, an assertion local variable, and a `const'(...)` cast. A past value of any of
-them is also the current value, not a retained one.
+them is also the current value, not a retained one. The exceptions are stated on the variable or the
+cast, never on an expression around it, so an expression mixing them is the sampled one composed
+over each part's own answer: `$past(b[i])` is the past `b` at the current `i`.
 
 ### F2. Preponed is not a moment that needs a pass
 
@@ -136,13 +138,20 @@ answers only the procedure's rule: its assertion analysis follows clock flow to 
 rewrites nothing. So a sampled value function inside an assertion with no default clocking was
 refused, and with one it counted the default clocking's ticks instead of the assertion's.
 
-### D3. A sampler is a synthesized process, one per scope and clocking event
+### D3. A sampler is a synthesized process, one per sampled value function that keeps a piece
 
 Per F4 the sampling agent is an always procedure, and it is lowered as one: a body that waits on the
-clocking event, evaluates each sampled expression over its leaves' sampled values, and repeats. It
-is an action bound to a schedule event, which is a category that already exists, so it needs no
-scheduling concept of its own and waits on its clock through its own loop as any `always` does
-([a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md)).
+function's clocking event, takes the sampled value of each piece D5 keeps, and repeats. It is an
+action bound to a schedule event, which is a category that already exists, so it needs no scheduling
+concept of its own and waits on its clock through its own loop as any `always` does
+([a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md)). It is a process of
+the instance that replicates the body the function is written in, and it reads what that body's
+statics hold as the body does. A function whose operand keeps no piece reads only what answers as it
+is now, and has none.
+
+Revised 2026-11-09. This section said one sampler per scope and clocking event; the lowering has
+built one per history since it was written, because telling two clocking events apart is a
+comparison of expressions, and sharing a wait is what one per event would save.
 
 This is deliberately not an observation armed by a reader. An armed observation exists only while
 someone waits at it, which is exactly the LRM 9.7 resensitization property
@@ -163,15 +172,45 @@ The alternative -- committing at the tick and having readers count around it -- 
 depend on whether a given reader ran before or after the sampler in the same region, which nothing
 in the engine orders and nothing in the standard licenses.
 
-### D5. A history is member storage of a fixed depth, prefilled with the default sampled value
+### D5. A sampled value function keeps the pieces of its operand that have a past
 
-Each `(sampled expression, clocking event)` a unit needs has a history of the depth its deepest
-`$past` asks for; the count is an elaboration-time constant (LRM 16.9.3), so the depth is known
-where the storage is declared. It is member storage reached only through its address.
+`$past(e)` is `e` evaluated where the call stands, as the sampled value of the tick the call names
+(LRM 16.9.3): every static variable `e` reads as of that tick, and every automatic variable,
+constant cast and value a procedural assertion saved as it is now (F1). So what has to have been
+kept is a value per tick for each **piece** of `e` that reads a sampled variable and nothing read as
+now, taken as large as it can be while it makes no call: operators and selects compute the same over
+the values of a tick whenever they run, so their result is kept, while a call -- a library method, a
+system function, a subroutine of the program -- may answer from the state of the run, an object's
+state or what its arguments do not name, so it is made where `e` is read, on its arguments' past
+values (LRM 16.5.1), which is the moment `architecture/language_conformance.md` rules the standard
+leaves open. A piece is also one its sampler can evaluate by itself: a range of values bounds only
+the membership or case item it stands in, and a part reading a queue's `$` counts from the select
+around it, so neither is kept whole and their own parts are kept instead. `$past(mem[addr])` with a
+static `addr` keeps one element per tick; `$past(mem[i])` with an automatic `i` keeps `mem`, since
+any `i` may be asked for (LRM 16.6 anticipates that copy); `$past(const'(x))` keeps nothing. A piece
+read inside another sampled value function of the operand is kept as that function's history holds
+it, at each tick of the outer function's clock, so functions nest across clocks with every history
+of a fixed depth.
 
-It is installed already full of the expression's default sampled value. LRM 16.9.3 requires exactly
-that answer before the kth prior tick exists, so a history that starts full has no empty case and no
-tick counter to compare against.
+Each history is storage of the body the function is written in, or of the scope where it stands
+among the scope's own expressions, of static lifetime, so it lives where that body's statics live
+and its sampler reaches what they reach, a static local of the body among them (LRM 6.21). Its depth
+is the tick count, an elaboration-time constant (LRM 16.9.3), known where the storage is declared.
+It is installed full of each piece's default sampled value, which LRM 16.9.3 requires before the kth
+prior tick exists, so it has no empty case and no tick counter; reading an automatic as now before
+that tick too is the reading `architecture/language_conformance.md` rules on. A read names the entry
+where the history keeps it, as a sampled read names the value where the variable keeps it, so
+`$past(mem[i])` reaches one element of the kept `mem` rather than a copy of all of it. A clocking
+block input is read, there and by every other sampled read, as the value its block samples at the
+event (LRM 16.5.1, 14.13), computed as the block computes it rather than read from the input's cell,
+which the block writes later in the same time step. The triggered state of an event or a sequence is
+an operand whose past value is sampled elsewhere -- in the Postponed region of the past tick (LRM
+16.5.1) -- and a function reading one is not yet carried out.
+
+Revised 2026-11-09. This section kept a history of the whole operand, lowered a second time into the
+scope's own arena. That copy could read neither an automatic variable nor a static local of the body
+that wrote the call, so `$past(b[i])` in a loop was refused and `$past` of a static local ended the
+compiler; it also called a function in the operand at the tick rather than at the read.
 
 ### D6. No layer gains a node kind
 
@@ -223,12 +262,20 @@ would be an upstream leak.
   time is the premise the whole engine rests on. It also puts the cost on slots in which nothing was
   sampled and nothing changed, which is most of them.
 
-- **Per-leaf history, with the expression re-evaluated at read time.** Sharing history across
-  expressions that read the same leaves is real, and this shape gets it. Rejected because LRM 16.5.1
-  has a function call in a sampled expression called on the sampled values of its arguments at the
-  time of evaluation; replaying the expression later calls it at a different time, with the same
-  arguments but not necessarily the same answer. D5 stores what the clause defines rather than the
-  inputs from which it could be recomputed.
+- **A history of the whole operand, evaluated at each tick.** It is what D5 first said, and it is
+  what a delay of an expression is in a language whose every variable is delayed (Lustre's `fby`).
+  Rejected because SystemVerilog has operands whose past is their present (F1): the copy cannot read
+  them, and it calls a function at the tick where LRM 16.5.1 has it "called on the sampled values of
+  its arguments at the time of the expression evaluation". Until 2026-11-09 this entry rejected the
+  opposite shape -- a history per leaf, the expression re-evaluated at the read -- for the same
+  clause read the other way, as calling the function at the wrong time; the read is the call's
+  evaluation, and `$sampled` already calls it there. D5 keeps more than leaves only where nothing is
+  called.
+- **A history per variable, matched to the read by the variable's cell.** It keeps the whole of
+  `mem` for `$past(mem[3])`, which copies every element at every tick, and a read reaches its cell
+  by a route of its own while the arming names the same cell by another, so the two meet only at run
+  time, through a table. Keyed by a piece of the operand, the read knows its history where it is
+  lowered.
 
 - **Implementing LRM 16.14.6's three conditions here.** They are exactly specifiable and would be a
   self-contained piece of work. Rejected because the front end already answers them and the answer

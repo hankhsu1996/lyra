@@ -48,16 +48,4 @@ auto Allows(
           unit.builtins.machine_bool));
 }
 
-auto ControlAddress(
-    mir::CompilationUnit& unit, mir::Builder block, const WalkFrame& frame,
-    const StaticCellBinding& control) -> mir::Expr {
-  const mir::ExprId cell = block.Add(BuildStaticStorageAccess(
-      unit, frame, control.home, control.cell_type, mir::EnclosingHops{}));
-  return mir::MakeAddressOfExpr(
-      cell, unit.types.Intern(
-                mir::Type{mir::PointerType{
-                    .pointee = control.cell_type,
-                    .ownership = mir::PointerOwnership::kBorrowed}}));
-}
-
 }  // namespace lyra::lowering::hir_to_mir

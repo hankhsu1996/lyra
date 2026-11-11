@@ -13,6 +13,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/registry.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
@@ -25,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
+#include "lyra/lowering/hir_to_mir/kept_piece.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/scope_table.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -280,12 +282,12 @@ class StructuralScopeLowerer {
       const WalkFrame& frame, hir::RoutedDisableTargetRefId id) const
       -> mir::ExprId;
 
-  // The MIR field the history of one sampled expression became (LRM 16.9.3).
-  // It takes no hop count: a history is recorded on the scope whose process
-  // reads it, so the reader and the storage are always the same scope.
-  [[nodiscard]] auto TranslateSampledHistory(hir::SampledHistoryId hir_id) const
-      -> mir::FieldId {
-    return sampled_history_fields_.Get(hir_id);
+  // Where the sampled value functions among this scope's own expressions keep
+  // the pieces of their operands (LRM 16.9.3): fields of the instance, which
+  // the reads and the scope's own activation reach with no hop, since the call
+  // and its storage are the same scope's.
+  [[nodiscard]] auto Histories() const -> const KeptHistories& {
+    return kept_histories_;
   }
 
   // What a clocking block this scope declares keeps that the scope publishes
@@ -315,14 +317,6 @@ class StructuralScopeLowerer {
     return mir::Direct{
         .target = mir::CallableTarget{
             .owner = class_id_, .slot = ClockingLandingCallable(landing)}};
-  }
-
-  // The MIR field holding one concurrent assertion's attempts (LRM 16.14.1).
-  // It takes no hop count for the same reason: an assertion is evaluated on the
-  // scope that declares it.
-  [[nodiscard]] auto TranslateConcurrentAssertion(
-      hir::ConcurrentAssertionId hir_id) const -> mir::FieldId {
-    return concurrent_assertion_fields_.Get(hir_id);
   }
 
   // The MIR field a structural data object of this scope became: a field of
@@ -433,10 +427,7 @@ class StructuralScopeLowerer {
   ConstructionTableSource construction_table_ = ConstructionTableSupplied{};
   base::Translation<hir::StructuralDataObjectId, mir::ClassFieldTarget>
       data_object_fields_;
-  base::Translation<hir::SampledHistoryId, mir::FieldId>
-      sampled_history_fields_;
-  base::Translation<hir::ConcurrentAssertionId, mir::FieldId>
-      concurrent_assertion_fields_;
+  KeptHistories kept_histories_;
   base::Translation<hir::ClockingBlockId, ClockingFields> clocking_fields_;
   base::Translation<hir::InterfacePortId, mir::ClassFieldTarget>
       interface_port_fields_;
@@ -551,15 +542,21 @@ auto ApplyInstanceSelects(
     std::span<const std::uint32_t> selects) -> ReachedObject;
 
 // The call `start` makes of `body`, a callable of the scope `frame` stands on
-// whose result is the execution it runs as, written into `frame`'s block,
-// whether it is a procedure the scope registers or an assertion's action it
-// runs later. The call names the scope; the instance whose text creates the
-// execution, which holds the seeds LRM 18.14.1 splits its generator from and
-// whose code it evaluates; and where the source writes it. A continuous driver
-// is not started here, because it may evaluate another instance's code and so
-// also names the instance it runs as.
+// whose result is the execution it runs as, written into `frame`'s block, for
+// a procedure the scope registers. The call names the scope; the instance
+// whose text creates the execution, which holds the seeds LRM 18.14.1 splits
+// its generator from and whose code it evaluates; and where the source writes
+// it. A continuous driver is not started here, because it may evaluate another
+// instance's code and so also names the instance it runs as.
 [[nodiscard]] auto BuildExecutionStart(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
+    support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId;
+
+// The same call for `started`, the coroutine a call of a closure answered,
+// whose captures are the values it runs with: the statement a concurrent
+// assertion's answer selects (LRM 16.14.1).
+[[nodiscard]] auto BuildExecutionStart(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId started,
     support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId;
 
 // The time unit and precision of the time scope a declaration in `declaring`

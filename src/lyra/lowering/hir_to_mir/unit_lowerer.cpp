@@ -47,6 +47,7 @@
 #include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/kept_piece.hpp"
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -284,7 +285,10 @@ auto PopulateNamespaceOwnStorage(
     for (const StaticCellBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
           body_lowerer, src.body,
-          StorageBringUp{.install = install_frame, .value = value_frame},
+          StorageBringUp{
+              .construct = install_frame,
+              .install = install_frame,
+              .value = value_frame},
           binding);
       if (!integ) return std::unexpected(std::move(integ.error()));
     }
@@ -1122,6 +1126,20 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   base::Translation<hir::StructuralSubroutineId, StaticCellBindings>
       subroutine_statics{scope.structural_subroutines.size()};
   for (const hir::SubroutineDecl& src : scope.structural_subroutines) {
+    // What a sampled value function keeps of its operand is filled at every
+    // tick of its clock by a process of an instance, which a namespace unit
+    // has none of (LRM 16.9.3, 26.2). One reading no static variable outside
+    // a constant cast keeps nothing and needs none.
+    for (const hir::ExprId call : SampledValueCalls(src.body.exprs)) {
+      if (!KeptPieces(src.body, call).empty()) {
+        return diag::Fail(
+            src.body.exprs.Get(call).span,
+            diag::DiagCode::kUnsupportedExpressionForm,
+            "a sampled value function reading a static variable as of an "
+            "earlier tick, in a subroutine of a package or of the "
+            "compilation-unit scope, is not yet supported");
+      }
+    }
     subroutine_statics.Append(BindBodyStatics(
         *this, scope.procedural_scopes,
         UnitStorage{.variables = &unit_.static_variables}, src.body));
@@ -1223,7 +1241,10 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   for (ClassDeclLowerer& class_lowerer : class_lowerers) {
     if (auto r = class_lowerer.PopulateBodies(
             namespace_frame,
-            StorageBringUp{.install = install_frame, .value = value_frame});
+            StorageBringUp{
+                .construct = install_frame,
+                .install = install_frame,
+                .value = value_frame});
         !r) {
       return std::unexpected(std::move(r.error()));
     }
@@ -1231,7 +1252,10 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   for (CovergroupLowerer& covergroup_lowerer : covergroup_lowerers) {
     if (auto r = covergroup_lowerer.PopulateBodies(
             namespace_frame,
-            StorageBringUp{.install = install_frame, .value = value_frame});
+            StorageBringUp{
+                .construct = install_frame,
+                .install = install_frame,
+                .value = value_frame});
         !r) {
       return std::unexpected(std::move(r.error()));
     }

@@ -20,10 +20,12 @@ namespace lyra::runtime {
 
 PropertyEvaluation::PropertyEvaluation(
     RuntimeEffects& effects, std::span<const Trigger* const> clock,
-    std::span<const Trigger* const> disable_reads, std::uint64_t words,
-    const AssertionControl* control)
-    : effects_(&effects), memberships_(clock.size() + disable_reads.size()) {
-  attempts_.Hold(words, control);
+    std::span<const Trigger* const> disable_reads,
+    std::span<const std::uint64_t> start, const AssertionControl* control)
+    : effects_(&effects),
+      memberships_(clock.size() + disable_reads.size()),
+      start_(start.begin(), start.end()),
+      control_(control) {
   for (const Trigger* trigger : clock) {
     Watch(*trigger);
   }
@@ -37,28 +39,23 @@ PropertyEvaluation::PropertyEvaluation(
     memberships_[watched].observation.Arm();
   }
   stepping_.Bind([this] { Step(); });
+  testing_.Bind([this] { Test(); });
 }
 
 void PropertyEvaluation::Watch(const Trigger& trigger) {
   EnrolOnPlace(memberships_[watched_++], this, trigger);
 }
 
-void PropertyEvaluation::Bind(OwnedCall step, OwnedCall test) {
-  step_ = std::move(step);
-  testing_.Bind(std::move(test));
-}
-
-void PropertyEvaluation::Disable() {
-  disabled_ = true;
-  attempts_.DisableTick();
-  pending_ticks_ = 0;
-  stepping_.Place().Unlink();
-  testing_.Place().Unlink();
+void PropertyEvaluation::Bind(
+    OwnedCall step, EvaluationAttempt::Closure closure) {
+  attempts_.Hold(start_, control_, std::move(step));
+  attempts_.Mature(std::move(closure));
 }
 
 auto PropertyEvaluation::Answered() const -> bool {
   switch (static_cast<support::AttemptAnswer>(attempts_.Answer())) {
     case support::AttemptAnswer::kPending:
+    case support::AttemptAnswer::kDisabled:
       return false;
     case support::AttemptAnswer::kHolds:
     case support::AttemptAnswer::kFails:
@@ -67,8 +64,13 @@ auto PropertyEvaluation::Answered() const -> bool {
   throw InternalError("PropertyEvaluation: unknown attempt answer");
 }
 
+auto PropertyEvaluation::Disabled() const -> bool {
+  return static_cast<support::AttemptAnswer>(attempts_.Answer()) ==
+         support::AttemptAnswer::kDisabled;
+}
+
 void PropertyEvaluation::Reached(const WaitMembership& membership) {
-  if (disabled_ || Answered() || !membership.observation.Fires()) {
+  if (Disabled() || Answered() || !membership.observation.Fires()) {
     return;
   }
   const auto position =
@@ -84,11 +86,31 @@ void PropertyEvaluation::Reached(const WaitMembership& membership) {
 void PropertyEvaluation::Step() {
   // Every tick the clock reached since the last of these is a step of its
   // own, all over this time step's sampled values.
-  while (pending_ticks_ != 0 && !disabled_ && !Answered()) {
+  while (pending_ticks_ != 0 && !Disabled() && !Answered()) {
     --pending_ticks_;
-    step_();
+    attempts_.Tick();
   }
   pending_ticks_ = 0;
+  Settled();
+}
+
+void PropertyEvaluation::Test() {
+  if (Disabled() || Answered()) {
+    return;
+  }
+  attempts_.TestDisable();
+  Settled();
+}
+
+void PropertyEvaluation::Settled() {
+  // A disabled evaluation answers nothing, so nothing is evaluated again and
+  // the process is never woken (LRM 16.12, 16.17).
+  if (Disabled()) {
+    pending_ticks_ = 0;
+    stepping_.Place().Unlink();
+    testing_.Place().Unlink();
+    return;
+  }
   if (Answered()) {
     effects_->WakeParkedOn(answers_, Change::Whole());
   }
@@ -101,10 +123,10 @@ class PropertyEvaluationAwaiter final : public StateAwaiter {
  public:
   PropertyEvaluationAwaiter(
       RuntimeEffects& effects, std::span<const Trigger* const> clock,
-      std::span<const Trigger* const> disable_reads, std::uint64_t words,
-      const AssertionControl* control)
+      std::span<const Trigger* const> disable_reads,
+      std::span<const std::uint64_t> start, const AssertionControl* control)
       : StateAwaiter(1),
-        evaluation_(effects, clock, disable_reads, words, control) {
+        evaluation_(effects, clock, disable_reads, start, control) {
     EnrolOn(evaluation_.Answers());
   }
 
@@ -138,8 +160,9 @@ auto EvaluationOf(Wait* wait) -> PropertyEvaluation& {
 
 auto WaitOnPropertyEvaluation(
     RuntimeEffects& effects, std::span<const Trigger> clock,
-    std::span<const Trigger> disable_reads, std::uint64_t words,
-    const AssertionControl* control) -> Wait {
+    std::span<const Trigger> disable_reads,
+    std::span<const std::uint64_t> start, const AssertionControl* control)
+    -> Wait {
   std::vector<const Trigger*> clock_leaves;
   for (const Trigger& trigger : clock) {
     clock_leaves.push_back(&trigger);
@@ -149,27 +172,25 @@ auto WaitOnPropertyEvaluation(
     disable_leaves.push_back(&trigger);
   }
   return WaitOnPropertyEvaluation(
-      effects, clock_leaves, disable_leaves, words, control);
+      effects, clock_leaves, disable_leaves, start, control);
 }
 
 auto WaitOnPropertyEvaluation(
     RuntimeEffects& effects, std::span<const Trigger* const> clock,
-    std::span<const Trigger* const> disable_reads, std::uint64_t words,
-    const AssertionControl* control) -> Wait {
+    std::span<const Trigger* const> disable_reads,
+    std::span<const std::uint64_t> start, const AssertionControl* control)
+    -> Wait {
   return MakeWait<PropertyEvaluationAwaiter>(
-      effects, clock, disable_reads, words, control);
+      effects, clock, disable_reads, start, control);
 }
 
 auto AttemptsOf(Wait* wait) -> EvaluationAttempts* {
   return &EvaluationOf(wait).Attempts();
 }
 
-void BindPropertyEvaluation(Wait* wait, OwnedCall step, OwnedCall test) {
-  EvaluationOf(wait).Bind(std::move(step), std::move(test));
-}
-
-void DisablePropertyEvaluation(Wait* wait) {
-  EvaluationOf(wait).Disable();
+void BindPropertyEvaluation(
+    Wait* wait, OwnedCall step, EvaluationAttempt::Closure closure) {
+  EvaluationOf(wait).Bind(std::move(step), std::move(closure));
 }
 
 }  // namespace lyra::runtime

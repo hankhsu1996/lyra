@@ -89,20 +89,15 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           [&](const hir::CoverStmt& c) {
             return LowerCoverStmt(*this, frame, stmt.label, c);
           },
-          [&](const hir::ConcurrentAssertStmt&) -> diag::Result<mir::Stmt> {
-            return std::unexpected(
-                diag::Make(
-                    stmt.span, diag::DiagCode::kUnsupportedStatementForm,
-                    "a concurrent assertion embedded in a procedure is not yet "
-                    "supported")
-                    .WithNote("pass '--assertions skip' to leave it out"));
+          [&](const hir::ConcurrentAssertStmt& a) {
+            return LowerProceduralConcurrentAssertionStmt(
+                *this, frame, stmt.label, hir::ConcurrentAssertion{a},
+                stmt.span);
           },
-          [&](const hir::ConcurrentCoverStmt&) -> diag::Result<mir::Stmt> {
-            return std::unexpected(
-                diag::Make(
-                    stmt.span, diag::DiagCode::kUnsupportedStatementForm,
-                    "a concurrent cover statement is not yet supported")
-                    .WithNote("pass '--assertions skip' to leave it out"));
+          [&](const hir::ConcurrentCoverStmt& c) {
+            return LowerProceduralConcurrentAssertionStmt(
+                *this, frame, stmt.label, hir::ConcurrentAssertion{c},
+                stmt.span);
           },
           [&](const hir::ExpectStmt& e) {
             return LowerExpectStmt(*this, frame, stmt.label, e, stmt.span);
@@ -916,6 +911,17 @@ auto ProcessLowerer::ControlCellOf(hir::ControlledAssertionId assertion) const
     throw InternalError(
         "ProcessLowerer::ControlCellOf: a statement the assertion control "
         "tasks select was given no control cell");
+  }
+  return found->second;
+}
+
+auto ProcessLowerer::AttemptsCellOf(hir::ControlledAssertionId assertion) const
+    -> const StaticCellBinding& {
+  const auto found = attempts_.find(assertion);
+  if (found == attempts_.end()) {
+    throw InternalError(
+        "ProcessLowerer::AttemptsCellOf: a concurrent assertion statement was "
+        "given no attempts -- please report this as a bug");
   }
   return found->second;
 }
