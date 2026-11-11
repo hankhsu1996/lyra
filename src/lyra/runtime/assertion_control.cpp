@@ -145,27 +145,46 @@ void AssertionControl::SubmitFinal(Coroutine<void> body) const {
   current_runtime().SubmitDeferredFinal(std::move(body), *this);
 }
 
+auto AssertionControl::KeptIn() const -> DeferredEffects* {
+  switch (type_) {
+    case support::AssertionType::kConcurrent:
+      return current_runtime().ObservedEffects();
+    case support::AssertionType::kUnique:
+    case support::AssertionType::kUnique0:
+    case support::AssertionType::kPriority:
+      return current_runtime().ViolationReportEffects();
+    case support::AssertionType::kSimpleImmediate:
+    case support::AssertionType::kObservedDeferredImmediate:
+    case support::AssertionType::kFinalDeferredImmediate:
+    case support::AssertionType::kExpect:
+      break;
+  }
+  throw InternalError(
+      "AssertionControl: only a violation report or a procedural concurrent "
+      "assertion's pending instance is made in its control");
+}
+
 auto AssertionControl::Allocate(std::size_t size, std::size_t alignment)
     -> void* {
-  return current_runtime().ViolationReportEffects()->Allocate(size, alignment);
+  return KeptIn()->Allocate(size, alignment);
 }
 
 void AssertionControl::Commit(void* made) const {
+  DeferredEffects& kept_in = *KeptIn();
   // LRM 20.11: with checking off nothing new is queued -- no violation report,
   // no pending procedural instance -- so what was just made is ended unqueued.
   if ((allowed_ & support::kAssertionChecks) == 0) {
-    const OwnedEffect dropped =
-        current_runtime().ViolationReportEffects()->Take(made);
+    const OwnedEffect dropped = kept_in.Take(made);
     return;
   }
   switch (type_) {
     case support::AssertionType::kConcurrent:
-      current_runtime().KeepPendingInstance(made, *this);
+      current_runtime().KeepPendingInstance(made, kept_in, *this);
       return;
     case support::AssertionType::kUnique:
     case support::AssertionType::kUnique0:
     case support::AssertionType::kPriority:
-      current_runtime().KeepViolationReport(made, *this);
+      current_runtime().KeepViolationReport(made, kept_in, *this);
       return;
     case support::AssertionType::kSimpleImmediate:
     case support::AssertionType::kObservedDeferredImmediate:

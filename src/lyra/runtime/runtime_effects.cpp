@@ -260,8 +260,7 @@ auto RuntimeEffects::ViolationReportEffects() -> DeferredEffects* {
 }
 
 void RuntimeEffects::KeepViolationReport(
-    void* made, const AssertionControl& control) {
-  DeferredEffects& matures_in = *ViolationReportEffects();
+    void* made, DeferredEffects& matures_in, const AssertionControl& control) {
   const CapturedControl queued_under{
       .control = &control, .generation = control.Generation()};
   // Once the simulation is over no region runs, so the report matures as it is
@@ -286,21 +285,13 @@ void RuntimeEffects::KeepViolationReport(
 }
 
 void RuntimeEffects::KeepPendingInstance(
-    void* made, const AssertionControl& control) {
-  DeferredEffects& observed = *ObservedEffects();
+    void* made, DeferredEffects& observed, const AssertionControl& control) {
   const CapturedControl queued_under{
       .control = &control, .generation = control.Generation()};
-  RuntimeProcess* process = TryCurrentProcess();
-  if (process == nullptr) {
-    throw InternalError(
-        "RuntimeEffects::KeepPendingInstance: a procedural concurrent "
-        "assertion stands only in an always or initial procedure, so one is "
-        "queued only while a process runs");
-  }
   // Maturing tests every source once and drops the record, so what the
   // instance then starts is beyond any later flush or `disable` (LRM
   // 16.14.6.4).
-  observed.Emplace([validity = AssertionReportValidity(*process), queued_under,
+  observed.Emplace([validity = AssertionReportValidity(*this), queued_under,
                     instance = observed.Take(made)] {
     if (validity.Holds() && queued_under.Holds()) instance.Call();
   });

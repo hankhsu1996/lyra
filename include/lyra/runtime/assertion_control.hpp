@@ -13,6 +13,7 @@
 namespace lyra::runtime {
 
 class CancellationTarget;
+class DeferredEffects;
 class EvaluationAttempts;
 class RuntimeEffects;
 class Scope;
@@ -101,6 +102,11 @@ class AssertionControl {
   }
 
  private:
+  // The effects what the statement queues is made and matures in: the
+  // Observed region's for a pending instance, and wherever a violation report
+  // raised now matures for a report (LRM 12.4.2.1, 16.14.6).
+  [[nodiscard]] auto KeptIn() const -> DeferredEffects*;
+
   EvaluationAttempts* attempts_ = nullptr;
   support::AssertionType type_ = support::AssertionType::kConcurrent;
   std::uint64_t directive_ = 0;

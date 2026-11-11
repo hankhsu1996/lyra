@@ -976,7 +976,7 @@ auto LowerActionStartInto(
             return {};
           },
           [&](const RunsDefaultReport& report) -> diag::Result<void> {
-            AppendDefaultReport(action, body.Body(), report.directive);
+            AppendDefaultReport(action, body_frame, report.directive);
             return {};
           },
           [](const RunsNothing&) -> diag::Result<void> { return {}; }},
@@ -1282,7 +1282,7 @@ auto LowerProcess(
   }
 
   ClosureBuilder closure(unit, body_frame, support::ClosureKind::kFn);
-  RunDeferredBodyOnNoThread(lowerer.Owner(), body_frame, closure);
+  RunDeferredBodyOnNoThread(action.Owner(), body_frame, closure);
   closure.Body().AppendStmt(
       mir::ExprStmt{
           .expr = closure.Body().Add(

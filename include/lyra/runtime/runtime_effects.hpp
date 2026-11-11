@@ -193,16 +193,19 @@ class RuntimeEffects {
   // active set can glitch no more, so maturing where it was made reports what
   // the Observed region would have, at the same time.
   [[nodiscard]] auto ViolationReportEffects() -> DeferredEffects*;
-  // Keeps the violation report made at `made` in those effects, where it
-  // matures unless the process that raised it reaches a flush point, or
-  // `control` is killed, first (LRM 20.11).
-  void KeepViolationReport(void* made, const AssertionControl& control);
+  // Keeps the violation report made at `made` in `matures_in`, those effects,
+  // where it matures unless the process that raised it reaches a flush point,
+  // or `control` is killed, first (LRM 20.11).
+  void KeepViolationReport(
+      void* made, DeferredEffects& matures_in, const AssertionControl& control);
   // LRM 16.14.6: a procedural concurrent assertion's pending instance, made at
-  // `made`, matures in the Observed region unless one of the sources that can
+  // `made` in `observed`, the Observed region's effects, matures there unless
+  // one of the sources that can
   // flush it -- the executing process's pass, the assertion's own label block
   // or the process's outermost scope disabled (LRM 16.14.6.2, 16.14.6.4), or a
   // Kill of `control` (LRM 20.11) -- moved first.
-  void KeepPendingInstance(void* made, const AssertionControl& control);
+  void KeepPendingInstance(
+      void* made, DeferredEffects& observed, const AssertionControl& control);
   // LRM 16.4: a deferred immediate assertion's action is queued where the
   // statement is reached and acts later only if every source that could
   // withdraw it still stands -- the executing process's pass, the disable

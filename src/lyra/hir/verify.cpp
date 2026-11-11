@@ -1795,7 +1795,7 @@ void VerifyScope(
         const auto* kept =
             std::get_if<NamespaceStatic>(&defined.variables.Get(id));
         if (kept != nullptr && kept->initializer.has_value()) {
-          from_kept(*kept->initializer, Slot::kOperand);
+          from_kept(*kept->initializer, OperandSlot::kOperand);
         }
       }
     }
