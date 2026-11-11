@@ -467,7 +467,7 @@ auto LowerSubroutineDeclImpl(
   // implicit result var, and every body-tree declaration below all land in it.
   OpenProceduralScope root{
       unit_lowerer.LookupProceduralScope(sym),
-      hir::ProceduralScopeKind::kSubroutineRoot, NameInAPath(sym)};
+      ToHirProceduralScopeKind(sym.subroutineKind), NameInAPath(sym)};
   const WalkFrame body_frame =
       frame.WithProceduralBody(&body).WithOpenScope(&root);
 
@@ -648,8 +648,8 @@ auto LowerEvaluatorDecl(
   const auto span = frontend::PointSpanOf(holder.location);
   hir::ProceduralBody body;
   OpenProceduralScope root{
-      frame.ProceduralScopes().Declare(),
-      hir::ProceduralScopeKind::kSubroutineRoot, name};
+      frame.ProceduralScopes().Declare(), hir::ProceduralScopeKind::kImplicit,
+      std::nullopt};
   ProcessLowerer lowerer(unit_lowerer, holder);
   const WalkFrame body_frame =
       frame.WithProceduralBody(&body).WithOpenScope(&root);
@@ -815,7 +815,7 @@ auto LowerMethodPrototypeDecl(
   // than ahead of the bodies.
   OpenProceduralScope root{
       class_frame.ProceduralScopes().Declare(),
-      hir::ProceduralScopeKind::kSubroutineRoot, NameInAPath(proto)};
+      ToHirProceduralScopeKind(proto.subroutineKind), NameInAPath(proto)};
   const WalkFrame body_frame =
       class_frame.WithProceduralBody(&body).WithOpenScope(&root);
 
@@ -904,7 +904,7 @@ auto LowerForeignImport(
   if (!abi_params) return std::unexpected(std::move(abi_params.error()));
 
   return hir::ForeignImportDecl{
-      .name = std::string{sym.name},
+      .name = NameInAPath(sym),
       .foreign_name = std::string{sym.getDPICIdentifier()},
       .is_pure = sym.flags.has(slang::ast::MethodFlags::Pure),
       .is_task = is_task,

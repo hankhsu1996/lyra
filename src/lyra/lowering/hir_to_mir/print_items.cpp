@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <format>
 #include <iterator>
 #include <optional>
 #include <span>
@@ -263,9 +264,10 @@ auto BuildRuntimeFormatOperand(
 template <ExprLowerer Lowerer>
 auto BuildLibraryBindingExpr(Lowerer& lowerer, const WalkFrame& frame)
     -> mir::ExprId {
+  const hir::CompilationUnit& unit = lowerer.Owner().Hir();
   return BuildStringValueExpr(
       lowerer.Owner().Unit(), frame.Builder(),
-      lowerer.Owner().Hir().library_binding);
+      std::format("{}.{}", unit.definition.library, unit.definition.cell));
 }
 
 // What one directive of a format string contributes. A directive that formats

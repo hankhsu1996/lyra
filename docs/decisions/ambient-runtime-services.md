@@ -1,6 +1,7 @@
 # Ambient runtime capability surface
 
-Date: 2026-07-20 (deferred-check attribution revised 2026-07-24) Status: accepted
+Date: 2026-07-20 (deferred-check attribution revised 2026-07-24, process ownership 2026-11-09)
+Status: accepted
 
 ## Context
 
@@ -63,14 +64,13 @@ Concretely:
    methods, and the receiver-based `AbiRegister*` shims are all removed. `Scope` contributes
    structural identity only (parent + segment + child scopes + registered signals + generated
    behavior handle).
-5. **Process ownership moves to the runtime.** `Runtime::processes_` (primary
-   `vector<shared_ptr<RuntimeProcess>>`) plus `Runtime::processes_by_scope_` (secondary
-   `unordered_map<Scope*, vector<RuntimeProcess*>>`, kept in lockstep) hold every process. The
-   `RegisterInitial` / `RegisterFinal` MIR builtins become namespace-qualified free functions
-   (`lyra::runtime::RegisterInitialProcess(scope, coro)`) that push into that registry through
-   ambient reach. The by-scope index answers the hierarchical queries (LRM 9.7 `disable`, LRM 9.6.1
-   `wait fork` descendant walk, scope teardown, `%m` attribution) directly, without scanning the
-   full registry.
+5. **Process ownership moves to the runtime.** A process is kept by whoever started it: a process
+   keeps its children (LRM 9.5), a program its initial procedures (LRM 24.3), and the runtime every
+   other execution no process started. The `RegisterInitial` / `RegisterFinal` MIR builtins become
+   namespace-qualified free functions (`lyra::runtime::RegisterInitialProcess(scope, coro)`) that
+   hand the process to its keeper through ambient reach. What a process started is reached from it
+   (LRM 9.6.1 `wait fork`, LRM 9.6.3 `disable fork`), and no index by scope stands beside that; `%m`
+   reads the scope tree, never a process.
 6. **Design tree is a distinct type.** `Design { unique_ptr<Scope> root_ }` is the single nominal
    type for "an elaborated scope tree". `Runtime::BindDesign` takes `unique_ptr<Design>`, so a
    mid-tree `Scope` cannot be mistaken for the whole design. Tree-global traversal (`ForEachScope`)
@@ -213,11 +213,10 @@ incidentally coupled under the module-only design; they are semantically indepen
 - Runtime library: `RuntimeEffects` declares the capability surface;
   `Runtime final : public RuntimeEffects` adds `BindDesign` / `Run` and holds every mutable
   simulation datum. `Design` owns the elaborated scope tree. `Scope` is a pure structural node (no
-  scheduler state). `Runtime::processes_` + `Runtime::processes_by_scope_` hold every process, both
-  indexes updated in lockstep on register / spawn. `ProcessExecutionGuard` publishes the ambient
-  process at each resume, and the elaboration walks publish nothing. `CurrentRuntimeGuard` publishes
-  on Runtime construction, restores the prior value on destruction so nested constructions in tests
-  cannot leave dangling TLS.
+  scheduler state). Every process is kept by the process, the program or the runtime that started
+  it. `ProcessExecutionGuard` publishes the ambient process at each resume, and the elaboration
+  walks publish nothing. `CurrentRuntimeGuard` publishes on Runtime construction, restores the prior
+  value on destruction so nested constructions in tests cannot leave dangling TLS.
 
 - Backends: C++ renders `current_runtime()` as `lyra::runtime::current_runtime()` in the
   `lyra::runtime` namespace group. LLVM binds it to a zero-argument runtime symbol

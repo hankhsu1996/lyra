@@ -69,14 +69,6 @@ void DescribeTo(
   Describing(runtime).Var(*entry, std::make_unique<EventProbe>(event));
 }
 
-void BeginDescribedBlock(RuntimeEffects& runtime, const abi::DumpBlock* block) {
-  Describing(runtime).BeginBlock(*block);
-}
-
-void EndDescribedBlock(RuntimeEffects& runtime) {
-  Describing(runtime).EndBlock();
-}
-
 void DescribeTo(
     Var<value::Real>& cell, RuntimeEffects& runtime,
     const abi::DumpEntry* entry) {

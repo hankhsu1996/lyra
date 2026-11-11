@@ -379,11 +379,11 @@ auto RenderUnitFiles(
       .code = std::move(code).Into(std::move(code_file))};
 }
 
-// `main.cpp`: hands the root unit's label and its `sv_create` entry to the
-// runtime, which does everything else about running the program -- command
-// line, errors, the simulation itself. `sv_create` is the entry any other unit
-// would use to make an object of the root's body, and the runtime holds what
-// it makes as a scope, which needs the root's class complete.
+// `main.cpp`: hands the root unit's `sv_create` entry to the runtime, which
+// does everything else about running the program -- command line, errors, the
+// simulation itself. `sv_create` is the entry any other unit would use to make
+// an object of the root's body, and the runtime holds what it makes as a scope,
+// which needs the root's class complete.
 auto RenderHostMain(const mir::CompilationUnit& root) -> CppArtifact {
   if (mir::RootedTreeOf(root) == nullptr) {
     throw InternalError("backend::cpp: the design root roots no tree");
@@ -397,7 +397,7 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> CppArtifact {
   out.text += "auto main(int argc, char** argv) -> int {\n";
   Write(
       out.text, "  return lyra::runtime::RunDesignRoot(argc, argv, ",
-      CppNameLiteral(root.name), ", ", CppBodyScope(root.name, root.body_name),
+      CppBodyScope(root.name, root.body_name),
       "::", CppObjectEntryName(std::nullopt), ");\n");
   out.text += "}\n";
   return std::move(out).Into("main.cpp");

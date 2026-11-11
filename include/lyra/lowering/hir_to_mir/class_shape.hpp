@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
-#include "lyra/base/time.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/static_property_id.hpp"
@@ -16,6 +15,7 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
@@ -25,8 +25,6 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/class_name.hpp"
-#include "lyra/support/dump_kind.hpp"
-#include "lyra/support/scope_execution.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -103,9 +101,7 @@ struct ClassShape {
   // no member. Absent for a scope of the design hierarchy, which is a type of
   // no instance.
   std::optional<DeclaringInstance> declaring_instance;
-  TimeResolution time_resolution;
-  support::ScopeExecution execution = support::ScopeExecution::kDesign;
-  support::DumpScopeKind dumped_as = support::DumpScopeKind::kModule;
+  std::optional<mir::ScopeDeclarations> scope_declarations;
   base::Arena<mir::ParamDecl, mir::ParamId> ctor_prefix_params;
   base::Arena<mir::FieldDecl, mir::FieldId> fields;
   std::vector<mir::NamedField> named_fields;

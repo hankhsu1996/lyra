@@ -8,7 +8,8 @@
 // (LRM Annex H.9.3), while a handle that is no scope is refused by the
 // user-data and time utilities and a name no scope carries finds nothing. The
 // time queries read the scope's own time unit and precision and the current
-// time scaled to either the scope's unit or the simulation's (LRM Annex H.13).
+// time scaled to either the scope's unit or the simulation's, as an integer
+// or, where the time value asks for one, as a real (LRM Annex H.13).
 // A name reaches a module, program, interface or generate scope and nothing
 // else, so a named block is not found by its name (LRM Annex H.9).
 `timescale 1ns / 1ps
@@ -21,6 +22,7 @@ module Top;
   import "DPI-C" context function int time_precision_power();
   import "DPI-C" context function int time_in_scope_units();
   import "DPI-C" context function int time_in_precision_units();
+  import "DPI-C" context function real scaled_time_in_scope_units();
   import "DPI-C" context function int scope_is_found(input string name);
   import "DPI-C" context function int invalid_scope_refusals();
 
@@ -32,6 +34,7 @@ module Top;
   int precision_power;
   int scope_time;
   int precision_time;
+  real scaled_time;
   int named_block_found;
   int refusals;
 
@@ -48,6 +51,8 @@ module Top;
     precision_power = time_precision_power();
     scope_time = time_in_scope_units();
     precision_time = time_in_precision_units();
+    #0.5;
+    scaled_time = scaled_time_in_scope_units();
   end
 
   // Calling the same import from a deeper scope must not change what it
@@ -88,6 +93,10 @@ module Top;
       $fatal(
           1, "the time in precision units was %0d, expected 5000",
           precision_time);
+    if (scaled_time < 5.499 || scaled_time > 5.501)
+      $fatal(
+          1, "the scaled time in scope units was %f, expected 5.5",
+          scaled_time);
     $display("All checks passed");
   end
 endmodule

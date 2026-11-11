@@ -9,6 +9,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/source_location.hpp"
+#include "lyra/base/time.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/dpi_scope_handles.hpp"
@@ -20,7 +21,7 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
-#include "lyra/runtime/sim_time.hpp"
+#include "lyra/runtime/vpi_time.hpp"
 #include "svdpi.h"
 
 namespace lyra::runtime {
@@ -225,28 +226,10 @@ auto ResolveTimeScope(svScope scope, const lyra::runtime::Scope** resolved)
   return true;
 }
 
-// As Annex H answers them, a C `int` each.
-struct TimePowers {
-  std::int32_t unit;
-  std::int32_t precision;
-};
-
-// The powers of ten a time query answers in. A scope carrying no timescale of
-// its own reports the unspecified sentinel rather than a power (LRM 3.14.2.3),
-// and a query naming no scope is at the simulation level; both are the same
-// answer, which is the simulation's own precision.
-auto EffectiveTimePowers(
-    const lyra::runtime::Scope* scope, std::int8_t global_power) -> TimePowers {
-  const auto effective = [global_power](std::int8_t declared) -> std::int32_t {
-    return declared == lyra::abi::kUnspecifiedTimePower ? global_power
-                                                        : declared;
-  };
-  if (scope == nullptr) {
-    return TimePowers{.unit = global_power, .precision = global_power};
-  }
-  return TimePowers{
-      .unit = effective(scope->TimeUnitPower()),
-      .precision = effective(scope->TimePrecisionPower())};
+// The definition of the scope a time query names, none where it names none.
+auto DefinitionOf(const lyra::runtime::Scope* scope)
+    -> const lyra::abi::DefinitionRecord* {
+  return scope == nullptr ? nullptr : &scope->Definition();
 }
 
 }  // namespace
@@ -255,14 +238,14 @@ auto EffectiveTimePowers(
 // simulation binary and resolved against the user's C by name. An `svScope` is
 // a `runtime::Scope*` the C layer handed out. The current scope, and the
 // caller's place, are those of the innermost entry of the running import call
-// chain; the handles handed out answer the name and user-data queries; a
-// time query reports the scope's effective unit or precision, or the
-// simulation-level value for a null scope; and the two disable entries are how
-// foreign code reads and answers the protocol of LRM 35.9. Every entry that
-// answers a scope hands it out, which is what makes it one foreign code may
-// pass back. Errors follow the svdpi contract -- a null handle, null out slot,
-// or invalid handle yields the documented null / -1 -- and nothing here throws
-// across the C boundary.
+// chain; the handles handed out answer the name and user-data queries; a time
+// query reports the scope's unit or precision, or the simulation time unit for
+// a null scope (LRM H.13); and the two disable entries are how foreign code
+// reads and answers the protocol of LRM 35.9. Every entry that answers a scope
+// hands it out, which is what makes it one foreign code may pass back. Errors
+// follow the svdpi contract -- a null handle, null out slot, or invalid handle
+// yields the documented null / -1 -- and nothing here throws across the C
+// boundary.
 extern "C" {
 
 auto svGetScope() -> svScope {
@@ -327,16 +310,14 @@ auto svGetTime(const svScope scope, svTimeVal* time) -> int {
   if (!ResolveTimeScope(scope, &resolved)) {
     return -1;
   }
-  const std::int8_t global = Effects().GlobalPrecisionPower();
-  const lyra::SimDuration divisor = lyra::runtime::TimeUnitDivisor(
-      static_cast<std::int8_t>(EffectiveTimePowers(resolved, global).unit),
-      global);
-  const std::uint64_t scaled = Effects().Now() / divisor;
-  time->type = sv_sim_time;
-  time->high = static_cast<std::uint32_t>(scaled >> 32U);
-  time->low = static_cast<std::uint32_t>(scaled & 0xFFFFFFFFU);
-  time->real = 0.0;
-  return 0;
+  // An svTimeVal is an s_vpi_time (LRM H.13).
+  return lyra::runtime::FillTime(
+             Effects(),
+             lyra::runtime::TimeResolutionOf(Effects(), DefinitionOf(resolved))
+                 .unit_power,
+             *time)
+             ? 0
+             : -1;
 }
 
 auto svGetTimeUnit(const svScope scope, std::int32_t* time_unit) -> int {
@@ -348,7 +329,8 @@ auto svGetTimeUnit(const svScope scope, std::int32_t* time_unit) -> int {
     return -1;
   }
   *time_unit =
-      EffectiveTimePowers(resolved, Effects().GlobalPrecisionPower()).unit;
+      lyra::runtime::TimeResolutionOf(Effects(), DefinitionOf(resolved))
+          .unit_power;
   return 0;
 }
 
@@ -362,7 +344,8 @@ auto svGetTimePrecision(const svScope scope, std::int32_t* time_precision)
     return -1;
   }
   *time_precision =
-      EffectiveTimePowers(resolved, Effects().GlobalPrecisionPower()).precision;
+      lyra::runtime::TimeResolutionOf(Effects(), DefinitionOf(resolved))
+          .precision_power;
   return 0;
 }
 

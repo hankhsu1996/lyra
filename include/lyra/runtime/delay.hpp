@@ -43,9 +43,9 @@ auto DelayTicksReal(
     std::int64_t precision_power) -> SimDuration;
 
 // The absolute simulation time a delay of `ticks` steps of `precision_power`
-// reaches. The scope's steps scale up to the engine's global tick before they
-// are added, because a design may declare several precisions and the engine
-// counts in the finest of them (LRM 3.14.3).
+// reaches. The scope's steps become ticks of the global time precision before
+// they are added, since a design may declare several precisions and the run
+// counts in the smallest it states (LRM 3.14.3).
 auto DelayDeadline(
     RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
     -> SimTime;

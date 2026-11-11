@@ -257,10 +257,10 @@ struct CompilationUnit {
   // entries, the artifact it is emitted as -- is named under this.
   std::string body_name;
   // The identifier the source declares the unit under, which several units
-  // share where one definition compiles to more than one unit, and which
-  // a unit the source gave no identifier lacks. It is what a person is told
-  // the compiler is working on, and the design element name `$printtimescale`
-  // prints (LRM 20.4.2); nothing compiled is named from it.
+  // share where one definition compiles to more than one unit. It is what a
+  // person is told the compiler is working on, the design element name
+  // `$printtimescale` prints (LRM 20.4.2), and the name its definition's record
+  // answers (LRM 37.10); no symbol is named from it.
   std::string source_name;
   TypePool types;
   // The values this unit settles before the program runs, each held once and

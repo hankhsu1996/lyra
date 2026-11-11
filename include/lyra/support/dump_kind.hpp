@@ -43,17 +43,6 @@ enum class DumpValueForm : std::uint8_t {
 
 auto DumpValueFormOf(DumpVarKind kind) -> DumpValueForm;
 
-// What a scope is recorded as in a value dump (LRM 21.7.2.1 `scope_type`).
-enum class DumpScopeKind : std::uint8_t {
-  kModule,
-  kTask,
-  kFunction,
-  kBegin,
-  kFork,
-};
-
-auto DumpScopeKindKeyword(DumpScopeKind kind) -> std::string_view;
-
 // The direction a port is declared with, which is what an extended value
 // change dump reads a value it records by (LRM 21.7.4.3.1): one the test
 // fixture drives into an input, one the device drives out of an output, and

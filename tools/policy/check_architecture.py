@@ -285,7 +285,9 @@ Rules:
         is where a frontend name becomes the compiler's identity, so after
         AST-to-HIR a name is text a user reads, a symbol a target spells, or
         the key a unit's boundary turns into an id once; nothing below finds a
-        declaration by it. Every text field of a HIR header -- a string, a
+        declaration by it, though a name from outside the design -- from
+        foreign code or the run's command line -- is matched against the
+        spelling at run time. Every text field of a HIR header -- a string, a
         qualified name, a path -- is classed in HIR_TEXT_FIELDS: as spelling,
         or as one a reader below AST-to-HIR still finds a declaration by,
         which names what finds it. That second class only shrinks: a field
@@ -1424,7 +1426,6 @@ HIR_TEXT_FIELDS = {
     ("compilation_unit.hpp", "CompilationUnit", "name"): FOUND_IN_UNITS,
     ("compilation_unit.hpp", "CompilationUnit", "body_name"): FOUND_IN_UNITS,
     ("compilation_unit.hpp", "CompilationUnit", "source_name"): SPELLING,
-    ("compilation_unit.hpp", "CompilationUnit", "library_binding"): SPELLING,
     ("covergroup.hpp", "BinConstruct", "name"): SPELLING,
     ("covergroup.hpp", "Coverpoint", "name"): SPELLING,
     ("covergroup.hpp", "CrossBin", "name"): SPELLING,
@@ -1432,7 +1433,6 @@ HIR_TEXT_FIELDS = {
     ("covergroup_ref.hpp", "CovergroupKey", "unit_name"): SPELLING,
     ("covergroup_ref.hpp", "CovergroupKey", "path"): SPELLING,
     ("dumped_declaration.hpp", "DumpedDeclaration", "identifier"): SPELLING,
-    ("dumped_declaration.hpp", "DumpedBlock", "identifier"): SPELLING,
     ("expr.hpp", "ConstraintBlockMode", "name"): FOUND_AT_RUN_TIME,
     ("expr.hpp", "StaticConstraintBlockMode", "block"): FOUND_AT_RUN_TIME,
     ("fixed_name.hpp", "NameBelowInstance", "text"): SPELLING,
@@ -1472,9 +1472,10 @@ HIR_TEXT_FIELDS = {
     ("stmt.hpp", "Stmt", "label"): SPELLING,
     ("structural_data_object.hpp", "StructuralDataObjectDecl", "name"):
         SPELLING,
+    ("structural_scope.hpp", "GenerateBlockName", "name"): SPELLING,
     ("structural_scope.hpp", "InstanceMemberDecl", "instance_name"): SPELLING,
     ("structural_scope.hpp", "InterfacePortDecl", "name"): SPELLING,
-    ("structural_scope.hpp", "StructuralScope", "source_name"): SPELLING,
+    ("structural_scope.hpp", "StructuralScope", "declared_classes"): SPELLING,
     ("subroutine.hpp", "SubroutineDecl", "name"): FOUND_AT_RUN_TIME,
     ("subroutine_prototype.hpp", "SubroutinePrototype", "name"): SPELLING,
     ("timing.hpp", "UnreportableReads", "why"): SPELLING,
@@ -1483,6 +1484,8 @@ HIR_TEXT_FIELDS = {
     ("type.hpp", "PackedAggregateField", "name"): SPELLING,
     ("type_definition.hpp", "EnumMember", "name"): SPELLING,
     ("type_definition.hpp", "UnpackedAggregateField", "name"): SPELLING,
+    ("unit_definition.hpp", "UnitDefinition", "library"): SPELLING,
+    ("unit_definition.hpp", "UnitDefinition", "cell"): SPELLING,
     ("unit_signature.hpp", "PortDecl", "name"): SPELLING,
     ("unit_signature.hpp", "UnitSignature", "unit_name"): SPELLING,
     ("unit_signatures.hpp", "UnitSignatures", "name"): SPELLING,

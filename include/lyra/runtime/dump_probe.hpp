@@ -241,11 +241,6 @@ void DescribeTo(
     Var<value::ObjectRef>& event, RuntimeEffects& runtime,
     const abi::DumpEntry* entry);
 
-// A named block, task or function the instance declares, around the things
-// its static variables are (LRM 21.7.2.3 `$scope`).
-void BeginDescribedBlock(RuntimeEffects& runtime, const abi::DumpBlock* block);
-void EndDescribedBlock(RuntimeEffects& runtime);
-
 // A real's value type is fixed by the language rather than shaped by the
 // design, so what describes one is a function of this library a unit calls,
 // not a template it compiles. It is no instantiation of the template above

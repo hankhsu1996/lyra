@@ -333,7 +333,7 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
 7. A member is a type, and its identity is the position it occupies in its object. Being reachable
    by an identifier is a relation the object holds over that position, stated only where the source
    declared one, so nothing the compiler introduces answers to a name a design could also write. An
-   owned child -- a module instance or a named generate scope -- is a member whose type is an owning
+   owned child -- a module instance or a generate scope -- is a member whose type is an owning
    pointer to an object type. An array of children is a member whose type is a vector of that owning
    pointer; a multidimensional array nests the vector wrapper. No member carries a classification
    flag beside its type; the type is the classification. _Programming-language consequence: the type
@@ -343,10 +343,11 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
    however the name reaching it was written -- through another instance of this unit, or through a
    signature naming this unit. Whether this unit defines the class or declares another unit's is a
    fact of the entry, never of the reference, and a declared entry holds nothing this unit emits.
-   For an owned child that fact is its runtime scope kind -- a named generate scope's class is
-   defined here, a module instance's by its unit -- and nothing else encodes scope kind.
-   _Programming-language consequence: a class reference is one kind, as a Rust `DefId` names a local
-   or an extern item alike; which crate defines it is a property of the item._
+   For an owned child that fact is its runtime scope kind -- a generate scope's class is defined
+   here, a module instance's by its unit -- and nothing else within MIR encodes it; the records of
+   the scopes a class declares are data the class hands the run, which no MIR consumer classifies a
+   member by. _Programming-language consequence: a class reference is one kind, as a Rust `DefId`
+   names a local or an extern item alike; which crate defines it is a property of the item._
 9. Instance multiplicity is the vector wrapper, a property of the member's type, and is orthogonal
    to which unit defines the owned object's class. The same wrapper composes over any object type
    and to any depth. _Programming-language consequence: cardinality and kind compose through generic
@@ -681,7 +682,7 @@ a generic programming language. The C++ backend emits MIR to C++ source: it is a
 a debug view. The C++ surface syntax happens to map naturally onto MIR's vocabulary because the two
 share many concepts, but C++ is not MIR's semantics and more than one backend may exist.
 
-A module instance, a named generate scope, and an instance array differ only in one member's type:
+A module instance, a generate scope, and an instance array differ only in one member's type:
 `owning-ptr(object of a class its unit defines)`, `owning-ptr(object of a class this unit defines)`,
 and `vector(owning-ptr(...))` respectively. A two-dimensional array is
 `vector(vector(owning-ptr(...)))`. Because the classification lives entirely in the type, a consumer

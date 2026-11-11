@@ -66,8 +66,8 @@ inline constexpr std::string_view kProgramEntrySymbol = "main";
 // The module holding where the program starts. A design has one, derived from
 // its root unit, and it is the one thing composing a program adds to the units'
 // own modules: it hands the arguments the program was started with to the
-// runtime, together with the design root's definition as the root's own unit
-// declares it. A linker starts the program there and a session calls it, so the
+// runtime, together with the entry the root's own unit builds its object
+// through. A linker starts the program there and a session calls it, so the
 // two bring a design up the same way.
 auto EmitProgramEntry(const lir::CompilationUnit& design_root) -> EmittedModule;
 

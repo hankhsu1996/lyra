@@ -36,6 +36,7 @@
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/published_clocking.hpp"
 #include "lyra/hir/published_modport.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/climb.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
@@ -633,10 +634,6 @@ auto UnitLowerer::DisableTargetFrom(
       .target = hir::RoutedDisableTargetRef{.id = id}}};
 }
 
-auto UnitLowerer::LowersAnInstance() const -> bool {
-  return scope_->asSymbol().kind == slang::ast::SymbolKind::InstanceBody;
-}
-
 auto UnitLowerer::StandsInAnotherInstance(const slang::ast::Scope& scope) const
     -> bool {
   const slang::ast::Scope* holding = scope.getContainingInstance();
@@ -669,7 +666,7 @@ auto NamesOwnDeclaration(const RouteOrigin& origin) -> bool {
 auto UnitLowerer::StartOf(
     const WalkFrame& frame, const slang::ast::Symbol& found,
     const slang::ast::HierarchicalReference& written) -> RouteOrigin {
-  if (!LowersAnInstance()) {
+  if (!hir::RootsAnObject(unit_.definition)) {
     return RouteOrigin{.start = FromReader{}, .written = written.path};
   }
 
@@ -1563,7 +1560,7 @@ auto UnitLowerer::StartInEnclosing(const slang::ast::Scope& scope)
 
 auto UnitLowerer::StartReaching(const slang::ast::Scope& target)
     -> std::optional<RouteOrigin> {
-  if (!LowersAnInstance()) return std::nullopt;
+  if (!hir::RootsAnObject(unit_.definition)) return std::nullopt;
   const std::optional<ReachStart>& start = environment_.ReachOf(target);
   if (!start.has_value()) return std::nullopt;
   return std::visit(
@@ -1581,7 +1578,7 @@ auto UnitLowerer::StartReaching(const slang::ast::Scope& target)
 auto UnitLowerer::StartThroughPort(
     const WalkFrame& frame, const slang::ast::Scope& target)
     -> std::optional<RouteOrigin> {
-  if (!LowersAnInstance()) return std::nullopt;
+  if (!hir::RootsAnObject(unit_.definition)) return std::nullopt;
   const slang::ast::Scope* holder = target.getContainingInstance();
   // Two ports bound to one instance name one type of it (LRM 6.22), so the
   // first in declaration order answers rightly. It is not always the port the

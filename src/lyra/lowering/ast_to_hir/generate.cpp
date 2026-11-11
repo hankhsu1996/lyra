@@ -29,23 +29,32 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// The block instance `block` lowered from its own elaboration, its label
-// settled on the scope itself (LRM 27.6): the body it is among the unit's, and
-// how it builds the blocks it holds in turn. A name the body reaches outward
-// resolves through the scopes holding the block.
+// The block instance `block` lowered from its own elaboration: the body it is
+// among the unit's, and how it builds the blocks it holds in turn. What it is
+// named by is the declaration the scope holding it states. A name the body
+// reaches outward resolves through the scopes holding the block.
 auto LowerGenerateBlock(
     UnitLowerer& unit_lowerer, const slang::ast::Scope& block,
-    std::string_view source_name, const WalkFrame& frame)
-    -> diag::Result<hir::BlockConstruction> {
+    const WalkFrame& frame) -> diag::Result<hir::BlockConstruction> {
   StructuralScopeLowerer body(unit_lowerer, block);
   const slang::ast::Scope& holder = *block.asSymbol().getParentScope();
   auto lowered = body.Run(frame.WithDeclaringScope(
       unit_lowerer.DeclaringScopeChain(holder), &holder));
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  lowered->scope.source_name = NameInAPath(source_name, block.getCompilation());
   return hir::BlockConstruction{
       .body = unit_lowerer.InternBlockBody(std::move(lowered->scope)),
       .built = std::move(lowered->construction)};
+}
+
+// The name the scope declaring a generate construct gives one of its blocks,
+// or the set of blocks a loop counts out (LRM 27.6), which the front end
+// answers whether or not it was built.
+template <typename Declared>
+auto GenerateBlockNameOf(const Declared& declared) -> hir::GenerateBlockName {
+  return hir::GenerateBlockName{
+      .name =
+          NameInAPath(declared.getExternalName(), declared.getCompilation()),
+      .implicitly_named = declared.isUnnamed};
 }
 
 // Whether the loop the source wrote survived elaboration as something a
@@ -117,6 +126,7 @@ auto BuildTheLoop(
       frame.Exprs().Add(hir::MakeRefExpr(*index_ref, variable_type, span));
 
   return hir::BlocksRepeat{
+      .declared = GenerateBlockNameOf(array),
       .variable = variable,
       .initial = *initial,
       .condition = *condition,
@@ -142,15 +152,15 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
   // Each block the loop counted out is lowered from its own elaboration, in
   // the order the loop counts them (LRM 27.4); which body each is, is this
   // object's, and the index reaches each as a value its construction supplies.
-  BuiltGenerate built{.generate = {}, .blocks = {}};
-  built.blocks.reserve(array.entries.size());
+  std::vector<hir::BlockConstruction> blocks;
+  blocks.reserve(array.entries.size());
   for (const slang::ast::GenerateBlockSymbol* entry : array.entries) {
-    auto block = LowerGenerateBlock(*owner_, *entry, array.name, frame);
+    auto block = LowerGenerateBlock(*owner_, *entry, frame);
     if (!block) return std::unexpected(std::move(block.error()));
-    built.blocks.push_back(*std::move(block));
+    blocks.push_back(*std::move(block));
   }
-  built.generate.counting = *std::move(loop);
-  return built;
+  return BuiltGenerate{
+      .generate = {.counting = *std::move(loop)}, .blocks = std::move(blocks)};
 }
 
 auto StructuralScopeLowerer::BuildGenerateFromBlock(
@@ -159,9 +169,13 @@ auto StructuralScopeLowerer::BuildGenerateFromBlock(
   // A block no conditional produced stands on its own and is built at its one
   // place.
   if (!IsAlternative(block)) {
-    auto built = LowerGenerateBlock(*owner_, block, block.name, frame);
+    auto built = LowerGenerateBlock(*owner_, block, frame);
     if (!built) return std::unexpected(std::move(built.error()));
-    return BuiltGenerate{.generate = {}, .blocks = {*std::move(built)}};
+    return BuiltGenerate{
+        .generate =
+            {.counting =
+                 hir::SingleBlock{.declared = GenerateBlockNameOf(block)}},
+        .blocks = {*std::move(built)}};
   }
 
   // What selects an alternative is the source's and is stated wherever the
@@ -169,25 +183,26 @@ auto StructuralScopeLowerer::BuildGenerateFromBlock(
   // object selected it (LRM 27.5). Only the one it selected was elaborated, and
   // an alternative it did not select need not be valid for its values, so
   // that one alone is lowered, at its place.
-  BuiltGenerate built{.generate = {}, .blocks = {}};
+  std::vector<hir::BlockConstruction> blocks;
   SelectionTree selection;
-  std::uint32_t position = 0;
+  std::vector<hir::GenerateBlockName> alternatives;
   for (const auto* arm : AlternativesOfConstruct(block)) {
-    auto placed = selection.Place(*this, frame, arm->selectionPath, position);
+    auto placed = selection.Place(
+        *this, frame, arm->selectionPath,
+        static_cast<std::uint32_t>(alternatives.size()));
     if (!placed) return std::unexpected(std::move(placed.error()));
-    ++position;
+    alternatives.push_back(GenerateBlockNameOf(*arm));
     if (arm->isUninstantiated) {
-      built.blocks.push_back(hir::BlockConstruction{.body = {}, .built = {}});
+      blocks.push_back(hir::BlockConstruction{.body = {}, .built = {}});
       continue;
     }
-    // The front end spells the name LRM 27.6 gives an unnamed alternative only
-    // on a block it built.
-    auto lowered = LowerGenerateBlock(*owner_, *arm, arm->name, frame);
+    auto lowered = LowerGenerateBlock(*owner_, *arm, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    built.blocks.push_back(*std::move(lowered));
+    blocks.push_back(*std::move(lowered));
   }
-  built.generate.counting = selection.Compose(position);
-  return built;
+  return BuiltGenerate{
+      .generate = {.counting = selection.Compose(std::move(alternatives))},
+      .blocks = std::move(blocks)};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

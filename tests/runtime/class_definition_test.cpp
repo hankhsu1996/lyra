@@ -1,6 +1,7 @@
 #include "lyra/runtime/class_definition.hpp"
 
 #include <array>
+#include <deque>
 #include <gtest/gtest.h>
 #include <memory>
 #include <string>
@@ -42,8 +43,12 @@ using lyra::value::ObjectRef;
 // here is one too, naming what it reaches by address the way an emitted one
 // does.
 
+constexpr lyra::abi::DefinitionRecord kDefinition{
+    .time_unit_power = -9, .time_precision_power = -9};
+
 constexpr ScopeInfo kScopeInfo{
-    .metadata = {.time_unit_power = -9, .time_precision_power = -9},
+    .scope_declarations =
+        {.definition = &kDefinition, .elaborated = {}, .lexical = {}},
     .exports = {},
     .resolve = nullptr,
     .initialize = nullptr,
@@ -82,8 +87,14 @@ constexpr ObjectDefinition kPlain{
     .declaring_instance = nullptr,
     .interface_reaches = {}};
 
-auto Segment(std::string name) -> HierarchySegment {
-  return HierarchySegment{std::move(name), {}};
+// A scope's segment, declared under `name` as an instance is. Each record is
+// kept for the whole test, as a unit's constant is kept for the whole run.
+auto Segment(const char* name) -> HierarchySegment {
+  static std::deque<lyra::abi::ElaboratedScopeRecord> records;
+  records.push_back(
+      lyra::abi::ElaboratedScopeRecord{
+          .name = name, .kind = 0, .implicitly_named = 0});
+  return HierarchySegment{&records.back(), {}};
 }
 
 // A scope created of `definition`'s class and then given its place under
@@ -114,7 +125,7 @@ TEST(ClassDefinitionTest, AScopeIsBuiltOfAScopeClass) {
 // (LRM 23.8). Every instance a resolution covered has one, so a scope with
 // none is a compiler fault.
 TEST(ClassDefinitionTest, AnUpwardNameStartsAtTheNearestInstanceOfItsClass) {
-  const auto root = PlacedScope(nullptr, Segment("$root"), &kRoot);
+  const auto root = PlacedScope(nullptr, HierarchySegment{}, &kRoot);
   Scope* outer =
       Scope::Attach(PlacedScope(root.get(), Segment("top"), &kOuterExtended));
   Scope* other =
@@ -168,7 +179,8 @@ class OwnClassScope : public Scope {
 };
 
 const ScopeInfo kOwnClassScopeInfo{
-    .metadata = {.time_unit_power = -9, .time_precision_power = -9},
+    .scope_declarations =
+        {.definition = &kDefinition, .elaborated = {}, .lexical = {}},
     .exports = {},
     .resolve = &Resolve,
     .initialize = &Initialize,

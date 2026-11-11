@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -8,7 +7,6 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
-#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/class_registry.hpp"
 #include "lyra/hir/coverage_library.hpp"
 #include "lyra/hir/covergroup.hpp"
@@ -23,45 +21,10 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
-
-// What a compilation unit's instances are. A module (LRM 23) and an interface
-// (LRM 25) are instantiated into the hierarchy, so each roots an object
-// composing a top class. A program (LRM 24) roots one too, and its procedures
-// are moreover a program's: they run in the reactive region set, and the
-// program and the run end with them (LRM 24.3, 24.7). A package (LRM 26) and
-// the `$unit` file-set scope (LRM 3.12.1) hold declarations reached with no
-// receiver, and root none. Whether a module or an interface was written
-// is not asked below this. The answer is intrinsic to the source construct, so
-// it travels on the unit rather than being re-inferred from its scope shape at
-// each stage that must branch on it.
-enum class UnitRole : std::uint8_t { kModuleOrInterface, kProgram, kNamespace };
-
-// Whether a unit of `role` roots an object, which a namespace does not.
-[[nodiscard]] inline auto RootsAnObject(UnitRole role) -> bool {
-  switch (role) {
-    case UnitRole::kModuleOrInterface:
-    case UnitRole::kProgram:
-      return true;
-    case UnitRole::kNamespace:
-      return false;
-  }
-  throw InternalError("hir::RootsAnObject: a unit of no role");
-}
-
-// Whether the procedures a unit of `role` declares are a program's (LRM 24.3).
-[[nodiscard]] inline auto IsProgram(UnitRole role) -> bool {
-  switch (role) {
-    case UnitRole::kProgram:
-      return true;
-    case UnitRole::kModuleOrInterface:
-    case UnitRole::kNamespace:
-      return false;
-  }
-  throw InternalError("hir::IsProgram: a unit of no role");
-}
 
 // Canonical TypeIds for primitives the lowering frequently materializes
 // (literal int type, void result of system tasks, etc.). Populated by
@@ -91,18 +54,15 @@ struct CompilationUnit {
   // are one body.
   std::string body_name;
   // The identifier the source declares this unit's design element, package or
-  // class under, which is what its author knows it by. Units of one definition
-  // compiled to more than one unit share it, and a unit the source gave no
-  // identifier has none.
+  // class under, which is what its author knows it by; `$unit` for a
+  // compilation unit's scope (LRM 3.12.1); and for a text of Lyra's own the
+  // unit it is compiled as. Units of one definition compiled to more than one
+  // unit share it.
   std::string source_name;
-  // The library and cell the unit's text was compiled into, as `library.cell`
-  // (LRM 33.2.1), which is what a `%l` written anywhere in it prints (LRM
-  // 33.7).
-  std::string library_binding;
   // The unit's own scope's name as far as its text fixes it (LRM 21.2.1.5):
   // the package's, and nothing for a design element or `$unit`.
   FixedName fixed_name;
-  UnitRole role = UnitRole::kModuleOrInterface;
+  UnitDefinition definition;
   TypePool types;
   // What each enumeration, unpacked structure and unpacked union `types` names
   // declares, whichever unit declares it.

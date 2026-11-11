@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -181,12 +182,15 @@ class StructuralScopeLowerer {
       const slang::ast::NetAliasSymbol& alias, WalkFrame frame)
       -> diag::Result<void>;
   // LRM 21.7.1.2: what a value dump records of an instance of this scope, the
-  // data objects `members` declares and the named blocks, tasks and functions
-  // among them, each named as a body of the scope names it, and of those
+  // data objects `members` declares and those the blocks -- one the source gave
+  // no name among them --, tasks and functions among them declare, an
+  // assertion's action aside, each named as a body of the scope names it and
+  // `enclosing` it is the procedural scope it is declared in, and of those
   // `ports` connects, the port each is (LRM 21.7.3.1).
   auto CollectDumped(
       const slang::ast::Scope& members, const DumpedPorts& ports,
-      WalkFrame frame) -> diag::Result<hir::DumpedMembers>;
+      WalkFrame frame, std::optional<hir::ProceduralScopeId> enclosing)
+      -> diag::Result<std::vector<hir::DumpedDeclaration>>;
   auto LowerContinuousAssign(
       const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
       -> diag::Result<hir::ContinuousAssign>;

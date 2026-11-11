@@ -99,10 +99,11 @@ struct Clockvar {
   auto operator==(const Clockvar&) const -> bool = default;
 };
 
-// A clocking block (LRM 14.3), one copy of which each instance of its scope
-// holds (LRM 14.7). At each occurrence of `event` it samples its inputs and
-// then triggers `block_event`, the event its name stands for (LRM 14.10,
-// 14.13); a drive of an output lands where the output's skew says (LRM 14.16).
+// A clocking block (LRM 14.3), under the name a hierarchical name writes for
+// it (LRM 23.6), one copy of which each instance of its scope holds (LRM
+// 14.7). At each occurrence of `event` it samples its inputs and then
+// triggers `block_event`, the event its name stands for (LRM 14.10, 14.13); a
+// drive of an output lands where the output's skew says (LRM 14.16).
 struct ClockingBlockDecl {
   std::string name;
   diag::SourceSpan span;

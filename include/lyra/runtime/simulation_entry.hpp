@@ -12,18 +12,17 @@ namespace lyra::runtime {
 // The entry a design's root unit publishes for making its object, as a host
 // reaches it: the owner every object takes -- none, for this one -- and the
 // structural identity it carries. Both are the host's to supply, so an emitted
-// program names the entry and the root's label and never composes a runtime
-// value of either. Services are reached from the constructed root (and every
-// child it builds) through the thread-local `current_runtime()` the owning
-// Runtime has already published on this thread, so nothing about the runtime
-// crosses here.
+// program names the entry alone and never composes a runtime value of it.
+// Services are reached from the constructed root (and every child it builds)
+// through the thread-local `current_runtime()` the owning Runtime has already
+// published on this thread, so nothing about the runtime crosses here.
 using RootFactory = std::function<OwnedObject<Scope>(Scope*, HierarchySegment)>;
 
 // The host program's design-simulation entry. Collects the LRM 21.6
 // command-line plusarg tokens off `argv`, constructs the Runtime seeded with
-// those tokens, asks `make` for the design's `$root` under `root_name` (whose
-// generated constructor elaborates the design), binds the built tree, and
-// drives the scheduler to completion. Returns the simulation's exit code.
+// those tokens, asks `make` for the design's `$root`, which nothing declares
+// and whose generated constructor elaborates the design, binds the built tree,
+// and drives the scheduler to completion. Returns the simulation's exit code.
 // Elaboration precedes the simulation (LRM 3.12), so a failure while the
 // design is built or resolved is reported here and the run never starts;
 // everything from time-zero initialization onward is the run's own.
@@ -35,22 +34,20 @@ using RootFactory = std::function<OwnedObject<Scope>(Scope*, HierarchySegment)>;
 // This is the entry the emitted `main` calls, and every host-boundary concern
 // is behind it -- argv parsing, engine construction, the root's structural
 // identity, bind, scheduler drive, exception mapping. That is what keeps an
-// emitted program's whole contribution to two names, so a future host concern
-// (a seed flag, a waveform sink, a deadline, verbosity, signal handling) is
-// added by editing runtime C++ rather than by growing what the emitter writes.
-auto RunDesignRoot(
-    int argc, char** argv, std::string_view root_name, const RootFactory& make)
-    -> int;
+// emitted program's whole contribution to one name, its root's entry, so a
+// future host concern (a seed flag, a waveform sink, a deadline, verbosity,
+// signal handling) is added by editing runtime C++ rather than by growing what
+// the emitter writes.
+auto RunDesignRoot(int argc, char** argv, const RootFactory& make) -> int;
 
 // The same for a root a target builds as its own class `T`, which is how the
 // entry an emitted program names answers.
 template <typename T>
 auto RunDesignRoot(
-    int argc, char** argv, std::string_view root_name,
-    OwnedObject<T> (*make)(Scope*, HierarchySegment)) -> int {
+    int argc, char** argv, OwnedObject<T> (*make)(Scope*, HierarchySegment))
+    -> int {
   return RunDesignRoot(
-      argc, argv, root_name,
-      RootFactory([make](Scope* parent, HierarchySegment segment) {
+      argc, argv, RootFactory([make](Scope* parent, HierarchySegment segment) {
         return OwnedObject<Scope>(make(parent, std::move(segment)));
       }));
 }

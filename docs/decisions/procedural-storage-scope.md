@@ -2,7 +2,8 @@
 
 ## Date
 
-2026-10-28 (revised; earlier 2026-10-23, 2026-08-13, original 2026-06-30)
+2026-11-09 (revised: the scope kinds VPI reads, and where an inspection interface reads the tree;
+earlier 2026-10-28, 2026-10-23, 2026-08-13, original 2026-06-30)
 
 ## Status
 
@@ -58,11 +59,13 @@ graph.
 
 Every procedural body has a root scope; every `begin/end` and `fork/join` introduces its own, and
 they nest -- a block inside a block is two scopes, the inner one a child of the outer. A loop that
-declares its own control variables gets one too, but not a kind of its own: LRM 12.7.1 and 12.7.3
-define that scope as an implicit begin/end block around the loop statement, unnamed unless a
-statement label names it, so it is an ordinary block scope. Each scope record holds:
+declares its own control variables gets one too: LRM 12.7.1 and 12.7.3 define that scope as an
+implicit begin/end block around the loop statement, unnamed unless a statement label names it, and
+it is lowered as an ordinary block scope; its kind says it is a `for` or a `foreach`, which is what
+VPI answers it as (LRM 37.12). Each scope record holds:
 
-- a kind (process root, subroutine root, begin/end block, fork/join);
+- a kind (process root, task, function, constraint block, covergroup, begin/end block, fork by its
+  join, `for`, `foreach`, or a scope the compiler opens for itself);
 - the identifier the source gave the scope -- a `block_identifier` (LRM 9.3.5) or a subroutine name
   -- absent where it gave none;
 - the ids of the variables declared directly in that scope;
@@ -143,9 +146,10 @@ it from elsewhere is the enclosing scope's published class. So no scope of a bod
 field or an object, named or not, declaring anything or not, and no predicate decides which would:
 one shape still lowers every scope, and it is the absence of a realization.
 
-An inspection interface would need the scope tree as data -- an instance's identity and the scope's
-place in its unit -- and the lexical tree is where that is read; nothing of it asks for an object
-the run constructs and walks.
+An inspection interface needs the scope tree as data -- an instance's identity and the scope's place
+in its unit -- and reads it from the records the enclosing class states of the scopes it declares
+(`a-scope-is-named-by-its-declaration.md`); nothing of it asks for an object the run constructs and
+walks.
 
 A DPI scope is a module, program, interface or generate scope (LRM Annex H.9), so a block is no DPI
 scope and `svGetScopeFromName` finds none.

@@ -131,3 +131,14 @@ int32_t time_in_precision_units(void) {
   }
   return (int32_t)now.low;
 }
+
+/* Asked for scaled real time, the value carries the time in the scope's unit
+   as a real, fraction included (LRM Annex H.13). */
+double scaled_time_in_scope_units(void) {
+  svTimeVal now;
+  now.type = sv_scaled_real_time;
+  if (svGetTime(svGetScope(), &now) != 0) {
+    return -1.0;
+  }
+  return now.real;
+}

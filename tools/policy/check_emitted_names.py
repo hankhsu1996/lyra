@@ -47,8 +47,7 @@ EMITTERS = [
 ]
 
 # The functions that answer what a declaration, or the file one is emitted
-# into, is spelled as in C++ -- as an identifier, or as the string the library
-# matches a referrer's name against. A name inside a call to one of these has
+# into, is spelled as in C++. A name inside a call to one of these has
 # been mapped by definition; the rest of this script is about names that are
 # not.
 MAPPERS = [
@@ -70,7 +69,6 @@ MAPPERS = [
     "CppObjectEntryName",
     "CppUnitCallableName",
     "CppForeignSymbolName",
-    "CppNameLiteral",
 ]
 
 # An expression an emitter writes without mapping, and why that is right. Each

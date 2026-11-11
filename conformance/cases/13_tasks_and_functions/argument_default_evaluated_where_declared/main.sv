@@ -3,7 +3,8 @@
 // call passes it (LRM 13.5.3). So whatever the call is made from -- another
 // instance, an interface port, a virtual interface, a package, an object --
 // a default naming a variable reads the callee's own, as it stands when the
-// call is made. A default of an output or an inout formal names the variable
+// call is made, and a `%m` in a default prints the name of that scope (LRM
+// 21.2.1.5). A default of an output or an inout formal names the variable
 // the call writes back to, so another instance's call writes back into the
 // declaring instance (LRM 13.5.3). Called through a handle of the class it is
 // declared in, a method takes its own default; which default an override
@@ -64,6 +65,9 @@ module Child;
   endfunction
   function automatic int g(int x = base);
     return x;
+  endfunction
+  function automatic string where(string s = $sformatf("%m"));
+    return s;
   endfunction
   task automatic put(output int o = written);
     o = 61;
@@ -180,6 +184,8 @@ module Top;
       $fatal(1, "a call from the declaring instance holds %0d", c.own_call);
     if (c.f() !== 42) $fatal(1, "another instance read %0d", c.f());
     if (c.f(5) !== 5) $fatal(1, "a passed argument read %0d", c.f(5));
+    if (c.where() != "Top.c")
+      $fatal(1, "a %%m default printed '%s', expected 'Top.c'", c.where());
     if (c.evaluated !== 1)
       $fatal(1, "the default was evaluated %0d times, expected 1",
              c.evaluated);

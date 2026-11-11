@@ -728,8 +728,9 @@ class LoweringFacts {
   const std::optional<CoverageLibrary>* coverage_;
 };
 
-// Per-unit lowerer, over a module instance body or a package. It holds the
-// in-progress compilation unit together with the registries that record which
+// Per-unit lowerer, over a design element's body, a package, a `$unit` scope or
+// a class specialization lowered on its own. It holds the in-progress
+// compilation unit together with the registries that record which
 // HIR identity this unit gave each slang symbol, so a reference resolves
 // against what the unit already decided rather than by re-reading the frontend.
 //
@@ -754,7 +755,7 @@ class UnitLowerer {
   // and its environment holds nothing.
   UnitLowerer(
       const LoweringFacts& facts, const slang::ast::Symbol& home,
-      Environment environment, hir::LoweringRef names, hir::UnitRole role);
+      Environment environment, hir::LoweringRef names);
 
   // The body phase reads through a reader recording into this object's own
   // record, so the object stays where it was made.
@@ -1517,7 +1518,8 @@ class UnitLowerer {
       -> hir::ScopePublication;
 
   // Records the identity a declaration scope minted for one of its procedural
-  // scopes, keyed by the symbol slang records the scope as.
+  // scopes, or one a block the source gave no name minted as it lowered, keyed
+  // by the symbol slang records the scope as.
   void DeclareProceduralScope(
       const slang::ast::Symbol& symbol, const slang::ast::Scope& owner,
       hir::ProceduralScopeId scope) {
@@ -1526,7 +1528,7 @@ class UnitLowerer {
   }
 
   // The identity minted for `symbol`'s procedural scope. Every procedural scope
-  // the source wrote is minted before any of its declaration scope's bodies
+  // a name can reach is minted before any of its declaration scope's bodies
   // lower, so absence is a compiler-bug invariant -- which makes this a lookup
   // for a symbol the declaration scope being lowered is known to own, never a
   // test of whether it owns one.
@@ -1890,10 +1892,6 @@ class UnitLowerer {
  private:
   // What `Declare` and `DescribeForGrouping` both do.
   auto DeclareOwn() -> diag::Result<void>;
-
-  // Whether this unit is lowered from an instance's body, which a name can
-  // leave, rather than a namespace's, which has no instance to leave.
-  [[nodiscard]] auto LowersAnInstance() const -> bool;
 
   // Whether `scope` stands in an instance other than the one this unit's body
   // was elaborated for; a namespace's scope stands in none.

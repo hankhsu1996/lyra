@@ -191,10 +191,9 @@ class VcdCommandWriter : public DumpWriter {
             "$timescale\n   {}{}\n$end\n", timescale.count, timescale.unit));
   }
 
-  void Scope(support::DumpScopeKind kind, std::string_view name) override {
+  void Scope(DumpScopeKind kind, std::string_view name) override {
     file_.Put(
-        std::format(
-            "$scope {} {} $end\n", support::DumpScopeKindKeyword(kind), name));
+        std::format("$scope {} {} $end\n", DumpScopeKindKeyword(kind), name));
   }
 
   void Upscope() override {
@@ -481,11 +480,9 @@ class TextWriter final : public DumpWriter {
     timescale_ = value::TimeUnitSpellingOf(precision_power);
   }
 
-  void Scope(support::DumpScopeKind kind, std::string_view name) override {
+  void Scope(DumpScopeKind kind, std::string_view name) override {
     scopes_.emplace_back(name);
-    file_.Put(
-        std::format(
-            "{} {}\n", support::DumpScopeKindKeyword(kind), ScopePath()));
+    file_.Put(std::format("{} {}\n", DumpScopeKindKeyword(kind), ScopePath()));
   }
 
   void Upscope() override {

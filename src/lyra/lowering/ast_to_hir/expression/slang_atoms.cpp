@@ -160,6 +160,17 @@ auto ToHirSubroutineKind(slang::ast::SubroutineKind k) -> hir::SubroutineKind {
   throw InternalError("ToHirSubroutineKind: unknown SubroutineKind");
 }
 
+auto ToHirProceduralScopeKind(slang::ast::SubroutineKind k)
+    -> hir::ProceduralScopeKind {
+  switch (k) {
+    case slang::ast::SubroutineKind::Function:
+      return hir::ProceduralScopeKind::kFunction;
+    case slang::ast::SubroutineKind::Task:
+      return hir::ProceduralScopeKind::kTask;
+  }
+  throw InternalError("ToHirProceduralScopeKind: unknown SubroutineKind");
+}
+
 auto LowerEnumMethodName(std::string_view name)
     -> std::optional<hir::EnumMethod> {
   if (name == "first") return hir::EnumMethod::kFirst;

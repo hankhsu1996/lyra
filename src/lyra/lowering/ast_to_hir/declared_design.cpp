@@ -43,6 +43,7 @@
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
+#include "lyra/lowering/ast_to_hir/unit_definition.hpp"
 #include "lyra/lowering/ast_to_hir/unit_grouping.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -50,19 +51,6 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
-
-// The role of a unit compiled from the design element `body` was elaborated
-// from.
-auto RoleOf(const slang::ast::InstanceBodySymbol& body) -> hir::UnitRole {
-  switch (body.getDefinition().definitionKind) {
-    case slang::ast::DefinitionKind::Module:
-    case slang::ast::DefinitionKind::Interface:
-      return hir::UnitRole::kModuleOrInterface;
-    case slang::ast::DefinitionKind::Program:
-      return hir::UnitRole::kProgram;
-  }
-  throw InternalError("RoleOf: a design element of no kind");
-}
 
 // Collects the lowerings reachable from the tops: one per body the front end
 // elaborated, lowered for the instance that body was elaborated for. slang
@@ -436,6 +424,8 @@ auto TopLevelUnits(
         TopLevelUnit{
             .instance_name = std::string{inst->name},
             .name_in_a_path = NameInAPath(*inst),
+            .instantiated =
+                DesignElementKindOf(inst->getDefinition().definitionKind),
             .unit_name = names.NameOf(*inst),
             .lowering = LoweringNameOf(*inst)});
   }
@@ -521,8 +511,7 @@ struct DeclaredDesign::Units {
         facts_in, instance.body, instances.EnvironmentOf(instance),
         hir::LoweringRef{
             .unit = names.NameOf(instance),
-            .lowering = LoweringNameOf(instance)},
-        RoleOf(instance.body));
+            .lowering = LoweringNameOf(instance)});
     if (auto declared = lowerer.DescribeForGrouping(); !declared) {
       sink.Report(std::move(declared.error()));
       return std::nullopt;
@@ -538,8 +527,7 @@ struct DeclaredDesign::Units {
         *facts, lowered.body, instances.EnvironmentOf(lowered),
         hir::LoweringRef{
             .unit = unit_names->NameOf(lowered),
-            .lowering = LoweringNameOf(lowered)},
-        RoleOf(lowered.body));
+            .lowering = LoweringNameOf(lowered)});
   }
 
   // Declares every unit the design has in the units grouping found. Every
@@ -556,28 +544,21 @@ struct DeclaredDesign::Units {
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
               *facts, *package, Environment{},
-              hir::LoweringRef::OfNamespace(package->name),
-              hir::UnitRole::kNamespace));
+              hir::LoweringRef::OfNamespace(package->name)));
     }
     for (const auto* cu : CollectCompilationUnits(front_end_facts)) {
-      // A `$unit` scope is lowered, emitted, and initialized exactly as a
-      // package is -- a rootless namespace unit -- so it carries the same unit
-      // kind; nothing downstream distinguishes the two, so there is no
-      // separate kind.
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
               *facts, *cu, Environment{},
               hir::LoweringRef::OfNamespace(
-                  CompilationUnitName(*cu, *unit_names)),
-              hir::UnitRole::kNamespace));
+                  CompilationUnitName(*cu, *unit_names))));
     }
     for (const slang::ast::ClassType* spec : specialization_homes.own_units) {
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
               *facts, *spec, Environment{},
               hir::LoweringRef::OfNamespace(
-                  CompilationUnitName(*spec, *unit_names)),
-              hir::UnitRole::kNamespace));
+                  CompilationUnitName(*spec, *unit_names))));
     }
     // The lowerings of one class stand side by side, in the design's order,
     // so whatever holds what one of them came out as, to tell whether a later

@@ -13,6 +13,7 @@
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/enum_method.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
+#include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/randomization_hook.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/unary_op.hpp"
@@ -41,6 +42,10 @@ auto FromSlangSubroutineKind(slang::ast::SubroutineKind k)
     -> support::SystemSubroutineKind;
 
 auto ToHirSubroutineKind(slang::ast::SubroutineKind k) -> hir::SubroutineKind;
+
+// The kind of the scope a subroutine of kind `k` roots (LRM 23.9).
+auto ToHirProceduralScopeKind(slang::ast::SubroutineKind k)
+    -> hir::ProceduralScopeKind;
 
 auto LowerEnumMethodName(std::string_view name)
     -> std::optional<hir::EnumMethod>;

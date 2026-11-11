@@ -4,42 +4,10 @@
 #include <string>
 #include <string_view>
 
+#include "lyra/runtime/hierarchical_name.hpp"
 #include "lyra/runtime/scope.hpp"
 
 namespace lyra::runtime {
-
-namespace {
-
-// The scope `name` names below `scope`, or null. A scope the source gave no
-// name stands in no path (LRM 23.6), so it is looked through with the whole of
-// `name` still to find; any other child is tried by its own part of a path,
-// spelled as a path spells it, which either ends the name or is followed by the
-// period before the rest.
-auto FindBelow(Scope& scope, std::string_view name) -> Scope* {
-  Scope* found = nullptr;
-  scope.ForEachChild([&](Scope& child) {
-    if (found != nullptr) {
-      return;
-    }
-    if (!child.IsAddressable()) {
-      found = FindBelow(child, name);
-      return;
-    }
-    const std::string part = child.DisplaySegment();
-    if (!name.starts_with(part)) {
-      return;
-    }
-    const std::string_view rest = name.substr(part.size());
-    if (rest.empty()) {
-      found = &child;
-    } else if (rest.front() == '.') {
-      found = FindBelow(child, rest.substr(1));
-    }
-  });
-  return found;
-}
-
-}  // namespace
 
 DpiScopeHandles::DpiScopeHandles(Scope& root) : root_(&root) {
 }
@@ -67,8 +35,13 @@ auto DpiScopeHandles::NameOf(const Scope* scope) -> const char* {
   return name->c_str();
 }
 
+// An instance scope is named from the tops down, so a name beginning at a
+// package names none.
 auto DpiScopeHandles::ScopeOfName(std::string_view name) const -> Scope* {
-  return FindBelow(*root_, name);
+  const std::optional<HierarchicalName> read = ReadHierarchicalName(name);
+  if (!read.has_value() || read->package.has_value()) return nullptr;
+  const ScopeReached reached = LongestNamedPrefix(*root_, read->parts);
+  return reached.parts == read->parts.size() ? reached.scope : nullptr;
 }
 
 auto DpiScopeHandles::PutUserData(const Scope* scope, void* key, void* data)

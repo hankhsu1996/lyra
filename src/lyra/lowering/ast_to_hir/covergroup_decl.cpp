@@ -159,7 +159,7 @@ class DeclBuilder {
         lowerer_(owner, covergroup),
         root_(
             decl_.procedural_scopes.Declare(),
-            hir::ProceduralScopeKind::kSubroutineRoot,
+            hir::ProceduralScopeKind::kCovergroup,
             std::string{CovergroupNameOf(covergroup)}) {
     decl_.body = owner.MakeProceduralBody(covergroup);
     decl_.declared_in = FixedNameOf(*covergroup.getParentScope());

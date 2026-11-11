@@ -1,5 +1,6 @@
 #include "lyra/runtime/ambient_run_context.hpp"
 
+#include <memory>
 #include <string_view>
 #include <variant>
 
@@ -12,6 +13,7 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
+#include "lyra/runtime/vpi_object.hpp"
 #include "lyra/value/constant_span.hpp"
 
 namespace lyra::runtime {
@@ -38,7 +40,9 @@ auto FindInCallableTable(
 }  // namespace
 
 AmbientRunContext::AmbientRunContext(Scope& root, RuntimeEffects& effects)
-    : effects_(&effects), scope_handles_(root) {
+    : effects_(&effects),
+      scope_handles_(root),
+      object_handles_(std::make_unique<VpiObjectHandles>()) {
   CurrentSlot() = this;
 }
 

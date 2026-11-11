@@ -72,20 +72,4 @@ auto DumpValueFormOf(DumpVarKind kind) -> DumpValueForm {
   throw InternalError("DumpValueFormOf: unknown kind");
 }
 
-auto DumpScopeKindKeyword(DumpScopeKind kind) -> std::string_view {
-  switch (kind) {
-    case DumpScopeKind::kModule:
-      return "module";
-    case DumpScopeKind::kTask:
-      return "task";
-    case DumpScopeKind::kFunction:
-      return "function";
-    case DumpScopeKind::kBegin:
-      return "begin";
-    case DumpScopeKind::kFork:
-      return "fork";
-  }
-  throw InternalError("DumpScopeKindKeyword: unknown kind");
-}
-
 }  // namespace lyra::support

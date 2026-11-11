@@ -29,12 +29,12 @@ different contexts and they do different jobs.
 Reading a module as a class separates two things that are easy to conflate.
 
 A scope's **members** are uniform: each is a name and a type (see `mir.md`). A signal, a child
-instance, an instance array, and a named generate scope are all members; they differ only in their
-type. How a member is stored, and how it is registered into the object graph, follow from that type
-alone. Registering an owned child walks the member's type: a vector layer iterates and indexes by
-position; an owning pointer to an object registers one child scope, whose kind -- module instance
-versus generate scope -- is read off the object type, then recurses into that child. One walk covers
-a scalar instance, an instance array of any dimensionality, and a generate scope, with no per-form
+instance, an instance array, and a generate scope are all members; they differ only in their type.
+How a member is stored, and how it is registered into the object graph, follow from that type alone.
+Registering an owned child walks the member's type: a vector layer iterates and indexes by position;
+an owning pointer to an object registers one child scope, whose kind -- module instance versus
+generate scope -- is read off the object type, then recurses into that child. One walk covers a
+scalar instance, an instance array of any dimensionality, and a generate scope, with no per-form
 branch and no separate classification.
 
 **Construction** -- the constructor statements that fill those members -- is the part that

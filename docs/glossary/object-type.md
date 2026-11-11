@@ -10,7 +10,8 @@ reads and writes. Not an [owning pointer](owning-pointer.md) or vector, which ar
 compose over an object type to give storage and cardinality.
 
 **Usage notes.** Which unit defines the class is the owned child's runtime scope kind -- generate
-scope versus module instance -- and is the only thing that encodes scope kind (see
-`architecture/mir.md`). The reference is one form either way; of a class another unit defines, only
-what that unit published -- never what its lowering adds to the object -- is visible across the
-boundary (see `architecture/compilation_unit_model.md`).
+scope versus module instance -- and is the only thing within MIR that encodes scope kind (see
+`architecture/mir.md`); the records of the scopes a class declares are data handed to the run. The
+reference is one form either way; of a class another unit defines, only what that unit published --
+never what its lowering adds to the object -- is visible across the boundary (see
+`architecture/compilation_unit_model.md`).

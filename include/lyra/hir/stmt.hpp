@@ -74,8 +74,7 @@ enum class JoinMode : std::uint8_t {
 // give each branch a by-value snapshot; they precede the parallel statements in
 // the fork's scope. Each branch in `branches` is a statement run as its own
 // concurrent process; `mode` sets when the parent resumes. `scope` is the
-// lexical declaration scope the fork opens, which owns the locals above and
-// exists whether or not any were written.
+// lexical declaration scope the fork opens, which owns the locals above.
 struct ForkStmt {
   JoinMode mode;
   std::vector<StmtId> locals;

@@ -370,18 +370,20 @@ void Runtime::EnsureReadyToRun() {
   ran_ = true;
 }
 
+// The minimum of every precision the design's source states, its packages'
+// and compilation units' as much as its instances' (LRM 3.14.3); one left to
+// the default states none, and where none is stated the default is the
+// minimum. The design's root states none.
 void Runtime::ResolveGlobalTimePrecision() {
-  bool found = false;
-  std::int8_t min_power = kDefaultTimePrecisionPower;
-  design_->ForEachScope([&](Scope& scope) {
-    const std::int8_t power = scope.TimePrecisionPower();
-    if (power == abi::kUnspecifiedTimePower) {
-      return;
-    }
-    min_power = found ? std::min(min_power, power) : power;
-    found = true;
-  });
-  global_precision_power_ = found ? min_power : kDefaultTimePrecisionPower;
+  std::optional<std::int8_t> finest;
+  const auto fold = [&](const abi::DefinitionRecord& definition) {
+    if (!definition.TimeStated()) return;
+    const std::int8_t power = definition.time_precision_power;
+    finest = finest.has_value() ? std::min(*finest, power) : power;
+  };
+  design_->ForEachScope([&](Scope& scope) { fold(scope.Definition()); });
+  for (const abi::ScopeDeclarations* ns : namespaces_) fold(*ns->definition);
+  global_precision_power_ = finest.value_or(kDefaultTimePrecisionPower);
   // LRM Table 20-3: the default `%t` display unit is the design-global
   // precision (the smallest across all timescale directives).
   time_format_.units_power = global_precision_power_;
@@ -449,6 +451,16 @@ void Runtime::ProgramEnded() {
           std::views::values(programs_), &ProgramThreads::AllRootsEnded)) {
     RequestSimulationEnd();
   }
+}
+
+auto Runtime::Namespaces() const
+    -> std::span<const abi::ScopeDeclarations* const> {
+  return namespaces_;
+}
+
+void Runtime::RegisterNamespace(
+    const abi::ScopeDeclarations& scope_declarations) {
+  namespaces_.push_back(&scope_declarations);
 }
 
 auto Runtime::ClaimNamespaceInitialization(std::string_view name) -> bool {
@@ -748,10 +760,10 @@ auto RegionsOf(support::ScopeExecution execution) -> RegionSet {
 }
 
 // What an execution runs in: the procedure it runs, the seeds of the instance
-// whose text holds it (LRM 18.14.1), the region set the class of the instance
-// whose code it evaluates states (LRM 24.3.1), and what created its thread. It
-// belongs to no program; an initial procedure of one is made a member where it
-// registers.
+// whose text holds it (LRM 18.14.1), the region set the definition of the
+// instance whose code it evaluates runs in (LRM 24.3.1), and what created its
+// thread. It belongs to no program; an initial procedure of one is made a
+// member where it registers.
 auto ContextIn(
     Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
     base::SourceLocation written_at, ThreadCreator creator)
@@ -759,7 +771,7 @@ auto ContextIn(
   return ExecutionContext{
       .procedure = {.scope = owning_scope, .written_at = written_at},
       .seeds = &unit_instance->InitializationSeeds(),
-      .regions = RegionsOf(runs_as->Info().metadata.Execution()),
+      .regions = RegionsOf(runs_as->Definition().Execution()),
       .creator = creator};
 }
 
@@ -836,7 +848,7 @@ void RegisterContinuousDriver(
 void RegisterInitialProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     base::SourceLocation written_at) {
-  switch (unit_instance->Info().metadata.Execution()) {
+  switch (unit_instance->Definition().Execution()) {
     case support::ScopeExecution::kDesign:
       RegisterStartingProcess(
           StartKind::kInitialProcedure, owning_scope, unit_instance,
@@ -934,6 +946,11 @@ void EnterNamespaceStaticInit(RuntimeEffects& runtime, const char* name) {
 auto ClaimNamespaceInitialization(RuntimeEffects& runtime, const char* name)
     -> std::int64_t {
   return AsRuntime(runtime).ClaimNamespaceInitialization(name) ? 1 : 0;
+}
+
+void RegisterNamespace(
+    RuntimeEffects& runtime, const abi::ScopeDeclarations* scope_declarations) {
+  AsRuntime(runtime).RegisterNamespace(*scope_declarations);
 }
 
 void LeaveStaticInit(RuntimeEffects& runtime) {

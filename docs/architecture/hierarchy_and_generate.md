@@ -12,8 +12,8 @@ shared by all consumers: external references, child routing, and construction.
   top-level block as a child.
 - The rule that generate constructs are constructor-time mechanisms that build the object tree.
   Generate is not a separate identity or topology system.
-- The rule that a semantically visible generate scope (named, navigable) is represented as a
-  first-class constructed object in the tree.
+- The rule that every generate scope a generate construct builds is represented as a first-class
+  constructed object in the tree.
 - The contract that every consumer of hierarchy navigates the same object tree.
 
 ## Does Not Own
@@ -34,20 +34,23 @@ shared by all consumers: external references, child routing, and construction.
    each block it builds is, is stated in the object's construction table, and the constructor builds
    every block through the entry there, as it builds an instance, so the unit's code names no
    block's body.
-3. A named generate scope is a first-class constructed object. An unnamed generate scope is not
-   addressable and is not materialized as an object.
+3. A generate scope is a first-class constructed object whether or not the source named it. One the
+   source gave no name is named as LRM 27.6 names it (`genblk<n>`, counted among the generate
+   constructs of the scope declaring it), and its declaration says the name was given rather than
+   written (LRM 37.85 `vpiImplicitDecl`).
 4. External references, runtime child routing, and the runtime constructor all navigate the same
    object tree. Typed members on the derived class are the ownership locus; a single non-owning
    generic adjacency list on the base scope, populated by one attachment operation per child, serves
    deterministic traversal. No second list of child pointers is maintained in parallel, and the
-   parent never restates a child's identity that the child already carries. A hierarchical name
-   reaches a child through the typed member or the generate entry that holds it, never by searching
-   the adjacency list for its name. Upward it is the same pair: a generate block keeps the scope
-   that built it in a member of the class it published, viewed as the class that scope published,
-   and a name declared there is reached through that member and what that scope published, so a
-   block's code is the same whichever body built it, while the base scope's generic parent serves
-   what the runtime answers by walking the tree -- a scope's name, and where an upward name searched
-   by class starts (LRM 23.8) -- and no name within one unit.
+   parent never restates a child's identity that the child already carries. A hierarchical name the
+   design writes reaches a child through the typed member or the generate entry that holds it, never
+   by searching the adjacency list for its name. Upward it is the same pair: a generate block keeps
+   the scope that built it in a member of the class it published, viewed as the class that scope
+   published, and a name declared there is reached through that member and what that scope
+   published, so a block's code is the same whichever body built it, while the base scope's generic
+   parent serves what the runtime answers by walking the tree -- a scope's name, the scope a name
+   from outside the design names, and where an upward name searched by class starts (LRM 23.8) --
+   and no name within one unit.
 5. The same compilation unit compiled once serves every instance of that unit. Hierarchy does not
    fork the unit's compile-time artifacts.
 6. A parameter value read only as a value is a constructor input: it changes how many blocks a loop
@@ -60,7 +63,7 @@ shared by all consumers: external references, child routing, and construction.
    classes and bodies rather than instances (`north_star.md` invariant 2), with each instance
    correct whatever is shared (its invariant 3).
 7. The constructed object tree is faithful to the frontend's elaboration. Every elaborated instance
-   and named scope has a corresponding constructed object, and generate-produced objects preserve
+   and generate scope has a corresponding constructed object, and generate-produced objects preserve
    the elaborated index and identity. Reference resolution relies on this faithfulness (see
    `reference_resolution.md`).
 8. The object tree has a single implicit root scope, `$root`, that owns every top-level block as a
@@ -73,16 +76,19 @@ shared by all consumers: external references, child routing, and construction.
    collapsed into one set.
 9. Instance multiplicity and generate are orthogonal axes. An array of instances (`c[3]`) is a
    cardinality property of one member's type -- a vector of owned children (see `mir.md`) -- not a
-   generate construct. A generate builds named child scopes as constructor-time logic; an array
-   replicates one child member. Either may appear without the other, and a generate scope may itself
-   contain instance arrays. Neither axis subsumes the other.
+   generate construct. A generate builds child scopes as constructor-time logic; an array replicates
+   one child member. Either may appear without the other, and a generate scope may itself contain
+   instance arrays. Neither axis subsumes the other.
 10. Scope identity is structural and complete at construction. A child's identity at one hierarchy
-    edge is the pair `(parent, segment)`, where the segment is the source-level label plus any
+    edge is the pair `(parent, segment)`, where the segment is the declaration of the parent's class
+    the child fills -- an instance, an array of them, a generate block or the set a loop generate
+    counts out, each stated once by the class as a record holding its name and its kind -- plus any
     per-dimension elaborated indices. The child receives that segment from its constructor's caller,
     holds it for its lifetime, and remains the sole authoritative source of its own identity; no
     consumer reconstructs the bracketed name by reverse-searching a parent registry, and the parent
-    never re-states an identity the child already carries. `%m`, hierarchical paths, and debug
-    output all read from this single source; resolving a hierarchical name reads none of them.
+    never re-states an identity the child already carries. `%m`, hierarchical paths, the names
+    foreign code is handed, and debug output all read from this single source; resolving a
+    hierarchical name the design writes reads none of them.
 11. A reference targeting a non-constructed runtime object is a sealing failure with a user
     diagnostic, never a runtime fallback. A conditional-generate arm not selected is no part of the
     unit and has no runtime scope; a hierarchical reference whose route traverses such an arm cannot
@@ -114,8 +120,8 @@ shared by all consumers: external references, child routing, and construction.
   elaboration; that doc relies on this faithfulness to make cross-unit resolution total.
 - A node whose owned child is built from another compilation unit (an instantiation) crosses the
   unit boundary: the parent references the class the child's unit published, never its body or
-  internal ids. An owned child that belongs to the same unit (a named generate scope) is intra-unit
-  and crosses no boundary for the unit's own code; a referrer in another unit reaches it through the
+  internal ids. An owned child that belongs to the same unit (a generate scope) is intra-unit and
+  crosses no boundary for the unit's own code; a referrer in another unit reaches it through the
   class it was published as. `compilation_unit_model.md` owns the signature and the name-based
   linkage; this doc owns only the resulting ownership edge in the object tree.
 
@@ -131,9 +137,12 @@ shared by all consumers: external references, child routing, and construction.
   construction-time moment. One non-owning adjacency relation serves traversal, populated by one
   attachment operation per child.
 - A runtime search of a scope's children, or of a scope's declarations, by name to resolve a
-  hierarchical reference. A name's target is fixed by the class each step was published as and is
-  checked where the referrer compiles; a search by text defers that check to run time and leaves an
-  unchecked cast in its place.
+  hierarchical reference the design writes. That name's target is fixed by the class each step was
+  published as and is checked where the referrer compiles; a search by text defers that check to run
+  time and leaves an unchecked cast in its place. A name that reaches the run from outside the
+  design -- from foreign code (LRM 35.5.3, 38.21) or the run's own command line -- has no compiled
+  referrer whose check a search could defer, so it is resolved by one search of the constructed tree
+  and of the declarations each class states, which every such reader shares.
 - A child-routing or external-reference path that reconstructs hierarchy from flattened symbol
   names.
 - Per-instance generate trees that duplicate the unit's construction logic.
@@ -149,8 +158,9 @@ shared by all consumers: external references, child routing, and construction.
   invariant 3 wherever an override elsewhere made an element differ (invariant 12 above).
 - Splitting a child's hierarchy identity between the child and a parent-side registry -- the child
   carrying only an un-indexed label while bracketed indices live in a parent table that consumers
-  reverse-search to recover the full name. The child carries its complete `(base, indices)` segment;
-  any per-dim decoration is the child's own property, never parent metadata about the child.
+  reverse-search to recover the full name. The child carries its complete `(declaration, indices)`
+  segment; any per-dim decoration is the child's own property, never parent metadata about the
+  child.
 - A scope's base constructor side-effecting its own attachment into the parent. Attachment is one
   explicit operation the parent performs once the child is fully constructed and its typed owner has
   committed, so a partially-built child is never visible in the parent's adjacency relation.
@@ -209,9 +219,9 @@ theirs the same way, so an instance array and a generate loop differ in what dec
 nothing a consumer of the tree can see.
 
 **A procedure and its blocks are no node.** A procedure is no branch of the hierarchy (LRM 23.6),
-and a named block such as `run` is one only as text: a path into it (`mid.run.x`) is a member `mid`
-publishes, and `%m` inside it is `mid`'s path with `.run` fixed by where the call is written. What a
-block keeps past an activation is a cell of `mid`.
+and a named block such as `run` is one only as a declaration its class states: a path into it
+(`mid.run.x`) is a member `mid` publishes, and `%m` inside it is `mid`'s path with `.run` fixed by
+where the call is written. What a block keeps past an activation is a cell of `mid`.
 
 **Each scope a name can step into publishes a class.** `mid`'s class publishes its members, the
 `bank` array, and one entry per generate construct: `g`'s entry names the class its blocks are

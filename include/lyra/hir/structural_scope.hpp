@@ -26,6 +26,7 @@
 #include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/foreign_export.hpp"
+#include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/port_direction.hpp"
@@ -41,6 +42,7 @@
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
@@ -382,11 +384,12 @@ struct InstanceAlternative {
 
 // A child built from another compilation unit, under the name a hierarchical
 // name writes for it (LRM 23.6): the identifier as it stands, or escaped where
-// such a name has to escape it. `array_dims` is empty for a scalar instance
-// and holds the range each dimension declares, outermost first, for an
-// instance array (`Child c[2][3:5]` is `{[0:1], [3:5]}`). The range is how
-// many elements a dimension has and which index selects each, the element at
-// a position being the one that many above the range's lowest index.
+// such a name has to escape it, and the kind of design element the
+// instantiation instantiates (LRM 23.3.2, 24.3, 25.3). `array_dims` is empty
+// for a scalar instance and holds the range each dimension declares, outermost
+// first, for an instance array (`Child c[2][3:5]` is `{[0:1], [3:5]}`). The
+// range is how many elements a dimension has and which index selects each, the
+// element at a position being the one that many above the range's lowest index.
 //
 // Every element of an array takes what its instantiation wrote (LRM 23.3.2),
 // so its elements differ only where something written elsewhere reached one of
@@ -396,6 +399,7 @@ struct InstanceAlternative {
 // instantiation are one unit and this scope states the same thing for each.
 struct InstanceMemberDecl {
   std::string instance_name;
+  DesignElementKind instantiated = DesignElementKind::kModule;
   std::vector<UnpackedRange> array_dims;
   std::vector<InstanceAlternative> alternatives;
   std::vector<std::uint32_t> taken;
@@ -527,8 +531,21 @@ struct NetJoin {
   auto operator==(const NetJoin&) const -> bool = default;
 };
 
+// A block a generate construct declares, as the scope declaring the construct
+// names it: the name the source gave it, or where it gave none the one LRM
+// 27.6 makes from the construct's number, which marks it implicitly named
+// (LRM 37.85), each as a hierarchical name writes it.
+struct GenerateBlockName {
+  std::string name;
+  bool implicitly_named = false;
+
+  auto operator==(const GenerateBlockName&) const -> bool = default;
+};
+
 // One block that no loop and no conditional produced (LRM 27.3), built once.
 struct SingleBlock {
+  GenerateBlockName declared;
+
   auto operator==(const SingleBlock&) const -> bool = default;
 };
 
@@ -546,6 +563,9 @@ struct SingleBlock {
 // index it stands at, evaluated where the index then stands (LRM 27.4). Which
 // body each block it counts out is, is its object's construction data.
 struct BlocksRepeat {
+  // The loop's own name, which every block it counts out bears with its
+  // index (LRM 27.4, 27.6).
+  GenerateBlockName declared;
   StructuralDataObjectId variable;
   ExprId initial;
   ExprId condition;
@@ -636,9 +656,10 @@ using SelectionChoice = std::variant<ChoiceOnCondition, ChoiceOnLabel>;
 struct BlocksChoose {
   base::Arena<SelectionChoice, SelectionChoiceId> choices;
   SelectionChoiceId root;
-  // How many alternatives the source wrote. Which body the one an object
-  // selects is, is that object's construction data.
-  std::uint32_t alternatives = 0;
+  // Each alternative the source wrote, at the position it stands, whether or
+  // not an object selects it. Which body the one an object selects is, is
+  // that object's construction data.
+  std::vector<GenerateBlockName> alternatives;
 
   auto operator==(const BlocksChoose&) const -> bool = default;
 };
@@ -648,8 +669,7 @@ struct BlocksChoose {
 // part of the scope holding the construct: the bodies are the unit's, and
 // which one each object builds is that object's construction data.
 struct Generate {
-  std::variant<SingleBlock, BlocksRepeat, BlocksChoose> counting =
-      SingleBlock{};
+  std::variant<SingleBlock, BlocksRepeat, BlocksChoose> counting;
 
   auto operator==(const Generate&) const -> bool = default;
 };
@@ -692,11 +712,13 @@ struct ExternDefinition {
 };
 
 struct StructuralScope {
-  // The label of a generate child as a hierarchical name writes it (LRM 23.6,
-  // 27.6), escaped where such a name has to escape it; empty for a block the
-  // source gave no label and for other scopes.
-  std::string source_name;
+  // The time unit and precision in force in the scope: its own, the one it
+  // inherits, or the default where the source states none (LRM 3.14.2.3).
   TimeResolution time_resolution;
+  // Whether the source states them rather than leaving the scope to the
+  // default; only a stated one takes part in the design's global precision
+  // (LRM 3.14.3).
+  bool time_resolution_stated = false;
   base::Registry<StructuralDataObjectDecl, StructuralDataObjectId>
       structural_data_objects;
   // What this scope published. Every scope a name can step into publishes --
@@ -754,6 +776,15 @@ struct StructuralScope {
   // the code that body compiled; one declared in a block the construction did
   // not build (LRM 27.5) is named by none of them and has no code in the body.
   std::vector<ReplicatedClass> replicated_classes;
+  // The classes the scope declares (LRM 8.3), each by the name it declares as a
+  // hierarchical name writes it (LRM 23.6), whether or not any code of it was
+  // built here: a parameterized class is one declaration however many of its
+  // specializations the design uses (LRM 8.25).
+  std::vector<std::string> declared_classes;
+  // The subroutines the scope declares by `import "DPI-C"` (LRM 35.5.4), each
+  // a task or a function of the scope as much as one written with a body (LRM
+  // 37.41 detail 6), by the unit's entry for it.
+  std::vector<ForeignImportId> declared_imports;
   // The covergroups that are types of this scope's instance in the same sense
   // (LRM 19.3), a class's embedded ones among them (LRM 19.4): each is made
   // into a class replicated with this scope, and one declared in a block the
@@ -769,7 +800,7 @@ struct StructuralScope {
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
   // What a value dump records of an instance of this scope (LRM 21.7.1.2). The
   // scopes inside this one are dumped as their own.
-  DumpedMembers dumped;
+  std::vector<DumpedDeclaration> dumped;
 
   // Two scopes are equal when everything they state is equal. Derived rather
   // than written. A field added to any node below is compared

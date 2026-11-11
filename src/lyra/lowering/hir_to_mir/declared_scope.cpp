@@ -54,15 +54,8 @@ auto ReportedNames(
         scopes,
     const hir::FixedName& declaring)
     -> base::Translation<hir::ProceduralScopeId, hir::FixedName> {
-  // A scope's name is its parent's and its own, and the tree states only the
-  // children of each scope, so the names are given on a descent from each
-  // body's root -- the scopes no other scope holds.
-  std::vector<bool> held(scopes.size(), false);
-  for (const hir::ProceduralScopeDecl& scope : scopes) {
-    for (const hir::ProceduralScopeId child : scope.child_scopes) {
-      held[child.value] = true;
-    }
-  }
+  // A scope's name is its parent's and its own, so the names are given on a
+  // descent from each body's root.
   std::vector<std::optional<hir::FixedName>> names(scopes.size());
   const auto name = [&](const auto& self, hir::ProceduralScopeId id,
                         hir::FixedName given) -> void {
@@ -71,8 +64,7 @@ auto ReportedNames(
     }
     names[id.value] = std::move(given);
   };
-  for (const hir::ProceduralScopeId id : scopes.Ids()) {
-    if (held[id.value]) continue;
+  for (const hir::ProceduralScopeId id : hir::RootProceduralScopes(scopes)) {
     name(name, id, Joined(declaring, "::", scopes.Get(id).source_name));
   }
   std::vector<hir::FixedName> answers;

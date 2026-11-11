@@ -59,17 +59,14 @@ auto Scope::HierarchicalPathOf(const lyra::value::String& below) const
   // -- the root anchors top-level adoption but is not part of a
   // user-visible hierarchical path.
   //
-  // What `below` names is innermost, and like a scope with no name it adds
-  // nothing where it names nothing.
+  // What `below` names is innermost, and it adds nothing where it names
+  // nothing.
   std::vector<std::string> parts;
   if (!below.View().empty()) {
     parts.emplace_back(below.View());
   }
   for (const Scope* cur = this; cur != nullptr && cur->parent_ != nullptr;
        cur = cur->parent_) {
-    if (!cur->IsAddressable()) {
-      continue;
-    }
     parts.push_back(cur->segment_.Display());
   }
   std::string out;

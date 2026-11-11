@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
+#include "lyra/lowering/hir_to_mir/scope_table.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
@@ -157,10 +158,10 @@ class StructuralScopeLowerer {
   }
 
   // Publishes the body that makes a block of the block body this scope is: it
-  // takes where the block hangs, the construction table it is built with and
-  // the index it is handed, if a loop's, at the type every block entry of the
-  // generate has, and builds the block under its own label, at the coordinate
-  // that index names (LRM 23.6, 27.4).
+  // takes where the block hangs, what the block adds to a hierarchical name,
+  // the construction table it is built with and the index it is handed, if a
+  // loop's, at the type every block entry of the generate has, and builds the
+  // block with them (LRM 23.6, 27.4).
   [[nodiscard]] auto PublishBlockEntry() const -> mir::CallableId;
 
   // The values whoever builds this scope hands it, in the order they are
@@ -216,6 +217,11 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto ConstructionTable() const
       -> const ConstructionTableSource& {
     return construction_table_;
+  }
+
+  // The record of each scope this scope declares, stated with its class.
+  [[nodiscard]] auto DeclaredScopeRecords() const -> const ScopeTable& {
+    return declared_scope_records_;
   }
 
   // The scope's time unit (LRM 3.14.2), which a time query scales its result
@@ -469,6 +475,7 @@ class StructuralScopeLowerer {
   // Each is a constructor parameter after the prefix every scope takes, and is
   // filled from it before anything the construction does can read it.
   std::vector<ConstructionValue> construction_values_;
+  ScopeTable declared_scope_records_;
   // What the unit published of the object this scope is -- an instance of the
   // unit, or a generate block inside one: what it published as its first
   // fields, in the order the signature states them, and a virtual method per

@@ -21,6 +21,7 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/lowering.hpp"
 #include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/owned_child_step.hpp"
@@ -133,19 +134,35 @@ auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {
     case JoinMode::kNone:
       return "join_none";
   }
-  return "join";
+  throw InternalError("ForkJoinModeLabel: unknown hir::JoinMode");
 }
 
 auto ProceduralScopeKindLabel(ProceduralScopeKind kind) -> std::string_view {
   switch (kind) {
     case ProceduralScopeKind::kProcessRoot:
       return "process-root";
-    case ProceduralScopeKind::kSubroutineRoot:
-      return "subroutine-root";
-    case ProceduralScopeKind::kBlock:
-      return "block";
-    case ProceduralScopeKind::kFork:
-      return "fork";
+    case ProceduralScopeKind::kTask:
+      return "task";
+    case ProceduralScopeKind::kFunction:
+      return "function";
+    case ProceduralScopeKind::kConstraintBlock:
+      return "constraint";
+    case ProceduralScopeKind::kCovergroup:
+      return "covergroup";
+    case ProceduralScopeKind::kBegin:
+      return "begin";
+    case ProceduralScopeKind::kForkJoin:
+      return "fork-join";
+    case ProceduralScopeKind::kForkJoinAny:
+      return "fork-join_any";
+    case ProceduralScopeKind::kForkJoinNone:
+      return "fork-join_none";
+    case ProceduralScopeKind::kFor:
+      return "for";
+    case ProceduralScopeKind::kForeach:
+      return "foreach";
+    case ProceduralScopeKind::kImplicit:
+      return "implicit";
   }
   throw InternalError(
       "ProceduralScopeKindLabel: unknown hir::ProceduralScopeKind");
@@ -2664,6 +2681,12 @@ class HirDumper {
       Line(std::format("clock: {}", FormatEventControl(h.clock)));
       Dedent();
     }
+    for (const std::string& name : s.declared_classes) {
+      Line(std::format("DeclaredClass '{}'", name));
+    }
+    for (const ForeignImportId id : s.declared_imports) {
+      Line(std::format("DeclaredImport ForeignImport[{}]", id.value));
+    }
     for (const ClockingBlockId id : s.clocking_blocks.Ids()) {
       const ClockingBlockDecl& c = s.clocking_blocks.Get(id);
       Line(
@@ -3963,21 +3986,36 @@ class HirDumper {
         c.data);
   }
 
+  // A name LRM 27.6 gave rather than the source is marked (LRM 37.85
+  // `vpiImplicitDecl`).
+  static auto BlockNameText(const GenerateBlockName& declared) -> std::string {
+    return std::format(
+        "\"{}\"{}", declared.name,
+        declared.implicitly_named ? " implicitly named" : "");
+  }
+
   void DumpGenerate(const Generate& g) {
     const std::string form = std::visit(
         Overloaded{
-            [](const SingleBlock&) { return std::string{"single"}; },
+            [](const SingleBlock& b) {
+              return std::format("single {}", BlockNameText(b.declared));
+            },
             [](const BlocksRepeat& r) {
               return std::format(
-                  "repeated var=StructuralDataObject[{}] initial=Expr[{}] "
+                  "repeated {} var=StructuralDataObject[{}] initial=Expr[{}] "
                   "condition=Expr[{}] step=Expr[{}] index=Expr[{}]",
-                  r.variable.value, r.initial.value, r.condition.value,
-                  r.step.value, r.index.value);
+                  BlockNameText(r.declared), r.variable.value, r.initial.value,
+                  r.condition.value, r.step.value, r.index.value);
             },
             [](const BlocksChoose& c) {
+              std::string names;
+              for (const GenerateBlockName& name : c.alternatives) {
+                if (!names.empty()) names += ", ";
+                names += BlockNameText(name);
+              }
               return std::format(
-                  "chosen {} alternatives={}", FormatSelectionChoice(c, c.root),
-                  c.alternatives);
+                  "chosen {} alternatives=[{}]",
+                  FormatSelectionChoice(c, c.root), names);
             },
         },
         g.counting);

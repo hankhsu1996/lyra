@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include "lyra/abi/records.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/dpi_scope_handles.hpp"
@@ -9,15 +11,16 @@ namespace lyra::runtime {
 
 class Scope;
 class RuntimeEffects;
+class VpiObjectHandles;
 
 // The design context in effect for the duration of a running simulation. A
 // foreign C function that calls back an exported SV subroutine (LRM 35.5), that
 // queries the DPI scope surface (LRM 35.5.3, Annex H), or that calls a VPI
 // routine (LRM 38), reaches the runtime with plain C arguments and no design
-// pointer, so it has nothing to reach the
-// run from unless the runtime anchors it ambiently. This holds the run's
-// effects facade for the executing process and time queries, and the scope
-// handles the run has given foreign code.
+// pointer, so it has nothing to reach the run from unless the runtime anchors
+// it ambiently. This holds the run's effects facade for the executing process
+// and time queries, and the handles the run has given foreign code: DPI's to
+// scopes, and VPI's to objects.
 //
 // It is an RAII guard over a thread-local slot: installed once around the
 // simulation run at the single run entry, and torn down when the run returns.
@@ -40,6 +43,12 @@ class AmbientRunContext {
     return scope_handles_;
   }
 
+  // Held apart, since what a handle refers to is declared against the
+  // standard's VPI header, which code a design compiles to never includes.
+  [[nodiscard]] auto ObjectHandles() -> VpiObjectHandles& {
+    return *object_handles_;
+  }
+
   static auto Current() -> AmbientRunContext&;
 
   // The context in effect, or null where no simulation is running on this
@@ -50,6 +59,7 @@ class AmbientRunContext {
  private:
   RuntimeEffects* effects_;
   DpiScopeHandles scope_handles_;
+  std::unique_ptr<VpiObjectHandles> object_handles_;
 };
 
 // The scope a module-scoped exported subroutine runs against: the current DPI

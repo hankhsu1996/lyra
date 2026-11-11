@@ -33,6 +33,7 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/field.hpp"
@@ -41,7 +42,6 @@
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_callback.hpp"
-#include "lyra/support/scope_execution.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -303,17 +303,19 @@ class UnitLowerer {
 
   // Lowers the synthetic design-root unit: a module whose root class is the
   // one nothing else constructs, so it alone carries the design's way in, and
-  // whose Initialize phase also brings up the namespaces' variables (LRM 26.2 /
-  // 10.5). Which namespaces those are is read off the signatures the root
-  // consumes and passed in; the lowering turns each into cross-unit calls, so
-  // this input stays at the design-root boundary and never reaches a source
-  // unit's lowering. So do the instantiations, from which the root states
-  // every specialization's construction table, its own among them.
+  // whose constructor installs the namespaces' storage and whose Initialize
+  // phase runs their initializers (LRM 26.2 / 10.5). Which namespaces those are
+  // is read off the signatures the root consumes and passed in; the lowering
+  // turns each into cross-unit calls, so this input stays at the design-root
+  // boundary and never reaches a source unit's lowering. So do the
+  // instantiations, from which the root states every specialization's
+  // construction table, its own among them.
   auto RunDesignRoot(DesignRootInputs design_root)
       -> diag::Result<mir::CompilationUnit>;
 
-  // Lowers a unit that roots no object -- a package (LRM 26) or the `$unit`
-  // file-set scope (LRM 3.12.1). Its functions and tasks lower to
+  // Lowers a unit that roots no object -- a package (LRM 26), the `$unit`
+  // file-set scope (LRM 3.12.1), a class specialization lowered on its own
+  // (LRM 8.25) or a text of the tool's. Its functions and tasks lower to
   // receiver-less callables owned by the unit's namespace, so the produced unit
   // has no root class.
   auto RunNamespace() -> diag::Result<mir::CompilationUnit>;
@@ -342,9 +344,9 @@ class UnitLowerer {
     return *hir_;
   }
 
-  // How the runtime runs what an instance of one of this unit's scopes
-  // starts: as a program's, where the unit is one (LRM 24.3.1).
-  [[nodiscard]] auto ScopeExecution() const -> support::ScopeExecution;
+  // The record of the definition every scope of this unit comes from (LRM
+  // 37.10), a constant of the unit.
+  [[nodiscard]] auto DefinitionConstant() const -> mir::ConstantId;
 
   // The name of the next class this unit's lowering builds for its own use,
   // counted among those alone.
@@ -699,9 +701,9 @@ class UnitLowerer {
 
   // Lowers a scope whose root is an object type into the unit's top class,
   // which the unit then names as its root. `design_root` is present for the
-  // design root alone, whose Initialize phase turns each namespace of the
-  // design into a cross-unit install and initialize call (LRM 26.2 / 10.5) and
-  // which states every construction table.
+  // design root alone, which calls each namespace of the design's install entry
+  // from its constructor and its initialize entry from its Initialize phase
+  // (LRM 26.2 / 10.5), and which states every construction table.
   auto PopulateModuleRoot(std::optional<DesignRootInputs> design_root)
       -> diag::Result<void>;
 

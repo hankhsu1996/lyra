@@ -25,6 +25,7 @@
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -119,16 +120,18 @@ auto DumpVarsItem(
       {block.Add(mir::MakeAddressOfExpr(member, pointer))});
 }
 
-// LRM 21.7.1.2: no arguments is the whole design, levels alone that many
-// levels of it from its tops, and otherwise the levels and then each instance
-// and variable.
+// LRM 21.7.1.2: levels alone are that many levels of the design from its
+// tops, no arguments every level of it, and otherwise the levels and then
+// each instance and variable.
 auto LowerDumpVars(
     ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
   mir::Builder block = frame.Builder();
   const std::vector<hir::ExprId> operands = RequiredOperands(call);
   if (operands.empty()) {
-    return DumpCall(process, block, support::BuiltinFn::kDumpVars, {});
+    return DumpCall(
+        process, block, support::BuiltinFn::kDumpVarsLevels,
+        {mir::BuildMachineIntLiteral(process.Owner().Unit(), block, 0)});
   }
   auto levels = MachineIntOperand(process, frame, operands.front());
   if (!levels) return std::unexpected(std::move(levels.error()));

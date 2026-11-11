@@ -43,7 +43,7 @@ auto IsCoroutine(const CompilationUnit& unit, const CallableCode& code)
 // does not compile here until it is said what kind of thing it is, or that it
 // is none.
 void Add(const CompilationUnit& unit, const Class& cls, HeldByClasses& held) {
-  const auto& [defining_unit, identity, base, implements, conforming, entries, dispatch, interface_tables, is_final, is_interface, self_pointer_type, time_resolution, execution, dumped_as, fields, named_fields, constructor, contained, callables, static_properties, named_static_properties, named_callables, library_callbacks, declaring_instance, interface_reaches, exports, definition] =
+  const auto& [defining_unit, identity, base, implements, conforming, entries, dispatch, interface_tables, is_final, is_interface, self_pointer_type, scope_declarations, fields, named_fields, constructor, contained, callables, static_properties, named_static_properties, named_callables, library_callbacks, declaring_instance, interface_reaches, exports, definition] =
       cls;
   // What another unit defines is declared here, and held there.
   if (defining_unit.has_value()) {

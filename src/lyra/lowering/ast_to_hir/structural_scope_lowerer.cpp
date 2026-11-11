@@ -4,9 +4,11 @@
 #include <array>
 #include <cstdint>
 #include <expected>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -29,6 +31,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/NetType.h>
+#include <slang/numeric/Time.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -44,6 +47,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/lowering/ast_to_hir/canonical_body.hpp"
 #include "lyra/lowering/ast_to_hir/clocking_block.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
@@ -63,6 +67,7 @@
 #include "lyra/lowering/ast_to_hir/strength.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/time_resolution.hpp"
+#include "lyra/lowering/ast_to_hir/unit_definition.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
@@ -443,6 +448,8 @@ auto StructuralScopeLowerer::BuildInstanceMember(
       .member =
           hir::InstanceMemberDecl{
               .instance_name = NameInAPath(declared),
+              .instantiated = DesignElementKindOf(
+                  elements.front()->getDefinition().definitionKind),
               .array_dims = std::move(dims),
               .alternatives = {},
               .taken = {}},
@@ -499,7 +506,10 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   const WalkFrame frame =
       parent_frame.WithStructuralFrame(frame_, slang_scope_, &scope)
           .WithProceduralScopeOwner(slang_scope_, &scope.procedural_scopes);
-  scope.time_resolution = ResolveTimeResolution(slang_scope_->getTimeScale());
+  const std::optional<slang::TimeScale> time_scale =
+      slang_scope_->getTimeScale();
+  scope.time_resolution = ResolveTimeResolution(time_scale);
+  scope.time_resolution_stated = time_scale.has_value();
 
   // Declared before anything else so that a name reaching one during the walk
   // below resolves to the declaration rather than folding to what one
@@ -564,8 +574,8 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   auto pc = PopulatePortConnections(*slang_scope_, frame);
   if (!pc) return std::unexpected(std::move(pc.error()));
 
-  auto dumped =
-      CollectDumped(*slang_scope_, DumpedPortsOf(*slang_scope_), frame);
+  auto dumped = CollectDumped(
+      *slang_scope_, DumpedPortsOf(*slang_scope_), frame, std::nullopt);
   if (!dumped) return std::unexpected(std::move(dumped.error()));
   scope.dumped = *std::move(dumped);
 
@@ -786,7 +796,6 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::UnpackedStructType:
     case SymbolKind::PackedUnionType:
     case SymbolKind::UnpackedUnionType:
-    case SymbolKind::ClassType:
     case SymbolKind::CovergroupType:
     case SymbolKind::VoidType:
     case SymbolKind::NullType:
@@ -804,7 +813,15 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::ForwardingTypedef:
     case SymbolKind::NetType:
     case SymbolKind::TypeParameter:
+      return {};
+
+    // A class the scope declares is one of the scopes it declares (LRM 37.12),
+    // a parameterized one as much as any; its code is built where the design
+    // uses it.
+    case SymbolKind::ClassType:
     case SymbolKind::GenericClassDef:
+      frame.current_structural_scope->declared_classes.push_back(
+          NameInAPath(member));
       return {};
 
     // Nothing to build at the walk. A parameter that varies per block or per
@@ -1344,7 +1361,7 @@ auto StructuralScopeLowerer::PopulateClockingMember(
   const std::size_t count = clockvars.size();
   scope.clocking_blocks.Define(
       declared.id, hir::ClockingBlockDecl{
-                       .name = std::string{block.name},
+                       .name = NameInAPath(block),
                        .span = span,
                        .event = *std::move(event),
                        .block_event = declared.block_event,
@@ -1508,6 +1525,7 @@ auto StructuralScopeLowerer::PopulateForeignImportMember(
   // away, or nowhere at all.
   auto id_or = owner_->EnsureForeignImport(sym);
   if (!id_or) return std::unexpected(std::move(id_or.error()));
+  frame.current_structural_scope->declared_imports.push_back(*id_or);
   return PopulateArgumentDefaults(sym, frame);
 }
 
@@ -1573,45 +1591,49 @@ auto StructuralScopeLowerer::PopulateNetAliasMember(
 }
 
 auto StructuralScopeLowerer::CollectDumped(
-    const slang::ast::Scope& members, const DumpedPorts& ports, WalkFrame frame)
-    -> diag::Result<hir::DumpedMembers> {
-  hir::DumpedMembers dumped;
-  // A named block, task or function, recorded where it declares something a
-  // dump records.
-  const auto collect_block =
-      [&](const slang::ast::Scope& scope, std::string_view name,
-          support::DumpScopeKind kind) -> diag::Result<void> {
-    auto inner = CollectDumped(scope, {}, frame);
+    const slang::ast::Scope& members, const DumpedPorts& ports, WalkFrame frame,
+    std::optional<hir::ProceduralScopeId> enclosing)
+    -> diag::Result<std::vector<hir::DumpedDeclaration>> {
+  std::vector<hir::DumpedDeclaration> dumped;
+  // What a block, task or function declares is enclosed by its scope. One
+  // the build lowers no body of -- a DPI-C import, an extern another module
+  // defines, an assertion's action the build leaves out -- has no scope here
+  // and holds nothing a dump records. A block the source gave no name holds
+  // what it declares as a named one does; a dump shows it under the named
+  // scopes around it, and no name reaches it (LRM 9.3.4).
+  const auto collect_enclosed =
+      [&](const slang::ast::Scope& scope,
+          const slang::ast::Symbol& symbol) -> diag::Result<void> {
+    const auto minted = owner_->LookupMintedProceduralScope(symbol);
+    if (!minted.has_value()) return {};
+    auto inner = CollectDumped(scope, {}, frame, minted->scope);
     if (!inner) return std::unexpected(std::move(inner.error()));
-    if (!inner->declarations.empty() || !inner->blocks.empty()) {
-      dumped.blocks.push_back(
-          hir::DumpedBlock{
-              .identifier = std::string{name},
-              .kind = kind,
-              .members = *std::move(inner)});
-    }
+    std::ranges::move(*inner, std::back_inserter(dumped));
     return {};
   };
+  // A concurrent assertion is no procedure the design runs and takes no body
+  // (LRM 16.14.5), so what its action declares is storage no route reaches
+  // yet, and a dump does not yet record it.
+  std::unordered_set<const slang::ast::Symbol*> assertion_actions;
   for (const slang::ast::Symbol& member : members.members()) {
-    if (!owner_->Owns(member)) {
+    const auto* proc = member.as_if<slang::ast::ProceduralBlockSymbol>();
+    if (proc == nullptr ||
+        StaticConcurrentAssertionOf(*proc).assertion == nullptr) {
       continue;
     }
-    if (const auto* block = member.as_if<slang::ast::StatementBlockSymbol>();
-        block != nullptr && !block->name.empty()) {
-      auto collected = collect_block(
-          *block, block->name,
-          block->blockKind == slang::ast::StatementBlockKind::Sequential
-              ? support::DumpScopeKind::kBegin
-              : support::DumpScopeKind::kFork);
+    for (const auto* block : proc->getBlocks()) assertion_actions.insert(block);
+  }
+  for (const slang::ast::Symbol& member : members.members()) {
+    if (!owner_->Owns(member) || assertion_actions.contains(&member)) {
+      continue;
+    }
+    if (const auto* block = member.as_if<slang::ast::StatementBlockSymbol>()) {
+      auto collected = collect_enclosed(*block, *block);
       if (!collected) return std::unexpected(std::move(collected.error()));
       continue;
     }
     if (const auto* subroutine = member.as_if<slang::ast::SubroutineSymbol>()) {
-      auto collected = collect_block(
-          *subroutine, subroutine->name,
-          subroutine->subroutineKind == slang::ast::SubroutineKind::Task
-              ? support::DumpScopeKind::kTask
-              : support::DumpScopeKind::kFunction);
+      auto collected = collect_enclosed(*subroutine, *subroutine);
       if (!collected) return std::unexpected(std::move(collected.error()));
       continue;
     }
@@ -1630,7 +1652,7 @@ auto StructuralScopeLowerer::CollectDumped(
     // named by the namespace wherever they are read (LRM 26.2, 6.21); a
     // design element's are storage of this scope's object.
     diag::Result<hir::Expr> named =
-        !hir::RootsAnObject(owner_->Unit().role)
+        !hir::RootsAnObject(owner_->Unit().definition)
             ? owner_
                   ->ResolveValueTarget(
                       frame, *value,
@@ -1646,7 +1668,7 @@ auto StructuralScopeLowerer::CollectDumped(
                   });
     if (!named) return std::unexpected(std::move(named.error()));
     const auto port = ports.find(value);
-    dumped.declarations.push_back(
+    dumped.push_back(
         hir::DumpedDeclaration{
             .identifier = std::string{value->name},
             .kind = *kind,
@@ -1654,7 +1676,8 @@ auto StructuralScopeLowerer::CollectDumped(
             .range = DumpedRangeOf(value->getType()),
             .port = port != ports.end() ? std::optional(port->second)
                                         : std::nullopt,
-            .named = frame.Exprs().Add(*std::move(named))});
+            .named = frame.Exprs().Add(*std::move(named)),
+            .enclosing = enclosing});
   }
   return dumped;
 }

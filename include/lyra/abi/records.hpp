@@ -5,8 +5,10 @@
 #include <optional>
 
 #include "lyra/base/source_location.hpp"
+#include "lyra/base/time.hpp"
 #include "lyra/support/dump_kind.hpp"
 #include "lyra/support/scope_execution.hpp"
+#include "lyra/support/scope_kind.hpp"
 #include "lyra/value/constant_span.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/object_ref.hpp"
@@ -33,31 +35,89 @@ namespace lyra::abi {
 struct ObjectDefinition;
 struct ConstructionTable;
 
-// The time unit or precision power a scope reports when it declares no
-// timescale of its own (the synthetic `$root`). The engine's design-global
-// precision minimum ignores it, so a purely structural node does not pull the
-// simulation tick finer.
-inline constexpr std::int8_t kUnspecifiedTimePower = 127;
+// What a definition is, as every scope of the run that comes from it answers
+// (LRM 37.10): what kind of definition, its name, the library it was read
+// from (LRM 33.3) and the cell its text lies in (LRM 33.2.1), its time unit
+// and precision as powers of ten (LRM Table 20-2) -- its own timescale, the
+// one it inherits, or the default where the source states none (LRM
+// 3.14.2.3) -- and whether the source stated them, since only a stated one
+// takes part in the design's global precision (LRM 3.14.3), and the
+// directives in force where it was written: whether `celldefine marks it
+// (LRM 22.10), the net type of an implicit net (LRM 22.8), the pull of an
+// unconnected input (LRM 22.9), and whether its subroutines are automatic
+// (LRM 23.2.1). A generate block's class answers its definition's. Each
+// enumeration is held as the number a constant record writes.
+struct DefinitionRecord {
+  const char* name = nullptr;
+  const char* library = nullptr;
+  const char* cell = nullptr;
+  std::int8_t time_unit_power = kDefaultTimeUnitPower;
+  std::int8_t time_precision_power = kDefaultTimePrecisionPower;
+  std::uint8_t time_stated = 0;
+  std::uint8_t kind = 0;
+  std::uint8_t default_net_type = 0;
+  std::uint8_t unconnected_drive = 0;
+  std::uint8_t celldefine = 0;
+  std::uint8_t automatic = 0;
 
-// A scope's immutable constant properties, known when its class is declared
-// and never computed by running generated code: its effective time unit and
-// precision as powers of ten (LRM Table 20-2), each the scope's own timescale
-// or the one it inherits (LRM 3.14.2.3), how what an instance starts is run
-// (LRM 24.3.1), and the kind of scope a value dump records it as (LRM
-// 21.7.2.1 `scope_type`), each held as the number a constant record writes.
-struct ScopeMetadata {
-  std::int8_t time_unit_power = kUnspecifiedTimePower;
-  std::int8_t time_precision_power = kUnspecifiedTimePower;
-  std::uint8_t execution =
-      static_cast<std::uint8_t>(support::ScopeExecution::kDesign);
-  std::uint8_t dumped_as =
-      static_cast<std::uint8_t>(support::DumpScopeKind::kModule);
-
-  [[nodiscard]] auto Execution() const -> support::ScopeExecution {
-    return static_cast<support::ScopeExecution>(execution);
+  [[nodiscard]] auto Kind() const -> support::DefinitionKind {
+    return static_cast<support::DefinitionKind>(kind);
   }
-  [[nodiscard]] auto DumpedAs() const -> support::DumpScopeKind {
-    return static_cast<support::DumpScopeKind>(dumped_as);
+  [[nodiscard]] auto TimeStated() const -> bool {
+    return time_stated != 0;
+  }
+  [[nodiscard]] auto DefaultNetType() const -> support::DefaultNetType {
+    return static_cast<support::DefaultNetType>(default_net_type);
+  }
+  [[nodiscard]] auto UnconnectedDrive() const -> support::UnconnectedDrive {
+    return static_cast<support::UnconnectedDrive>(unconnected_drive);
+  }
+  [[nodiscard]] auto Execution() const -> support::ScopeExecution {
+    return support::ExecutionOf(Kind());
+  }
+};
+
+// A scope one scope declares that the run builds -- an instance, an array of
+// them, a generate block, the blocks a loop generate counts out -- or the
+// implicit root of the design hierarchy, as a constant of the declaring
+// scope's class: what kind of declaration it is, the name it declares as a
+// hierarchical name writes it (LRM 23.6), and whether that name is the one
+// LRM 27.6 gives a generate block the source did not name. A scope a
+// construction builds is handed the declaration it fills, and is named by it.
+struct ElaboratedScopeRecord {
+  const char* name = nullptr;
+  std::uint8_t kind = 0;
+  std::uint8_t implicitly_named = 0;
+
+  [[nodiscard]] auto Kind() const -> support::ElaboratedScopeKind {
+    return static_cast<support::ElaboratedScopeKind>(kind);
+  }
+  // Whether its name is LRM 27.6's rather than the source's (LRM 37.85).
+  [[nodiscard]] auto ImplicitlyNamed() const -> bool {
+    return implicitly_named != 0;
+  }
+};
+
+// A scope one scope declares that the run builds nothing for, the declaration
+// being the whole of it (LRM 37.12), as a constant of the declaring scope's
+// class: what kind of declaration it is, the name it declares as a
+// hierarchical name writes it (LRM 23.6) -- empty for a block the source did
+// not name, which no written name can be -- the one it lies inside, if any,
+// and where it stands among the class's declarations. A unit holds each
+// distinct constant once, so the position is what keeps two declarations alike
+// in all else two records.
+struct LexicalScopeRecord {
+  const char* name = nullptr;
+  const LexicalScopeRecord* enclosing = nullptr;
+  std::uint32_t position = 0;
+  std::uint8_t kind = 0;
+
+  [[nodiscard]] auto Kind() const -> support::LexicalScopeKind {
+    return static_cast<support::LexicalScopeKind>(kind);
+  }
+  // Whether the source named the scope.
+  [[nodiscard]] auto Named() const -> bool {
+    return *name != '\0';
   }
 };
 
@@ -85,19 +145,31 @@ struct ScopeCallable {
 // The body a class of the design hierarchy runs on an instance in one phase.
 using ScopePhase = void (*)(runtime::GcObject*);
 
+// What a scope of the design hierarchy states of itself (LRM 37.10, 37.12): the
+// definition it comes from and the scopes it declares. A class of the hierarchy
+// states it of its instances; a package and the compilation unit's scope, each
+// one object of the run, state it once, as a constant handed to the library as
+// its storage is installed.
+struct ScopeDeclarations {
+  const DefinitionRecord* definition = nullptr;
+  value::ConstantSpan<const ElaboratedScopeRecord*> elaborated;
+  value::ConstantSpan<const LexicalScopeRecord*> lexical;
+};
+
 // What a class of the design hierarchy tells the library about its instances:
-// its timescale, the DPI-C exports an instance answers, and what an instance
-// does in each phase the library drives it through. A DPI-C export's name is
-// the program-global C identifier the foreign side calls (LRM 35.4), so the
-// foreign side has no type to reach the body through and finds it by that
-// name. The phases are listed in the order they run -- every route and alias
-// is bound, then every cell takes the value its declaration gives it (LRM
-// 10.5), then every process is created (LRM 9.2) -- and then what an instance
-// describes to a value dump starting (LRM 21.7.1.2); each is entered on the
-// instance, as every entry of a class's definition is. What a unit publishes of
-// its object has none of this, since no instance is built of it.
+// what they state of themselves, the DPI-C exports an instance answers, and
+// what an instance does in each phase the library drives it through. A DPI-C
+// export's name is the program-global C identifier the foreign side calls
+// (LRM 35.4), so the foreign side has no type to reach the body through and
+// finds it by that name. The phases are listed in the order they run -- every
+// route and alias is bound, then every cell takes the value its declaration
+// gives it (LRM 10.5), then every process is created (LRM 9.2) -- and then what
+// an instance describes to a value dump starting (LRM 21.7.1.2); each is
+// entered on the instance, as every entry of a class's definition is. What a
+// unit publishes of its object has none of this, since no instance is built of
+// it.
 struct ScopeInfo {
-  ScopeMetadata metadata;
+  ScopeDeclarations scope_declarations;
   value::ConstantSpan<ScopeCallable> exports;
   ScopePhase resolve = nullptr;
   ScopePhase initialize = nullptr;
@@ -231,8 +303,12 @@ struct ConstructionTable {
 // name (LRM 21.7.2.3 `$var`); a port is where the thing is what a port of the
 // class connects, with the port's direction, which an extended dump reads its
 // values by, and its position among the ports, which it records them in (LRM
-// 21.7.3.1, 21.7.4.2).
+// 21.7.3.1, 21.7.4.2). A static variable of a block, a task or a function lies
+// in that procedural scope, whose record the entry names, and a dump writes a
+// `$scope` around it for each named one from there out to the instance (LRM
+// 21.7.2.3).
 struct DumpEntry {
+  const LexicalScopeRecord* enclosing = nullptr;
   const char* identifier = nullptr;
   std::int64_t left = 0;
   std::int64_t right = 0;
@@ -271,30 +347,55 @@ struct DumpEntry {
   }
 };
 
-// A named block, task or function a class declares, whose static variables
-// are the class's own storage (LRM 21.7.2.3 `$scope`).
-struct DumpBlock {
-  const char* identifier = nullptr;
-  std::uint8_t kind = 0;
-
-  [[nodiscard]] auto Kind() const -> support::DumpScopeKind {
-    return static_cast<support::DumpScopeKind>(kind);
-  }
-};
-
 // Hands each member of a record to `visit`, in the order the record declares
 // them, as Boost.PFR's `for_each_field` does. A structured binding names every
 // member, so a record gaining or losing one stops these from compiling until
 // they say so.
 
 template <typename Visit>
-constexpr void ForEachField(const ScopeMetadata& record, const Visit& visit) {
-  const auto& [time_unit_power, time_precision_power, execution, dumped_as] =
+constexpr void ForEachField(
+    const DefinitionRecord& record, const Visit& visit) {
+  const auto& [name, library, cell, time_unit_power, time_precision_power, time_stated, kind, default_net_type, unconnected_drive, celldefine, automatic] =
       record;
+  visit(name);
+  visit(library);
+  visit(cell);
   visit(time_unit_power);
   visit(time_precision_power);
-  visit(execution);
-  visit(dumped_as);
+  visit(time_stated);
+  visit(kind);
+  visit(default_net_type);
+  visit(unconnected_drive);
+  visit(celldefine);
+  visit(automatic);
+}
+
+template <typename Visit>
+constexpr void ForEachField(
+    const ElaboratedScopeRecord& record, const Visit& visit) {
+  const auto& [name, kind, implicitly_named] = record;
+  visit(name);
+  visit(kind);
+  visit(implicitly_named);
+}
+
+template <typename Visit>
+constexpr void ForEachField(
+    const LexicalScopeRecord& record, const Visit& visit) {
+  const auto& [name, enclosing, position, kind] = record;
+  visit(name);
+  visit(enclosing);
+  visit(position);
+  visit(kind);
+}
+
+template <typename Visit>
+constexpr void ForEachField(
+    const ScopeDeclarations& record, const Visit& visit) {
+  const auto& [definition, elaborated, lexical] = record;
+  visit(definition);
+  visit(elaborated);
+  visit(lexical);
 }
 
 template <typename Visit>
@@ -306,9 +407,9 @@ constexpr void ForEachField(const ScopeCallable& record, const Visit& visit) {
 
 template <typename Visit>
 constexpr void ForEachField(const ScopeInfo& record, const Visit& visit) {
-  const auto& [metadata, exports, resolve, initialize, create_processes, describe] =
+  const auto& [scope_declarations, exports, resolve, initialize, create_processes, describe] =
       record;
-  visit(metadata);
+  visit(scope_declarations);
   visit(exports);
   visit(resolve);
   visit(initialize);
@@ -379,8 +480,9 @@ constexpr void ForEachField(
 
 template <typename Visit>
 constexpr void ForEachField(const DumpEntry& record, const Visit& visit) {
-  const auto& [identifier, left, right, width, kind, has_range, has_port, port_direction, port_position] =
+  const auto& [enclosing, identifier, left, right, width, kind, has_range, has_port, port_direction, port_position] =
       record;
+  visit(enclosing);
   visit(identifier);
   visit(left);
   visit(right);
@@ -390,13 +492,6 @@ constexpr void ForEachField(const DumpEntry& record, const Visit& visit) {
   visit(has_port);
   visit(port_direction);
   visit(port_position);
-}
-
-template <typename Visit>
-constexpr void ForEachField(const DumpBlock& record, const Visit& visit) {
-  const auto& [identifier, kind] = record;
-  visit(identifier);
-  visit(kind);
 }
 
 template <typename Visit>

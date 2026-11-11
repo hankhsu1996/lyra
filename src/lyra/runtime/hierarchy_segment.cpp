@@ -3,16 +3,25 @@
 #include <cstdint>
 #include <span>
 #include <string>
-#include <utility>
+
+#include "lyra/abi/records.hpp"
+#include "lyra/support/scope_kind.hpp"
 
 namespace lyra::runtime {
 
-HierarchySegment::HierarchySegment() = default;
+const abi::ElaboratedScopeRecord kDesignRootRecord{
+    .name = support::kDesignRootName.data(),
+    .kind =
+        static_cast<std::uint8_t>(support::ElaboratedScopeKind::kDesignRoot),
+    .implicitly_named = 0};
+
+HierarchySegment::HierarchySegment() : declaration_(&kDesignRootRecord) {
+}
 
 HierarchySegment::HierarchySegment(
-    std::string base_name, std::span<const std::int64_t> indices)
-    : base_name_(std::move(base_name)),
-      indices_(indices.begin(), indices.end()) {
+    const abi::ElaboratedScopeRecord* declaration,
+    std::span<const std::int64_t> indices)
+    : declaration_(declaration), indices_(indices.begin(), indices.end()) {
 }
 
 HierarchySegment::HierarchySegment(const HierarchySegment&) = default;
@@ -24,7 +33,7 @@ auto HierarchySegment::operator=(HierarchySegment&&) noexcept
 HierarchySegment::~HierarchySegment() = default;
 
 auto HierarchySegment::Display() const -> std::string {
-  std::string out(base_name_);
+  std::string out(declaration_->name);
   for (const std::int64_t index : indices_) {
     out.push_back('[');
     out.append(std::to_string(index));

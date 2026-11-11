@@ -40,6 +40,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/frontend/library_texts.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/dump.hpp"
@@ -47,6 +48,7 @@
 #include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/verify.hpp"
@@ -55,11 +57,11 @@
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
-#include "lyra/lowering/ast_to_hir/library_cell.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
+#include "lyra/lowering/ast_to_hir/unit_definition.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 #include "lyra/profiling/time_trace.hpp"
@@ -91,11 +93,17 @@ auto ScopeLoweredFor(const slang::ast::Symbol& home)
 }
 
 // The identifier the source declares `home` under. An instance body is one
-// elaboration of a definition and carries the definition's; a `$unit` scope
-// (LRM 3.12.1) was declared under none.
+// elaboration of a definition and carries the definition's. A compilation
+// unit's scope is named `$unit` (LRM 3.12.1), and one read from a text of
+// Lyra's by the unit it is compiled as.
 auto SourceNameOf(const slang::ast::Symbol& home) -> std::string {
   if (const auto* body = home.as_if<slang::ast::InstanceBodySymbol>()) {
     return std::string(body->getDefinition().name);
+  }
+  if (const auto* unit = home.as_if<slang::ast::CompilationUnitSymbol>()) {
+    const frontend::LibraryText* text = frontend::LibraryTextOf(*unit);
+    if (text == nullptr) return "$unit";
+    return std::string(text->unit);
   }
   return std::string(home.name);
 }
@@ -104,16 +112,15 @@ auto SourceNameOf(const slang::ast::Symbol& home) -> std::string {
 
 UnitLowerer::UnitLowerer(
     const LoweringFacts& facts, const slang::ast::Symbol& home,
-    Environment environment, hir::LoweringRef names, hir::UnitRole role)
+    Environment environment, hir::LoweringRef names)
     : facts_(facts),
       home_(&home),
       scope_(&ScopeLoweredFor(home)),
       environment_(std::move(environment)),
       unit_{std::move(names.unit), {}},
       lowering_(std::move(names.lowering)) {
-  unit_.role = role;
+  unit_.definition = UnitDefinitionOf(home, scope_->asSymbol());
   unit_.source_name = SourceNameOf(home);
-  unit_.library_binding = LibraryBindingOf(scope_->asSymbol());
   unit_.fixed_name = FixedNameOf(*scope_);
   signature_.unit_name = unit_.name;
 }
@@ -635,7 +642,7 @@ void UnitLowerer::DeclareSubroutine(
     }
   };
   if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
-    if (hir::RootsAnObject(unit_.role)) {
+    if (hir::RootsAnObject(unit_.definition)) {
       MapForeignImportScope(sub, frame);
     }
     declare_defaults();
@@ -1078,7 +1085,7 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
     -> hir::ScopePublication {
   // A namespace roots no object, so no class lays out what it publishes;
   // another unit reaches its declarations by name (LRM 26.3).
-  if (!hir::RootsAnObject(unit_.role)) return {};
+  if (!hir::RootsAnObject(unit_.definition)) return {};
   const ScopePublicationRecord& published = PublicationOf(scope);
   const auto unbound = [] [[noreturn]] (std::string_view what) {
     throw InternalError(

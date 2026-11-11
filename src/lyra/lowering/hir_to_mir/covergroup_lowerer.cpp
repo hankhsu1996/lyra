@@ -21,6 +21,7 @@
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
+#include "lyra/hir/unit_definition.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -190,7 +191,7 @@ auto TypeMethod(
 auto TakesDeclaringInstance(
     const UnitLowerer& unit_lowerer, hir::CovergroupId ref) -> bool {
   return unit_lowerer.Hir().covergroups.IsOwn(ref) &&
-         hir::RootsAnObject(unit_lowerer.Hir().role);
+         hir::RootsAnObject(unit_lowerer.Hir().definition);
 }
 
 // Where an object holds the item `item` names: the class of the lineage
@@ -771,10 +772,9 @@ class ClassWriter {
                       : std::format("{}.{}", below.text, own_name));
             },
             [&](const hir::WholeName&) {
-              const std::string& home = u_->Hir().source_name;
               return e.String(
                   std::format(
-                      "{}::{}", home.empty() ? std::string{"$unit"} : home,
+                      "{}::{}", u_->Hir().source_name,
                       support::DisplayOf(path)));
             }},
         decl_->declared_in);
@@ -2112,9 +2112,7 @@ void CovergroupLowerer::DeclareShape(
       .implements = {},
       .self_pointer_type = unit_lowerer.SelfPointerTo(class_id_),
       .declaring_instance = std::nullopt,
-      .time_resolution = {},
-      .execution = {},
-      .dumped_as = {},
+      .scope_declarations = std::nullopt,
       .ctor_prefix_params = {},
       .fields = {},
       .named_fields = {},
@@ -2226,7 +2224,7 @@ auto CovergroupLowerer::PopulateBodies(
   // A covergroup a design element's unit declares keeps its code in the body
   // realizing the scope its object's instance is, and its class is what every
   // body of the unit states alike.
-  if (hir::RootsAnObject(unit_lowerer.Hir().role)) {
+  if (hir::RootsAnObject(unit_lowerer.Hir().definition)) {
     MoveCodeIntoBody(
         unit_lowerer, class_id_, cls, declaring_frame,
         declaring_scope_->PublishedClassId());

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <span>
-#include <string_view>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
@@ -13,19 +12,13 @@
 
 namespace lyra::compiler {
 
-// The name of the synthesized design-root unit. Its constructor elaborates the
-// design -- it builds the top-level units as its owned children -- so the host
-// constructs this one unit and the runtime walks the tree it builds. A leading
-// `$` keeps it distinct from every source unit (an SV identifier cannot begin
-// with `$`); a backend maps it to a target-language identifier when emitting.
-inline constexpr std::string_view kDesignRootUnitName = "$root";
-
 // Writes the design-root unit: a compilation unit the compiler synthesizes
 // rather than finds in the source, whose constructor elaborates the design (it
-// builds the top-level units as its owned children) and whose Initialize phase
-// brings up the packages' variables (LRM 26.2 / 10.5). Being a unit, it goes on
-// down the same vertical as the rest, so what it answers with is its semantic
-// model and a caller that wants it executable takes it the rest of the way.
+// builds the top-level units as its owned children) and installs the
+// packages' storage, and which runs their initializers in its Initialize phase
+// (LRM 26.2, 10.5). Being a unit, it goes on down the same vertical as the
+// rest, so what it answers with is its semantic model and a caller that wants
+// it executable takes it the rest of the way.
 //
 // It is a referrer like any other, and what the units published is the whole
 // of what it reads of another unit's declarations: each top states the class

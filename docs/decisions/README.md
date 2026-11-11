@@ -1120,6 +1120,20 @@ the detail lives in the entry itself.
   running context import was written. Stubs answering an error, `<cstdarg>` in the runtime, acting
   where `vpi_control` is called, and a copy of the canonical types are rejected. Revised 2026-11-09:
   the DPI routines.
+- [a-scope-is-named-by-its-declaration](a-scope-is-named-by-its-declaration.md) -- every class of
+  the hierarchy, every package and every compilation unit's scope states a record of each scope it
+  declares and of the definition it comes from; a constructed scope's segment is the record it
+  fills; every generate block is constructed, an unnamed one named `genblk<n>`; a package and
+  `$unit` hand their records to the run as their storage is installed; one reader serves every name
+  from outside the design; no record says where a scope was written. A name copied per instance, an
+  object per procedural scope, places in the records, a name table of packages and a bring-up entry
+  of its own for a namespace's records are rejected.
+- [a-vpi-handle-is-a-reference-to-an-object](a-vpi-handle-is-a-reference-to-an-object.md) -- a VPI
+  object is a constructed scope, a namespace, the set one declaration builds, or a declaration as
+  the scope around it holds it; a handle refers to one and two handles to it compare equal; an
+  iteration keeps what its relation answered; a relation or property not yet reached answers nothing
+  with an error. A handle that is a scope's address, an object per procedural scope and a handle
+  holding the names it answers are rejected.
 
 ### Compile-time model and specialization
 
@@ -1506,6 +1520,8 @@ the detail lives in the entry itself.
   rejected. Revised 2026-11-05: the writer thread is also what an ending hands the dump to, the
   simulation publishing each unit whole with no lock between the sides, and a file the system
   refuses to write is reported where it was asked for, FST included through a carried libfst change.
+  Revised 2026-11-09: each recorded variable names the declaration it lies in, and a scope is
+  recorded as what the declaration it fills is.
 - [static-initializer-draws-from-its-container](static-initializer-draws-from-its-container.md) -- a
   randomization call draws from the generator installed for whatever is running, and a static
   initialization installs one just as a process does, seeded from the container the standard names

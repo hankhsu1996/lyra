@@ -7,6 +7,7 @@
 // the name alone does not.
 
 #include <string>
+#include <string_view>
 
 namespace slang::ast {
 class DefinitionSymbol;
@@ -34,15 +35,17 @@ namespace lyra::lowering::ast_to_hir {
 [[nodiscard]] auto CellName(const slang::ast::DefinitionSymbol& cell)
     -> std::string;
 
-// The library binding information LRM 33.7 has a `%l` print for the text of
-// `unit`, which is a design element's body, a package, or a compilation-unit
-// scope: the library that text was compiled into and the cell holding it, as
-// `library.cell`, with the default library written by its name. A module
-// declared inside another is no cell of its own, so its text is the enclosing
-// cell's. A package is a cell too (LRM 33.2.1). The compilation-unit scope is
-// none, and the standard gives its text no cell to print, so it is written
-// `$unit`, the name LRM 3.12.1 gives that scope.
-[[nodiscard]] auto LibraryBindingOf(const slang::ast::Symbol& unit)
-    -> std::string;
+// The library the text of `unit`, a design element's body, a package or a
+// compilation-unit scope, was compiled into (LRM 33.3).
+[[nodiscard]] auto LibraryOf(const slang::ast::Symbol& unit)
+    -> std::string_view;
+
+// The cell the text of `unit`, a design element's body, a package or a
+// compilation-unit scope, lies in, which with its library is what LRM 33.7 has
+// a `%l` print. A module declared inside another is no cell of its own, so its
+// text is the enclosing cell's. A package is a cell too (LRM 33.2.1). The
+// compilation-unit scope is none, and the standard gives its text no cell to
+// print, so it is written `$unit`, the name LRM 3.12.1 gives that scope.
+[[nodiscard]] auto CellOf(const slang::ast::Symbol& unit) -> std::string_view;
 
 }  // namespace lyra::lowering::ast_to_hir

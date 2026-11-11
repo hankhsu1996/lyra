@@ -5,7 +5,8 @@
 // action, so actions that wait run side by side: the one started at 5 is still
 // waiting when the one started at 15 begins. A variable declared automatic is
 // each run's own, and one declared in the block without a lifetime is static,
-// as in any static block, so every run shares it (LRM 6.21).
+// as in any static block, so every run shares it (LRM 6.21), and so does one
+// declared in a block named inside it.
 //
 // An attempt still pending when the run ends is owed the answer its statement
 // demanded of a pending result, which for an assert is that it holds, and that
@@ -22,6 +23,7 @@ module Top;
   int resumed[$];
   int resumed_with[$];
   int resumed_sharing[$];
+  int counted[$];
   int cover_resumed[$];
 
   int watched = 0;
@@ -38,6 +40,11 @@ module Top;
     mine = $time;
     shared = $time;
     started.push_back(mine);
+    begin : counting
+      int runs;
+      runs = runs + 1;
+      counted.push_back(runs);
+    end
     #12;
     resumed.push_back($time);
     resumed_with.push_back(mine);
@@ -75,6 +82,9 @@ module Top;
     if (resumed_sharing != ints_t'{15, 25, 35, 35})
       $fatal(1, "fail actions resumed sharing %p, expected 15 25 35 35",
              resumed_sharing);
+    if (counted != ints_t'{1, 2, 3, 4})
+      $fatal(1, "a named block's static counted %p, expected 1 2 3 4",
+             counted);
     if (disabled_at !== 5)
       $fatal(1, "the disabling action ran at %0d, expected 5", disabled_at);
     if (watched !== 0) $fatal(1, "the disabled block went on to its end");
