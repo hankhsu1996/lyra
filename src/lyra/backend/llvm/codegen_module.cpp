@@ -375,12 +375,13 @@ auto CodeGenModule::AppendTypeArg(
 namespace {
 
 // The arguments `value` is handed over as, appended to `args`: a structure's
-// fields one after another, read off it where `builder` stands, and any other
-// value as itself. A structure is expanded, as clang's `ABIArgInfo::Expand`
-// expands one, so every argument a call hands over is a scalar or an address,
-// which lands where its own kind says on every target; one handed whole lands
-// where that target's rules for structures put it. The type a callee is
-// declared at is expanded the same way.
+// fields one after another, each expanded in turn and read off it where
+// `builder` stands, and any other value as itself. A structure is expanded, as
+// clang's `ABIArgInfo::Expand` expands one, nested records included, so every
+// argument a call hands over is a scalar or an address, which lands where its
+// own kind says on every target; one handed whole lands where that target's
+// rules for structures put it. The type a callee is declared at is expanded
+// the same way.
 void AppendExpandedArgs(
     llvm::IRBuilderBase& builder, llvm::Value* value,
     std::vector<llvm::Value*>& args) {
@@ -390,7 +391,8 @@ void AppendExpandedArgs(
     return;
   }
   for (unsigned field = 0; field < structure->getNumElements(); ++field) {
-    args.push_back(builder.CreateExtractValue(value, {field}));
+    AppendExpandedArgs(
+        builder, builder.CreateExtractValue(value, {field}), args);
   }
 }
 

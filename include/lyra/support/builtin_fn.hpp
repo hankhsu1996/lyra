@@ -231,11 +231,11 @@ enum class BuiltinFn : std::uint16_t {
   // `Commit` says the attempt it begins has matured; `Tick` says the leading
   // clock ticked and runs the tick, which a commit later in the same time step
   // runs again for the attempt it opens (LRM 16.14.5, 16.14.6). What the tick
-  // runs reads, bounded by `LiveWord`, the Booleans
-  // every attempt shares, and `Run` steps each attempt's closure with them,
-  // settling those that answered and starting the statement each answer
-  // selects in Reactive where its control allowed it. `TestDisable` asks each
-  // closure whether its disable condition holds between ticks (LRM 16.12).
+  // runs reads, bounded by `LiveWord`, the Booleans every attempt shares, and
+  // `Run` steps each attempt's closure with them, settling those that answered
+  // and starting the statement each answer selects in Reactive where its
+  // control allowed it. `TestDisable` asks each closure whether its disable
+  // condition holds between ticks (LRM 16.12).
   // `Answer` and `ActionRuns` read what the one attempt an expect statement
   // holds came to, and whether the arm that answer selects may run.
   kEvaluationAttemptsInstall,
@@ -258,9 +258,9 @@ enum class BuiltinFn : std::uint16_t {
   // evaluation whose antecedent matched. `Count` / `PartOf` /
   // `ImplicationAnswer` / `ImplicationNonvacuous` / `Resolve` answer every
   // evaluation from the last back: how many there are, which part of the
-  // property one answers for, the
-  // least answer an implication's instances reached and whether any was
-  // nonvacuous (LRM 16.14.8), and its own answer and vacuity.
+  // property one answers for, the least answer an implication's instances
+  // reached and whether any was nonvacuous (LRM 16.14.8), and its own answer
+  // and vacuity.
   kEvaluationAttemptSharedWord,
   kEvaluationAttemptLiveWord,
   kEvaluationAttemptNextUnstepped,
@@ -618,7 +618,9 @@ enum class BuiltinFn : std::uint16_t {
   kAssertionControlAllocate,
   kAssertionControlCommit,
   // LRM 20.11 what the assertion control tasks set for one statement.
-  // `RegisterIn` and `Register` make it one the tasks select, held by an
+  // `Describe` states which statement it controls, where its storage is
+  // constructed; `RegisterIn` and `Register` make it one the tasks select, held
+  // by an
   // instance or by none, `RegisterWithin` one a task naming a block it stands
   // in selects; `Allowed` is what an execution beginning now may do, as
   // `support::kAssertion*` bits. `SubmitObserved` and `SubmitFinal` queue a
@@ -628,6 +630,7 @@ enum class BuiltinFn : std::uint16_t {
   // ride the executing process's deferred report queue, which the runtime
   // reads ambiently. The observed form takes where it is written, and is
   // refused once the slot is in its Postponed region.
+  kAssertionControlDescribe,
   kAssertionControlRegisterIn,
   kAssertionControlRegister,
   kAssertionControlRegisterWithin,

@@ -94,6 +94,41 @@ module Top;
     end
   end
 
+  // A sampled value function reads a saved value as the attempt saved it, its
+  // past value included, and a static variable as of the tick the function
+  // names (LRM 16.5.1, 16.9.3). `hist` steps at every tick and `hist_d1` holds
+  // what `hist` was a tick before, so each attempt reads its own iteration's
+  // bit of the previous tick -- a tick after it starts, in its action block,
+  // and through a saved constant cast. Each reads a tick that has happened,
+  // since what an automatic contributes before one is a reading two clauses
+  // disagree on (LRM 16.9.3's default sampled value against 16.5.1's current
+  // value); the action block's bits 0 and 1 of `hist` agree under both.
+  logic [3:0] hist = 4'b0011;
+  logic [3:0] hist_d1 = 4'b0011;
+  int past_fails[$];
+  bit action_past[$];
+  int cast_fails = 0;
+  int past_passes = 0;
+  int cast_passes = 0;
+  always @(posedge clk) begin
+    hist <= hist + 4'd5;
+    hist_d1 <= hist;
+  end
+  always @(posedge clk) begin
+    for (int p = 0; p < 4; p++) begin
+      a_past: assert property (1 |=> $past(hist[p]) === hist_d1[p])
+        past_passes++;
+        else past_fails.push_back(p);
+      a_past_cast: assert property (1 |=> $past(hist[const'(p)]) === hist_d1[p]
+                                    && $past(const'(p * 7)) == 7 * p)
+        cast_passes++;
+        else cast_fails++;
+    end
+    for (int q = 0; q < 2; q++)
+      a_past_act: assert property (never)
+        else action_past.push_back($past(hist[q]) === $sampled(hist_d1[q]));
+  end
+
   // Ticks land at 5, 15, 25 and 35. Attempts that began at the last tick have
   // a consequent left to read when the run ends, and a weak one holds there.
   initial #40 $finish;
@@ -136,6 +171,24 @@ module Top;
     foreach (with_reset_fails[n])
       if (with_reset_fails[n] !== 0)
         $fatal(1, "a disabled attempt failed for m=%0d", with_reset_fails[n]);
+    if (past_fails.size() !== 0)
+      $fatal(1, "%0d attempts read the wrong past value, the first for p=%0d",
+             past_fails.size(), past_fails[0]);
+    // Attempts begun at 5, 15 and 25 reach their consequent before the run
+    // ends, four of each, and those begun at 35 may or may not run a pass
+    // action when the run ends.
+    if (past_passes < 12 || past_passes > 16 || cast_passes < 12 ||
+        cast_passes > 16)
+      $fatal(1, "the past reads passed %0d and %0d times, expected 12 to 16 each",
+             past_passes, cast_passes);
+    if (cast_fails !== 0)
+      $fatal(1, "%0d attempts misread a past value through a cast",
+             cast_fails);
+    if (action_past.size() !== 8)
+      $fatal(1, "%0d action blocks ran, expected 8", action_past.size());
+    foreach (action_past[n])
+      if (!action_past[n])
+        $fatal(1, "action block %0d read the wrong past value", n);
     $display("All checks passed");
   end
 endmodule

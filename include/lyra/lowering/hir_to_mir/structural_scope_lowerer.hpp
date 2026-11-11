@@ -13,6 +13,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/registry.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
@@ -25,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
+#include "lyra/lowering/hir_to_mir/kept_piece.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/scope_table.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -280,12 +282,12 @@ class StructuralScopeLowerer {
       const WalkFrame& frame, hir::RoutedDisableTargetRefId id) const
       -> mir::ExprId;
 
-  // The MIR field the history of one sampled expression became (LRM 16.9.3).
-  // It takes no hop count: a history is recorded on the scope whose process
-  // reads it, so the reader and the storage are always the same scope.
-  [[nodiscard]] auto TranslateSampledHistory(hir::SampledHistoryId hir_id) const
-      -> mir::FieldId {
-    return sampled_history_fields_.Get(hir_id);
+  // Where the sampled value functions among this scope's own expressions keep
+  // the pieces of their operands (LRM 16.9.3): fields of the instance, which
+  // the reads and the scope's own activation reach with no hop, since the call
+  // and its storage are the same scope's.
+  [[nodiscard]] auto Histories() const -> const KeptHistories& {
+    return kept_histories_;
   }
 
   // What a clocking block this scope declares keeps that the scope publishes
@@ -425,8 +427,7 @@ class StructuralScopeLowerer {
   ConstructionTableSource construction_table_ = ConstructionTableSupplied{};
   base::Translation<hir::StructuralDataObjectId, mir::ClassFieldTarget>
       data_object_fields_;
-  base::Translation<hir::SampledHistoryId, mir::FieldId>
-      sampled_history_fields_;
+  KeptHistories kept_histories_;
   base::Translation<hir::ClockingBlockId, ClockingFields> clocking_fields_;
   base::Translation<hir::InterfacePortId, mir::ClassFieldTarget>
       interface_port_fields_;

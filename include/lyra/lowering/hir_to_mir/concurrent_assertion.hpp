@@ -41,10 +41,11 @@ struct InstalledConcurrentAssertion {
 };
 
 // Lowers one concurrent assertion the scope declares into the callables it
-// takes -- what a tick runs, and the process of its clock, at each tick of
-// which the statement the assertion stands for is reached and its attempt
-// matures, its closure made (LRM 16.14.5, 16.14.6) --
-// adding each to `mir_class`. `statics` are the cells of its action block's
+// takes -- what a tick runs; the process of its clock, at each tick of which
+// the statement the assertion stands for is reached and its attempt matures
+// (LRM 16.14.5, 16.14.6); and where it is written, the process watching its
+// `disable iff` -- adding each to `mir_class`. `statics` are the cells of its
+// action block's
 // static-lifetime variables, whose initializers `bring_up` runs.
 [[nodiscard]] auto LowerConcurrentAssertion(
     StructuralScopeLowerer& lowerer, mir::Class& mir_class,

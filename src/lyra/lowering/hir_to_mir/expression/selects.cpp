@@ -1170,6 +1170,13 @@ auto PlaceContents(
   // values of the variables it reads (LRM 16.5.1), so the whole of what
   // reading one changes is which value each leaf answers with -- here, where
   // every leaf read is built.
+  // Read as of an earlier tick, every such leaf stands in a piece its history
+  // kept, which answered before the walk reached here.
+  if (!frame.prior_ticks.empty() && keeps_sampled_value) {
+    throw InternalError(
+        "PlaceContents: a read as of an earlier tick reached a variable no "
+        "history kept -- please report this as a bug");
+  }
   if (frame.reads_as_of == ReadsAsOf::kPreponed && keeps_sampled_value) {
     return frame.Builder().SampledWrapperContents(unit.types, cell_id, held);
   }

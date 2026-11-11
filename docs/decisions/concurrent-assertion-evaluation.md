@@ -231,7 +231,8 @@ to its successor, starting the instances its matches seed, and computing what ea
 property answers -- built from the design's own Boolean expressions read as of Preponed. The part
 that varies at run time is how many attempts are live and how many evaluations each carries, which
 is storage holding one position set per evaluation. The storage belongs to whatever replicates the
-statement, as its control does, whichever placement the statement has.
+statement, as its control does, whichever placement a concurrent assertion has; an expect's are the
+wait's its process stops at (D8).
 
 Revised 2026-11-07: each attempt is a **closure**, the attempt's code bound to the values it was
 made with (D5), and the storage keeps it, made in storage the attempts hand out as a region's
@@ -273,9 +274,10 @@ it makes rather than the variables under it. A read of a static variable is its 
 any assertion, and the sampled value of a constant cast is its argument's current value (LRM
 16.5.1), in every assertion. A static assertion and an expect save nothing: the first is queued
 nowhere and reads no automatic, and the second reads the process's variables as of the Observed
-region (D8). A sampled value function asking a past value of a constant cast is answered by its
-current value, which a history kept a tick at a time does not hold, so it is refused (an automatic
-variable's is answered without a history already).
+region (D8). A sampled value function in the property reads its operand where it stands, the
+attempt's saved values among it, and keeps a history only of the parts that read sampled variables
+([sampled-value-and-its-clock](sampled-value-and-its-clock.md) D5), so a past value of a saved value
+or of a constant cast is that value as it is now (LRM 16.5.1).
 
 Whether a matured attempt begins now or waits is answered against the time step, by the storage,
 which alone knows whether the step has ticked. Two events reach it: an attempt matures -- at every
@@ -360,9 +362,9 @@ the property is read strongly (Annex F.3.4.3.1).
 - The per-tick cost is proportional to the evaluations actually in flight. Each attempt is one
   closure the storage allocates where it matures, so an attempt that fails at the tick it starts --
   what an antecedent that does not match looks like, the common case in a real design -- costs that
-  allocation and nothing more. A Boolean no saved value bears on is read once a tick for every
-  attempt; one that reads a saved value is read by each attempt, which is the least a different
-  value can cost.
+  allocation and the attempt's own record of its evaluations, both ended as it settles. A Boolean no
+  saved value bears on is read once a tick for every attempt; one that reads a saved value is read
+  by each attempt, which is the least a different value can cost.
 - Where an assertion's Boolean expressions are the whole property, an attempt starts with one
   evaluation and resolves in one tick, so the general path answers the degenerate one with no case
   of its own.

@@ -339,18 +339,27 @@ class EvaluationAttempts {
   void SettleAtEndOfRun();
 
  private:
-  // What an answered attempt does. An installed assertion starts the
-  // statement its answer selects in the Reactive region of now (LRM 16.14.1).
-  // A held attempt keeps its answer for the process waiting on it.
+  // Where the storage stands: before the design activates it, nothing is known
+  // of how wide a position set is or whose control decides. Once activated,
+  // what an answered attempt does depends on the placement. An installed
+  // assertion starts the statement its answer selects in the Reactive region
+  // of now (LRM 16.14.1), and its control reaches these attempts again to
+  // abort them; a held attempt keeps its answer for the process waiting on
+  // it, and its control only decides which arm may run.
+  struct Uninstalled {};
   struct Installed {
     RuntimeEffects* effects;
+    const AssertionControl* control;
   };
   struct Held {
     support::AttemptAnswer answer;
     bool action_runs;
+    const AssertionControl* control;
   };
 
   void RequireInstalled() const;
+  // The control of an activated storage.
+  [[nodiscard]] auto Control() const -> const AssertionControl&;
   void Prepare(std::span<const std::uint64_t> start, OwnedCall step);
   void Open(EvaluationAttempt::Closure closure);
   void Conclude(EvaluationAttempt attempt);
@@ -365,9 +374,7 @@ class EvaluationAttempts {
   std::optional<SimTime> ticked_at_;
   // What a tick runs over the attempts.
   OwnedCall step_;
-  std::variant<Installed, Held> answered_;
-  const AssertionControl* control_ = nullptr;
-  bool installed_ = false;
+  std::variant<Uninstalled, Installed, Held> state_;
 };
 
 }  // namespace lyra::runtime

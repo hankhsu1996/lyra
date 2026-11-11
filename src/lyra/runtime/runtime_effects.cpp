@@ -298,7 +298,8 @@ void RuntimeEffects::KeepPendingInstance(
         "queued only while a process runs");
   }
   // Maturing tests every source once and drops the record, so what the
-  // instance then starts is beyond any later flush or `disable` (16.14.6.4).
+  // instance then starts is beyond any later flush or `disable` (LRM
+  // 16.14.6.4).
   observed.Emplace([validity = AssertionReportValidity(*process), queued_under,
                     instance = observed.Take(made)] {
     if (validity.Holds() && queued_under.Holds()) instance.Call();

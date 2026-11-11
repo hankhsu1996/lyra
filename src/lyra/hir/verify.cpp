@@ -41,7 +41,6 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/published_covergroup.hpp"
 #include "lyra/hir/range_bounds.hpp"
-#include "lyra/hir/sampled_history.hpp"
 #include "lyra/hir/scope_construction.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_data_object.hpp"
@@ -58,6 +57,15 @@
 namespace lyra::hir {
 
 namespace {
+
+// What a report of a body's reads names.
+void ReachReads(const Reads& reads, const auto& reach) {
+  ReachSensitivity(reads.cells, reach);
+  ReachSensitivity(reads.writes, reach);
+  for (const ExprId call : reads.calls) {
+    reach(call, OperandSlot::kReport);
+  }
+}
 
 auto KindOf(const Primary& primary) -> std::string_view {
   return std::visit(
@@ -405,7 +413,10 @@ struct Reacher {
       case OperandSlot::kSensitivity:
       case OperandSlot::kShared:
         return;
+      // A sampled value function's clock is evaluated by what keeps its
+      // history, which is one place as an operand is.
       case OperandSlot::kOperand:
+      case OperandSlot::kHistory:
         break;
     }
     std::vector<Place>& places = reaches->at.at(id.value);
@@ -418,8 +429,6 @@ struct Reacher {
         Reacher{.reaches = reaches, .from = id, .holder = {}});
   }
 
-  // The expressions a pattern holds are the constants it matches against (LRM
-  // 12.6), however deep in it they are written.
   void ThroughPattern(PatternId id) const {
     const Reacher from_pattern{
         .reaches = reaches,
@@ -475,6 +484,8 @@ auto DescribePlace(const base::Arena<Expr, ExprId>& exprs, const Place& place)
       return std::format("the sensitivity of {}", holder);
     case OperandSlot::kShared:
       return std::format("the value {} shares", holder);
+    case OperandSlot::kHistory:
+      return std::format("the clock of {}", holder);
   }
   throw InternalError("hir::DescribePlace: unknown OperandSlot");
 }
@@ -1450,7 +1461,8 @@ void VerifyCovergroup(
             Overloaded{
                 [](const SampledByCall&) {},
                 [&](const SampledOnEvent& on) {
-                  ReachEventControl(on.event, from_group);
+                  ReachEventControl(
+                      on.event, OperandSlot::kOperand, from_group);
                 },
                 [](const SampledAtBlocks&) {}},
             group.sampling);
@@ -1816,20 +1828,13 @@ void VerifyScope(
     ReachFromGenerate(reaches, generate);
   }
   ReachFromConnections(reaches, scope);
-  const auto from_history =
-      ReachFrom(reaches, std::nullopt, "a sampled history");
-  for (const SampledHistoryDecl& history : scope.sampled_histories) {
-    from_history(history.subject, OperandSlot::kOperand);
-    ReachEventControl(history.clock, from_history);
-    from_history(history.depth, OperandSlot::kOperand);
-  }
   const auto from_clocking =
       ReachFrom(reaches, std::nullopt, "a clocking block");
   const auto reach_delay = [&](const DelayControl& delay) {
     from_clocking(delay.duration, OperandSlot::kOperand);
   };
   for (const ClockingBlockDecl& clocking : scope.clocking_blocks) {
-    ReachEventControl(clocking.event, from_clocking);
+    ReachEventControl(clocking.event, OperandSlot::kOperand, from_clocking);
     for (const Clockvar& clockvar : clocking.clockvars) {
       from_clocking(clockvar.signal, OperandSlot::kOperand);
       ReachSensitivity(clockvar.signal_reads, from_clocking);

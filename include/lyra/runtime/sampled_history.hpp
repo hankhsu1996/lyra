@@ -39,7 +39,7 @@ class SampledHistory {
 
   // Fills every entry with the expression's default sampled value. Run where
   // the design is activated, which is after every declaration initializer has
-  // run (LRM 10.5) and before any procedure can write -- so what the subject
+  // run (LRM 10.5) and before any procedure can write -- so what the expression
   // evaluates to there is the default sampled value the standard defines (LRM
   // 16.5.1).
   void Install(const T& default_sampled_value, std::int64_t entries) {

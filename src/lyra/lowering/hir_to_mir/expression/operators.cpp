@@ -591,14 +591,15 @@ auto LowerHirConditionalExpr(
 namespace {
 
 // Where a conversion's operand is read. The sampled value of a constant cast
-// is its argument's current value (LRM 16.5.1), so an assertion reading as of
-// the Preponed region reads under one as it is now; every other conversion
-// reads its operand where the conversion is read.
+// is its argument's current value, past ones included (LRM 16.5.1), so an
+// assertion reading as of the Preponed region or of an earlier tick reads
+// under one as it is now; every other conversion reads its operand where the
+// conversion is read.
 auto OperandFrameOf(hir::ConversionKind kind, const WalkFrame& frame)
     -> WalkFrame {
   switch (kind) {
     case hir::ConversionKind::kConstCast:
-      return frame.WithReadsAsOf(ReadsAsOf::kNow);
+      return frame.WithReadsAsOf(ReadsAsOf::kNow).WithPriorTicks({});
     case hir::ConversionKind::kImplicit:
     case hir::ConversionKind::kPropagated:
     case hir::ConversionKind::kStreamingConcat:

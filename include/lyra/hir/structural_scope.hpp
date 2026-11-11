@@ -36,7 +36,6 @@
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/published_scope_ref.hpp"
-#include "lyra/hir/sampled_history.hpp"
 #include "lyra/hir/scope_class_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
@@ -746,12 +745,6 @@ struct StructuralScope {
   // design has run. What is armed is the whole cell, whatever part of it a read
   // selects.
   std::vector<ValueTarget> sampled_cells;
-  // What something in this scope reads across the ticks of a clocking event
-  // (LRM 16.9.3). A history's subject is an expression rather than a reference,
-  // so it lives in this scope's own arena the way a continuous assignment's
-  // does: nothing the user wrote evaluates it, and the process that does is
-  // synthesized a layer down.
-  base::Registry<SampledHistoryDecl, SampledHistoryId> sampled_histories;
   // The clocking blocks this scope declares (LRM 14.3). What samples their
   // inputs and carries their drives is no statement the source wrote, so it is
   // built a layer down from these.

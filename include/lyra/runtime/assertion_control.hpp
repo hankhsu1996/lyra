@@ -31,14 +31,16 @@ class Scope;
 // the generation they were made under and act only while it stands, so a
 // later On does not bring them back.
 //
-// It is also where the statement's pending reports are queued -- a deferred
-// assertion's action (LRM 16.4) and a violation report (LRM 12.4.2.1) -- since
-// this control's Kill withdraws both before they mature.
+// It is also where the statement's pending work is queued -- a deferred
+// assertion's action (LRM 16.4), a violation report (LRM 12.4.2.1) and a
+// procedural concurrent assertion's pending instance (LRM 16.14.6) -- since
+// this control's Kill withdraws each before it matures.
 //
-// It is usable from the moment its storage exists. A statement can run before
-// the design's storage is brought up -- a function a parameter is computed
-// with runs while the design is built -- and registering only makes the
-// control one a task can find.
+// It is usable from the moment it is described, which is where its storage is
+// constructed. A statement can run before the design's storage is brought up
+// -- a function a parameter is computed with runs while the design is built,
+// an initializer of one instance calls into another -- and registering only
+// makes the control one a task can find.
 class AssertionControl {
  public:
   AssertionControl();
@@ -48,16 +50,16 @@ class AssertionControl {
   auto operator=(AssertionControl&&) -> AssertionControl& = delete;
   ~AssertionControl();
 
-  // Makes it one the tasks select, as a statement of `type` stating
+  // States what it is the control of: a statement of `type` stating
   // `directive` (a `support::AssertionDirectiveType`, 0 for a statement that
-  // is no assertion) that the instance `in` holds.
-  void RegisterIn(
-      RuntimeEffects& effects, Scope* in, std::uint64_t type,
-      std::uint64_t directive);
+  // is no assertion), which is what the tasks select it by and what decides
+  // which kind of pending work it keeps.
+  void Describe(std::uint64_t type, std::uint64_t directive);
+  // Makes it one the tasks select, held by the instance `in`.
+  void RegisterIn(RuntimeEffects& effects, Scope* in);
   // The same for one no instance holds -- one a class method or a package
   // subroutine declares -- which only a task naming no scope reaches.
-  void Register(
-      RuntimeEffects& effects, std::uint64_t type, std::uint64_t directive);
+  void Register(RuntimeEffects& effects);
   // Makes it one a task naming `block` selects: a named block it stands in,
   // its own label's included (LRM 16.3).
   void RegisterWithin(RuntimeEffects& effects, const CancellationTarget* block);
@@ -99,8 +101,6 @@ class AssertionControl {
   }
 
  private:
-  void Describe(std::uint64_t type, std::uint64_t directive);
-
   EvaluationAttempts* attempts_ = nullptr;
   support::AssertionType type_ = support::AssertionType::kConcurrent;
   std::uint64_t directive_ = 0;

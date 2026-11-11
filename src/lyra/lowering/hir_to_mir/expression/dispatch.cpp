@@ -11,11 +11,11 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/clocking_block.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
@@ -28,8 +28,10 @@
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/tagged_union.hpp"
 #include "lyra/lowering/hir_to_mir/expression/view_names.hpp"
+#include "lyra/lowering/hir_to_mir/kept_piece.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/randomization.hpp"
+#include "lyra/lowering/hir_to_mir/sampled_history.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -125,16 +127,10 @@ auto LowerClassNew(
 template <ExprLowerer L>
 auto KeepsSampledValue(const L& lowerer, const hir::Expr& expr) -> bool {
   if constexpr (std::same_as<L, ProcessLowerer>) {
-    const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
-    const auto* var = primary == nullptr
-                          ? nullptr
-                          : std::get_if<hir::ProceduralVarRef>(&primary->data);
-    if (var != nullptr) {
-      return lowerer.HirBody().procedural_vars.Get(var->var).lifetime !=
-             hir::VariableLifetime::kAutomatic;
-    }
+    return !ReadsAutomaticVariable(&lowerer.HirBody(), expr);
+  } else {
+    return !ReadsAutomaticVariable(nullptr, expr);
   }
-  return true;
 }
 
 // A call of randomization reached from a structural expression.
@@ -347,10 +343,41 @@ auto LowerAsPlaceAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
       KeepsSampledValue(lowerer, expr));
 }
 
+// The sampled value of a clocking block input `expr` reads, where the walk
+// reads sampled values: what the block samples at its event (LRM 16.5.1),
+// rather than the input's own cell, which holds the previous event's sample
+// until the block writes it in the Observed region.
+template <ExprLowerer L>
+auto ReadOfClockingInput(
+    L& lowerer, const hir::Expr& expr, const WalkFrame& frame)
+    -> std::optional<diag::Result<mir::Expr>> {
+  if (frame.reads_as_of != ReadsAsOf::kPreponed) return std::nullopt;
+  const StructuralScopeLowerer* scope = nullptr;
+  if constexpr (std::same_as<L, ProcessLowerer>) {
+    if (!lowerer.HasEnclosingScope()) return std::nullopt;
+    scope = &lowerer.EnclosingScopeLowerer();
+  } else {
+    scope = &lowerer;
+  }
+  const std::optional<ClockingInputRef> input =
+      ClockingInputReadBy(*scope, expr);
+  if (!input.has_value()) return std::nullopt;
+  return LowerClockingSample(*scope, frame, *input);
+}
+
 template <ExprLowerer L>
 auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
   const diag::FailureContext at(expr.span);
+  // Read as of an earlier tick, a piece of the operand a history kept is what
+  // that history holds of that tick (LRM 16.9.3).
+  if (auto kept = ReadOfKeptPiece(lowerer, expr, frame.WithSpan(expr.span))) {
+    return mir::LoweredFrom(*std::move(kept), expr.span);
+  }
+  if (auto sample =
+          ReadOfClockingInput(lowerer, expr, frame.WithSpan(expr.span))) {
+    return mir::LoweredFrom(*std::move(sample), expr.span);
+  }
   return mir::LoweredFrom(
       LowerAsPlaceAt(lowerer, expr, frame.WithSpan(expr.span)), expr.span);
 }
@@ -500,6 +527,12 @@ template <ExprLowerer L>
 auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<AccessPath> {
   const diag::FailureContext at(expr.span);
+  if (auto kept = ReadOfKeptPiece(lowerer, expr, frame.WithSpan(expr.span))) {
+    if (!*kept) return std::unexpected(std::move(kept->error()));
+    return AccessPath{
+        .owner = frame.WithSpan(expr.span).Builder().Add(**std::move(kept)),
+        .descent = {}};
+  }
   return diag::PlacedAt(
       LowerAccessPathAt(lowerer, expr, frame.WithSpan(expr.span)), expr.span);
 }

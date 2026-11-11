@@ -149,7 +149,8 @@ enum class LibraryDecl : std::uint8_t {
   kEvaluationAttempt,
   // LRM 20.11 what the assertion control tasks set for one assertion, expect
   // statement or violation report. It is also where the statement's violation
-  // reports are kept until they mature (LRM 12.4.2.1), as a region's deferred
+  // reports (LRM 12.4.2.1) and a procedural concurrent assertion's pending
+  // instances (LRM 16.14.6) are kept until they mature, as a region's deferred
   // effects keep theirs.
   kAssertionControl,
   // LRM 27.4 the blocks one loop generate built, each under the value its

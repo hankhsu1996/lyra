@@ -248,6 +248,12 @@ struct WalkFrame {
   // 16.14.6.1). Empty elsewhere.
   std::span<const SavedValue> saved_values;
 
+  // The sampled value functions whose operand the walk is in, outermost first,
+  // each reading as of an earlier tick of its clock (LRM 16.9.3): a piece the
+  // outermost one's history kept, read through the rest, answers with what
+  // that history holds. Empty wherever the walk reads as of the current step.
+  std::span<const hir::ExprId> prior_ticks;
+
   // The local holding the problem of the call of `randomize()` a constraint is
   // stated to (LRM 18.5, 18.7), in a constraint block's body or the
   // constraints written with a call. Absent anywhere no constraint is lowered.
@@ -363,6 +369,13 @@ struct WalkFrame {
       -> WalkFrame {
     WalkFrame next = *this;
     next.saved_values = saved;
+    return next;
+  }
+
+  [[nodiscard]] auto WithPriorTicks(std::span<const hir::ExprId> through) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.prior_ticks = through;
     return next;
   }
 
@@ -483,10 +496,18 @@ struct WalkFrame {
 // representation and default, and `value` the LRM 10.5 value initializer. An
 // owner that brings both up in one body names it twice; a namespace unit keeps
 // them apart, so that every cell in the design is installed before any
-// initializer reads one. The two travel together wherever a cell comes up, and
-// pairing the wrong install with a value would put a cell's representation
+// initializer reads one. The phases travel together wherever a cell comes up,
+// and pairing the wrong install with a value would put a cell's representation
 // where its contents go, so they cross as one value.
+//
+// `construct` is where what a cell is, fixed when the program is compiled, is
+// written into it: before any initializer of the design runs, since one may
+// reach the cell through a call into another instance whose own install has
+// not run yet. An instance's is its constructor, which runs for the whole tree
+// before any scope brings its storage up; a namespace's is its install, which
+// runs for every namespace before any initializer does.
 struct StorageBringUp {
+  WalkFrame construct;
   WalkFrame install;
   WalkFrame value;
 };

@@ -19,38 +19,11 @@ namespace lyra::runtime {
 
 namespace {
 
-// What a statement of `type` gives the tasks to act on (LRM 20.11): an
-// assertion states a directive and has both checking and actions, an expect
-// statement has actions and no checking a task turns off, and a violation
-// report has checking and no actions.
-struct Controllable {
-  bool states_directive;
-  bool checks;
-  bool acts;
-};
-
-auto ControllableOf(support::AssertionType type) -> Controllable {
-  switch (type) {
-    case support::AssertionType::kConcurrent:
-    case support::AssertionType::kSimpleImmediate:
-    case support::AssertionType::kObservedDeferredImmediate:
-    case support::AssertionType::kFinalDeferredImmediate:
-      return {.states_directive = true, .checks = true, .acts = true};
-    case support::AssertionType::kExpect:
-      return {.states_directive = false, .checks = false, .acts = true};
-    case support::AssertionType::kUnique:
-    case support::AssertionType::kUnique0:
-    case support::AssertionType::kPriority:
-      return {.states_directive = false, .checks = true, .acts = false};
-  }
-  throw InternalError("AssertionControl: unknown assertion type");
-}
-
 // Whether `control` reaches a statement of `type` at all (LRM 20.11): On, Off
 // and Kill reach what checks, and the action controls what acts.
 auto Reaches(support::AssertionControlType control, support::AssertionType type)
     -> bool {
-  const Controllable controllable = ControllableOf(type);
+  const support::AssertionTypeInfo info = support::InfoOf(type);
   switch (control) {
     case support::AssertionControlType::kLock:
     case support::AssertionControlType::kUnlock:
@@ -58,14 +31,14 @@ auto Reaches(support::AssertionControlType control, support::AssertionType type)
     case support::AssertionControlType::kOn:
     case support::AssertionControlType::kOff:
     case support::AssertionControlType::kKill:
-      return controllable.checks;
+      return info.checks;
     case support::AssertionControlType::kPassOn:
     case support::AssertionControlType::kPassOff:
     case support::AssertionControlType::kFailOn:
     case support::AssertionControlType::kFailOff:
     case support::AssertionControlType::kNonvacuousOn:
     case support::AssertionControlType::kVacuousOff:
-      return controllable.acts;
+      return info.acts;
   }
   throw InternalError("AssertionControl: unknown control type");
 }
@@ -75,22 +48,17 @@ auto Reaches(support::AssertionControlType control, support::AssertionType type)
 AssertionControl::AssertionControl() = default;
 AssertionControl::~AssertionControl() = default;
 
-void AssertionControl::RegisterIn(
-    RuntimeEffects& effects, Scope* in, std::uint64_t type,
-    std::uint64_t directive) {
-  Describe(type, directive);
-  effects.AssertionControlsOfTheRun().AddIn(*this, *in);
-}
-
-void AssertionControl::Register(
-    RuntimeEffects& effects, std::uint64_t type, std::uint64_t directive) {
-  Describe(type, directive);
-  effects.AssertionControlsOfTheRun().Add(*this);
-}
-
 void AssertionControl::Describe(std::uint64_t type, std::uint64_t directive) {
   type_ = static_cast<support::AssertionType>(type);
   directive_ = directive;
+}
+
+void AssertionControl::RegisterIn(RuntimeEffects& effects, Scope* in) {
+  effects.AssertionControlsOfTheRun().AddIn(*this, *in);
+}
+
+void AssertionControl::Register(RuntimeEffects& effects) {
+  effects.AssertionControlsOfTheRun().Add(*this);
 }
 
 void AssertionControl::RegisterWithin(
@@ -107,7 +75,7 @@ auto AssertionControl::SelectedBy(
   if ((types & static_cast<std::uint64_t>(type_)) == 0) {
     return false;
   }
-  return !ControllableOf(type_).states_directive ||
+  return !support::InfoOf(type_).states_directive ||
          (directives & directive_) != 0;
 }
 

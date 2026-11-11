@@ -306,8 +306,7 @@ void EvaluationAttempts::Install(
     RuntimeEffects& effects, std::span<const std::uint64_t> start,
     OwnedCall step, AssertionControl* control) {
   Prepare(start, std::move(step));
-  answered_ = Installed{.effects = &effects};
-  control_ = control;
+  state_ = Installed{.effects = &effects, .control = control};
   control->Watch(*this);
   effects.RegisterConcurrentAssertion(*this);
 }
@@ -316,9 +315,10 @@ void EvaluationAttempts::Hold(
     std::span<const std::uint64_t> start, const AssertionControl* control,
     OwnedCall step) {
   Prepare(start, std::move(step));
-  answered_ =
-      Held{.answer = support::AttemptAnswer::kPending, .action_runs = false};
-  control_ = control;
+  state_ = Held{
+      .answer = support::AttemptAnswer::kPending,
+      .action_runs = false,
+      .control = control};
 }
 
 void EvaluationAttempts::Prepare(
@@ -331,7 +331,6 @@ void EvaluationAttempts::Prepare(
   }
   start_.assign(start.begin(), start.end());
   step_ = std::move(step);
-  installed_ = true;
 }
 
 auto EvaluationAttempts::Allocate(std::size_t size, std::size_t alignment) const
@@ -366,7 +365,7 @@ void EvaluationAttempts::Mature(EvaluationAttempt::Closure closure) {
 void EvaluationAttempts::Open(EvaluationAttempt::Closure closure) {
   // LRM 20.11: with checking off no attempt begins; the attempt keeps what its
   // control allowed as it began.
-  const std::uint64_t allowed = control_->Allowed();
+  const std::uint64_t allowed = Control().Allowed();
   if ((allowed & support::kAssertionChecks) == 0) {
     return;
   }
@@ -389,24 +388,25 @@ void EvaluationAttempts::Tick() {
 
 void EvaluationAttempts::Run(std::span<const std::uint64_t> shared) {
   RequireInstalled();
-  std::vector<EvaluationAttempt> kept;
-  kept.reserve(attempts_.size());
+  // The attempts still in flight are moved down over those that left, so a
+  // tick allocates nothing.
+  std::size_t kept = 0;
   for (EvaluationAttempt& attempt : attempts_) {
-    if (attempt.Stepped()) {
-      kept.push_back(std::move(attempt));
-      continue;
+    if (!attempt.Stepped()) {
+      if (attempt.Call(support::AttemptEvent::kTick, shared) != 0) {
+        ConcludeDisabled();
+        continue;
+      }
+      if (attempt.Settle()) {
+        Conclude(std::move(attempt));
+        continue;
+      }
     }
-    if (attempt.Call(support::AttemptEvent::kTick, shared) != 0) {
-      ConcludeDisabled();
-      continue;
-    }
-    if (attempt.Settle()) {
-      Conclude(std::move(attempt));
-      continue;
-    }
-    kept.push_back(std::move(attempt));
+    if (&attempts_[kept] != &attempt) attempts_[kept] = std::move(attempt);
+    ++kept;
   }
-  attempts_ = std::move(kept);
+  attempts_.erase(
+      attempts_.begin() + static_cast<std::ptrdiff_t>(kept), attempts_.end());
 }
 
 void EvaluationAttempts::Conclude(EvaluationAttempt attempt) {
@@ -432,8 +432,13 @@ void EvaluationAttempts::Conclude(EvaluationAttempt attempt) {
             held.answer = holds ? support::AttemptAnswer::kHolds
                                 : support::AttemptAnswer::kFails;
             held.action_runs = runs;
+          },
+          [](const Uninstalled&) {
+            throw InternalError(
+                "EvaluationAttempts::Conclude: an attempt settled before the "
+                "design activated its storage");
           }},
-      answered_);
+      state_);
 }
 
 void EvaluationAttempts::TestDisable() {
@@ -450,7 +455,7 @@ void EvaluationAttempts::TestDisable() {
 void EvaluationAttempts::ConcludeDisabled() {
   // A held attempt that is disabled answers nothing, so its process is never
   // woken (LRM 16.12, 16.17).
-  if (auto* held = std::get_if<Held>(&answered_)) {
+  if (auto* held = std::get_if<Held>(&state_)) {
     held->answer = support::AttemptAnswer::kDisabled;
   }
 }
@@ -470,7 +475,7 @@ auto EvaluationAttempts::LiveWord(std::uint64_t word) const -> std::uint64_t {
 
 auto EvaluationAttempts::Answer() const -> std::uint64_t {
   RequireInstalled();
-  const auto* held = std::get_if<Held>(&answered_);
+  const auto* held = std::get_if<Held>(&state_);
   if (held == nullptr) {
     throw InternalError(
         "EvaluationAttempts::Answer: an installed assertion starts the "
@@ -481,7 +486,7 @@ auto EvaluationAttempts::Answer() const -> std::uint64_t {
 
 auto EvaluationAttempts::ActionRuns() const -> bool {
   RequireInstalled();
-  const auto* held = std::get_if<Held>(&answered_);
+  const auto* held = std::get_if<Held>(&state_);
   if (held == nullptr) {
     throw InternalError(
         "EvaluationAttempts::ActionRuns: an installed assertion starts the "
@@ -492,7 +497,7 @@ auto EvaluationAttempts::ActionRuns() const -> bool {
 
 void EvaluationAttempts::SettleAtEndOfRun() {
   RequireInstalled();
-  if (!std::holds_alternative<Installed>(answered_)) {
+  if (!std::holds_alternative<Installed>(state_)) {
     throw InternalError(
         "EvaluationAttempts::SettleAtEndOfRun: a held attempt is never "
         "registered for the end of the run");
@@ -508,11 +513,24 @@ void EvaluationAttempts::SettleAtEndOfRun() {
 }
 
 void EvaluationAttempts::RequireInstalled() const {
-  if (!installed_) {
+  if (std::holds_alternative<Uninstalled>(state_)) {
     throw InternalError(
         "EvaluationAttempts: an assertion was reached before the design "
         "activated it, so nothing here knows how wide a position set is");
   }
+}
+
+auto EvaluationAttempts::Control() const -> const AssertionControl& {
+  return *std::visit(
+      Overloaded{
+          [](const Installed& installed) { return installed.control; },
+          [](const Held& held) { return held.control; },
+          [](const Uninstalled&) -> const AssertionControl* {
+            throw InternalError(
+                "EvaluationAttempts: an assertion was reached before the "
+                "design activated it, so no control decides what it may do");
+          }},
+      state_);
 }
 
 }  // namespace lyra::runtime

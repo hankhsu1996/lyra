@@ -16,18 +16,17 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/case_keyword.hpp"
-#include "lyra/hir/conversion.hpp"
 #include "lyra/hir/operands.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/lowering/hir_to_mir/assertion_automaton.hpp"
-#include "lyra/lowering/hir_to_mir/assertion_control.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
+#include "lyra/lowering/hir_to_mir/kept_piece.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -59,39 +58,25 @@ namespace {
 
 // Visits every expression one evaluated from `expr` is made of, `expr` among
 // them, as long as `visit` answers that it goes on below the one it was handed.
-// Only what is evaluated here is followed: a report or a sensitivity names
-// expressions another evaluation reads, and a shared name one another holder
-// evaluates.
+// Only what is evaluated where it stands is followed.
 struct OperandWalk {
   const hir::ProceduralBody* body;
   const std::function<bool(hir::ExprId)>* visit;
 
-  void operator()(hir::ExprId id, hir::OperandSlot slot) const {
-    switch (slot) {
-      case hir::OperandSlot::kOperand:
-        break;
-      case hir::OperandSlot::kReport:
-      case hir::OperandSlot::kSensitivity:
-      case hir::OperandSlot::kShared:
-        return;
-    }
+  void operator()(hir::ExprId id) const {
     if (!(*visit)(id)) return;
-    hir::ForEachOperand(body->exprs.Get(id).data, *this);
+    hir::ForEachOperand(body->exprs.Get(id).data, Evaluated());
   }
-  void ThroughPattern(hir::PatternId id) const {
-    hir::ForEachPatternOperand(body->patterns, id, [&](hir::ExprId e) {
-      (*this)(e, hir::OperandSlot::kOperand);
-    });
-  }
-  void ThroughProperty(hir::PropertyExprId id) const {
-    hir::ForEachPropertyOperand(
-        body->property_exprs, body->sequence_exprs, id,
-        [&](hir::ExprId e) { (*this)(e, hir::OperandSlot::kOperand); });
-  }
-  void ThroughConstraint(hir::ConstraintId id) const {
-    hir::ForEachConstraintOperand(body->constraints, id, [&](hir::ExprId e) {
-      (*this)(e, hir::OperandSlot::kOperand);
-    });
+  // The reach handing this walk what the holder it is given evaluates.
+  [[nodiscard]] auto Evaluated() const -> hir::EvaluatedOperands<OperandWalk> {
+    return {
+        .trees =
+            hir::TreeArenas{
+                .patterns = &body->patterns,
+                .properties = &body->property_exprs,
+                .sequences = &body->sequence_exprs,
+                .constraints = &body->constraints},
+        .visit = this};
   }
 };
 
@@ -102,22 +87,11 @@ void WalkStmt(const OperandWalk& walk, hir::StmtId id) {
   if (const auto* declared = std::get_if<hir::VarDeclStmt>(&stmt.data)) {
     const std::optional<hir::ExprId> init =
         walk.body->procedural_vars.Get(declared->var).init;
-    if (init.has_value()) walk(*init, hir::OperandSlot::kOperand);
+    if (init.has_value()) walk(*init);
   }
-  hir::ForEachExpr(stmt.data, walk);
+  hir::ForEachExpr(stmt.data, walk.Evaluated());
   hir::ForEachChildStmt(
       stmt.data, [&](hir::StmtId child) { WalkStmt(walk, child); });
-}
-
-// The variable `id` reads, where it is a read of a procedural variable.
-auto ProceduralVarRead(const hir::ProceduralBody& body, hir::ExprId id)
-    -> std::optional<hir::ProceduralVarId> {
-  const auto* primary = std::get_if<hir::PrimaryExpr>(&body.exprs.Get(id).data);
-  const auto* var = primary == nullptr
-                        ? nullptr
-                        : std::get_if<hir::ProceduralVarRef>(&primary->data);
-  if (var == nullptr) return std::nullopt;
-  return var->var;
 }
 
 auto Word(mir::Builder block, mir::TypeId type, std::uint64_t value)
@@ -950,7 +924,7 @@ auto BuildSharedSatisfiedPositions(
 auto LowerStepOverAttempts(
     ProcessLowerer& action, const WalkFrame& parent,
     const StaticCellBinding& attempts, const AssertionAutomaton& automaton,
-    const std::vector<bool>& reads_saved) -> diag::Result<mir::CallableCode> {
+    const std::vector<bool>& reads_saved) -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = action.Owner().Unit();
   mir::CallableCode code = mir::CallableCode::Defined(parent.span);
   CallableBindings bindings(unit, code);
@@ -974,7 +948,11 @@ auto LowerStepOverAttempts(
                       .receiver = place(body)},
                   {*shared}, unit.builtins.void_type))});
   body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  return code;
+  return mir::CallableDecl{
+      .code = std::move(code),
+      .foreign = std::nullopt,
+      .virtual_dispatch = std::nullopt,
+      .defining_unit = std::nullopt};
 }
 
 // Starts the statement `arm` an attempt's answer selects, as an execution of
@@ -1022,8 +1000,8 @@ struct AttemptCode {
   const hir::PropertySpec* spec = nullptr;
   const AssertionAutomaton* automaton = nullptr;
   const std::vector<bool>* reads_saved = nullptr;
-  std::optional<ActionArm> pass;
-  std::optional<ActionArm> fail;
+  ActionArm pass;
+  ActionArm fail;
   diag::SourceSpan written_at;
 };
 
@@ -1134,12 +1112,11 @@ auto BuildAttemptClosure(
     at.Builder().AppendIfThen(*condition, std::move(held));
     return block;
   };
-  const auto outcome = [&](const std::optional<ActionArm>& arm) -> ArmBody {
+  const auto outcome = [&](const ActionArm& arm) -> ArmBody {
     return [&](const WalkFrame& in) -> diag::Result<mir::Block> {
       mir::Block block;
-      if (!arm.has_value()) return block;
       auto started = LowerActionStartInto(
-          action, in.WithBlock(&block), *arm, code.written_at);
+          action, in.WithBlock(&block), arm, code.written_at);
       if (!started) return std::unexpected(std::move(started.error()));
       return block;
     };
@@ -1174,6 +1151,26 @@ auto BuildAttemptClosure(
   return closure.Build(body.ReadLocal(answer, word_type));
 }
 
+// An attempt of `code` becoming due (LRM 16.14.5, 16.14.6), as a statement of
+// `frame`'s block: its closure, reading `saved`, made in the attempts, which
+// open it now or at the next tick of its clock.
+auto AppendAttemptBecomingDue(
+    ProcessLowerer& action, const WalkFrame& frame, const AttemptCode& code,
+    std::span<const SavedValue> saved, const StaticCellBinding& attempts)
+    -> diag::Result<void> {
+  mir::CompilationUnit& unit = action.Owner().Unit();
+  auto made = BuildAttemptClosure(action, frame, code, saved);
+  if (!made) return std::unexpected(std::move(made.error()));
+  mir::Builder block = frame.Builder();
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.Add(BuildEmplacedClosure(
+              unit, frame,
+              BuildStaticStorageAddress(unit, block, frame, attempts),
+              *std::move(made)))});
+  return {};
+}
+
 // LRM 16.12 disables an evaluation attempt if the disable condition is true at
 // any time between the start of that attempt and its end, both inclusive. That
 // interval is not made of ticks, so the condition is watched for change rather
@@ -1205,7 +1202,7 @@ auto LowerDisableWatcher(
     const auto* var = std::get_if<hir::ProceduralVarRef>(&entry.cell);
     const bool is_saved =
         var != nullptr && std::ranges::any_of(saved, [&](hir::ExprId id) {
-          return ProceduralVarRead(action.HirBody(), id) == var->var;
+          return ProceduralVarRead(action.HirBody().exprs.Get(id)) == var->var;
         });
     if (!is_saved) watched.push_back(entry);
   }
@@ -1251,12 +1248,11 @@ auto LowerDisableWatcher(
 // `matured_at_each_tick` is given, an attempt of that code matures at each
 // tick, its closure made in the attempts.
 auto LowerProcess(
-    ProcessLowerer& action, const StructuralScopeLowerer& lowerer,
-    const WalkFrame& ctor_frame, const hir::EventControl& clock,
-    const StaticCellBinding& attempts,
+    ProcessLowerer& action, const WalkFrame& ctor_frame,
+    const hir::EventControl& clock, const StaticCellBinding& attempts,
     const std::optional<AttemptCode>& matured_at_each_tick)
     -> diag::Result<mir::CallableDecl> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::CompilationUnit& unit = action.Owner().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
   const mir::TypeId self_ptr_type =
       ctor_frame.current_class.cls->self_pointer_type;
@@ -1278,15 +1274,11 @@ auto LowerProcess(
   if (!wait) return std::unexpected(std::move(wait.error()));
   body_block_builder.AppendStmt(*std::move(wait));
   if (matured_at_each_tick.has_value()) {
-    auto made =
-        BuildAttemptClosure(action, body_frame, *matured_at_each_tick, {});
-    if (!made) return std::unexpected(std::move(made.error()));
-    const mir::ExprId committed = body_block_builder.Add(BuildEmplacedClosure(
-        unit, body_frame,
-        BuildStaticStorageAddress(
-            unit, body_block_builder, body_frame, attempts),
-        *std::move(made)));
-    body_block_builder.AppendStmt(mir::ExprStmt{.expr = committed});
+    if (auto due = AppendAttemptBecomingDue(
+            action, body_frame, *matured_at_each_tick, {}, attempts);
+        !due) {
+      return std::unexpected(std::move(due.error()));
+    }
   }
 
   ClosureBuilder closure(unit, body_frame, support::ClosureKind::kFn);
@@ -1302,11 +1294,9 @@ auto LowerProcess(
                   {}, void_type))});
 
   mir::Expr keeper = BuildRegionEffectsCallExpr(
-      lowerer.Owner(), body_block_builder,
-      support::BuiltinFn::kObservedEffects);
+      action.Owner(), body_block_builder, support::BuiltinFn::kObservedEffects);
   const mir::ExprId kept = body_block_builder.Add(BuildEmplacedClosure(
-      lowerer.Owner().Unit(), body_frame, std::move(keeper),
-      closure.BuildVoid()));
+      unit, body_frame, std::move(keeper), closure.BuildVoid()));
   body_block_builder.AppendStmt(mir::ExprStmt{.expr = kept});
 
   mir::Builder entry_builder(code.Body(), body_frame.span);
@@ -1328,87 +1318,35 @@ auto LowerProcess(
       .defining_unit = std::nullopt};
 }
 
-auto AddCallable(mir::Class& mir_class, mir::CallableCode code)
-    -> mir::CallableId {
-  return mir_class.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
-}
-
-// The automatic variables declared in the scopes around the statement whose
-// control is `control`, from the body's root down: what a procedural
-// assertion saves where it reads one (LRM 16.14.6.1). A variable its action
-// block declares lies in a scope below the statement's and is its own.
-auto EnclosingAutomatics(
-    const hir::ProceduralBody& body,
-    const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
-        scopes,
-    hir::ControlledAssertionId control) -> std::vector<hir::ProceduralVarId> {
-  std::vector<hir::ProceduralScopeId> path;
-  const auto descend = [&](const auto& self_ref,
-                           hir::ProceduralScopeId id) -> bool {
-    path.push_back(id);
-    const hir::ProceduralScopeDecl& scope = scopes.Get(id);
-    if (std::ranges::find(scope.controlled_assertions, control) !=
-        scope.controlled_assertions.end()) {
-      return true;
-    }
-    for (const hir::ProceduralScopeId child : scope.child_scopes) {
-      if (self_ref(self_ref, child)) return true;
-    }
-    path.pop_back();
-    return false;
-  };
-  if (!descend(descend, body.root_scope)) {
-    throw InternalError(
-        "EnclosingAutomatics: a concurrent assertion statement's control is "
-        "declared by no scope of its body");
-  }
-  std::vector<hir::ProceduralVarId> automatics;
-  for (const hir::ProceduralScopeId id : path) {
-    for (const hir::ProceduralVarId var : scopes.Get(id).declarations) {
-      if (body.procedural_vars.Get(var).lifetime ==
-          hir::VariableLifetime::kAutomatic) {
-        automatics.push_back(var);
-      }
-    }
-  }
-  return automatics;
-}
-
-// Whether `kind` is a constant cast, whose value a procedural assertion saves
-// (LRM 16.14.6.1).
-auto IsConstCast(hir::ConversionKind kind) -> bool {
-  switch (kind) {
-    case hir::ConversionKind::kConstCast:
-      return true;
-    case hir::ConversionKind::kImplicit:
-    case hir::ConversionKind::kPropagated:
-    case hir::ConversionKind::kStreamingConcat:
-    case hir::ConversionKind::kExplicit:
-    case hir::ConversionKind::kBitstreamCast:
-      return false;
-  }
-  throw InternalError("IsConstCast: unknown hir::ConversionKind");
-}
-
 // LRM 16.14.6.1: what a procedural concurrent assertion saves where its
 // statement is reached -- each read of an automatic variable of the procedure
 // that its property, its disable condition or its action block makes, and
 // each constant cast in any of them, as the value it makes rather than the
 // variables under it. The attempt reads them as they were, every tick and in
 // its action block, as a lambda's by-value captures are read.
+//
+// What it saves of is each automatic variable the scopes around the statement
+// declare, from the body's root down to the scope declaring the statement's
+// control, which is where the statement stands. A variable its action block
+// declares lies in a scope below that and is its own.
 auto SavedOperands(
-    const hir::ProceduralBody& body,
-    const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
-        scopes,
-    const hir::ConcurrentAssertion& assertion) -> std::vector<hir::ExprId> {
+    const ProcessLowerer& process, const hir::ConcurrentAssertion& assertion)
+    -> std::vector<hir::ExprId> {
+  const hir::ProceduralBody& body = process.HirBody();
   const AssertionDispositions dispositions = DispositionsOf(assertion);
-  const std::vector<hir::ProceduralVarId> around =
-      EnclosingAutomatics(body, scopes, dispositions.control);
+  const auto& control = std::get<AssertionControlCell>(
+      process.ControlCellOf(dispositions.control).of);
+  const auto& scopes =
+      process.EnclosingScopeLowerer().HirScope().procedural_scopes;
+  std::vector<hir::ProceduralVarId> around;
+  for (const hir::ProceduralScopeId id : control.within) {
+    for (const hir::ProceduralVarId var : scopes.Get(id).declarations) {
+      if (body.procedural_vars.Get(var).lifetime ==
+          hir::VariableLifetime::kAutomatic) {
+        around.push_back(var);
+      }
+    }
+  }
   std::vector<hir::ExprId> saved;
   const std::function<bool(hir::ExprId)> visit = [&](hir::ExprId id) {
     if (const auto* conversion =
@@ -1417,7 +1355,8 @@ auto SavedOperands(
       saved.push_back(id);
       return false;
     }
-    const std::optional<hir::ProceduralVarId> var = ProceduralVarRead(body, id);
+    const std::optional<hir::ProceduralVarId> var =
+        ProceduralVarRead(body.exprs.Get(id));
     if (var.has_value() && std::ranges::find(around, *var) != around.end()) {
       saved.push_back(id);
       return false;
@@ -1425,9 +1364,9 @@ auto SavedOperands(
     return true;
   };
   const OperandWalk walk{.body = &body, .visit = &visit};
-  walk.ThroughProperty(dispositions.spec->body);
+  walk.Evaluated().ThroughProperty(dispositions.spec->body);
   if (dispositions.spec->disable.has_value()) {
-    walk(dispositions.spec->disable->condition, hir::OperandSlot::kOperand);
+    walk(dispositions.spec->disable->condition);
   }
   for (const std::optional<hir::StmtId>& arm :
        {dispositions.pass_stmt, dispositions.fail_stmt}) {
@@ -1450,7 +1389,7 @@ auto PositionsReadingSaved(
     };
     const OperandWalk walk{.body = &body, .visit = &visit};
     for (const hir::ExprId conjunct : automaton.positions[position].conjuncts) {
-      walk(conjunct, hir::OperandSlot::kOperand);
+      walk(conjunct);
     }
     reads_saved[position] = reads;
   }
@@ -1482,15 +1421,13 @@ auto AnalyzeAssertion(
 
 // The same for an assertion a procedure holds as a statement, which saves what
 // it reads of the procedure's automatics and its constant casts (LRM
-// 16.14.6.1). The scope's machinery and the statement each ask, and both are
-// answered from the statement alone.
+// 16.14.6.1). It is a function of the statement alone, so the scope's
+// machinery and the statement, which each ask, are given one answer.
 auto AnalyzeProceduralAssertion(
-    const hir::ProceduralBody& body,
-    const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
-        scopes,
-    const hir::ConcurrentAssertion& assertion) -> AnalyzedAssertion {
+    const ProcessLowerer& process, const hir::ConcurrentAssertion& assertion)
+    -> AnalyzedAssertion {
   return AnalyzeAssertion(
-      body, assertion, SavedOperands(body, scopes, assertion));
+      process.HirBody(), assertion, SavedOperands(process, assertion));
 }
 
 // The code of each attempt of an installed assertion, which starts the
@@ -1513,8 +1450,7 @@ auto InstalledAttemptCode(
 // condition. A static assertion's process makes the closure of each
 // attempt it begins.
 auto LowerMachinery(
-    ProcessLowerer& action, const StructuralScopeLowerer& lowerer,
-    mir::Class& mir_class, const WalkFrame& ctor_frame,
+    ProcessLowerer& action, mir::Class& mir_class, const WalkFrame& ctor_frame,
     const AnalyzedAssertion& analyzed,
     const std::optional<AttemptCode>& matured_at_each_tick)
     -> diag::Result<InstalledConcurrentAssertion> {
@@ -1527,7 +1463,7 @@ auto LowerMachinery(
   if (!step) return std::unexpected(std::move(step.error()));
 
   auto process = LowerProcess(
-      action, lowerer, ctor_frame, dispositions.spec->clock, attempts,
+      action, ctor_frame, dispositions.spec->clock, attempts,
       matured_at_each_tick);
   if (!process) return std::unexpected(std::move(process.error()));
   std::vector<mir::CallableId> processes;
@@ -1542,7 +1478,7 @@ auto LowerMachinery(
 
   return InstalledConcurrentAssertion{
       .processes = std::move(processes),
-      .step = AddCallable(mir_class, *std::move(step)),
+      .step = mir_class.callables.Add(*std::move(step)),
       .start = analyzed.automaton.parts.front().start,
       .control = action.ControlCellOf(dispositions.control),
       .attempts = attempts};
@@ -1565,7 +1501,7 @@ auto LowerConcurrentAssertion(
   const AnalyzedAssertion analyzed =
       AnalyzeAssertion(decl.action, decl.assertion, {});
   auto built = LowerMachinery(
-      action, lowerer, mir_class, ctor_frame, analyzed,
+      action, mir_class, ctor_frame, analyzed,
       InstalledAttemptCode(decl.action, analyzed, decl.span));
   if (!built) return std::unexpected(std::move(built.error()));
 
@@ -1586,10 +1522,9 @@ auto LowerProceduralConcurrentAssertion(
   ProcessLowerer action(
       lowerer.Owner(), &lowerer, body, std::nullopt, ctor_frame, scopes,
       statics);
-  const AnalyzedAssertion analyzed = AnalyzeProceduralAssertion(
-      body, lowerer.HirScope().procedural_scopes, assertion);
-  return LowerMachinery(
-      action, lowerer, mir_class, ctor_frame, analyzed, std::nullopt);
+  const AnalyzedAssertion analyzed =
+      AnalyzeProceduralAssertion(action, assertion);
+  return LowerMachinery(action, mir_class, ctor_frame, analyzed, std::nullopt);
 }
 
 auto LowerExpectStmt(
@@ -1717,8 +1652,8 @@ auto LowerExpectStmt(
           .spec = &expect.spec,
           .automaton = &automaton,
           .reads_saved = &reads_saved,
-          .pass = std::nullopt,
-          .fail = std::nullopt,
+          .pass = RunsNothing{},
+          .fail = RunsNothing{},
           .written_at = span},
       {});
   if (!made) return std::unexpected(std::move(made.error()));
@@ -1837,9 +1772,8 @@ auto LowerProceduralConcurrentAssertionStmt(
     -> diag::Result<mir::Stmt> {
   mir::CompilationUnit& unit = process.Owner().Unit();
   const hir::ProceduralBody& body = process.HirBody();
-  const AnalyzedAssertion analyzed = AnalyzeProceduralAssertion(
-      body, process.EnclosingScopeLowerer().HirScope().procedural_scopes,
-      assertion);
+  const AnalyzedAssertion analyzed =
+      AnalyzeProceduralAssertion(process, assertion);
   const AssertionDispositions& dispositions = analyzed.dispositions;
 
   // A pending instance that matures begins an attempt (LRM 16.14.6): its
@@ -1850,20 +1784,12 @@ auto LowerProceduralConcurrentAssertionStmt(
   auto saved = process.SaveValues(analyzed.saved, scope_frame);
   if (!saved) return std::unexpected(std::move(saved.error()));
   ClosureBuilder instance(unit, scope_frame, support::ClosureKind::kFn);
-  auto made = BuildAttemptClosure(
-      process, instance.Frame(), InstalledAttemptCode(body, analyzed, span),
-      *saved);
-  if (!made) return std::unexpected(std::move(made.error()));
-  const StaticCellBinding& attempts =
-      process.AttemptsCellOf(dispositions.control);
-  mir::Builder instance_body = instance.Body();
-  instance_body.AppendStmt(
-      mir::ExprStmt{
-          .expr = instance_body.Add(BuildEmplacedClosure(
-              unit, instance.Frame(),
-              BuildStaticStorageAddress(
-                  unit, instance_body, instance.Frame(), attempts),
-              *std::move(made)))});
+  if (auto due = AppendAttemptBecomingDue(
+          process, instance.Frame(), InstalledAttemptCode(body, analyzed, span),
+          *saved, process.AttemptsCellOf(dispositions.control));
+      !due) {
+    return std::unexpected(std::move(due.error()));
+  }
 
   // The control keeps it in the Observed region, on the condition that no
   // flush point, `disable` of its label or of the process, or Kill reaches it

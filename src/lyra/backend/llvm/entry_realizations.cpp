@@ -1085,6 +1085,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kAssertionControlCommit:
     case support::BuiltinFn::kEvaluationAttemptsAllocate:
     case support::BuiltinFn::kEvaluationAttemptsCommit:
+    case support::BuiltinFn::kAssertionControlDescribe:
     case support::BuiltinFn::kAssertionControlRegisterIn:
     case support::BuiltinFn::kAssertionControlRegister:
     case support::BuiltinFn::kAssertionControlRegisterWithin:

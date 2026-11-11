@@ -185,6 +185,8 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_assertion_control_allocate",
       &lyra_rt_assertion_control_allocate);
   add("lyra_rt_assertion_control_commit", &lyra_rt_assertion_control_commit);
+  add("lyra_rt_assertion_control_describe",
+      &lyra_rt_assertion_control_describe);
   add("lyra_rt_assertion_control_register_in",
       &lyra_rt_assertion_control_register_in);
   add("lyra_rt_assertion_control_register",

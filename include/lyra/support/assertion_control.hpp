@@ -21,25 +21,53 @@ enum class AssertionType : std::uint8_t {
   kPriority = 128,
 };
 
-// Whether a statement of `type` has attempts in flight that storage of its own
-// holds: a concurrent assertion begins one at a tick and each spans later
-// ticks (LRM 16.14.1). An expect statement's one attempt is held by the wait
-// its process stops at (LRM 16.17), and every other kind answers where it is
-// reached.
-[[nodiscard]] constexpr auto HasEvaluationAttempts(AssertionType type) -> bool {
+// What a statement of one type is, to the assertion control tasks and to the
+// storage it is given (LRM 20.11). An assertion states a directive and has
+// both checking and actions; an expect statement has actions and no checking
+// a task turns off; a violation report has checking and no actions. A
+// concurrent assertion alone has attempts in flight that storage of its own
+// holds: it begins one at a tick and each spans later ticks (LRM 16.14.1),
+// while an expect statement's one attempt is held by the wait its process
+// stops at (LRM 16.17), and every other kind answers where it is reached.
+struct AssertionTypeInfo {
+  bool states_directive;
+  bool checks;
+  bool acts;
+  bool holds_attempts;
+};
+
+[[nodiscard]] constexpr auto InfoOf(AssertionType type) -> AssertionTypeInfo {
   switch (type) {
     case AssertionType::kConcurrent:
-      return true;
+      return {
+          .states_directive = true,
+          .checks = true,
+          .acts = true,
+          .holds_attempts = true};
     case AssertionType::kSimpleImmediate:
     case AssertionType::kObservedDeferredImmediate:
     case AssertionType::kFinalDeferredImmediate:
+      return {
+          .states_directive = true,
+          .checks = true,
+          .acts = true,
+          .holds_attempts = false};
     case AssertionType::kExpect:
+      return {
+          .states_directive = false,
+          .checks = false,
+          .acts = true,
+          .holds_attempts = false};
     case AssertionType::kUnique:
     case AssertionType::kUnique0:
     case AssertionType::kPriority:
-      return false;
+      return {
+          .states_directive = false,
+          .checks = true,
+          .acts = false,
+          .holds_attempts = false};
   }
-  throw InternalError("support::HasEvaluationAttempts: unknown AssertionType");
+  throw InternalError("support::InfoOf: unknown AssertionType");
 }
 
 // What an assertion states (LRM 16.2, Table 20-7), each the bit of

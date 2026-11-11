@@ -467,4 +467,9 @@ struct Stmt {
   auto operator==(const Stmt&) const -> bool = default;
 };
 
+// The concurrent assertion `data` is, where a procedure reaches one (LRM
+// 16.14.6), and nothing for any other statement.
+[[nodiscard]] auto ConcurrentAssertionOf(const StmtData& data)
+    -> std::optional<ConcurrentAssertion>;
+
 }  // namespace lyra::hir

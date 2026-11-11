@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <slang/ast/Expression.h>
+#include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -21,24 +22,30 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// How one read answers for its part of an expression's sampled value (LRM
-// 16.5.1).
-enum class SampledAnswer {
-  // An automatic variable answers with what it holds now, and so does a `ref`
-  // formal that is not `ref static`, being usable only where an automatic
-  // variable is (LRM 13.5.2).
-  kCurrent,
-  // A constant is no variable: its value is the same at every time, so it is
-  // its own sampled value and nothing has to answer for it.
-  kFixed,
-  // Anything else answers from a cell this scope arms, and so does a constant
-  // read from a cell, which is read as a variable is.
-  kArmed,
-};
-
-auto SampledAnswerOf(
-    const UnitLowerer& unit_lowerer, const slang::ast::ValueSymbol& symbol,
-    diag::SourceSpan span) -> diag::Result<SampledAnswer> {
+// Whether one read answers for its part of an expression's sampled value
+// (LRM 16.5.1) from a cell the reading scope arms. Three kinds of read answer
+// without one: an automatic variable with what it holds now, as a `ref` formal
+// that is not `ref static` does, being usable only where an automatic is (LRM
+// 13.5.2); a constant, which is its own value at every time; and a clocking
+// block input, whose sampled value is the one its block samples (LRM 14.13),
+// computed from what the block itself arms. Anything else does, a constant
+// read from a cell among them.
+auto AnswersFromArmedCell(
+    const UnitLowerer& unit_lowerer, const slang::ast::Scope& reader,
+    const slang::ast::ValueSymbol& symbol, diag::SourceSpan span)
+    -> diag::Result<bool> {
+  if (symbol.kind == slang::ast::SymbolKind::ClockVar) {
+    // The sample is computed where the block is declared, so a read through
+    // the hierarchy would have to reach the block's signal from there.
+    const slang::ast::Scope* block = symbol.getParentScope();
+    if (block == nullptr || block->asSymbol().getParentScope() != &reader) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a sampled value of an input of a clocking block another scope "
+          "declares is not yet supported");
+    }
+    return false;
+  }
   const auto* var = symbol.as_if<slang::ast::VariableSymbol>();
   // A property of an object has a lifetime too, but it is the object's rather
   // than a call's, and the clause does not reach it.
@@ -49,7 +56,7 @@ auto SampledAnswerOf(
           "a sampled value of a 'ref static' argument is not yet supported");
     }
     if (!HasStaticStorage(*var)) {
-      return SampledAnswer::kCurrent;
+      return false;
     }
   }
   auto resolved = ResolveReferent(symbol, span);
@@ -57,12 +64,10 @@ auto SampledAnswerOf(
   switch (resolved->kind) {
     case Referent::kParameterConstant:
       return unit_lowerer.ReadsParameterFromCell(
-                 resolved->symbol->as<slang::ast::ParameterSymbol>())
-                 ? SampledAnswer::kArmed
-                 : SampledAnswer::kFixed;
+          resolved->symbol->as<slang::ast::ParameterSymbol>());
     case Referent::kEnumConstant:
     case Referent::kSpecparam:
-      return SampledAnswer::kFixed;
+      return false;
     case Referent::kVariableStorage:
     case Referent::kNetStorage:
     // What names no cell this scope can reach is still a read that has to
@@ -75,12 +80,12 @@ auto SampledAnswerOf(
     case Referent::kClockingOutput:
     case Referent::kAssertionLocal:
     case Referent::kStructureMember:
-      return SampledAnswer::kArmed;
+      return true;
     case Referent::kNotAValue:
       break;
   }
   throw InternalError(
-      "SampledAnswerOf: a read resolved to a declaration that denotes no "
+      "AnswersFromArmedCell: a read resolved to a declaration that denotes no "
       "value");
 }
 
@@ -89,7 +94,7 @@ auto SampledAnswerOf(
 auto ArmSampledReads(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const slang::ast::Expression& expr, diag::SourceSpan span)
-    -> diag::Result<SampledReads> {
+    -> diag::Result<void> {
   if (frame.reader_scope == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -99,23 +104,13 @@ auto ArmSampledReads(
   const auto& reads = unit_lowerer.Sensitivity().AnalyzeReads(
       expr, frame.reader_scope->asSymbol());
   std::vector<AccessedPart> armed;
-  SampledReads counted;
   for (const AccessedPart& read : reads) {
-    auto answer = SampledAnswerOf(unit_lowerer, *read.symbol, span);
-    if (!answer) return std::unexpected(std::move(answer.error()));
-    switch (*answer) {
-      case SampledAnswer::kCurrent:
-        ++counted.current;
-        break;
-      case SampledAnswer::kFixed:
-        break;
-      case SampledAnswer::kArmed:
-        armed.push_back(read);
-        break;
-    }
+    auto answers = AnswersFromArmedCell(
+        unit_lowerer, *frame.reader_scope, *read.symbol, span);
+    if (!answers) return std::unexpected(std::move(answers.error()));
+    if (*answers) armed.push_back(read);
   }
-  counted.armed = armed.size();
-  if (armed.empty()) return counted;
+  if (armed.empty()) return {};
   if (frame.current_structural_scope == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -139,7 +134,7 @@ auto ArmSampledReads(
   for (hir::ValueTarget& cell : *cells) {
     sampled.push_back(std::move(cell));
   }
-  return counted;
+  return {};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

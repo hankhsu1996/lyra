@@ -6,6 +6,7 @@
 #include <variant>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/assertion.hpp"
 #include "lyra/hir/constraint.hpp"
@@ -20,21 +21,20 @@
 
 namespace lyra::hir {
 
-// How a holder names an expression. An operand is what the holder evaluates,
-// and is a place the expression is reached at. A function's report and a
-// sensitivity describe what a body reads or waits on, often in terms of
-// expressions the body itself holds: the report evaluates what it names in an
-// evaluation of its own, ahead of the body, and a sensitivity evaluates
-// nothing, so naming one there is no place the body's evaluation reaches it;
-// it is held only to naming an expression the arena has. A shared name is an
-// expression another holder evaluates, named for the value that evaluation
-// gives: the instance a synchronous drive's target reaches, which its landing
-// is made on too.
+// How a holder names an expression. `kOperand` is an expression the holder
+// evaluates where it stands. A function's report evaluates what it names in
+// an evaluation of its own, ahead of the body; a sensitivity evaluates
+// nothing; a shared name is the value another holder's evaluation gives, the
+// instance a synchronous drive's target reaches; and a sampled value
+// function's clock is evaluated by what keeps its history, at each tick, never
+// where the call stands. Only an operand and a clock are places an expression
+// is evaluated at; the others are held only to naming one the arena has.
 enum class OperandSlot : std::uint8_t {
   kOperand,
   kReport,
   kSensitivity,
-  kShared
+  kShared,
+  kHistory
 };
 
 void ReachSensitivityEntry(const SensitivityEntry& entry, const auto& reach) {
@@ -54,28 +54,20 @@ void ReachSensitivity(
   }
 }
 
-void ReachReads(const Reads& reads, const auto& reach) {
-  ReachSensitivity(reads.cells, reach);
-  ReachSensitivity(reads.writes, reach);
-  for (const ExprId call : reads.calls) {
-    reach(call, OperandSlot::kReport);
-  }
-}
-
-void ReachEventControl(const EventControl& control, const auto& reach) {
+// The expressions an event control evaluates, each in `evaluated`.
+void ReachEventControl(
+    const EventControl& control, OperandSlot evaluated, const auto& reach) {
   for (const EventEntry& entry : control.entries) {
     std::visit(
         Overloaded{
             [&](const ValueChange& c) {
-              reach(c.signal, OperandSlot::kOperand);
+              reach(c.signal, evaluated);
               ReachSensitivity(c.cells, reach);
             },
-            [&](const NamedEventTrigger& t) {
-              reach(t.event, OperandSlot::kOperand);
-            }},
+            [&](const NamedEventTrigger& t) { reach(t.event, evaluated); }},
         entry.occurrence);
     if (entry.condition.has_value()) {
-      reach(*entry.condition, OperandSlot::kOperand);
+      reach(*entry.condition, evaluated);
     }
   }
 }
@@ -86,7 +78,9 @@ void ReachTimingControl(const TimingControl& timing, const auto& reach) {
           [&](const DelayControl& c) {
             reach(c.duration, OperandSlot::kOperand);
           },
-          [&](const EventControl& c) { ReachEventControl(c, reach); },
+          [&](const EventControl& c) {
+            ReachEventControl(c, OperandSlot::kOperand, reach);
+          },
           [&](const ImplicitEventControl& c) {
             ReachSensitivity(c.sensitivity_list, reach);
           },
@@ -120,10 +114,12 @@ void ReachDelayOrEventControl(
           [&](const DelayControl& c) {
             reach(c.duration, OperandSlot::kOperand);
           },
-          [&](const EventControl& c) { ReachEventControl(c, reach); },
+          [&](const EventControl& c) {
+            ReachEventControl(c, OperandSlot::kOperand, reach);
+          },
           [&](const RepeatedEventControl& c) {
             reach(c.count, OperandSlot::kOperand);
-            ReachEventControl(c.event, reach);
+            ReachEventControl(c.event, OperandSlot::kOperand, reach);
           },
           [&](const ClockingDriveControl& c) {
             if (c.cycles.has_value()) reach(*c.cycles, OperandSlot::kOperand);
@@ -155,7 +151,7 @@ void ReachConditions(
 }
 
 void ReachPropertySpec(const PropertySpec& spec, const auto& reach) {
-  ReachEventControl(spec.clock, reach);
+  ReachEventControl(spec.clock, OperandSlot::kOperand, reach);
   if (spec.disable.has_value()) {
     reach(spec.disable->condition, OperandSlot::kOperand);
     ReachSensitivity(spec.disable->sensitivity, reach);
@@ -203,7 +199,12 @@ void ReachCallee(const SubroutineRef& callee, const auto& reach) {
               reach(ref.with_clause->expr, OperandSlot::kOperand);
             }
           },
-          [](const PastValueRef&) {}, [](const ValueChangeRef&) {},
+          [&](const PastValueRef& ref) {
+            ReachEventControl(ref.clock, OperandSlot::kHistory, reach);
+          },
+          [&](const ValueChangeRef& ref) {
+            ReachEventControl(ref.clock, OperandSlot::kHistory, reach);
+          },
           [](const ForeignImportRef&) {}, [](const NamespaceSubroutineRef&) {},
           [&](const PublishedScopeMethodRef& ref) {
             std::visit(
@@ -244,7 +245,8 @@ void ReachReceiver(const CovergroupReceiver& receiver, const auto& operand) {
 }
 
 // Calls `reach` with each expression `data` holds, all of them in the arena
-// that holds `data`.
+// that holds `data`, and its `ThroughPattern` or `ThroughConstraint` with each
+// pattern or constraint tree `data` holds.
 void ForEachOperand(const ExprData& data, const auto& reach) {
   const auto operand = [&](ExprId id) { reach(id, OperandSlot::kOperand); };
   const auto operands = [&](std::span<const ExprId> ids) {
@@ -419,8 +421,10 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
       data);
 }
 
-// Calls `reach` with each expression `data` holds itself, as opposed to through
-// a statement, a pattern or a variable it names.
+// Calls `reach` with each expression `data` holds itself, and its
+// `ThroughPattern`, `ThroughProperty` or `ThroughConstraint` with each tree
+// `data` holds. The statements under `data` are `ForEachChildStmt`'s, and a
+// declared variable's initializer is the variable's, not the statement's.
 void ForEachExpr(const StmtData& data, const auto& reach) {
   const auto operand = [&](ExprId id) { reach(id, OperandSlot::kOperand); };
   std::visit(
@@ -710,5 +714,57 @@ void ForEachConstraintOperand(
           [&](const DisableSoftConstraint& c) { operand(c.target); }},
       constraints.Get(id).data);
 }
+
+// The arenas holding the trees one body's expressions name, each null where the
+// holder keeps none of that kind.
+struct TreeArenas {
+  const base::Arena<Pattern, PatternId>* patterns;
+  const base::Arena<PropertyExpr, PropertyExprId>* properties;
+  const base::Arena<SequenceExpr, SequenceExprId>* sequences;
+  const base::Arena<Constraint, ConstraintId>* constraints;
+};
+
+// The reach `ForEachOperand` and `ForEachExpr` take, handing `visit` each
+// expression the holder evaluates where it stands: an operand, and each
+// expression a pattern, a property or a constraint tree it holds is built
+// from. What a report, a sensitivity or a shared name names, and a sampled
+// value function's clock, are evaluated elsewhere and are not handed over.
+template <typename Visit>
+struct EvaluatedOperands {
+  TreeArenas trees;
+  const Visit* visit;
+
+  void operator()(ExprId id, OperandSlot slot) const {
+    switch (slot) {
+      case OperandSlot::kOperand:
+        (*visit)(id);
+        return;
+      case OperandSlot::kReport:
+      case OperandSlot::kSensitivity:
+      case OperandSlot::kShared:
+      case OperandSlot::kHistory:
+        return;
+    }
+  }
+  void ThroughPattern(PatternId id) const {
+    if (trees.patterns == nullptr) {
+      throw InternalError("hir: a pattern was named where no tree of one is");
+    }
+    ForEachPatternOperand(*trees.patterns, id, *visit);
+  }
+  void ThroughProperty(PropertyExprId id) const {
+    if (trees.properties == nullptr || trees.sequences == nullptr) {
+      throw InternalError("hir: a property was named where no tree of one is");
+    }
+    ForEachPropertyOperand(*trees.properties, *trees.sequences, id, *visit);
+  }
+  void ThroughConstraint(ConstraintId id) const {
+    if (trees.constraints == nullptr) {
+      throw InternalError(
+          "hir: a constraint was named where no tree of one is");
+    }
+    ForEachConstraintOperand(*trees.constraints, id, *visit);
+  }
+};
 
 }  // namespace lyra::hir

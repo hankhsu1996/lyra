@@ -3152,18 +3152,20 @@ void lyra_rt_assertion_control_commit(const void* control, void* made) {
   static_cast<const AssertionControl*>(control)->Commit(made);
 }
 
-void lyra_rt_assertion_control_register_in(
-    void* control, void* effects, void* scope, std::uint64_t type,
-    std::uint64_t directive) {
-  static_cast<AssertionControl*>(control)->RegisterIn(
-      *static_cast<RuntimeEffects*>(effects), static_cast<Scope*>(scope), type,
-      directive);
+void lyra_rt_assertion_control_describe(
+    void* control, std::uint64_t type, std::uint64_t directive) {
+  static_cast<AssertionControl*>(control)->Describe(type, directive);
 }
 
-void lyra_rt_assertion_control_register(
-    void* control, void* effects, std::uint64_t type, std::uint64_t directive) {
+void lyra_rt_assertion_control_register_in(
+    void* control, void* effects, void* scope) {
+  static_cast<AssertionControl*>(control)->RegisterIn(
+      *static_cast<RuntimeEffects*>(effects), static_cast<Scope*>(scope));
+}
+
+void lyra_rt_assertion_control_register(void* control, void* effects) {
   static_cast<AssertionControl*>(control)->Register(
-      *static_cast<RuntimeEffects*>(effects), type, directive);
+      *static_cast<RuntimeEffects*>(effects));
 }
 
 void lyra_rt_assertion_control_register_within(
@@ -4849,9 +4851,9 @@ void lyra_rt_string_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_string_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<String>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<String>*>(history)->At(ticks_back));
 }
 
 void lyra_rt_real_sampled_history_install(
@@ -4865,9 +4867,9 @@ void lyra_rt_real_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_real_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Real>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Real>*>(history)->At(ticks_back));
 }
 
 void lyra_rt_shortreal_sampled_history_install(
@@ -4882,9 +4884,8 @@ void lyra_rt_shortreal_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_shortreal_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<ShortReal>*>(history)->At(ticks_back));
 }
 
@@ -4901,10 +4902,10 @@ void lyra_rt_laidout_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_laidout_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<LaidOutValue>*>(history)->At(
-               ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<LaidOutValue>*>(history)->At(
+          ticks_back));
 }
 
 void lyra_rt_dynarray_sampled_history_install(
@@ -4919,10 +4920,10 @@ void lyra_rt_dynarray_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_dynarray_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<RuntimeDynamicArray>*>(history)->At(
-               ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<RuntimeDynamicArray>*>(history)->At(
+          ticks_back));
 }
 
 void lyra_rt_queue_sampled_history_install(
@@ -4937,10 +4938,10 @@ void lyra_rt_queue_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_queue_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<RuntimeQueue>*>(history)->At(
-               ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<RuntimeQueue>*>(history)->At(
+          ticks_back));
 }
 
 void lyra_rt_assocarray_sampled_history_install(
@@ -4955,9 +4956,8 @@ void lyra_rt_assocarray_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_assocarray_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<RuntimeAssociativeArray>*>(history)->At(
           ticks_back));
 }
@@ -4978,9 +4978,8 @@ void lyra_rt_managedref_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_managedref_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<ObjectRef>*>(history)->At(ticks_back));
 }
 
@@ -9048,9 +9047,9 @@ void lyra_rt_bit8_sampled_history_push(void* history, const void* value) {
   HistoryAt<Bit8>(history).Push(Read<Bit8>(value));
 }
 auto lyra_rt_bit8_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Bit8>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Bit8>*>(history)->At(ticks_back));
 }
 auto lyra_rt_bit8_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit8>(designation);
@@ -9228,9 +9227,9 @@ void lyra_rt_bit16_sampled_history_push(void* history, const void* value) {
   HistoryAt<Bit16>(history).Push(Read<Bit16>(value));
 }
 auto lyra_rt_bit16_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Bit16>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Bit16>*>(history)->At(ticks_back));
 }
 auto lyra_rt_bit16_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit16>(designation);
@@ -9409,9 +9408,9 @@ void lyra_rt_bit32_sampled_history_push(void* history, const void* value) {
   HistoryAt<Bit32>(history).Push(Read<Bit32>(value));
 }
 auto lyra_rt_bit32_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Bit32>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Bit32>*>(history)->At(ticks_back));
 }
 auto lyra_rt_bit32_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit32>(designation);
@@ -9590,9 +9589,9 @@ void lyra_rt_bit64_sampled_history_push(void* history, const void* value) {
   HistoryAt<Bit64>(history).Push(Read<Bit64>(value));
 }
 auto lyra_rt_bit64_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Bit64>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Bit64>*>(history)->At(ticks_back));
 }
 auto lyra_rt_bit64_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit64>(designation);
@@ -9773,9 +9772,9 @@ void lyra_rt_logic8_sampled_history_push(void* history, const void* value) {
   HistoryAt<Logic8>(history).Push(Read<Logic8>(value));
 }
 auto lyra_rt_logic8_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<Logic8>*>(history)->At(ticks_back));
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
+      static_cast<const SampledHistory<Logic8>*>(history)->At(ticks_back));
 }
 auto lyra_rt_logic8_land(const void* designation) noexcept -> void* {
   return LandDesignation<Logic8>(designation);
@@ -9956,9 +9955,8 @@ void lyra_rt_logic16_sampled_history_push(void* history, const void* value) {
   HistoryAt<Logic16>(history).Push(Read<Logic16>(value));
 }
 auto lyra_rt_logic16_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<Logic16>*>(history)->At(ticks_back));
 }
 auto lyra_rt_logic16_land(const void* designation) noexcept -> void* {
@@ -10141,9 +10139,8 @@ void lyra_rt_logic32_sampled_history_push(void* history, const void* value) {
   HistoryAt<Logic32>(history).Push(Read<Logic32>(value));
 }
 auto lyra_rt_logic32_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<Logic32>*>(history)->At(ticks_back));
 }
 auto lyra_rt_logic32_land(const void* designation) noexcept -> void* {
@@ -10326,9 +10323,8 @@ void lyra_rt_logic64_sampled_history_push(void* history, const void* value) {
   HistoryAt<Logic64>(history).Push(Read<Logic64>(value));
 }
 auto lyra_rt_logic64_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<Logic64>*>(history)->At(ticks_back));
 }
 auto lyra_rt_logic64_land(const void* designation) noexcept -> void* {
@@ -10522,9 +10518,8 @@ void lyra_rt_bit_wide_sampled_history_push(void* history, const void* value) {
   HistoryAt<BitWide>(history).PushBytes(value);
 }
 auto lyra_rt_bit_wide_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<BitWide>*>(history)->At(ticks_back));
 }
 auto lyra_rt_bit_wide_land(const void* designation, std::int64_t width) noexcept
@@ -10721,9 +10716,8 @@ void lyra_rt_logic_wide_sampled_history_push(void* history, const void* value) {
   HistoryAt<LogicWide>(history).PushBytes(value);
 }
 auto lyra_rt_logic_wide_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out,
+    const void* history, std::int64_t ticks_back) -> const void* {
+  return HandleTo(
       static_cast<const SampledHistory<LogicWide>*>(history)->At(ticks_back));
 }
 auto lyra_rt_logic_wide_land(

@@ -92,9 +92,11 @@ expression reading only such variables.
 - A `chandle` local of a body that can wait is a cell too, so a wait on one is answered rather than
   refused.
 - Still refused: a sampled value of a `ref static` formal, which the front end's output does not yet
-  distinguish from a plain `ref`'s, and a history function (`$past`, `$rose` and the rest) over an
-  expression reading both an automatic variable and one the design element holds, which needs the
-  history kept per variable rather than per expression.
+  distinguish from a plain `ref`'s.
+- A history function (`$past`, `$rose` and the rest) over an expression reading both an automatic
+  variable and one the design element holds reads the automatic where the call stands and keeps only
+  the parts of the operand that have a past
+  ([sampled-value-and-its-clock](sampled-value-and-its-clock.md) D5).
 - A variable of a process or a task on the C++ backend is a `Var<T>` where it was a bare value: a
   subscriber record, one pointer of rare state, and a test on each write for whether anything waits.
   Measured with the benchmark runner (C++ backend, `-O2`) against `664a06a6`:

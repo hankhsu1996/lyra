@@ -613,8 +613,6 @@ def run_self_tests() -> bool:
         not check_r008(abi(header=raises_none, entries=says_returns)),
         "R008 is silent when the two sides agree")
 
-
-
     named = 'kIntegralEntriesSymbol =\n    "lyra_rt_t";'
     defines = (
         "extern constinit const lyra::runtime::IntegralEntries\n"

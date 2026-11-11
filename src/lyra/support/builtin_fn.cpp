@@ -1270,6 +1270,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"Commit"},
           .takes_the_location = false,
           .callables = {kEffectFnOncePastTheCaller}};
+    case BuiltinFn::kAssertionControlDescribe:
+      return {
+          .name = "assertion_control_describe",
+          .declaration = Method{"Describe"},
+          .takes_the_location = false};
     case BuiltinFn::kAssertionControlRegisterIn:
       return {
           .name = "assertion_control_register_in",
