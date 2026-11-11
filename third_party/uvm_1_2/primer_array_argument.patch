@@ -1,0 +1,26 @@
+The register primer passes TABLES, an unpacked array of a class derived from
+uvm_reg, to a formal declared as an unpacked array of uvm_reg. An unpacked
+array is assignment compatible only with one whose element type is equivalent
+(IEEE 1800-2023 7.6, 6.22.2), and a derived class is not equivalent to its
+base, so the call is refused. Copy the handles into an array of uvm_reg and
+pass that, the form the example already uses on its other branch; what the
+register model is configured with is unchanged.
+
+Not sent to the suite, since UVM 1.2 is a closed Accellera release.
+
+--- a/examples/simple/registers/primer/reg_model.sv
++++ b/examples/simple/registers/primer/reg_model.sv
+@@ -221,7 +221,12 @@
+ 	DATA.configure(INDEX, r, this, null);
+       end
+ `else
+-      DATA.configure(INDEX, TABLES, this, null);
++      begin
++         uvm_reg r[256];
++         foreach (TABLES[i])
++            r[i] = TABLES[i];
++         DATA.configure(INDEX, r, this, null);
++      end
+ `endif
+      
+       DATA.build();

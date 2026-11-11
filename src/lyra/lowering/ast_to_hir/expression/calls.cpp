@@ -58,7 +58,6 @@
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
-#include "lyra/lowering/ast_to_hir/passed_by_reference.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sampled_reads.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
@@ -1502,13 +1501,6 @@ auto LowerRandomizationCall(
           if (arg->type->isNull()) {
             continue;
           }
-          // A listed variable is written where it lies, as through a
-          // reference, so it is held to what a reference may name. The front
-          // end states it as the target of a write.
-          const slang::ast::Expression* written = ArgLValue(*arg);
-          auto passed =
-              RefuseUnionPartByReference(written != nullptr ? *written : *arg);
-          if (!passed) return std::unexpected(std::move(passed.error()));
           auto variable = place(*arg, at);
           if (!variable) return std::unexpected(std::move(variable.error()));
           listed.push_back(*variable);
@@ -1664,15 +1656,7 @@ auto LowerCallExpr(
   actuals.values.reserve(call.arguments().size());
   std::optional<hir::TypeId> receiver_type;
   const bool names_controlled_scopes = IsAssertionControlCall(call);
-  const auto* const* callee =
-      std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
   for (std::size_t i = 0; i < call.arguments().size(); ++i) {
-    if (callee != nullptr && !OmitsArgument(call, i) &&
-        (*callee)->getArguments()[i]->direction ==
-            slang::ast::ArgumentDirection::Ref) {
-      auto passed = RefuseUnionPartByReference(*call.arguments()[i]);
-      if (!passed) return std::unexpected(std::move(passed.error()));
-    }
     // LRM 13.5: HIR carries an `output` / `inout` actual as the lvalue it is.
     // What passes between it and the formal follows from the formal's
     // direction and the two types, where MIR is built.

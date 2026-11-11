@@ -232,12 +232,41 @@ obvious meaning to give it. It is an error all the same, because an allowed text
 nothing rewritten: `mubi_t'(j)`. A design that cannot be edited is built with
 `--relax-enum-conversions`, which reads every such assignment as that cast.
 
+#### A member of a union, or a part of one, passed by reference
+
+```systemverilog
+typedef struct { int x; int y; } s_t;
+typedef union { int a; s_t s; } u_t;
+u_t v;
+task automatic set(ref int r); r = 3; endtask
+initial begin
+  set(v.a);    // a member of a union
+  set(v.s.x);  // a member of a structure that is a union's member
+end
+```
+
+13.5.2: "Only the following shall be legal to pass by reference: A variable, A class property, A
+member of an unpacked structure, or An element of an unpacked array." A member of an unpacked union,
+tagged or not, is not on the list. Forbidden. A structure's member or an array's element lying in a
+union's member is on the list by its last select, and the clause does not say which governs; 7.3
+makes a union "a single piece of storage that can be accessed using one of the named member data
+types", with "no required representation" for an unpacked one, so what lies in a member has no
+storage of its own while another member may be what the union holds. Not settled, and the front end
+Lyra pins takes the stricter reading.
+
+The front end refuses both wherever a reference is bound -- an argument, a formal's default, a `ref`
+port's connection -- and where the scope randomize function is handed a variable (18.12), which it
+writes where it lies. No allowed text lends either a meaning: a reference names storage of one type
+for as long as it is held, and a union's storage is read as another type whenever another member
+writes it (7.3.2), or ends and holds another member when a tagged union is assigned (11.9). Pass the
+whole union, or pass the member to an `inout` formal, which copies it in and out (13.5) and runs.
+
 ### Forbidden, run as an extension when asked
 
 Refused by default and run when the caller asks for it by name, with the meaning stated here. The
 author is not reported to.
 
-#### A `force` on part of a variable
+#### A `force` on part of a variable, or on a whole unpacked one
 
 ```systemverilog
 typedef struct packed { logic [8:0] next; logic we; } field_t;
@@ -253,6 +282,7 @@ end
 typedef struct { logic we; logic [7:0] next; } entry_t;
 entry_t entries [4];
 initial force entries[2].we = 1'b1;
+initial force entries = '{default: '{we: 1'b1, next: 8'h00}};
 ```
 
 10.6.2: the target "can be a reference to a singular variable, a net, a constant bit-select of a
@@ -260,12 +290,15 @@ vector net, a constant part-select of a vector net, or a concatenation of these.
 bit-select or a part-select of a variable". 7.2.1: a packed structure is "a mechanism for
 subdividing a vector into subfields", so a member of `hwif` is bits of one vector variable. A member
 of an unpacked structure and an element of an unpacked array are named nowhere in the list, which is
-read as complete. Forbidden.
+read as complete. A whole unpacked structure, union or array is not singular (6.4), so a variable of
+one is not a target either, while a net of one is, since the list names a net with no such limit.
+Forbidden.
 
 All three conditions hold. The front end keeps the refusal of every one of these as one warning
 raised to an error, in the set it relaxes because "some tools violate the standard", and an open
-simulator takes the text, forcing bits of a variable and an element of an unpacked array alike. No
-allowed text says the same: forcing the whole variable restates every part the design drives, and
+simulator takes the text, forcing bits of a variable, an element of an unpacked array and a whole
+unpacked array alike. No allowed text says the same. Forcing a whole singular variable restates
+every part the design drives, forcing each part of an unpacked variable is itself forbidden, and
 forcing a net adds one to the design for the testbench's sake.
 
 The meaning Lyra gives it is the standard's rules for forcing a whole variable, applied to each
@@ -277,9 +310,14 @@ next procedural assignment, unless a continuous assignment or an `assign` drives
 is then reestablished there and reevaluated. A port that stands for what its connection drives goes
 on showing that wherever nothing is forced. This is a choice, not a reading the standard forces: the
 open simulator, which keeps the forced value of a whole variable as 10.6.2 says, takes the value
-`always_comb` last wrote after the release of a part. A member of an unpacked union, one storage its
-members read differently (7.3), and a part of a string, a queue, a dynamic array or an associative
-array, whose parts lie at no fixed place in the value (7.10.3), are not yet carried out.
+`always_comb` last wrote after the release of a part. A force on a whole unpacked variable holds
+every position its type numbers, and a queue, a dynamic array or an associative array is one
+position held whole, as a string is, which 6.4 calls singular although it can be indexed like an
+array. A member of an unpacked union, one storage its members read differently (7.3), and a part of
+a string, a queue, a dynamic array or an associative array, whose parts lie at no fixed place in the
+value (7.10.3), are not yet carried out. An `assign` or `deassign` on a whole unpacked variable
+stays an error, as one on a select does. The front end relaxes a faulty target of `force` and
+`release` only, and gives every faulty target of `assign` and `deassign` an error.
 
 `-Wno-error=bad-procedural-force` asks for it, and so does `--compat all`.
 
@@ -415,38 +453,6 @@ one declared later with its type's start value, and a base's property with the b
 complete. Write `a`, which 8.7's own example does (`int d2 = c2;`).
 
 ### Forbidden or not settled, accepted by the front end, and refused by Lyra
-
-#### A member of a union, or a part of one, passed by reference
-
-```systemverilog
-typedef struct { int x; int y; } s_t;
-typedef union { int a; s_t s; } u_t;
-u_t v;
-task automatic set(ref int r); r = 3; endtask
-initial begin
-  set(v.a);    // a member of a union
-  set(v.s.x);  // a member of a structure that is a union's member
-end
-```
-
-13.5.2: "Only the following shall be legal to pass by reference: A variable, A class property, A
-member of an unpacked structure, or An element of an unpacked array." A member of an unpacked union,
-tagged or not, is not on the list. Forbidden. A structure's member or an array's element lying in a
-union's member is on the list by its last select, and the clause does not say which governs; 7.3
-makes a union "a single piece of storage that can be accessed using one of the named member data
-types", with "no required representation" for an unpacked one, so what lies in a member has no
-storage of its own while another member may be what the union holds. Not settled, and Lyra takes the
-stricter reading.
-
-The front end accepts both with no diagnostic (it refuses only a member of a packed union). No
-allowed text lends either a meaning: a reference names storage of one type for as long as it is
-held, and a union's storage is read as another type whenever another member writes it (7.3.2), or
-ends and holds another member when a tagged union is assigned (11.9). C++ and Rust let such a
-reference be bound only by leaving a read through it after that undefined, or by a borrow discipline
-SystemVerilog does not have. Lyra refuses it wherever a reference is bound -- an argument, a
-formal's default, a `ref` port's connection -- and where the scope randomize function is handed a
-variable (18.12), which it writes where it lies. Pass the whole union, or pass the member to an
-`inout` formal, which copies it in and out (13.5) and runs.
 
 #### A cross bin selecting the bins of a coverpoint the cross does not cross
 

@@ -1,0 +1,39 @@
+The coverage example overrides uvm_reg::sample, uvm_mem::sample and
+uvm_reg_block::sample, each declared protected, with methods declared with no
+access qualifier, which makes them public. A virtual method's prototype gives
+the encapsulation of every override, and an override has identical qualifiers
+(IEEE 1800-2023 8.20), so the declarations are refused. Declare the overrides
+protected; nothing calls them from outside, so what the example does is
+unchanged.
+
+Not sent to the suite, since UVM 1.2 is a closed Accellera release.
+
+--- a/examples/simple/registers/models/coverage/regmodel.sv
++++ b/examples/simple/registers/models/coverage/regmodel.sv
+@@ -79,7 +79,7 @@
+    `uvm_object_utils(reg_R)
+ 
+ 
+-   virtual function void sample(uvm_reg_data_t data,
++   protected virtual function void sample(uvm_reg_data_t data,
+                                 uvm_reg_data_t byte_en,
+                                 bit            is_read,
+                                 uvm_reg_map    map);
+@@ -122,7 +122,7 @@
+    
+    `uvm_object_utils(mem_M)
+    
+-   virtual function void sample(uvm_reg_addr_t offset,
++   protected virtual function void sample(uvm_reg_addr_t offset,
+                                 bit            is_read,
+                                 uvm_reg_map    map);
+       if (get_coverage(UVM_CVR_ADDR_MAP)) begin
+@@ -197,7 +197,7 @@
+    
+    `uvm_object_utils(block_B)
+    
+-   virtual function void sample(uvm_reg_addr_t offset,
++   protected virtual function void sample(uvm_reg_addr_t offset,
+                                 bit            is_read,
+                                 uvm_reg_map    map);
+       if (get_coverage(UVM_CVR_ADDR_MAP)) begin

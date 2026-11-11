@@ -1,0 +1,5 @@
+# Corrections to the UVM 1.2 examples, applied to the release `MODULE.bazel`
+# names. Each file opens with what it corrects and the clause of IEEE 1800 that
+# says so. The release is closed, so none is sent anywhere.
+
+exports_files(glob(["*.patch"]))
