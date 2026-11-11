@@ -1869,6 +1869,24 @@ void lyra_rt_dynarray_cell_set(void* cell, const void* value);
 void lyra_rt_dynarray_cell_arm_sampling(void* cell);
 auto lyra_rt_dynarray_cell_sampled_get(void* cell, const void* location)
     -> const void*;
+auto lyra_rt_dynarray_cell_begin_takeover(
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t;
+auto lyra_rt_dynarray_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool;
+void lyra_rt_dynarray_cell_end_takeover(
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location);
+auto lyra_rt_dynarray_ref_begin_takeover(
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t;
+auto lyra_rt_dynarray_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value, const void* location) -> bool;
+void lyra_rt_dynarray_ref_end_takeover(
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location);
 auto lyra_rt_dynarray_value_cell_alloc(const void* element_type) noexcept
     -> void*;
 void lyra_rt_dynarray_value_cell_store(void* cell, const void* value) noexcept;
@@ -2129,6 +2147,24 @@ void lyra_rt_queue_cell_set(void* cell, const void* value);
 void lyra_rt_queue_cell_arm_sampling(void* cell);
 auto lyra_rt_queue_cell_sampled_get(void* cell, const void* location) -> const
     void*;
+auto lyra_rt_queue_cell_begin_takeover(
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t;
+auto lyra_rt_queue_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool;
+void lyra_rt_queue_cell_end_takeover(
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location);
+auto lyra_rt_queue_ref_begin_takeover(
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t;
+auto lyra_rt_queue_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value, const void* location) -> bool;
+void lyra_rt_queue_ref_end_takeover(
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location);
 auto lyra_rt_queue_value_cell_alloc(const void* queue_type) noexcept -> void*;
 void lyra_rt_queue_value_cell_store(void* cell, const void* value) noexcept;
 auto lyra_rt_queue_value_cell_load(void* cell) noexcept -> void*;
@@ -2221,6 +2257,24 @@ void lyra_rt_assocarray_cell_set(void* cell, const void* value);
 void lyra_rt_assocarray_cell_arm_sampling(void* cell);
 auto lyra_rt_assocarray_cell_sampled_get(void* cell, const void* location)
     -> const void*;
+auto lyra_rt_assocarray_cell_begin_takeover(
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t;
+auto lyra_rt_assocarray_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value,
+    const void* location) -> bool;
+void lyra_rt_assocarray_cell_end_takeover(
+    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location);
+auto lyra_rt_assocarray_ref_begin_takeover(
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location) -> std::int64_t;
+auto lyra_rt_assocarray_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value, const void* location) -> bool;
+void lyra_rt_assocarray_ref_end_takeover(
+    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
+    const void* location);
 auto lyra_rt_assocarray_value_cell_alloc(
     const void* key_index_order, const void* element_type) noexcept -> void*;
 void lyra_rt_assocarray_value_cell_store(

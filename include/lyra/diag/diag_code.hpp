@@ -40,10 +40,6 @@ enum class DiagCode : std::uint32_t {
   // tolerated and what can be simulated are separate questions, so this is an
   // error and never a gap the compiler has left.
   kErrorInvalidFrontendSemantics,
-  // The front end accepted a text the standard forbids and no rule of the
-  // standard lends a meaning to: a union's member, or a part of one, passed by
-  // reference (LRM 13.5.2).
-  kErrorUnionPartPassedByReference,
   // The front end accepted a cross bin selecting `binsof` a coverpoint the
   // cross does not cross, which the standard gives no meaning (LRM 19.6.1).
   kErrorBinsofOutsideItsCross,

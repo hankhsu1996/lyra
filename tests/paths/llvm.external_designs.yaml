@@ -85,7 +85,7 @@ uvm-1.2:simple/registers/models/broadcast:default:
   says: "undefined reference to `uvm_re_match'"
 uvm-1.2:simple/registers/models/coverage:default:
   stops: build
-  says: "virtual method 'sample' is 'public' but declared 'protected' in superclass method"
+  says: "undefined reference to `uvm_re_match'"
 uvm-1.2:simple/registers/models/fifo_reg:default:
   stops: build
   says: "undefined reference to `uvm_re_match'"
@@ -106,10 +106,10 @@ uvm-1.2:simple/registers/models/user-defined:default:
   says: "undefined reference to `uvm_re_match'"
 uvm-1.2:simple/registers/primer:hw_reset:
   stops: build
-  says: "cannot be assigned to type 'uvm_reg$[]'"
+  says: "undefined reference to `uvm_re_match'"
 uvm-1.2:simple/registers/primer:reg_user:
   stops: build
-  says: "cannot be assigned to type 'uvm_reg$[]'"
+  says: "undefined reference to `uvm_re_match'"
 uvm-1.2:simple/registers/sequence_api:blk:
   stops: build
   says: "undefined reference to `uvm_re_match'"

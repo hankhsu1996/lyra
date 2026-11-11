@@ -1155,6 +1155,17 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dynarray_cell_arm_sampling",
       &lyra_rt_dynarray_cell_arm_sampling);
   add("lyra_rt_dynarray_cell_sampled_get", &lyra_rt_dynarray_cell_sampled_get);
+  add("lyra_rt_dynarray_cell_begin_takeover",
+      &lyra_rt_dynarray_cell_begin_takeover);
+  add("lyra_rt_dynarray_cell_drive_takeover",
+      &lyra_rt_dynarray_cell_drive_takeover);
+  add("lyra_rt_dynarray_cell_end_takeover",
+      &lyra_rt_dynarray_cell_end_takeover);
+  add("lyra_rt_dynarray_ref_begin_takeover",
+      &lyra_rt_dynarray_ref_begin_takeover);
+  add("lyra_rt_dynarray_ref_drive_takeover",
+      &lyra_rt_dynarray_ref_drive_takeover);
+  add("lyra_rt_dynarray_ref_end_takeover", &lyra_rt_dynarray_ref_end_takeover);
   add("lyra_rt_dynarray_value_cell_alloc", &lyra_rt_dynarray_value_cell_alloc);
   add("lyra_rt_dynarray_value_cell_store", &lyra_rt_dynarray_value_cell_store);
   add("lyra_rt_dynarray_value_cell_load", &lyra_rt_dynarray_value_cell_load);
@@ -1194,6 +1205,12 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_queue_cell_set", &lyra_rt_queue_cell_set);
   add("lyra_rt_queue_cell_arm_sampling", &lyra_rt_queue_cell_arm_sampling);
   add("lyra_rt_queue_cell_sampled_get", &lyra_rt_queue_cell_sampled_get);
+  add("lyra_rt_queue_cell_begin_takeover", &lyra_rt_queue_cell_begin_takeover);
+  add("lyra_rt_queue_cell_drive_takeover", &lyra_rt_queue_cell_drive_takeover);
+  add("lyra_rt_queue_cell_end_takeover", &lyra_rt_queue_cell_end_takeover);
+  add("lyra_rt_queue_ref_begin_takeover", &lyra_rt_queue_ref_begin_takeover);
+  add("lyra_rt_queue_ref_drive_takeover", &lyra_rt_queue_ref_drive_takeover);
+  add("lyra_rt_queue_ref_end_takeover", &lyra_rt_queue_ref_end_takeover);
   add("lyra_rt_queue_value_cell_alloc", &lyra_rt_queue_value_cell_alloc);
   add("lyra_rt_queue_value_cell_store", &lyra_rt_queue_value_cell_store);
   add("lyra_rt_queue_value_cell_load", &lyra_rt_queue_value_cell_load);
@@ -1236,6 +1253,18 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_assocarray_cell_arm_sampling);
   add("lyra_rt_assocarray_cell_sampled_get",
       &lyra_rt_assocarray_cell_sampled_get);
+  add("lyra_rt_assocarray_cell_begin_takeover",
+      &lyra_rt_assocarray_cell_begin_takeover);
+  add("lyra_rt_assocarray_cell_drive_takeover",
+      &lyra_rt_assocarray_cell_drive_takeover);
+  add("lyra_rt_assocarray_cell_end_takeover",
+      &lyra_rt_assocarray_cell_end_takeover);
+  add("lyra_rt_assocarray_ref_begin_takeover",
+      &lyra_rt_assocarray_ref_begin_takeover);
+  add("lyra_rt_assocarray_ref_drive_takeover",
+      &lyra_rt_assocarray_ref_drive_takeover);
+  add("lyra_rt_assocarray_ref_end_takeover",
+      &lyra_rt_assocarray_ref_end_takeover);
   add("lyra_rt_assocarray_value_cell_alloc",
       &lyra_rt_assocarray_value_cell_alloc);
   add("lyra_rt_assocarray_value_cell_store",

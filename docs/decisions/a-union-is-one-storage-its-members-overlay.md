@@ -48,10 +48,9 @@ read as a value of another member type, which is a potential type loophole").
   error (7.3.2, 11.9); the tag changes only by assigning a whole tagged value.
 - `%p` prints an untagged union's first member (21.2.1.6); streaming streams it (11.4.14.1); `%u` /
   `%z` and `$fread` act on it (21.2.1.7, 21.3.4.4).
-- A union member is never a reference target (13.5.2). The front end accepts one, and a part below
-  one, and Lyra refuses both before lowering
-  ([language_conformance](../architecture/language_conformance.md), "A member of a union, or a part
-  of one, passed by reference").
+- A union member is never a reference target (13.5.2). The front end refuses one, and a part below
+  one ([language_conformance](../architecture/language_conformance.md), "A member of a union, or a
+  part of one, passed by reference").
 
 ## What established compilers do
 

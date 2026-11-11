@@ -21,7 +21,7 @@ bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "slang", version = "12.1")
 git_override(
     module_name = "slang",
-    commit = "40e785c5b418c9ea1595062a8db5aa17a8282f2a",
+    commit = "d3cb3a4d787de29f9f428fd262ddd3fc02e52278",
     remote = "https://github.com/hankhsu1996/slang.git",
 )
 
@@ -168,8 +168,9 @@ filegroup(
 )
 
 # The UVM class library, pinned as the benchmark suite is and fetched only by
-# the targets that name it: UVM 1.2, whose shipped examples are cases, and
-# uvm-core, the library of IEEE 1800.2-2020.
+# the targets that name it: UVM 1.2, whose shipped examples are cases, with the
+# corrections `third_party/uvm_1_2` states for the examples that break the
+# standard; and uvm-core, the library of IEEE 1800.2-2020.
 http_archive(
     name = "uvm_1_2",
     build_file_content = """
@@ -182,6 +183,11 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 """,
+    patch_strip = 1,
+    patches = [
+        "//third_party/uvm_1_2:coverage_sample_override.patch",
+        "//third_party/uvm_1_2:primer_array_argument.patch",
+    ],
     sha256 = "502a2e605ce552bfd9767803c7e99a053715b00f7a9c4c511c3fbfddfb30157c",
     strip_prefix = "uvm-1.2",
     urls = ["https://www.accellera.org/images/downloads/standards/uvm/uvm-1.2.tar.gz"],

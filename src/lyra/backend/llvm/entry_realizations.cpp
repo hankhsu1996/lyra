@@ -140,10 +140,12 @@ constexpr DomainSet kBodyObjects =
 constexpr DomainSet kBodyValues = kVariableValues | DomainSet{Domain::kBitVec};
 // What a variable a procedural continuous assignment takes over may hold: a
 // singular value (LRM 10.6.1, 10.6.2, 6.4), but no chandle, which no
-// continuous assignment may name (LRM 6.14); and a value laid out by its type,
-// of which a caller may ask for a member or an element to be forced.
+// continuous assignment may name (LRM 6.14); and, where a caller asks for a
+// force the standard forbids, a container the library holds, forced whole, and
+// a value laid out by its type, forced whole or in part.
 constexpr DomainSet kLibraryValuesTakenOver =
-    kIntegral | kReals | DomainSet{Domain::kString, Domain::kManagedRef};
+    kIntegral | kReals | kLibraryContainers |
+    DomainSet{Domain::kString, Domain::kManagedRef};
 constexpr DomainSet kVariableValuesTakenOver =
     kLibraryValuesTakenOver | kLaidOutByType;
 

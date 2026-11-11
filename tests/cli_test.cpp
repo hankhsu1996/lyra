@@ -990,17 +990,22 @@ TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
       << analyzed.stdout_text;
 }
 
-// A force on part of a variable, run when the caller asks for it (LRM 10.6.2),
-// reaches a member of an unpacked structure and an element of a fixed-size
-// unpacked array, and bits within either, since a value's type
-// numbers its positions part by part: the rest of the variable goes on taking
-// its own writes -- whole, through a member, through a `ref` argument -- and
-// what drives it continuously. A port standing for what its connection drives,
-// a net one driver decides and a net its drivers resolve each go on showing
-// their source wherever no force holds a position, and show it again once
-// released. A member of a union and a part of a value of a dynamic type lie at
-// no fixed position, and are refused.
-TEST(LyraRun, AForceOnPartOfAnAggregateHoldsOnlyThatPart) {
+// A force on a whole unpacked variable or on part of one is forbidden (LRM
+// 10.6.2, 6.4) and refused unless the caller asks for it. Asked for, a force
+// on part of a variable reaches a member of an unpacked structure and an
+// element of a fixed-size unpacked array, and bits within either, since a
+// value's type numbers its positions part by part: the rest of the variable
+// goes on taking its own writes -- whole, through a member, through a `ref`
+// argument -- and what drives it continuously. A port standing for what its
+// connection drives, a net one driver decides and a net its drivers resolve
+// each go on showing their source wherever no force holds a position, and show
+// it again once released. A force on a whole structure, union or array of any
+// kind -- named directly, a fixed-size array through an instance, a container
+// through a `ref` port -- holds all of it at what its source evaluates to as
+// the source changes, and a release leaves it there, or shows again what drives
+// it continuously. A member of a union and a part of a value of a dynamic type
+// lie at no fixed position, and are refused.
+TEST(LyraRun, AForceOnAnUnpackedVariableHoldsWhatItNames) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
@@ -1009,6 +1014,19 @@ TEST(LyraRun, AForceOnPartOfAnAggregateHoldsOnlyThatPart) {
   WriteFile(
       *tmp_or / "aggregate.sv",
       "module Child(input logic [7:0] p, input wire [7:0] n);\n"
+      "endmodule\n"
+      "\n"
+      "module Holder;\n"
+      "  int arr [2];\n"
+      "endmodule\n"
+      "\n"
+      "module RefChild(ref int r [$]);\n"
+      "endmodule\n"
+      "\n"
+      "module RefDyn(ref int r []);\n"
+      "endmodule\n"
+      "\n"
+      "module RefAssoc(ref int r [int]);\n"
       "endmodule\n"
       "\n"
       "module Test;\n"
@@ -1038,6 +1056,24 @@ TEST(LyraRun, AForceOnPartOfAnAggregateHoldsOnlyThatPart) {
       "  assign shown = pins;\n"
       "  int changes = 0;\n"
       "  always @(driven.we) changes++;\n"
+      "  typedef union { int i; logic [31:0] v; } word_t;\n"
+      "  field_t whole_s, fs;\n"
+      "  word_t whole_u, fu;\n"
+      "  int whole_f [2], ff [2];\n"
+      "  int whole_d [], fd [];\n"
+      "  int whole_q [$], fq [$];\n"
+      "  int whole_a [int], fa [int];\n"
+      "  int ref_q [$];\n"
+      "  int ref_d [];\n"
+      "  int ref_a [int];\n"
+      "  Holder h();\n"
+      "  RefChild rc(.r(ref_q));\n"
+      "  RefDyn rd(.r(ref_d));\n"
+      "  RefAssoc ra(.r(ref_a));\n"
+      "  field_t driven_whole;\n"
+      "  assign driven_whole = src;\n"
+      "  int driven_arr [2], arr_src [2];\n"
+      "  assign driven_arr = arr_src;\n"
       "\n"
       "  task automatic poke(ref logic [7:0] n);\n"
       "    n = 8'h77;\n"
@@ -1053,7 +1089,36 @@ TEST(LyraRun, AForceOnPartOfAnAggregateHoldsOnlyThatPart) {
       "    e = 8'h10;\n"
       "    src = '{we: 0, next: 8'h11, name: \"s\"};\n"
       "    pins = '{we: 0, next: 8'h11};\n"
+      "    whole_s = '{we: 0, next: 8'h01, name: \"a\"};\n"
+      "    whole_u.i = 1;\n"
+      "    whole_f = '{1, 1};\n"
+      "    whole_d = '{1};\n"
+      "    whole_q = {1};\n"
+      "    whole_a = '{0: 1};\n"
+      "    h.arr = '{1, 1};\n"
+      "    ref_q = {1};\n"
+      "    ref_d = '{1};\n"
+      "    ref_a = '{0: 1};\n"
+      "    arr_src = '{1, 1};\n"
+      "    fs = '{we: 1, next: 8'h05, name: \"f\"};\n"
+      "    fu.i = 5;\n"
+      "    ff = '{5, 5};\n"
+      "    fd = '{5, 5};\n"
+      "    fq = {5, 5};\n"
+      "    fa = '{1: 5};\n"
       "    #1;\n"
+      "    force whole_s = fs;\n"
+      "    force whole_u = fu;\n"
+      "    force whole_f = ff;\n"
+      "    force whole_d = fd;\n"
+      "    force whole_q = fq;\n"
+      "    force whole_a = fa;\n"
+      "    force h.arr = ff;\n"
+      "    force rc.r = fq;\n"
+      "    force rd.r = fd;\n"
+      "    force ra.r = fa;\n"
+      "    force driven_whole = fs;\n"
+      "    force driven_arr = ff;\n"
       "    force s.we = 1'b1;\n"
       "    force w.big[70:60] = '1;\n"
       "    force r[2] = 50;\n"
@@ -1077,7 +1142,44 @@ TEST(LyraRun, AForceOnPartOfAnAggregateHoldsOnlyThatPart) {
       "    e = 8'h20;\n"
       "    src = '{we: 0, next: 8'h22, name: \"t\"};\n"
       "    pins = '{we: 0, next: 8'h22};\n"
+      "    whole_s = '{we: 0, next: 8'h99, name: \"w\"};\n"
+      "    whole_u.i = 9;\n"
+      "    whole_f = '{9, 9};\n"
+      "    whole_d = '{9};\n"
+      "    whole_q = {9};\n"
+      "    whole_a = '{9: 9};\n"
+      "    h.arr = '{9, 9};\n"
+      "    ref_q = {9};\n"
+      "    ref_d = '{9};\n"
+      "    ref_a = '{9: 9};\n"
+      "    arr_src = '{9, 9};\n"
+      "    fs.next = 8'h06;\n"
+      "    fu.i = 6;\n"
+      "    ff[0] = 6;\n"
+      "    fd = '{6, 6, 6};\n"
+      "    fq.push_back(6);\n"
+      "    fa[2] = 6;\n"
       "    #1;\n"
+      "    if (whole_s.next !== 8'h06 || whole_s.name != \"f\" || whole_u.i "
+      "!== 6)\n"
+      "      $fatal(1, \"a forced whole structure or union read %p %p\", "
+      "whole_s, whole_u);\n"
+      "    if (whole_f[0] !== 6 || whole_f[1] !== 5 || h.arr[0] !== 6)\n"
+      "      $fatal(1, \"a forced whole array read %p %p\", whole_f, h.arr);\n"
+      "    if (whole_d.size() !== 3 || whole_q.size() !== 3 || "
+      "!whole_a.exists(2) ||\n"
+      "        whole_a.num() !== 2)\n"
+      "      $fatal(1, \"a forced whole container read %p %p %p\", whole_d, "
+      "whole_q,\n"
+      "             whole_a);\n"
+      "    if (ref_q.size() !== 3 || ref_d.size() !== 3 || ref_a.num() !== 2)\n"
+      "      $fatal(1, \"a container forced through a ref port read %p %p "
+      "%p\",\n"
+      "             ref_q, ref_d, ref_a);\n"
+      "    if (driven_whole.next !== 8'h06 || driven_arr[0] !== 6)\n"
+      "      $fatal(1, \"a forced whole driven variable read %p %p\", "
+      "driven_whole,\n"
+      "             driven_arr);\n"
       "    if (s.we !== 1'b1 || s.next !== 8'h77 || s.name != \"z\")\n"
       "      $fatal(1, \"a member read %p\", s);\n"
       "    if (a[0] !== 9 || a[1] !== 40 || a[2] !== 42 || a[3] !== 9)\n"
@@ -1113,6 +1215,18 @@ TEST(LyraRun, AForceOnPartOfAnAggregateHoldsOnlyThatPart) {
       "    release driven.we;\n"
       "    release snet.next;\n"
       "    release shown.we;\n"
+      "    release whole_s;\n"
+      "    release whole_u;\n"
+      "    release whole_f;\n"
+      "    release whole_d;\n"
+      "    release whole_q;\n"
+      "    release whole_a;\n"
+      "    release h.arr;\n"
+      "    release rc.r;\n"
+      "    release rd.r;\n"
+      "    release ra.r;\n"
+      "    release driven_whole;\n"
+      "    release driven_arr;\n"
       "    if (c.p !== 8'h2a || c.n !== 8'h20)\n"
       "      $fatal(1, \"a release showed a port's source when it should "
       "not: %h %h\", c.p, c.n);\n"
@@ -1132,9 +1246,28 @@ TEST(LyraRun, AForceOnPartOfAnAggregateHoldsOnlyThatPart) {
       "    if (w.big[70:60] !== '1 || r[2] !== 50)\n"
       "      $fatal(1, \"a released wide or descending part read %h %p\", "
       "w.big, r);\n"
+      "    if (whole_s.next !== 8'h06 || whole_u.i !== 6 || whole_f[0] !== 6 "
+      "||\n"
+      "        h.arr[0] !== 6)\n"
+      "      $fatal(1, \"a released whole did not keep its value: %p %p %p "
+      "%p\",\n"
+      "             whole_s, whole_u, whole_f, h.arr);\n"
+      "    if (whole_d.size() !== 3 || whole_q.size() !== 3 || whole_a.num() "
+      "!== 2 ||\n"
+      "        ref_q.size() !== 3 || ref_d.size() !== 3 || ref_a.num() !== 2)\n"
+      "      $fatal(1, \"a released whole container did not keep its "
+      "value\");\n"
+      "    if (driven_whole.next !== 8'h22 || driven_whole.name != \"t\" ||\n"
+      "        driven_arr[0] !== 9)\n"
+      "      $fatal(1, \"a release did not reestablish the driver of a whole: "
+      "%p %p\",\n"
+      "             driven_whole, driven_arr);\n"
       "    a[2] = 5;\n"
+      "    whole_q = {};\n"
       "    #1;\n"
       "    if (a[2] !== 5) $fatal(1, \"a write after release read %p\", a);\n"
+      "    if (whole_q.size() !== 0)\n"
+      "      $fatal(1, \"a write after release read %p\", whole_q);\n"
       "    $display(\"All checks passed\");\n"
       "  end\n"
       "endmodule\n");
@@ -1176,6 +1309,20 @@ TEST(LyraRun, AForceOnPartOfAnAggregateHoldsOnlyThatPart) {
   refused("int da[];", "da[1]", kDynamic);
   refused("int aa[int];", "aa[3]", kDynamic);
   refused("string s;", "s[0]", kDynamic);
+
+  WriteFile(
+      *tmp_or / "whole.sv",
+      "module Test;\n"
+      "  int q [$], src [$];\n"
+      "  initial force q = src;\n"
+      "endmodule\n");
+  const auto strict = RunLyraFrom(lyra, *tmp_or, "check --top Test whole.sv");
+  EXPECT_THAT(strict, ExitedWithCode(Ne(0)))
+      << "the default reading accepted it";
+  EXPECT_NE(
+      strict.stderr_text.find("must be a net, a singular variable"),
+      std::string::npos)
+      << strict.stderr_text;
 }
 
 // A force on part of a variable is forbidden (LRM 10.6.2), and run when the

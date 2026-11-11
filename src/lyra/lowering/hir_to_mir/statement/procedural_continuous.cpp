@@ -71,9 +71,10 @@ auto TakeoverHolder(const AccessPath& place) -> mir::ExprId {
 }
 
 // The positions of its holder one place of a takeover's target names. LRM
-// 10.6.1 admits only a whole variable and 10.6.2 adds a constant part-select of
-// a net, and a caller may ask for any part of a variable as well, run with the
-// rules 10.6.2 gives a whole variable applied to each position. A value's type
+// 10.6.1 admits only a whole singular variable and 10.6.2 adds a net and a
+// constant part-select of one, and a caller may ask for a whole unpacked
+// variable or any part of a variable as well, run with the rules 10.6.2 gives a
+// whole variable applied to each position. A value's type
 // numbers its positions part by part, so each step moves the first position on
 // by what lies before the part it reaches: the elements before it, the members
 // before it, the bits below it. A part of a value of a dynamic type, and a

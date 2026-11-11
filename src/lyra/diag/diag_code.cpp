@@ -111,11 +111,6 @@ constexpr std::array kEntries{
         DiagCodeInfo{
             .kind = DiagKind::kError, .name = "invalid_frontend_semantics"}},
     std::pair{
-        DiagCode::kErrorUnionPartPassedByReference,
-        DiagCodeInfo{
-            .kind = DiagKind::kError,
-            .name = "union_part_passed_by_reference"}},
-    std::pair{
         DiagCode::kErrorBinsofOutsideItsCross,
         DiagCodeInfo{
             .kind = DiagKind::kError, .name = "binsof_outside_its_cross"}},
