@@ -41,7 +41,7 @@ whether the operand was there.
 
 Four more values were handed over the same way, each built where the call is from a type the call
 already names: the default of a reduction's answer type, for a receiver holding no entries; the
-default of the index type `$low` and `$high` answer, for an associative dimension holding none; the
+default of the type `$low` and `$high` answer, for an associative dimension holding none; the
 default of the type a stream of bits is read into, as the value it took its shape from; and a
 queue's declared bound, `-1` where it declares none, at every construction of a queue and every
 conversion into one.
