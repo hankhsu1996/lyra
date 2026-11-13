@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/expr.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -57,6 +58,11 @@ auto BindImplicitParameters(
 // one place the self place is formed -- every field access, cross-unit deref,
 // closure self-capture, and runtime-effect engine handle starts from it.
 auto MakeSelfRefExpr(const WalkFrame& frame) -> mir::Expr;
+
+// Whether `expr` is `this` (LRM 8.11), the object the running body was invoked
+// on: never null, and kept alive by that invocation, so a call made on it needs
+// no handle of its own.
+auto IsThisHandle(const hir::Expr& expr) -> bool;
 
 // LRM 8.11 `this`: the handle referring to the object the body runs on. Every
 // body of a class holds a share of its object from where it begins, which is

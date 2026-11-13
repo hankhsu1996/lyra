@@ -2,7 +2,6 @@
 
 #include <expected>
 #include <format>
-#include <optional>
 #include <string>
 #include <utility>
 
@@ -424,23 +423,6 @@ auto MakeIterationElementRefExpr(
       *type_id, span);
 }
 
-// Whether `ancestor` is `cls` or a class it extends (LRM 8.13).
-auto IsLineageOf(
-    const slang::ast::ClassType& cls, const slang::ast::ClassType& ancestor)
-    -> bool {
-  const slang::ast::ClassType* at = &cls;
-  while (at != nullptr) {
-    if (at == &ancestor) {
-      return true;
-    }
-    const slang::ast::Type* base = at->getBaseClass();
-    at = base == nullptr
-             ? nullptr
-             : &base->getCanonicalType().as<slang::ast::ClassType>();
-  }
-  return false;
-}
-
 // A read of a property Lyra's definitions hold weakly (LRM 8.30.3): the object
 // the weak handle refers to, or null, as the property's declared type sees it.
 auto LowerReadWeaklyHeld(
@@ -508,17 +490,6 @@ auto MakeClassPropertyRefExpr(
                 .target = *std::move(target)},
         .span = span};
   }
-  auto randomized =
-      RandomizedObjectReaching(unit_lowerer, frame, owner_class, span);
-  if (!randomized) return std::unexpected(std::move(randomized.error()));
-  if (randomized->has_value()) {
-    return hir::Expr{
-        .type = *type_id,
-        .data =
-            hir::ClassPropertyAccessExpr{
-                .base_value = **randomized, .target = *std::move(target)},
-        .span = span};
-  }
   return hir::MakeRefExpr(
       hir::ClassPropertyRef{.target = *std::move(target)}, *type_id, span);
 }
@@ -527,18 +498,11 @@ auto MakeClassPropertyRefExpr(
 // rather than for something reached through it. Every qualifying use is
 // answered where the qualification is lowered, so what arrives here is the
 // handle, which is a primary of the expression grammar exactly as `null` is.
-//
-// In the constraints a `randomize() with` call writes, `this` names the object
-// the call randomizes (LRM 18.7).
 auto MakeCurrentInstanceHandleExpr(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    const slang::ast::Type& type, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
+    UnitLowerer& unit_lowerer, const slang::ast::Type& type,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  if (frame.randomized_class != nullptr) {
-    return hir::MakeRefExpr(hir::RandomizedObject{}, *type_id, span);
-  }
   return hir::MakeRefExpr(hir::ThisHandle{}, *type_id, span);
 }
 
@@ -577,20 +541,6 @@ auto NamesCurrentInstance(const slang::ast::Expression& expr) -> bool {
   return named != nullptr && IsCurrentInstanceHandle(named->symbol);
 }
 
-auto RandomizedObjectReaching(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    const slang::ast::ClassType& owner, diag::SourceSpan span)
-    -> diag::Result<std::optional<hir::ExprId>> {
-  if (frame.randomized_class == nullptr ||
-      !IsLineageOf(*frame.randomized_class, owner)) {
-    return std::nullopt;
-  }
-  auto object_type = unit_lowerer.InternType(*frame.randomized_class, span);
-  if (!object_type) return std::unexpected(std::move(object_type.error()));
-  return frame.Exprs().Add(
-      hir::MakeRefExpr(hir::RandomizedObject{}, *object_type, span));
-}
-
 auto LowerCurrentInstanceMember(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::Symbol& member, const slang::ast::Type& type,
@@ -620,6 +570,14 @@ auto LowerNamedValueProc(
 
   if (auto clause = frame.FindIterationClause(sym)) {
     return MakeIterationElementRefExpr(unit_lowerer, named, *clause, span);
+  }
+  // The object a call of `randomize()` randomizes, named in the call's
+  // constraints and listed arguments by the variable the front end gives it
+  // (LRM 18.7, 18.11).
+  if (&sym == frame.randomized_object) {
+    auto type_id = unit_lowerer.InternExpressionType(named, span);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    return hir::MakeRefExpr(hir::RandomizedObject{}, *type_id, span);
   }
   if (const auto* filled = unit_lowerer.NameFilledDuringElaboration(sym)) {
     return LowerValueRef(unit_lowerer, frame, *filled, *named.type, span);
@@ -654,8 +612,7 @@ auto LowerNamedValueProc(
       return MakeClassPropertyRefExpr(
           unit_lowerer, frame, target, *named.type, span);
     case Referent::kThisHandle:
-      return MakeCurrentInstanceHandleExpr(
-          unit_lowerer, frame, *named.type, span);
+      return MakeCurrentInstanceHandleExpr(unit_lowerer, *named.type, span);
     case Referent::kPatternBinding:
       return MakePatternVarRefExpr(
           unit_lowerer, target.as<slang::ast::PatternVarSymbol>(), *named.type,

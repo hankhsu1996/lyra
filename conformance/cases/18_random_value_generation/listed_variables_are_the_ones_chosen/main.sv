@@ -2,6 +2,8 @@
 // constraints hold (LRM 18.12), and a class's randomize() given a list chooses
 // exactly the variables listed, whether or not they were declared random,
 // holding every other one while still checking every constraint (LRM 18.11).
+// A property the object's class inherits is a property of the object, so the
+// call may list it too.
 // A listed array is each of its elements, and its size where a constraint
 // names it, as though its mode were on; a random handle the call does not list
 // is a state variable, so the object it reaches is neither randomized nor
@@ -17,7 +19,11 @@ module Top;
     endfunction
   endclass
 
-  class Pair;
+  class Held;
+    bit [7:0] inherited;
+  endclass
+
+  class Pair extends Held;
     rand bit [7:0] chosen;
     rand bit [7:0] held;
     bit [7:0] state;
@@ -35,6 +41,7 @@ module Top;
   int listed_result;
   bit listed_kept;
   bit state_chosen;
+  bit inherited_chosen;
   int array_result;
   bit array_held;
   int queue_result;
@@ -51,6 +58,7 @@ module Top;
     listed_result = -1;
     listed_kept = 0;
     state_chosen = 0;
+    inherited_chosen = 0;
     array_result = -1;
     array_held = 0;
     queue_result = -1;
@@ -67,6 +75,10 @@ module Top;
     p.state = 0;
     void'(p.randomize(state) with { state == 123; });
     state_chosen = p.state == 123;
+
+    p.inherited = 0;
+    void'(p.randomize(inherited) with { inherited == 77; });
+    inherited_chosen = p.inherited == 77;
 
     inner_prepared = 0;
     p.inner.v = 0;
@@ -88,6 +100,8 @@ module Top;
       $fatal(1, "a listing call chose a variable it did not list");
     if (state_chosen !== 1)
       $fatal(1, "a listed variable not declared random was not chosen");
+    if (inherited_chosen !== 1)
+      $fatal(1, "a listed variable the class inherits was not chosen");
     if (array_result !== 1 || array_held !== 1)
       $fatal(1, "a listed array answered %0d", array_result);
     if (queue_result !== 1 || queue_held !== 1)

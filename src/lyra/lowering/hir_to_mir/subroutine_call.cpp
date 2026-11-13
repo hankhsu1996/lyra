@@ -60,10 +60,10 @@ struct DeclaringScopeArgument {
   hir::DeclaringInstanceReach reach;
 };
 
-// The object the source named a method on (LRM 8.6), in whichever receiver
-// form it wrote.
+// The object the source named a method on (LRM 8.6), `this` where it named
+// none.
 struct CalledObject {
-  hir::MethodReceiver source;
+  hir::ExprId receiver;
 };
 
 // An object across an instance boundary, reached through an endpoint sealed at
@@ -258,9 +258,8 @@ auto PlanMethodBoundary(
 
 // Plans a call to an instance method (LRM 8.6), which leads with the object
 // the source named, and nothing for a hook the library runs (LRM 18.6.2,
-// 8.26.9). It dispatches when the callee fills a slot and the source did not
-// demand the base's implementation, which `super` demands whatever role the
-// callee carries (LRM 8.15).
+// 8.26.9). A call in mode `virtual` dispatches where the callee fills a slot;
+// one in mode `super` runs the method it names (LRM 8.15).
 auto PlanInstanceMethodCall(
     UnitLowerer& unit_lowerer, const hir::MethodCallRef& ref,
     std::optional<mir::TypeId> result_type) -> std::optional<SubroutineCallee> {
@@ -270,19 +269,26 @@ auto PlanInstanceMethodCall(
     return std::nullopt;
   }
   MethodCalleeFacts facts = ReadMethodCallee(unit_lowerer, *runs);
-  const AmbientHandle object{CalledObject{.source = ref.receiver}};
-  std::optional<mir::VirtualSlot> slot = facts.target.slot;
-  if (slot.has_value() &&
-      !std::holds_alternative<hir::SuperReceiver>(ref.receiver)) {
+  const AmbientHandle object{CalledObject{.receiver = ref.receiver}};
+  const auto named = [&] {
     return PlanMethodBoundary(
         facts, result_type,
-        DispatchedCallee{.receiver = object, .slot = *std::move(slot)}, object,
+        NamedCallee{.callee = facts.target.direct, .handle = object}, object,
         std::nullopt);
+  };
+  switch (ref.mode) {
+    case hir::InvocationMode::kVirtual:
+      if (std::optional<mir::VirtualSlot> slot = facts.target.slot) {
+        return PlanMethodBoundary(
+            facts, result_type,
+            DispatchedCallee{.receiver = object, .slot = *std::move(slot)},
+            object, std::nullopt);
+      }
+      return named();
+    case hir::InvocationMode::kSuper:
+      return named();
   }
-  return PlanMethodBoundary(
-      facts, result_type,
-      NamedCallee{.callee = facts.target.direct, .handle = object}, object,
-      std::nullopt);
+  throw InternalError("PlanInstanceMethodCall: unknown InvocationMode");
 }
 
 // Plans a call to a type-associated method (LRM 8.10), which has no object to
@@ -495,26 +501,23 @@ struct ResolvedCallee {
   std::optional<mir::ExprId> leading;
 };
 
-// The borrowed pointer an instance method's body reads as its `self`. An
-// explicit handle evaluates and then derefs the managed wrapper to reach the
-// object; a receiver that is the enclosing method's own object and a `super`
-// qualifier both read its self binding, which is already such a pointer -- the
-// three differ in which implementation runs, not in where the receiver comes
-// from.
+// The borrowed pointer an instance method's body reads as its `self`. `this`
+// is the running body's own self binding, which is already such a pointer;
+// any other handle is evaluated and the managed wrapper opened to reach the
+// object.
 template <ExprLowerer Lowerer>
 auto BuildReceiverPointer(
-    Lowerer& lowerer, const WalkFrame& frame,
-    const hir::MethodReceiver& receiver) -> diag::Result<mir::ExprId> {
+    Lowerer& lowerer, const WalkFrame& frame, hir::ExprId receiver)
+    -> diag::Result<mir::ExprId> {
   mir::Builder block = frame.Builder();
-  const auto* handle = std::get_if<hir::HandleReceiver>(&receiver);
-  if (handle == nullptr) {
+  const hir::Expr& expr = lowerer.HirExprs().Get(receiver);
+  if (IsThisHandle(expr)) {
     return block.Add(MakeSelfRefExpr(frame));
   }
-  auto handle_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(handle->expr), frame);
-  if (!handle_or) return std::unexpected(std::move(handle_or.error()));
+  auto handle = lowerer.LowerExpr(expr, frame);
+  if (!handle) return std::unexpected(std::move(handle.error()));
   return BuildObjectPointer(
-      lowerer.Owner().Unit(), block, block.Add(*std::move(handle_or)));
+      lowerer.Owner().Unit(), block, block.Add(*std::move(handle)));
 }
 
 // Evaluates the ambient handle a callee's first parameter binds, in the block
@@ -533,7 +536,7 @@ auto BuildAmbientHandle(
             return BuildImplicitInstanceArgument(lowerer, frame, a.reach);
           },
           [&](const CalledObject& o) -> diag::Result<mir::ExprId> {
-            return BuildReceiverPointer(lowerer, frame, o.source);
+            return BuildReceiverPointer(lowerer, frame, o.receiver);
           },
           [&](const SealedObject& s) -> diag::Result<mir::ExprId> {
             return lowerer.RouteEnd(frame, s.reference.id);
@@ -556,26 +559,28 @@ auto AmbientHandleOf(const CalleeForm& form) -> std::optional<AmbientHandle> {
       form);
 }
 
-// The class handle the source named the object of the call `form` names
-// through, where it named one (LRM 8.4).
-auto ClassHandleOf(const CalleeForm& form) -> std::optional<hir::ExprId> {
+// The class handle the call `form` names is made through, where that handle
+// is not `this` (LRM 8.4).
+auto ClassHandleOf(
+    const base::Arena<hir::Expr, hir::ExprId>& exprs, const CalleeForm& form)
+    -> std::optional<hir::ExprId> {
   const std::optional<AmbientHandle> handle = AmbientHandleOf(form);
   const auto* called =
       handle.has_value() ? std::get_if<CalledObject>(&*handle) : nullptr;
-  const auto* through = called == nullptr
-                            ? nullptr
-                            : std::get_if<hir::HandleReceiver>(&called->source);
-  if (through == nullptr) return std::nullopt;
-  return through->expr;
+  if (called == nullptr || IsThisHandle(exprs.Get(called->receiver))) {
+    return std::nullopt;
+  }
+  return called->receiver;
 }
 
 // The class handle a call holds the object it is made on through, where it
 // holds one: the one the source named the object by, where the call leaves a
 // formal to a default, `omits_any`, whose evaluation the object has to outlive.
-auto HeldHandleOf(const CalleeForm& form, bool omits_any)
-    -> std::optional<hir::ExprId> {
+auto HeldHandleOf(
+    const base::Arena<hir::Expr, hir::ExprId>& exprs, const CalleeForm& form,
+    bool omits_any) -> std::optional<hir::ExprId> {
   if (!omits_any) return std::nullopt;
-  return ClassHandleOf(form);
+  return ClassHandleOf(exprs, form);
 }
 
 // A component landing in an actual is what gives a call something to sequence
@@ -596,7 +601,7 @@ auto TakesSteps(
     const base::Arena<hir::Expr, hir::ExprId>& exprs, const hir::CallExpr& call,
     const SubroutineCallee& plan) -> bool {
   return WritesBack(plan) ||
-         HeldHandleOf(plan.form, OmitsAny(exprs, RequiredOperands(call)))
+         HeldHandleOf(exprs, plan.form, OmitsAny(exprs, RequiredOperands(call)))
              .has_value();
 }
 
@@ -1171,7 +1176,7 @@ auto EmitSubroutineCall(
   // are made on it, as a construction creates its object there (LRM 13.5).
   const std::vector<hir::ExprId> operands = RequiredOperands(call);
   const std::optional<hir::ExprId> held =
-      HeldHandleOf(plan.form, OmitsAny(hir_exprs, operands));
+      HeldHandleOf(hir_exprs, plan.form, OmitsAny(hir_exprs, operands));
   std::optional<std::optional<mir::ExprId>> handle;
   auto bound = BindFormals(
       lowerer, frame, plan.completion.formals, operands,
@@ -1443,10 +1448,11 @@ auto EmitReportingCall(
   const bool omits_any = OmitsAny(lowerer.HirExprs(), operands);
   // What the function reads is fixed by its text, so the order the call's
   // operands run in decides nothing here, and the object is formed first.
-  auto handle = omits_any ? EvaluateSharedHandle(
-                                lowerer, frame, plan.form,
-                                HeldHandleOf(plan.form, omits_any))
-                          : EvaluateHandle(lowerer, frame, plan.form);
+  auto handle =
+      omits_any ? EvaluateSharedHandle(
+                      lowerer, frame, plan.form,
+                      HeldHandleOf(lowerer.HirExprs(), plan.form, omits_any))
+                : EvaluateHandle(lowerer, frame, plan.form);
   if (!handle) return std::unexpected(std::move(handle.error()));
   ResolvedCallee resolved =
       ResolveCalleeOn(lowerer.Owner(), block, plan.form, *handle);

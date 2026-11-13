@@ -1,12 +1,12 @@
-// The super keyword reaches a member of the base class of the class whose body
-// writes it, and is what makes a method the subclass overrode, or a property
-// it redeclared, reachable at all. Which member it denotes is fixed by the
-// class the body belongs to and not by the type of the object the method was
-// called on, so a super call inside a method that a further subclass overrides
-// still runs the version one level up from where it is written, and a super
-// read there yields the property one level up. Since there is no way to reach
-// higher than the immediate base, reaching further up means that version's own
-// super doing so in turn (LRM 8.14, 8.15).
+// The super keyword, written alone or as `this.super`, reaches a member of the
+// base class of the class whose body writes it, and is what makes a method the
+// subclass overrode, or a property it redeclared, reachable at all. Which
+// member it denotes is fixed by the class the body belongs to and not by the
+// type of the object the method was called on, so a super call inside a method
+// that a further subclass overrides still runs the version one level up from
+// where it is written, and a super read there yields the property one level up.
+// Since there is no way to reach higher than the immediate base, reaching
+// further up means that version's own super doing so in turn (LRM 8.14, 8.15).
 module Top;
   class Base;
     int v = 1;
@@ -29,6 +29,10 @@ module Top;
 
     virtual function int base_v();
       return super.v;
+    endfunction
+
+    virtual function int this_base_f();
+      return this.super.f();
     endfunction
   endclass
 
@@ -66,6 +70,7 @@ module Top;
 
   int mid_base_v;
   int leaf_base_v;
+  int leaf_this_base_f;
   int via_mid_handle_base_v;
 
   initial begin
@@ -91,6 +96,7 @@ module Top;
     leaf_super_base_f = l.mid_base_f();
     leaf_own_v = l.v;
     leaf_base_v = l.base_v();
+    leaf_this_base_f = l.this_base_f();
 
     mh = l;
     via_mid_handle_f = mh.f();
@@ -131,6 +137,8 @@ module Top;
     if (via_mid_handle_base_v !== 2)
       $fatal(1, "via_mid_handle_base_v was %0d, expected 2",
              via_mid_handle_base_v);
+    if (leaf_this_base_f !== 1)
+      $fatal(1, "leaf_this_base_f was %0d, expected 1", leaf_this_base_f);
     $display("All checks passed");
   end
 endmodule

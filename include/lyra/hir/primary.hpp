@@ -36,17 +36,18 @@ struct NullLiteral {
 // LRM 8.11 `this`: the handle referring to the object the subroutine it appears
 // in was invoked on -- a constructor as much as a method. The other
 // class-handle primary, and the counterpart of `null`: one names no object,
-// this one names the object running. It appears only where the source asks for
-// the object itself; qualifying a member with `this` names what the bare name
+// this one names the object running. It stands where the source asks for the
+// object itself, and as the object of a method call that names none or names
+// `this` (LRM 8.6); a property qualified with `this` names what the bare name
 // names and never reaches here.
 struct ThisHandle {
   auto operator==(const ThisHandle&) const -> bool = default;
 };
 
-// The object a `randomize() with` call randomizes (LRM 18.7), which a name in
-// the call's constraint block reaches its class's properties through before
-// the scope around the call: the handle the call was made on, evaluated once
-// where the call is.
+// The object a call of `randomize()` randomizes (LRM 18.7, 18.11): every
+// instance member the call's constraints or listed arguments find in that
+// object's class is reached through it. It is the handle the call was made on,
+// evaluated once where the call is.
 struct RandomizedObject {
   auto operator==(const RandomizedObject&) const -> bool = default;
 };

@@ -14,7 +14,6 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/pattern_id.hpp"
-#include "lyra/hir/primary.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/timing.hpp"
@@ -179,13 +178,7 @@ void ReachCallee(const SubroutineRef& callee, const auto& reach) {
       Overloaded{
           [](const StructuralSubroutineRef&) {},
           [&](const MethodCallRef& ref) {
-            std::visit(
-                Overloaded{
-                    [&](const HandleReceiver& receiver) {
-                      reach(receiver.expr, OperandSlot::kOperand);
-                    },
-                    [](const SelfReceiver&) {}, [](const SuperReceiver&) {}},
-                ref.receiver);
+            reach(ref.receiver, OperandSlot::kOperand);
           },
           [](const StaticMethodCallRef&) {}, [](const SystemSubroutineRef&) {},
           [&](const BuiltinMethodRef& ref) {

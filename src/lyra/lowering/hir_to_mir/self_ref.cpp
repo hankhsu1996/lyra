@@ -328,6 +328,12 @@ auto BuildReferenceArg(
           .type = ref_type});
 }
 
+auto IsThisHandle(const hir::Expr& expr) -> bool {
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
+  return primary != nullptr &&
+         std::holds_alternative<hir::ThisHandle>(primary->data);
+}
+
 auto BuildThisHandle(const WalkFrame& frame) -> mir::Expr {
   const BodyBindingRef share =
       frame.bindings->EnsureCarrier(ReceiverShareOrigin{});

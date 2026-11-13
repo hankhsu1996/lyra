@@ -505,35 +505,33 @@ auto LowerLibraryHookCall(
     }
     throw InternalError("LowerLibraryHookCall: unknown RandomizationHook");
   }();
-  auto object = std::visit(
-      Overloaded{
-          [&](const hir::HandleReceiver& handle) -> diag::Result<mir::ExprId> {
-            auto lowered =
-                lowerer.LowerExpr(lowerer.HirExprs().Get(handle.expr), frame);
-            if (!lowered) return std::unexpected(std::move(lowered.error()));
-            return block.AsValue(unit.types, block.Add(*std::move(lowered)));
-          },
-          [&](const hir::SelfReceiver&) -> diag::Result<mir::ExprId> {
-            return block.Add(BuildThisHandle(frame));
-          },
-          [&](const hir::SuperReceiver&) -> diag::Result<mir::ExprId> {
-            return block.Add(BuildThisHandle(frame));
-          }},
-      ref.receiver);
-  if (!object) return std::unexpected(std::move(object.error()));
-  // The built-in hook does nothing, but calling it is still a method reached
-  // through the handle, so the handle is opened, which fails the design where
-  // it names no object (LRM 8.4); the hook the object's own class runs is
+  // Which hook runs follows from its class alone, so the invocation mode
+  // leaves it as it is.
+  const hir::Expr& receiver = lowerer.HirExprs().Get(ref.receiver);
+  const auto evaluate_receiver = [&]() -> diag::Result<mir::ExprId> {
+    auto lowered = lowerer.LowerExpr(receiver, frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return block.AsValue(unit.types, block.Add(*std::move(lowered)));
+  };
+  // The built-in hook does nothing, but calling it through a handle still
+  // opens the handle, which fails the design where it names no object (LRM
+  // 8.4); `this` always names one. The hook the object's own class runs is
   // handed the object.
   if (!runs_objects_hook) {
-    const mir::TypeId root =
-        mir::LibraryTypeOf(unit.types, support::LibraryDecl::kObjectRoot);
-    block.AppendStmt(
-        mir::ExprStmt{
-            .expr = block.Add(mir::MakeObjectOfCall(unit, *object, root))});
+    if (!IsThisHandle(receiver)) {
+      auto object = evaluate_receiver();
+      if (!object) return std::unexpected(std::move(object.error()));
+      const mir::TypeId root =
+          mir::LibraryTypeOf(unit.types, support::LibraryDecl::kObjectRoot);
+      block.AppendStmt(
+          mir::ExprStmt{
+              .expr = block.Add(mir::MakeObjectOfCall(unit, *object, root))});
+    }
     return BuildBuiltinMethodCall(
         unit_lowerer.Unit(), block, fn, std::nullopt, {}, result_type);
   }
+  auto object = evaluate_receiver();
+  if (!object) return std::unexpected(std::move(object.error()));
   return BuildBuiltinMethodCall(
       unit_lowerer.Unit(), block, fn, std::nullopt,
       {StatedAsRead(
