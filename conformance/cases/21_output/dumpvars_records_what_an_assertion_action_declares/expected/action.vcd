@@ -1,0 +1,63 @@
+$timescale 1ns $end
+$scope module Top $end
+$var reg 1 C clk $end
+$var reg 1 L low $end
+$var reg 1 H high $end
+$scope begin a $end
+$scope begin act $end
+$var integer 32 R runs $end
+$upscope $end
+$upscope $end
+$scope begin b $end
+$scope begin assumed $end
+$var integer 32 B broken $end
+$upscope $end
+$upscope $end
+$scope begin unlabelled $end
+$var integer 32 F failed $end
+$upscope $end
+$scope begin c $end
+$scope begin hit $end
+$var integer 32 T hits $end
+$scope begin inner $end
+$var integer 32 D deep $end
+$upscope $end
+$upscope $end
+$upscope $end
+$scope begin p $end
+$scope begin d $end
+$scope begin queued $end
+$var integer 32 P pending $end
+$upscope $end
+$upscope $end
+$upscope $end
+$scope begin q $end
+$scope begin dormant $end
+$var integer 32 N never $end
+$upscope $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+0C
+0L
+1H
+b0 R
+b0 B
+b0 F
+b0 T
+b0 D
+b0 P
+b111 N
+$end
+#1
+1C
+b1 R
+b1 B
+b1 F
+b1 T
+b10 D
+b1 P
+#2
+0C

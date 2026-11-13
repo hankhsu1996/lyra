@@ -114,6 +114,11 @@ constexpr std::array kEntries{
         DiagCode::kErrorBinsofOutsideItsCross,
         DiagCodeInfo{
             .kind = DiagKind::kError, .name = "binsof_outside_its_cross"}},
+    std::pair{
+        DiagCode::kErrorNamesWhatAnAssertionLeftOutDeclares,
+        DiagCodeInfo{
+            .kind = DiagKind::kError,
+            .name = "names_what_an_assertion_left_out_declares"}},
 
     std::pair{
         DiagCode::kHostInvalidCliArgs,

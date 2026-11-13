@@ -405,34 +405,37 @@ struct SubroutineLoweringResult {
   std::optional<std::vector<hir::ExprId>> base_arguments;
 };
 
-// The variable `formal` is: one its namespace keeps, named as every name
-// reaching it names it (LRM 13.3.2, 6.21), or one the body declares -- an
-// automatic formal, or a static one each instance keeps.
+// The variable `formal` is: for an automatic formal, one the body declares;
+// for a static one (LRM 13.3.2), a variable of the scope declaring the
+// subroutine, reached as every name reaching it reaches it -- a design
+// element's from its own instance, a namespace's as the namespace's (LRM
+// 26.2).
 auto FormalVariableOf(
     UnitLowerer& unit_lowerer, ProcessLowerer& lowerer, const WalkFrame& frame,
-    hir::ProceduralBody& body, const slang::ast::FormalArgumentSymbol& formal)
-    -> diag::Result<hir::FormalVariable> {
-  const auto span = frontend::PointSpanOf(formal.location);
-  const auto of_the_body = [&]() -> diag::Result<hir::FormalVariable> {
-    auto type = unit_lowerer.InternType(formal.getType(), span);
-    if (!type) return std::unexpected(std::move(type.error()));
+    hir::ProceduralBody& body, const slang::ast::FormalArgumentSymbol& formal,
+    hir::TypeId type) -> diag::Result<hir::FormalVariable> {
+  if (!HasStaticStorage(formal)) {
     return hir::FormalVariable{
-        lowerer.AddProceduralVar(frame, body, formal, *type)};
-  };
-  std::optional<KeptStatic> kept = KeptStaticOf(formal);
-  if (!kept.has_value()) return of_the_body();
+        lowerer.AddProceduralVar(frame, body, formal, type)};
+  }
+  auto target = unit_lowerer.ResolveValueTarget(
+      frame, formal, RouteOrigin{.start = FromReader{}, .written = {}},
+      frontend::PointSpanOf(formal.location));
+  if (!target) return std::unexpected(std::move(target.error()));
   return std::visit(
       Overloaded{
-          [&](const KeptByNamespace& by) -> diag::Result<hir::FormalVariable> {
-            return hir::FormalVariable{
-                unit_lowerer.NamespaceValueRefOf(*by.unit, kept->name)};
+          [](const hir::RoutedValueRef& ref) {
+            return hir::FormalVariable{ref};
           },
-          [](const KeptByClass&) -> diag::Result<hir::FormalVariable> {
+          [](const hir::NamespaceValueRef& ref) {
+            return hir::FormalVariable{ref};
+          },
+          [](const hir::StaticPropertyRef&) -> hir::FormalVariable {
             throw InternalError(
                 "FormalVariableOf: a class keeps a formal, though a class "
                 "method is automatic (LRM 8.6) -- please report this as a bug");
           }},
-      kept->keeper);
+      *target);
 }
 
 auto LowerSubroutineDeclImpl(
@@ -445,7 +448,7 @@ auto LowerSubroutineDeclImpl(
     return std::unexpected(std::move(return_type_or.error()));
   }
 
-  hir::ProceduralBody body = unit_lowerer.MakeProceduralBody(sym);
+  hir::ProceduralBody body;
   ConsumedBodyExpressions consumed_body_exprs;
   if (base_call_ast != nullptr) consumed_body_exprs.insert(base_call_ast);
   ProcessLowerer lowerer(unit_lowerer, sym, std::move(consumed_body_exprs));
@@ -474,12 +477,16 @@ auto LowerSubroutineDeclImpl(
   std::vector<hir::SubroutineParam> params;
   params.reserve(sym.getArguments().size());
   for (const auto* formal : sym.getArguments()) {
-    auto variable =
-        FormalVariableOf(unit_lowerer, lowerer, body_frame, body, *formal);
+    auto type = unit_lowerer.InternType(
+        formal->getType(), frontend::PointSpanOf(formal->location));
+    if (!type) return std::unexpected(std::move(type.error()));
+    auto variable = FormalVariableOf(
+        unit_lowerer, lowerer, body_frame, body, *formal, *type);
     if (!variable) return std::unexpected(std::move(variable.error()));
     params.push_back(
         hir::SubroutineParam{
             .variable = *std::move(variable),
+            .type = *type,
             .direction = ParamDirectionOf(*formal),
             .default_evaluator = DefaultEvaluatorOf(unit_lowerer, *formal)});
   }
@@ -489,9 +496,6 @@ auto LowerSubroutineDeclImpl(
     result_var = lowerer.AddProceduralVar(
         body_frame, body, *sym.returnValVar, *return_type_or);
   }
-
-  auto constants = lowerer.DeclarePerObjectConstants(sym, body_frame);
-  if (!constants) return std::unexpected(std::move(constants.error()));
 
   // Base-call args (LRM 8.7) evaluate in the constructor's own frame and can
   // reference formals -- for example `super.new(a * 2)` where `a` is the
@@ -663,6 +667,7 @@ auto LowerEvaluatorDecl(
         hir::SubroutineParam{
             .variable = lowerer.AddEvaluatorParameter(
                 body_frame, body, *parameter, *type),
+            .type = *type,
             .direction = EvaluatorParamDirectionOf(*parameter),
             .default_evaluator = std::nullopt});
   }
@@ -805,7 +810,7 @@ auto LowerMethodPrototypeDecl(
     return std::unexpected(std::move(return_type_or.error()));
   }
 
-  hir::ProceduralBody body = unit_lowerer.MakeProceduralBody(proto);
+  hir::ProceduralBody body;
   ProcessLowerer lowerer(unit_lowerer, proto);
 
   // A pure virtual prototype has no body to walk, but it still has parameter
@@ -832,6 +837,7 @@ auto LowerMethodPrototypeDecl(
     params.push_back(
         hir::SubroutineParam{
             .variable = var,
+            .type = *formal_type_or,
             .direction = ParamDirectionOf(*formal),
             .default_evaluator = DefaultEvaluatorOf(unit_lowerer, *formal)});
   }

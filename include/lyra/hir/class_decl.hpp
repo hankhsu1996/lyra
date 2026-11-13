@@ -44,7 +44,7 @@ struct StaticPropertyInit {
   // The block or subroutine of a method the initializer was written in, for a
   // static variable a method declares, whose name a construct in it reports
   // (LRM 21.2.1.5); nothing for a static property, written in the class.
-  std::optional<ProceduralScopeId> written_in;
+  std::optional<ProceduralScopeId> lexical_scope;
 
   auto operator==(const StaticPropertyInit&) const -> bool = default;
 };

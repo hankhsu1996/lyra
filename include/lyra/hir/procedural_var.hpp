@@ -18,19 +18,9 @@ struct ProceduralVarId {
       -> std::strong_ordering = default;
 };
 
-// LRM 6.21 / 13.3.1 / 13.4.2 variable lifetime. A static-lifetime variable has
-// one storage location that retains its value between calls, per thing that
-// replicates the declaration -- a module instance, which replicates a class it
-// declares too, and nothing at all for a package subroutine or a method of a
-// class a package declares; an automatic-lifetime variable is allocated fresh
-// for each activation. slang resolves the source keyword and
-// the enclosing module / subroutine default into a per-variable choice, which
-// HIR records verbatim.
-enum class VariableLifetime : std::uint8_t {
-  kStatic,
-  kAutomatic,
-};
-
+// A variable a body declares, allocated fresh for each activation (LRM 6.21,
+// 13.3.1). A static one is a declaration of the scope or class around the body
+// wherever the body writes it, so none is a body's.
 struct ProceduralVarDecl {
   // The identifier the source declared this variable under, absent for one the
   // lowering introduced to carry a construct the language states without a
@@ -41,16 +31,14 @@ struct ProceduralVarDecl {
   // absence rather than a word chosen to look unlikely.
   std::optional<std::string> name;
   TypeId type;
-  VariableLifetime lifetime = VariableLifetime::kAutomatic;
   // An automatic local a detached (join_none / join_any) fork branch borrows
   // and can outlive (LRM 6.21). Its storage is lifted into a shared object so
   // the branch keeps it alive after the declaring frame returns. Decided by a
   // pre-pass over the body before the decl is interned, so it is known at
   // creation rather than discovered (and back-patched) at a later reference.
   bool lifetime_extended = false;
-  // The declaration assignment the source wrote (`int x = 3`). It belongs to
-  // the declaration, not to any statement: the lifetime above decides when it
-  // runs against storage of that lifetime, never whose it is.
+  // The declaration assignment the source wrote (`int x = 3`), made on each
+  // entry to the declaring scope (LRM 6.21).
   std::optional<ExprId> init = std::nullopt;
 
   auto operator==(const ProceduralVarDecl&) const -> bool = default;

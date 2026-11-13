@@ -1,15 +1,12 @@
-#include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_bring_up.hpp"
 
 #include <cstdint>
-#include <expected>
 #include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
-#include "lyra/lowering/hir_to_mir/access_path.hpp"
-#include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
@@ -117,90 +114,24 @@ void RegisterAssertionControl(
   }
 }
 
-auto IntegrateVariableInitializer(
-    ProcessLowerer& process, const hir::ProceduralBody& body,
-    const StorageBringUp& bring_up, const StaticCellBinding& binding,
-    hir::ProceduralVarId var) -> diag::Result<void> {
-  const WalkFrame& install_frame = bring_up.install;
-  const WalkFrame& value_frame = bring_up.value;
-  mir::Builder value_block = value_frame.Builder();
-  mir::CompilationUnit& unit = process.Owner().Unit();
-  const hir::ProceduralVarDecl& decl = body.procedural_vars.Get(var);
-
-  // An observable cell installs its declared representation and default
-  // contents once (LRM 10.5); a later user initializer stores through the cell,
-  // which verifies the value against the installed representation. The
-  // default-only case is fully expressed by that installation and needs no
-  // store.
-  if (unit.types.Get(binding.cell_type).IsCapabilityWrapper()) {
-    mir::Builder install_block = install_frame.Builder();
-    const mir::ExprId installed = install_block.Add(BuildStaticStorageAccess(
-        unit, install_frame, binding.home, binding.cell_type,
-        mir::EnclosingHops{}));
-    const mir::ExprId prototype =
-        BuildDeclaredInitialValue(process.Owner(), install_frame, decl.type);
-    install_block.AppendStmt(
-        mir::ExprStmt{
-            .expr = install_block.Add(
-                mir::MakeCapabilityInstallCallExpr(
-                    installed, prototype, support::BuiltinFn::kInitialize,
-                    unit.builtins.void_type))});
-    if (!decl.init.has_value()) {
-      return {};
-    }
-  }
-
-  const mir::ExprId target = value_block.Add(BuildStaticStorageAccess(
-      unit, value_frame, binding.home, binding.cell_type,
-      mir::EnclosingHops{}));
-  mir::ExprId init_value{};
-  if (decl.init.has_value()) {
-    // The initializer is written in the scope declaring the variable, whose
-    // name a construct in it reports (LRM 21.2.1.5), wherever it runs.
-    const hir::Expr& initializer = body.exprs.Get(*decl.init);
-    const WalkFrame declaring_frame =
-        value_frame.WithScopeName(process.Scopes().Get(binding.scope).name);
-    auto init_or = process.LowerExpr(initializer, declaring_frame);
-    if (!init_or) return std::unexpected(std::move(init_or.error()));
-    init_value = value_block.Add(*std::move(init_or));
-  } else {
-    init_value =
-        BuildDeclaredInitialValue(process.Owner(), value_frame, decl.type);
-  }
-
-  const mir::Expr assign_expr = BuildStoreExpr(
-      unit, value_block, AccessPath{.owner = target, .descent = {}},
-      init_value);
-  value_block.AppendStmt(mir::ExprStmt{.expr = value_block.Add(assign_expr)});
-  return {};
-}
-
 }  // namespace
 
-auto IntegrateStaticInitializer(
+void BringUpStaticCell(
     ProcessLowerer& process, const hir::ProceduralBody& body,
-    const StorageBringUp& bring_up, const StaticCellBinding& binding)
-    -> diag::Result<void> {
-  return std::visit(
+    const StorageBringUp& bring_up, const StaticCellBinding& binding) {
+  std::visit(
       Overloaded{
-          [&](hir::ProceduralVarId var) {
-            return IntegrateVariableInitializer(
-                process, body, bring_up, binding, var);
-          },
-          [&](const AssertionControlCell& control) -> diag::Result<void> {
+          [&](const AssertionControlCell& control) {
             DescribeAssertionControl(
                 process, body, bring_up.construct, binding, control);
             RegisterAssertionControl(
                 process, bring_up.install, binding, control);
-            return {};
           },
           // The assertion installs its own attempts, beside its clock.
-          [](const ConcurrentAttemptsCell&) -> diag::Result<void> {
-            return {};
-          },
+          [](const ConcurrentAttemptsCell&) {},
           // A history is filled where the scope keeps its sampled value
           // functions' histories, once what they read is armed.
-          [](const SampledHistoryCell&) -> diag::Result<void> { return {}; }},
+          [](const SampledHistoryCell&) {}},
       binding.of);
 }
 

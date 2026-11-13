@@ -426,7 +426,7 @@ void UnitLowerer::DeclareMemberIdentities(
       }
       return;
     case SymbolKind::ProceduralBlock:
-      DeclareProcess(
+      DeclareProceduralBlock(
           member.as<slang::ast::ProceduralBlockSymbol>(), decls, published,
           frame);
       return;
@@ -440,7 +440,8 @@ void UnitLowerer::DeclareMemberIdentities(
           decls.structural_data_objects.Declare();
       MapStructuralDataObjectBinding(value, frame, id);
       published.members.emplace_back(
-          ScopePublicationRecord::DataObject{.symbol = &value, .id = id});
+          ScopePublicationRecord::DataObject{
+              .symbol = &value, .id = id, .holder = published.class_path});
       return;
     }
     // A parameter whose value differs between the objects built from this
@@ -454,7 +455,8 @@ void UnitLowerer::DeclareMemberIdentities(
           decls.structural_data_objects.Declare();
       MapStructuralDataObjectBinding(param, frame, id);
       published.members.emplace_back(
-          ScopePublicationRecord::DataObject{.symbol = &param, .id = id});
+          ScopePublicationRecord::DataObject{
+              .symbol = &param, .id = id, .holder = published.class_path});
       return;
     }
     // An interface port names an instance another unit builds and this one's
@@ -653,12 +655,11 @@ void UnitLowerer::DeclareSubroutine(
   published.callables.emplace_back(
       ScopePublicationRecord::Subroutine{.symbol = &sub, .id = id});
   declare_defaults();
-  support::DefPath path =
+  const support::DefPath path =
       support::Extended(published.class_path, ProceduralStepOf(sub));
   published.disable_targets.push_back(
       ScopePublicationRecord::DisableTarget{.symbol = &sub, .path = path});
-  DeclareProceduralStatics(
-      sub, sub, hir::ProceduralBodyRef{id}, frame, published, std::move(path));
+  DeclareProceduralStatics(sub, decls, published, frame, path);
 }
 
 // A subroutine an interface leaves to a connected module to define (LRM 25.7)
@@ -861,81 +862,73 @@ auto UnitLowerer::FindDeclaredClocking(
   return found == clocking_blocks_.end() ? nullptr : &found->second;
 }
 
-// An assertion whose enabling condition is 1 is not a procedure the design
-// runs (LRM 16.14.5): what starts its attempts is the clock. So it takes no
-// process identity.
-void UnitLowerer::DeclareProcess(
+// The front end presents a process as a procedure, and an assertion whose
+// enabling condition is 1 too, though it is no procedure the design runs (LRM
+// 16.14.5): what starts its attempts is the clock, so it takes no process
+// identity. In either, a block's variables are static unless declared
+// otherwise, as the scope's are (LRM 6.21), so what they declare is declared
+// alike. One the build leaves out declares
+// nothing, and nor does a block an assertion it leaves out opens inside one.
+void UnitLowerer::DeclareProceduralBlock(
     const slang::ast::ProceduralBlockSymbol& proc, ScopeDeclarations& decls,
     ScopePublicationRecord& published, ScopeFrameId frame) {
   if (!Contains(proc)) return;
-  if (StaticConcurrentAssertionOf(proc).assertion != nullptr) return;
-  const hir::ProcessId id = decls.processes.Declare();
-  MapProcessBinding(proc, id);
-  // The frontend hoists a process's outermost blocks into this scope's member
-  // list -- its body, or where the body opens no scope of its own, each block
-  // written directly inside it -- so the process is the only place that says
-  // which of those blocks are its own. A process is unnamed, so each of them
-  // stands directly in this scope.
+  if (StaticConcurrentAssertionOf(proc).assertion == nullptr) {
+    MapProcessBinding(proc, decls.processes.Declare());
+  }
+  // The frontend hoists a procedure's outermost blocks into this scope's
+  // member list -- its body, or where the body opens no scope of its own, each
+  // block written directly inside it, an assertion's label or its action --
+  // so the procedure is the only place that says which of those blocks are
+  // its own. A procedure is unnamed, so each of them stands directly in this
+  // scope.
   for (const auto* block : proc.getBlocks()) {
-    std::optional<support::DefPath> path;
-    if (!block->name.empty()) {
-      path = support::Extended(published.class_path, ProceduralStepOf(*block));
-      published.disable_targets.push_back(
-          ScopePublicationRecord::DisableTarget{
-              .symbol = block, .path = *path});
-    }
-    DeclareProceduralStatics(
-        *block, proc, hir::ProceduralBodyRef{id}, frame, published, path);
+    DeclareBlockStatics(*block, decls, published, frame, published.class_path);
   }
 }
 
+void UnitLowerer::DeclareBlockStatics(
+    const slang::ast::StatementBlockSymbol& block, ScopeDeclarations& decls,
+    ScopePublicationRecord& published, ScopeFrameId frame,
+    const support::DefPath& around) {
+  if (InBlockLeftOut(block)) return;
+  support::DefPath path = support::Extended(around, ProceduralStepOf(block));
+  if (ReachedByName(path)) {
+    published.disable_targets.push_back(
+        ScopePublicationRecord::DisableTarget{.symbol = &block, .path = path});
+  }
+  DeclareProceduralStatics(block, decls, published, frame, path);
+}
+
 void UnitLowerer::DeclareProceduralStatics(
-    const slang::ast::Scope& block, const slang::ast::Symbol& body_symbol,
-    hir::ProceduralBodyRef body, ScopeFrameId frame,
-    ScopePublicationRecord& published,
-    const std::optional<support::DefPath>& within) {
+    const slang::ast::Scope& block, ScopeDeclarations& decls,
+    ScopePublicationRecord& published, ScopeFrameId frame,
+    const support::DefPath& within) {
   for (const auto& member : block.members()) {
     if (member.kind == slang::ast::SymbolKind::StatementBlock) {
-      const auto& nested = member.as<slang::ast::StatementBlockSymbol>();
-      std::optional<support::DefPath> path;
-      if (within.has_value() && !nested.name.empty()) {
-        path = support::Extended(*within, ProceduralStepOf(nested));
-        published.disable_targets.push_back(
-            ScopePublicationRecord::DisableTarget{
-                .symbol = &nested, .path = *path});
-      }
-      DeclareProceduralStatics(
-          nested, body_symbol, body, frame, published, path);
+      DeclareBlockStatics(
+          member.as<slang::ast::StatementBlockSymbol>(), decls, published,
+          frame, within);
       continue;
     }
-    // A static-lifetime variable is storage of the object the body runs on
-    // (LRM 6.21), and so is a constant whose value differs between the objects
-    // built from this unit: it is read there rather than folded to the value
-    // one elaboration gave it.
-    const auto* var = member.as_if<slang::ast::VariableSymbol>();
-    const auto* constant = member.as_if<slang::ast::ParameterSymbol>();
-    const bool held = (var != nullptr && HasStaticStorage(*var)) ||
-                      (constant != nullptr && DiffersPerObject(*constant));
-    if (!held) continue;
-    // A namespace unit's subroutine has no instance to replicate its statics;
-    // the namespace keeps them as its own variables.
-    if (var != nullptr && KeptStaticOf(*var).has_value()) continue;
-
-    const hir::ProceduralVarId id =
-        procedural_static_vars_[&body_symbol].Declare();
-    const auto [_, inserted] = procedural_static_bindings_.emplace(
-        &member,
-        ProceduralStaticBinding{.home_frame = frame, .body = body, .var = id});
-    if (!inserted) {
-      throw InternalError(
-          "UnitLowerer::DeclareProceduralStatics: procedural static already "
-          "mapped");
-    }
-    if (var != nullptr && within.has_value()) {
+    if (!IsStaticLocal(member)) continue;
+    const auto& value = member.as<slang::ast::ValueSymbol>();
+    const hir::StructuralDataObjectId id =
+        decls.structural_data_objects.Declare();
+    MapStructuralDataObjectBinding(value, frame, id);
+    // A design element publishes what a name from elsewhere can reach (LRM
+    // 23.6), and one written in a block the source left unnamed is reached by
+    // none, so it stays the scope's own. A namespace keeps every variable it
+    // has as program storage the units naming it share (LRM 26.2), so it lists
+    // them all.
+    if (ReachedByName(within) || !hir::RootsAnObject(unit_.definition)) {
       published.members.emplace_back(
-          ScopePublicationRecord::LocalStatic{
-              .symbol = var, .body = body, .var = id, .within = *within});
+          ScopePublicationRecord::DataObject{
+              .symbol = &value, .id = id, .holder = within});
     }
+    decls.written_statics.push_back(
+        WrittenStatic{
+            .symbol = &value, .id = id, .lexical_scope = &block.asSymbol()});
   }
 }
 
@@ -962,6 +955,75 @@ auto UnitLowerer::ValueSourceOf(const slang::ast::ParameterSymbol& param) const
                              : it->second;
 }
 
+auto UnitLowerer::StaticsInTheDesign(
+    const slang::ast::SubroutineSymbol& subroutine) const
+    -> std::vector<QualifiedStatic> {
+  std::vector<QualifiedStatic> statics = QualifiedStaticsOf(subroutine);
+  std::erase_if(statics, [&](const QualifiedStatic& local) {
+    return InBlockLeftOut(*local.var);
+  });
+  return statics;
+}
+
+auto UnitLowerer::InBlockLeftOut(const slang::ast::Symbol& symbol) const
+    -> bool {
+  // The blocks between the symbol and the body around them, outermost last.
+  std::vector<const slang::ast::StatementBlockSymbol*> around;
+  if (const auto* block = symbol.as_if<slang::ast::StatementBlockSymbol>()) {
+    around.push_back(block);
+  }
+  const slang::ast::Scope* holder = symbol.getParentScope();
+  while (holder != nullptr) {
+    const auto* block =
+        holder->asSymbol().as_if<slang::ast::StatementBlockSymbol>();
+    if (block == nullptr) break;
+    around.push_back(block);
+    holder = block->getParentScope();
+  }
+  if (around.empty() || holder == nullptr) return false;
+  // The body is a subroutine's, or the procedure's that lists the outermost
+  // block as one of its own, whichever unit declares it.
+  const slang::ast::Statement* body = nullptr;
+  if (const auto* subroutine =
+          holder->asSymbol().as_if<slang::ast::SubroutineSymbol>()) {
+    body = &subroutine->getBody();
+  } else {
+    for (const auto& member : holder->members()) {
+      const auto* proc = member.as_if<slang::ast::ProceduralBlockSymbol>();
+      if (proc == nullptr ||
+          !std::ranges::contains(proc->getBlocks(), around.back())) {
+        continue;
+      }
+      // An assertion that is the procedure itself is left out whole.
+      if (!Contains(*proc)) return true;
+      body = &proc->getBody();
+      break;
+    }
+  }
+  if (body == nullptr) return false;
+  const auto [known, inserted] = blocks_left_out_.try_emplace(body);
+  if (inserted) known->second = BlocksLeftOut(*body, AssertionPolicy());
+  const auto& left_out = known->second;
+  return std::ranges::any_of(around, [&](const auto* block) {
+    return std::ranges::contains(left_out, block);
+  });
+}
+
+auto UnitLowerer::DeclaresStaticLocals(const slang::ast::Scope& block) const
+    -> bool {
+  return std::ranges::any_of(
+      block.members(),
+      [&](const slang::ast::Symbol& member) { return IsStaticLocal(member); });
+}
+
+auto UnitLowerer::IsStaticLocal(const slang::ast::Symbol& member) const
+    -> bool {
+  const auto* var = member.as_if<slang::ast::VariableSymbol>();
+  const auto* constant = member.as_if<slang::ast::ParameterSymbol>();
+  return (var != nullptr && HasStaticStorage(*var)) ||
+         (constant != nullptr && DiffersPerObject(*constant));
+}
+
 auto UnitLowerer::DiffersPerObject(
     const slang::ast::ParameterSymbol& param) const -> bool {
   switch (ValueSourceOf(param)) {
@@ -973,15 +1035,6 @@ auto UnitLowerer::DiffersPerObject(
   }
   throw InternalError(
       "UnitLowerer::DiffersPerObject: unknown ParameterValueSource");
-}
-
-auto UnitLowerer::MakeProceduralBody(const slang::ast::Symbol& body_symbol)
-    -> hir::ProceduralBody {
-  hir::ProceduralBody body;
-  const auto it = procedural_static_vars_.find(&body_symbol);
-  if (it == procedural_static_vars_.end()) return body;
-  body.procedural_vars = std::move(it->second);
-  return body;
 }
 
 auto UnitLowerer::TakeScopeDeclarations(const slang::ast::Scope& scope)
@@ -1131,11 +1184,6 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
             Overloaded{
                 [](const ScopePublicationRecord::DataObject& data)
                     -> hir::PublishedDecl { return data.id; },
-                [](const ScopePublicationRecord::LocalStatic& local)
-                    -> hir::PublishedDecl {
-                  return hir::PublishedStatic{
-                      .body = local.body, .var = local.var};
-                },
                 [&](const ScopePublicationRecord::ClassStatic& property)
                     -> hir::PublishedDecl {
                   const auto owner = class_cache_.find(property.owner);
@@ -1535,15 +1583,6 @@ auto UnitLowerer::LookupProcessBinding(
   return it->second;
 }
 
-auto UnitLowerer::LookupProceduralStatic(const slang::ast::Symbol& var) const
-    -> std::optional<ProceduralStaticBinding> {
-  const auto it = procedural_static_bindings_.find(&var);
-  if (it == procedural_static_bindings_.end()) {
-    return std::nullopt;
-  }
-  return it->second;
-}
-
 namespace {
 
 // The subroutine body a scope member declares, or nothing when it declares
@@ -1608,12 +1647,17 @@ auto ContributionOf(const slang::ast::Symbol& member, const UnitLowerer& owner)
   }
   if (member.kind == slang::ast::SymbolKind::StatementBlock) {
     const auto& block = member.as<slang::ast::StatementBlockSymbol>();
-    // Only a block the source named can be named from elsewhere, so only one
-    // needs an identity before the bodies lower. A block slang recorded for its
-    // own reasons -- the implicit scope a pattern arm's bindings live in, the
-    // one a loop's control variables live in -- is reached only by the walk
-    // that lowers it, which mints its identity there.
-    return {.minted = block.name.empty() ? nullptr : &member, .walked = &block};
+    if (owner.InBlockLeftOut(block)) return {};
+    // A block needs an identity before the bodies lower where something other
+    // than its own body names it: a name from elsewhere, which reaches only a
+    // block the source named, or a static variable written in it, which the
+    // scope declares as written there. A block slang recorded for its own
+    // reasons -- the implicit scope a pattern arm's bindings live in, the one
+    // a loop's control variables live in -- is reached only by the walk that
+    // lowers it, which mints its identity there.
+    const bool named_ahead =
+        !block.name.empty() || owner.DeclaresStaticLocals(block);
+    return {.minted = named_ahead ? &member : nullptr, .walked = &block};
   }
   // An anonymous program opens no scope, so its subroutines are this scope's
   // (LRM 24.6).

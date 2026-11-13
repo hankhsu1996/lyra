@@ -44,9 +44,8 @@ struct InstalledConcurrentAssertion {
 // takes -- what a tick runs; the process of its clock, at each tick of which
 // the statement the assertion stands for is reached and its attempt matures
 // (LRM 16.14.5, 16.14.6); and where it is written, the process watching its
-// `disable iff` -- adding each to `mir_class`. `statics` are the cells of its
-// action block's
-// static-lifetime variables, whose initializers `bring_up` runs.
+// `disable iff` -- adding each to `mir_class`. `statics` are the cells its
+// action block keeps past an activation, which `bring_up` brings up.
 [[nodiscard]] auto LowerConcurrentAssertion(
     StructuralScopeLowerer& lowerer, mir::Class& mir_class,
     const WalkFrame& ctor_frame, const StorageBringUp& bring_up,

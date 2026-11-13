@@ -121,16 +121,10 @@ auto LowerClassNew(
 }
 
 // Whether `expr`, read as of the Preponed region, answers with a value its cell
-// kept. A variable a body declares with automatic lifetime -- a `ref` formal
-// among them -- keeps none, its sampled value being its current one (LRM
-// 16.5.1).
-template <ExprLowerer L>
-auto KeepsSampledValue(const L& lowerer, const hir::Expr& expr) -> bool {
-  if constexpr (std::same_as<L, ProcessLowerer>) {
-    return !ReadsAutomaticVariable(&lowerer.HirBody(), expr);
-  } else {
-    return !ReadsAutomaticVariable(nullptr, expr);
-  }
+// kept. A variable a body declares is automatic -- a `ref` formal among them --
+// and keeps none, its sampled value being its current one (LRM 16.5.1).
+auto KeepsSampledValue(const hir::Expr& expr) -> bool {
+  return !ProceduralVarRead(expr).has_value();
 }
 
 // A call of randomization reached from a structural expression.
@@ -340,7 +334,7 @@ auto LowerAsPlaceAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
   if (!raw_or) return raw_or;
   return PlaceContents(
       lowerer.Owner().Unit(), frame, *std::move(raw_or),
-      KeepsSampledValue(lowerer, expr));
+      KeepsSampledValue(expr));
 }
 
 // The sampled value of a clocking block input `expr` reads, where the walk

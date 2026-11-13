@@ -26,7 +26,6 @@
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
-#include "lyra/lowering/hir_to_mir/kept_piece.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/scope_table.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -104,6 +103,16 @@ struct ClockingFields {
   mir::ClassFieldTarget occurrence;
   base::Translation<hir::ClockvarId, ClockvarFields> clockvars;
 };
+
+// `frame` where a data object's initializer is written: the scope's own, or
+// the block or subroutine of `scopes` a body writes it in, whose name a
+// construct in the initializer reports (LRM 21.2.1.5).
+[[nodiscard]] inline auto LexicalScopeFrame(
+    const WalkFrame& frame, const DeclaredScopes& scopes,
+    const hir::StructuralDataObjectDecl& decl) -> WalkFrame {
+  if (!decl.lexical_scope.has_value()) return frame;
+  return frame.WithScopeName(scopes.Get(*decl.lexical_scope).name);
+}
 
 // Lowers one HIR structural scope into one MIR class, in two passes over the
 // unit's scopes: the first settles what every scope declares, the second lowers
@@ -336,34 +345,6 @@ class StructuralScopeLowerer {
   // Registry identity of the class this scope lowers to.
   [[nodiscard]] auto ClassId() const -> mir::ClassId {
     return class_id_;
-  }
-
-  // The field one of this scope's static-lifetime body variables was given. A
-  // reference names the declaration rather than the procedural scopes around
-  // it, and the storage is a field of this scope's object, so a referrer
-  // standing on this object is already standing on the cell.
-  [[nodiscard]] auto ProceduralStaticField(
-      const hir::ProceduralBodyRef& body, hir::ProceduralVarId var) const
-      -> mir::ClassFieldTarget {
-    const StaticCellBindings& statics = std::visit(
-        Overloaded{
-            [&](hir::ProcessId id) -> const StaticCellBindings& {
-              return process_static_bindings_.Get(id);
-            },
-            [&](hir::StructuralSubroutineId id) -> const StaticCellBindings& {
-              return declared_subroutines_.Get(id).statics;
-            }},
-        body);
-    for (const StaticCellBinding& binding : statics) {
-      const auto* declared = std::get_if<hir::ProceduralVarId>(&binding.of);
-      if (declared != nullptr && *declared == var) {
-        return InstanceFieldOf(binding);
-      }
-    }
-    throw InternalError(
-        "StructuralScopeLowerer::ProceduralStaticField: the var was given no "
-        "persistent storage, so it is not a static-lifetime variable of that "
-        "body");
   }
 
   // What each of this scope's procedural scopes owns at run time.

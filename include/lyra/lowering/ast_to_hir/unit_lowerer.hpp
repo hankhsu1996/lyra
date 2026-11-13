@@ -172,21 +172,6 @@ struct OwnedChildBinding {
 using OwnedChildBindings =
     std::unordered_map<const slang::ast::Symbol*, OwnedChildBinding>;
 
-// A static-lifetime body local that a hierarchical path can name (LRM 23.9).
-// The declaration pass mints it, so a reference from a peer body resolves it
-// whichever body lowers first; `home_frame` is the structural scope whose
-// object tree carries the storage. Where inside that scope the storage sits --
-// which named blocks stand between -- is settled when the scope's classes are
-// built, so the reference names only the declaration.
-struct ProceduralStaticBinding {
-  ScopeFrameId home_frame{};
-  hir::ProceduralBodyRef body;
-  hir::ProceduralVarId var{};
-};
-
-using ProceduralStaticBindings =
-    std::unordered_map<const slang::ast::Symbol*, ProceduralStaticBinding>;
-
 // One procedural scope's minted identity, together with the declaration scope
 // whose registry it indexes -- the one owning the body it was written in. The
 // pair is what makes the identity meaningful to a reader: an id alone is a
@@ -212,19 +197,15 @@ struct MintedProceduralScope {
 // known; a class's static property, once the class is interned; a named block,
 // once its body's scopes are -- carries the front end's symbol until then.
 struct ScopePublicationRecord {
-  // A variable or net of the scope (LRM 6.5).
+  // A variable or net of the scope (LRM 6.5), or a static variable one of its
+  // bodies writes (LRM 6.21) or a constant whose value differs between the
+  // scope's objects, published as a declaration of `holder`: the
+  // scope's own path, then each subroutine and block the source writes it in
+  // (LRM 23.9), a block left unnamed by its position, which no name spells.
   struct DataObject {
     const slang::ast::ValueSymbol* symbol = nullptr;
     hir::StructuralDataObjectId id;
-  };
-  // A static-lifetime variable of one of the scope's bodies (LRM 6.21),
-  // published as a declaration of `within`: the subroutine or named block of
-  // the unit declaring it.
-  struct LocalStatic {
-    const slang::ast::VariableSymbol* symbol = nullptr;
-    hir::ProceduralBodyRef body;
-    hir::ProceduralVarId var;
-    support::DefPath within;
+    support::DefPath holder;
   };
   // What a class the scope declares keeps for itself (LRM 6.22, 8.9): a
   // static property, or a static variable one of its methods declares (LRM
@@ -267,8 +248,8 @@ struct ScopePublicationRecord {
     hir::StructuralDataObjectId id;
   };
   using Member = std::variant<
-      DataObject, LocalStatic, ClassStatic, CovergroupEvent, Instance,
-      InterfacePort, ClockingVariable>;
+      DataObject, ClassStatic, CovergroupEvent, Instance, InterfacePort,
+      ClockingVariable>;
 
   // A subroutine the source declared on the scope (LRM 13).
   struct Subroutine {
@@ -623,9 +604,20 @@ struct RouteOrigin {
 // elaboration the front end resolved it in.
 [[nodiscard]] auto NamesOwnDeclaration(const RouteOrigin& origin) -> bool;
 
+// A static variable, or a constant whose value differs between the objects
+// built from the scope, that one of the scope's bodies writes in the block or
+// subroutine `lexical_scope` (LRM 6.21): a data object of the scope, minted
+// with the scope's own and defined by the scope rather than by any body.
+struct WrittenStatic {
+  const slang::ast::ValueSymbol* symbol = nullptr;
+  hir::StructuralDataObjectId id;
+  const slang::ast::Symbol* lexical_scope = nullptr;
+};
+
 // The declarations of one structural scope that a peer may name before the
 // scope is built, minted here and handed to the scope when it is.
 struct ScopeDeclarations {
+  std::vector<WrittenStatic> written_statics;
   base::Registry<hir::StructuralDataObjectDecl, hir::StructuralDataObjectId>
       structural_data_objects;
   base::Registry<hir::SubroutineDecl, hir::StructuralSubroutineId>
@@ -809,8 +801,7 @@ class UnitLowerer {
 
   // Defines the variable this namespace keeps under `name` (LRM 26.2, 6.21).
   void DefineNamespaceVariable(
-      const support::QualifiedName& name,
-      hir::NamespaceVariableDefinition definition);
+      const support::QualifiedName& name, hir::StructuralDataObjectId object);
 
   // The slang scope this unit is lowered from -- a module instance body or a
   // package. A constant expression the lowering must evaluate itself (an LRM
@@ -1243,6 +1234,28 @@ class UnitLowerer {
       const slang::ast::Symbol& containing) const
       -> const slang::ast::TimingControl*;
 
+  // Whether `member`, declared in a block or a subroutine of a body, is storage
+  // of the object the body runs on rather than of one run of it -- clang's
+  // static local: a variable with static lifetime (LRM 6.21), or a constant
+  // whose value differs between the objects built from this unit, which is
+  // read there rather than folded to the value one elaboration gave it.
+  [[nodiscard]] auto IsStaticLocal(const slang::ast::Symbol& member) const
+      -> bool;
+  // Whether `block` declares any such member directly.
+  [[nodiscard]] auto DeclaresStaticLocals(const slang::ast::Scope& block) const
+      -> bool;
+  // Whether `symbol` -- a block, or a declaration in one -- lies in a block
+  // the build leaves out of the design with the statement opening it (LRM 16),
+  // so that nothing there is declared, asked of the body around it: a
+  // procedure's, a subroutine's or a class method's, of any unit.
+  [[nodiscard]] auto InBlockLeftOut(const slang::ast::Symbol& symbol) const
+      -> bool;
+  // The statics of a class's or a namespace's subroutine that the design
+  // holds: every one but those a statement the build leaves out declares.
+  [[nodiscard]] auto StaticsInTheDesign(
+      const slang::ast::SubroutineSymbol& subroutine) const
+      -> std::vector<QualifiedStatic>;
+
   // Whether the design being built contains this procedural block. A concurrent
   // assertion is a process whose whole body is the assertion, so disabling
   // assertions removes it rather than emptying it -- an always block with no
@@ -1382,19 +1395,6 @@ class UnitLowerer {
       const slang::ast::ProceduralBlockSymbol& proc) const
       -> std::optional<hir::ProcessId>;
 
-  [[nodiscard]] auto LookupProceduralStatic(const slang::ast::Symbol& var) const
-      -> std::optional<ProceduralStaticBinding>;
-
-  // Opens the body of a process or subroutine with the static-lifetime locals
-  // the compilation unit's declaration pass minted for it already in place. A
-  // peer body that lowered earlier may already name one of those ids in a
-  // hierarchical reference, so this body cannot assign its own: the minted ids
-  // have to occupy the leading arena slots. Producing the body already holding
-  // them, rather than filling one afterwards, is what leaves no window in
-  // which anything else could take those slots.
-  [[nodiscard]] auto MakeProceduralBody(const slang::ast::Symbol& body_symbol)
-      -> hir::ProceduralBody;
-
   // Hands a structural scope the declarations minted for it, once.
   [[nodiscard]] auto TakeScopeDeclarations(const slang::ast::Scope& scope)
       -> ScopeDeclarations;
@@ -1444,8 +1444,8 @@ class UnitLowerer {
   // The compilation-unit declaration pass (LRM 23.6 / 23.9 / 27): before any
   // executable body lowers, walk the whole unit's scope tree and mint every
   // declaration a peer body may reference -- owned children (instance,
-  // generate block, generate array), subroutines, and the static-lifetime body
-  // locals a named block puts on the hierarchical path -- assigning each scope
+  // generate block, generate array), subroutines, and every static variable a
+  // body of the scope writes, wherever it writes it -- assigning each scope
   // its frame along the way. A body or sensitivity read then resolves any of
   // them regardless of which sibling scope or body lowered first. Registers no
   // executable HIR. What each scope publishes is recorded in the same walk,
@@ -1678,7 +1678,9 @@ class UnitLowerer {
   // identity there. Any other is reached over a route: where this unit lays
   // out the scope that declares `target`, to that scope, carrying its identity
   // for the block; otherwise to the scope of another unit declaring it, naming
-  // the position that scope published it at.
+  // the position that scope published it at. Nothing where nothing of the
+  // design is named: a task a connected module leaves undefined, or a block a
+  // statement the build leaves out opens.
   [[nodiscard]] auto DisableTargetOf(
       const WalkFrame& frame, const slang::ast::Symbol& target,
       const slang::ast::HierarchicalReference& reference, diag::SourceSpan span)
@@ -1734,10 +1736,10 @@ class UnitLowerer {
   [[nodiscard]] auto ResolveStaticPropertyTarget(
       const WalkFrame& frame, const slang::ast::ClassPropertySymbol& prop,
       diag::SourceSpan span) -> diag::Result<hir::ValueTarget>;
-  // The same for anything `owner_class` keeps for itself, named `name` within
-  // it: a static property, or a static variable one of its methods declares
-  // (LRM 6.21), which is storage of the class in the same way.
-  [[nodiscard]] auto ResolveClassKept(
+  // The same for a static of `owner_class`, named `name` within it: a static
+  // property, or a static variable one of its methods declares (LRM 6.21),
+  // which is storage of the class in the same way.
+  [[nodiscard]] auto ResolveClassStatic(
       const WalkFrame& frame, const slang::ast::ClassType& owner_class,
       const support::QualifiedName& name, diag::SourceSpan span)
       -> diag::Result<hir::ValueTarget>;
@@ -2039,27 +2041,27 @@ class UnitLowerer {
       const slang::ast::ValueSymbol& value, const ScopeRoute& route)
       -> diag::Result<hir::DataLeaf>;
 
-  // Reserves an identity for each static-lifetime local one procedural block
-  // subtree of `body` declares, and for each constant it declares whose value
-  // differs between the objects built from this unit, and recurses into the
-  // blocks nested in it.
-  // Every scope is walked the same way and contributes however many statics it
-  // holds, none excluded: whether a hierarchical path can reach a given one is
-  // the frontend's question, already answered before any reference gets here,
-  // so nothing is held back on the chance that nothing will name it. Only the
-  // identity is minted -- what is declared, including the initializer, is an
-  // expression of the body and is filled when that body lowers.
+  // Declares, as data objects of the scope being declared, each static
+  // variable `block` writes and each constant it writes whose value differs
+  // between the objects built from this unit, and recurses into the blocks
+  // nested in it, leaving out what a left-out assertion holds. A body declares
+  // none of them; the scope defines each.
   //
-  // What a name reaches here from elsewhere is published as a declaration of
-  // `within`, which scope of the unit `block` is (LRM 23.9): each
-  // static-lifetime variable, and each named block as what a `disable` of it
-  // ends (LRM 9.6.2). A block the source left unnamed puts nothing below it on
-  // any path a name spells, which is what an absent `within` says.
+  // Each one a name reaches -- `within`, the path `block` stands at, has no
+  // unnamed step (LRM 23.9) -- is published as a declaration of that path, and
+  // so is every one a namespace holds, whose statics are program storage the
+  // declaration names; each named block below is what a `disable` of it ends
+  // (LRM 9.6.2).
   void DeclareProceduralStatics(
-      const slang::ast::Scope& block, const slang::ast::Symbol& body_symbol,
-      hir::ProceduralBodyRef body, ScopeFrameId frame,
-      ScopePublicationRecord& published,
-      const std::optional<support::DefPath>& within);
+      const slang::ast::Scope& block, ScopeDeclarations& decls,
+      ScopePublicationRecord& published, ScopeFrameId frame,
+      const support::DefPath& within);
+  // The same for one block standing at `around`: its own step on the path,
+  // and the block as a `disable` target where a name reaches it.
+  void DeclareBlockStatics(
+      const slang::ast::StatementBlockSymbol& block, ScopeDeclarations& decls,
+      ScopePublicationRecord& published, ScopeFrameId frame,
+      const support::DefPath& around);
 
   // The identities one member of a scope brings, minted into `decls`, the
   // scope's own, at `frame`, the scope's frame, and what of it the scope
@@ -2090,7 +2092,7 @@ class UnitLowerer {
   void DeclareClockingStorage(
       const slang::ast::ClockingBlockSymbol& block, ScopeDeclarations& decls,
       ScopePublicationRecord& published, ScopeFrameId frame);
-  void DeclareProcess(
+  void DeclareProceduralBlock(
       const slang::ast::ProceduralBlockSymbol& proc, ScopeDeclarations& decls,
       ScopePublicationRecord& published, ScopeFrameId frame);
   // A class is a type of each instance of the scope replicating it (LRM 6.22,
@@ -2237,13 +2239,12 @@ class UnitLowerer {
       clocking_driving_variables_;
   std::unordered_map<const slang::ast::ProceduralBlockSymbol*, hir::ProcessId>
       process_bindings_;
-  ProceduralStaticBindings procedural_static_bindings_;
-  // The local pool of each body that declares a static, keyed by the body's
-  // frontend symbol; the body receives it when it is built.
-  std::unordered_map<
-      const slang::ast::Symbol*,
-      base::Registry<hir::ProceduralVarDecl, hir::ProceduralVarId>>
-      procedural_static_vars_;
+  // The outermost blocks the build leaves out of each body asked about, by its
+  // statement: the answer a body always has, kept once it is first asked.
+  mutable std::unordered_map<
+      const slang::ast::Statement*,
+      std::vector<const slang::ast::StatementBlockSymbol*>>
+      blocks_left_out_;
   std::unordered_map<const slang::ast::Scope*, ScopeDeclarations>
       scope_declarations_;
   std::unordered_map<const slang::ast::PatternVarSymbol*, hir::PatternId>
@@ -2303,13 +2304,13 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
 //
 // Identity precedes bodies because a `disable` names a block or task by static
 // declaration identity (LRM 9.6.2) and so can name one whose body lowers later
-// or lives in another body entirely. Only what a name can reach from elsewhere
-// is minted here, so nothing is minted that no body goes on to fill -- a block
-// instance its body was not lowered from mints the identities the one it was
-// lowered from fills, since the source orders both alike. The walk
-// that lowers a body mints and fills every other scope it opens, and the
-// lexical nesting -- which slang's member list does not follow -- is recorded
-// there, where it is known.
+// or lives in another body entirely. Only what a name can reach from elsewhere,
+// and a block a static is written in, is minted here, so nothing is minted
+// that no body goes on to fill -- a block instance its body was not lowered
+// from mints the identities the one it was lowered from fills, since the
+// source orders both alike. The walk that lowers a body mints and fills every
+// other scope it opens, and the lexical nesting -- which slang's member list
+// does not follow -- is recorded there, where it is known.
 // `declaring` is the scope whose registry the minted identities index, and
 // `walked` the scope being scanned for them; the two part company as the walk
 // descends into blocks the declaration scope still owns.

@@ -2535,7 +2535,12 @@ TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
 // A build asked to leave the design's assertions out of it checks none of them,
 // and the design computes what it computes with them checked, since an
 // assertion validates a behavior of the design rather than producing one
-// (LRM 16.2).
+// (LRM 16.2). What an assertion's action declares leaves with it, wherever the
+// assertion is written, so a dump of the design records none of it, and a name
+// elsewhere reaching it -- in the unit or from another -- is refused for
+// reading what exists only while checked. A `disable` or an assertion control
+// task naming what was left out reaches nothing of the design, and does
+// nothing.
 TEST(LyraRun, ABuildLeavingAssertionsOutComputesWhatTheDesignComputes) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -2544,16 +2549,72 @@ TEST(LyraRun, ABuildLeavingAssertionsOutComputesWhatTheDesignComputes) {
 
   const auto src = *tmp_or / "test.sv";
   std::ofstream(src)
+      << "package P;\n"
+      << "  function automatic int f();\n"
+      << "    a_in_package: assert (0) else begin : fact\n"
+      << "      static int in_package;\n"
+      << "      in_package = in_package + 1;\n"
+      << "    end\n"
+      << "    return 0;\n"
+      << "  endfunction\n"
+      << "endpackage\n"
+      << "class C;\n"
+      << "  task t();\n"
+      << "    a_in_method: assert (0) else begin\n"
+      << "      static int in_method;\n"
+      << "      in_method = in_method + 1;\n"
+      << "    end\n"
+      << "  endtask\n"
+      << "endclass\n"
       << "module Test;\n"
       << "  logic clk = 0;\n"
       << "  int ticks = 0;\n"
+      << "  task u();\n"
+      << "    a_in_task: assert (0) else begin\n"
+      << "      static int in_task;\n"
+      << "      in_task = in_task + 1;\n"
+      << "    end\n"
+      << "  endtask\n"
+      << "  initial begin\n"
+      << "    static C c = new;\n"
+      << "    c.t();\n"
+      << "    u();\n"
+      << "    void'(P::f());\n"
+      << "  end\n"
       << "  initial repeat (4) #5 clk = ~clk;\n"
       << "  always_ff @(posedge clk) ticks <= ticks + 1;\n"
       << "  a_concurrent: assert property (@(posedge clk) ticks < 0)\n"
       << "    else $fatal(1, \"a concurrent assertion was checked\");\n"
+      << "  a_counting: assert property (@(posedge clk) ticks < 0)\n"
+      << "    else begin : act\n"
+      << "      int failures;\n"
+      << "      failures = failures + 1;\n"
+      << "      $fatal(1, \"an assertion with a block was checked\");\n"
+      << "    end\n"
+      << "  initial begin : p\n"
+      << "    a_procedural: assert property (@(posedge clk) ticks < 0)\n"
+      << "      else begin : pact\n"
+      << "        static int seen;\n"
+      << "        seen = seen + 1;\n"
+      << "      end\n"
+      << "  end\n"
       << "  initial begin\n"
+      << "    $dumpfile(\"" << (*tmp_or / "left_out.vcd").string() << "\");\n"
+      << "    $dumpvars;\n"
       << "    a_immediate: assert (ticks < 0)\n"
       << "      else $fatal(1, \"an immediate assertion was checked\");\n"
+      << "    a_immediate_counting: assert (ticks < 0)\n"
+      << "      else begin : iact\n"
+      << "        static int in_immediate;\n"
+      << "        in_immediate = in_immediate + 1;\n"
+      << "      end\n"
+      << "  end\n"
+      << "  initial begin\n"
+      << "    #1;\n"
+      << "    $assertoff(0, a_counting);\n"
+      << "    $asserton(0, Test.a_counting.act);\n"
+      << "    disable a_counting.act;\n"
+      << "    disable p.a_procedural.pact;\n"
       << "  end\n"
       << "  final $display(\"ticks=%0d\", ticks);\n"
       << "endmodule\n";
@@ -2565,10 +2626,61 @@ TEST(LyraRun, ABuildLeavingAssertionsOutComputesWhatTheDesignComputes) {
   ASSERT_THAT(run, ExitedWithCode(0)) << run.stdout_text << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("ticks=2"), std::string::npos)
       << run.stdout_text;
+  std::ifstream dumped(*tmp_or / "left_out.vcd");
+  const std::string dump{
+      std::istreambuf_iterator<char>(dumped), std::istreambuf_iterator<char>()};
+  EXPECT_TRUE(dump.contains("ticks")) << dump;
+  EXPECT_FALSE(dump.contains("failures")) << dump;
+  EXPECT_FALSE(dump.contains("seen")) << dump;
+  EXPECT_FALSE(dump.contains("in_immediate")) << dump;
+  EXPECT_FALSE(dump.contains("in_task")) << dump;
   EXPECT_EQ(run.stdout_text.find("was checked"), std::string::npos)
       << run.stdout_text;
   EXPECT_EQ(run.stderr_text.find("was checked"), std::string::npos)
       << run.stderr_text;
+
+  const auto reading = *tmp_or / "reading.sv";
+  std::ofstream(reading)
+      << "module Test;\n"
+      << "  logic clk = 0;\n"
+      << "  a: assert property (@(posedge clk) 0) else begin : act\n"
+      << "    int failures;\n"
+      << "    failures = failures + 1;\n"
+      << "  end\n"
+      << "  final $display(\"%0d\", a.act.failures);\n"
+      << "endmodule\n";
+  const std::vector<std::string> reading_args = {
+      "run",  "--backend", "llvm", "--assertions",
+      "skip", "--top",     "Test", reading.string()};
+  const auto refused = RunChildProcess(lyra, reading_args);
+  EXPECT_THAT(refused, ExitedWithCode(1)) << refused.stderr_text;
+  EXPECT_TRUE(refused.stderr_text.contains(
+      "error: 'failures' is declared in an assertion that '--assertions "
+      "skip' leaves out of the design"))
+      << refused.stderr_text;
+
+  const auto reaching = *tmp_or / "reaching.sv";
+  std::ofstream(reaching)
+      << "module Leaf;\n"
+      << "  logic clk = 0;\n"
+      << "  a: assert property (@(posedge clk) 0) else begin : act\n"
+      << "    int failures;\n"
+      << "    failures = failures + 1;\n"
+      << "  end\n"
+      << "endmodule\n"
+      << "module Test;\n"
+      << "  Leaf u();\n"
+      << "  final $display(\"%0d\", u.a.act.failures);\n"
+      << "endmodule\n";
+  const std::vector<std::string> reaching_args = {
+      "run",  "--backend", "llvm", "--assertions",
+      "skip", "--top",     "Test", reaching.string()};
+  const auto refused_across = RunChildProcess(lyra, reaching_args);
+  EXPECT_THAT(refused_across, ExitedWithCode(1)) << refused_across.stderr_text;
+  EXPECT_TRUE(refused_across.stderr_text.contains(
+      "error: 'failures' is declared in an assertion that '--assertions "
+      "skip' leaves out of the design"))
+      << refused_across.stderr_text;
 }
 
 // Variable initialization is simulation activity at time zero (LRM 4), not
@@ -2663,18 +2775,28 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
   // What a block the source gave no name declares, and a named block inside
   // it, is recorded under the named scopes around it, which add no part for
   // that block, as `%m` prints it; no name given to the dump option reaches
-  // either (LRM 9.3.4).
+  // either (LRM 9.3.4). An assertion's action is such a block too, and a name
+  // reaches what a named one declares.
   const auto blocks = dir / "blocks.sv";
-  std::ofstream(blocks) << "module Test;\n"
-                        << "  initial begin : nb\n"
-                        << "    begin\n"
-                        << "      static logic [3:0] un = 4'h5;\n"
-                        << "      begin : deep\n"
-                        << "        static logic [3:0] dv = 4'h6;\n"
-                        << "      end\n"
-                        << "    end\n"
-                        << "  end\n"
-                        << "endmodule\n";
+  std::ofstream(blocks)
+      << "module Test;\n"
+      << "  logic clk = 0;\n"
+      << "  initial begin : nb\n"
+      << "    begin\n"
+      << "      static logic [3:0] un = 4'h5;\n"
+      << "      begin : deep\n"
+      << "        static logic [3:0] dv = 4'h6;\n"
+      << "      end\n"
+      << "    end\n"
+      << "  end\n"
+      << "  lbl: assert property (@(posedge clk) 1) else begin\n"
+      << "    static logic [3:0] au = 4'h7;\n"
+      << "  end\n"
+      << "  named: assert property (@(posedge clk) 1) else\n"
+      << "    begin : act\n"
+      << "      static logic [3:0] an = 4'h8;\n"
+      << "    end\n"
+      << "endmodule\n";
 
   const auto run = [&](const std::filesystem::path& source,
                        const std::vector<std::string>& options) {
@@ -2755,6 +2877,18 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
     const std::string text = read(file);
     EXPECT_TRUE(has(text, "0ns Test.nb.un = 0101")) << text;
     EXPECT_TRUE(has(text, "0ns Test.nb.deep.dv = 0110")) << text;
+    EXPECT_TRUE(has(text, "0ns Test.lbl.au = 0111")) << text;
+    EXPECT_TRUE(has(text, "0ns Test.named.act.an = 1000")) << text;
+  }
+  {
+    const auto file = dir / "blocks_action.txt";
+    const auto ran = run(
+        blocks,
+        {"+lyra+dump=" + file.string(), "+lyra+dump+scope=Test.named.act.an"});
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+    const std::string text = read(file);
+    EXPECT_TRUE(has(text, "0ns Test.named.act.an = 1000")) << text;
+    EXPECT_FALSE(has(text, "Test.nb.")) << text;
   }
   {
     const auto file = dir / "blocks_named.txt";

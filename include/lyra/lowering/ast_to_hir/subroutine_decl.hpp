@@ -188,7 +188,8 @@ auto LowerEvaluatorDecl(
     WalkFrame frame) -> diag::Result<hir::SubroutineDecl>;
 
 // Lowers a slang subroutine (LRM 13) into a hir::SubroutineDecl: its result
-// type, its formals as body-local procedural vars carrying their direction, the
+// type, its formals carrying their direction -- an automatic one a variable of
+// the body, a static one the variable declared for it around the body -- the
 // implicit result variable of a non-void function (LRM 13.4.1), and its lowered
 // body. The same shape serves a structural-scope subroutine and a class method;
 // `frame` is the enclosing context the body is lowered against. The caller

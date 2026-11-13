@@ -29,8 +29,7 @@ struct ProceduralBody {
   base::Arena<Pattern, PatternId> patterns;
   // The sequence and property trees of the concurrent assertions written in
   // this body. They sit beside the expressions rather than in the scope's
-  // arenas because that is where the expressions they read are: a property
-  // written in a procedure may name a static local of it (LRM 16.6).
+  // arenas because that is where the expressions they read are.
   base::Arena<SequenceExpr, SequenceExprId> sequence_exprs;
   base::Arena<PropertyExpr, PropertyExprId> property_exprs;
   // The constraints written in this body (LRM 18.5, 18.7), beside the

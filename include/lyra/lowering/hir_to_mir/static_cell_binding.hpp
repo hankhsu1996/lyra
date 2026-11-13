@@ -1,7 +1,6 @@
 #pragma once
 
 #include <map>
-#include <span>
 #include <variant>
 #include <vector>
 
@@ -10,7 +9,6 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
-#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/kept_piece.hpp"
@@ -28,10 +26,10 @@ class UnitLowerer;
 struct WalkFrame;
 struct ClassShape;
 
-// Where a static-lifetime cell of a body lives: a variable's (LRM 6.21), and
-// the control of a statement the assertion control tasks select, which lives
-// as the statement's other static storage does. What decides it is what the
-// declaration belongs to, never what reaches it. A body in the
+// Where a cell outliving every activation of a body lives -- what the compiler
+// keeps for the body, such as the control of a statement the assertion control
+// tasks select, and a class's static variable (LRM 6.21). What decides it is
+// what the declaration belongs to, never what reaches it. A body in the
 // design hierarchy is replicated with its instance, so its cell is a field of
 // that instance's class and every instance has its own. A class method's
 // declaration belongs to the class: the standard makes such a variable "roughly
@@ -73,16 +71,9 @@ struct UnitCellHome {
 using StaticStorageHome =
     std::variant<InstanceFieldHome, ClassCellHome, UnitCellHome>;
 
-// A cell already placed for a static-lifetime variable a scope published, which
-// the walk binding the body's variables takes rather than declaring a second
-// one.
-struct PlacedStatic {
-  hir::ProceduralVarId var;
-  mir::ClassFieldTarget field;
-};
-
-// The same for a static property of a class the scope declares, which the
-// class takes rather than declaring a cell of its own (LRM 6.22, 8.9).
+// Where a static property of a class the scope declares was placed: a field of
+// the scope's instance, which the class takes rather than declaring a cell of
+// its own (LRM 6.22, 8.9).
 struct PlacedProperty {
   hir::StaticPropertyId property;
   mir::ClassFieldTarget field;
@@ -90,13 +81,10 @@ struct PlacedProperty {
 
 // The pool a declaration scope declares its bodies' static-lifetime cells in,
 // one per home above. Whoever lowers a declaration scope states its own, so
-// nothing here works out where a body sits from the body. `placed` lists the
-// cells of this body's locals the scope published, each already a field of the
-// class the scope publishes.
+// nothing here works out where a body sits from the body.
 struct InstanceStorage {
   mir::ClassId owner;
   ClassShape* shape = nullptr;
-  std::span<const PlacedStatic> placed = {};
 };
 
 struct ClassStorage {
@@ -138,48 +126,37 @@ struct SampledHistoryCell {
   KeptPiece kept;
 };
 
-// The cell one static-lifetime body variable, one statement's assertion
-// control, one concurrent assertion's attempts, or one kept piece of a sampled
-// value function's operand became. `cell_type` is the type the home was
-// declared with -- a variable's observable-cell type, and for the others the
-// library type that holds them -- settled once here so no reader recomputes
-// it. `scope` is the
-// scope declaring it, which a variable's initializer is written in though it
-// runs apart from every activation of that scope (LRM 6.21).
+// The cell one statement's assertion control, one concurrent assertion's
+// attempts, or one kept piece of a sampled value function's operand became --
+// what a body keeps past an activation that the source declared no variable
+// for. `cell_type` is the library type the home was declared with, settled once
+// here so no reader recomputes it. `scope` is the scope holding what it is for.
 struct StaticCellBinding {
-  std::variant<
-      hir::ProceduralVarId, AssertionControlCell, ConcurrentAttemptsCell,
-      SampledHistoryCell>
+  std::variant<AssertionControlCell, ConcurrentAttemptsCell, SampledHistoryCell>
       of;
   hir::ProceduralScopeId scope;
   StaticStorageHome home;
   mir::TypeId cell_type;
 };
 
-// One entry per static-lifetime cell a body declares. A body that declares
+// One entry per cell a body keeps past an activation. A body that declares
 // none has an empty one; nothing about the shape tells that apart from a body
 // that declares one or many, and no reader has to.
 using StaticCellBindings = std::vector<StaticCellBinding>;
 
 // Declares one static-lifetime cell in `owner` and answers with the home a body
-// reaches it through. Every cell that outlives an activation is declared here,
-// whichever construct asked for one, except one a scope published, which was
-// placed where its publication put it. The cell answers to no identifier: the
-// source declared a local of a body.
+// reaches it through. Every cell a body keeps past an activation is declared
+// here, whichever construct asked for one. The cell answers to no identifier:
+// the source declared no variable for it.
 [[nodiscard]] auto DeclareStaticCell(
     const StaticStorageOwner& owner, mir::TypeId cell_type)
     -> StaticStorageHome;
 
-// Gives every static-lifetime variable one body declares, every statement of
-// it the assertion control tasks select, and every piece its sampled value
-// functions keep, its cell in `owner`. The walk descends the body's scope tree
-// because that is where the declarations are -- a scope lists what it
-// declares.
-//
-// Sibling callables sharing a source identifier, and nested blocks repeating
-// one, need nothing done to stay distinct: each cell is a position in the pool
-// they share, and a position is distinct by being one.
-auto BindBodyStatics(
+// Gives every statement of one body the assertion control tasks select, and
+// every piece its sampled value functions keep, its cell in `owner`. The walk
+// descends the body's scope tree because that is where the statements are -- a
+// scope lists what it holds.
+auto BindBodyCells(
     const UnitLowerer& unit_lowerer,
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
@@ -244,7 +221,7 @@ class KeptHistories {
   std::map<hir::ExprId, std::vector<Cell>> by_call_;
 };
 
-// The field a static of a body in the design hierarchy took. Such a body is
+// The field a cell of a body in the design hierarchy took. Such a body is
 // replicated with its instance, so its cells are that instance's fields and no
 // other home arises there. Asked by a route that already holds the object.
 [[nodiscard]] auto InstanceFieldOf(const StaticCellBinding& binding)

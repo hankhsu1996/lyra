@@ -347,8 +347,8 @@ the detail lives in the entry itself.
   designator rather than an operand.
 - [variable-initialization](variable-initialization.md) -- LRM 10.5 variable initialization as a
   constructor-scope statement.
-- [variable-lifetime-storage](variable-lifetime-storage.md) -- storage of static-lifetime body
-  locals.
+- [variable-lifetime-storage](variable-lifetime-storage.md) -- a static variable a body writes is a
+  variable of the scope, class or namespace around the body, whose replication decides its storage.
 - [lifetime-extended-automatic-scope](lifetime-extended-automatic-scope.md) -- an automatic scope a
   process may outlive is a shared-owned activation object; a detached branch captures the handle by
   value.
@@ -807,8 +807,9 @@ the detail lives in the entry itself.
 - [procedural-storage-scope](procedural-storage-scope.md) -- HIR carries a lexical procedural scope
   tree (downward ownership, no backrefs) alongside its statement tree; no procedural scope is a
   run-time object, named or not, and what it keeps past an activation -- its statics, its `disable`
-  target, its covergroup events -- is a field of the class enclosing the body, while a static of a
-  named block is published with the blocks it sits in.
+  target, its covergroup events -- is a field of the class enclosing the body. A static is a data
+  object of the structural scope recording the scope it is written in, published with the named
+  blocks it sits in.
 - [elaboration-lifecycle-phases](elaboration-lifecycle-phases.md) -- a generated constructor only
   allocates; elaboration is a staged build / resolve / initialize / activate protocol.
 - [processes-start-in-turn-at-time-zero](processes-start-in-turn-at-time-zero.md) -- what starts at

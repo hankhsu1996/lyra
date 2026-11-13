@@ -40,7 +40,6 @@
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
@@ -54,6 +53,7 @@
 #include "lyra/lowering/hir_to_mir/scope_table.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_bring_up.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -154,12 +154,12 @@ auto UnitsReadBy(const mir::CompilationUnit& unit, const mir::Block& body)
 // design root runs at time zero: `install_frame` receives each cell's declared
 // representation and default, and `value_frame` each LRM 10.5 value
 // initializer. What this covers is the namespace's own -- its variables (LRM
-// 26.2) and the static-lifetime variables its subroutines declare, which are
-// the same one-program-global-cell storage; the cells the unit's classes own
-// join the same two bodies from the class lowering. The design root installs
-// every unit before initializing any, so a value initializer always reaches
-// installed storage. Neither this unit's cells nor another's sit on an
-// instance, so an initializer here lowers with no enclosing scope and no
+// 26.2), those its subroutines write among them, and the cells the compiler
+// keeps for its bodies, one program-global cell each; the cells the unit's
+// classes own join the same two bodies from the class lowering. The design
+// root installs every unit before initializing any, so a value initializer
+// always reaches installed storage. Neither this unit's cells nor another's sit
+// on an instance, so an initializer here lowers with no enclosing scope and no
 // receiver: a sibling cell is this unit's own, and another unit's is the cell
 // declared here for it.
 auto PopulateNamespaceOwnStorage(
@@ -231,35 +231,22 @@ auto PopulateNamespaceOwnStorage(
     // A variable the namespace's own scope declares is written there; a
     // static of one of its subroutines is written in that subroutine (LRM
     // 21.2.1.5).
-    auto initializer = std::visit(
-        Overloaded{
-            [&](hir::StructuralDataObjectId object)
-                -> diag::Result<
-                    std::pair<std::optional<hir::ExprId>, WalkFrame>> {
-              const auto* var = std::get_if<hir::StructuralVariableDecl>(
-                  &scope.structural_data_objects.Get(object).kind);
-              // A package declares no ports, so nothing here stands for
-              // storage another scope owns; a net is the only other kind a
-              // package-scope declaration reaches this as.
-              if (var == nullptr) {
-                return diag::Fail(
-                    diag::DiagCode::kUnsupportedExpressionForm,
-                    "a net declared in a package is not yet supported");
-              }
-              return std::pair{var->initializer, value_frame};
-            },
-            [&](const hir::NamespaceStatic& kept)
-                -> diag::Result<
-                    std::pair<std::optional<hir::ExprId>, WalkFrame>> {
-              return std::pair{
-                  kept.initializer,
-                  value_frame.WithScopeName(scopes.Get(kept.written_in).name)};
-            }},
-        defined.variables.Get(id));
-    if (!initializer) return std::unexpected(std::move(initializer.error()));
-    const auto& [value, written] = *initializer;
-    if (!value.has_value()) continue;
-    auto value_or = expr_lowerer.LowerExpr(scope.exprs.Get(*value), written);
+    const hir::StructuralDataObjectDecl& object =
+        scope.structural_data_objects.Get(defined.variables.Get(id));
+    const auto* as_variable =
+        std::get_if<hir::StructuralVariableDecl>(&object.kind);
+    // A package declares no ports, so nothing here stands for storage another
+    // scope owns; a net is the only other kind a package-scope declaration
+    // reaches this as.
+    if (as_variable == nullptr) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedExpressionForm,
+          "a net declared in a package is not yet supported");
+    }
+    if (!as_variable->initializer.has_value()) continue;
+    auto value_or = expr_lowerer.LowerExpr(
+        scope.exprs.Get(*as_variable->initializer),
+        LexicalScopeFrame(value_frame, scopes, object));
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::ExprId value_id = value_block.Add(*std::move(value_or));
     value_block.AppendStmt(
@@ -283,14 +270,13 @@ auto PopulateNamespaceOwnStorage(
         WalkFrame{}.WithScopeName(unit_lowerer.Hir().fixed_name), scopes,
         statics);
     for (const StaticCellBinding& binding : statics) {
-      auto integ = IntegrateStaticInitializer(
+      BringUpStaticCell(
           body_lowerer, src.body,
           StorageBringUp{
               .construct = install_frame,
               .install = install_frame,
               .value = value_frame},
           binding);
-      if (!integ) return std::unexpected(std::move(integ.error()));
     }
   }
 
@@ -1094,11 +1080,11 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   // variables, functions, and tasks (LRM 26.2). Each function and task lowers
   // to a receiver-less callable, and each variable to unit-level static
   // storage, so a package produces no root class and never enters the
-  // structural-scope body machinery. A body's own static-lifetime variables
-  // take the same unit-level storage its variables do, being one program-global
-  // cell each. The frame has no owner class, so the produced body carries no
-  // `self`. Every body the namespace owns starts from one frame, which says
-  // what a name reported in it begins with.
+  // structural-scope body machinery. A static variable a body writes is one of
+  // those variables, and a cell the compiler keeps for a body takes the same
+  // unit-level storage. The frame has no owner class, so the produced body
+  // carries no `self`. Every body the namespace owns starts from one frame,
+  // which says what a name reported in it begins with.
   const hir::StructuralScope& scope = hir_->root_scope;
   const WalkFrame namespace_frame = WalkFrame{}.WithScopeName(hir_->fixed_name);
 
@@ -1140,7 +1126,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
             "compilation-unit scope, is not yet supported");
       }
     }
-    subroutine_statics.Append(BindBodyStatics(
+    subroutine_statics.Append(BindBodyCells(
         *this, scope.procedural_scopes,
         UnitStorage{.variables = &unit_.static_variables}, src.body));
   }

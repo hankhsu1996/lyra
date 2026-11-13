@@ -1,12 +1,14 @@
-# Variable lifetime storage (static-lifetime body locals)
+# Variable lifetime storage (static variables a body writes)
 
 Date: 2026-06-08 Status: accepted; revised 2026-09-09, where "per instance" names the wrong thing or
-nothing at all (see "What replicates the declaration", below).
+nothing at all (see "What replicates the declaration", below), and 2026-11-12, where such a local of
+a design element's body is a variable of the structural scope rather than of the body.
 
 ## Context
 
-A procedural body local (declared in an `initial` / `always` / `final` process or in a task /
-function) has a SystemVerilog lifetime that fixes both its storage and its initialization:
+A procedural body local (declared in an `initial` / `always` / `final` process, in a task /
+function, or in the action of a concurrent assertion) has a SystemVerilog lifetime that fixes both
+its storage and its initialization:
 
 - **static** (LRM 6.21, the module / package default): one storage location per module instance,
   existing for the whole simulation, default-initialized once. It retains its value across
@@ -45,13 +47,16 @@ member of the class enclosing the body, default-initialized once; realize an aut
 C++ local at its source position.** A process and a method use the identical mechanism.
 
 - Per-instance is what the lifetime says, and the instance is the object the body already runs on,
-  so the member sits there whichever block of the body declared it. A static inside a method belongs
-  to the SV class rather than to an object of it, and how many cells that is follows the class's own
-  replication (see the revision below). What the declaring block decides is the name a hierarchical
-  path reaches the member by (`procedural-storage-scope.md`), never where the member sits.
-- A body of the design hierarchy reaches the static local by the same scoped reference it uses for
-  any local; the backend resolves that reference to the per-instance member. A static a class or a
-  namespace keeps for one of its subroutines is the keeper's entry instead, which every body names
+  so the member sits there whichever block of the body declared it. Since 2026-11-12 the declaration
+  is the structural scope's too, a data object recording the block it is written in, so the body
+  declares nothing of it and every reference names the scope's variable
+  (`procedural-storage-scope.md` D4). A static inside a method belongs to the SV class rather than
+  to an object of it, and how many cells that is follows the class's own replication (see the
+  revision below). What the declaring block decides is the name a hierarchical path reaches the
+  member by (`procedural-storage-scope.md`), never where the member sits.
+- A body of the design hierarchy reaches the static as it reaches any variable of the scope, which
+  the backend resolves to the per-instance member. A static a class's method or a namespace's
+  subroutine writes is that class's or that namespace's declaration instead, which every body names
   alike, the declaring one included (`type-associated-storage-is-the-declarers.md` D5).
 - The per-instance member is a flat member on the owner class's member arena -- not a sub-struct
   grouping per callable. SystemVerilog's per-callable scoping is already settled by HIR name-binding
@@ -61,17 +66,15 @@ C++ local at its source position.** A process and a method use the identical mec
   collapses static-local storage and access onto the same paths the rest of MIR already uses for
   module-level signals (one type of decl, one MemberAccess shape, one render path, no static-frame
   walker state on the backend).
-- The cell answers to no identifier, so nothing has to keep two of them apart. Sibling callables in
-  the same owner class (`static int x;` in two processes) and nested blocks repeating an identifier
-  can all claim the same source name, and each still takes its own position in the pool its owner
-  declares; a position is distinct by being one (`a-name-is-a-relation-not-an-identity.md`). The
-  source name stays what the declaring scope offers a hierarchical path
-  (`procedural-storage-scope.md`), never something composed into the member -- a name joined to a
-  word of the compiler's own is a name a design may also declare, and the two then land on one
-  member. A cell a class or a namespace keeps for a subroutine is the one that answers to a name,
-  and the name is that same relation -- the subroutine and the blocks between, as steps, then the
-  identifier -- never a spelling joined from them (`type-associated-storage-is-the-declarers.md`
-  D5).
+- Sibling callables in the same owner class (`static int x;` in two processes) and nested blocks
+  repeating an identifier can all claim the same source name, and each is still a declaration of its
+  own. One a name reaches answers to the relation its path is -- the subroutines and blocks between,
+  as steps, then the identifier -- and one in a block the source did not name answers to no
+  identifier and takes its own position; a position is distinct by being one
+  (`a-name-is-a-relation-not-an-identity.md`). The name is never a spelling composed into the member
+  -- a name joined to a word of the compiler's own is a name a design may also declare, and the two
+  then land on one member. A class's and a namespace's statics answer to the same relation
+  (`type-associated-storage-is-the-declarers.md` D5).
 
 ### Why honor the frontend, and not reclassify bare to automatic
 

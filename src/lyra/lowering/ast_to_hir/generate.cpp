@@ -99,7 +99,8 @@ auto BuildTheLoop(
           hir::StructuralDataObjectDecl{
               .name = std::string{loop_variable.name},
               .type = *index_type,
-              .kind = hir::StructuralGenvarDecl{}});
+              .kind = hir::StructuralGenvarDecl{},
+              .lexical_scope = std::nullopt});
   unit_lowerer.MapStructuralDataObjectBinding(
       loop_variable, lowerer.Frame(), variable);
 

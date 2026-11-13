@@ -181,15 +181,25 @@ class StructuralScopeLowerer {
   auto PopulateNetAliasMember(
       const slang::ast::NetAliasSymbol& alias, WalkFrame frame)
       -> diag::Result<void>;
-  // LRM 21.7.1.2: what a value dump records of an instance of this scope, the
-  // data objects `members` declares and those the blocks -- one the source gave
-  // no name among them --, tasks and functions among them declare, an
-  // assertion's action aside, each named as a body of the scope names it and
-  // `enclosing` it is the procedural scope it is declared in, and of those
-  // `ports` connects, the port each is (LRM 21.7.3.1).
-  auto CollectDumped(
-      const slang::ast::Scope& members, const DumpedPorts& ports,
-      WalkFrame frame, std::optional<hir::ProceduralScopeId> enclosing)
+  // LRM 21.7.1.2: what a value dump records of one data object of an instance
+  // of this scope, named as a body of the scope names it, in the procedural
+  // scope it is written in where it is written in one, and, where `ports`
+  // connects it, the port it is (LRM 21.7.3.1); nothing where a dump records no
+  // value of its kind.
+  auto DumpedEntryOf(
+      const slang::ast::ValueSymbol& value, const DumpedPorts& ports,
+      WalkFrame frame, std::optional<hir::ProceduralScopeId> lexical_scope)
+      -> diag::Result<std::optional<hir::DumpedDeclaration>>;
+  // What a value dump records of the data objects the scope declares itself.
+  auto CollectDumped(const DumpedPorts& ports, WalkFrame frame)
+      -> diag::Result<std::vector<hir::DumpedDeclaration>>;
+  // Defines each static variable, and each constant differing per object, that
+  // a body of this scope writes (LRM 6.21): a data object of the scope written
+  // in the block or subroutine the source puts it in, whose initializer is an
+  // expression of the scope run once before any procedure starts (LRM 10.5).
+  // What a value dump records of each is stated beside its definition.
+  auto DefineWrittenStatics(
+      std::span<const WrittenStatic> statics, WalkFrame frame)
       -> diag::Result<std::vector<hir::DumpedDeclaration>>;
   auto LowerContinuousAssign(
       const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)

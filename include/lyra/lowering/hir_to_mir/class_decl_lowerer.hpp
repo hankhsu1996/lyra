@@ -120,8 +120,8 @@ class ClassDeclLowerer {
   const hir::StructuralScope* replicating_;
   const StructuralScopeLowerer* declaring_scope_;
 
-  // The cells each method's static-lifetime variables took, in the order the
-  // class lists them.
+  // The cells each method keeps past a call, in the order the class lists
+  // them.
   base::Translation<hir::MethodId, StaticCellBindings> method_statics_;
   StaticCellBindings ctor_static_bindings_;
   DeclaredScopes scopes_;

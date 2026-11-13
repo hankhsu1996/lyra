@@ -352,10 +352,7 @@ auto LowerIntraAssignmentStmt(
 
   const hir::ProceduralVarId held = body.procedural_vars.Declare();
   body.procedural_vars.Define(
-      held, hir::ProceduralVarDecl{
-                .name = std::nullopt,
-                .type = type,
-                .lifetime = hir::VariableLifetime::kAutomatic});
+      held, hir::ProceduralVarDecl{.name = std::nullopt, .type = type});
   inner.OpenScope().declarations.push_back(held);
 
   const auto held_ref = [&] {

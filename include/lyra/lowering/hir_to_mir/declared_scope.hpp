@@ -21,9 +21,9 @@ namespace lyra::lowering::hir_to_mir {
 // body, a `begin ... end`, a `fork ... join` (LRM 23.9). Two things about a
 // scope outlive the activation that opened it: the place a hierarchical name
 // reaches it at (LRM 23.6), and what a `disable` naming it invalidates (LRM
-// 9.6.2). A static-lifetime variable declared in it also outlives every
-// activation (LRM 6.21) -- but that is storage of the declaration like any
-// other, placed by the rule that places every static cell.
+// 9.6.2). A static variable declared in it also outlives every activation (LRM
+// 6.21) -- but that is a variable of the scope or class around the body,
+// placed as every one of those is.
 //
 // So a scope has no run-time existence of its own: what a body there keeps is a
 // field of the class enclosing it, one member access from that body's `self`,

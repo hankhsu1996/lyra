@@ -242,50 +242,45 @@ auto ProceduralStepOf(const slang::ast::Symbol& scope) -> support::DefPathData;
 // nothing (LRM 13.5.2).
 auto HasStaticStorage(const slang::ast::VariableSymbol& var) -> bool;
 
-// The class keeps one per class and per specialization (LRM 8.25), for a
-// method.
-struct KeptByClass {
+// A method's static is the class's: one per class and per specialization (LRM
+// 6.21, 8.25).
+struct DeclaredInClass {
   const slang::ast::ClassType* cls = nullptr;
 };
 
-// The package or the compilation-unit scope keeps one for the run, for a
-// subroutine it declares (LRM 26.2).
-struct KeptByNamespace {
+// A subroutine's static is the namespace's -- the package's or the
+// compilation-unit scope's -- one for the run (LRM 6.21, 26.2).
+struct DeclaredInNamespace {
   const slang::ast::Symbol* unit = nullptr;
 };
 
-// What keeps a static variable a subroutine declares beyond the subroutine's
-// body: whatever replicates the subroutine's declaration, where that is not a
-// design element's instance, which keeps it as a variable of the body.
-using StaticKeeper = std::variant<KeptByClass, KeptByNamespace>;
+// Which declaration a static variable a subroutine writes is a declaration of
+// where every unit names it by the same qualified name: the class or the
+// namespace the subroutine stands in. A design element's subroutine is not
+// one, its statics being variables of the scope, reached as the scope's own.
+using StaticContext = std::variant<DeclaredInClass, DeclaredInNamespace>;
 
-// A static variable a class or a namespace keeps for one of its subroutines
-// (LRM 6.21), each formal of a static subroutine among them (LRM 13.3.2): what
-// keeps it, and the name the keeper knows it by -- the subroutine and every
-// block between, as steps, then the variable's own name (LRM 23.6). A block the
-// source left unlabelled is a step by its position, which no name the source
-// writes reaches.
-struct KeptStatic {
+// A static variable of a class's or a namespace's subroutine (LRM 6.21), each
+// formal of a static subroutine among them (LRM 13.3.2): the declaration it is
+// one of, and the name every unit knows it by there -- the subroutine and
+// every block between, as steps, then the variable's own name (LRM 23.6). A
+// block the source left unlabelled is a step by its position, which no name
+// the source writes reaches.
+struct QualifiedStatic {
   const slang::ast::VariableSymbol* var = nullptr;
-  StaticKeeper keeper;
+  StaticContext context;
   support::QualifiedName name;
 };
 
 // The above for `value`, and nothing for any other value: an automatic one, or
-// one a design element's subroutine declares.
-auto KeptStaticOf(const slang::ast::ValueSymbol& value)
-    -> std::optional<KeptStatic>;
+// one a design element's subroutine writes.
+auto QualifiedStaticOf(const slang::ast::ValueSymbol& value)
+    -> std::optional<QualifiedStatic>;
 
-// Every static variable a class or a namespace keeps for `subroutine`, in the
-// order its body declares them: none for a design element's subroutine.
-auto StaticsKeptBy(const slang::ast::SubroutineSymbol& subroutine)
-    -> std::vector<KeptStatic>;
-
-// The innermost scope around `var`'s declaration the source named -- its
-// subroutine or a labelled block -- which a construct written there reports as
-// where it is (LRM 21.2.1.5); a block the source left unlabelled has no name.
-auto NamedScopeAround(const slang::ast::VariableSymbol& var)
-    -> const slang::ast::Symbol&;
+// Every such static of `subroutine`, in the order its body writes them: none
+// for a design element's subroutine.
+auto QualifiedStaticsOf(const slang::ast::SubroutineSymbol& subroutine)
+    -> std::vector<QualifiedStatic>;
 
 // Which declaration of its compilation unit `declaration` is: one step for each
 // scope the source nests it in, from the unit's own scope down, and one for the

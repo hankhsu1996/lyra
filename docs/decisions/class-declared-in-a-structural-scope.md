@@ -145,10 +145,10 @@ A static property's cell belongs to whatever replicates the class declaration:
 | a package or the compilation-unit scope | one, program-global            |
 | a structural scope                      | one per instance of that scope |
 
-This is the same sentence as `variable-lifetime-storage.md`'s rule for a static-lifetime local, one
-level up, and it uses the same placement vocabulary rather than a second one. Where a structural
-scope replicates the class, the cell is a field of the class the scope published, placed from the
-class's declaration alone, so every body realizing the scope places it alike. The declared
+This is the same sentence as `variable-lifetime-storage.md`'s rule for a static variable a body
+writes, one level up, and it uses the same placement vocabulary rather than a second one. Where a
+structural scope replicates the class, the cell is a field of the class the scope published, placed
+from the class's declaration alone, so every body realizing the scope places it alike. The declared
 initializer (LRM 10.5) runs once per cell, which for the second row is once per instance during that
 instance's initialization -- still before any `initial` or `always` procedure, as 10.5 requires.
 

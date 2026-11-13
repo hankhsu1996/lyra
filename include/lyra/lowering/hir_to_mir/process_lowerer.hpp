@@ -70,13 +70,12 @@ struct PromotedVarBinding {
     const PromotedVarBinding& binding) -> mir::Expr;
 
 // Where one HIR procedural var of this body keeps its storage: an in-frame
-// local for an automatic, a cell behind a shared pointer for a
-// lifetime-extended automatic, or a cell that outlives every activation for a
-// static-lifetime variable (LRM 6.21). Every var the body reaches has exactly
-// one of these, so a reader visits the answer rather than probing one registry
-// and falling back to another.
+// local for an automatic, or a cell behind a shared pointer for a
+// lifetime-extended automatic (LRM 6.21). Every var the body reaches has
+// exactly one of these, so a reader visits the answer rather than probing one
+// registry and falling back to another.
 using ProceduralVarBinding =
-    std::variant<AutomaticVarBinding, PromotedVarBinding, StaticCellBinding>;
+    std::variant<AutomaticVarBinding, PromotedVarBinding>;
 
 // Lowers one procedural body -- a process, a method, a subroutine, a
 // constructor -- into its callable code. What holds for the whole body sits
@@ -105,8 +104,7 @@ class ProcessLowerer {
   // declaration. `owner_ctor_frame` carries the owner class into the body --
   // a frame naming no class is a namespace context, whose body has no `self`.
   // `scopes` is what each procedural scope of the declaration scope owns at run
-  // time, and `statics` the static-lifetime cells this body's variables and
-  // controlled statements were given.
+  // time, and `statics` the cells this body keeps past an activation.
   ProcessLowerer(
       UnitLowerer& unit_lowerer,
       const StructuralScopeLowerer* enclosing_scope_lowerer,
@@ -125,14 +123,13 @@ class ProcessLowerer {
         // replaces it with the one its completion payload states.
         result_type_(unit_lowerer.Unit().builtins.coroutine_void),
         body_writer_(std::move(body_writer)) {
-    // Where every static-lifetime cell of this body lives is settled before
-    // the body lowers, so each one is bound here. Reaching a static's
-    // declaration, or a statement the assertion control tasks select, then
-    // binds nothing -- the walk carries no part of the answer.
+    // Where every cell this body keeps past an activation lives is settled
+    // before the body lowers, so each one is bound here. Reaching a statement
+    // the assertion control tasks select then binds nothing -- the walk carries
+    // no part of the answer.
     for (const StaticCellBinding& binding : statics) {
       std::visit(
           Overloaded{
-              [&](hir::ProceduralVarId var) { MapProceduralVar(var, binding); },
               [&](const AssertionControlCell& control) {
                 controls_.emplace(control.assertion, binding);
               },
@@ -394,10 +391,9 @@ class ProcessLowerer {
       const hir::ProceduralVarDecl& declared, mir::TypeId type) -> mir::LocalId;
 
   // Where the named var keeps its storage. Every var a reference can name is
-  // bound before anything reads it -- a static when the body opens, an
-  // automatic formal by the signature, any other automatic by its declaration
-  // -- so an unbound var is a reference reaching a declaration the walk has
-  // not passed, which is a compiler bug rather than an answer.
+  // bound before anything reads it -- a formal by the signature, any other by
+  // its declaration -- so an unbound var is a reference reaching a declaration
+  // the walk has not passed, which is a compiler bug rather than an answer.
   [[nodiscard]] auto LookupProceduralVar(hir::ProceduralVarId hir_id) const
       -> const ProceduralVarBinding& {
     const ProceduralVarBinding* binding = bindings_.Find(hir_id);

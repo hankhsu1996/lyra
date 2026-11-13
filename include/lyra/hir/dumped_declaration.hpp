@@ -40,7 +40,7 @@ struct DumpedDeclaration {
   };
   std::optional<Port> port;
   ExprId named;
-  std::optional<ProceduralScopeId> enclosing;
+  std::optional<ProceduralScopeId> lexical_scope;
 
   auto operator==(const DumpedDeclaration&) const -> bool = default;
 };

@@ -104,10 +104,10 @@ using RouteBase = std::variant<InUnitBase, EnclosingScopeBase>;
 // two ways: by this unit's own declaration, or by the position another unit's
 // signature gave it.
 //
-// A value ends at data: a data object declared by the reader's own scope, or a
-// static-lifetime local of one of that scope's bodies, which a named block
-// or a subroutine puts on the hierarchical path (LRM 23.9) -- every such scope
-// between is part of where the storage sits, not a step of its own, so the leaf
+// A value ends at data: a data object of the reader's own scope -- one the
+// scope declares, or a static variable one of its bodies writes in a block or
+// a subroutine the hierarchical path names (LRM 23.9), every such scope between
+// being where the source wrote it rather than a step of its own, so the leaf
 // identity fixes the whole procedural descent. A leaf in another unit is named
 // against that unit's signature instead, which published every such
 // declaration. Each states the storage its target holds and the data type
@@ -121,28 +121,6 @@ struct StructuralDataObjectLeaf {
   auto operator==(const StructuralDataObjectLeaf&) const -> bool = default;
 };
 
-// The body a static-lifetime local was declared in. A static's identity is
-// scoped to its body's declaration arena, so reaching one from elsewhere names
-// the body alongside it.
-using ProceduralBodyRef = std::variant<ProcessId, StructuralSubroutineId>;
-
-struct ProceduralStaticLeaf {
-  ProceduralBodyRef body;
-  ProceduralVarId var;
-  TypeId type;
-
-  auto operator==(const ProceduralStaticLeaf&) const -> bool = default;
-};
-
-// A static-lifetime local a scope published: the body declaring it, and its
-// identity there.
-struct PublishedStatic {
-  ProceduralBodyRef body;
-  ProceduralVarId var;
-
-  auto operator==(const PublishedStatic&) const -> bool = default;
-};
-
 // The cell a covergroup the scope declares keeps for its type, which the
 // beginning or end of a block it is sampled at tells every instance of the
 // covergroup this instance of the scope holds (LRM 19.3, 6.22).
@@ -154,16 +132,16 @@ struct CovergroupBlockEvent {
 
 // A declaration a scope published, named the way the scope that holds it names
 // it. Which arena it lives in is what says how its storage is built: a data
-// object owns a cell the scope installs, a static-lifetime local owns one the
-// scope holds for the body declaring it, a static property of a class the scope
-// declares owns one the scope holds for that class (LRM 6.22, 8.9), an instance
-// member stands for an object the scope builds and owns, and an interface port
-// stands for one the scope neither owns nor builds. The last two publish the
-// same thing -- a borrowed pointer to another unit's object -- and differ only
-// in what this scope does with it.
+// object -- one the scope declares, or a static variable one of its bodies
+// writes (LRM 6.21) -- owns a cell the scope installs, a static property of a
+// class the scope declares owns one the scope holds for that class (LRM 6.22,
+// 8.9), an instance member stands for an object the scope builds and owns, and
+// an interface port stands for one the scope neither owns nor builds. The last
+// two publish the same thing -- a borrowed pointer to another unit's object --
+// and differ only in what this scope does with it.
 using PublishedDecl = std::variant<
-    StructuralDataObjectId, PublishedStatic, ClassStaticPropertyTarget,
-    CovergroupBlockEvent, InstanceMemberId, InterfacePortId>;
+    StructuralDataObjectId, ClassStaticPropertyTarget, CovergroupBlockEvent,
+    InstanceMemberId, InterfacePortId>;
 
 // A callable a scope published: a subroutine of the scope, or what lands the
 // drives of an output of a clocking block it declares, which no subroutine the
@@ -210,8 +188,7 @@ struct PublishedMemberLeaf {
   auto operator==(const PublishedMemberLeaf&) const -> bool = default;
 };
 
-using DataLeaf = std::variant<
-    StructuralDataObjectLeaf, ProceduralStaticLeaf, PublishedMemberLeaf>;
+using DataLeaf = std::variant<StructuralDataObjectLeaf, PublishedMemberLeaf>;
 
 // A cell of the storage the declaring unit says a data end is, holding a value
 // of `type`.
@@ -225,11 +202,6 @@ struct DataCell {
       Overloaded{
           [](const StructuralDataObjectLeaf& l) {
             return DataCell{.storage = l.storage, .type = l.type};
-          },
-          // A static-lifetime local is a variable wherever it sits (LRM 6.21),
-          // so it needs no field to say so.
-          [](const ProceduralStaticLeaf& l) {
-            return DataCell{.storage = VariableStorage{}, .type = l.type};
           },
           [](const PublishedMemberLeaf& l) {
             return DataCell{.storage = l.storage, .type = l.type};

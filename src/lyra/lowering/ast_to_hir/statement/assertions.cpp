@@ -8,6 +8,7 @@
 #include <variant>
 #include <vector>
 
+#include <slang/ast/ASTVisitor.h>
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/TimingControl.h>
@@ -1024,6 +1025,80 @@ auto StaticConcurrentAssertionOf(const slang::ast::ProceduralBlockSymbol& proc)
   }
   found.assertion = &assertion;
   return found;
+}
+
+namespace {
+
+// The outermost blocks a statement opens: one the front end made a scope of,
+// and below a block it made none of, the ones inside. What a block holds is
+// left out with it, so nothing below one is listed.
+class OpenedBlocks : public slang::ast::ASTVisitor<
+                         OpenedBlocks, slang::ast::VisitFlags::Statements> {
+ public:
+  explicit OpenedBlocks(
+      std::vector<const slang::ast::StatementBlockSymbol*>& blocks)
+      : blocks_(&blocks) {
+  }
+
+  void handle(const slang::ast::BlockStatement& block) {
+    if (block.blockSymbol != nullptr) {
+      blocks_->push_back(block.blockSymbol);
+      return;
+    }
+    visitDefault(block);
+  }
+
+ private:
+  std::vector<const slang::ast::StatementBlockSymbol*>* blocks_;
+};
+
+// The blocks each statement of a body the build leaves out opens.
+class StatementsLeftOut
+    : public slang::ast::ASTVisitor<
+          StatementsLeftOut, slang::ast::VisitFlags::Statements> {
+ public:
+  explicit StatementsLeftOut(support::AssertionPolicy policy)
+      : policy_(policy) {
+  }
+
+  // An assertion simulation does not evaluate (LRM 16.14.4) or the policy
+  // elides (LRM 16), as its own statement's lowering leaves it out. A checker
+  // it drops (LRM 17) opens no block of the body: what the checker declares is
+  // its instance's (LRM 17.3).
+  void handle(const slang::ast::ConcurrentAssertionStatement& stmt) {
+    Visit(stmt, !EvaluatedInSimulation(stmt, policy_));
+  }
+  void handle(const slang::ast::ImmediateAssertionStatement& stmt) {
+    Visit(stmt, support::ElidesAssertions(policy_));
+  }
+
+  auto Take() && -> std::vector<const slang::ast::StatementBlockSymbol*> {
+    return std::move(blocks_);
+  }
+
+ private:
+  template <typename S>
+  void Visit(const S& stmt, bool left_out) {
+    if (!left_out) {
+      visitDefault(stmt);
+      return;
+    }
+    OpenedBlocks opened(blocks_);
+    stmt.visitStmts(opened);
+  }
+
+  support::AssertionPolicy policy_;
+  std::vector<const slang::ast::StatementBlockSymbol*> blocks_;
+};
+
+}  // namespace
+
+auto BlocksLeftOut(
+    const slang::ast::Statement& body, support::AssertionPolicy policy)
+    -> std::vector<const slang::ast::StatementBlockSymbol*> {
+  StatementsLeftOut left_out(policy);
+  body.visit(left_out);
+  return std::move(left_out).Take();
 }
 
 auto LowerImmediateAssertionStmt(

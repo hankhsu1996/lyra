@@ -194,18 +194,18 @@ of a fixed depth.
 
 Each history is storage of the body the function is written in, or of the scope where it stands
 among the scope's own expressions, of static lifetime, so it lives where that body's statics live
-and its sampler reaches what they reach, a static local of the body among them (LRM 6.21). Its depth
-is the tick count, an elaboration-time constant (LRM 16.9.3), known where the storage is declared.
-It is installed full of each piece's default sampled value, which LRM 16.9.3 requires before the kth
-prior tick exists, so it has no empty case and no tick counter; reading an automatic as now before
-that tick too is the reading `architecture/language_conformance.md` rules on. A read names the entry
-where the history keeps it, as a sampled read names the value where the variable keeps it, so
-`$past(mem[i])` reaches one element of the kept `mem` rather than a copy of all of it. A clocking
-block input is read, there and by every other sampled read, as the value its block samples at the
-event (LRM 16.5.1, 14.13), computed as the block computes it rather than read from the input's cell,
-which the block writes later in the same time step. The triggered state of an event or a sequence is
-an operand whose past value is sampled elsewhere -- in the Postponed region of the past tick (LRM
-16.5.1) -- and a function reading one is not yet carried out.
+and its sampler reaches what they reach, a static variable the body writes among them (LRM 6.21).
+Its depth is the tick count, an elaboration-time constant (LRM 16.9.3), known where the storage is
+declared. It is installed full of each piece's default sampled value, which LRM 16.9.3 requires
+before the kth prior tick exists, so it has no empty case and no tick counter; reading an automatic
+as now before that tick too is the reading `architecture/language_conformance.md` rules on. A read
+names the entry where the history keeps it, as a sampled read names the value where the variable
+keeps it, so `$past(mem[i])` reaches one element of the kept `mem` rather than a copy of all of it.
+A clocking block input is read, there and by every other sampled read, as the value its block
+samples at the event (LRM 16.5.1, 14.13), computed as the block computes it rather than read from
+the input's cell, which the block writes later in the same time step. The triggered state of an
+event or a sequence is an operand whose past value is sampled elsewhere -- in the Postponed region
+of the past tick (LRM 16.5.1) -- and a function reading one is not yet carried out.
 
 Revised 2026-11-09. This section kept a history of the whole operand, lowered a second time into the
 scope's own arena. That copy could read neither an automatic variable nor a static local of the body

@@ -330,7 +330,8 @@ auto Building(
         StructuralDataObjectDecl{
             .name = "i",
             .type = built.unit.builtins.integer,
-            .kind = StructuralConstructionValueDecl{}});
+            .kind = StructuralConstructionValueDecl{},
+            .lexical_scope = std::nullopt});
   }
   built.unit.block_bodies.Add(std::move(body));
   built.unit.root_scope.generates.Add(std::move(generate));

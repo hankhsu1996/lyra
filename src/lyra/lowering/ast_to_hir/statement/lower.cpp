@@ -60,10 +60,10 @@ auto LowerVariableDeclStmt(
     const slang::ast::VariableDeclStatement& vd, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
   const auto& sym = vd.symbol;
-  // A static variable a class or a namespace keeps for this subroutine is the
-  // keeper's declaration, set up with the keeper's own storage before any
+  // A static variable is a declaration of the scope or class around the body
+  // wherever the body writes it, set up with that one's storage before any
   // process starts (LRM 6.21, 10.5), so it declares nothing of this body.
-  if (KeptStaticOf(sym).has_value()) return LowerEmptyStmt(span);
+  if (HasStaticStorage(sym)) return LowerEmptyStmt(span);
   auto type_id_or = proc.Owner().InternType(
       sym.getType(), frontend::PointSpanOf(sym.location));
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));

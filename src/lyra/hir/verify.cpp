@@ -1749,7 +1749,6 @@ void VerifyRoutesStayOrPublish(
     const bool own_identity = std::visit(
         Overloaded{
             [](const StructuralDataObjectLeaf&) { return true; },
-            [](const ProceduralStaticLeaf&) { return true; },
             [](const PublishedMemberLeaf&) { return false; }},
         route.leaf);
     if (own_identity && !in_own_scope(route)) {
@@ -1783,23 +1782,6 @@ void VerifyScope(
     const std::string& label, std::vector<std::string>& lines) {
   ArenaReaches reaches{scope};
   ReachFromDataObjects(reaches, scope);
-  // A namespace keeps its subroutines' statics as its variables, and their
-  // initializers are expressions of its own scope, the one scope it has.
-  if (&scope == &unit.root_scope) {
-    const auto from_kept =
-        ReachFrom(reaches, std::nullopt, "a subroutine static's declaration");
-    if (unit.namespace_definition.has_value()) {
-      const NamespaceDefinition& defined = *unit.namespace_definition;
-      for (const NamespaceVariableId id : defined.variables.Ids()) {
-        if (!defined.variables.IsDefined(id)) continue;
-        const auto* kept =
-            std::get_if<NamespaceStatic>(&defined.variables.Get(id));
-        if (kept != nullptr && kept->initializer.has_value()) {
-          from_kept(*kept->initializer, OperandSlot::kOperand);
-        }
-      }
-    }
-  }
   const auto from_assign =
       ReachFrom(reaches, std::nullopt, "a continuous assignment");
   for (const ContinuousAssign& assign : scope.continuous_assigns) {

@@ -149,9 +149,7 @@ auto BuildImplicitInstanceArgument(
 // storage type, read from the enclosing scope reached by `hops` (a wrapper
 // type for observable storage, the value type otherwise) -- a fact that lives
 // only in the MIR scope, not in HIR, so it is read here rather than passed
-// down. Serves both a structural-var reference and a static-lifetime variable
-// kept as a per-instance structural var (LRM 13.3.1), which reach their
-// storage identically.
+// down.
 auto BuildStructuralFieldAccessExpr(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops, mir::FieldId var) -> mir::Expr;

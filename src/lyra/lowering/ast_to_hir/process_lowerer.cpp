@@ -53,7 +53,7 @@ ProcessLowerer::ProcessLowerer(
 auto ProcessLowerer::Run(
     const slang::ast::ProceduralBlockSymbol& proc, WalkFrame parent_frame)
     -> diag::Result<hir::Process> {
-  hir::ProceduralBody body = owner_->MakeProceduralBody(proc);
+  hir::ProceduralBody body;
 
   // A process is anonymous in SV (LRM 9.2), so its root scope takes a
   // synthesized segment.
@@ -123,7 +123,7 @@ auto ProcessLowerer::RunConcurrentAssertion(
     const slang::ast::ConcurrentAssertionStatement& as,
     const slang::ast::StatementBlockSymbol* named_block, WalkFrame parent_frame)
     -> diag::Result<hir::ConcurrentAssertionDecl> {
-  hir::ProceduralBody body = owner_->MakeProceduralBody(proc);
+  hir::ProceduralBody body;
 
   OpenProceduralScope root{
       owner_->LookupProceduralScope(proc),
@@ -163,10 +163,8 @@ auto ProcessLowerer::RunConcurrentAssertion(
 
 auto ProcessLowerer::DeclareProceduralVar(
     const WalkFrame& frame, hir::ProceduralBody& body,
-    const slang::ast::ValueSymbol& var) -> hir::ProceduralVarId {
-  const auto declared = owner_->LookupProceduralStatic(var);
-  const hir::ProceduralVarId id =
-      declared.has_value() ? declared->var : body.procedural_vars.Declare();
+    const slang::ast::VariableSymbol& var) -> hir::ProceduralVarId {
+  const hir::ProceduralVarId id = body.procedural_vars.Declare();
   const auto [_, inserted] = procedural_var_bindings_.emplace(&var, id);
   if (!inserted) {
     throw InternalError(
@@ -181,15 +179,18 @@ void ProcessLowerer::DefineProceduralVar(
     hir::ProceduralBody& body, hir::ProceduralVarId id,
     const slang::ast::VariableSymbol& var, hir::TypeId type,
     std::optional<hir::ExprId> init) {
+  if (HasStaticStorage(var)) {
+    throw InternalError(
+        "ProcessLowerer::DefineProceduralVar: a static variable is a "
+        "declaration of the scope or class around the body, never of the "
+        "body -- please report this as a bug");
+  }
   body.procedural_vars.Define(
-      id,
-      hir::ProceduralVarDecl{
-          .name = std::string{var.name},
-          .type = type,
-          .lifetime = HasStaticStorage(var) ? hir::VariableLifetime::kStatic
-                                            : hir::VariableLifetime::kAutomatic,
-          .lifetime_extended = lifetime_extended_.contains(&var),
-          .init = init});
+      id, hir::ProceduralVarDecl{
+              .name = std::string{var.name},
+              .type = type,
+              .lifetime_extended = lifetime_extended_.contains(&var),
+              .init = init});
 }
 
 auto ProcessLowerer::AddProceduralVar(
@@ -217,45 +218,9 @@ auto ProcessLowerer::AddEvaluatorParameter(
       id, hir::ProceduralVarDecl{
               .name = std::string{var.name},
               .type = type,
-              .lifetime = hir::VariableLifetime::kAutomatic,
               .lifetime_extended = false,
               .init = std::nullopt});
   return id;
-}
-
-auto ProcessLowerer::DeclarePerObjectConstants(
-    const slang::ast::Scope& scope, const WalkFrame& frame)
-    -> diag::Result<void> {
-  hir::ProceduralBody& body = *frame.current_procedural_body;
-  for (const auto& member : scope.members()) {
-    const auto* constant = member.as_if<slang::ast::ParameterSymbol>();
-    if (constant == nullptr ||
-        !owner_->LookupProceduralStatic(*constant).has_value()) {
-      continue;
-    }
-    const hir::ProceduralVarId id =
-        DeclareProceduralVar(frame, body, *constant);
-
-    const auto span = frontend::PointSpanOf(constant->location);
-    auto type = owner_->InternType(constant->getType(), span);
-    if (!type) return std::unexpected(std::move(type.error()));
-    const slang::ast::Expression* initializer = constant->getInitializer();
-    if (initializer == nullptr) {
-      throw InternalError(
-          "ProcessLowerer::DeclarePerObjectConstants: a constant whose value "
-          "differs per object states no expression it is written from");
-    }
-    auto init = LowerExpr(*initializer, frame);
-    if (!init) return std::unexpected(std::move(init.error()));
-    body.procedural_vars.Define(
-        id, hir::ProceduralVarDecl{
-                .name = std::string{constant->name},
-                .type = *type,
-                .lifetime = hir::VariableLifetime::kStatic,
-                .lifetime_extended = false,
-                .init = frame.Exprs().Add(*std::move(init))});
-  }
-  return {};
 }
 
 auto ProcessLowerer::LookupProceduralVar(const slang::ast::ValueSymbol& var)

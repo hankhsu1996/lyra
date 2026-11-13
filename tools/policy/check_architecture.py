@@ -127,10 +127,8 @@ Rules:
         run sees this. Each axis -- which construct states a target's value,
         and how the target is named -- is covered on its own, and only the
         combination is wrong, so both suites stay green.
-        Scope: src/**, include/** outside the two sites that own it -- the
-               route translation, which reads the registry to build a leaf,
-               and the pass that mints procedural identities, which reads it
-               to reuse one it already minted.
+        Scope: src/**, include/** outside the site that owns it -- the
+               route translation, which reads the registry to build a leaf.
 
   A019  LIR names no MIR identity. A layer that holds the identity of the
         layer above it has two identity systems for one entity, and the
@@ -883,9 +881,7 @@ def check_a016(repo_root: Path) -> list[str]:
 
 
 # Rule A018
-DECLARATION_REGISTRY_PATTERN = re.compile(
-    r"\bLookup(?:StructuralDataObjectBinding|ProceduralStatic)\b"
-)
+DECLARATION_REGISTRY_PATTERN = re.compile(r"\bLookupStructuralDataObjectBinding\b")
 DECLARATION_REGISTRY_OWNERS = frozenset(
     {
         # Declares and defines the registry.
@@ -893,8 +889,6 @@ DECLARATION_REGISTRY_OWNERS = frozenset(
         "src/lyra/lowering/ast_to_hir/unit_lowerer.cpp",
         # Builds a route's leaf from what this unit declares.
         "src/lyra/lowering/ast_to_hir/reference_route.cpp",
-        # Reuses the identity it already minted for a static.
-        "src/lyra/lowering/ast_to_hir/process_lowerer.cpp",
     }
 )
 
@@ -1963,10 +1957,6 @@ def run_self_tests() -> bool:
         DECLARATION_REGISTRY_PATTERN.search(
             "if (!LookupStructuralDataObjectBinding(var).has_value()) {"),
         "A018 a membership test on the registry")
-    ok &= expect(
-        DECLARATION_REGISTRY_PATTERN.search(
-            "const auto s = owner_->LookupProceduralStatic(var);"),
-        "A018 either registry lookup")
     ok &= expect(
         not DECLARATION_REGISTRY_PATTERN.search(
             "auto binding = LookupInterfacePortBinding(port);"),

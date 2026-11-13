@@ -283,8 +283,8 @@ Two consequences for type structure:
   is the read-side substitute for the construction pass's binding registry -- the same
   registry-presence distinction that separates the two pass kinds. The class chain, by contrast,
   both passes climb, because a member's declared MIR storage type lives only in the constructed
-  class and must be read there by whoever needs it (a member reference, or a static-lifetime local
-  promoted to a member). Forcing the two axes onto one mechanism would either carry a chain a
+  class and must be read there by whoever needs it (a member reference, a static variable a body
+  writes among them). Forcing the two axes onto one mechanism would either carry a chain a
   construction pass never reads or demand a name a counter cannot produce.
 
 ## Data Flow
