@@ -17,6 +17,7 @@ namespace slang::ast {
 class ConcurrentAssertionStatement;
 class ImmediateAssertionStatement;
 class ProceduralBlockSymbol;
+class Statement;
 class StatementBlockSymbol;
 }  // namespace slang::ast
 
@@ -59,6 +60,15 @@ struct StaticConcurrentAssertion {
 [[nodiscard]] auto EvaluatedInSimulation(
     const slang::ast::ConcurrentAssertionStatement& assertion,
     support::AssertionPolicy policy) -> bool;
+
+// The outermost blocks the statements of `body` that `policy` leaves out open.
+// Such a statement takes what it declares out of the design with it, so no
+// scope declares what these blocks write and no name reaches into them. A
+// block around one -- the one a label opens (LRM 9.3.5) among them -- stays,
+// since the body around it still runs it.
+[[nodiscard]] auto BlocksLeftOut(
+    const slang::ast::Statement& body, support::AssertionPolicy policy)
+    -> std::vector<const slang::ast::StatementBlockSymbol*>;
 
 // Declares the statement being lowered as one the assertion control tasks
 // select (LRM 20.11), in the scope it stands in.

@@ -8,6 +8,7 @@
 
 #include "lyra/base/pool_id.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/support/strength_level.hpp"
 
@@ -139,21 +140,29 @@ struct StructuralDataObjectDecl {
   std::string name;
   TypeId type;
   StructuralDataObjectKind kind;
+  // Where the source writes the declaration, apart from the scope it belongs
+  // to: a block, a task or a function of one of the scope's bodies, whose
+  // static variables are the scope's own as much as one written beside them
+  // (LRM 6.21), and absent for one written in the scope itself.
+  std::optional<ProceduralScopeId> lexical_scope;
 
   auto operator==(const StructuralDataObjectDecl&) const -> bool = default;
 };
 
-// Whether anything answers this declaration by the name it was written under.
-// Every kind does except the index a loop counts with: it does not exist at
-// simulation time (LRM 27.4), so the loop's own expressions reach it by
-// identity and nothing else reaches it at all. The name stays on the
+// Whether anything answers this declaration by the name it was written under,
+// as the scope's own. Every kind does except the index a loop counts with: it
+// does not exist at simulation time (LRM 27.4), so the loop's own expressions
+// reach it by identity and nothing else reaches it at all. Nor does a static a
+// body writes, which answers, if to anything, to the path of the blocks it is
+// written in. The name stays on the
 // declaration because a reader of the lowered form wants it; what this says is
 // that no consumer may treat it as an identifier something answers to. Two
 // loops of one scope counting with the same genvar name are two declarations,
 // not one name written twice, and only this tells them apart.
 [[nodiscard]] inline auto AnsweredByName(const StructuralDataObjectDecl& decl)
     -> bool {
-  return !std::holds_alternative<StructuralGenvarDecl>(decl.kind);
+  return !std::holds_alternative<StructuralGenvarDecl>(decl.kind) &&
+         !decl.lexical_scope.has_value();
 }
 
 }  // namespace lyra::hir

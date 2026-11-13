@@ -189,14 +189,6 @@ auto LowerProceduralVarRefExpr(
   const ProceduralVarBinding& var_binding = process.LookupProceduralVar(var);
   return std::visit(
       Overloaded{
-          // Storage that outlives every activation (LRM 6.21) sits wherever the
-          // declaration belongs, which the binding settled; the read is that
-          // one access.
-          [&](const StaticCellBinding& binding) {
-            return BuildStaticStorageAccess(
-                process.Owner().Unit(), frame, binding.home, binding.cell_type,
-                mir::EnclosingHops{});
-          },
           // A lifetime-extended automatic (LRM 6.21) lives in a shared cell;
           // the read reaches it through the handle, a carrier the resolver
           // makes available in this body (a by-value, owning copy inside a
@@ -240,6 +232,10 @@ auto LowerFormalVariableExpr(
       Overloaded{
           [&](hir::ProceduralVarId var) {
             return LowerProceduralVarRefExpr(process, frame, var);
+          },
+          [&](const hir::RoutedValueRef& routed) {
+            return LowerRoutedValueRefExpr(
+                process.EnclosingScopeLowerer(), frame, routed);
           },
           [&](const hir::NamespaceValueRef& kept) {
             return LowerNamespaceValueRefExpr(process.Owner(), kept);

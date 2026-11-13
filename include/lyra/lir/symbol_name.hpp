@@ -156,8 +156,8 @@ auto ObjectEntrySymbol(
     std::string_view unit_name, std::string_view body_name,
     std::optional<std::uint32_t> block) -> std::string;
 // A unit's own storage. A package variable answers to the identifier the source
-// declared, which is what another unit reaches it by; the cell a subroutine's
-// static-lifetime local keeps answers to none, and takes its position instead.
+// declared, which is what another unit reaches it by; a cell the compiler adds
+// answers to none, and takes its position instead.
 auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)
     -> std::string;
 

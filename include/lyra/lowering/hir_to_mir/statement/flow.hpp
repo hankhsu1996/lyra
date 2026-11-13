@@ -1,8 +1,8 @@
 #pragma once
 
-// Lowering of variable-declaration and flow-control statements: variable
-// declarations (LRM 6.21 / 13.3.1 static-lifetime body variables), `return`
-// (LRM 13.4.1), `break` / `continue` (LRM 12.7).
+// Lowering of variable-declaration and flow-control statements: declarations
+// of a body's automatic variables (LRM 6.21), `return` (LRM 13.4.1), `break` /
+// `continue` (LRM 12.7).
 
 #include <functional>
 #include <optional>
@@ -18,9 +18,9 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// The value a variable starts at, built in the frame's block only where
-// reaching its declaration brings it up: a static one was brought up before the
-// body and asks for none.
+// The value a variable starts at, built in the frame's block once the
+// variable's storage is declared, so what building it appends there follows
+// the declaration.
 using InitialValue = std::function<mir::ExprId()>;
 
 // What a variable starts at where nothing hands it a value: its type's default
@@ -31,13 +31,11 @@ auto DefaultInitialValue(
     const hir::ProceduralVarDecl& decl) -> InitialValue;
 
 // What reaching the point of declaration of the variable `var` of the body does
-// (LRM 6.21). An automatic one comes into being in the frame's block -- a
-// frame slot, or the cell it is promoted to where a detached branch names it
-// -- is bound so every later reference reaches that storage, and starts at
-// `initial`. A static one was bound and brought up before the body, so reaching
-// it does nothing. `name` is the identifier the binding answers to. The
-// statement that brings the storage up is returned unlabelled, for the caller
-// to place.
+// (LRM 6.21). It comes into being in the frame's block -- a frame slot, or the
+// cell it is promoted to where a detached branch names it -- is bound so every
+// later reference reaches that storage, and starts at `initial`. `name` is the
+// identifier the binding answers to. The statement that brings the storage up
+// is returned unlabelled, for the caller to place.
 auto LowerVarStart(
     ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var,
     const std::optional<std::string>& name, const InitialValue& initial)

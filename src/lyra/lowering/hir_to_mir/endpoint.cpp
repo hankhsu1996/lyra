@@ -40,9 +40,6 @@ auto ClimbedEndpoint(
           [&](const hir::StructuralDataObjectLeaf& l) {
             return own("a data object").TranslateStructuralDataObject(l.object);
           },
-          [&](const hir::ProceduralStaticLeaf& l) {
-            return own("a static").ProceduralStaticField(l.body, l.var);
-          },
           [&](const hir::PublishedMemberLeaf& l) {
             const ScopeClassLayout& record =
                 lowerer.Owner().ScopeClassLayoutOf(l.scope_class);

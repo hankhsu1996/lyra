@@ -50,13 +50,14 @@ struct ProceduralScopeId {
 // duplicates what the other says: a downstream consumer that needs ownership
 // reads it here, not from the statement tree.
 //
-// Lexical containment runs downward: a scope holds the declarations it owns and
-// the scopes nested directly inside it, and both are reached by descending from
-// a body's root. Nothing holds a link back up -- the direction the enclosing
-// structural scope already runs the same two relations in. A declaration's
-// identity lives in its body's arena rather than inside the scope, because an
-// identity a hierarchical path can name is minted before any body lowers; what
-// the scope holds is that id.
+// Lexical containment runs downward: a scope holds the automatic variables it
+// declares and the scopes nested directly inside it, and both are reached by
+// descending from a body's root -- the direction the enclosing structural
+// scope already runs the same two relations in. An automatic variable's
+// identity lives in its body's arena, and the scope holds that id. A static
+// variable written in the scope is no declaration of the body at all: it is a
+// variable of the structural scope or class around the body, which records the
+// procedural scope it is written in (LRM 6.21).
 //
 // Scopes nest: a `begin ... end` inside a `begin ... end` is two of them, and
 // the inner one is a child of the outer. The kinds below say which construct

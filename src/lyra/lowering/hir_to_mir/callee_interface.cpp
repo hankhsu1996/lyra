@@ -152,9 +152,7 @@ auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
     formals.push_back(
         CalleeFormal{
             .direction = param.direction,
-            .type = unit_lowerer.TranslateType(
-                hir::FormalTypeOf(
-                    unit_lowerer.Hir().namespaces, decl, param))});
+            .type = unit_lowerer.TranslateType(param.type)});
   }
   return formals;
 }
@@ -288,8 +286,7 @@ auto PrototypeOf(
     const auto* var = std::get_if<hir::ProceduralVarId>(&param.variable);
     formals.push_back(
         PrototypeFormal{
-            .type =
-                hir::FormalTypeOf(unit_lowerer.Hir().namespaces, decl, param),
+            .type = param.type,
             .direction = param.direction,
             .declared =
                 var == nullptr

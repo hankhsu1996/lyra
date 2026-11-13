@@ -2,8 +2,9 @@
 
 ## Date
 
-2026-11-09 (revised: the scope kinds VPI reads, and where an inspection interface reads the tree;
-earlier 2026-10-28, 2026-10-23, 2026-08-13, original 2026-06-30)
+2026-11-12 (revised: a static a body writes is a variable of the structural scope, D4, D6, D7;
+earlier 2026-11-09, the scope kinds VPI reads, and where an inspection interface reads the tree;
+2026-10-28, 2026-10-23, 2026-08-13, original 2026-06-30)
 
 ## Status
 
@@ -39,10 +40,17 @@ between each other:
 
 Lexical containment lives only in the scope tree, expressed downward: each scope holds the ids of
 its direct declarations and of the scopes nested directly inside it, and both are reached by
-descending from a body's `root_scope`. Nothing holds a link back up. This is the same direction the
-enclosing structural scope uses for the same two relations, where the declarations and the child
-scopes are arenas the scope owns outright. A scope is reached by walking the scope tree, never by
-walking the statement tree.
+descending from a body's `root_scope`. Nothing in the tree holds a link back up. This is the same
+direction the enclosing structural scope uses for the same two relations, where the declarations and
+the child scopes are arenas the scope owns outright. A scope is reached by walking the scope tree,
+never by walking the statement tree.
+
+A static is no declaration of the body (D4): it belongs to the structural scope, and records apart
+from that the procedural scope the source writes it in, its `lexical_scope`. This is clang's split
+between a declaration's semantic context and its lexical one (`Decl::getDeclContext` and
+`Decl::getLexicalDeclContext`, `DeclBase.h`), which differ for `void A::f() {}` written outside
+`namespace A`; a static written in a block differs the same way, belonging to the module and written
+in the block. rustc keeps one `DefKey::parent`, because a block is no definition there.
 
 No procedural scope exists at run time. Its identity and the storage its declarations take on the
 enclosing class are settled before any executable lowering runs; body lowering reads those bindings
@@ -98,8 +106,8 @@ A scope's contents are known only once its subtree has been walked, so the walk 
 is the one that fills it in against the identity minted for it. That an identity is filled later
 than it is minted is the ordinary case -- it is what lets a `disable` in another body name a block
 before that block's body lowers. What must hold is that every minted identity is definitely filled,
-which is why identity is minted ahead of the bodies only for what a name can reach, and every such
-scope is one some body goes on to open.
+which is why identity is minted ahead of the bodies only for what a name can reach and for a block a
+static is written in, and every such scope is one some body goes on to open.
 
 A block introduces one unconditionally. Neither carrying a name nor holding a declaration is a
 condition on the scope existing -- both are properties recorded on the scope, so a block with
@@ -109,10 +117,11 @@ scopes the language defines.
 
 Identity is minted ahead of the bodies for exactly what a name can reach from elsewhere -- a
 subroutine and a source-named block -- because a `disable` or a hierarchical reference in another
-body has to name it before that body lowers. Everything else is minted by the walk that opens it,
-which is also the only pass that knows the lexical nesting: the frontend records a scope for reasons
-of its own (the bindings of a pattern arm, the control variables of a loop) and lists those symbols
-as siblings of the process rather than inside it, so its member nesting is not the source's.
+body has to name it before that body lowers, and for a block a static is written in, because the
+static is declared before any body and records it. Everything else is minted by the walk that opens
+it, which is also the only pass that knows the lexical nesting: the frontend records a scope for
+reasons of its own (the bindings of a pattern arm, the control variables of a loop) and lists those
+symbols as siblings of the process rather than inside it, so its member nesting is not the source's.
 
 A scope's addressability -- whether an SV path can name it -- is exactly whether the source gave it
 an identifier, which is what LRM 23.9's procedural entries come to: a task or function root, which
@@ -127,14 +136,14 @@ MIR storage            = a field of the class enclosing the body
 ```
 
 The lexical tree preserves SV semantics (visibility, shadowing, and `disable`, which names a scope
-by static declaration identity). Storage is a separate question: a static-lifetime local of a body
-in this hierarchy is one cell per instance (LRM 6.21, and `variable-lifetime-storage.md` for what
-decides that count elsewhere), which says how many cells exist and how long they live, and says
-nothing about which object holds one. Reachability is a third question, and the LRM answers it
-separately -- LRM 6.21 lets a hierarchical reference name any static variable except one declared
-inside an unnamed block, so a path descends through the named blocks to reach the cell. That path is
-text: the enclosing scope publishes the static with the named blocks it sits in, and a route
-resolves it at compile time to a member of the published class.
+by static declaration identity). Storage is a separate question: a static a body in this hierarchy
+writes is one cell per instance (LRM 6.21, and `variable-lifetime-storage.md` for what decides that
+count elsewhere), which says how many cells exist and how long they live, and says nothing about
+which object holds one. Reachability is a third question, and the LRM answers it separately -- LRM
+6.21 lets a hierarchical reference name any static variable except one declared inside an unnamed
+block, so a path descends through the named blocks to reach the cell. That path is text: the
+enclosing scope publishes the static with the named blocks it sits in, and a route resolves it at
+compile time to a member of the published class.
 
 ### D3. No procedural scope is an object
 
@@ -171,9 +180,26 @@ set: the blocks and tasks a name reaches, so no pass has to first find out which
 ### D4. The lexical owner is the naming owner
 
 This decision is about bodies of the design hierarchy, whose statics their instances replicate. A
-static a class or a namespace keeps for one of its subroutines is that keeper's own entry, declared
-and named by it and reached the same way from every body
-([type-associated-storage-is-the-declarers](type-associated-storage-is-the-declarers.md) D5).
+static variable a body of a design element writes -- in a block of a process, a task or a function,
+or the action of an assertion -- is a data object of the structural scope, as a variable written
+beside the bodies is: declared once by the unit's declaration pass from the lexical tree, whichever
+kind of body stands around it, recording the procedural scope it is written in, defined by the scope
+with its initializer, and reached by every body and every unit as the scope's own. The body declares
+nothing of it. This is the field's shape: clang keys a local static by its `VarDecl` whatever
+context it stands in (`CodeGenModule::getOrCreateStaticVarDecl`), and rustc gives a `static` inside
+a body or a closure an item's `DefId` before any body is checked (`rustc_resolve`'s `DefCollector`).
+A static a class or a namespace subroutine writes is that class's or that namespace's own entry,
+declared and named by it and reached the same way from every body
+([type-associated-storage-is-the-declarers](type-associated-storage-is-the-declarers.md) D5); a
+namespace's is a data object of its scope as well, which its declaration lists by qualified name.
+
+Until 2026-11-12 such a static was a variable of its body, bound to an instance field and, where
+named, published beside it, so a unit reached one declaration in two forms (by body and position
+inside the unit, by the published member from outside), and which statics a scope had was answered
+by four walks -- one per kind of body in the declaration pass, the body's own, the binding of each
+body's statics to fields, and the dump's walk of the source tree. They disagreed for the action of
+an assertion the clock starts, which no walk over procedures counted: its statics had storage and no
+name, dump or `disable` reached them.
 
 A static's cell is a field of the class enclosing the body -- the same arena that holds the scope's
 own variables, an instance member, or the slot a stored route fills. A body reads it off `self` in
@@ -182,8 +208,9 @@ one step, and nothing has to know which blocks stand between the declaration and
 What the declaring scope owns is the name. A static declared in a scope the source named is
 published under its source spelling with the named blocks and subroutines it sits in, so a path
 through them reaches the cell; one declared in a scope the source did not name is published nowhere,
-so `Top.outer.hidden` does not resolve for a `hidden` inside an unnamed block under `outer` -- which
-is what SV's hierarchical-reference rules already say (LRM 6.21).
+its field being the scope's own class's, so `Top.outer.hidden` does not resolve for a `hidden`
+inside an unnamed block under `outer` -- which is what SV's hierarchical-reference rules already say
+(LRM 6.21).
 
 Which scope declares it is the source's own answer and never the shape of the statements below it. A
 task's `int counted;` is declared by the task however its statements are grouped, so it is published
@@ -211,8 +238,8 @@ construction, and the class enclosing the body states all of it.
 The HIR-to-MIR shape phase reads the lexical scope tree, never the statement tree. What it gives a
 scope -- its reported name, a cancellation source if the source named it -- depends on that scope
 alone, so it is one flat pass over the scope registry with nothing carried from a parent to a child.
-What each static gets depends only on its declaring scope, so it is one descent per body, taken
-because a declaration states its scope by sitting in it and holds no link back up.
+A static records the scope it is written in, as a class's and a namespace's do and as a declaration
+records its context in clang and rustc, so nothing descends a body to find it.
 
 There is no preliminary pass computing a property of a scope from the scopes around it. Where the
 nesting matters -- the name a scope reports -- it is read by descending the same lexical tree once.
@@ -220,23 +247,23 @@ nesting matters -- the name a scope reports -- it is read by descending the same
 Both are shared by every declaration scope that owns bodies and re-derive nothing. There is one
 answer to "what does this scope own", not one per owner kind.
 
-The body lowering looks up the resulting binding per static var; it re-derives nothing and does not
+The body lowering reaches each static as a variable of the scope; it re-derives nothing and does not
 visit the statement tree for any of this.
 
 ### D7. Intra-unit access to a procedural-scope static names the declaration, not the scopes above it
 
 A reference of the form `outer.x` from a sibling process is an intra-unit typed route (LRM 23.9),
-not a cross-unit by-name climb. What it names is the static declaration itself -- the body that
-declares it and its id within that body. The procedural scopes between the static and its structural
-scope -- named blocks, and the tasks and functions LRM 23.9 puts on that path beside them -- are not
-steps of the route, and they are not steps of the access either: the cell is a field of the
-structural scope's own class, so arriving at that scope is arriving at the cell.
+not a cross-unit by-name climb. What it names is the static declaration itself -- the data object of
+the scope it is. The procedural scopes between the static and its structural scope -- named blocks,
+and the tasks and functions LRM 23.9 puts on that path beside them -- are not steps of the route,
+and they are not steps of the access either: the cell is a field of the structural scope's own
+class, so arriving at that scope is arriving at the cell.
 
-This is why a static a hierarchical path can name is minted by the compilation unit's declaration
-pass rather than by the body that declares it, and why it is minted **once**: the reference and the
-declaration name the same id. An identity assigned during body lowering could not be named by a peer
-body that lowers first, and giving such a static a second, reference-only identity would put two
-name systems on one declaration.
+This is why a static is minted by the compilation unit's declaration pass rather than by the body
+that writes it, and why it is minted **once**: the reference and the declaration name the same id.
+An identity assigned during body lowering could not be named by a peer body that lowers first, and
+giving such a static a second, reference-only identity would put two name systems on one
+declaration.
 
 Its executable realization is a typed enclosing climb to the storage's structural scope and then the
 field -- typed member accesses, no by-name lookup anywhere. A descent from another unit takes the
@@ -303,9 +330,9 @@ time one does. Every body takes the same realization, so no predicate chooses be
 - A run-time object, class or handle for a procedural scope, for some scopes or for all. What a
   scope keeps is a cell of the instance and what reports it is text (D3); an object would be built
   and walked for no reader.
-- A second identity for a static-lifetime local, minted so that a reference can name what the
-  declaration arena assigns too late. One declaration has one id; if a reference cannot name it, the
-  declaration is being minted at the wrong stage.
+- A second identity for a static, minted so that a reference can name what the declaration arena
+  assigns too late. One declaration has one id; if a reference cannot name it, the declaration is
+  being minted at the wrong stage.
 - A block label used as the identity of a scope or of the storage inside it. The label is a segment
   of the path text; identity is the id the declaration pass mints.
 - A static's cell anywhere but the class enclosing the body. Reachability is answered by what that
@@ -371,7 +398,7 @@ time one does. Every body takes the same realization, so no predicate chooses be
 ## Cross-references
 
 - `declarations-before-bodies.md` -- the strict-D5 invariant a procedural scope's storage respects.
-- `variable-lifetime-storage.md` -- the storage-owner rule for static-lifetime body locals, read
-  through the addressable-scope concept this decision provides.
+- `variable-lifetime-storage.md` -- the storage-owner rule for static variables, read through the
+  addressable-scope concept this decision provides.
 - `hierarchical-reference-routing.md` -- one routing path per access shape; a route into a
   procedural static is a typed enclosing climb to the structural scope that holds it.

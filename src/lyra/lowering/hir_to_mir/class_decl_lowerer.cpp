@@ -29,7 +29,6 @@
 #include "lyra/lowering/hir_to_mir/class_code.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
@@ -40,6 +39,7 @@
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_bring_up.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -224,9 +224,8 @@ auto BaseHookTarget(
   return mir::CallableTarget{.owner = declared, .slot = *body};
 }
 
-// One body of the class and the static-lifetime variables it declared, paired
-// so the bring-up can apply each initializer in the arena the expression was
-// written in.
+// One body of the class and the cells it keeps past an activation, paired so
+// each is brought up against the body its identity is scoped to.
 struct BodyStatics {
   const hir::ProceduralBody* body;
   std::string_view name;
@@ -286,8 +285,8 @@ auto LowerStaticStorageInto(
     // 21.2.1.5).
     const hir::Expr& value = hir_class.static_init.exprs.Get(init.value);
     const WalkFrame named = frame.WithScopeName(
-        init.written_in.has_value() ? scopes.Get(*init.written_in).name
-                                    : hir_class.fixed_name);
+        init.lexical_scope.has_value() ? scopes.Get(*init.lexical_scope).name
+                                       : hir_class.fixed_name);
     auto value_or = lowerer.LowerExpr(value, named);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::ExprId value_id = block.Add(*std::move(value_or));
@@ -309,9 +308,7 @@ auto LowerStaticStorageInto(
         unit_lowerer, declaring_scope, *body.body, std::nullopt, frame, scopes,
         body.statics);
     for (const StaticCellBinding& binding : body.statics) {
-      auto integ = IntegrateStaticInitializer(
-          body_lowerer, *body.body, bring_up, binding);
-      if (!integ) return std::unexpected(std::move(integ.error()));
+      BringUpStaticCell(body_lowerer, *body.body, bring_up, binding);
     }
   }
   return {};
@@ -394,17 +391,16 @@ auto ClassDeclLowerer::DeclareShape(
   // pool, chosen by what replicates the class declaration (LRM 6.22, 8.9): a
   // class a namespace unit declares owns its cells, and one a structural scope
   // declares is replicated with that scope, so its cells are fields of the
-  // instance and each instance has its own. Static properties, the
-  // static-lifetime variables of its bodies, and what a `disable` naming one of
-  // its blocks invalidates all take the same answer, because the question is
-  // the same one.
+  // instance and each instance has its own. Static properties -- its methods'
+  // static variables among them -- and what a `disable` naming one of its
+  // blocks invalidates all take the same answer, because the question is the
+  // same one.
   const StaticStorageOwner class_storage =
-      declaring_shape != nullptr ? StaticStorageOwner{InstanceStorage{
-                                       .owner = declaring_scope_->ClassId(),
-                                       .shape = declaring_shape,
-                                       .placed = {}}}
-                                 : StaticStorageOwner{ClassStorage{
-                                       .owner = class_id_, .shape = &shape}};
+      declaring_shape != nullptr
+          ? StaticStorageOwner{InstanceStorage{
+                .owner = declaring_scope_->ClassId(), .shape = declaring_shape}}
+          : StaticStorageOwner{
+                ClassStorage{.owner = class_id_, .shape = &shape}};
 
   // What the class keeps (LRM 8.9, 6.21) takes its cells in the order its list
   // places it, recorded as the loop goes. That pool also takes what the
@@ -453,16 +449,15 @@ auto ClassDeclLowerer::DeclareShape(
   }
 
   const auto bind_statics = [&](const hir::SubroutineDecl& decl) {
-    return BindBodyStatics(
+    return BindBodyCells(
         unit_lowerer, hir_class.procedural_scopes, class_storage, decl.body);
   };
 
   // Everything a peer may need about a method before its body exists is
   // settled here, in one pass over what the class declares. Each method is the
   // callable at its position, so a call resolves whatever order the two bodies
-  // reach (LRM 13.7). Its static-lifetime variables take their cells on this
-  // same shape, so a static write from a body routes to the exact cell the
-  // shape declares. The method making a covergroup the class embeds (LRM
+  // reach (LRM 13.7). What its body keeps past a call takes its cells on this
+  // same shape. The method making a covergroup the class embeds (LRM
   // 19.4.1) is virtual, so a class extending this one makes its extension of
   // the covergroup through it.
   std::vector<CallableSignature> signatures;

@@ -54,9 +54,10 @@ namespace lyra::mir {
 // class member's initializer runs in its Initialize phase, never as a field on
 // the declaration.
 // It carries no name, for the reason a field carries none: the arena also takes
-// the static-lifetime cells of bodies the unit's namespace declares, and those
-// the source never wrote. `defining_unit`, where present, names the unit whose
-// namespace holds the cell, which this unit only declares (LRM 26.3).
+// the cells the compiler adds for a body the unit's namespace declares -- a
+// statement's assertion control, a block's disable state -- which the source
+// never wrote. `defining_unit`, where present, names the unit whose namespace
+// holds the cell, which this unit only declares (LRM 26.3).
 struct StaticVariableDecl {
   TypeId type;
   std::optional<std::string> defining_unit;
@@ -137,10 +138,10 @@ struct RootedTree {
 
 // A unit that is a namespace rather than a hierarchy -- a package (LRM 26.2) or
 // the compilation-unit scope (LRM 3.12.1). Such a namespace owns every cell of
-// the program no instance holds: its own variables (LRM 26.2), the
-// static-lifetime locals of its subroutines (LRM 6.21), and the
-// type-associated cells of the classes it declares (LRM 8.9). These are the two
-// bodies the design root calls at time zero to bring all of them up.
+// the program no instance holds: its own variables (LRM 26.2), the static
+// variables of its subroutines (LRM 6.21), and the type-associated cells of
+// the classes it declares (LRM 8.9). These are the two bodies the design root
+// calls at time zero to bring all of them up.
 //
 // `install_storage` gives every cell its declared representation and language
 // default and fires nothing; `initialize_storage` then runs each value
@@ -318,7 +319,7 @@ struct CompilationUnit {
   // The identifiers the source declared for the cells among
   // `static_variables`: a package variable of this unit's namespace, or of
   // another unit's this unit declares, under the name that unit published it.
-  // The cell a subroutine's static-lifetime local keeps takes no part.
+  // A cell the compiler adds takes no part.
   std::vector<NamedStaticVariable> named_static_variables;
   // The foreign names this unit declares on a scope (LRM 35.5.3), each named
   // once and in declaration order. A name is program-global and lives in its

@@ -436,8 +436,7 @@ auto ProcessLowerer::LowerSubroutine(
   // out at completion rather than aliased live. An `inout` is both a parameter
   // and a payload component.
   for (const auto& param : src.params) {
-    const mir::TypeId value_type = owner_->TranslateType(
-        hir::FormalTypeOf(owner_->Hir().namespaces, src, param));
+    const mir::TypeId value_type = owner_->TranslateType(param.type);
     const std::optional<mir::TypeId> param_type =
         ParamTypeOf(owner_->Unit(), value_type, param.direction);
     const bool by_reference =
@@ -488,17 +487,9 @@ auto ProcessLowerer::LowerSubroutine(
     const std::optional<mir::LocalId> parameter = std::visit(
         Overloaded{
             [&](hir::ProceduralVarId var) -> std::optional<mir::LocalId> {
-              const hir::ProceduralVarDecl& decl =
-                  src.body.procedural_vars.Get(var);
-              switch (decl.lifetime) {
-                case hir::VariableLifetime::kStatic:
-                  return shared();
-                case hir::VariableLifetime::kAutomatic:
-                  return of_this_activation(var, decl);
-              }
-              throw InternalError(
-                  "ProcessLowerer::LowerSubroutine: unknown VariableLifetime");
+              return of_this_activation(var, src.body.procedural_vars.Get(var));
             },
+            [&](const hir::RoutedValueRef&) { return shared(); },
             [&](const hir::NamespaceValueRef&) { return shared(); }},
         param.variable);
     if (parameter.has_value()) params.push_back(*parameter);

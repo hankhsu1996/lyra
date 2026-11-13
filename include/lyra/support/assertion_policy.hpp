@@ -20,7 +20,9 @@ enum class AssertionPolicy : std::uint8_t {
 // policy is read here and nowhere else. LRM 16.2: an assertion states what the
 // design is required to do and never drives it, so a run with the whole family
 // dropped computes the same values, which is what makes dropping them sound
-// rather than a fidelity trade.
+// rather than a fidelity trade. A dropped assertion takes what its action
+// declares with it, and a design reading that from elsewhere is where the
+// premise fails, so it is refused rather than read as a value that differs.
 [[nodiscard]] auto ElidesAssertions(AssertionPolicy policy) -> bool;
 
 }  // namespace lyra::support

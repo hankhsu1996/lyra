@@ -6,7 +6,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/procedural_var.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/type.hpp"
@@ -16,23 +15,6 @@
 #include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
-
-namespace {
-
-// The cell the scope already placed for `var` where it published that local,
-// and otherwise a fresh one in `owner`.
-auto PlacedOrDeclared(
-    const StaticStorageOwner& owner, hir::ProceduralVarId var,
-    mir::TypeId cell_type) -> StaticStorageHome {
-  if (const auto* instance = std::get_if<InstanceStorage>(&owner)) {
-    for (const PlacedStatic& placed : instance->placed) {
-      if (placed.var == var) return InstanceFieldHome{.field = placed.field};
-    }
-  }
-  return DeclareStaticCell(owner, cell_type);
-}
-
-}  // namespace
 
 auto DeclareStaticCell(const StaticStorageOwner& owner, mir::TypeId cell_type)
     -> StaticStorageHome {
@@ -59,7 +41,7 @@ auto DeclareStaticCell(const StaticStorageOwner& owner, mir::TypeId cell_type)
       owner);
 }
 
-auto BindBodyStatics(
+auto BindBodyCells(
     const UnitLowerer& unit_lowerer,
     const base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>&
         scopes,
@@ -77,21 +59,6 @@ auto BindBodyStatics(
                         hir::ProceduralScopeId scope_id) -> void {
     const hir::ProceduralScopeDecl& scope = scopes.Get(scope_id);
     enclosing.push_back(scope_id);
-    for (const hir::ProceduralVarId var_id : scope.declarations) {
-      const hir::ProceduralVarDecl& var = body.procedural_vars.Get(var_id);
-      if (var.lifetime != hir::VariableLifetime::kStatic) continue;
-      // One variable serves every activation of the body, whatever process each
-      // runs in (LRM 6.21), so one process may write it while another waits on
-      // it (LRM 9.4.2).
-      const mir::TypeId cell_type = mir::ObservableCellOf(
-          unit_lowerer.Unit().types, unit_lowerer.TranslateType(var.type));
-      bindings.push_back(
-          StaticCellBinding{
-              .of = var_id,
-              .scope = scope_id,
-              .home = PlacedOrDeclared(owner, var_id, cell_type),
-              .cell_type = cell_type});
-    }
     for (const hir::ControlledAssertionId assertion :
          scope.controlled_assertions) {
       bindings.push_back(
@@ -126,7 +93,7 @@ auto BindBodyStatics(
       // refused before its statics are bound.
       if (!std::holds_alternative<InstanceStorage>(owner)) {
         throw InternalError(
-            "BindBodyStatics: a sampled value function keeps a piece in a "
+            "BindBodyCells: a sampled value function keeps a piece in a "
             "body outside the design hierarchy -- please report this as a "
             "bug");
       }

@@ -39,12 +39,6 @@ struct KeptPiece {
 [[nodiscard]] auto ProceduralVarRead(const hir::Expr& expr)
     -> std::optional<hir::ProceduralVarId>;
 
-// Whether `expr` reads a variable a body declares with automatic lifetime -- a
-// `ref` formal among them -- whose sampled value is its current one (LRM
-// 16.5.1). `body` is null among a scope's own expressions, which name none.
-[[nodiscard]] auto ReadsAutomaticVariable(
-    const hir::ProceduralBody* body, const hir::Expr& expr) -> bool;
-
 // What the history of the sampled value function `call` keeps. A piece is a
 // largest part of the operand that reads a variable the standard samples, and
 // nothing read as it is now -- an automatic variable, a constant cast, a value

@@ -828,24 +828,24 @@ auto HasStaticStorage(const slang::ast::VariableSymbol& var) -> bool {
 
 namespace {
 
-// What keeps the statics `subroutine` declares beyond its body, and nothing
-// where that is a design element's instance.
-auto KeeperOf(const slang::ast::SubroutineSymbol& subroutine)
-    -> std::optional<StaticKeeper> {
+// The class or namespace whose statics `subroutine`'s are, and nothing for a
+// design element's subroutine, whose statics are the scope's variables.
+auto ContextOf(const slang::ast::SubroutineSymbol& subroutine)
+    -> std::optional<StaticContext> {
   const slang::ast::Symbol& around = subroutine.getParentScope()->asSymbol();
   if (const auto* cls = around.as_if<slang::ast::ClassType>()) {
-    return KeptByClass{.cls = cls};
+    return DeclaredInClass{.cls = cls};
   }
   if (const slang::ast::Symbol* unit = DeclaringNamespaceUnit(subroutine)) {
-    return KeptByNamespace{.unit = unit};
+    return DeclaredInNamespace{.unit = unit};
   }
   return std::nullopt;
 }
 
 }  // namespace
 
-auto KeptStaticOf(const slang::ast::ValueSymbol& value)
-    -> std::optional<KeptStatic> {
+auto QualifiedStaticOf(const slang::ast::ValueSymbol& value)
+    -> std::optional<QualifiedStatic> {
   if (value.kind != slang::ast::SymbolKind::Variable &&
       value.kind != slang::ast::SymbolKind::FormalArgument) {
     return std::nullopt;
@@ -861,14 +861,14 @@ auto KeptStaticOf(const slang::ast::ValueSymbol& value)
       continue;
     }
     if (holder.kind != slang::ast::SymbolKind::Subroutine) return std::nullopt;
-    std::optional<StaticKeeper> keeper =
-        KeeperOf(holder.as<slang::ast::SubroutineSymbol>());
-    if (!keeper.has_value()) return std::nullopt;
+    std::optional<StaticContext> context =
+        ContextOf(holder.as<slang::ast::SubroutineSymbol>());
+    if (!context.has_value()) return std::nullopt;
     steps.push_back(ProceduralStepOf(holder));
     std::ranges::reverse(steps);
-    return KeptStatic{
+    return QualifiedStatic{
         .var = &var,
-        .keeper = *keeper,
+        .context = *context,
         .name = support::QualifiedName{
             .within = support::DefPath{.data = std::move(steps)},
             .name = std::string{var.name}}};
@@ -876,9 +876,9 @@ auto KeptStaticOf(const slang::ast::ValueSymbol& value)
   return std::nullopt;
 }
 
-auto StaticsKeptBy(const slang::ast::SubroutineSymbol& subroutine)
-    -> std::vector<KeptStatic> {
-  std::vector<KeptStatic> statics;
+auto QualifiedStaticsOf(const slang::ast::SubroutineSymbol& subroutine)
+    -> std::vector<QualifiedStatic> {
+  std::vector<QualifiedStatic> statics;
   const auto collect = [&](const auto& self,
                            const slang::ast::Scope& scope) -> void {
     for (const slang::ast::Symbol& member : scope.members()) {
@@ -889,23 +889,14 @@ auto StaticsKeptBy(const slang::ast::SubroutineSymbol& subroutine)
       }
       const auto* value = member.as_if<slang::ast::ValueSymbol>();
       if (value == nullptr) continue;
-      if (std::optional<KeptStatic> kept = KeptStaticOf(*value)) {
-        statics.push_back(*std::move(kept));
+      if (std::optional<QualifiedStatic> qualified =
+              QualifiedStaticOf(*value)) {
+        statics.push_back(*std::move(qualified));
       }
     }
   };
   collect(collect, subroutine);
   return statics;
-}
-
-auto NamedScopeAround(const slang::ast::VariableSymbol& var)
-    -> const slang::ast::Symbol& {
-  const slang::ast::Symbol* at = &var.getParentScope()->asSymbol();
-  while (at->kind == slang::ast::SymbolKind::StatementBlock &&
-         at->name.empty()) {
-    at = &at->getParentScope()->asSymbol();
-  }
-  return *at;
 }
 
 auto CovergroupNameOf(const slang::ast::CovergroupType& covergroup)

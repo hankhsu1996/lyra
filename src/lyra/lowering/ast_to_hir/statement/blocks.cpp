@@ -41,13 +41,11 @@ auto SourceBlockName(const slang::ast::StatementBlockSymbol* symbol)
 // directly declares an item (LRM 9.3.4, 37.12 detail 1), and one no name can
 // reach where it made none.
 //
-// Whether the source named it is asked once, and that one answer decides both
-// halves: the name the scope carries, and where its identity comes from. A
-// named block is one a peer can name before this walk reaches it, so the
-// compilation unit's declaration pass has already minted its identity; an
-// unnamed one can be named by nothing, so it mints its own here. Asking the two
-// separately is what lets them drift into looking up an identity nobody
-// declared.
+// Its identity comes from the compilation unit's declaration pass where that
+// pass minted one -- a block the source named, which a peer can name before
+// this walk reaches it, and one a static variable is written in, which its
+// scope declares as written there -- and is minted here otherwise, for a block
+// nothing outside this body names.
 class ProceduralScope {
  public:
   ProceduralScope(
@@ -84,18 +82,26 @@ class ProceduralScope {
       hir::ProceduralScopeKind kind, std::optional<std::string> source_name)
       : enclosing_(enclosing),
         open_(
-            source_name.has_value()
-                ? proc.Owner().LookupProceduralScope(*symbol)
-                : enclosing.ProceduralScopes().Declare(),
-            kind, std::move(source_name)),
+            IdentityOf(proc, enclosing, symbol), kind, std::move(source_name)),
         frame_(enclosing.WithOpenScope(&open_)) {
-    // A block the front end made a scope of that the source gave no name
-    // mints its identity here, and records it by the block, so what a value
-    // dump records of the block lies within it.
-    if (symbol != nullptr && !open_.source_name.has_value()) {
-      proc.Owner().DeclareProceduralScope(
-          *symbol, enclosing.ProceduralScopeOwner(), open_.id);
+  }
+
+  static auto IdentityOf(
+      const ProcessLowerer& proc, const WalkFrame& enclosing,
+      const slang::ast::StatementBlockSymbol* symbol)
+      -> hir::ProceduralScopeId {
+    if (symbol != nullptr) {
+      if (const auto minted =
+              proc.Owner().LookupMintedProceduralScope(*symbol)) {
+        return minted->scope;
+      }
+      if (!symbol->name.empty()) {
+        throw InternalError(
+            "ProceduralScope: a block the source named was not minted by the "
+            "declaration pass -- please report this as a bug");
+      }
     }
+    return enclosing.ProceduralScopes().Declare();
   }
 
   WalkFrame enclosing_;
@@ -185,11 +191,6 @@ auto LowerForkStmt(
   // the fork-branch execution scope.
   ProceduralScope scope(proc, frame, block.blockSymbol, kind);
   const WalkFrame& fork_scope_frame = scope.Frame();
-  if (block.blockSymbol != nullptr) {
-    auto constants =
-        proc.DeclarePerObjectConstants(*block.blockSymbol, fork_scope_frame);
-    if (!constants) return std::unexpected(std::move(constants.error()));
-  }
 
   std::vector<hir::StmtId> locals;
   std::vector<const slang::ast::Statement*> branch_stmts;
@@ -269,11 +270,6 @@ auto LowerBlockStmt(
   ProceduralScope scope(
       proc, frame, block.blockSymbol, SequentialKindOf(block));
   const WalkFrame& body_frame = scope.Frame();
-  if (block.blockSymbol != nullptr) {
-    auto constants =
-        proc.DeclarePerObjectConstants(*block.blockSymbol, body_frame);
-    if (!constants) return std::unexpected(std::move(constants.error()));
-  }
 
   std::vector<hir::StmtId> kids;
   if (block.body.kind == slang::ast::StatementKind::List) {

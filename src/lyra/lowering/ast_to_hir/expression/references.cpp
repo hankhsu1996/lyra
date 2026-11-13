@@ -595,12 +595,7 @@ auto LowerNamedValueProc(
       throw InternalError(
           "LowerNamedValueProc: a plain identifier does not reach a name a "
           "view offers");
-    // A constant the body holds because its value differs between the objects
-    // built from this unit is read from the body's own cell; any other folds.
     case Referent::kParameterConstant:
-      if (auto held = proc.LookupProceduralVar(target)) {
-        return MakeProceduralVarRefExpr(unit_lowerer, *held, *named.type, span);
-      }
       return MakeParameterConstantExpr(
           unit_lowerer, frame, target, *named.type, span);
     case Referent::kEnumConstant:
@@ -621,8 +616,9 @@ auto LowerNamedValueProc(
     // variable-family symbols too, so this arm covers a name bound to the
     // enclosing body's own storage as well as one naming a cell elsewhere. The
     // lexical binding wins: only a name the body holds no variable for -- one
-    // declared outside it, or a static its class or namespace keeps -- is a
-    // value reached as storage outside the body.
+    // declared outside it, or a static, which the scope or class around the
+    // body declares wherever it is written (LRM 6.21) -- is a value reached as
+    // storage outside the body.
     case Referent::kVariableStorage: {
       const auto& var = target.as<slang::ast::VariableSymbol>();
       if (auto local = proc.LookupProceduralVar(var)) {

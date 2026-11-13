@@ -43,6 +43,10 @@ enum class DiagCode : std::uint32_t {
   // The front end accepted a cross bin selecting `binsof` a coverpoint the
   // cross does not cross, which the standard gives no meaning (LRM 19.6.1).
   kErrorBinsofOutsideItsCross,
+  // A name reaches what an assertion declares that the build leaves out of the
+  // design, so the design reads something that exists only while it is
+  // checked, which leaving assertions out promised it does not.
+  kErrorNamesWhatAnAssertionLeftOutDeclares,
 
   kHostInvalidCliArgs,
   kHostInvalidManifest,

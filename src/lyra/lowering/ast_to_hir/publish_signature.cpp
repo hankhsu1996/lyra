@@ -369,6 +369,23 @@ auto UnitLowerer::PublishTypeSignatures() -> diag::Result<void> {
   return WalkOwnDeclarations(publish);
 }
 
+namespace {
+
+// The name a namespace knows one of its data objects by, which every unit
+// naming it spells the same way (LRM 26.3, 6.21): the subroutines and blocks
+// between, then the identifier, for a static of one of its subroutines, and
+// the identifier alone for one of its own.
+auto NameInNamespace(const ScopePublicationRecord::DataObject& data)
+    -> support::QualifiedName {
+  if (std::optional<QualifiedStatic> qualified =
+          QualifiedStaticOf(*data.symbol)) {
+    return std::move(qualified->name);
+  }
+  return support::UnqualifiedName(std::string{data.symbol->name});
+}
+
+}  // namespace
+
 auto UnitLowerer::PublishNamespace() -> diag::Result<void> {
   hir::TypeImportMemo published;
   hir::TypeImporter importer = PublishingImporter(published);
@@ -382,9 +399,9 @@ auto UnitLowerer::PublishNamespace() -> diag::Result<void> {
             declared.callables, callable,
             hir::ImportCallable(importer, *std::move(own))));
   }
-  // What another unit reads and writes (LRM 26.3, 6.21): the
-  // namespace's own variables, and the static variables of its subroutines,
-  // each named as the namespace knows it.
+  // What another unit reads and writes (LRM 26.3, 6.21): the namespace's own
+  // variables, and the static variables of its subroutines, which are as much
+  // data objects of its scope, each named as the namespace knows it.
   const auto publish = [&](const slang::ast::ValueSymbol& var,
                            support::QualifiedName name) -> diag::Result<void> {
     auto type = InternType(var.getType(), frontend::PointSpanOf(var.location));
@@ -400,19 +417,8 @@ auto UnitLowerer::PublishNamespace() -> diag::Result<void> {
   for (const ScopePublicationRecord::Member& member : declared.members) {
     const auto* data = std::get_if<ScopePublicationRecord::DataObject>(&member);
     if (data == nullptr) continue;
-    auto published_var = publish(
-        *data->symbol,
-        support::UnqualifiedName(std::string{data->symbol->name}));
+    auto published_var = publish(*data->symbol, NameInNamespace(*data));
     if (!published_var) return published_var;
-  }
-  for (const ScopePublicationRecord::Callable& callable : declared.callables) {
-    const auto* subroutine =
-        std::get_if<ScopePublicationRecord::Subroutine>(&callable);
-    if (subroutine == nullptr) continue;
-    for (KeptStatic& local : StaticsKeptBy(*subroutine->symbol)) {
-      auto published_var = publish(*local.var, std::move(local.name));
-      if (!published_var) return published_var;
-    }
   }
   return {};
 }
@@ -825,10 +831,7 @@ auto UnitLowerer::PublishScopeClass(const slang::ast::Scope& scope)
     auto made = std::visit(
         Overloaded{
             [&](const ScopePublicationRecord::DataObject& data) {
-              return cell(*data.symbol, published.class_path);
-            },
-            [&](const ScopePublicationRecord::LocalStatic& local) {
-              return cell(*local.symbol, local.within);
+              return cell(*data.symbol, data.holder);
             },
             [&](const ScopePublicationRecord::ClassStatic& property) {
               const auto interned = class_cache_.find(property.owner);
@@ -1263,8 +1266,7 @@ void UnitLowerer::DeclareOwnNamespace() {
   for (const ScopePublicationRecord::Member& member : published.members) {
     const auto* data = std::get_if<ScopePublicationRecord::DataObject>(&member);
     if (data == nullptr) continue;
-    DefineNamespaceVariable(
-        support::UnqualifiedName(std::string{data->symbol->name}), data->id);
+    DefineNamespaceVariable(NameInNamespace(*data), data->id);
   }
   // Each subroutine the namespace declares is the subroutine of its scope at
   // the same position of what it published.
@@ -1301,8 +1303,7 @@ void UnitLowerer::DeclareOwnNamespace() {
 }
 
 void UnitLowerer::DefineNamespaceVariable(
-    const support::QualifiedName& name,
-    hir::NamespaceVariableDefinition definition) {
+    const support::QualifiedName& name, hir::StructuralDataObjectId object) {
   hir::NamespaceDefinition& defined = *unit_.namespace_definition;
   const std::optional<hir::NamespaceVariableId> variable =
       unit_.namespaces.Declaration(defined.entry).FindVariable(name);
@@ -1313,7 +1314,7 @@ void UnitLowerer::DefineNamespaceVariable(
             "variable '{}' -- please report this as a bug",
             unit_.name, support::DisplayOf(name)));
   }
-  defined.variables.Define(*variable, std::move(definition));
+  defined.variables.Define(*variable, object);
 }
 
 auto UnitLowerer::DeclarationOf(hir::ClassId cls)

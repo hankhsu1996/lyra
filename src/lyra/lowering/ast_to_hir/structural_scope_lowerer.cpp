@@ -8,7 +8,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -516,6 +515,8 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   // elaboration gave it.
   auto parameters = DeclareDifferingParameters(scope, frame);
   if (!parameters) return std::unexpected(std::move(parameters.error()));
+  auto written = DefineWrittenStatics(declarations.written_statics, frame);
+  if (!written) return std::unexpected(std::move(written.error()));
 
   // Structural members (variables, instances, generates, subroutine bodies)
   // are lowered before the members that name them (processes, continuous
@@ -574,10 +575,10 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   auto pc = PopulatePortConnections(*slang_scope_, frame);
   if (!pc) return std::unexpected(std::move(pc.error()));
 
-  auto dumped = CollectDumped(
-      *slang_scope_, DumpedPortsOf(*slang_scope_), frame, std::nullopt);
+  auto dumped = CollectDumped(DumpedPortsOf(*slang_scope_), frame);
   if (!dumped) return std::unexpected(std::move(dumped.error()));
   scope.dumped = *std::move(dumped);
+  std::ranges::move(*written, std::back_inserter(scope.dumped));
 
   scope.routes = owner_->TakeRoutesForFrame(frame_);
   scope.published = owner_->TakePublication(*slang_scope_);
@@ -670,7 +671,8 @@ auto StructuralScopeLowerer::DeclareSettledValue(
       owner_->ReservedDataObject(value), hir::StructuralDataObjectDecl{
                                              .name = std::string{value.name},
                                              .type = *type_or,
-                                             .kind = std::move(kind)});
+                                             .kind = std::move(kind),
+                                             .lexical_scope = std::nullopt});
   return {};
 }
 
@@ -949,7 +951,8 @@ auto StructuralScopeLowerer::PopulateVariableMember(
       owner_->ReservedDataObject(var), hir::StructuralDataObjectDecl{
                                            .name = std::string{var.name},
                                            .type = *type_id_or,
-                                           .kind = std::move(kind)});
+                                           .kind = std::move(kind),
+                                           .lexical_scope = std::nullopt});
   return {};
 }
 
@@ -1020,10 +1023,12 @@ auto StructuralScopeLowerer::PopulateNetMember(
       hir::StructuralDataObjectDecl{
           .name = std::string{net.name},
           .type = *type_id_or,
-          .kind = hir::StructuralNetDecl{
-              .net_type = *net_type,
-              .charge_strength =
-                  TranslateChargeStrength(net.getChargeStrength())}});
+          .kind =
+              hir::StructuralNetDecl{
+                  .net_type = *net_type,
+                  .charge_strength =
+                      TranslateChargeStrength(net.getChargeStrength())},
+          .lexical_scope = std::nullopt});
 
   // A net-declaration assignment (`wire w = expr;`, LRM 6.5) is a single
   // continuous driver of the net. slang carries it as the net's initializer
@@ -1113,7 +1118,8 @@ void DefineBlockVariable(
       id, hir::StructuralDataObjectDecl{
               .name = std::move(name),
               .type = type,
-              .kind = hir::StructuralVariableDecl{.initializer = initializer}});
+              .kind = hir::StructuralVariableDecl{.initializer = initializer},
+              .lexical_scope = std::nullopt});
 }
 
 // A clockvar, the type its value interns as, and where it is written.
@@ -1482,23 +1488,6 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
   frame.current_structural_scope->structural_subroutines.Define(
       binding->subroutine_id, *std::move(decl_or));
 
-  // A static variable of a namespace unit's subroutine is one of the
-  // namespace's variables (LRM 6.21, 26.2), defined here with its initializer,
-  // which runs with theirs before any process starts (LRM 10.5).
-  for (const KeptStatic& local : StaticsKeptBy(sym)) {
-    std::optional<hir::ExprId> initializer;
-    if (const slang::ast::Expression* init = local.var->getInitializer()) {
-      auto lowered = LowerExpr(*init, frame);
-      if (!lowered) return std::unexpected(std::move(lowered.error()));
-      initializer = frame.Exprs().Add(*std::move(lowered));
-    }
-    owner_->DefineNamespaceVariable(
-        local.name, hir::NamespaceStatic{
-                        .initializer = initializer,
-                        .written_in = owner_->LookupProceduralScope(
-                            NamedScopeAround(*local.var))});
-  }
-
   if (auto defaults = PopulateArgumentDefaults(sym, frame); !defaults) {
     return defaults;
   }
@@ -1590,94 +1579,94 @@ auto StructuralScopeLowerer::PopulateNetAliasMember(
   return {};
 }
 
+auto StructuralScopeLowerer::DumpedEntryOf(
+    const slang::ast::ValueSymbol& value, const DumpedPorts& ports,
+    WalkFrame frame, std::optional<hir::ProceduralScopeId> lexical_scope)
+    -> diag::Result<std::optional<hir::DumpedDeclaration>> {
+  const std::optional<support::DumpVarKind> kind = DumpedKindOf(value);
+  if (!kind.has_value()) return std::nullopt;
+  const auto span = frontend::PointSpanOf(value.location);
+  auto type = owner_->InternType(value.getType(), span);
+  if (!type) return std::unexpected(std::move(type.error()));
+  // A namespace's variables are named by the namespace wherever they are read
+  // (LRM 26.2, 6.21); a design element's are storage of this scope's object.
+  diag::Result<hir::Expr> named =
+      !hir::RootsAnObject(owner_->Unit().definition)
+          ? owner_
+                ->ResolveValueTarget(
+                    frame, value,
+                    RouteOrigin{.start = FromReader{}, .written = {}}, span)
+                .transform([&](const hir::ValueTarget& target) {
+                  return hir::MakeValueTargetRefExpr(target, *type, span);
+                })
+          : owner_->MakeRoutedValueRef(value, frame_, ScopeRoute::Enclosing({}))
+                .transform([&](hir::RoutedValueRef ref) {
+                  return hir::MakeRefExpr(std::move(ref), *type, span);
+                });
+  if (!named) return std::unexpected(std::move(named.error()));
+  const auto port = ports.find(&value);
+  return hir::DumpedDeclaration{
+      .identifier = std::string{value.name},
+      .kind = *kind,
+      .width = DumpedWidthOf(*kind, value.getType().getCanonicalType()),
+      .range = DumpedRangeOf(value.getType()),
+      .port = port != ports.end() ? std::optional(port->second) : std::nullopt,
+      .named = frame.Exprs().Add(*std::move(named)),
+      .lexical_scope = lexical_scope};
+}
+
 auto StructuralScopeLowerer::CollectDumped(
-    const slang::ast::Scope& members, const DumpedPorts& ports, WalkFrame frame,
-    std::optional<hir::ProceduralScopeId> enclosing)
+    const DumpedPorts& ports, WalkFrame frame)
     -> diag::Result<std::vector<hir::DumpedDeclaration>> {
   std::vector<hir::DumpedDeclaration> dumped;
-  // What a block, task or function declares is enclosed by its scope. One
-  // the build lowers no body of -- a DPI-C import, an extern another module
-  // defines, an assertion's action the build leaves out -- has no scope here
-  // and holds nothing a dump records. A block the source gave no name holds
-  // what it declares as a named one does; a dump shows it under the named
-  // scopes around it, and no name reaches it (LRM 9.3.4).
-  const auto collect_enclosed =
-      [&](const slang::ast::Scope& scope,
-          const slang::ast::Symbol& symbol) -> diag::Result<void> {
-    const auto minted = owner_->LookupMintedProceduralScope(symbol);
-    if (!minted.has_value()) return {};
-    auto inner = CollectDumped(scope, {}, frame, minted->scope);
-    if (!inner) return std::unexpected(std::move(inner.error()));
-    std::ranges::move(*inner, std::back_inserter(dumped));
-    return {};
-  };
-  // A concurrent assertion is no procedure the design runs and takes no body
-  // (LRM 16.14.5), so what its action declares is storage no route reaches
-  // yet, and a dump does not yet record it.
-  std::unordered_set<const slang::ast::Symbol*> assertion_actions;
-  for (const slang::ast::Symbol& member : members.members()) {
-    const auto* proc = member.as_if<slang::ast::ProceduralBlockSymbol>();
-    if (proc == nullptr ||
-        StaticConcurrentAssertionOf(*proc).assertion == nullptr) {
-      continue;
-    }
-    for (const auto* block : proc->getBlocks()) assertion_actions.insert(block);
-  }
-  for (const slang::ast::Symbol& member : members.members()) {
-    if (!owner_->Owns(member) || assertion_actions.contains(&member)) {
-      continue;
-    }
-    if (const auto* block = member.as_if<slang::ast::StatementBlockSymbol>()) {
-      auto collected = collect_enclosed(*block, *block);
-      if (!collected) return std::unexpected(std::move(collected.error()));
-      continue;
-    }
-    if (const auto* subroutine = member.as_if<slang::ast::SubroutineSymbol>()) {
-      auto collected = collect_enclosed(*subroutine, *subroutine);
-      if (!collected) return std::unexpected(std::move(collected.error()));
-      continue;
-    }
+  for (const slang::ast::Symbol& member : slang_scope_->members()) {
     const auto* value = member.as_if<slang::ast::ValueSymbol>();
-    if (value == nullptr) {
-      continue;
-    }
-    const std::optional<support::DumpVarKind> kind = DumpedKindOf(*value);
-    if (!kind.has_value()) {
-      continue;
-    }
-    const auto span = frontend::PointSpanOf(value->location);
-    auto type = owner_->InternType(value->getType(), span);
+    if (value == nullptr || !owner_->Owns(member)) continue;
+    auto entry = DumpedEntryOf(*value, ports, frame, std::nullopt);
+    if (!entry) return std::unexpected(std::move(entry.error()));
+    if (entry->has_value()) dumped.push_back(**std::move(entry));
+  }
+  return dumped;
+}
+
+auto StructuralScopeLowerer::DefineWrittenStatics(
+    std::span<const WrittenStatic> statics, WalkFrame frame)
+    -> diag::Result<std::vector<hir::DumpedDeclaration>> {
+  std::vector<hir::DumpedDeclaration> dumped;
+  for (const WrittenStatic& written : statics) {
+    const slang::ast::ValueSymbol& value = *written.symbol;
+    const auto span = frontend::PointSpanOf(value.location);
+    auto type = owner_->InternType(value.getType(), span);
     if (!type) return std::unexpected(std::move(type.error()));
-    // A namespace's variables, its subroutines' statics among them, are
-    // named by the namespace wherever they are read (LRM 26.2, 6.21); a
-    // design element's are storage of this scope's object.
-    diag::Result<hir::Expr> named =
-        !hir::RootsAnObject(owner_->Unit().definition)
-            ? owner_
-                  ->ResolveValueTarget(
-                      frame, *value,
-                      RouteOrigin{.start = FromReader{}, .written = {}}, span)
-                  .transform([&](const hir::ValueTarget& target) {
-                    return hir::MakeValueTargetRefExpr(target, *type, span);
-                  })
-            : owner_
-                  ->MakeRoutedValueRef(
-                      *value, frame_, ScopeRoute::Enclosing({}))
-                  .transform([&](hir::RoutedValueRef ref) {
-                    return hir::MakeRefExpr(std::move(ref), *type, span);
-                  });
-    if (!named) return std::unexpected(std::move(named.error()));
-    const auto port = ports.find(value);
-    dumped.push_back(
-        hir::DumpedDeclaration{
-            .identifier = std::string{value->name},
-            .kind = *kind,
-            .width = DumpedWidthOf(*kind, value->getType().getCanonicalType()),
-            .range = DumpedRangeOf(value->getType()),
-            .port = port != ports.end() ? std::optional(port->second)
-                                        : std::nullopt,
-            .named = frame.Exprs().Add(*std::move(named)),
-            .enclosing = enclosing});
+    const slang::ast::Expression* init = value.getInitializer();
+    std::optional<hir::ExprId> initializer;
+    if (init != nullptr) {
+      auto lowered = LowerExpr(*init, frame);
+      if (!lowered) return std::unexpected(std::move(lowered.error()));
+      initializer = frame.Exprs().Add(*std::move(lowered));
+    }
+    hir::StructuralDataObjectKind kind =
+        hir::StructuralVariableDecl{.initializer = initializer};
+    if (value.kind == slang::ast::SymbolKind::Parameter) {
+      if (!initializer.has_value()) {
+        throw InternalError(
+            "StructuralScopeLowerer::DefineWrittenStatics: a constant whose "
+            "value differs per object states no expression it is written "
+            "from");
+      }
+      kind = hir::StructuralLocalparamDecl{.initializer = *initializer};
+    }
+    const hir::ProceduralScopeId scope =
+        owner_->LookupProceduralScope(*written.lexical_scope);
+    frame.current_structural_scope->structural_data_objects.Define(
+        written.id, hir::StructuralDataObjectDecl{
+                        .name = std::string{value.name},
+                        .type = *type,
+                        .kind = std::move(kind),
+                        .lexical_scope = scope});
+    auto entry = DumpedEntryOf(value, {}, frame, scope);
+    if (!entry) return std::unexpected(std::move(entry.error()));
+    if (entry->has_value()) dumped.push_back(**std::move(entry));
   }
   return dumped;
 }

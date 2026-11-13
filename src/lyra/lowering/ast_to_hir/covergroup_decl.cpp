@@ -161,7 +161,6 @@ class DeclBuilder {
             decl_.procedural_scopes.Declare(),
             hir::ProceduralScopeKind::kCovergroup,
             std::string{CovergroupNameOf(covergroup)}) {
-    decl_.body = owner.MakeProceduralBody(covergroup);
     decl_.declared_in = FixedNameOf(*covergroup.getParentScope());
     frame_ =
         declaring_frame

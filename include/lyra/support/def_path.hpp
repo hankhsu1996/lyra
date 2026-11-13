@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <compare>
 #include <cstddef>
 #include <cstdint>
@@ -178,6 +179,26 @@ struct DefPath {
           [](const TypeStep&) { return false; },
           [](const UnnamedTypeStep&) { return false; }},
       path.data.back());
+}
+
+// Whether a name the source writes can spell the path: whether it passes no
+// block and no type the source left unnamed, which no name reaches through
+// (LRM 6.21, 9.3.4).
+[[nodiscard]] inline auto ReachedByName(const DefPath& path) -> bool {
+  const auto spelled = [](const DefPathData& step) {
+    return std::visit(
+        Overloaded{
+            [](const GenerateBlockStep&) { return true; },
+            [](const ClassStep&) { return true; },
+            [](const SubroutineStep&) { return true; },
+            [](const NamedBlockStep&) { return true; },
+            [](const ClockingBlockStep&) { return true; },
+            [](const UnnamedBlockStep&) { return false; },
+            [](const TypeStep&) { return true; },
+            [](const UnnamedTypeStep&) { return false; }},
+        step);
+  };
+  return std::ranges::all_of(path.data, spelled);
 }
 
 // The scope of the design hierarchy a declaration at `path` is declared in:

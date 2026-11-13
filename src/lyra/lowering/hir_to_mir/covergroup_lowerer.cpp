@@ -2152,12 +2152,11 @@ void CovergroupLowerer::DeclareShape(
   // covergroup's declaration puts it (LRM 6.22, 8.9): a cell of the scope's
   // instance where a scope declares it, and the class's own otherwise.
   const StaticStorageOwner class_storage =
-      declaring_shape != nullptr ? StaticStorageOwner{InstanceStorage{
-                                       .owner = declaring_scope_->ClassId(),
-                                       .shape = declaring_shape,
-                                       .placed = {}}}
-                                 : StaticStorageOwner{ClassStorage{
-                                       .owner = class_id_, .shape = &shape}};
+      declaring_shape != nullptr
+          ? StaticStorageOwner{InstanceStorage{
+                .owner = declaring_scope_->ClassId(), .shape = declaring_shape}}
+          : StaticStorageOwner{
+                ClassStorage{.owner = class_id_, .shape = &shape}};
   if (std::holds_alternative<hir::SampledAtBlocks>(decl_->sampling) &&
       !decl_->embedding.has_value()) {
     type_event_ =

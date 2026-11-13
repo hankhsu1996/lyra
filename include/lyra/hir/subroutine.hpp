@@ -5,8 +5,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/overloaded.hpp"
-#include "lyra/hir/namespace.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -19,11 +17,13 @@
 namespace lyra::hir {
 
 // The variable a formal is, which a call writes what it hands in to and takes
-// what it hands back from (LRM 13.5): a variable of the subroutine's body, or,
-// for a static subroutine of a package or the compilation-unit scope, one of
-// the variables that namespace keeps (LRM 13.3.2, 26.2), which every name
-// reaching it -- the body's own included -- names the same way.
-using FormalVariable = std::variant<ProceduralVarId, NamespaceValueRef>;
+// what it hands back from (LRM 13.5): a variable of the subroutine's body for
+// an automatic formal, or, for a static subroutine, one of the variables the
+// scope declaring it keeps (LRM 13.3.2) -- a design element's, reached from its
+// own instance, or a package's or the compilation-unit scope's (LRM 26.2) --
+// which every name reaching it, the body's own included, names the same way.
+using FormalVariable =
+    std::variant<ProceduralVarId, RoutedValueRef, NamespaceValueRef>;
 
 // A formal as its subroutine declares it: the variable a call binds at its
 // position, how it binds it, and `default_evaluator` -- for a subroutine a
@@ -33,6 +33,9 @@ using FormalVariable = std::variant<ProceduralVarId, NamespaceValueRef>;
 // defaults with the rest of what a call reads of it.
 struct SubroutineParam {
   FormalVariable variable;
+  // The type the formal is declared with, which a call binds by wherever the
+  // variable lives.
+  TypeId type;
   ParamDirection direction = ParamDirection::kInput;
   std::optional<StructuralSubroutineId> default_evaluator;
 
@@ -95,22 +98,5 @@ struct SubroutineDecl {
 
   auto operator==(const SubroutineDecl&) const -> bool = default;
 };
-
-// The type of the variable the formal `param` of `decl` binds: the body's own
-// variable's, or the one a namespace in `namespaces` declares for a static
-// subroutine's formal.
-inline auto FormalTypeOf(
-    const NamespaceRegistry& namespaces, const SubroutineDecl& decl,
-    const SubroutineParam& param) -> TypeId {
-  return std::visit(
-      Overloaded{
-          [&](ProceduralVarId var) {
-            return decl.body.procedural_vars.Get(var).type;
-          },
-          [&](const NamespaceValueRef& kept) {
-            return namespaces.VariableOf(kept.owner, kept.variable).type;
-          }},
-      param.variable);
-}
 
 }  // namespace lyra::hir

@@ -392,17 +392,17 @@ auto UnitLowerer::ResolveRouteTarget(
             if (!member.has_value()) return unsupported();
             return PublishedMemberLeafOf(on.scope_class, *member);
           },
-          // A route that stays in this unit's layout names this unit's own
-          // declaration. For a static a name reaches through a procedural
-          // scope (LRM 23.9 puts a block, a task and a function on that path
-          // alike), that identity also says every such scope between the
-          // static and its structural one describes where the storage sits
-          // rather than a step the route takes.
           // A value is a member of one object, so a walk standing on several
           // has not reached one.
           [&](const OnSeveralObjects&) -> diag::Result<hir::DataLeaf> {
             return unsupported();
           },
+          // A route that stays in this unit's layout names this unit's own
+          // declaration. For a static a name reaches through a procedural
+          // scope (LRM 23.9 puts a block, a task and a function on that path
+          // alike), the declaration is the scope's own data object, so every
+          // such scope between describes where the source wrote it rather
+          // than a step the route takes.
           [&](const InOwnScope&) -> diag::Result<hir::DataLeaf> {
             auto type = InternType(value.getType(), span);
             if (!type) return std::unexpected(std::move(type.error()));
@@ -411,12 +411,6 @@ auto UnitLowerer::ResolveRouteTarget(
               return hir::StructuralDataObjectLeaf{
                   .object = data_object->var_id,
                   .storage = DeclarationStorage(value),
-                  .type = *type};
-            }
-            if (const auto procedural_static = LookupProceduralStatic(value)) {
-              return hir::ProceduralStaticLeaf{
-                  .body = procedural_static->body,
-                  .var = procedural_static->var,
                   .type = *type};
             }
             return unsupported();
@@ -535,6 +529,10 @@ auto UnitLowerer::DisableTargetOf(
     const WalkFrame& frame, const slang::ast::Symbol& target,
     const slang::ast::HierarchicalReference& reference, diag::SourceSpan span)
     -> diag::Result<std::optional<hir::DisableTarget>> {
+  // A block a statement the build leaves out opens, or one nested in it, is
+  // out of the design with that statement: nothing of it runs to be ended and
+  // no assertion stands in it to be controlled, so the name selects nothing.
+  if (InBlockLeftOut(target)) return std::nullopt;
   // The name starts where it was written to, whatever it turns out to end at.
   RouteOrigin origin = StartOf(frame, target, reference);
   const slang::ast::InterfacePortSymbol* port =
@@ -800,7 +798,6 @@ auto UnitLowerer::TranslateReferenceRoute(
 
   // This unit's own identity for the target, if it declares it.
   const auto data_object = LookupStructuralDataObjectBinding(value);
-  const auto procedural_static = LookupProceduralStatic(value);
   const std::optional<hir::StructuralHops> data_object_hops =
       data_object ? frame.HopsTo(data_object->home_frame) : std::nullopt;
 
@@ -817,9 +814,7 @@ auto UnitLowerer::TranslateReferenceRoute(
   const auto own_scope = [](const std::optional<hir::StructuralHops>& hops) {
     return hops.has_value() && hops->value == 0;
   };
-  if (own_scope(data_object_hops) ||
-      (procedural_static &&
-       own_scope(frame.HopsTo(procedural_static->home_frame)))) {
+  if (own_scope(data_object_hops)) {
     return routed_ref(
         frame.Current(), ScopeRoute::Enclosing(hir::StructuralHops{0}));
   }
@@ -1490,6 +1485,16 @@ auto UnitLowerer::ResolveValueTarget(
     return in_namespace(
         *unit, support::UnqualifiedName(std::string{value.name}));
   }
+  // An assertion the build leaves out takes what it declares out of the
+  // design, on the promise that leaving it out changes nothing the design
+  // computes; a name reaching into it is where the promise fails.
+  if (InBlockLeftOut(value)) {
+    return diag::Fail(
+        span, diag::DiagCode::kErrorNamesWhatAnAssertionLeftOutDeclares,
+        "'{}' is declared in an assertion that '--assertions skip' leaves out "
+        "of the design",
+        value.name);
+  }
 
   const auto routed = [&]() -> diag::Result<hir::ValueTarget> {
     auto route = TranslateReferenceRoute(frame, value, std::move(origin));
@@ -1503,23 +1508,23 @@ auto UnitLowerer::ResolveValueTarget(
     return hir::ValueTarget{*std::move(*route)};
   };
 
-  // A static variable a class or a namespace keeps for one of its subroutines
-  // (LRM 6.21) is that keeper's storage as its static properties or its
-  // variables are, so every name reaching one -- the subroutine's own, a
-  // sibling's, another unit's, whatever path spelled it -- reaches it the way
-  // it reaches the keeper's own. One a design element's subroutine declares is
-  // storage of the instance and is routed.
-  std::optional<KeptStatic> kept = KeptStaticOf(value);
-  if (!kept.has_value()) return routed();
+  // A static variable of a class's or a namespace's subroutine (LRM 6.21) is
+  // that one's storage as its static properties or its variables are, so
+  // every name reaching one -- the subroutine's own, a sibling's, another
+  // unit's, whatever path spelled it -- reaches it the way it reaches the
+  // class's or the namespace's own. One a design element's body writes is a
+  // variable of the scope and is routed.
+  std::optional<QualifiedStatic> qualified = QualifiedStaticOf(value);
+  if (!qualified.has_value()) return routed();
   return std::visit(
       Overloaded{
-          [&](const KeptByClass& by) {
-            return ResolveClassKept(frame, *by.cls, kept->name, span);
+          [&](const DeclaredInClass& by) {
+            return ResolveClassStatic(frame, *by.cls, qualified->name, span);
           },
-          [&](const KeptByNamespace& by) {
-            return in_namespace(*by.unit, kept->name);
+          [&](const DeclaredInNamespace& by) {
+            return in_namespace(*by.unit, qualified->name);
           }},
-      kept->keeper);
+      qualified->context);
 }
 
 auto UnitLowerer::NamespaceValueRefOf(
@@ -1678,12 +1683,12 @@ auto UnitLowerer::ReachDeclaringInstance(
 auto UnitLowerer::ResolveStaticPropertyTarget(
     const WalkFrame& frame, const slang::ast::ClassPropertySymbol& prop,
     diag::SourceSpan span) -> diag::Result<hir::ValueTarget> {
-  return ResolveClassKept(
+  return ResolveClassStatic(
       frame, prop.getParentScope()->asSymbol().as<slang::ast::ClassType>(),
       support::UnqualifiedName(std::string{prop.name}), span);
 }
 
-auto UnitLowerer::ResolveClassKept(
+auto UnitLowerer::ResolveClassStatic(
     const WalkFrame& frame, const slang::ast::ClassType& owner_class,
     const support::QualifiedName& name, diag::SourceSpan span)
     -> diag::Result<hir::ValueTarget> {

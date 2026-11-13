@@ -50,7 +50,6 @@ auto IsKept(PastAnswer answer) -> bool {
 struct OperandArenas {
   const base::Arena<hir::Expr, hir::ExprId>* exprs;
   hir::TreeArenas trees;
-  const hir::ProceduralBody* body;
 };
 
 auto PiecesOf(const OperandArenas& arenas, hir::ExprId call)
@@ -223,8 +222,8 @@ struct PieceWalk {
         call.callee);
   }
 
-  [[nodiscard]] auto AnswerOfPrimary(
-      const hir::Expr& expr, const hir::Primary& p) const -> PastAnswer {
+  [[nodiscard]] auto AnswerOfPrimary(const hir::Primary& p) const
+      -> PastAnswer {
     return std::visit(
         Overloaded{
             [](const hir::IntegerLiteral&) { return PastAnswer::kFixed; },
@@ -237,11 +236,9 @@ struct PieceWalk {
             [](const hir::QueueLastIndex&) { return PastAnswer::kFixed; },
             [](const hir::RoutedObjectRef&) { return PastAnswer::kFixed; },
             [](const hir::ScopeArgumentRef&) { return PastAnswer::kFixed; },
-            [&](const hir::ProceduralVarRef&) {
-              return ReadsAutomaticVariable(arenas->body, expr)
-                         ? PastAnswer::kNow
-                         : PastAnswer::kKept;
-            },
+            // A variable a body declares is automatic, a static one being
+            // the scope's or the class's (LRM 6.21).
+            [](const hir::ProceduralVarRef&) { return PastAnswer::kNow; },
             // What an evaluation binds exists only within it.
             [](const hir::IterationBindingRef&) { return PastAnswer::kNow; },
             [](const hir::PatternVarRef&) { return PastAnswer::kNow; },
@@ -260,9 +257,7 @@ struct PieceWalk {
     const hir::Expr& expr = arenas->exprs->Get(id);
     return std::visit(
         Overloaded{
-            [&](const hir::PrimaryExpr& p) {
-              return AnswerOfPrimary(expr, p.data);
-            },
+            [&](const hir::PrimaryExpr& p) { return AnswerOfPrimary(p.data); },
             [&](const hir::CallExpr& call) {
               return AnswerOfCall(id, expr, call);
             },
@@ -356,25 +351,21 @@ auto PiecesOf(const OperandArenas& arenas, hir::ExprId call)
 auto BodyArenas(const hir::ProceduralBody& body) -> OperandArenas {
   return OperandArenas{
       .exprs = &body.exprs,
-      .trees =
-          hir::TreeArenas{
-              .patterns = &body.patterns,
-              .properties = &body.property_exprs,
-              .sequences = &body.sequence_exprs,
-              .constraints = &body.constraints},
-      .body = &body};
+      .trees = hir::TreeArenas{
+          .patterns = &body.patterns,
+          .properties = &body.property_exprs,
+          .sequences = &body.sequence_exprs,
+          .constraints = &body.constraints}};
 }
 
 auto ScopeArenas(const hir::StructuralScope& scope) -> OperandArenas {
   return OperandArenas{
       .exprs = &scope.exprs,
-      .trees =
-          hir::TreeArenas{
-              .patterns = &scope.patterns,
-              .properties = nullptr,
-              .sequences = nullptr,
-              .constraints = nullptr},
-      .body = nullptr};
+      .trees = hir::TreeArenas{
+          .patterns = &scope.patterns,
+          .properties = nullptr,
+          .sequences = nullptr,
+          .constraints = nullptr}};
 }
 
 }  // namespace
@@ -401,19 +392,6 @@ auto ProceduralVarRead(const hir::Expr& expr)
                         : std::get_if<hir::ProceduralVarRef>(&primary->data);
   if (var == nullptr) return std::nullopt;
   return var->var;
-}
-
-auto ReadsAutomaticVariable(
-    const hir::ProceduralBody* body, const hir::Expr& expr) -> bool {
-  const std::optional<hir::ProceduralVarId> var = ProceduralVarRead(expr);
-  if (!var.has_value()) return false;
-  if (body == nullptr) {
-    throw InternalError(
-        "ReadsAutomaticVariable: a variable of a body was read among a "
-        "scope's own expressions");
-  }
-  return body->procedural_vars.Get(*var).lifetime ==
-         hir::VariableLifetime::kAutomatic;
 }
 
 auto KeptPieces(const hir::ProceduralBody& body, hir::ExprId call)

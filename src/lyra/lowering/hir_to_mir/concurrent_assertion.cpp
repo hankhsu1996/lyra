@@ -25,7 +25,6 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/kept_piece.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -37,6 +36,7 @@
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_bring_up.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/switch_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -1340,12 +1340,7 @@ auto SavedOperands(
       process.EnclosingScopeLowerer().HirScope().procedural_scopes;
   std::vector<hir::ProceduralVarId> around;
   for (const hir::ProceduralScopeId id : control.within) {
-    for (const hir::ProceduralVarId var : scopes.Get(id).declarations) {
-      if (body.procedural_vars.Get(var).lifetime ==
-          hir::VariableLifetime::kAutomatic) {
-        around.push_back(var);
-      }
-    }
+    std::ranges::copy(scopes.Get(id).declarations, std::back_inserter(around));
   }
   std::vector<hir::ExprId> saved;
   const std::function<bool(hir::ExprId)> visit = [&](hir::ExprId id) {
@@ -1506,9 +1501,7 @@ auto LowerConcurrentAssertion(
   if (!built) return std::unexpected(std::move(built.error()));
 
   for (const StaticCellBinding& binding : statics) {
-    auto integrated =
-        IntegrateStaticInitializer(action, decl.action, bring_up, binding);
-    if (!integrated) return std::unexpected(std::move(integrated.error()));
+    BringUpStaticCell(action, decl.action, bring_up, binding);
   }
   return built;
 }

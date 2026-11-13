@@ -121,8 +121,9 @@ auto ExtentOf(
   auto target =
       unit_lowerer.DisableTargetOf(frame, *named.symbol, named.hierRef, span);
   if (!target) return std::unexpected(std::move(target.error()));
-  // A task an interface leaves to a connected module that defines none has no
-  // statement to control (LRM 25.7.4).
+  // A target naming nothing of the design -- a task an interface leaves to a
+  // connected module that defines none (LRM 25.7.4), or a block the build
+  // leaves out -- has no statement to control.
   if (!target->has_value()) return std::optional<hir::ScopeArgument>{};
   return std::optional<hir::ScopeArgument>{**std::move(target)};
 }

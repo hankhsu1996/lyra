@@ -2401,20 +2401,6 @@ class HirDumper {
               [](const StructuralDataObjectId& id) {
                 return std::format("StructuralDataObject[{}]", id.value);
               },
-              [](const PublishedStatic& local) {
-                return std::format(
-                    "Static[{}] of {}", local.var.value,
-                    std::visit(
-                        Overloaded{
-                            [](ProcessId id) {
-                              return std::format("Process[{}]", id.value);
-                            },
-                            [](StructuralSubroutineId id) {
-                              return std::format(
-                                  "StructuralSubroutine[{}]", id.value);
-                            }},
-                        local.body));
-              },
               [](const ClassStaticPropertyTarget& property) {
                 return std::format(
                     "StaticProperty[{}] of Class[{}]", property.prop.value,
@@ -2541,19 +2527,6 @@ class HirDumper {
             [](const StructuralDataObjectLeaf& l) {
               return std::format(" . StructuralDataObject[{}]", l.object.value);
             },
-            [](const ProceduralStaticLeaf& l) {
-              const std::string body = std::visit(
-                  Overloaded{
-                      [](const ProcessId& id) {
-                        return std::format("Process[{}]", id.value);
-                      },
-                      [](const StructuralSubroutineId& id) {
-                        return std::format(
-                            "StructuralSubroutine[{}]", id.value);
-                      }},
-                  l.body);
-              return std::format(" . {}.ProceduralVar[{}]", body, l.var.value);
-            },
             [](const PublishedMemberLeaf& l) {
               return std::format(
                   " . ScopeClass[{}].member[{}]", l.scope_class.value,
@@ -2623,8 +2596,13 @@ class HirDumper {
       const auto& v = s.structural_data_objects.Get(id);
       Line(
           std::format(
-              "StructuralDataObject[{}] \"{}\" : Type[{}]{}", id.value, v.name,
-              v.type.value, FormatStructuralDataObject(v)));
+              "StructuralDataObject[{}] \"{}\" : Type[{}]{}{}", id.value,
+              v.name, v.type.value, FormatStructuralDataObject(v),
+              v.lexical_scope.has_value()
+                  ? std::format(
+                        " lexical_scope=ProceduralScope[{}]",
+                        v.lexical_scope->value)
+                  : std::string{}));
     }
     for (const InterfacePortId id : s.interface_ports.Ids()) {
       const auto& port = s.interface_ports.Get(id);
@@ -2877,6 +2855,9 @@ class HirDumper {
               [](ProceduralVarId var) {
                 return std::format("ProceduralVar[{}]", var.value);
               },
+              [](const RoutedValueRef& routed) {
+                return std::format("RoutedValueRef[{}]", routed.id.value);
+              },
               [](const NamespaceValueRef& kept) {
                 return FormatNamespaceValue(kept);
               }},
@@ -2910,24 +2891,9 @@ class HirDumper {
         continue;
       }
       Line(
-          std::visit(
-              Overloaded{
-                  [&](StructuralDataObjectId object) {
-                    return std::format(
-                        "Variable[{}] = StructuralDataObject[{}]", id.value,
-                        object.value);
-                  },
-                  [&](const NamespaceStatic& kept) {
-                    return std::format(
-                        "Variable[{}] = static{} in ProceduralScope[{}]",
-                        id.value,
-                        kept.initializer.has_value()
-                            ? std::format(
-                                  " init=Expr[{}]", kept.initializer->value)
-                            : std::string{},
-                        kept.written_in.value);
-                  }},
-              definition.variables.Get(id)));
+          std::format(
+              "Variable[{}] = StructuralDataObject[{}]", id.value,
+              definition.variables.Get(id).value));
     }
     for (const NamespaceSubroutineId id : definition.subroutines.Ids()) {
       Line(
@@ -3106,9 +3072,8 @@ class HirDumper {
         const auto& lv = body.procedural_vars.Get(id);
         Line(
             std::format(
-                "ProceduralVar[{}]{} : Type[{}]{}{}{}", id.value,
+                "ProceduralVar[{}]{} : Type[{}]{}{}", id.value,
                 FormatName(lv.name), lv.type.value,
-                lv.lifetime == VariableLifetime::kStatic ? " static" : "",
                 lv.lifetime_extended ? " lifetime-extended" : "",
                 lv.init.has_value()
                     ? std::format(" init=Expr[{}]", lv.init->value)

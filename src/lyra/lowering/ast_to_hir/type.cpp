@@ -821,7 +821,7 @@ auto LowerConstraintBlockDecl(
   auto void_type =
       unit_lowerer.InternType(cls.getCompilation().getVoidType(), span);
   if (!void_type) return std::unexpected(std::move(void_type.error()));
-  hir::ProceduralBody body = unit_lowerer.MakeProceduralBody(block);
+  hir::ProceduralBody body;
   ProcessLowerer lowerer(unit_lowerer, block);
   OpenProceduralScope root{
       unit_lowerer.LookupProceduralScope(block),
@@ -1232,7 +1232,7 @@ auto UnitLowerer::InternOwnClass(
   // own included -- names this entry.
   for (const slang::ast::SubroutineSymbol* body :
        StaticBodiesOf(defined_methods, constructor_sym)) {
-    for (KeptStatic& local : StaticsKeptBy(*body)) {
+    for (QualifiedStatic& local : StaticsInTheDesign(*body)) {
       auto var_type = InternType(
           local.var->getType(), frontend::PointSpanOf(local.var->location));
       if (!var_type) return std::unexpected(std::move(var_type.error()));
@@ -1788,7 +1788,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
               .target = StaticPropertyPositionOf(
                   pending.id, support::UnqualifiedName(std::string{prop.name})),
               .value = decl.static_init.exprs.Add(*std::move(init_expr)),
-              .written_in = std::nullopt});
+              .lexical_scope = std::nullopt});
       continue;
     }
     auto init_expr = init_lowerer.LowerExpr(*init, init_frame);
@@ -1803,7 +1803,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   // written in the method's scope, whose name it reports (LRM 21.2.1.5).
   for (const slang::ast::SubroutineSymbol* body :
        StaticBodiesOf(defined_methods, constructor_sym)) {
-    for (const KeptStatic& local : StaticsKeptBy(*body)) {
+    for (const QualifiedStatic& local : StaticsInTheDesign(*body)) {
       const slang::ast::Expression* init = local.var->getInitializer();
       if (init == nullptr) continue;
       auto init_expr = init_lowerer.LowerExpr(*init, static_init_frame);
@@ -1812,8 +1812,8 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
           hir::StaticPropertyInit{
               .target = StaticPropertyPositionOf(pending.id, local.name),
               .value = decl.static_init.exprs.Add(*std::move(init_expr)),
-              .written_in =
-                  LookupProceduralScope(NamedScopeAround(*local.var))});
+              .lexical_scope = LookupProceduralScope(
+                  local.var->getParentScope()->asSymbol())});
     }
   }
   // The cells constructing an object of the class reads are what a `new` of it

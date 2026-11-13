@@ -8,16 +8,13 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/id_range.hpp"
 #include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/translation.hpp"
-#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/keyed_identities.hpp"
-#include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/subroutine_id.hpp"
 #include "lyra/hir/subroutine_prototype.hpp"
@@ -173,28 +170,14 @@ class NamespaceRegistry {
   base::Registry<NamespaceDeclaration, NamespaceId> declarations_;
 };
 
-// A static variable a subroutine of the namespace declares (LRM 6.21): the
-// initializer the source wrote, an expression of the unit's own scope written
-// in that scope's procedural scope `written_in`.
-struct NamespaceStatic {
-  std::optional<ExprId> initializer;
-  ProceduralScopeId written_in;
-
-  auto operator==(const NamespaceStatic&) const -> bool = default;
-};
-
-// Where the namespace defines a variable it keeps: as a declaration of its own
-// scope, or as a static of one of its subroutines.
-using NamespaceVariableDefinition =
-    std::variant<StructuralDataObjectId, NamespaceStatic>;
-
 // What a namespace unit defines of what it declares: the entry it has for
-// itself, and at each position of that entry's declaration, where each
-// variable is declared and which subroutine of its scope each subroutine it
-// declares is.
+// itself, and at each position of that entry's declaration, which data object
+// of its scope each variable is -- one written in the scope or in one of its
+// subroutines (LRM 26.2, 6.21) -- and which subroutine of its scope each
+// subroutine it declares is.
 struct NamespaceDefinition {
   NamespaceId entry;
-  base::Registry<NamespaceVariableDefinition, NamespaceVariableId> variables;
+  base::Registry<StructuralDataObjectId, NamespaceVariableId> variables;
   base::Translation<NamespaceSubroutineId, StructuralSubroutineId> subroutines;
 
   auto operator==(const NamespaceDefinition&) const -> bool = default;

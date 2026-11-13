@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -44,7 +43,6 @@
 #include "lyra/lowering/hir_to_mir/container_construction.hpp"
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
@@ -64,6 +62,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
+#include "lyra/lowering/hir_to_mir/static_cell_bring_up.hpp"
 #include "lyra/lowering/hir_to_mir/switch_stmt.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
@@ -1018,13 +1017,6 @@ auto MaterializeLeaf(
             return AddressTypedLeaf(
                 unit_lowerer, block, reached,
                 scope.TranslateStructuralDataObject(l.object), pointer_type);
-          },
-          [&](const hir::ProceduralStaticLeaf& l) {
-            const StructuralScopeLowerer& scope =
-                OwnScopeOf(reached, "MaterializeLeaf");
-            return AddressTypedLeaf(
-                unit_lowerer, block, reached,
-                scope.ProceduralStaticField(l.body, l.var), pointer_type);
           },
           // A published member is reached through the target unit's own
           // object, whose pointer the step before it produced.
@@ -2499,10 +2491,10 @@ auto DescribeDumped(
             mir::Direct{.target = entry, .receiver = member},
             {runtime(), DumpEntryAddress(
                             unit, block, declaration,
-                            declaration.enclosing.transform(
-                                [&](hir::ProceduralScopeId enclosing) {
+                            declaration.lexical_scope.transform(
+                                [&](hir::ProceduralScopeId lexical_scope) {
                                   return lowerer.DeclaredScopeRecords()
-                                      .procedural_scopes.at(enclosing);
+                                      .procedural_scopes.at(lexical_scope);
                                 }))},
             unit.builtins.void_type));
   }
@@ -2700,12 +2692,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       hir_scope.instance_members.size());
   std::vector<std::optional<mir::ClassFieldTarget>> interface_port_fields(
       hir_scope.interface_ports.size());
-  // The cells of the published static-lifetime variables, taken over by the
-  // walk binding each body's variables, keyed by that body.
-  std::vector<std::vector<PlacedStatic>> placed_process_statics(
-      hir_scope.processes.size());
-  std::vector<std::vector<PlacedStatic>> placed_subroutine_statics(
-      hir_scope.structural_subroutines.size());
   // The cells of the static properties of the classes this scope declares,
   // keyed by the class, which takes them over: the scope publishes every one
   // (LRM 8.9, 23.6), so each is where the publication put it.
@@ -2726,18 +2712,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
         Overloaded{
             [&](hir::StructuralDataObjectId id) {
               data_object_fields[id.value] = field;
-            },
-            [&](const hir::PublishedStatic& local) {
-              const PlacedStatic placed{.var = local.var, .field = field};
-              std::visit(
-                  Overloaded{
-                      [&](hir::ProcessId id) {
-                        placed_process_statics[id.value].push_back(placed);
-                      },
-                      [&](hir::StructuralSubroutineId id) {
-                        placed_subroutine_statics[id.value].push_back(placed);
-                      }},
-                  local.body);
             },
             [&](const hir::ClassStaticPropertyTarget& property) {
               placed_class_statics[property.owner].push_back(
@@ -2946,7 +2920,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
           InstanceFieldHome{.field = *disable_cells[scope_id.value]};
     } else if (scope.source_name.has_value()) {
       declared.disable_target = DeclareStaticCell(
-          InstanceStorage{.owner = class_id_, .shape = &shape, .placed = {}},
+          InstanceStorage{.owner = class_id_, .shape = &shape},
           mir::LibraryTypeOf(
               unit_lowerer.Unit().types,
               support::LibraryDecl::kCancellationTarget));
@@ -2991,13 +2965,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     declared_subroutines.push_back(
         DeclaredCallable{
             .callable = body,
-            .statics = BindBodyStatics(
+            .statics = BindBodyCells(
                 unit_lowerer, hir_scope.procedural_scopes,
-                InstanceStorage{
-                    .owner = class_id_,
-                    .shape = &shape,
-                    .placed = placed_subroutine_statics[sub_id.value]},
-                s.body)});
+                InstanceStorage{.owner = class_id_, .shape = &shape}, s.body)});
   }
   // What a definer hands the object is kept here, and the method taking it
   // overrides the one the published class introduced for it.
@@ -3051,12 +3021,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   std::vector<StaticCellBindings> process_statics;
   process_statics.reserve(hir_scope.processes.size());
   for (const hir::ProcessId id : hir_scope.processes.Ids()) {
-    process_statics.push_back(BindBodyStatics(
+    process_statics.push_back(BindBodyCells(
         unit_lowerer, hir_scope.procedural_scopes,
-        InstanceStorage{
-            .owner = class_id_,
-            .shape = &shape,
-            .placed = placed_process_statics[id.value]},
+        InstanceStorage{.owner = class_id_, .shape = &shape},
         hir_scope.processes.Get(id).body));
   }
   process_static_bindings_ = {
@@ -3066,7 +3033,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   assertion_statics.reserve(hir_scope.concurrent_assertions.size());
   for (const hir::ConcurrentAssertionId id :
        hir_scope.concurrent_assertions.Ids()) {
-    assertion_statics.push_back(BindBodyStatics(
+    assertion_statics.push_back(BindBodyCells(
         unit_lowerer, hir_scope.procedural_scopes,
         InstanceStorage{.owner = class_id_, .shape = &shape},
         hir_scope.concurrent_assertions.Get(id).action));
@@ -3392,8 +3359,9 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     if (const auto* settled =
             std::get_if<hir::StructuralLocalparamDecl>(&settled_decl.kind)) {
       install_in_constructor(id);
-      auto value =
-          LowerExpr(hir_scope.exprs.Get(settled->initializer), ctor_frame);
+      auto value = LowerExpr(
+          hir_scope.exprs.Get(settled->initializer),
+          LexicalScopeFrame(ctor_frame, scopes_, settled_decl));
       if (!value) return std::unexpected(std::move(value.error()));
       store_into(ctor_block, ctor_frame, id, *std::move(value));
       continue;
@@ -3492,8 +3460,9 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
             BuildDeclaredInitialValue(unit_lowerer, init_frame, d.type));
       }
       if (var->initializer.has_value()) {
-        auto value_or =
-            LowerExpr(hir_scope.exprs.Get(*var->initializer), init_frame);
+        auto value_or = LowerExpr(
+            hir_scope.exprs.Get(*var->initializer),
+            LexicalScopeFrame(init_frame, scopes_, d));
         if (!value_or) return std::unexpected(std::move(value_or.error()));
         emit_value_store(initialize_block_builder.Add(*std::move(value_or)));
       }
@@ -3636,14 +3605,13 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
             .defining_unit = std::nullopt});
     subroutine_callables.push_back(declared.callable);
     for (const StaticCellBinding& binding : declared.statics) {
-      auto integ = IntegrateStaticInitializer(
+      BringUpStaticCell(
           subroutine_lowerer, src.body,
           StorageBringUp{
               .construct = ctor_frame,
               .install = install_frame,
               .value = init_frame},
           binding);
-      if (!integ) return std::unexpected(std::move(integ.error()));
     }
   }
 
@@ -3784,14 +3752,13 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
             }},
         p.kind);
     for (const StaticCellBinding& binding : statics) {
-      auto integ = IntegrateStaticInitializer(
+      BringUpStaticCell(
           process_lowerer, p.body,
           StorageBringUp{
               .construct = ctor_frame,
               .install = install_frame,
               .value = init_frame},
           binding);
-      if (!integ) return std::unexpected(std::move(integ.error()));
     }
   }
 

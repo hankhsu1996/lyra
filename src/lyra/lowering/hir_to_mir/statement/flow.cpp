@@ -87,14 +87,6 @@ auto LowerVarStart(
     const PromotedVarBinding promoted = BindPromotedVar(process, var);
     return InitializePromotedVar(process, frame, promoted, initial());
   }
-  // LRM 6.21: a static-lifetime variable keeps a cell that outlives every
-  // activation, so its storage and its binding are both settled before the body
-  // lowers and its declaration assignment runs where that cell is brought up,
-  // before any process starts. Reaching the declaration is therefore not an
-  // event: it binds nothing and emits nothing.
-  if (hir_local.lifetime == hir::VariableLifetime::kStatic) {
-    return mir::Stmt{.label = std::nullopt, .data = mir::EmptyStmt{}};
-  }
   mir::Builder block = frame.Builder();
   mir::CompilationUnit& unit = process.Owner().Unit();
   const DeclaredVariable variable = DeclareVariable(
@@ -111,15 +103,11 @@ auto LowerVarDeclaration(
   const auto& hir_local = process.HirBody().procedural_vars.Get(var);
   // LRM 6.21, 13.3: an automatic variable takes its default on each entry to
   // its scope, and its declaration assignment is made to it after, so an
-  // assignment naming the variable reads that default. A static one was
-  // brought up before the body, its assignment with it.
+  // assignment naming the variable reads that default.
   mir::Stmt started = LowerVarStart(
       process, frame, var, hir_local.name,
       DefaultInitialValue(process, frame, hir_local));
-  if (!hir_local.init.has_value() ||
-      hir_local.lifetime == hir::VariableLifetime::kStatic) {
-    return started;
-  }
+  if (!hir_local.init.has_value()) return started;
   const mir::TypeId type = process.Owner().TranslateType(hir_local.type);
   mir::Builder block = frame.Builder();
   block.AppendStmt(std::move(started));

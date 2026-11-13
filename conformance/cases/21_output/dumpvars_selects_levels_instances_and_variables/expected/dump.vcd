@@ -1,6 +1,11 @@
 $timescale 1ns $end
 $scope module Top $end
 $var reg 1 T t $end
+$scope begin a $end
+$scope begin act $end
+$var reg 1 A counted $end
+$upscope $end
+$upscope $end
 $scope module u $end
 $var reg 1 U m $end
 $upscope $end
@@ -15,6 +20,7 @@ $enddefinitions $end
 #0
 $dumpvars
 1T
+xA
 0U
 0V
 1X
