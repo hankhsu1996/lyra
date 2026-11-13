@@ -240,8 +240,7 @@ auto HighestIndexValue(const slang::ast::Type& index_type) -> slang::SVInt {
 // every answer. A queue or dynamic array dimension ascends from 0, so its
 // left and low ends and its direction are fixed and its extent is not; an
 // associative dimension's index space ascends from 0 to the index type's
-// highest value, so only which indices are allocated is left to the value,
-// and its answers are of the index type rather than `integer`.
+// highest value, so only which indices are allocated is left to the value.
 auto AnswerTheTypeFixes(QueryKind query, const slang::ast::Type& dimension)
     -> std::optional<slang::SVInt> {
   if (dimension.hasFixedRange() && !dimension.isScalar()) {

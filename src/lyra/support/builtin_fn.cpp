@@ -411,12 +411,14 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "assoc_min_index",
           .declaration = Method{"MinIndex"},
+          .takes_a_type_argument = true,
           .takes_the_location = false,
           .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kAssocMaxIndex:
       return {
           .name = "assoc_max_index",
           .declaration = Method{"MaxIndex"},
+          .takes_a_type_argument = true,
           .takes_the_location = false,
           .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kAssocWithDefault:

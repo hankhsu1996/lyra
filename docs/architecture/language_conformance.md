@@ -850,6 +850,32 @@ question would answer it, `$display` included, and the descriptor argument would
 `$ferror` asks and is no operation, so asking twice answers the same, as C's `ferror` leaves a
 stream's error indicator as it found it.
 
+#### An array query returning an index the integer cannot hold
+
+```systemverilog
+int wide[longint];
+int unsigned_keys[bit [31:0]];
+initial begin
+  wide[64'sh1_0000_0000] = 1;
+  $display($low(wide));               // the index, or the index cut to 32 bits?
+  $display($right(unsigned_keys));    // 32'hFFFF_FFFF, or -1?
+end
+```
+
+20.7 says "The return type is integer". Over an associative dimension it has `$low` return the
+lowest currently allocated index value, or 'x where none is allocated, `$high` the largest, and
+`$right` the highest possible index value. An integer holds every index of a signed index type of up
+to 32 bits and of an unsigned one of up to 31, and there the two sentences agree. Of a wider index
+type, or an unsigned 32-bit one, the integer cannot hold every index, so the type and the value the
+clause gives cannot both be had.
+
+The front end types `$low`, `$high` and `$right` of such a dimension at the index type, and of an
+array whose dimension the program computes at the index type where it is wider than 32 bits, and
+every other array query as `integer`. Lyra carries out that typing, so the index keeps its value. An
+index type holding no x answers its default, 0, for an array holding none, as any answer of a type
+holding no x reads the 'x a query names. The other dimensions of such an array, and `$left`,
+`$increment` and `$size`, return an integer as the clause says.
+
 #### The end event of a block left by `return`, `break` or `continue`
 
 ```systemverilog
