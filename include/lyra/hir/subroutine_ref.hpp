@@ -1,12 +1,12 @@
 #pragma once
 
 #include <compare>
+#include <cstdint>
 #include <optional>
 #include <variant>
 #include <vector>
 
 #include "lyra/hir/array_iterator_method.hpp"
-#include "lyra/hir/callee_interface.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/enum_method.hpp"
@@ -16,7 +16,7 @@
 #include "lyra/hir/namespace.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/randomization_hook.hpp"
-#include "lyra/hir/scope_class.hpp"
+#include "lyra/hir/scope_class_id.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_id.hpp"
 #include "lyra/hir/timing.hpp"
@@ -37,39 +37,17 @@ struct StructuralSubroutineRef {
   auto operator==(const StructuralSubroutineRef&) const -> bool = default;
 };
 
-// Which object an instance-method call runs against (LRM 8.6, 8.11, 8.15).
-// The arms are the answers, not the source spellings, so two spellings that
-// name one object share one arm.
-//
-// - `HandleReceiver` -- LRM 8.6 qualified `h.foo()`: the source supplied a
-//   class-handle expression the call dispatches through, and the call obeys
-//   the callee's own virtual role.
-// - `SelfReceiver` -- the object the enclosing method was invoked on, which
-//   an unqualified `foo()` names (LRM 8.6) and which `this.foo()` names
-//   explicitly (LRM 8.11). The call obeys the callee's virtual role.
-// - `SuperReceiver` -- LRM 8.15 `super.foo()`: the receiver is still the
-//   enclosing method's self, but the source demands the base's
-//   implementation and the call must skip dynamic dispatch regardless of
-//   whether the target is virtual.
-//
-// The three arms are structurally disjoint because "receiver source" and
-// "dispatch qualifier" are not independent axes -- a super-qualified call is
-// never through an explicit handle, so encoding them as a receiver-optional
-// plus a super-flag would admit an invalid state.
-struct HandleReceiver {
-  ExprId expr;
-
-  auto operator==(const HandleReceiver&) const -> bool = default;
+// How an invocation finds the method that runs from the one it names: its
+// invocation mode, as Java, whose class model this follows, names it (JLS
+// 15.12.3).
+enum class InvocationMode : std::uint8_t {
+  // The named method's own role decides: the latest override where it is
+  // virtual, the named method where it is not (LRM 8.20).
+  kVirtual,
+  // `super.m()`: the named method runs and overriding is not allowed (LRM
+  // 8.15).
+  kSuper,
 };
-struct SelfReceiver {
-  auto operator==(const SelfReceiver&) const -> bool = default;
-};
-struct SuperReceiver {
-  auto operator==(const SuperReceiver&) const -> bool = default;
-};
-
-using MethodReceiver =
-    std::variant<HandleReceiver, SelfReceiver, SuperReceiver>;
 
 // A hook `randomize()` runs that class `cls` has without declaring it (LRM
 // 18.6.2), as the front end gives every class one of each it does not declare:
@@ -89,11 +67,12 @@ struct BuiltinHookCallee {
 // class has without declaring it.
 using InstanceMethodCallee = std::variant<ClassMethodTarget, BuiltinHookCallee>;
 
-// Calls an instance method (LRM 8.6). `receiver` states which object the call
-// runs against, whichever source form named it.
+// Calls an instance method (LRM 8.6) on the object `receiver` evaluates to; a
+// call naming no object runs on `this` (LRM 8.11).
 struct MethodCallRef {
-  MethodReceiver receiver;
+  ExprId receiver;
   InstanceMethodCallee callee;
+  InvocationMode mode{};
 
   auto operator==(const MethodCallRef&) const -> bool = default;
 };
@@ -265,10 +244,8 @@ struct ForeignImportRef {
   auto operator==(const ForeignImportRef&) const -> bool = default;
 };
 
-// Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`
-// because a static method has no receiver -- neither an explicit handle, the
-// enclosing method's own object, nor a super qualifier -- and encoding it as a
-// receiver-optional variant of `MethodCallRef` would admit an invalid state.
+// Calls a static class method (LRM 8.10), which runs on no object, so the
+// reference holds none.
 // Under inheritance, `Derived::inherited_static()` still names the base -- the
 // method lives on the base's arena -- mirroring the owner-qualified rule for
 // inherited instance access.

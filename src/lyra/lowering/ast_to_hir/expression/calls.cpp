@@ -13,7 +13,6 @@
 #include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Expression.h>
-#include <slang/ast/Lookup.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/SystemSubroutine.h>
 #include <slang/ast/TimingControl.h>
@@ -139,43 +138,56 @@ auto MethodInterfaceOf(
       .prototype.interface;
 }
 
-// Classifies which object an instance-method call runs against into a
-// MethodReceiver arm. Super takes precedence over an accompanying `thisClass`,
-// because `this.super.foo()` reaches the base through the `super` qualifier
-// while still naming the outer `this` as the object. A receiver written as
-// `this` (LRM 8.11) names the object the enclosing method was invoked on --
-// the same object an unqualified call names -- so it takes the self arm and no
-// handle is evaluated.
-template <ExprLowerer Lowerer>
-auto ClassifyMethodReceiver(
-    Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call)
-    -> diag::Result<hir::MethodReceiver> {
-  if (call.lookupInfo.viaSuper) return hir::SuperReceiver{};
-  const auto* this_class = call.thisClass();
-  if (this_class == nullptr || NamesCurrentInstance(*this_class)) {
-    const auto* const* method =
-        std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
-    // A covergroup a class embeds calls the embedding object's methods as if
-    // it were that object (LRM 19.4).
-    if (method != nullptr && ReachedThroughEmbedding(frame, **method)) {
-      return hir::HandleReceiver{
-          .expr = EmbeddingObject(frame, frontend::SpanOf(call.sourceRange))};
-    }
-    if (const slang::ast::ClassType* owner =
-            method != nullptr ? DeclaringClassOf(**method) : nullptr) {
-      auto randomized = RandomizedObjectReaching(
-          lowerer.Owner(), frame, *owner, frontend::SpanOf(call.sourceRange));
-      if (!randomized) return std::unexpected(std::move(randomized.error()));
-      if (randomized->has_value()) {
-        return hir::HandleReceiver{.expr = **randomized};
-      }
-    }
-    return hir::SelfReceiver{};
+// The class whose body is being lowered, which `this` is a handle of (LRM
+// 8.11).
+auto RunningClass(const WalkFrame& frame) -> const slang::ast::ClassType& {
+  const auto* cls =
+      frame.ProceduralScopeOwner().asSymbol().as_if<slang::ast::ClassType>();
+  if (cls == nullptr) {
+    throw InternalError(
+        "AST->HIR: a call naming no object stands outside a class's body");
   }
-  auto receiver_or = lowerer.LowerExpr(*this_class, frame);
-  if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
-  return hir::HandleReceiver{
-      .expr = frame.Exprs().Add(*std::move(receiver_or))};
+  return *cls;
+}
+
+// The object a call is made on: the one `handle` names, and `this` where the
+// call named none (LRM 8.6, 8.11).
+template <ExprLowerer Lowerer>
+auto ObjectOfCall(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const slang::ast::Expression* handle, diag::SourceSpan span)
+    -> diag::Result<hir::ExprId> {
+  if (handle != nullptr) {
+    auto lowered = lowerer.LowerExpr(*handle, frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return frame.Exprs().Add(*std::move(lowered));
+  }
+  auto type = lowerer.Owner().InternType(RunningClass(frame), span);
+  if (!type) return std::unexpected(std::move(type.error()));
+  return frame.Exprs().Add(hir::MakeRefExpr(hir::ThisHandle{}, *type, span));
+}
+
+// The object an instance-method call runs on. A covergroup a class embeds calls
+// the embedding object's methods as if it were that object (LRM 19.4).
+template <ExprLowerer Lowerer>
+auto ObjectOfMethodCall(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const slang::ast::CallExpression& call) -> diag::Result<hir::ExprId> {
+  const auto span = frontend::SpanOf(call.sourceRange);
+  const auto* this_class = call.thisClass();
+  const auto* const* method =
+      std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
+  if ((this_class == nullptr || NamesCurrentInstance(*this_class)) &&
+      method != nullptr && ReachedThroughEmbedding(frame, **method)) {
+    return EmbeddingObject(frame, span);
+  }
+  return ObjectOfCall(lowerer, frame, this_class, span);
+}
+
+auto InvocationModeOf(const slang::ast::CallExpression& call)
+    -> hir::InvocationMode {
+  return call.lookupInfo.viaSuper ? hir::InvocationMode::kSuper
+                                  : hir::InvocationMode::kVirtual;
 }
 
 // Arms what a sampled value function's operand reads, so it answers for one.
@@ -957,29 +969,6 @@ auto LowerSystemCall(
   };
 }
 
-// The object a call of `randomize()`, a mode method or a method of the
-// object's generator acts on, where the call reached it through a handle; the
-// object a method named without one reaches where it named none.
-template <ExprLowerer Lowerer>
-auto ObjectOfCall(
-    Lowerer& lowerer, const WalkFrame& frame,
-    const slang::ast::Expression* handle, const slang::ast::Type& class_type,
-    diag::SourceSpan span) -> diag::Result<hir::ExprId> {
-  if (handle != nullptr) {
-    auto lowered = lowerer.LowerExpr(*handle, frame);
-    if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return frame.Exprs().Add(*std::move(lowered));
-  }
-  auto randomized = RandomizedObjectReaching(
-      lowerer.Owner(), frame,
-      class_type.getCanonicalType().as<slang::ast::ClassType>(), span);
-  if (!randomized) return std::unexpected(std::move(randomized.error()));
-  if (randomized->has_value()) return **randomized;
-  auto type = lowerer.Owner().InternType(class_type, span);
-  if (!type) return std::unexpected(std::move(type.error()));
-  return frame.Exprs().Add(hir::MakeRefExpr(hir::ThisHandle{}, *type, span));
-}
-
 // A call of a method every class has (LRM 18.6.2, 18.8, 18.9, 18.13.3 --
 // 18.13.5), on the object the call reaches or the running method's own.
 template <ExprLowerer Lowerer>
@@ -1006,18 +995,19 @@ auto LowerBuiltinClassMethodCall(
     auto cls = lowerer.Owner().ResolveClass(declaring, span);
     if (!cls) return std::unexpected(std::move(cls.error()));
     lowerer.Owner().DeclarationOf(*cls);
-    auto receiver = ClassifyMethodReceiver(lowerer, frame, call);
+    auto receiver = ObjectOfMethodCall(lowerer, frame, call);
     if (!receiver) return std::unexpected(std::move(receiver.error()));
     return expr(
         hir::CallExpr{
             .callee =
                 hir::MethodCallRef{
-                    .receiver = *std::move(receiver),
+                    .receiver = *receiver,
                     .callee =
-                        hir::BuiltinHookCallee{.cls = *cls, .hook = *hook}},
+                        hir::BuiltinHookCallee{.cls = *cls, .hook = *hook},
+                    .mode = InvocationModeOf(call)},
             .arguments = std::move(arg_ids)});
   }
-  auto object = ObjectOfCall(lowerer, frame, call.thisClass(), declaring, span);
+  auto object = ObjectOfCall(lowerer, frame, call.thisClass(), span);
   if (!object) return std::unexpected(std::move(object.error()));
   const auto on_object = [&](support::BuiltinFn fn) {
     std::vector<std::optional<hir::ExprId>> operands{*object};
@@ -1077,15 +1067,13 @@ auto LowerSubroutineCall(
   // A method the runtime carries out routes to the library entry. A static
   // method acts on no object, whatever handle the call is written through (LRM
   // 8.10); an instance method acts on the object the call reaches, or on the
-  // running method's own where it names none -- in an inline constraint, the
-  // object being randomized (LRM 18.7).
+  // running method's own where it names none.
   if (const auto carried = RuntimeCarriedMethodOf(*sym)) {
     auto result_type = unit_lowerer.InternExpressionType(call, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     std::optional<hir::ExprId> receiver;
     if (!sym->flags.has(slang::ast::MethodFlags::Static)) {
-      auto object =
-          ObjectOfCall(lowerer, frame, call.thisClass(), *declaring, span);
+      auto object = ObjectOfCall(lowerer, frame, call.thisClass(), span);
       if (!object) return std::unexpected(std::move(object.error()));
       receiver = *object;
     }
@@ -1179,13 +1167,13 @@ auto LowerSubroutineCall(
 
   // Instance-method call (LRM 8.6): every source shape -- `h.foo()`, an
   // unqualified `foo()` from inside a class body, `this.foo()`, and
-  // `super.foo()` -- lowers to one `MethodCallRef`, distinguished by which
-  // object the classifier says it runs against. The declaring class is the one
+  // `super.foo()` -- lowers to one `MethodCallRef`, distinguished by the object
+  // it runs on and its invocation mode. The declaring class is the one
   // declaring the method the call runs, an inherited one included.
   if (IsMadeOnAnObject(call, *sym)) {
-    auto receiver_or = ClassifyMethodReceiver(lowerer, frame, call);
-    if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
     const auto& declaring_class = *declaring;
+    auto receiver = ObjectOfMethodCall(lowerer, frame, call);
+    if (!receiver) return std::unexpected(std::move(receiver.error()));
     auto callee =
         unit_lowerer.MakeClassMethodTarget(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
@@ -1201,8 +1189,9 @@ auto LowerSubroutineCall(
             hir::CallExpr{
                 .callee =
                     hir::MethodCallRef{
-                        .receiver = *std::move(receiver_or),
-                        .callee = *std::move(callee)},
+                        .receiver = *receiver,
+                        .callee = *std::move(callee),
+                        .mode = InvocationModeOf(call)},
                 .arguments = std::move(arguments),
             },
         .span = span,
@@ -1419,65 +1408,42 @@ auto LowerRandomizationCall(
         handle = args.front();
         args = args.subspan(1);
       }
-      const auto* with =
+      const auto* details =
           std::get_if<slang::ast::CallExpression::RandomizeCallInfo>(
               &info.extraInfo);
-      // The names a call lists, and those its inline constraints read, are
-      // looked up in the object's class first (LRM 18.7, 18.11).
+      // The names a call lists, and those its inline constraints read, reach
+      // the object it randomizes through the variable the front end gives that
+      // object (LRM 18.7, 18.11).
+      const WalkFrame within = frame.WithRandomizedObject(
+          details != nullptr ? details->thisVar : nullptr);
       std::vector<hir::ExprId> listed;
-      const auto list = [&](const WalkFrame& at) -> diag::Result<void> {
-        for (const slang::ast::Expression* arg : args) {
-          // `randomize(null)` lists no variable (LRM 18.11.1).
-          if (arg->type->isNull()) {
-            continue;
-          }
-          auto variable = place(*arg, at);
-          if (!variable) return std::unexpected(std::move(variable.error()));
-          listed.push_back(*variable);
+      for (const slang::ast::Expression* arg : args) {
+        // `randomize(null)` lists no variable (LRM 18.11.1).
+        if (arg->type->isNull()) {
+          continue;
         }
-        return {};
-      };
-      const bool lists = !args.empty();
+        auto variable = place(*arg, within);
+        if (!variable) return std::unexpected(std::move(variable.error()));
+        listed.push_back(*variable);
+      }
       hir::RandomizeTarget target;
-      WalkFrame within = frame;
       if (on_class) {
-        const slang::ast::Type* class_type =
-            handle != nullptr ? handle->type.get() : nullptr;
-        if (class_type == nullptr) {
-          const slang::ast::ClassType* method_class =
-              slang::ast::Lookup::getContainingClass(*info.scope).first;
-          if (method_class == nullptr) {
-            throw InternalError(
-                "AST->HIR randomize: a class's randomize() named bare outside "
-                "a method of a class");
-          }
-          class_type = method_class;
-        }
-        const auto& randomized =
-            class_type->getCanonicalType().as<slang::ast::ClassType>();
-        auto object = ObjectOfCall(lowerer, frame, handle, *class_type, span);
+        auto object = ObjectOfCall(lowerer, frame, handle, span);
         if (!object) return std::unexpected(std::move(object.error()));
-        within = frame.WithRandomizedClass(randomized);
-        if (auto r = list(within); !r) {
-          return std::unexpected(std::move(r.error()));
-        }
         hir::RandomVariables variables = hir::DeclaredRandomVariables{};
-        if (lists) {
+        if (!args.empty()) {
           variables =
               hir::ListedRandomVariables{.variables = std::move(listed)};
         }
         target = hir::RandomizedClassObject{
             .object = *object, .variables = std::move(variables)};
       } else {
-        if (auto r = list(frame); !r) {
-          return std::unexpected(std::move(r.error()));
-        }
         target = hir::RandomizedScopeVariables{.variables = std::move(listed)};
       }
       std::optional<hir::ConstraintId> constraints;
-      if (with != nullptr && with->inlineConstraints != nullptr) {
+      if (details != nullptr && details->inlineConstraints != nullptr) {
         auto lowered =
-            lowerer.LowerConstraint(*with->inlineConstraints, within);
+            lowerer.LowerConstraint(*details->inlineConstraints, within);
         if (!lowered) return std::unexpected(std::move(lowered.error()));
         constraints = within.current_procedural_body->constraints.Add(
             *std::move(lowered));
@@ -1524,10 +1490,7 @@ auto LowerRandomizationCall(
       block_target = hir::StaticConstraintBlockMode{
           .introducer = *introducer, .block = std::string{introducing.name}};
     } else {
-      const auto& owner = named->block->getParentScope()
-                              ->asSymbol()
-                              .as<slang::ast::ClassType>();
-      auto object = ObjectOfCall(lowerer, frame, named->handle, owner, span);
+      auto object = ObjectOfCall(lowerer, frame, named->handle, span);
       if (!object) return std::unexpected(std::move(object.error()));
       block_target = hir::ConstraintBlockMode{
           .object = *object, .name = std::string{named->block->name}};

@@ -382,6 +382,16 @@ auto FormatRandomizationHook(RandomizationHook hook) -> std::string_view {
   throw InternalError("FormatRandomizationHook: unknown hook");
 }
 
+auto FormatInvocationMode(InvocationMode mode) -> std::string_view {
+  switch (mode) {
+    case InvocationMode::kVirtual:
+      return "virtual";
+    case InvocationMode::kSuper:
+      return "super";
+  }
+  throw InternalError("FormatInvocationMode: unknown InvocationMode");
+}
+
 auto FormatInstanceMethodCallee(const InstanceMethodCallee& callee)
     -> std::string {
   return std::visit(
@@ -1240,19 +1250,10 @@ class HirDumper {
                   decl.name);
             },
             [](const MethodCallRef& m) -> std::string {
-              const std::string recv = std::visit(
-                  Overloaded{
-                      [](const HandleReceiver& h) {
-                        return std::format("Expr[{}]", h.expr.value);
-                      },
-                      [](const SelfReceiver&) { return std::string{"<self>"}; },
-                      [](const SuperReceiver&) {
-                        return std::string{"<super>"};
-                      }},
-                  m.receiver);
               return std::format(
-                  "Method target={} recv={}",
-                  FormatInstanceMethodCallee(m.callee), recv);
+                  "Method target={} recv=Expr[{}] mode={}",
+                  FormatInstanceMethodCallee(m.callee), m.receiver.value,
+                  FormatInvocationMode(m.mode));
             },
             [](const StaticMethodCallRef& s) -> std::string {
               return std::format(

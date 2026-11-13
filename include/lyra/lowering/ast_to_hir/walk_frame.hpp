@@ -34,6 +34,7 @@ class HierarchicalReference;
 class Symbol;
 class Scope;
 class TimingControl;
+class VariableSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -231,10 +232,13 @@ struct WalkFrame {
   // they were written in its class, so a member named without a handle reaches
   // it through this variable. Absent everywhere else.
   std::optional<CovergroupEmbedding> embedding;
-  // The class of the object a `randomize() with` call randomizes, while the
-  // constraints written with the call are lowered: a name of a property of it
-  // reaches that object, and `this` names it (LRM 18.7). Null elsewhere.
-  const slang::ast::ClassType* randomized_class = nullptr;
+  // While the constraints and the listed arguments of a call of `randomize()`
+  // made through a handle other than `this` are lowered, the variable the front
+  // end gives them for the object the call randomizes: `this` names it there,
+  // and every instance member the front end found in that object's class is
+  // reached through it (LRM 18.7, 18.11). Null elsewhere, and for a call whose
+  // object is the running method's own.
+  const slang::ast::VariableSymbol* randomized_object = nullptr;
 
   // The lexical procedural scope whose contents are currently being walked.
   // Owned by the caller that opened it; null on a frame that is not inside a
@@ -443,10 +447,10 @@ struct WalkFrame {
     return next;
   }
 
-  [[nodiscard]] auto WithRandomizedClass(const slang::ast::ClassType& cls) const
-      -> WalkFrame {
+  [[nodiscard]] auto WithRandomizedObject(
+      const slang::ast::VariableSymbol* object) const -> WalkFrame {
     WalkFrame next = *this;
-    next.randomized_class = &cls;
+    next.randomized_object = object;
     return next;
   }
 

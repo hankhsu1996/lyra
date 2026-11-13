@@ -31,7 +31,7 @@ uvm-1.2:integrated/codec:test:
   says: "undefined reference to `uvm_re_match'"
 uvm-1.2:integrated/ubus/examples:test_2m_4s:
   stops: build
-  says: "reaching the storage 'compiled_regex' names from here is not yet supported"
+  says: "undefined reference to `uvm_re_match'"
 uvm-1.2:simple/basic_examples/event_pool:default:
   stops: build
   says: "undefined reference to `uvm_re_match'"

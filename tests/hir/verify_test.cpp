@@ -530,16 +530,13 @@ TEST(HirVerifyTest, EveryReadOfAClassNeedsItsDeclaration) {
     return std::vector<ExprId>{
         expr(u, b, CallExpr{.callee = std::move(callee), .arguments = {}})};
   };
-  const auto on_handle = [](const CompilationUnit& u, ProceduralBody& b) {
-    return MethodReceiver{HandleReceiver{.expr = AddLeaf(u, b)}};
-  };
   const std::vector<std::pair<std::string_view, Reading>> readings{
       {"a method call",
        [&](CompilationUnit& u, ProceduralBody& b, ClassId cls) {
          return call(
              u, b,
              MethodCallRef{
-                 .receiver = on_handle(u, b),
+                 .receiver = AddLeaf(u, b),
                  .callee = BuiltinHookCallee{
                      .cls = cls, .hook = RandomizationHook::kPreRandomize}});
        }},
@@ -548,7 +545,7 @@ TEST(HirVerifyTest, EveryReadOfAClassNeedsItsDeclaration) {
          return call(
              u, b,
              MethodCallRef{
-                 .receiver = on_handle(u, b),
+                 .receiver = AddLeaf(u, b),
                  .callee =
                      ClassMethodTarget{.owner = cls, .method = MethodId{0}}});
        }},

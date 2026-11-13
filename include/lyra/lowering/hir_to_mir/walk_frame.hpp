@@ -259,9 +259,9 @@ struct WalkFrame {
   // constraints written with a call. Absent anywhere no constraint is lowered.
   std::optional<mir::LocalId> constraint_problem;
 
-  // The local holding the object a `randomize() with` call randomizes, which a
-  // name in the constraints written with the call reaches its class's
-  // properties through (LRM 18.7). Absent outside those constraints.
+  // The local holding the object a call of `randomize()` randomizes, which the
+  // call's constraints and listed variables reach its members through (LRM
+  // 18.7, 18.11). Absent outside that call.
   std::optional<mir::LocalId> randomized_object;
 
   // How far out of `self` that instance sits, in class-chain steps. Answered
