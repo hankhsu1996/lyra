@@ -284,6 +284,24 @@ increment there, and a call with an output, inout or `ref` argument, which the s
 forbids; the front end Lyra pins counts the queue a pop is called on as such an argument, so the pop
 is refused by the same check. Read the element and remove it in a procedure instead.
 
+#### A method of an implemented interface class named through its scope
+
+```systemverilog
+interface class I;
+  pure virtual function int m();
+endclass
+class C implements I;
+  virtual function int m(); return I::m(); endfunction
+endclass
+```
+
+8.23 gives the class scope resolution operator "access to public or protected class members of a
+superclass from within the derived classes", and 8.26.2 says "When an interface class is
+implemented, nothing is inherited". An implemented interface class is not a superclass, so `I::m()`
+names an instance member of a class the body does not derive from, which no clause grants and the
+front end already refuses for any other such class. Lyra refuses it in the front end it pins. Call
+`m()` to reach the implementation.
+
 ### Forbidden, run as an extension when asked
 
 Refused by default and run when the caller asks for it by name, with the meaning stated here. The
@@ -572,6 +590,27 @@ reading, in the front end it pins, which binds this argument as an expression of
 wherever the call stands and already holds it to 16.6's rule on output and `ref` arguments; the
 write is refused beside that rule. Make the write a statement of its own.
 
+#### A pure virtual method called through `super` or a class scope
+
+```systemverilog
+virtual class A;
+  pure virtual function int v();
+endclass
+class B extends A;
+  virtual function int v(); return super.v(); endfunction
+endclass
+```
+
+A call through `super`, or through the scope of a superclass, runs the method of the class it names
+(see _A virtual method named through a class scope_, below), and 8.21 declares a pure virtual method
+"without providing an implementation"; no clause says what calling it without dispatch does. 8.21's
+NOTE, "A method without a statement body is still a legal, callable method", reads as the other side
+and is not: its example is a virtual method declared with an empty body, which is an implementation,
+and a pure method has none. SystemVerilog's class model is Java's (8.7), and Java refuses the same
+call ("a compile-time error if the compile-time declaration is abstract", JLS 15.12.3). Lyra refuses
+it in the front end it pins, where every call's name is resolved. Call the method without the
+qualifier to reach the override.
+
 ### Not settled by the standard, accepted by the front end
 
 Run as the front end analyzed it. A tool that refuses the text is not wrong either, so no case may
@@ -785,6 +824,43 @@ Lyra takes the default of the method the call names, that of the handle's class,
 override's body with it, so `h.f()` is 1. A default is part of what the caller passes, and which
 method the call names is known where it is written, while the override that runs is known only from
 the object; C++ decides the same way for the same reason. Through `d`, both readings give 2.
+
+#### A virtual method named through a class scope
+
+```systemverilog
+class A;
+  virtual function int v(); return 1; endfunction
+endclass
+class B extends A;
+  virtual function int v(); return 2; endfunction
+  function int base(); return A::v(); endfunction
+  function int own(); return B::v(); endfunction
+endclass
+class C extends B;
+  virtual function int v(); return 3; endfunction
+endclass
+// C c = new; c.base(), c.own()   -- 1 or 3, 2 or 3?
+```
+
+8.23 says the class scope resolution operator "uniquely identifies a member ... of a particular
+class" and gives "access to public or protected class members of a superclass from within the
+derived classes". 8.20 says of a virtual method that "there is only one implementation ... per class
+hierarchy, and it is always the one in the latest derived class". Neither speaks of a call that
+names a virtual method through a class.
+
+SystemVerilog's class model is Java's (8.7), and Java decides how a call finds the method it runs
+from the call's form alone (JLS 15.12.3). `super.m()` and `T.super.m()` run the named class's method
+with overriding not allowed (15.12.4.4); a call reaching the object's own member, written plainly or
+through `this`, dispatches. Lyra reads `::` the same way. Naming a superclass is the access 8.23
+grants and runs that class's method, so `c.base()` is 1; a grandparent's overridden method, which
+`super` cannot reach (8.15), is reachable this way and no other. Naming the body's own class names
+the member an unqualified name names, which 8.23 grants nothing beyond, so the call dispatches as
+that one does, and `c.own()` is 3.
+
+The same holds inside an inline constraint. A class name is not a member of the randomized object's
+class, so `A::v()` there resolves from the scope holding the call (18.7) and runs on that scope's
+own object, as the same text written outside the constraint would; only a name qualified by `this`
+or `super` is bound to the randomized object.
 
 #### A `try_get` while a `get` is waiting for more keys
 
