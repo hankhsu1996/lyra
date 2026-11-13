@@ -44,8 +44,10 @@ enum class InvocationMode : std::uint8_t {
   // The named method's own role decides: the latest override where it is
   // virtual, the named method where it is not (LRM 8.20).
   kVirtual,
-  // `super.m()`: the named method runs and overriding is not allowed (LRM
-  // 8.15).
+  // `super.m()`, or `C::m()` with `C` a superclass of the object: the call
+  // names the class whose method runs, and overriding is not allowed (LRM
+  // 8.15, 8.23), as Java's `super` mode covers both `super.m()` and
+  // `T.super.m()`.
   kSuper,
 };
 

@@ -184,10 +184,22 @@ auto ObjectOfMethodCall(
   return ObjectOfCall(lowerer, frame, this_class, span);
 }
 
-auto InvocationModeOf(const slang::ast::CallExpression& call)
-    -> hir::InvocationMode {
-  return call.lookupInfo.viaSuper ? hir::InvocationMode::kSuper
-                                  : hir::InvocationMode::kVirtual;
+// How a call made on `receiver` finds the method that runs. A name qualified by
+// a superclass of the object, through `super` or `::`, reaches that class's
+// member, and the call runs it (LRM 8.15, 8.23); one qualified by the object's
+// own class names the member an unqualified name would, and dispatches as that
+// one does (LRM 8.20), as Java's `super` and `this` forms of a call do.
+template <ExprLowerer Lowerer>
+auto InvocationModeOf(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const slang::ast::CallExpression& call, hir::ExprId receiver,
+    diag::SourceSpan span) -> diag::Result<hir::InvocationMode> {
+  if (call.classQualifier == nullptr) return hir::InvocationMode::kVirtual;
+  auto named = lowerer.Owner().InternType(*call.classQualifier, span);
+  if (!named) return std::unexpected(std::move(named.error()));
+  return *named == frame.Exprs().Get(receiver).type
+             ? hir::InvocationMode::kVirtual
+             : hir::InvocationMode::kSuper;
 }
 
 // Arms what a sampled value function's operand reads, so it answers for one.
@@ -997,6 +1009,8 @@ auto LowerBuiltinClassMethodCall(
     lowerer.Owner().DeclarationOf(*cls);
     auto receiver = ObjectOfMethodCall(lowerer, frame, call);
     if (!receiver) return std::unexpected(std::move(receiver.error()));
+    auto mode = InvocationModeOf(lowerer, frame, call, *receiver, span);
+    if (!mode) return std::unexpected(std::move(mode.error()));
     return expr(
         hir::CallExpr{
             .callee =
@@ -1004,7 +1018,7 @@ auto LowerBuiltinClassMethodCall(
                     .receiver = *receiver,
                     .callee =
                         hir::BuiltinHookCallee{.cls = *cls, .hook = *hook},
-                    .mode = InvocationModeOf(call)},
+                    .mode = *mode},
             .arguments = std::move(arg_ids)});
   }
   auto object = ObjectOfCall(lowerer, frame, call.thisClass(), span);
@@ -1166,14 +1180,16 @@ auto LowerSubroutineCall(
   }
 
   // Instance-method call (LRM 8.6): every source shape -- `h.foo()`, an
-  // unqualified `foo()` from inside a class body, `this.foo()`, and
-  // `super.foo()` -- lowers to one `MethodCallRef`, distinguished by the object
-  // it runs on and its invocation mode. The declaring class is the one
+  // unqualified `foo()` from inside a class body, `this.foo()`, `super.foo()`
+  // and `C::foo()` -- lowers to one `MethodCallRef`, distinguished by the
+  // object it runs on and its invocation mode. The declaring class is the one
   // declaring the method the call runs, an inherited one included.
   if (IsMadeOnAnObject(call, *sym)) {
     const auto& declaring_class = *declaring;
     auto receiver = ObjectOfMethodCall(lowerer, frame, call);
     if (!receiver) return std::unexpected(std::move(receiver.error()));
+    auto mode = InvocationModeOf(lowerer, frame, call, *receiver, span);
+    if (!mode) return std::unexpected(std::move(mode.error()));
     auto callee =
         unit_lowerer.MakeClassMethodTarget(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
@@ -1191,7 +1207,7 @@ auto LowerSubroutineCall(
                     hir::MethodCallRef{
                         .receiver = *receiver,
                         .callee = *std::move(callee),
-                        .mode = InvocationModeOf(call)},
+                        .mode = *mode},
                 .arguments = std::move(arguments),
             },
         .span = span,
