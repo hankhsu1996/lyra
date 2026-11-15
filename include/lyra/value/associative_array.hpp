@@ -181,14 +181,17 @@ class AssociativeArray {
   }
 
   // LRM 20.7 `$low` / `$high` over an associative dimension: the smallest and
-  // largest currently allocated index. With none allocated the dimension has no
-  // index to report and the query reads the index type's default, which is
-  // `'x` for a 4-state index type, as LRM 20.7 requires.
-  [[nodiscard]] auto MinIndex() const -> K {
-    return FirstIndex().value_or(DefaultOf<K>());
+  // largest currently allocated index, as a value of `R`, the integral type the
+  // query answers at, which need not be the index type. With none allocated the
+  // dimension has no index to report and the query reads `R`'s default, which
+  // is `'x` for the `integer` LRM 20.7 states.
+  template <IntegralValue R>
+  [[nodiscard]] auto MinIndex() const -> R {
+    return IndexAs<R>(FirstIndex());
   }
-  [[nodiscard]] auto MaxIndex() const -> K {
-    return LastIndex().value_or(DefaultOf<K>());
+  template <IntegralValue R>
+  [[nodiscard]] auto MaxIndex() const -> R {
+    return IndexAs<R>(LastIndex());
   }
 
   // LRM 7.9.6 / 7.9.7: the smallest stored index strictly greater than `probe`
@@ -275,6 +278,14 @@ class AssociativeArray {
       return Tuple<Int, K>{Int::FromInt(0), std::move(probe)};
     }
     return Tuple<Int, K>{Int::FromInt(1), *std::move(visited)};
+  }
+
+  template <IntegralValue R>
+  [[nodiscard]] static auto IndexAs(const std::optional<K>& index) -> R {
+    if (!index.has_value()) {
+      return DefaultOf<R>();
+    }
+    return Convert<R>(*index);
   }
 
   BasicAssociativeArray<StaticKey<K>, StaticElem<V>> core_;

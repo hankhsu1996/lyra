@@ -1211,13 +1211,6 @@ auto ReferArrayElement(
   return BuildReference(out, from.Part(element, formed, StepTo(position)));
 }
 
-// Builds a copy of one element of `type`, in the storage the call handed over.
-auto ElementInto(void* out, const value::ValueType& type, const void* element)
-    -> void* {
-  type.Copy(element, out);
-  return out;
-}
-
 // Stores each of a literal's entries under the index it names (LRM 7.9.11). An
 // entry is the product of the two, of `entry_type`, which states each one's
 // type, so nothing here converts either.
@@ -1479,24 +1472,30 @@ auto EmplaceVisited(
   return EmplaceCompletion(out, type, std::move(components));
 }
 
-// The least or greatest index an array holds (LRM 20.7), built in `out`, or,
-// where it holds none, x in every position of `answer_type`, the integral type
-// the query answers, whatever the array holds.
+// The least or greatest index an array holds (LRM 20.7), built in `out` as a
+// value of `answer_type`, the integral type the query answers at, which need
+// not be the index type; where the array holds none, that type's default,
+// which is x in every position of the `integer` LRM 20.7 states.
 auto IndexInto(void* out, const value::AnyValue* index, const void* answer_type)
     -> void* {
-  if (index == nullptr) {
-    const value::IntegralValueType* answered = TypeAt(answer_type).AsIntegral();
-    if (answered == nullptr) {
-      throw InternalError(
-          "an array query answers an integral value (LRM 20.7) -- please "
-          "report this as a bug");
-    }
-    value::WrittenWords none(answered->Shape());
-    value::FillScalar(none.MutableView(), value::FourStateBit::kUnknown);
-    none.StoreTo(out);
-    return out;
+  const value::IntegralValueType* answered = TypeAt(answer_type).AsIntegral();
+  const value::IntegralValueType* indexed =
+      index == nullptr ? nullptr : index->Type().AsIntegral();
+  if (answered == nullptr || (index != nullptr && indexed == nullptr)) {
+    throw InternalError(
+        "an array query answers an integral index (LRM 20.7) -- please "
+        "report this as a bug");
   }
-  return ElementInto(out, index->Type(), index->Bytes());
+  value::WrittenWords answer(answered->Shape());
+  if (index == nullptr) {
+    value::FillDefault(answer.MutableView());
+  } else {
+    const value::LoadedWords key =
+        value::LoadedWords::Load(index->Bytes(), indexed->Shape());
+    value::Convert(answer.MutableView(), key.View());
+  }
+  answer.StoreTo(out);
+  return out;
 }
 
 // A completion the runtime already assembled as a pair, laid out component by
