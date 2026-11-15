@@ -35,8 +35,13 @@ the same every time the body reaches the stop, so each pass stops at the one wai
 its own around the stop where no loop repeats it. One only the stop can name, a delay's amount or a
 fork's branches, is built at the stop, and so is one that reads a variable the body declares. A stop
 only marks the activation as parked on it; an occurrence while one is parked wakes it, and any other
-occurrence is ignored. That is the C++ and Rust shape of the same thing -- an awaitable is a local
-of the coroutine, declared where its inputs are known, and a stop only awaits it.
+occurrence wakes nothing. That is the C++ and Rust shape of the same thing -- an awaitable is a
+local of the coroutine, declared where its inputs are known, and a stop only awaits it. A
+procedure's timing control asks afresh at its next stop, since it waits only for what happens once
+it is reached (LRM 9.4.2); a continuous assignment or a procedural continuous assignment is
+sensitive whenever it executes, its own update included (LRM 4.9.1, 4.9.2), so its wait keeps a
+change the process makes itself while it runs, and its next stop places it again in the Active
+region of its set.
 
 A task is enabled with `co_await`: enabling a time-consuming task suspends the enabling process
 until the task completes (LRM 13.3). The scheduler resumes the innermost suspended frame, and each

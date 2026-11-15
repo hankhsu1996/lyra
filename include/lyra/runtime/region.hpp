@@ -20,8 +20,10 @@ namespace lyra::runtime {
 
 // A region later in the time step that a thread's own work lands in, named by
 // what it is for in whichever region set the thread runs in (LRM 4.4.1): where
-// a `#0` resumes it, and where its nonblocking assignments update.
-enum class RegionInSet : std::uint8_t { kInactive, kNba };
+// an evaluation event for a process sensitive to what an update changed is
+// scheduled (LRM 4.5), where a `#0` resumes it, and where its nonblocking
+// assignments update.
+enum class RegionInSet : std::uint8_t { kActive, kInactive, kNba };
 
 // The regions of one region set. Design code runs in the active region set and
 // a program's in the reactive one (LRM 24.3.1), each the other's dual.
@@ -33,6 +35,8 @@ struct RegionSet {
   [[nodiscard]] constexpr auto operator[](RegionInSet which) const
       -> support::Region {
     switch (which) {
+      case RegionInSet::kActive:
+        return active;
       case RegionInSet::kInactive:
         return inactive;
       case RegionInSet::kNba:

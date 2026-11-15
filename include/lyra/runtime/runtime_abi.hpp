@@ -870,6 +870,12 @@ auto lyra_rt_wait_on(void* triggers, std::uint64_t triggers_count, void* out)
     -> void*;
 auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void*;
 
+// The wait of a continuous process on the source elements of its expression,
+// which a change it makes itself while it runs evaluates again (LRM 4.9.1,
+// 4.9.2).
+auto lyra_rt_wait_continuously_on(
+    void* triggers, std::uint64_t triggers_count, void* out) -> void*;
+
 // The wait an expect statement stops at (LRM 16.17): it watches `clock` and
 // `disable_reads` and holds the one attempt the statement began, over a
 // property that starts at the positions `start`, which `attempts_of` answers

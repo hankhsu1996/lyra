@@ -3355,6 +3355,13 @@ auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void* {
       out, WaitOnImplicitList(static_cast<const ReadReport*>(report)));
 }
 
+auto lyra_rt_wait_continuously_on(
+    void* triggers, std::uint64_t triggers_count, void* out) -> void* {
+  return Emplace(
+      out, WaitContinuouslyOn(
+               SpanAt<const Trigger* const>(triggers, triggers_count)));
+}
+
 auto lyra_rt_wait_on_property_evaluation(
     void* runtime, void* clock, std::uint64_t clock_count, void* disable_reads,
     std::uint64_t disable_reads_count, void* start, std::uint64_t start_count,

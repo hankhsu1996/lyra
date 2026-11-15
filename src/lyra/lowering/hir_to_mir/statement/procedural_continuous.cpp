@@ -300,7 +300,7 @@ auto LowerProceduralContinuousAssignStmt(
   } else {
     mir::Block wait_block;
     mir::Builder wait_block_builder = body.Into(wait_block);
-    auto waited = BuildValueChangeWaitStmt(
+    auto waited = BuildContinuousWaitStmt(
         wait_block_builder,
         closure.Frame().WithLoopPreheader(&body.Body()).WithBlock(&wait_block),
         process, pca.sensitivity_list);
