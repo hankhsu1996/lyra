@@ -10,10 +10,13 @@
 namespace lyra::runtime {
 
 // The waits woken by what happens on storage: an event control (LRM 9.4.2,
-// 15.5.2), an implicit sensitivity (LRM 9.2.2.2.1, 9.4.2.2), and a `wait`
-// statement (LRM 9.4.3). They part company in two places only: what they watch
-// is fixed where the wait is built or known only once the process has
-// evaluated, and what starting a stopped process again asks of them (LRM 9.7).
+// 15.5.2), an implicit sensitivity (LRM 9.2.2.2.1, 9.4.2.2), a `wait`
+// statement (LRM 9.4.3), and the sensitivity of a continuous process (LRM
+// 4.9.1, 4.9.2). They part company in four places: what they watch is fixed
+// where the wait is built or known only once the process has evaluated,
+// whether a change made while the process runs is an occurrence for it,
+// whether resuming from them is a report flush point (LRM 12.4.2.1, 16.4.2),
+// and what starting a stopped process again asks of them (LRM 9.7).
 
 // A wait on one trigger per leaf, the storage it watches fixed for as long as
 // the body holding it runs: what a change there is measured from is taken where
@@ -25,6 +28,18 @@ namespace lyra::runtime {
 
 // The same on the implicit list `report` settled.
 [[nodiscard]] auto WaitOnImplicitList(const ReadReport* report) -> Wait;
+
+// The wait of a continuous assignment or a procedural continuous assignment,
+// on one trigger per source element of its expression. Such a process is
+// sensitive to those elements whenever it executes, and its own update is a
+// change of one of them like any other (LRM 4.5, 4.9.1, 4.9.2): a change that
+// reaches the wait while the process runs is kept, and the process's next stop
+// evaluates it again in the active region of this time step instead of
+// waiting.
+[[nodiscard]] auto WaitContinuouslyOn(std::span<const Trigger> triggers)
+    -> Wait;
+[[nodiscard]] auto WaitContinuouslyOn(std::span<const Trigger* const> triggers)
+    -> Wait;
 
 // An event control its process decides: the frame resumes on every candidacy
 // the reports' places see, and evaluates its observations again to learn

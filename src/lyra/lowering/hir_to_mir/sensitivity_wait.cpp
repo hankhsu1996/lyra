@@ -563,22 +563,37 @@ auto BuildTriggerArray(
           .type = triggers_type});
 }
 
+namespace {
+
+// The wait the runtime's `entry` builds on `leaves`, in `storage_block`, and
+// the stop at it for `stop_block`.
 template <typename Lowerer>
-auto BuildWaitOnStmt(
-    mir::Builder storage_block, mir::Builder stop_block, const WalkFrame& frame,
-    Lowerer& lowerer, std::span<const ObservedLeaf> leaves)
-    -> diag::Result<mir::Stmt> {
+auto BuildLeafWaitStmt(
+    support::BuiltinFn entry, mir::Builder storage_block,
+    mir::Builder stop_block, const WalkFrame& frame, Lowerer& lowerer,
+    std::span<const ObservedLeaf> leaves) -> diag::Result<mir::Stmt> {
   const WalkFrame storage_frame = frame.WithBlock(&storage_block.Body());
   auto triggers =
       BuildTriggerArray(storage_block, storage_frame, lowerer, leaves);
   if (!triggers) return std::unexpected(std::move(triggers.error()));
   const mir::LocalId wait = DeclareLocal(
-      storage_frame,
-      storage_block.Add(
-          mir::MakeCallExpr(
-              mir::Direct{.target = support::BuiltinFn::kWaitOn}, {*triggers},
-              lowerer.Owner().Unit().builtins.wait)));
+      storage_frame, storage_block.Add(
+                         mir::MakeCallExpr(
+                             mir::Direct{.target = entry}, {*triggers},
+                             lowerer.Owner().Unit().builtins.wait)));
   return BuildParkStmt(lowerer.Owner(), stop_block, wait);
+}
+
+}  // namespace
+
+template <typename Lowerer>
+auto BuildWaitOnStmt(
+    mir::Builder storage_block, mir::Builder stop_block, const WalkFrame& frame,
+    Lowerer& lowerer, std::span<const ObservedLeaf> leaves)
+    -> diag::Result<mir::Stmt> {
+  return BuildLeafWaitStmt(
+      support::BuiltinFn::kWaitOn, storage_block, stop_block, frame, lowerer,
+      leaves);
 }
 
 auto BuildValueChangeLeaves(
@@ -596,10 +611,14 @@ auto BuildValueChangeLeaves(
   return leaves;
 }
 
+namespace {
+
+// The wait the runtime's `entry` builds on the variables `sensitivity_list`
+// names, a change to any of them being the event, and the stop at it.
 template <typename Lowerer>
-auto BuildValueChangeWaitStmt(
-    mir::Builder stop_block, const WalkFrame& frame, Lowerer& lowerer,
-    std::span<const hir::SensitivityEntry> sensitivity_list)
+auto BuildSensitivityWaitStmt(
+    support::BuiltinFn entry, mir::Builder stop_block, const WalkFrame& frame,
+    Lowerer& lowerer, std::span<const hir::SensitivityEntry> sensitivity_list)
     -> diag::Result<mir::Stmt> {
   return BuildStopAtWait(
       frame, stop_block, sensitivity_list, lowerer.HirExprs(), {}, false,
@@ -607,8 +626,30 @@ auto BuildValueChangeWaitStmt(
         const std::vector<ObservedLeaf> leaves = BuildValueChangeLeaves(
             lowerer.Owner().Unit(), frame.WithBlock(&storage.Body()), storage,
             sensitivity_list);
-        return BuildWaitOnStmt(storage, stop, frame, lowerer, leaves);
+        return BuildLeafWaitStmt(entry, storage, stop, frame, lowerer, leaves);
       });
+}
+
+}  // namespace
+
+template <typename Lowerer>
+auto BuildValueChangeWaitStmt(
+    mir::Builder stop_block, const WalkFrame& frame, Lowerer& lowerer,
+    std::span<const hir::SensitivityEntry> sensitivity_list)
+    -> diag::Result<mir::Stmt> {
+  return BuildSensitivityWaitStmt(
+      support::BuiltinFn::kWaitOn, stop_block, frame, lowerer,
+      sensitivity_list);
+}
+
+template <typename Lowerer>
+auto BuildContinuousWaitStmt(
+    mir::Builder stop_block, const WalkFrame& frame, Lowerer& lowerer,
+    std::span<const hir::SensitivityEntry> sensitivity_list)
+    -> diag::Result<mir::Stmt> {
+  return BuildSensitivityWaitStmt(
+      support::BuiltinFn::kWaitContinuouslyOn, stop_block, frame, lowerer,
+      sensitivity_list);
 }
 
 auto HoldImplicitList(
@@ -679,6 +720,12 @@ template auto BuildValueChangeWaitStmt(
     mir::Builder, const WalkFrame&, ProcessLowerer&,
     std::span<const hir::SensitivityEntry>) -> diag::Result<mir::Stmt>;
 template auto BuildValueChangeWaitStmt(
+    mir::Builder, const WalkFrame&, const StructuralScopeLowerer&,
+    std::span<const hir::SensitivityEntry>) -> diag::Result<mir::Stmt>;
+template auto BuildContinuousWaitStmt(
+    mir::Builder, const WalkFrame&, ProcessLowerer&,
+    std::span<const hir::SensitivityEntry>) -> diag::Result<mir::Stmt>;
+template auto BuildContinuousWaitStmt(
     mir::Builder, const WalkFrame&, const StructuralScopeLowerer&,
     std::span<const hir::SensitivityEntry>) -> diag::Result<mir::Stmt>;
 

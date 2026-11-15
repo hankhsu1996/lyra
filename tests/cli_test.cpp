@@ -3083,14 +3083,15 @@ TEST(LyraRun, AnErrorInANonblockingEventControlStopsTheProcedure) {
   }
 }
 
-// Procedures that keep waking each other with no delay between them are legal
-// text the standard only warns of (LRM 9.2.2, 12.7.6), and a tool that stops
-// such a run owes its reader the one thing they cannot find alone: which
-// procedures. The corpus cannot state this, since the run has to fail.
+// Processes that keep waking each other, or themselves, with no delay between
+// them are legal text the standard only warns of (LRM 9.2.2, 12.7.6), and a
+// tool that stops such a run owes its reader the one thing they cannot find
+// alone: which processes. The corpus cannot state this, since the run has to
+// fail.
 //
 // The procedure that set the pair going ran once and is not among those still
 // running when the run is stopped, so it is not named.
-TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
+TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProcessesKeepingItThere) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
@@ -3112,11 +3113,11 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
   EXPECT_NE(run.stderr_text.find("time never advances"), std::string::npos)
       << run.stderr_text;
   EXPECT_NE(
-      run.stderr_text.find("test.sv:3:3: note: this procedure in 'Test' ran"),
+      run.stderr_text.find("test.sv:3:3: note: this process in 'Test' ran"),
       std::string::npos)
       << run.stderr_text;
   EXPECT_NE(
-      run.stderr_text.find("test.sv:4:3: note: this procedure in 'Test' ran"),
+      run.stderr_text.find("test.sv:4:3: note: this process in 'Test' ran"),
       std::string::npos)
       << run.stderr_text;
   EXPECT_EQ(run.stderr_text.find("test.sv:5:3"), std::string::npos)
@@ -3144,14 +3145,35 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
   ASSERT_THAT(stuck, ExitedWithCode(Ne(0)))
       << stuck.stdout_text << stuck.stderr_text;
   const auto generator = stuck.stderr_text.find(
-      "clocked.sv:8:3: note: this procedure in 'Test' ran");
+      "clocked.sv:8:3: note: this process in 'Test' ran");
   const auto registers = stuck.stderr_text.find(
-      "clocked.sv:3:3: note: this procedure in 'Test.held[");
+      "clocked.sv:3:3: note: this process in 'Test.held[");
   ASSERT_NE(generator, std::string::npos) << stuck.stderr_text;
   ASSERT_NE(registers, std::string::npos) << stuck.stderr_text;
   EXPECT_LT(generator, registers) << stuck.stderr_text;
-  EXPECT_NE(stuck.stderr_text.find("and 5 more procedures"), std::string::npos)
+  EXPECT_NE(stuck.stderr_text.find("and 5 more processes"), std::string::npos)
       << stuck.stderr_text;
+
+  // A continuous assignment is evaluated again whenever what it reads
+  // changes, its own update included (LRM 10.3.2, 4.9.1), so one inverting
+  // its own two-state target never settles, and it is the process named.
+  const auto inverting = *tmp_or / "inverting.sv";
+  std::ofstream(inverting) << "module Test;\n"
+                           << "  bit a;\n"
+                           << "  assign a = ~a;\n"
+                           << "endmodule\n";
+  const std::vector<std::string> inverting_args = {
+      "run", "--backend", "llvm", "--top", "Test", inverting.string()};
+  const auto inverted = RunChildProcess(lyra, inverting_args);
+  ASSERT_THAT(inverted, ExitedWithCode(Ne(0)))
+      << inverted.stdout_text << inverted.stderr_text;
+  EXPECT_NE(inverted.stderr_text.find("time never advances"), std::string::npos)
+      << inverted.stderr_text;
+  EXPECT_NE(
+      inverted.stderr_text.find(
+          "inverting.sv:3:10: note: this process in 'Test' ran"),
+      std::string::npos)
+      << inverted.stderr_text;
 }
 
 // An input port written with no port kind, of a type no net type resolves, is
@@ -3285,7 +3307,7 @@ TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
     EXPECT_NE(run.stderr_text.find("interrupted at time 7"), std::string::npos)
         << backend << ": " << run.stderr_text;
     EXPECT_NE(
-        run.stderr_text.find("test.sv:4:3: note: this procedure was running"),
+        run.stderr_text.find("test.sv:4:3: note: this process was running"),
         std::string::npos)
         << backend << ": " << run.stderr_text;
     EXPECT_EQ(run.stdout_text, "reached time 7\n")
@@ -3438,7 +3460,7 @@ TEST(LyraRun, ARunStoppedInDeferredWorkSaysWhichProcedureDeferredIt) {
         << backend << ": " << Describe(run.end) << "\n"
         << run.stderr_text;
     EXPECT_NE(
-        run.stderr_text.find("test.sv:7:3: note: this procedure was running"),
+        run.stderr_text.find("test.sv:7:3: note: this process was running"),
         std::string::npos)
         << backend << ": " << run.stderr_text;
   }

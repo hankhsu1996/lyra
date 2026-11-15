@@ -3,7 +3,8 @@
 Date: 2026-10-05. Status: accepted. Moved a wait's memberships off the activation
 (`a-membership-is-one-record.md`), and revises `waiting-is-an-operation.md` D4 and
 `disable-scope-invalidation.md` D2 in place. Revised 2026-11-01: a wait no longer stands in the
-outermost block for the body's whole run.
+outermost block for the body's whole run. Revised 2026-11-14: a continuous process's wait keeps a
+change made while it runs.
 
 ## Context
 
@@ -29,9 +30,9 @@ hand-written model with the same event counts.
 **Every timing control is a wait the body holds in its frame, built so that a stop reached again
 stops at the same wait, and ended where nothing can reach that stop again.** Each stop says only
 that the activation is parked on it now; an occurrence while one is parked wakes it, and one while
-none is, or while the activation is stopped, is no occurrence. Every timing control stops through
-the same entry, and nothing about a stop is decided twice; the one other way a body gives up control
-is a foreign task carried on a fiber (LRM 35.9), which waits for no occurrence at all.
+none is, or while the activation is stopped, wakes nothing. Every timing control stops through the
+same entry, and nothing about a stop is decided twice; the one other way a body gives up control is
+a foreign task carried on a fiber (LRM 35.9), which waits for no occurrence at all.
 
 - **Where it is built is decided by what it names and by what repeats it.** A wait whose leaves are
   cells of the design, and whose observations evaluate nothing but such cells where a change
@@ -52,7 +53,25 @@ is a foreign task carried on a fiber (LRM 35.9), which waits for no occurrence a
   observable, a `wait fork` condition, a process's termination -- when it is built, and leaves when
   it ends. Reaching a place asks the wait whether an activation is parked on it, and takes that
   activation if the occurrence is an event for it. One stop answers every change that arrives before
-  the activation runs, and a change the activation makes itself while running is no occurrence.
+  the activation runs.
+- **What a change made while the process runs is depends on what the process is.** A procedure's
+  timing control waits only for what happens once the procedure reaches it (LRM 9.4.2), so a change
+  the procedure makes itself while running, or one that reaches the wait while nothing is parked
+  there, is no occurrence for it. A continuous assignment and a procedural continuous assignment are
+  processes sensitive to the source elements of their expression whenever they execute, and their
+  new value is an update of its own, which schedules an evaluation of every process sensitive to
+  what it changed (LRM 4.5, 4.9.1, 4.9.2); an assignment whose expression reads its own target is
+  one of those. The process writes inside the pass that evaluated it, while nothing is parked on its
+  wait, so that wait keeps the change, and the stop that follows schedules the evaluation in the
+  Active region of its region set rather than waiting. Only a change the process makes itself is
+  kept: one another process makes while this one waits in a queue to run comes before the evaluation
+  that run makes, which reads it, and keeping it would evaluate the process twice for every input
+  written twice in one step -- an `always_comb` writing a default and then its value does that on
+  every run. A process that keeps changing what it reads keeps its time slot going round its regions
+  until the slot's bound on that ends the run. Revised 2026-11-14: the bullet above said a change
+  the activation makes itself while running is no occurrence for any wait; that was written for
+  timing controls, and every continuous assignment reading its own target stopped after one
+  evaluation with a value no evaluation leaves.
 - **A wait for a state is reached by each change on the way there.** A `join` watches each branch's
   termination (LRM 9.3.2 -- a killed branch has terminated as surely as one that ran out),
   `wait fork` the process's children (LRM 9.6.1), an `await` its target's termination (LRM 9.7).

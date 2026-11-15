@@ -33,9 +33,11 @@ struct WithoutStopping {};
 struct OnAnOccurrence {};
 
 // Later in the time step it stopped in, in `region` of the region set the
-// execution runs in: a `#0` delay resumes in the Inactive or Re-Inactive region
-// (LRM 4.4.2.3, 4.4.2.7), a nonblocking assignment's carrier in the NBA or
-// Re-NBA region (LRM 4.4.2.4, 4.4.2.8).
+// execution runs in: a continuous process its own update changed is evaluated
+// again in the Active or Reactive region (LRM 4.5, 4.9.1), a `#0` delay
+// resumes in the Inactive or Re-Inactive region (LRM 4.4.2.3, 4.4.2.7), a
+// nonblocking assignment's carrier in the NBA or Re-NBA region (LRM 4.4.2.4,
+// 4.4.2.8).
 struct LaterInThisTimeStep {
   RegionInSet region;
 };
@@ -112,10 +114,11 @@ struct WaitMembership : IntrusiveListNode<WaitMembership> {
 void EnrolOnPlace(
     WaitMembership& membership, Observer observer, const Trigger& watched);
 
-// How one kind of timing control waits: what it watches, and what it answers
-// when the execution stops at it and when a stopped execution is started again
-// (LRM 9.7). It is the awaiter of the execution's `co_await`, in the C++ sense:
-// the object the suspension asks how to suspend and how to be woken.
+// How one kind of wait waits -- a timing control, or the sensitivity of a
+// continuous process: what it watches, and what it answers when the execution
+// stops at it and when a stopped execution is started again (LRM 9.7). It is
+// the awaiter of the execution's `co_await`, in the C++ sense: the object the
+// suspension asks how to suspend and how to be woken.
 //
 // It owns its memberships, which stand for its whole life, and names the
 // activation parked on it only while one is. Reaching a membership asks it
@@ -159,9 +162,9 @@ class Awaiter {
 
   // The activation an occurrence reaching `membership` wakes: the one parked
   // here, where one is and the occurrence is an event for it. Waking it is
-  // what ends its being parked. Nothing parked means nothing to ask, so a
+  // what ends its being parked. Nothing parked means nothing to wake, so a
   // change while the activation runs -- its own writes among them -- or while
-  // it is stopped is no occurrence for it.
+  // it is stopped wakes no one; what the awaiter keeps of it is its own.
   [[nodiscard]] auto WokenBy(const WaitMembership& membership) -> Activation* {
     if (parked_ == nullptr) {
       ReachedWhileUnparked();
@@ -203,8 +206,10 @@ class Awaiter {
     return true;
   }
 
-  // An occurrence reached a membership while nothing was parked here. Most
-  // waits ask afresh at every stop and have nothing to keep of it.
+  // An occurrence reached a membership while nothing was parked here. A
+  // procedure's timing control waits only for what happens once it is
+  // reached (LRM 9.4.2), so it asks afresh at every stop; a continuous
+  // process is sensitive while it runs too (LRM 4.9.1), so its wait keeps it.
   virtual void ReachedWhileUnparked() {
   }
 

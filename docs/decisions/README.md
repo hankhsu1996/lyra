@@ -1556,9 +1556,10 @@ the detail lives in the entry itself.
   control is a wait the body's frame holds, built so a stop reached again stops at the same wait
   (outside the innermost loop on fixed storage, at the stop for a delay or a join); its memberships
   stand for its life, each stop only parks on it and answers how the execution carries on, and a
-  join waits on its branches' termination. Every process stays one coroutine; the
-  two-kinds-of-process split was built, measured and rejected. Revises waiting-is-an-operation D4
-  and disable-scope-invalidation D2.
+  join waits on its branches' termination. A continuous process's wait keeps a change the process
+  makes itself while it runs and evaluates it again in the Active region. Every process stays one
+  coroutine; the two-kinds-of-process split was built, measured and rejected. Revises
+  waiting-is-an-operation D4 and disable-scope-invalidation D2.
 - [a-coroutines-storage-states-its-lifetime](a-coroutines-storage-states-its-lifetime.md) -- a
   coroutine's slots realize LIR's storage statements as lifetime markers, as clang's do at every
   level, so LLVM's split reads the lifetime LIR states rather than checking every pair of a slot's

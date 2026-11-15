@@ -1760,6 +1760,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "wait_on_implicit_list",
           .declaration = RuntimeFunction("WaitOnImplicitList"),
           .takes_the_location = false};
+    case BuiltinFn::kWaitContinuouslyOn:
+      return {
+          .name = "wait_continuously_on",
+          .declaration = RuntimeFunction("WaitContinuouslyOn"),
+          .takes_the_location = false};
     case BuiltinFn::kParkAt:
       return {
           .name = "park_at",

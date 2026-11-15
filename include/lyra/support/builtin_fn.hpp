@@ -867,12 +867,16 @@ enum class BuiltinFn : std::uint16_t {
   // decides (LRM 4.5), and answers one or zero.
   kObservationFires,
   // LRM 9.4.2 / 9.4.2.2 value-change wait -- an `@(...)`, an `@*`, an
-  // implicit list, a continuous assignment. The wait is built on one trigger
-  // per watched leaf, or on the implicit list a report settled (LRM
-  // 9.2.2.2.1), so a stop reached again stops at the same wait. Each answers
-  // the wait.
+  // implicit list. The wait is built on one trigger per watched leaf, or on
+  // the implicit list a report settled (LRM 9.2.2.2.1), so a stop reached again
+  // stops at the same wait. Each answers the wait.
   kWaitOn,
   kWaitOnImplicitList,
+  // LRM 4.9.1 / 4.9.2 the wait of a continuous assignment or a procedural
+  // continuous assignment, on one trigger per source element of its
+  // expression: a change the process makes itself while it runs evaluates it
+  // again. Answers the wait.
+  kWaitContinuouslyOn,
   // LRM 9.4 every stop: it takes the runtime handle and the wait the body holds
   // -- whichever construct built it -- and answers whether the caller must give
   // up control; the execution continues when what the wait waits for happens.

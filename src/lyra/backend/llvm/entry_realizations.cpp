@@ -1168,6 +1168,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObservationFires:
     case support::BuiltinFn::kWaitOn:
     case support::BuiltinFn::kWaitOnImplicitList:
+    case support::BuiltinFn::kWaitContinuouslyOn:
     case support::BuiltinFn::kWaitOnPropertyEvaluation:
     case support::BuiltinFn::kAttemptsOf:
     case support::BuiltinFn::kBindPropertyEvaluation:

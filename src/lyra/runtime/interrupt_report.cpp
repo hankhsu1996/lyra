@@ -93,7 +93,7 @@ void InterruptReport::SayWhereTheRunWas(int signal) {
       WriteDecimal(written_at.Line());
       Write(":");
       WriteDecimal(written_at.Column());
-      Write(": note: this procedure was running\n");
+      Write(": note: this process was running\n");
     }
   }
   // Its handler is gone, so the signal's own action ends the process: at once

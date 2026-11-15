@@ -133,9 +133,9 @@ auto ReportReads(
 // Every construct that waits for something to happen on storage converges on
 // one wait holding one trigger per leaf -- `@*` (LRM 9.4.2.2), `@(...)` (LRM
 // 9.4.2), `@e` (LRM 15.5.2), an implicit list (LRM 9.2.2.2.1), and a
-// continuous assignment -- differing only in what decides that reaching a leaf
-// is an event for them, and built so a stop reached again stops at the same
-// wait.
+// continuous assignment (LRM 4.9.1) -- differing in what decides that reaching
+// a leaf is an event for them and in whether a change the waiting process makes
+// itself counts, and built so a stop reached again stops at the same wait.
 
 // The block a wait is built in to be reused, where `cells` are what it watches,
 // `evaluated` the expressions of `exprs` its observations evaluate where a
@@ -209,12 +209,24 @@ auto BuildWaitOnStmt(
     mir::Builder block, std::span<const hir::SensitivityEntry> sensitivity)
     -> std::vector<ObservedLeaf>;
 
-// The wait of a construct the standard makes sensitive to the variables it
-// reads, where a change to any of them is the event (LRM 9.4.2.2, 10.3, 10.6).
-// Being reached is the whole condition, so its leaves share the one
-// observation that says so. The stop is for `stop_block`.
+// The wait of an `@*`, and of anything else that waits as an event control
+// does, on the variables `sensitivity_list` names, where a change to any of
+// them once its process waits there is the event (LRM 9.4.2, 9.4.2.2). Being
+// reached is the whole condition, so its leaves share the one observation that
+// says so. The stop is for `stop_block`.
 template <typename Lowerer>
 auto BuildValueChangeWaitStmt(
+    mir::Builder stop_block, const WalkFrame& frame, Lowerer& lowerer,
+    std::span<const hir::SensitivityEntry> sensitivity_list)
+    -> diag::Result<mir::Stmt>;
+
+// The wait of a continuous assignment or a procedural continuous assignment on
+// the source elements of its expression (LRM 10.3.2, 10.6). The process is
+// sensitive to them whenever it executes, its own update included (LRM 4.9.1,
+// 4.9.2), so the wait is the runtime's continuous one; otherwise it is built
+// and stopped at as a timing control's is.
+template <typename Lowerer>
+auto BuildContinuousWaitStmt(
     mir::Builder stop_block, const WalkFrame& frame, Lowerer& lowerer,
     std::span<const hir::SensitivityEntry> sensitivity_list)
     -> diag::Result<mir::Stmt>;

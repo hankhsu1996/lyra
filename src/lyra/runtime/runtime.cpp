@@ -344,13 +344,13 @@ void Runtime::ReportUnsettledSlot(std::span<const ProcedureContext> ran) {
                       one.procedure.scope->HierarchicalPath().View()});
     diagnostic_.Line(
         std::format(
-            "{}{}note: this procedure{} ran {} in the last {} passes",
-            written_at, written_at.empty() ? "" : ": ", where, Times(one.runs),
+            "{}{}note: this process{} ran {} in the last {} passes", written_at,
+            written_at.empty() ? "" : ": ", where, Times(one.runs),
             kNotedRegionPasses));
   }
   if (named < counted.size()) {
     diagnostic_.Line(
-        std::format("note: and {} more procedures", counted.size() - named));
+        std::format("note: and {} more processes", counted.size() - named));
   }
 }
 

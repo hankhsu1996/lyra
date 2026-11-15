@@ -1,7 +1,6 @@
 #include "lyra/runtime/value_change_wait.hpp"
 
 #include <iterator>
-#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
@@ -9,6 +8,8 @@
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/read_report.hpp"
+#include "lyra/runtime/region.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/wait.hpp"
 
@@ -83,6 +84,63 @@ class StandingAwaiter final : public Awaiter {
   // Nothing has measured a baseline before the first stop, which is the same
   // as something having moved since the last one.
   bool reached_while_unparked_ = true;
+};
+
+// The sensitivity of a continuous process -- a continuous assignment, or a
+// procedural one (LRM 4.9.1, 4.9.2) -- to the source elements of its
+// expression. Its new value is an update of its own, and an update schedules an
+// evaluation of every process sensitive to what it changed (LRM 4.5), this one
+// included where its expression reads its own target. The process writes while
+// it runs, so the change reaches this wait while nothing is parked here; it is
+// kept, and the stop that follows schedules the evaluation it calls for. Only a
+// change the process makes itself is one that follows its reading: one made
+// while it waits in a queue to run comes before the evaluation that run makes,
+// and that evaluation reads it. Where the process keeps changing what it reads,
+// the time slot keeps going round its regions, and its bound on that is what
+// ends the run.
+class ContinuousAwaiter final : public Awaiter {
+ public:
+  // `process` is the one that waits on it, which builds it before its first
+  // evaluation.
+  ContinuousAwaiter(RuntimeProcess& process, std::span<const Trigger> triggers)
+      : Awaiter(triggers.size()), process_(&process) {
+    for (const Trigger& trigger : triggers) {
+      EnrolOnLeaf(trigger);
+    }
+  }
+
+  ContinuousAwaiter(
+      RuntimeProcess& process, std::span<const Trigger* const> triggers)
+      : Awaiter(triggers.size()), process_(&process) {
+    for (const Trigger* trigger : triggers) {
+      EnrolOnLeaf(*trigger);
+    }
+  }
+
+  auto Begin() -> Resumption override {
+    if (changed_while_running_) {
+      changed_while_running_ = false;
+      return LaterInThisTimeStep{.region = RegionInSet::kActive};
+    }
+    return OnAnOccurrence{};
+  }
+
+  // A flush point is a procedure's or a process's resumption from an event
+  // control or a wait statement (LRM 12.4.2.1, 16.4.2); a continuous process
+  // is no procedure and stops at neither.
+  [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
+    return false;
+  }
+
+ private:
+  void ReachedWhileUnparked() override {
+    if (current_runtime().TryCurrentProcess() == process_) {
+      changed_while_running_ = true;
+    }
+  }
+
+  RuntimeProcess* process_;
+  bool changed_while_running_ = false;
 };
 
 // Waiting for one of the places an evaluation the process made reached to
@@ -197,6 +255,16 @@ auto WaitOn(std::span<const Trigger* const> triggers) -> Wait {
 
 auto WaitOnImplicitList(const ReadReport* report) -> Wait {
   return WaitOn(report->ImplicitList());
+}
+
+auto WaitContinuouslyOn(std::span<const Trigger> triggers) -> Wait {
+  return MakeWait<ContinuousAwaiter>(
+      current_runtime().CurrentProcess(), triggers);
+}
+
+auto WaitContinuouslyOn(std::span<const Trigger* const> triggers) -> Wait {
+  return MakeWait<ContinuousAwaiter>(
+      current_runtime().CurrentProcess(), triggers);
 }
 
 auto WaitRecollecting(

@@ -268,11 +268,11 @@ auto AppendArm(
 
 }  // namespace
 
-// LRM 10.3.2 (continuous assignment) and LRM 9.2.2.2.1 (always_comb) share a
-// runtime mental model: re-evaluate the assignment whenever any RHS read
-// changes. HIR keeps continuous assignment as a distinct scope-level node so
-// source diagnostics retain provenance; at HIR -> MIR we materialise the
-// runtime shape as a coroutine body `forever { <store>; wait on reads; }`,
+// LRM 10.3.2: the assignment is evaluated again whenever an operand of its
+// right-hand side changes, its own update included (LRM 4.9.1). HIR keeps
+// continuous assignment as a distinct scope-level node so source diagnostics
+// retain provenance; at HIR -> MIR the lowering builds the runtime shape as a
+// coroutine body `forever { <store>; wait on reads; }`,
 // which the caller registers as a continuous driver. The body executes once
 // when it starts (the natural fall-through of the eternal loop) before the
 // first wait, which is the evaluation LRM 4.9.1 asks for to propagate constant
@@ -473,7 +473,7 @@ auto LowerContinuousDrive(
     if (auto stored = store(body_frame, *value); !stored) {
       return std::unexpected(std::move(stored.error()));
     }
-    auto waited = BuildValueChangeWaitStmt(
+    auto waited = BuildContinuousWaitStmt(
         body_block_builder, body_frame, lowerer, sensitivity);
     if (!waited) return std::unexpected(std::move(waited.error()));
     body_block_builder.AppendStmt(*std::move(waited));
@@ -529,7 +529,7 @@ auto LowerContinuousDrive(
       return std::unexpected(std::move(armed.error()));
     }
 
-    auto waited = BuildValueChangeWaitStmt(
+    auto waited = BuildContinuousWaitStmt(
         body_block_builder, body_frame, lowerer, sensitivity);
     if (!waited) return std::unexpected(std::move(waited.error()));
     body_block_builder.AppendStmt(*std::move(waited));
