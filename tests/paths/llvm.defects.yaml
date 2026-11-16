@@ -9,6 +9,5 @@
 # A case may appear in this file or in the refusal record, never both.
 
 06_data_types/a_static_variable_initialized_in_a_block_needs_static: "the program the standard rejects ran"
-08_classes/new_is_refused_as_a_returned_expression: "the program the standard rejects ran"
 08_classes/this_is_refused_in_a_property_initializer: "the program the standard rejects ran"
 23_hierarchy/an_input_of_no_port_kind_takes_a_net_type: "the program the standard rejects ran"
