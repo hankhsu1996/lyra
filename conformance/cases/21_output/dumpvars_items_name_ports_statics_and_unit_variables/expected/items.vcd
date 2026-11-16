@@ -1,0 +1,30 @@
+$timescale 1ns $end
+$scope package $unit $end
+$var reg 4 U u [3:0] $end
+$upscope $end
+$scope module Top $end
+$scope module bus $end
+$var reg 4 D data [3:0] $end
+$upscope $end
+$scope module l $end
+$var wire 4 A a [3:0] $end
+$scope task bump $end
+$var reg 4 C count [3:0] $end
+$upscope $end
+$scope begin blk $end
+$var reg 4 H held [3:0] $end
+$upscope $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+b0111 U
+b0101 D
+b0100 A
+b0010 C
+b0011 H
+$end
+#1
+b1000 A
+b0011 C

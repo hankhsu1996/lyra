@@ -5,6 +5,7 @@
 #include <fstream>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <iterator>
 #include <span>
 #include <string>
 #include <string_view>
@@ -35,15 +36,15 @@ using conformance::framework::RunChildProcess;
 // and without a delay, one whose captures are each small and together large, a
 // parameter left to its default, overridden, and of a structure type, a value
 // named on the command line, a memory loaded from a file as text and as bytes,
-// a change waited on, a value forced and released, its sampled value, and one
-// a loop's step discards -- each checked against what it must hold. A list of
-// arguments longer than a frame keeps is checked beside them, and so are
-// locals each as large as a frame keeps one and together many times the
-// stack: in a function, which hands one by reference and a value made of them
-// by value, in a method, in a process that is done with them before it first
-// waits, in a branch it forks, and in a process that waits on one and forks a
-// branch reading them; beside a function declaring as many as a frame keeps
-// together and one discarding as many values of that size.
+// a change waited on, a value forced and released, its sampled value, one a
+// loop's step discards, and one a dump reads -- each checked against what it
+// must hold. A list of arguments longer than a frame keeps is checked beside
+// them, and so are locals each as large as a frame keeps one and together many
+// times the stack: in a function, which hands one by reference and a value
+// made of them by value, in a method, in a process that is done with them
+// before it first waits, in a branch it forks, and in a process that waits on
+// one and forks a branch reading them; beside a function declaring as many as
+// a frame keeps together and one discarding as many values of that size.
 constexpr int kManyArguments = 200;
 constexpr int kManyLocals = 600;
 constexpr int kLocalsAFrameKeeps = 16;
@@ -171,6 +172,12 @@ module Test;
       return (MANY_ENDS) === '1;
     endfunction
   endclass
+
+  wide_t dumped = {1'b1, {4194302{1'b0}}, 1'b1};
+  initial begin
+    $dumpfile("DUMPFILE");
+    $dumpvars(0, dumped);
+  end
 
   bit locals_before_wait, locals_in_fork, captured, waited;
   initial begin
@@ -381,6 +388,8 @@ auto ExpectValuesKeptOffTheStack(std::span<const std::string> build_options)
       design.replace(at, name.size(), with);
     }
   };
+  const auto dump = *tmp_or / "dumped.vcd";
+  replace("DUMPFILE", dump.string());
   replace("MEMORY", memory.string());
   replace("MANY_FORMATS", formats);
   replace("MANY_ARGUMENTS", arguments);
@@ -413,6 +422,16 @@ auto ExpectValuesKeptOffTheStack(std::span<const std::string> build_options)
       "-c", std::format("ulimit -s 512 && exec '{}'", program.string())};
   const auto ran = RunChildProcess(*sh_or, run);
   EXPECT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+
+  // The dump read every bit of the variable where the design holds it.
+  std::ifstream dumped_file(dump);
+  const std::string dumped_text(
+      (std::istreambuf_iterator<char>(dumped_file)),
+      std::istreambuf_iterator<char>());
+  EXPECT_NE(
+      dumped_text.find(std::format("b1{}1 ", std::string(4194302, '0'))),
+      std::string::npos)
+      << "the dumped variable's value";
 }
 
 }  // namespace lyra::test

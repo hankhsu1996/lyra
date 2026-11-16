@@ -17,8 +17,10 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/dump_kind.hpp"
 #include "lyra/runtime/file.hpp"
-#include "lyra/support/dump_kind.hpp"
+#include "lyra/support/data_object.hpp"
+#include "lyra/support/port_direction.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/integral_words.hpp"
 
@@ -26,10 +28,214 @@ namespace lyra::runtime {
 
 DumpWriter::~DumpWriter() = default;
 
-auto DumpReference(const abi::DumpEntry& entry) -> std::string {
-  std::string reference = entry.identifier;
-  if (const auto range = entry.Range()) {
-    reference += std::format(" [{}:{}]", range->left, range->right);
+namespace {
+
+// The keyword a variable of `type` is declared by (LRM 21.7.5 Table 21-11),
+// an enumeration's being its base's.
+auto VariableKeyword(const abi::Typespec& type) -> DumpVarKind {
+  switch (type.Kind()) {
+    case support::TypespecKind::kEvent:
+      return DumpVarKind::kEvent;
+    case support::TypespecKind::kReal:
+    case support::TypespecKind::kShortReal:
+      return DumpVarKind::kReal;
+    case support::TypespecKind::kRealtime:
+      return DumpVarKind::kRealtime;
+    case support::TypespecKind::kInt:
+    case support::TypespecKind::kInteger:
+      return DumpVarKind::kInteger;
+    case support::TypespecKind::kTime:
+      return DumpVarKind::kTime;
+    case support::TypespecKind::kEnum:
+      if (type.base == nullptr) {
+        throw InternalError(
+            "dump: an enumeration's type states no base it is declared by -- "
+            "please report this as a bug");
+      }
+      return VariableKeyword(*type.base);
+    case support::TypespecKind::kBit:
+    case support::TypespecKind::kLogic:
+    case support::TypespecKind::kShortInt:
+    case support::TypespecKind::kLongInt:
+    case support::TypespecKind::kByte:
+    case support::TypespecKind::kPackedStruct:
+    case support::TypespecKind::kPackedUnion:
+    case support::TypespecKind::kPackedArray:
+      return DumpVarKind::kReg;
+  }
+  throw InternalError("dump: unknown type kind");
+}
+
+// The keyword a net of `net_type` is declared by (LRM 21.7.2.1).
+auto NetKeyword(support::NetType net_type) -> DumpVarKind {
+  switch (net_type) {
+    case support::NetType::kWire:
+    case support::NetType::kUwire:
+      return DumpVarKind::kWire;
+    case support::NetType::kTri:
+      return DumpVarKind::kTri;
+    case support::NetType::kWand:
+      return DumpVarKind::kWand;
+    case support::NetType::kTriand:
+      return DumpVarKind::kTriand;
+    case support::NetType::kWor:
+      return DumpVarKind::kWor;
+    case support::NetType::kTrior:
+      return DumpVarKind::kTrior;
+    case support::NetType::kTri0:
+      return DumpVarKind::kTri0;
+    case support::NetType::kTri1:
+      return DumpVarKind::kTri1;
+    case support::NetType::kSupply0:
+      return DumpVarKind::kSupply0;
+    case support::NetType::kSupply1:
+      return DumpVarKind::kSupply1;
+    case support::NetType::kTrireg:
+      return DumpVarKind::kTrireg;
+  }
+  throw InternalError("dump: unknown net type");
+}
+
+auto KeywordOf(const abi::DataObjectRecord& object) -> DumpVarKind {
+  const abi::Typespec& type = *object.typespec;
+  switch (type.Kind()) {
+    case support::TypespecKind::kEvent:
+    case support::TypespecKind::kReal:
+    case support::TypespecKind::kShortReal:
+    case support::TypespecKind::kRealtime:
+      return VariableKeyword(type);
+    case support::TypespecKind::kBit:
+    case support::TypespecKind::kLogic:
+    case support::TypespecKind::kInt:
+    case support::TypespecKind::kShortInt:
+    case support::TypespecKind::kLongInt:
+    case support::TypespecKind::kByte:
+    case support::TypespecKind::kInteger:
+    case support::TypespecKind::kTime:
+    case support::TypespecKind::kEnum:
+    case support::TypespecKind::kPackedStruct:
+    case support::TypespecKind::kPackedUnion:
+    case support::TypespecKind::kPackedArray:
+      break;
+  }
+  const std::optional<support::NetType> net_type = object.NetType();
+  return net_type.has_value() ? NetKeyword(*net_type) : VariableKeyword(type);
+}
+
+// The port an extended dump records `port`, at `position` among its scope's
+// ports, as (LRM 21.7.3.1), none for a port bound by reference, which carries
+// no value across it.
+auto DumpedPortOf(const abi::DescribedPort& described, std::uint32_t position)
+    -> std::optional<DumpedPort> {
+  const auto port = [&](DumpPortDirection direction) {
+    return DumpedPort{.direction = direction, .position = position};
+  };
+  switch (described.Direction()) {
+    case support::PortDirection::kInput:
+      return port(DumpPortDirection::kInput);
+    case support::PortDirection::kOutput:
+      return port(DumpPortDirection::kOutput);
+    case support::PortDirection::kInOut:
+      return port(DumpPortDirection::kInOut);
+    case support::PortDirection::kRef:
+    case support::PortDirection::kConstRef:
+      return std::nullopt;
+  }
+  throw InternalError("dump: unknown port direction");
+}
+
+// The range a dump declares a value of `type` under (LRM 21.7.5): an
+// enumeration's base's, since an enumeration whose declaration states a type
+// is dumped as that type, and for a packed array of several dimensions one
+// spanning all its bits, since those dimensions are collapsed into one. The
+// type as declared stays the row's, which a reader of the design by name asks.
+auto DumpedRangeOf(const abi::Typespec& type) -> std::optional<support::Range> {
+  const auto collapsed = [&]() -> std::optional<support::Range> {
+    const std::optional<support::Range> outermost = type.Range();
+    if (!outermost.has_value()) {
+      return std::nullopt;
+    }
+    const std::int64_t span = outermost->left > outermost->right
+                                  ? outermost->left - outermost->right + 1
+                                  : outermost->right - outermost->left + 1;
+    if (span == static_cast<std::int64_t>(type.width)) {
+      return outermost;
+    }
+    return support::Range{
+        .left = static_cast<std::int64_t>(type.width) - 1, .right = 0};
+  };
+  switch (type.Kind()) {
+    case support::TypespecKind::kEnum:
+      return type.base != nullptr ? DumpedRangeOf(*type.base) : std::nullopt;
+    case support::TypespecKind::kBit:
+    case support::TypespecKind::kLogic:
+    case support::TypespecKind::kPackedArray:
+      return collapsed();
+    case support::TypespecKind::kInt:
+    case support::TypespecKind::kShortInt:
+    case support::TypespecKind::kLongInt:
+    case support::TypespecKind::kByte:
+    case support::TypespecKind::kInteger:
+    case support::TypespecKind::kTime:
+    case support::TypespecKind::kReal:
+    case support::TypespecKind::kShortReal:
+    case support::TypespecKind::kRealtime:
+    case support::TypespecKind::kEvent:
+    case support::TypespecKind::kPackedStruct:
+    case support::TypespecKind::kPackedUnion:
+      return type.Range();
+  }
+  throw InternalError("dump: unknown type kind");
+}
+
+}  // namespace
+
+auto DumpVarDeclarationOf(const abi::DataObjectRecord& object)
+    -> DumpVarDeclaration {
+  const DumpVarKind kind = KeywordOf(object);
+  const auto width = [&]() -> std::uint32_t {
+    switch (DumpValueFormOf(kind)) {
+      case DumpValueForm::kTriggered:
+        return 1;
+      case DumpValueForm::kReal:
+        return 64;
+      case DumpValueForm::kBits:
+        return object.typespec->width;
+    }
+    throw InternalError("dump: unknown value");
+  }();
+  return DumpVarDeclaration{
+      .identifier = object.identifier,
+      .kind = kind,
+      .width = width,
+      .range = DumpedRangeOf(*object.typespec),
+      .port = std::nullopt};
+}
+
+auto DumpPortDeclarationOf(
+    const abi::DataObjectRecord& connects, const abi::DescribedPort& port,
+    std::uint32_t position) -> std::optional<DumpVarDeclaration> {
+  DumpVarDeclaration declared = DumpVarDeclarationOf(connects);
+  switch (DumpValueFormOf(declared.kind)) {
+    case DumpValueForm::kTriggered:
+      return std::nullopt;
+    case DumpValueForm::kBits:
+    case DumpValueForm::kReal:
+      break;
+  }
+  declared.identifier = port.name;
+  declared.port = DumpedPortOf(port, position);
+  if (!declared.port.has_value()) {
+    return std::nullopt;
+  }
+  return declared;
+}
+
+auto DumpReference(const DumpVarDeclaration& variable) -> std::string {
+  std::string reference = variable.identifier;
+  if (variable.range.has_value()) {
+    reference +=
+        std::format(" [{}:{}]", variable.range->left, variable.range->right);
   }
   return reference;
 }
@@ -251,16 +457,12 @@ class VcdWriter final : public VcdCommandWriter {
  public:
   using VcdCommandWriter::VcdCommandWriter;
 
-  void Var(DumpCode code, const abi::DumpEntry& entry) override {
+  void Var(DumpCode code, const DumpVarDeclaration& variable) override {
     if (scalar_.size() <= code.value) {
       scalar_.resize(code.value + 1);
     }
-    scalar_[code.value] = entry.width == 1;
-    Declare(code, entry);
-  }
-
-  void Alias(DumpCode code, const abi::DumpEntry& entry) override {
-    Declare(code, entry);
+    scalar_[code.value] = variable.width == 1;
+    Declare(code, variable);
   }
 
   void Change(DumpCode code, const DumpValue& value) override {
@@ -299,12 +501,11 @@ class VcdWriter final : public VcdCommandWriter {
     return spelled;
   }
 
-  void Declare(DumpCode code, const abi::DumpEntry& entry) {
+  void Declare(DumpCode code, const DumpVarDeclaration& variable) {
     File().Put(
         std::format(
-            "$var {} {} {} {} $end\n",
-            support::DumpVarKindKeyword(entry.Kind()), entry.width,
-            Identifier(code), DumpReference(entry)));
+            "$var {} {} {} {} $end\n", DumpVarKindKeyword(variable.kind),
+            variable.width, Identifier(code), DumpReference(variable)));
   }
 
   // A scalar is its character and its code with nothing between them; a vector
@@ -332,15 +533,15 @@ class VcdWriter final : public VcdCommandWriter {
 // output, and through an inout, whose driver is not told apart, in the
 // characters of a port of unknown direction. Each string is indexed by the
 // scalar's planes as a number: 0, 1, z, x.
-auto PortStateCharacter(
-    support::DumpPortDirection direction, value::FourStateBit bit) -> char {
+auto PortStateCharacter(DumpPortDirection direction, value::FourStateBit bit)
+    -> char {
   const auto planes = static_cast<std::size_t>(std::to_underlying(bit));
   switch (direction) {
-    case support::DumpPortDirection::kInput:
+    case DumpPortDirection::kInput:
       return std::string_view("DUZN")[planes];
-    case support::DumpPortDirection::kOutput:
+    case DumpPortDirection::kOutput:
       return std::string_view("LHTX")[planes];
-    case support::DumpPortDirection::kInOut:
+    case DumpPortDirection::kInOut:
       return std::string_view("01F?")[planes];
   }
   throw InternalError("dump: unknown port direction");
@@ -360,8 +561,8 @@ class ExtendedVcdWriter final : public VcdCommandWriter {
   // LRM 21.7.4.2: the size is the index range the declaration states, and
   // where it states none -- a single bit, a real, an int -- the port is
   // written as scalar, 1.
-  void Var(DumpCode code, const abi::DumpEntry& entry) override {
-    const std::optional<abi::DumpEntry::Connection> port = entry.Port();
+  void Var(DumpCode code, const DumpVarDeclaration& variable) override {
+    const std::optional<DumpedPort>& port = variable.port;
     if (!port.has_value()) {
       throw InternalError("ExtendedVcdWriter: a dumped port has a direction");
     }
@@ -369,18 +570,16 @@ class ExtendedVcdWriter final : public VcdCommandWriter {
       ports_.resize(code.value + 1);
     }
     ports_[code.value] = {
-        .direction = port->direction, .width = UnknownWidth(entry)};
+        .direction = port->direction, .width = UnknownWidth(variable)};
     std::string size = "1";
-    if (const auto range = entry.Range()) {
-      size = std::format("[{}:{}]", range->left, range->right);
+    if (variable.range.has_value()) {
+      size =
+          std::format("[{}:{}]", variable.range->left, variable.range->right);
     }
     File().Put(
         std::format(
-            "$var port {} <{} {} $end\n", size, code.value, entry.identifier));
-  }
-
-  void Alias(DumpCode code, const abi::DumpEntry& entry) override {
-    Var(code, entry);
+            "$var port {} <{} {} $end\n", size, code.value,
+            variable.identifier));
   }
 
   void Time(SimTime time) override {
@@ -438,19 +637,20 @@ class ExtendedVcdWriter final : public VcdCommandWriter {
   // A port's direction, and how many positions an unknown value of it is
   // written with.
   struct Port {
-    support::DumpPortDirection direction = support::DumpPortDirection::kInput;
+    DumpPortDirection direction = DumpPortDirection::kInput;
     std::uint32_t width = 0;
   };
 
   // An unknown real has no position to spell, so it is spelled as one.
-  static auto UnknownWidth(const abi::DumpEntry& entry) -> std::uint32_t {
-    switch (support::DumpValueFormOf(entry.Kind())) {
-      case support::DumpValueForm::kReal:
+  static auto UnknownWidth(const DumpVarDeclaration& variable)
+      -> std::uint32_t {
+    switch (DumpValueFormOf(variable.kind)) {
+      case DumpValueForm::kReal:
         return 1;
-      case support::DumpValueForm::kTriggered:
+      case DumpValueForm::kTriggered:
         throw InternalError("ExtendedVcdWriter: a port is no event");
-      case support::DumpValueForm::kBits:
-        return entry.width;
+      case DumpValueForm::kBits:
+        return variable.width;
     }
     throw InternalError("ExtendedVcdWriter: unknown value");
   }
@@ -468,9 +668,8 @@ class ExtendedVcdWriter final : public VcdCommandWriter {
   SimTime time_ = 0;
 };
 
-// Text a person reads: one line a change, `<time> <names> = <value>`, the
-// time with its unit and a vector's every position from the most significant.
-// A thing several names stand for is named by all of them.
+// Text a person reads: one line a change, `<time> <name> = <value>`, the time
+// with its unit and a vector's every position from the most significant.
 class TextWriter final : public DumpWriter {
  public:
   explicit TextWriter(OpenedStream file) : file_(std::move(file)) {
@@ -481,20 +680,20 @@ class TextWriter final : public DumpWriter {
   }
 
   void Scope(DumpScopeKind kind, std::string_view name) override {
-    scopes_.emplace_back(name);
-    file_.Put(std::format("{} {}\n", DumpScopeKindKeyword(kind), ScopePath()));
+    const std::string path = MemberPath(name);
+    file_.Put(std::format("{} {}\n", DumpScopeKindKeyword(kind), path));
+    scopes_.push_back(Named{.path = path, .kind = kind});
   }
 
   void Upscope() override {
     scopes_.pop_back();
   }
 
-  void Var(DumpCode code, const abi::DumpEntry& entry) override {
-    Name(code, entry);
-  }
-
-  void Alias(DumpCode code, const abi::DumpEntry& entry) override {
-    Name(code, entry);
+  void Var(DumpCode code, const DumpVarDeclaration& variable) override {
+    if (names_.size() <= code.value) {
+      names_.resize(code.value + 1);
+    }
+    names_[code.value] = MemberPath(variable.identifier);
   }
 
   void EndDefinitions() override {
@@ -554,33 +753,43 @@ class TextWriter final : public DumpWriter {
     return std::format("{}{}", time_ * timescale_.count, timescale_.unit);
   }
 
-  [[nodiscard]] auto ScopePath() const -> std::string {
-    std::string joined;
-    for (const std::string& scope : scopes_) {
-      if (!joined.empty()) {
-        joined.push_back('.');
-      }
-      joined += scope;
+  // The hierarchical name of `name` declared in the innermost scope open: the
+  // scope's name and then `name`, after `::` where the scope is a package, as
+  // LRM 26.3 names what a package declares, and after `.` otherwise (LRM 23.6),
+  // so a package's member is never spelled as a top module's would be.
+  [[nodiscard]] auto MemberPath(std::string_view name) const -> std::string {
+    if (scopes_.empty()) {
+      return std::string(name);
     }
-    return joined;
+    const Named& within = scopes_.back();
+    return std::format(
+        "{}{}{}", within.path, MemberSeparatorOf(within.kind), name);
   }
 
-  void Name(DumpCode code, const abi::DumpEntry& entry) {
-    if (names_.size() <= code.value) {
-      names_.resize(code.value + 1);
+  static auto MemberSeparatorOf(DumpScopeKind kind) -> std::string_view {
+    switch (kind) {
+      case DumpScopeKind::kPackage:
+        return "::";
+      case DumpScopeKind::kModule:
+      case DumpScopeKind::kTask:
+      case DumpScopeKind::kFunction:
+      case DumpScopeKind::kBegin:
+      case DumpScopeKind::kFork:
+        return ".";
     }
-    std::string& names = names_[code.value];
-    if (!names.empty()) {
-      names += ", ";
-    }
-    names += ScopePath();
-    names.push_back('.');
-    names += entry.identifier;
+    throw InternalError("TextWriter: unknown scope kind");
   }
+
+  // A scope open, by the hierarchical name it is written under and what it
+  // is.
+  struct Named {
+    std::string path;
+    DumpScopeKind kind;
+  };
 
   DumpTextFile file_;
   value::TimeUnitSpelling timescale_{.count = 1, .unit = "s"};
-  std::vector<std::string> scopes_;
+  std::vector<Named> scopes_;
   std::vector<std::string> names_;
   SimTime time_ = 0;
 };

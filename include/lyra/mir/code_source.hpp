@@ -8,9 +8,7 @@
 
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/value_operation.hpp"
 
@@ -19,33 +17,15 @@ namespace lyra::mir {
 struct CompilationUnit;
 
 // Where a callable's code sits, as rustc's `MirSource` names the item a body
-// belongs to. Every code a unit holds is at exactly one of these, a callable at
-// the target a call names it by; a body built below MIR, which the unit does
-// not hold, is named the same way.
-struct ConstructorSource {
-  ClassId owner;
-
-  auto operator<=>(const ConstructorSource&) const
-      -> std::strong_ordering = default;
-};
-struct RecordMethodSource {
-  RecordId record;
-  support::ValueOperation answers;
-
-  auto operator<=>(const RecordMethodSource&) const
-      -> std::strong_ordering = default;
-};
+// belongs to. Every code a unit holds is at exactly one of these: a callable of
+// the unit's table at the target a call names it by, whoever declares it, the
+// definition a foreign name's scope entries share, and a body built below MIR,
+// which the unit does not hold, named by its type and the operation.
 struct TypeOperationSource {
   TypeId type;
   support::ValueOperation answers;
 
   auto operator<=>(const TypeOperationSource&) const
-      -> std::strong_ordering = default;
-};
-struct ClosureSource {
-  ClosureId closure;
-
-  auto operator<=>(const ClosureSource&) const
       -> std::strong_ordering = default;
 };
 struct ForeignScopeEntrySource {
@@ -54,9 +34,8 @@ struct ForeignScopeEntrySource {
   auto operator<=>(const ForeignScopeEntrySource&) const
       -> std::strong_ordering = default;
 };
-using CodeSource = std::variant<
-    ConstructorSource, CallableTarget, UnitCallableTarget, RecordMethodSource,
-    TypeOperationSource, ClosureSource, ForeignScopeEntrySource>;
+using CodeSource =
+    std::variant<CallableTarget, TypeOperationSource, ForeignScopeEntrySource>;
 
 // The source by what a reader of a message knows it as: the name the source
 // gave it where it gave one, and where it sits otherwise.

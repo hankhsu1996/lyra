@@ -20,13 +20,14 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/continuous_assign.hpp"
-#include "lyra/hir/dumped_declaration.hpp"
+#include "lyra/hir/described_data_object.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/scope_construction.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+#include "lyra/support/data_object.hpp"
 #include "lyra/support/strength_level.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -52,9 +53,10 @@ struct BuiltInstanceMember {
   std::vector<hir::LoweringRef> made;
 };
 
-// The ports a scope declares, by the net or variable each connects inside it.
-using DumpedPorts =
-    std::unordered_map<const slang::ast::Symbol*, hir::DumpedDeclaration::Port>;
+// The ports a scope declares, by the net or variable each connects inside it,
+// several ports connecting one being listed each in its own position.
+using DescribedPorts = std::unordered_map<
+    const slang::ast::Symbol*, std::vector<support::DescribedPort>>;
 
 // Per-structural-scope lowerer: produces one hir::StructuralScope populated
 // with the members of a slang scope (variables, subroutines, processes,
@@ -181,26 +183,24 @@ class StructuralScopeLowerer {
   auto PopulateNetAliasMember(
       const slang::ast::NetAliasSymbol& alias, WalkFrame frame)
       -> diag::Result<void>;
-  // LRM 21.7.1.2: what a value dump records of one data object of an instance
-  // of this scope, named as a body of the scope names it, in the procedural
-  // scope it is written in where it is written in one, and, where `ports`
-  // connects it, the port it is (LRM 21.7.3.1); nothing where a dump records no
-  // value of its kind.
-  auto DumpedEntryOf(
-      const slang::ast::ValueSymbol& value, const DumpedPorts& ports,
-      WalkFrame frame, std::optional<hir::ProceduralScopeId> lexical_scope)
-      -> diag::Result<std::optional<hir::DumpedDeclaration>>;
-  // What a value dump records of the data objects the scope declares itself.
-  auto CollectDumped(const DumpedPorts& ports, WalkFrame frame)
-      -> diag::Result<std::vector<hir::DumpedDeclaration>>;
+  // What a reader reaching the design by name finds of one data object of this
+  // scope (LRM 21.7.1.2): its cell as the scope's own code reaches it, and,
+  // where `ports` connects it, each port connecting it (LRM 21.7.4.2); nothing
+  // where such a reader describes no value of its kind.
+  auto DescribedEntryOf(
+      const slang::ast::ValueSymbol& value, const DescribedPorts& ports,
+      WalkFrame frame) -> diag::Result<std::optional<hir::DescribedDataObject>>;
+  // What a reader by name finds of the data objects the scope declares itself.
+  auto CollectDescribed(const DescribedPorts& ports, WalkFrame frame)
+      -> diag::Result<std::vector<hir::DescribedDataObject>>;
   // Defines each static variable, and each constant differing per object, that
   // a body of this scope writes (LRM 6.21): a data object of the scope written
   // in the block or subroutine the source puts it in, whose initializer is an
   // expression of the scope run once before any procedure starts (LRM 10.5).
-  // What a value dump records of each is stated beside its definition.
+  // What a reader by name finds of each is stated beside its definition.
   auto DefineWrittenStatics(
       std::span<const WrittenStatic> statics, WalkFrame frame)
-      -> diag::Result<std::vector<hir::DumpedDeclaration>>;
+      -> diag::Result<std::vector<hir::DescribedDataObject>>;
   auto LowerContinuousAssign(
       const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
       -> diag::Result<hir::ContinuousAssign>;

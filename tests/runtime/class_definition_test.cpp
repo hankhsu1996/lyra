@@ -48,12 +48,17 @@ constexpr lyra::abi::DefinitionRecord kDefinition{
 
 constexpr ScopeInfo kScopeInfo{
     .scope_declarations =
-        {.definition = &kDefinition, .elaborated = {}, .lexical = {}},
+        {.definition = &kDefinition,
+         .elaborated = {},
+         .lexical = {},
+         .data_objects = {},
+         .ports = {},
+         .read = nullptr,
+         .subscribe = nullptr},
     .exports = {},
     .resolve = nullptr,
     .initialize = nullptr,
-    .create_processes = nullptr,
-    .describe = nullptr};
+    .create_processes = nullptr};
 
 // The definition of a class of the design hierarchy extending `base`, whose
 // instances end as the library's scope.
@@ -180,12 +185,17 @@ class OwnClassScope : public Scope {
 
 const ScopeInfo kOwnClassScopeInfo{
     .scope_declarations =
-        {.definition = &kDefinition, .elaborated = {}, .lexical = {}},
+        {.definition = &kDefinition,
+         .elaborated = {},
+         .lexical = {},
+         .data_objects = {},
+         .ports = {},
+         .read = nullptr,
+         .subscribe = nullptr},
     .exports = {},
     .resolve = &Resolve,
     .initialize = &Initialize,
-    .create_processes = &CreateProcesses,
-    .describe = nullptr};
+    .create_processes = &CreateProcesses};
 
 const ObjectDefinition kOwnClassScope{
     .base = nullptr,

@@ -46,6 +46,14 @@ using MemberPlace = std::variant<MemberAtHops, MemberThroughSlot>;
     const UnitLowerer& owner, const hir::StructuralScope& scope,
     const hir::Expr& expr) -> std::optional<hir::RoutedValueRef>;
 
+// The variable `expr` names whole, wherever its cell lives: one a route
+// reaches, a modport's name standing for one whole variable among them (LRM
+// 25.5.4), one a namespace keeps, or a static property. None for a part of
+// one, and for anything else.
+[[nodiscard]] auto WholeVariableTarget(
+    const UnitLowerer& owner, const hir::StructuralScope& scope,
+    const hir::Expr& expr) -> std::optional<hir::ValueTarget>;
+
 // Resolves a value reference to the member it ends at. Pure: it reads
 // identities and types and mutates no block.
 [[nodiscard]] auto BindEndpoint(

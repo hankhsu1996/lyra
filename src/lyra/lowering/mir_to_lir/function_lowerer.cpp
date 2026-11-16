@@ -24,18 +24,17 @@
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/place_query.hpp"
-#include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/value_step.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -200,21 +199,7 @@ auto FunctionLowerer::LowerCallTarget(
                 Overloaded{
                     [&](const mir::CallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
-                      return unit_->CallableCallTarget(t.owner, t.slot);
-                    },
-                    [&](const mir::ClosureTarget& t)
-                        -> diag::Result<lir::CallTarget> {
-                      return lir::CallTarget{lir::FunctionTarget{
-                          .function = unit_->ClosureFunction(t.closure)}};
-                    },
-                    [&](const mir::ForeignSymbolTarget& f)
-                        -> diag::Result<lir::CallTarget> {
-                      // A name in the DPI-C name space is reached as an
-                      // external-linkage symbol the execution session resolves
-                      // (LRM 35.4); nothing about the call names a unit or a
-                      // class.
-                      return lir::CallTarget{
-                          lir::ForeignTarget{.symbol = f.linkage_name}};
+                      return unit_->CallTargetOf(t.callable);
                     },
                     [&](const support::BuiltinFn& fn)
                         -> diag::Result<lir::CallTarget> {
@@ -226,30 +211,6 @@ auto FunctionLowerer::LowerCallTarget(
                                   ? std::nullopt
                                   : std::optional{unit_->TranslateType(
                                         d.type_arguments.front())}}};
-                    },
-                    [&](const mir::UnitCallableTarget& t)
-                        -> diag::Result<lir::CallTarget> {
-                      // A body of a unit's namespace is reached by the symbol
-                      // the unit owning it emits it under.
-                      return lir::CallTarget{lir::SymbolTarget{
-                          .symbol = unit_->UnitCallableSymbol(t.slot)}};
-                    },
-                    // A base's constructor, entered on the object the call is
-                    // made on, as a `new` enters the class's own.
-                    [&](const mir::ConstructorTarget& t)
-                        -> diag::Result<lir::CallTarget> {
-                      return ConstructorOf(t.cls).callee;
-                    },
-                    // Reached by the symbol its declaring unit emits it under,
-                    // from that unit and from any other alike.
-                    [&](const mir::RecordMethodTarget& t)
-                        -> diag::Result<lir::CallTarget> {
-                      const mir::TypeDeclarationRef declaration =
-                          mir::RecordDeclarationOf(unit_->Mir(), t.record);
-                      return lir::CallTarget{lir::SymbolTarget{
-                          .symbol = lir::RecordMethodSymbol(
-                              declaration.unit_name, declaration.path,
-                              t.answers)}};
                     },
                     // A body this unit states for the type, which no other
                     // unit names.
@@ -292,7 +253,11 @@ auto FunctionLowerer::LowerCallTarget(
           // `class_method`. The receiver is already the call's first argument,
           // as it is for a method named outright.
           [&](const mir::Virtual& v) -> diag::Result<lir::CallTarget> {
-            if (unit_->Mir().GetClass(v.slot.owner_class).is_interface) {
+            if (unit_->Mir()
+                    .GetClass(
+                        mir::DeclaringClassOf(
+                            unit_->Mir(), v.slot.introduced_by))
+                    .is_interface) {
               return lir::CallTarget{lir::InterfaceDispatchTarget{
                   .requirement = unit_->SlotRef(v.slot)}};
             }
@@ -314,14 +279,14 @@ FunctionLowerer::FunctionLowerer(
 }
 
 FunctionLowerer::FunctionLowerer(
-    UnitLowerer& unit, const mir::ClosureDecl& closure, std::string name)
+    UnitLowerer& unit, mir::ClosureId closure, std::string name)
     : unit_(&unit),
-      code_(&closure.invoke),
-      closure_(&closure),
+      code_(&unit.Mir().callables.Get(unit.Mir().BodyOf(closure)).code),
+      closure_(&unit.Mir().GetClosure(closure)),
       name_(std::move(name)),
-      span_(closure.invoke.span),
-      variable_slot_(closure.invoke.locals.size(), std::nullopt),
-      locals_(closure.invoke.locals.size(), std::nullopt) {
+      span_(code_->span),
+      variable_slot_(code_->locals.size(), std::nullopt),
+      locals_(code_->locals.size(), std::nullopt) {
 }
 
 auto FunctionLowerer::TakeParam(mir::LocalId param) -> lir::ValueId {
@@ -508,7 +473,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
 auto FunctionLowerer::ConstructorOf(mir::ClassId cls) -> EnteredConstructor {
   return EnteredConstructor{
       .object_type = unit_->ClassValueType(cls),
-      .callee = unit_->ConstructorCallTarget(cls)};
+      .callee = unit_->ConstructionCallTargetOf(cls)};
 }
 
 auto FunctionLowerer::UnwindingType() -> lir::TypeId {

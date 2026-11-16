@@ -1,7 +1,7 @@
 $timescale 1ns $end
 $scope module Top $end
-$var reg 4 A a $end
-$var wire 4 W w $end
+$var reg 4 A a [3:0] $end
+$var wire 4 W w [3:0] $end
 $var real 64 R r $end
 $var integer 32 N n $end
 $var event 1 E e $end

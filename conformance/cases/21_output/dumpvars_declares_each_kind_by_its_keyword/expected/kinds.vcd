@@ -1,0 +1,65 @@
+$timescale 1ns $end
+$scope module Top $end
+$var event 1 Z p $end
+$var reg 1 B b $end
+$var reg 8 L l [7:0] $end
+$var reg 8 M m [7:0] $end
+$var reg 4 S s $end
+$var reg 4 ! pu $end
+$var integer 32 I i $end
+$var reg 16 J si $end
+$var reg 64 K li $end
+$var reg 8 Y by $end
+$var integer 32 N n $end
+$var time 64 T t $end
+$var real 64 R r $end
+$var real 64 Q sr $end
+$var realtime 64 P rt $end
+$var integer 32 C c $end
+$var reg 4 # e4 [3:0] $end
+$var event 1 $ ev $end
+$var wire 1 W w $end
+$var tri 1 X tr $end
+$var wand 1 A wa $end
+$var triand 1 D ta $end
+$var wor 1 O wo $end
+$var trior 1 E tor $end
+$var tri0 1 F t0 $end
+$var tri1 1 G t1 $end
+$var supply0 1 H s0 $end
+$var supply1 1 U s1 $end
+$var wire 1 V u $end
+$var trireg 1 % tg $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+1B
+b01011010 L
+b00111100 M
+b1011 S
+b0110 !
+b101 I
+b110 J
+b111 K
+b1000 Y
+b1001 N
+b1010 T
+r1.5 R
+r2.5 Q
+r3.5 P
+b1 C
+b0100 #
+1W
+1X
+1A
+1D
+1O
+1E
+0F
+1G
+0H
+1U
+1V
+x%
+$end

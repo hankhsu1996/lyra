@@ -280,11 +280,12 @@ auto OperationTakesATypeArgument(support::ValueOperation operation) -> bool {
       operation);
 }
 
-// The name of a callee fixed at compile time. Each kind of function is looked
-// up in its own table, and that kind also decides where a receiver goes.
-void WriteDirectCallee(
-    const ScopeView& view, const mir::Direct& direct, mir::TypeId result_type,
+// The name of a callable this unit declares, by who declares it, which also
+// decides where a receiver goes.
+void WriteCallableCallee(
+    const mir::CompilationUnit& unit, mir::CallableId callable,
     CallWriter& callee) {
+  const mir::CallableDecl& decl = unit.callables.Get(callable);
   std::visit(
       Overloaded{
           // Qualified by the owning class, `obj.Base::f()`, or
@@ -292,21 +293,26 @@ void WriteDirectCallee(
           // that unit's header is included. For a virtual method called
           // directly (LRM 8.15 `super`) that is what makes C++ skip virtual
           // dispatch; for any other method it changes nothing.
-          [&](const mir::CallableTarget& t) {
-            const auto& cls = view.Unit().GetClass(t.owner);
+          [&](const mir::DeclaredByClass&) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
-                CppClassPath(view.Unit(), t.owner),
-                "::", CppClassCallableName(view.Unit(), cls, t.slot));
+                ClassCallablePath{.unit = &unit, .callable = callable});
+          },
+          // A base's construction on the object being constructed,
+          // `(*self).Base::sv_construct(args)`, is qualified as a direct call
+          // to a member is.
+          [&](const mir::ConstructsClass&) {
+            callee.Named(
+                ReceiverPlacement::kIntoCalleeName,
+                ClassCallablePath{.unit = &unit, .callable = callable});
           },
           // A closure's body, as its type's call operator on the closure it
           // borrows, `c.sv_closure_3::operator()(x)`, or as the type's
           // function taking the box the closure was made in over,
           // `sv_closure_3::sv_call_once(box)`.
-          [&](const mir::ClosureTarget& t) {
-            const MintedName name = CppClosureName(t.closure);
-            switch (mir::ClosureKindOf(
-                view.Unit().types, view.Unit().GetClosure(t.closure))) {
+          [&](const mir::DeclaredByClosure& owner) {
+            const MintedName name = CppClosureName(owner.closure);
+            switch (mir::ClosureKindOf(unit.types, decl.code)) {
               case support::ClosureKind::kFn:
               case support::ClosureKind::kFnMut:
                 callee.Named(
@@ -320,39 +326,41 @@ void WriteDirectCallee(
             }
             throw InternalError("backend::cpp: unknown ClosureKind");
           },
-          // A function of a unit's namespace is qualified by that unit's,
-          // `::Top::f`, this unit's own included.
-          [&](const mir::UnitCallableTarget& t) {
+          // A function of a unit's namespace is spelled as its reach says; a
+          // foreign one's prototype is declared once in this artifact.
+          [&](const mir::DeclaredByNamespace&) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
-                CppNamespaceMemberScope(
-                    CppUnitCallableOwner(view.Unit(), t.slot)),
-                "::", CppUnitCallableName(view.Unit(), t.slot));
-          },
-          [&](const support::BuiltinFn& id) {
-            WriteEntryCallee(
-                view, support::RuntimeEntryOf(id), direct, result_type, callee);
-          },
-          // A base's constructor on the object being constructed,
-          // `(*self).Base::sv_construct(args)`, qualified as a direct call to a
-          // member is.
-          [&](const mir::ConstructorTarget& t) {
-            callee.Named(
-                ReceiverPlacement::kIntoCalleeName,
-                CppClassRef(view.Unit(), t.cls),
-                "::", CppConstructorMemberName());
+                NamespaceCallablePath{.unit = &unit, .callable = callable});
           },
           // A method of a struct or a union, qualified by its type the way a
           // class method is: `v.::Pkg::sv_types::s::IsBitIdentical(w)` on the
           // value it is asked of, `::Pkg::sv_types::s::FromBitstream(b)` for a
           // question asked of the type.
-          [&](const mir::RecordMethodTarget& t) {
+          [&](const mir::DeclaredByRecord& owner) {
             const mir::TypeDeclarationRef declaration =
-                mir::RecordDeclarationOf(view.Unit(), t.record);
+                mir::RecordDeclarationOf(unit, owner.record);
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
                 CppRecordQualifiedName(declaration.unit_name, declaration.path),
-                "::", CppValueOperationMemberName(t.answers));
+                "::", CppValueOperationMemberName(owner.answers));
+          }},
+      unit.OwnerOf(callable));
+}
+
+// The name of a callee fixed at compile time: a callable of the unit, by who
+// declares it, an entry of the runtime library, or an operation of a type.
+void WriteDirectCallee(
+    const ScopeView& view, const mir::Direct& direct, mir::TypeId result_type,
+    CallWriter& callee) {
+  std::visit(
+      Overloaded{
+          [&](const mir::CallableTarget& t) {
+            WriteCallableCallee(view.Unit(), t.callable, callee);
+          },
+          [&](const support::BuiltinFn& id) {
+            WriteEntryCallee(
+                view, support::RuntimeEntryOf(id), direct, result_type, callee);
           },
           // An operation a fixed-size array answers is the library
           // template's own member, which the host compiler instantiates for
@@ -385,14 +393,6 @@ void WriteDirectCallee(
                 ReceiverPlacement::kIntoCalleeName,
                 CppNamespaceMemberScope(t.unit_name),
                 "::", CppBringUpEntryName(t.entry));
-          },
-          // A DPI-C symbol is program-global, so it is spelled unqualified
-          // (LRM 35.4); the prototype it resolves against is declared once in
-          // this artifact.
-          [&](const mir::ForeignSymbolTarget& t) {
-            callee.Named(
-                ReceiverPlacement::kIntoCalleeName,
-                CppForeignSymbolName(t.linkage_name));
           }},
       direct.target);
 }
@@ -412,7 +412,11 @@ void WriteCallee(
           // for a behavior an interface introduced, the one finding
           // that interface's table among the object's.
           [&](const mir::Virtual& v) {
-            if (view.Unit().GetClass(v.slot.owner_class).is_interface) {
+            if (view.Unit()
+                    .GetClass(
+                        mir::DeclaringClassOf(
+                            view.Unit(), v.slot.introduced_by))
+                    .is_interface) {
               callee.Named(
                   ReceiverPlacement::kIntoArgumentList,
                   CppInterfaceDispatchCallee{

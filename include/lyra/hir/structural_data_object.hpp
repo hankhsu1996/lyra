@@ -10,6 +10,8 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/hir/typespec.hpp"
+#include "lyra/support/data_object.hpp"
 #include "lyra/support/strength_level.hpp"
 
 namespace lyra::hir {
@@ -19,26 +21,6 @@ struct StructuralDataObjectId {
 
   auto operator<=>(const StructuralDataObjectId&) const
       -> std::strong_ordering = default;
-};
-
-// The net type of a net data object (LRM 6.6, Table 6-1): it fixes how the
-// net's contributions resolve and what the net shows where nothing drives it.
-// `wire` and `tri` are one net type under two spellings, as are `wand` and
-// `triand`, and `wor` and `trior` (LRM 6.6.1, 6.6.3). The source spelling is
-// kept, and what it states is derived where the net type is translated.
-enum class NetType : std::uint8_t {
-  kWire,
-  kTri,
-  kWand,
-  kTriand,
-  kWor,
-  kTrior,
-  kTri0,
-  kTri1,
-  kSupply0,
-  kSupply1,
-  kUwire,
-  kTrireg,
 };
 
 // What a port's internal name stands for where it owns no storage, and so who
@@ -65,7 +47,7 @@ struct StructuralVariableDecl {
 // it stores, absent where it wrote none, which is the one net type that takes
 // one (LRM 6.6.4).
 struct StructuralNetDecl {
-  NetType net_type;
+  support::NetType net_type;
   std::optional<support::StrengthLevel> charge_strength;
 
   auto operator==(const StructuralNetDecl&) const -> bool = default;
@@ -145,6 +127,10 @@ struct StructuralDataObjectDecl {
   // static variables are the scope's own as much as one written beside them
   // (LRM 6.21), and absent for one written in the scope itself.
   std::optional<ProceduralScopeId> lexical_scope;
+  // The type as the source declared it, for a declaration of a type a reader
+  // reaching the design by name describes; none for any other, and for one
+  // the lowering introduced.
+  std::optional<Typespec> typespec = std::nullopt;
 
   auto operator==(const StructuralDataObjectDecl&) const -> bool = default;
 };

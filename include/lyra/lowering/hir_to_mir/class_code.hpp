@@ -69,17 +69,17 @@ namespace lyra::lowering::hir_to_mir {
 // called through.
 auto CallableFormOf(const hir::MethodDispatch& dispatch) -> CallableForm;
 
-// The operation `point` of the class `id` as the class states it: taking what
-// the operation does, it reads the instance the operation runs for -- the one
-// a body of the form `form` is handed where it is entered by a construction or
-// runs on no object (LRM 8.7, 8.10), and otherwise the one the object recorded
-// where `instance` says -- and enters the code that instance's body compiled,
-// through the method `published`, the class published of the scope declaring
-// the class, introduced for it.
+// The operation `operation_of`, a callable of a class, as the class states it:
+// taking what the operation does, it reads the instance the operation runs for
+// -- the one a body of the form `form` is handed where it is entered by a
+// construction or runs on no object (LRM 8.7, 8.10), and otherwise the one the
+// object recorded where `instance` says -- and enters the code that instance's
+// body compiled, through the method `published`, the class published of the
+// scope declaring the class, introduced for it.
 [[nodiscard]] auto EntryOf(
-    UnitLowerer& unit_lowerer, mir::ClassId id,
-    const DeclaringInstance& instance, const ClassCodePoint& point,
-    CallableForm form, mir::ClassId published) -> mir::CallableCode;
+    UnitLowerer& unit_lowerer, const DeclaringInstance& instance,
+    mir::CallableId operation_of, CallableForm form, mir::ClassId published)
+    -> mir::CallableCode;
 
 // The class `cls` a design element's unit declares, as every body of the unit
 // states it: its layout, what it answers of the interface classes it
@@ -91,6 +91,13 @@ auto CallableFormOf(const hir::MethodDispatch& dispatch) -> CallableForm;
 [[nodiscard]] auto StateClassFromDeclaration(
     UnitLowerer& unit_lowerer, hir::ClassId cls) -> mir::Class;
 
+// Defines the class `id`, `cls`, with what its body compiled for it, unless
+// another lowering of the class defined it already (LRM 27.3): each callable
+// the class took and its constructor.
+void DefineCompiledClass(
+    UnitLowerer& unit_lowerer, mir::ClassId id, mir::Class cls,
+    CompiledClassCode compiled);
+
 // Moves the code a body compiled for each operation of the class `id`, which
 // belongs to an instance (LRM 6.22), out of `compiled` and into the body class
 // `declaring_frame` stands in, whose published class is `published`: each
@@ -98,7 +105,7 @@ auto CallableFormOf(const hir::MethodDispatch& dispatch) -> CallableForm;
 // it, with the instance as its object and what the operation took after it.
 // Which body's code runs is then the instance's (LRM 8.25).
 void MoveCodeIntoBody(
-    UnitLowerer& unit_lowerer, mir::ClassId id, const mir::Class& compiled,
+    UnitLowerer& unit_lowerer, mir::ClassId id, CompiledClassCode compiled,
     const WalkFrame& declaring_frame, mir::ClassId published);
 
 }  // namespace lyra::lowering::hir_to_mir

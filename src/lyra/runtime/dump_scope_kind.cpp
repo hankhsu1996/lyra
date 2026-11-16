@@ -19,6 +19,8 @@ auto DumpScopeKindKeyword(DumpScopeKind kind) -> std::string_view {
       return "begin";
     case DumpScopeKind::kFork:
       return "fork";
+    case DumpScopeKind::kPackage:
+      return "package";
   }
   throw InternalError("DumpScopeKindKeyword: unknown kind");
 }

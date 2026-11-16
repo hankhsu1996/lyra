@@ -12,13 +12,10 @@
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/verify.hpp"
 #include "lyra/mir/builder.hpp"
-#include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/phase.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "tests/mir_to_lir/lowered.hpp"
@@ -26,29 +23,12 @@
 namespace lyra::lowering::mir_to_lir {
 namespace {
 
-auto AddEmptyBody(mir::CompilationUnit& unit) -> mir::CallableId {
-  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
-  code.result_type = unit.builtins.void_type;
-  return unit.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
-}
-
 // A namespace unit whose one named body declares a shared pointer and then a
 // second one starting as the first, taken either by a move or by a read. A
 // shared pointer owns what it points at and has a copy, and a local holding
 // one is a slot of its own rather than a variable.
 auto UnitTakingASharedPointer(bool moved) -> mir::CompilationUnit {
-  mir::CompilationUnit unit;
-  unit.name = "U";
-  unit.phase = mir::Phase::kLegalized;
-  unit.body_name = "U";
-  unit.content = mir::BroughtUpNamespace{
-      .install_storage = AddEmptyBody(unit),
-      .initialize_storage = AddEmptyBody(unit)};
+  mir::CompilationUnit unit = NamespaceUnit();
   mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
   const mir::TypeId shared = unit.types.Intern(
@@ -75,13 +55,7 @@ auto UnitTakingASharedPointer(bool moved) -> mir::CompilationUnit {
                       .data = mir::MoveExpr{.operand = named}, .type = shared})
             : body.Add(mir::MakeCopyExpr(named, shared));
   body.AppendStmt(mir::LocalDeclStmt{.target = taker, .init = taken});
-  const mir::CallableId id = unit.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
-  unit.named_callables.push_back(mir::NamedCallable{.name = "f", .body = id});
+  AddNamedBody(unit, "f", std::move(code));
   return unit;
 }
 

@@ -154,7 +154,7 @@ auto KeptValue(Lowerer& lowerer, const WalkFrame& frame, const KeptPiece& kept)
 // anything is reading it, so it is lowered as one.
 template <ExprLowerer Lowerer>
 auto LowerSampler(Lowerer& reader, const WalkFrame& ctor_frame, hir::ExprId id)
-    -> diag::Result<mir::CallableDecl> {
+    -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = reader.Owner().Unit();
   const hir::Expr& call = reader.HirExprs().Get(id);
   const std::vector<KeptPiece> kept = reader.Histories().PiecesOf(id);
@@ -254,7 +254,7 @@ auto PriorTicksOfOperand(const WalkFrame& frame, hir::ExprId call)
 
 template <ExprLowerer Lowerer>
 auto KeepSampledHistories(
-    Lowerer& reader, mir::Class& mir_class, const WalkFrame& ctor_frame,
+    Lowerer& reader, const WalkFrame& ctor_frame,
     const WalkFrame& activate_frame)
     -> diag::Result<std::vector<HistorySampler>> {
   std::vector<HistorySampler> samplers;
@@ -282,7 +282,9 @@ auto KeepSampledHistories(
     if (!sampler_or) return std::unexpected(std::move(sampler_or.error()));
     samplers.push_back(
         HistorySampler{
-            .body = mir_class.callables.Add(*std::move(sampler_or)),
+            .body = reader.Owner().Unit().AddClassCallable(
+                ctor_frame.current_class.id, std::nullopt,
+                *std::move(sampler_or)),
             .written_at = reader.HirExprs().Get(id).span});
     if (auto filled = InstallHistory(reader, activate_frame, id); !filled) {
       return std::unexpected(std::move(filled.error()));
@@ -308,8 +310,8 @@ auto ReadOfKeptPiece(
 
 template <ExprLowerer Lowerer>
 auto LowerPastValueCall(
-    Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call,
-    const hir::PastValueRef&) -> diag::Result<mir::Expr> {
+    Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call)
+    -> diag::Result<mir::Expr> {
   if (call.arguments.size() != 2 || !call.arguments.front().has_value()) {
     throw InternalError(
         "LowerPastValueCall: a prior-tick read states its operand and how far "
@@ -388,11 +390,11 @@ auto LowerValueChangeCall(
 }
 
 template auto KeepSampledHistories(
-    ProcessLowerer&, mir::Class&, const WalkFrame&, const WalkFrame&)
+    ProcessLowerer&, const WalkFrame&, const WalkFrame&)
     -> diag::Result<std::vector<HistorySampler>>;
 template auto KeepSampledHistories(
-    const StructuralScopeLowerer&, mir::Class&, const WalkFrame&,
-    const WalkFrame&) -> diag::Result<std::vector<HistorySampler>>;
+    const StructuralScopeLowerer&, const WalkFrame&, const WalkFrame&)
+    -> diag::Result<std::vector<HistorySampler>>;
 template auto ReadOfKeptPiece(
     ProcessLowerer&, const hir::Expr&, const WalkFrame&)
     -> std::optional<diag::Result<mir::Expr>>;
@@ -400,11 +402,11 @@ template auto ReadOfKeptPiece(
     const StructuralScopeLowerer&, const hir::Expr&, const WalkFrame&)
     -> std::optional<diag::Result<mir::Expr>>;
 template auto LowerPastValueCall(
-    ProcessLowerer&, const WalkFrame&, const hir::CallExpr&,
-    const hir::PastValueRef&) -> diag::Result<mir::Expr>;
+    ProcessLowerer&, const WalkFrame&, const hir::CallExpr&)
+    -> diag::Result<mir::Expr>;
 template auto LowerPastValueCall(
-    const StructuralScopeLowerer&, const WalkFrame&, const hir::CallExpr&,
-    const hir::PastValueRef&) -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, const WalkFrame&, const hir::CallExpr&)
+    -> diag::Result<mir::Expr>;
 template auto LowerValueChangeCall(
     ProcessLowerer&, const WalkFrame&, const hir::CallExpr&,
     const hir::ValueChangeRef&, mir::TypeId, diag::SourceSpan)

@@ -14,7 +14,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/source_manager.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/constant_id.hpp"
@@ -23,7 +22,6 @@
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lowering/mir_to_lir/function_lowerer.hpp"
-#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
@@ -39,10 +37,10 @@
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/support/library_callback.hpp"
 #include "lyra/support/library_decl.hpp"
-#include "lyra/support/linkage.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -95,13 +93,28 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
   // Every identity a declaration gives the unit is taken before any body is
   // lowered, because a body may name a function whose own body is lowered
   // later -- including itself, and a body may build a closure whose own body
-  // is lowered after it.
-  std::vector<ClassIdentities> classes;
+  // is lowered after it. Only a callable this unit defines becomes a
+  // function of the unit, whoever declares it, so a bodyless one takes no
+  // function identity and is reached by the symbol whoever defines it emits.
+  std::vector<std::optional<lir::FunctionId>> functions(
+      mir_->callables.size(), std::nullopt);
+  for (const mir::CallableId id : mir_->callables.Ids()) {
+    if (mir::IsDefinedHere(mir_->callables.Get(id))) {
+      functions.at(id.value) = out_.functions.Declare();
+    }
+  }
+  functions_ = {mir_->callables.size(), std::move(functions)};
+
+  std::vector<std::optional<lir::DispatchOrdinal>> ordinals(
+      mir_->callables.size(), std::nullopt);
+  std::vector<lir::ClassId> classes;
   classes.reserve(mir_->classes.size());
   for (const mir::ClassId id : mir_->classes.Ids()) {
-    classes.push_back(TakeClassIdentities(mir_->GetClass(id)));
+    TakeDispatchOrdinals(id, ordinals);
+    classes.push_back(out_.classes.Declare());
   }
   class_identities_ = {mir_->classes.size(), std::move(classes)};
+  ordinals_ = {mir_->callables.size(), std::move(ordinals)};
 
   // So is every record this unit names, since what another unit published
   // may hold one -- a specialization of its generic on this unit's record.
@@ -112,19 +125,17 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
   }
   record_identities_ = {mir_->records.size(), std::move(records)};
 
-  std::vector<ClosureIdentities> closures;
+  std::vector<lir::ClosureId> closures;
   closures.reserve(mir_->closures.size());
   for (std::size_t i = 0; i < mir_->closures.size(); ++i) {
-    closures.push_back(
-        ClosureIdentities{
-            .declaration = out_.closures.Declare(),
-            .invoke = out_.functions.Declare()});
+    closures.push_back(out_.closures.Declare());
   }
   closure_identities_ = {mir_->closures.size(), std::move(closures)};
 
   // What every record is made of is settled before any body lowers, since a
   // body reaching a member of one reads it -- a method of the record
-  // included, which is why each method's function is only reserved here.
+  // included. A method of a record another unit declares is that unit's
+  // function.
   for (const mir::RecordId id : mir_->records.Ids()) {
     const mir::RecordDecl& decl = mir_->GetRecord(id);
     lir::RecordDecl lowered{
@@ -134,10 +145,13 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
         .kind = TranslateRecordKind(decl.kind),
         .elements = TranslateTypes(decl.elements),
         .methods = {}};
-    for (const mir::RecordMethod& method : mir_->GetRecordMethods(id)) {
-      lowered.methods.push_back(
-          lir::RecordMethod{
-              .answers = method.answers, .function = out_.functions.Declare()});
+    if (!decl.defining_unit.has_value()) {
+      for (const mir::CallableId method : mir_->RecordMethodsOf(id)) {
+        lowered.methods.push_back(
+            lir::RecordMethod{
+                .answers = mir::AnsweredOperationOf(*mir_, method),
+                .function = FunctionOf(method)});
+      }
     }
     out_.records.Define(RecordDeclaration(id), std::move(lowered));
   }
@@ -190,57 +204,54 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
   // A callable the unit's namespace owns -- a package's own body (LRM 26.3) --
   // is a body like any other and becomes a function of the unit. A DPI-C
   // import is reached as a foreign symbol and defined elsewhere.
-  for (const mir::CallableId id : mir_->callables.Ids()) {
+  for (const mir::CallableId id : mir_->NamespaceCallables()) {
     const mir::CallableDecl& callable = mir_->callables.Get(id);
-    if (!std::holds_alternative<mir::DefinedHere>(mir::FormOf(callable))) {
+    if (!mir::IsDefinedHere(callable)) {
       continue;
     }
     auto fn =
-        FunctionLowerer(*this, callable.code, UnitCallableSymbol(id)).Run();
+        FunctionLowerer(*this, callable.code, NamespaceCallableSymbolOf(id))
+            .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    fn->linkage = mir::LinkageOf(*mir_, mir::UnitCallableTarget{.slot = id});
-    out_.functions.Add(*std::move(fn));
+    fn->linkage = mir::LinkageOf(*mir_, mir::CallableTarget{.callable = id});
+    out_.functions.Define(FunctionOf(id), *std::move(fn));
   }
 
   // A record's method is a function under a symbol composed from the record
   // and the operation it answers, which is how every unit reaching it names it.
   for (const mir::RecordId id : mir_->records.Ids()) {
     const mir::RecordDecl& decl = mir_->GetRecord(id);
-    const mir::RecordMethods& methods = mir_->GetRecordMethods(id);
+    if (decl.defining_unit.has_value()) continue;
     const lir::RecordDecl& lowered = out_.records.Get(RecordDeclaration(id));
-    for (std::size_t i = 0; i < methods.size(); ++i) {
-      const mir::RecordMethod& method = methods[i];
-      auto fn =
-          FunctionLowerer(
-              *this, method.code,
-              lir::RecordMethodSymbol(mir_->name, decl.path, method.answers))
-              .Run();
+    for (const mir::CallableId method : mir_->RecordMethodsOf(id)) {
+      auto fn = FunctionLowerer(
+                    *this, mir_->callables.Get(method).code,
+                    RecordMethodSymbolOf(method))
+                    .Run();
       if (!fn) {
         return std::unexpected(std::move(fn.error()));
       }
       fn->linkage = lowered.linkage;
-      out_.functions.Define(lowered.methods[i].function, *std::move(fn));
+      out_.functions.Define(FunctionOf(method), *std::move(fn));
     }
   }
 
   for (const mir::ClassId id : mir_->classes.Ids()) {
     const mir::Class& declared = mir_->GetClass(id);
     if (declared.defining_unit.has_value()) {
-      out_.classes.Define(
-          class_identities_.Get(id).lir_class,
-          LowerDeclaredClass(id, declared));
+      out_.classes.Define(LirClass(id), LowerDeclaredClass(id, declared));
       continue;
     }
     auto cls = LowerClass(id, declared);
     if (!cls) {
       return std::unexpected(std::move(cls.error()));
     }
-    out_.classes.Define(class_identities_.Get(id).lir_class, *std::move(cls));
+    out_.classes.Define(LirClass(id), *std::move(cls));
   }
   if (const mir::RootedTree* tree = mir::RootedTreeOf(*mir_)) {
-    out_.root = class_identities_.Get(tree->root).lir_class;
+    out_.root = LirClass(tree->root);
   }
 
   // A closure's captures are the storage its values own, and its invoke is a
@@ -253,15 +264,15 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
       closure.captures.push_back(
           lir::Member{.type = TranslateType(decl.fields.Get(field).type)});
     }
-    closure.invoke = ClosureFunction(id);
-    auto fn =
-        FunctionLowerer(
-            *this, decl, lir::ClosureInvokeSymbol(out_.body_name, id.value))
-            .Run();
+    const mir::CallableId body = mir_->BodyOf(id);
+    closure.invoke = FunctionOf(body);
+    auto fn = FunctionLowerer(
+                  *this, id, lir::ClosureInvokeSymbol(out_.body_name, id.value))
+                  .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    fn->linkage = mir::LinkageOf(*mir_, mir::ClosureSource{.closure = id});
+    fn->linkage = mir::LinkageOf(*mir_, mir::CallableTarget{.callable = body});
     out_.functions.Define(closure.invoke, *std::move(fn));
     out_.closures.Define(ClosureDeclaration(id), std::move(closure));
   }
@@ -348,7 +359,8 @@ auto BringUpEntrySymbol(std::string_view unit_name, mir::BringUpEntry entry)
   throw InternalError("mir_to_lir: unknown bring-up entry");
 }
 
-auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
+auto UnitLowerer::NamespaceCallableSymbolOf(mir::CallableId id) const
+    -> std::string {
   return std::visit(
       Overloaded{
           // A foreign name is program-global and crosses as itself (LRM 35.4).
@@ -375,9 +387,15 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
             return lir::NamespaceCallableSymbol(
                 r.unit_name, lir::SymbolPart::Name(r.name));
           },
+          // Named by the callback it answers, as a class's body answering it
+          // is.
+          [&](const mir::ReachedAsLibraryCallback& r) {
+            return lir::NamespaceCallableSymbol(
+                out_.body_name, lir::SymbolPart::LibraryCallback(r.callback));
+          },
           [&](const mir::ReachedByPosition& r) {
             return lir::NamespaceCallableSymbol(
-                out_.body_name, lir::SymbolPart::Ordinal(r.slot.value));
+                out_.body_name, lir::SymbolPart::Ordinal(r.position.value));
           }},
       mir::NamespaceReachOf(*mir_, id));
 }
@@ -423,16 +441,24 @@ auto DispatchNamePart(const mir::DispatchName& name) -> lir::SymbolPart {
 
 }  // namespace
 
-auto UnitLowerer::ClassBodySymbol(
-    lir::SymbolPart class_part, const mir::Class& cls, mir::CallableId id) const
-    -> std::string {
+auto UnitLowerer::ClassBodySymbolOf(mir::CallableId id) const -> std::string {
+  const auto* owner = std::get_if<mir::DeclaredByClass>(&mir_->OwnerOf(id));
+  if (owner == nullptr) {
+    throw InternalError(
+        std::format(
+            "mir_to_lir: callable {} is named as a body of a class, which no "
+            "class declares -- please report this as a bug",
+            id.value));
+  }
+  const mir::ClassId declaring = owner->cls;
+  const mir::Class& cls = mir_->GetClass(declaring);
   // An entry is named by the method it enters, which a class of another unit
   // whose table holds it names it by.
   for (const mir::MethodEntry& entry : cls.entries) {
     if (entry.entry == id) {
       return lir::MethodEntrySymbol(
-          ClassQualifier(cls), std::move(class_part),
-          DispatchNamePart(mir::DispatchNameOf(*mir_, cls, entry.method)));
+          ClassQualifier(cls), ClassPart(declaring),
+          DispatchNamePart(mir::DispatchNameOf(*mir_, entry.method)));
     }
   }
   // A body the library calls is named by the callback it answers, which a
@@ -440,74 +466,49 @@ auto UnitLowerer::ClassBodySymbol(
   const std::optional<support::LibraryCallback> callback =
       cls.CallbackAnsweredBy(id);
   return lir::ClassCallableSymbol(
-      ClassQualifier(cls), std::move(class_part),
+      ClassQualifier(cls), ClassPart(declaring),
       callback.has_value()
           ? lir::SymbolPart::LibraryCallback(*callback)
-          : lir::SymbolPartOf(mir::NameOf(cls.named_callables, id), id.value));
+          : lir::SymbolPartOf(
+                mir::NameOf(cls.named_callables, id), owner->ordinal.value));
 }
 
-auto UnitLowerer::EntryBody(
-    const mir::CallableTarget& method, lir::TypeId prototype)
+auto UnitLowerer::EntryBody(mir::CallableId method, lir::TypeId prototype)
     -> lir::TableBody {
-  const mir::Class& owner = mir_->GetClass(method.owner);
+  const mir::ClassId declaring = mir::DeclaringClassOf(*mir_, method);
+  const mir::Class& owner = mir_->GetClass(declaring);
+  // The entry a class of this unit gives a method is a callable of the class,
+  // entered as any other is.
+  if (const std::optional<mir::CallableId> entry = owner.EntryOf(method)) {
+    return ReferentOfCallable(*entry, prototype);
+  }
+  // A class another unit defines states no entry, and every unit names the
+  // entry of each of its methods by the method it enters.
   if (!owner.defining_unit.has_value()) {
-    if (const std::optional<mir::CallableId> entry =
-            owner.EntryOf(method.slot)) {
-      return lir::FunctionReferent{
-          .function = MethodFunction(method.owner, *entry)};
-    }
     throw InternalError(
         "mir_to_lir: a method of a class of this unit is reached through an "
         "entry the class does not have -- please report this as a bug");
   }
   const std::string_view qualifier = ClassQualifier(owner);
-  lir::SymbolPart class_part = ClassPart(method.owner);
+  lir::SymbolPart class_part = ClassPart(declaring);
   return lir::ExternalFunctionReferent{
       .symbol = lir::MethodEntrySymbol(
           qualifier, std::move(class_part),
-          DispatchNamePart(mir::DispatchNameOf(*mir_, owner, method.slot))),
+          DispatchNamePart(mir::DispatchNameOf(*mir_, method))),
       .prototype = prototype};
 }
 
-namespace {
-
-// Whether `cls` constructs its objects with a body this unit holds, rather
-// than stating what another unit's construction takes.
-auto DefinesConstructor(const mir::Class& cls) -> bool {
-  return cls.constructor.has_value() && cls.constructor->code.body.has_value();
-}
-
-}  // namespace
-
-auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
-    -> ClassIdentities {
-  // Only a callable this program defines becomes a function of the unit, so a
-  // bodyless one takes no function identity and answers with none. Which
-  // behavior a callable introduces is the other question, answered from the
-  // same walk and independent of it: a callable may have a body and introduce
-  // nothing, introduce something and have no body (LRM 8.21), both, or neither.
-  std::vector<std::optional<lir::FunctionId>> methods;
-  std::vector<std::optional<lir::DispatchOrdinal>> ordinals;
-  methods.reserve(cls.callables.size());
-  ordinals.reserve(cls.callables.size());
-  for (const mir::CallableId callable : cls.callables.Ids()) {
-    methods.push_back(
-        std::holds_alternative<mir::DefinedHere>(
-            mir::FormOf(cls.callables.Get(callable)))
-            ? std::optional{out_.functions.Declare()}
-            : std::nullopt);
-    ordinals.push_back(cls.IntroductionOrdinal(callable).transform(
-        [](mir::BehaviorOrdinal ordinal) {
-          return lir::DispatchOrdinal{.value = ordinal.value};
-        }));
+void UnitLowerer::TakeDispatchOrdinals(
+    mir::ClassId cls,
+    std::vector<std::optional<lir::DispatchOrdinal>>& ordinals) const {
+  // Which behavior a callable introduces is independent of whether this
+  // unit defines it: a callable may have a body and introduce nothing,
+  // introduce something and have no body (LRM 8.21), both, or neither.
+  const std::vector<mir::CallableId> introduced =
+      mir::IntroducedBehaviors(*mir_, cls);
+  for (std::uint32_t at = 0; at < introduced.size(); ++at) {
+    ordinals.at(introduced[at].value) = lir::DispatchOrdinal{.value = at};
   }
-  return ClassIdentities{
-      .lir_class = out_.classes.Declare(),
-      .constructor = DefinesConstructor(cls)
-                         ? std::optional{out_.functions.Declare()}
-                         : std::nullopt,
-      .methods = {cls.callables.size(), std::move(methods)},
-      .ordinals = {cls.callables.size(), std::move(ordinals)}};
 }
 
 auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
@@ -515,7 +516,6 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   lir::Class out;
   out.identity = cls.identity;
   out.linkage = mir::LinkageOf(*mir_, owner);
-  const std::string_view qualifier = lir::QualifierOf(out_, cls.identity);
   out.base = cls.base.transform(
       [&](const mir::ClassRef& base) { return BaseType(base); });
 
@@ -526,17 +526,18 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   out.dispatch = LowerDispatch(cls);
   out.interface_tables = LowerInterfaceTables(cls);
 
-  const ClassIdentities& identities = class_identities_.Get(owner);
-
   // A class's bodies become functions of the program, and a body's own name is
   // unique only within its class -- so the class qualifies it, being itself
   // unique program-wide.
-  if (DefinesConstructor(cls)) {
-    const lir::FunctionId function = ConstructorFunction(owner);
-    auto constructor = FunctionLowerer(
-                           *this, cls.constructor->code,
-                           lir::ConstructorSymbol(qualifier, ClassPart(owner)))
-                           .Run();
+  const mir::DeclaredCallables& declared = mir_->CallablesOf(owner);
+  if (declared.constructor.has_value() &&
+      functions_.Get(*declared.constructor).has_value()) {
+    const lir::FunctionId function = FunctionOf(*declared.constructor);
+    auto constructor =
+        FunctionLowerer(
+            *this, mir_->callables.Get(*declared.constructor).code,
+            ConstructorSymbolOf(owner))
+            .Run();
     if (!constructor) {
       return std::unexpected(std::move(constructor.error()));
     }
@@ -544,16 +545,15 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     out_.functions.Define(function, *std::move(constructor));
   }
 
-  // Only a callable this program defines becomes a function: a DPI-C import is
-  // reached as a foreign symbol and a pure virtual has no implementation here
-  // (LRM 8.21).
-  for (const mir::CallableId cid : cls.callables.Ids()) {
-    const std::optional<lir::FunctionId>& body = identities.methods.Get(cid);
+  // Only a callable this unit defines becomes a function: a pure virtual has
+  // no implementation here (LRM 8.21).
+  for (const mir::CallableId cid : declared.callables) {
+    const std::optional<lir::FunctionId>& body = functions_.Get(cid);
     if (!body.has_value()) {
       continue;
     }
-    const mir::CallableCode& code = cls.callables.Get(cid).code;
-    std::string symbol = ClassBodySymbol(ClassPart(owner), cls, cid);
+    const mir::CallableCode& code = mir_->callables.Get(cid).code;
+    std::string symbol = ClassBodySymbolOf(cid);
     auto fn = FunctionLowerer(*this, code, std::move(symbol)).Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
@@ -710,9 +710,12 @@ auto UnitLowerer::ReferentOf(
             return lir::SharedStorageReferent{
                 .symbol = StaticPropertySymbolOf(r)};
           },
+          // A body this unit defines is its function; a body of another
+          // unit's namespace is reached by the symbol that unit emits it
+          // under, as a call reaches it.
           [&](const mir::FunctionRef& f) -> lir::Referent {
-            return lir::FunctionReferent{
-                .function = MethodFunction(f.body.owner, f.body.slot)};
+            return lir::ReferentOf(
+                ReferentOfCallable(f.callable, TranslateType(named)));
           },
           [&](const mir::ExternalObjectEntryRef& e) -> lir::Referent {
             return lir::ExternalFunctionReferent{
@@ -721,7 +724,7 @@ auto UnitLowerer::ReferentOf(
                 .prototype = TranslateType(named)};
           },
           [&](const mir::DispatchEntryRef& e) -> lir::Referent {
-            return lir::ReferentOf(EntryBody(e.body, TranslateType(named)));
+            return lir::ReferentOf(EntryBody(e.method, TranslateType(named)));
           },
           [&](const mir::DestructorRef& d) -> lir::Referent {
             return lir::DestructorReferent{.cls = LirClass(d.of)};
@@ -737,13 +740,13 @@ auto UnitLowerer::ReferentOf(
 }
 
 auto UnitLowerer::LirClass(mir::ClassId cls) const -> lir::ClassId {
-  return class_identities_.Get(cls).lir_class;
+  return class_identities_.Get(cls);
 }
 
 auto UnitLowerer::SlotRef(const mir::VirtualSlot& slot)
     -> lir::StatedDispatchRef {
   const std::optional<lir::DispatchOrdinal>& ordinal =
-      class_identities_.Get(slot.owner_class).ordinals.Get(slot.slot);
+      ordinals_.Get(slot.introduced_by);
   // A dispatch names the callable that introduced the behavior, which is the
   // one identity every class answering it agrees on, so a callable naming no
   // introduction is a producer that built the slot identity wrongly.
@@ -752,7 +755,9 @@ auto UnitLowerer::SlotRef(const mir::VirtualSlot& slot)
         "mir_to_lir: a dispatch names a callable that introduces no behavior");
   }
   return lir::StatedDispatchRef{
-      .introduced_by = ClassValueType(slot.owner_class), .ordinal = *ordinal};
+      .introduced_by =
+          ClassValueType(mir::DeclaringClassOf(*mir_, slot.introduced_by)),
+      .ordinal = *ordinal};
 }
 
 auto UnitLowerer::TableBodyPrototype() const -> lir::TypeId {
@@ -771,8 +776,8 @@ auto UnitLowerer::LowerDispatch(const mir::Class& cls)
     dispatch.push_back(
         lir::DispatchedBehavior{
             .behavior = SlotRef(dispatched.behavior),
-            .answered_by = dispatched.answered_by.transform(
-                [&](const mir::CallableTarget& body) {
+            .answered_by =
+                dispatched.answered_by.transform([&](mir::CallableId body) {
                   return EntryBody(body, erased);
                 })});
   }
@@ -787,73 +792,159 @@ auto UnitLowerer::LowerInterfaceTables(const mir::Class& cls)
   for (const mir::InterfaceTable& implemented : cls.interface_tables) {
     lir::InterfaceTable table{
         .of = ClassValueType(implemented.of), .answered_by = {}};
-    for (const std::optional<mir::CallableTarget>& body :
-         implemented.answered_by) {
-      table.answered_by.push_back(
-          body.transform([&](const mir::CallableTarget& answered) {
-            return EntryBody(answered, erased);
-          }));
+    for (const std::optional<mir::CallableId>& body : implemented.answered_by) {
+      table.answered_by.push_back(body.transform([&](mir::CallableId answered) {
+        return EntryBody(answered, erased);
+      }));
     }
     tables.push_back(std::move(table));
   }
   return tables;
 }
 
-auto UnitLowerer::MethodFunction(
-    mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId {
-  const std::optional<lir::FunctionId>& fn =
-      class_identities_.Get(owner).methods.Get(callable);
+auto UnitLowerer::FunctionOf(mir::CallableId callable) const
+    -> lir::FunctionId {
+  const std::optional<lir::FunctionId>& fn = functions_.Get(callable);
   if (!fn.has_value()) {
     throw InternalError(
-        "mir_to_lir: callable has no body, so it is no function of this unit");
+        std::format(
+            "mir_to_lir: callable {} is no function of this unit, which "
+            "defines no body for it -- please report this as a bug",
+            callable.value));
   }
   return *fn;
 }
 
-auto UnitLowerer::CallableCallTarget(
-    mir::ClassId owner, mir::CallableId callable) const -> lir::CallTarget {
-  const mir::Class& cls = mir_->GetClass(owner);
-  if (!cls.defining_unit.has_value()) {
-    return lir::CallTarget{
-        lir::FunctionTarget{.function = MethodFunction(owner, callable)}};
-  }
-  return lir::CallTarget{lir::SymbolTarget{
-      .symbol = ClassBodySymbol(ClassPart(owner), cls, callable)}};
+auto UnitLowerer::EnteredAs(mir::CallableId callable) const -> CallableEntered {
+  const mir::CallableDecl& decl = mir_->callables.Get(callable);
+  return std::visit(
+      Overloaded{
+          // A callable this unit defines is its function, whoever declares it.
+          [&](const mir::DefinedHere&) -> CallableEntered {
+            return lir::FunctionTarget{.function = FunctionOf(callable)};
+          },
+          // A name in the DPI-C name space is reached as an external-linkage
+          // symbol the execution session resolves (LRM 35.4); nothing about
+          // the call names a unit or a class.
+          [&](const mir::DefinedByForeignCode&) -> CallableEntered {
+            return lir::ForeignTarget{
+                .symbol = std::get<mir::DeclaredByNamespace>(decl.owner)
+                              .foreign->foreign_name};
+          },
+          // Reached by the symbol the unit defining it emits it under.
+          [&](const mir::DefinedByAnotherUnit&) -> CallableEntered {
+            return lir::SymbolTarget{.symbol = SymbolOfElsewhere(callable)};
+          },
+          [&](const mir::LeftAbstract&) -> CallableEntered {
+            throw InternalError(
+                std::format(
+                    "mir_to_lir: callable {}, which its class leaves to what "
+                    "extends it, is entered other than by dispatch -- please "
+                    "report this as a bug",
+                    callable.value));
+          }},
+      mir::FormOf(decl));
 }
 
-auto UnitLowerer::ConstructorCallTarget(mir::ClassId cls) const
+auto UnitLowerer::SymbolOfElsewhere(mir::CallableId callable) const
+    -> std::string {
+  return std::visit(
+      Overloaded{
+          [&](const mir::DeclaredByClass&) {
+            return ClassBodySymbolOf(callable);
+          },
+          [&](const mir::ConstructsClass& owner) {
+            return ConstructorSymbolOf(owner.cls);
+          },
+          [&](const mir::DeclaredByNamespace&) {
+            return NamespaceCallableSymbolOf(callable);
+          },
+          [&](const mir::DeclaredByRecord&) {
+            return RecordMethodSymbolOf(callable);
+          },
+          [&](const mir::DeclaredByClosure&) -> std::string {
+            throw InternalError(
+                std::format(
+                    "mir_to_lir: the body of a closure, callable {}, is "
+                    "defined elsewhere -- please report this as a bug",
+                    callable.value));
+          }},
+      mir_->OwnerOf(callable));
+}
+
+auto UnitLowerer::ReferentOfCallable(
+    mir::CallableId callable, lir::TypeId prototype) const -> lir::TableBody {
+  return std::visit(
+      Overloaded{
+          [](const lir::FunctionTarget& target) -> lir::TableBody {
+            return lir::FunctionReferent{.function = target.function};
+          },
+          [&](lir::SymbolTarget target) -> lir::TableBody {
+            return lir::ExternalFunctionReferent{
+                .symbol = std::move(target.symbol), .prototype = prototype};
+          },
+          [&](const lir::ForeignTarget&) -> lir::TableBody {
+            throw InternalError(
+                std::format(
+                    "mir_to_lir: the address of callable {}, a function the "
+                    "foreign program defines, is taken -- please report this "
+                    "as a bug",
+                    callable.value));
+          }},
+      EnteredAs(callable));
+}
+
+auto UnitLowerer::CallTargetOf(mir::CallableId callable) const
     -> lir::CallTarget {
-  const mir::Class& declared = mir_->GetClass(cls);
-  if (!declared.defining_unit.has_value()) {
-    return lir::CallTarget{
-        lir::FunctionTarget{.function = ConstructorFunction(cls)}};
-  }
-  const std::string_view qualifier = ClassQualifier(declared);
-  lir::SymbolPart class_part = ClassPart(cls);
-  return lir::CallTarget{lir::SymbolTarget{
-      .symbol = lir::ConstructorSymbol(qualifier, std::move(class_part))}};
+  return std::visit(
+      Overloaded{
+          [](lir::FunctionTarget target) { return lir::CallTarget{target}; },
+          [](lir::SymbolTarget target) {
+            return lir::CallTarget{std::move(target)};
+          },
+          [](lir::ForeignTarget target) {
+            return lir::CallTarget{std::move(target)};
+          }},
+      EnteredAs(callable));
 }
 
-auto UnitLowerer::ConstructorFunction(mir::ClassId cls) const
-    -> lir::FunctionId {
-  const std::optional<lir::FunctionId>& constructor =
-      class_identities_.Get(cls).constructor;
+auto UnitLowerer::ConstructorSymbolOf(mir::ClassId cls) const -> std::string {
+  return lir::ConstructorSymbol(
+      ClassQualifier(mir_->GetClass(cls)), ClassPart(cls));
+}
+
+auto UnitLowerer::RecordMethodSymbolOf(mir::CallableId method) const
+    -> std::string {
+  const auto* owner =
+      std::get_if<mir::DeclaredByRecord>(&mir_->OwnerOf(method));
+  if (owner == nullptr) {
+    throw InternalError(
+        std::format(
+            "mir_to_lir: callable {} is named as a method of a record, which "
+            "no record declares -- please report this as a bug",
+            method.value));
+  }
+  const mir::TypeDeclarationRef declaration =
+      mir::RecordDeclarationOf(*mir_, owner->record);
+  return lir::RecordMethodSymbol(
+      declaration.unit_name, declaration.path, owner->answers);
+}
+
+auto UnitLowerer::ConstructionCallTargetOf(mir::ClassId cls) const
+    -> lir::CallTarget {
+  const std::optional<mir::CallableId>& constructor =
+      mir_->CallablesOf(cls).constructor;
   if (!constructor.has_value()) {
     throw InternalError(
         "mir_to_lir: a construction enters a class no object is built of -- "
         "please report this as a bug");
   }
-  return *constructor;
-}
-
-auto UnitLowerer::ClosureFunction(mir::ClosureId closure) const
-    -> lir::FunctionId {
-  return closure_identities_.Get(closure).invoke;
+  return CallTargetOf(*constructor);
 }
 
 auto UnitLowerer::ClosureDeclaration(mir::ClosureId closure) const
     -> lir::ClosureId {
-  return closure_identities_.Get(closure).declaration;
+  return closure_identities_.Get(closure);
 }
 
 auto UnitLowerer::RecordDeclaration(mir::RecordId record) const

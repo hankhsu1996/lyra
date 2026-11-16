@@ -5,10 +5,10 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/expr.hpp"
 #include "lyra/support/library_callback.hpp"
 
 namespace lyra::mir {
@@ -23,19 +23,27 @@ namespace lyra::mir {
 [[nodiscard]] auto DispatchTableOf(const CompilationUnit& unit, ClassId cls)
     -> std::vector<VirtualSlot>;
 
+// The callables introducing the behaviors the class `cls` adds to dispatch
+// (LRM 8.20), or the methods an interface declares itself (LRM 8.26), in the
+// order the class declares them. It is the one order a class's table, an
+// interface's table and every position a dispatch names are read in, whichever
+// layer lays the table out.
+[[nodiscard]] auto IntroducedBehaviors(const CompilationUnit& unit, ClassId cls)
+    -> std::vector<CallableId>;
+
 // The body an object of `cls` runs for `behavior`: the one the nearest class of
 // its lineage gives, starting at `cls` itself, or none where that class leaves
 // the behavior abstract (LRM 8.21).
 [[nodiscard]] auto DispatchedBody(
     const CompilationUnit& unit, ClassId cls, const VirtualSlot& behavior)
-    -> std::optional<CallableTarget>;
+    -> std::optional<CallableId>;
 
 // The body the nearest class of the lineage of `cls`, starting at `cls`
 // itself, answers the library's `callback` with, or none where no class
 // answers it.
 [[nodiscard]] auto CallbackBodyOf(
     const CompilationUnit& unit, ClassId cls, support::LibraryCallback callback)
-    -> std::optional<CallableTarget>;
+    -> std::optional<CallableId>;
 
 // Every interface an object of `cls` is also an object of (LRM 8.26),
 // each once however many ways it is reached (LRM 8.26.6.3): those of the class
@@ -64,7 +72,6 @@ using DispatchName = std::variant<
     std::string_view, support::LibraryCallback, DeclaringInstanceName>;
 
 [[nodiscard]] auto DispatchNameOf(
-    const CompilationUnit& unit, const Class& cls, CallableId method)
-    -> DispatchName;
+    const CompilationUnit& unit, CallableId method) -> DispatchName;
 
 }  // namespace lyra::mir

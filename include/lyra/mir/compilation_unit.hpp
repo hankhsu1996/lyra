@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+#include <format>
 #include <map>
 #include <optional>
 #include <span>
@@ -19,6 +21,8 @@
 #include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_id.hpp"
+#include "lyra/mir/callable_ordinal.hpp"
+#include "lyra/mir/callable_table.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_decl.hpp"
@@ -38,6 +42,7 @@
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/float_width.hpp"
 #include "lyra/support/layout.hpp"
+#include "lyra/support/library_callback.hpp"
 #include "lyra/support/library_decl.hpp"
 
 namespace lyra::mir {
@@ -154,9 +159,18 @@ struct RootedTree {
 //
 // Neither answers to a name, which is why the unit holds each as the body it is
 // rather than among the bodies an identifier reaches.
+//
+// A package and the compilation unit's scope are each also one object of the
+// run beside the instance tree (LRM 37.10), and state of themselves what a
+// class of the design hierarchy states of its instances: the definition they
+// are, the scopes they declare, and the data objects they declare, with the
+// two bodies of the namespace reading and subscribing to them, which the
+// install body hands the library. Absent for a unit that is no such object: a
+// class lowered alone, or a text of the tool's.
 struct BroughtUpNamespace {
   CallableId install_storage;
   CallableId initialize_storage;
+  std::optional<ScopeDeclarations> scope_declarations;
 };
 
 // What a unit contributes to the program it links into. A hierarchy's storage
@@ -282,29 +296,13 @@ struct CompilationUnit {
   // each declared with what that unit published (`Class::defining_unit`).
   base::Registry<Class, ClassId> classes;
   UnitContent content;
-  // Callables the unit's namespace owns directly rather than through one of its
-  // classes -- a package's functions and tasks (LRM 26.3), both directions of
-  // the DPI-C boundary (LRM 35.5) (the prototype of every import the unit takes
-  // part in, and the program-global symbol of every export it defines), and the
-  // type-associated functions the compiler synthesizes for the readings a type
-  // decides about a value of it (LRM 6.19.5, 21.2.1.6).
-  // All are receiver-less, which is what puts them here rather than on a class:
-  // a type-associated function takes the value and no object, so no class owns
-  // one even where the unit has classes, and every unit has a namespace whether
-  // or not it has any. A DPI-C name is program-global, in a name space no
-  // compilation-unit scope contains (LRM 35.4, 35.7), so no class ever owns
-  // one. Which direction a foreign callable is reads off its body: an import is
-  // the declaration the user's C defines, an export symbol the definition the
-  // user's C calls. Where an export's subroutine belongs to a scope, the scope
-  // publishes an entry per body of the unit and the symbol dispatches over
-  // those entries -- a definition naming nothing this unit owns, which is why
-  // neither the entry nor the symbol is one of these. A class's own callables
-  // live on that class; these are the unit-level namespace's, one scope up.
-  // Identity is minted separately from content, because a body here is named
-  // before it exists: a subroutine of this namespace may call a sibling the
-  // source declared after it, or itself, and what such a call names is the
-  // position.
-  base::Registry<CallableDecl, CallableId> callables;
+  // Every callable this unit names, declared once and reached by its identity,
+  // whoever declares it: the callables of its classes, their constructions,
+  // its closures' bodies, its records' methods and those of its namespace, and
+  // those of another unit it reaches, each declared with what that unit
+  // published. Every identity is taken through the functions below, which
+  // stamp its owner.
+  CallableTable callables;
   // The name each body a subroutine the source declared is reached by (LRM
   // 26.3): one of this unit's namespace, or one of another unit's this unit
   // declares, under the name that unit published it. A body the compiler
@@ -341,12 +339,9 @@ struct CompilationUnit {
   // another unit it holds a value of, defined with what that unit published.
   // A record type names one of these by where it sits.
   base::Registry<RecordDecl, RecordId> records;
-  // The methods of each of those, by the same identity, stated once every
-  // record is defined, since a method reaches its members' records; none for
-  // a record another unit declares, which states its own.
-  base::Registry<RecordMethods, RecordId> record_methods;
   // Every closure of this unit, one per closure site -- an anonymous concrete
-  // callable value (capture fields plus one invoke). Its `ClosureId` is the
+  // callable value (capture fields plus one invoke, a callable of the table
+  // above). Its `ClosureId` is the
   // closure's type identity, in a separate registry from `records`: a
   // closure is its own callable-value category, not a record.
   base::Registry<ClosureDecl, ClosureId> closures;
@@ -490,10 +485,6 @@ struct CompilationUnit {
     classes.Define(id, std::move(value));
   }
 
-  [[nodiscard]] auto GetRecordMethods(RecordId id) const
-      -> const RecordMethods& {
-    return record_methods.Get(id);
-  }
   [[nodiscard]] auto GetRecord(RecordId id) const -> const RecordDecl& {
     return records.Get(id);
   }
@@ -510,6 +501,302 @@ struct CompilationUnit {
 
   void DefineClosure(ClosureId id, ClosureDecl value) {
     closures.Define(id, std::move(value));
+  }
+
+  // A subroutine of the unit's own namespace, standing after those it already
+  // declares: its identity alone, for one named before it exists, or with its
+  // code.
+  auto TakeNamespaceCallable() -> CallableId {
+    return TakeOfNamespace(std::nullopt, std::nullopt);
+  }
+  auto AddNamespaceCallable(CallableCode code) -> CallableId {
+    const CallableId id = TakeNamespaceCallable();
+    StateCallable(id, std::move(code));
+    return id;
+  }
+
+  // A callable of the unit's namespace reached under the C linkage `linkage`
+  // (LRM 35.4): an import, whose code is its prototype, or the entry point of
+  // an export.
+  auto AddForeignCallable(ForeignLinkage linkage, CallableCode code)
+      -> CallableId {
+    const CallableId id = TakeOfNamespace(std::move(linkage), std::nullopt);
+    StateCallable(id, std::move(code));
+    return id;
+  }
+
+  // A subroutine the namespace of the unit `defining_unit` defines, which this
+  // unit declares stating nothing of it, its signature being that unit's.
+  auto AddSubroutineOfUnit(std::string defining_unit) -> CallableId {
+    const CallableId id =
+        TakeOfNamespace(std::nullopt, std::move(defining_unit));
+    StateCallable(id, CallableCode{});
+    return id;
+  }
+
+  // A callable the class `cls` declares, standing after those it already
+  // declares: its identity alone, for one named before it exists and before
+  // its class settles the part it takes in dispatch, or with that part and its
+  // code. Only a class the unit has an identity for declares one.
+  auto TakeClassCallable(ClassId cls) -> CallableId {
+    std::vector<CallableId>& taken = ClassCallables(cls).callables;
+    const CallableId id = Take(
+        DeclaredByClass{
+            .cls = cls,
+            .ordinal = OrdinalAfter(taken),
+            .virtual_dispatch = std::nullopt});
+    taken.push_back(id);
+    return id;
+  }
+  auto AddClassCallable(
+      ClassId cls, std::optional<VirtualDispatchRole> virtual_dispatch,
+      CallableCode code) -> CallableId {
+    const CallableId id = TakeClassCallable(cls);
+    StateClassCallable(id, std::move(virtual_dispatch), std::move(code));
+    return id;
+  }
+
+  // The code of the class callable `id`, taken and not yet stated, with the
+  // part it takes in its class's dispatch where it takes one.
+  void StateClassCallable(
+      CallableId id, std::optional<VirtualDispatchRole> virtual_dispatch,
+      CallableCode code) {
+    if (virtual_dispatch.has_value()) {
+      StateDispatchRole(id, *std::move(virtual_dispatch));
+    }
+    StateCallable(id, std::move(code));
+  }
+
+  // The part the class callable `id`, taken and not yet stated, takes in its
+  // class's dispatch, which its class settles before any body lowers.
+  void StateDispatchRole(CallableId id, VirtualDispatchRole role) {
+    auto* of_class = std::get_if<DeclaredByClass>(&UnstatedOwner(id));
+    if (of_class == nullptr) {
+      throw InternalError(
+          std::format(
+              "mir: callable {} is given a part in dispatch, and no class "
+              "declares it -- please report this as a bug",
+              id.value));
+    }
+    of_class->virtual_dispatch = std::move(role);
+  }
+
+  // The construction of the class `cls`: its identity alone, for one named
+  // before it exists, or with its code. A class has one at most, which the
+  // verifier holds it to.
+  auto TakeClassConstructor(ClassId cls) -> CallableId {
+    const CallableId id = Take(ConstructsClass{.cls = cls});
+    ClassCallables(cls).constructor = id;
+    return id;
+  }
+  auto AddClassConstructor(ClassId cls, CallableCode code) -> CallableId {
+    const CallableId id = TakeClassConstructor(cls);
+    StateCallable(id, std::move(code));
+    return id;
+  }
+
+  // The body the closure `closure` is invoked through. Only a closure the unit
+  // has an identity for has one.
+  auto AddClosureBody(ClosureId closure, CallableCode code) -> CallableId {
+    if (closure.value >= closures.size()) {
+      throw InternalError(
+          std::format(
+              "mir: a body is declared for closure {}, which the unit has no "
+              "identity for -- please report this as a bug",
+              closure.value));
+    }
+    const CallableId id = Take(DeclaredByClosure{.closure = closure});
+    std::vector<std::optional<CallableId>>& of_closures =
+        callables.by_owner_.of_closures;
+    if (of_closures.size() <= closure.value) {
+      of_closures.resize(closures.size());
+    }
+    of_closures[closure.value] = id;
+    StateCallable(id, std::move(code));
+    return id;
+  }
+
+  // The method of the record `record` answering `answers`, declared after
+  // those it already declares: its identity alone, for one whose body is built
+  // once every record's methods are declared, or with its code.
+  auto TakeRecordMethod(RecordId record, support::ValueOperation answers)
+      -> CallableId {
+    if (record.value >= records.size()) {
+      throw InternalError(
+          "mir: a method is declared for a record the unit has no identity "
+          "for -- please report this as a bug");
+    }
+    const CallableId id =
+        Take(DeclaredByRecord{.record = record, .answers = answers});
+    std::vector<std::vector<CallableId>>& of_records =
+        callables.by_owner_.of_records;
+    if (of_records.size() <= record.value) {
+      of_records.resize(records.size());
+    }
+    of_records[record.value].push_back(id);
+    return id;
+  }
+  auto AddRecordMethod(
+      RecordId record, support::ValueOperation answers, CallableCode code)
+      -> CallableId {
+    const CallableId id = TakeRecordMethod(record, answers);
+    StateCallable(id, std::move(code));
+    return id;
+  }
+
+  // The code of the callable `id`, whose identity is taken, which its
+  // declaration carries with the owner it was taken with.
+  void StateCallable(CallableId id, CallableCode code) {
+    const auto owner = callables.unstated_.find(id);
+    if (owner == callables.unstated_.end()) {
+      throw InternalError(
+          std::format(
+              "mir: callable {} is stated twice, or was never taken -- please "
+              "report this as a bug",
+              id.value));
+    }
+    callables.decls_.Define(
+        id, CallableDecl{
+                .owner = std::move(owner->second), .code = std::move(code)});
+    callables.unstated_.erase(owner);
+  }
+
+  // The owner `callable` was taken with, whether or not it is stated yet.
+  [[nodiscard]] auto OwnerOf(CallableId callable) const
+      -> const CallableOwner& {
+    if (callables.decls_.IsDefined(callable)) {
+      return callables.decls_.Get(callable).owner;
+    }
+    return callables.unstated_.at(callable);
+  }
+
+  [[nodiscard]] auto CallablesOf(ClassId cls) const
+      -> const DeclaredCallables& {
+    static const DeclaredCallables kNone;
+    const std::vector<DeclaredCallables>& of_classes =
+        callables.by_owner_.of_classes;
+    return cls.value < of_classes.size() ? of_classes[cls.value] : kNone;
+  }
+
+  // The body the closure `closure` is invoked through. A closure exists only
+  // where a body is synthesized for it, so asking it of one that has none is a
+  // producer's defect.
+  [[nodiscard]] auto BodyOf(ClosureId closure) const -> CallableId {
+    const std::vector<std::optional<CallableId>>& of_closures =
+        callables.by_owner_.of_closures;
+    if (closure.value >= of_closures.size() ||
+        !of_closures[closure.value].has_value()) {
+      throw InternalError(
+          std::format(
+              "mir: closure {} is invoked and declares no body -- please "
+              "report this as a bug",
+              closure.value));
+    }
+    return *of_closures[closure.value];
+  }
+
+  // The callables the unit's namespace declares, in the order it declares
+  // them -- a package's functions and tasks (LRM 26.3), both directions of the
+  // DPI-C boundary (LRM 35.5) (the prototype of every import the unit takes
+  // part in, and the program-global symbol of every export it defines), the
+  // type-associated functions the compiler synthesizes for the readings a type
+  // decides about a value of it (LRM 6.19.5, 21.2.1.6), and the subroutines of
+  // another unit's namespace this unit declares.
+  //
+  // All are receiver-less, which is what puts them here rather than on a
+  // class: a type-associated function takes the value and no object, so no
+  // class owns one even where the unit has classes, and every unit has a
+  // namespace whether or not it has any. A DPI-C name is program-global, in a
+  // name space no compilation-unit scope contains (LRM 35.4, 35.7), so no class
+  // ever owns one. Which direction a foreign callable is reads off its body: an
+  // import is the declaration the user's C defines, an export symbol the
+  // definition the user's C calls. Where an export's subroutine belongs to a
+  // scope, the scope publishes an entry per body of the unit and the symbol
+  // dispatches over those entries -- a definition naming nothing this unit
+  // owns, which is why neither the entry nor the symbol is one of these. A body
+  // here nothing names is spelled from where it stands among them, as a
+  // class's is among its own.
+  [[nodiscard]] auto NamespaceCallables() const -> std::span<const CallableId> {
+    return callables.by_owner_.of_namespace;
+  }
+
+  // The methods the record `record` declares, in the order it declares them:
+  // one for every operation on a whole value the record's type has, whichever
+  // unit defines it -- a real or a chandle member leaves no bit stream (LRM
+  // 6.24.3), a tagged union no stream at all (LRM 11.4.14.1), and a member the
+  // net types' tables do not fold nothing to resolve (LRM 6.6.1). Each is
+  // declared before any body naming one is built: for a record of this unit,
+  // defined once every record is, since a method reaches its members' records;
+  // for one another unit declares, stating nothing, since that unit defines
+  // them.
+  [[nodiscard]] auto RecordMethodsOf(RecordId record) const
+      -> std::span<const CallableId> {
+    const std::vector<std::vector<CallableId>>& of_records =
+        callables.by_owner_.of_records;
+    if (record.value >= of_records.size()) {
+      return {};
+    }
+    return of_records[record.value];
+  }
+
+ private:
+  // Mints the identity and keeps the owner it is taken with until its code is
+  // stated.
+  auto Take(CallableOwner owner) -> CallableId {
+    const CallableId id = callables.decls_.Declare();
+    callables.unstated_.emplace(id, std::move(owner));
+    return id;
+  }
+
+  // Where the next callable an owner takes stands, after `taken`, the
+  // callables it has taken in ordinal order.
+  static auto OrdinalAfter(const std::vector<CallableId>& taken)
+      -> CallableOrdinal {
+    return CallableOrdinal{.value = static_cast<std::uint32_t>(taken.size())};
+  }
+
+  auto TakeOfNamespace(
+      std::optional<ForeignLinkage> foreign,
+      std::optional<std::string> defining_unit) -> CallableId {
+    std::vector<CallableId>& taken = callables.by_owner_.of_namespace;
+    const CallableId id = Take(
+        DeclaredByNamespace{
+            .ordinal = OrdinalAfter(taken),
+            .foreign = std::move(foreign),
+            .defining_unit = std::move(defining_unit)});
+    taken.push_back(id);
+    return id;
+  }
+
+  // What the class `cls` declares, which only a class the unit has an
+  // identity for does.
+  auto ClassCallables(ClassId cls) -> DeclaredCallables& {
+    if (cls.value >= classes.size()) {
+      throw InternalError(
+          std::format(
+              "mir: a callable is declared by class {}, which the unit has no "
+              "identity for -- please report this as a bug",
+              cls.value));
+    }
+    std::vector<DeclaredCallables>& of_classes = callables.by_owner_.of_classes;
+    if (of_classes.size() <= cls.value) {
+      of_classes.resize(classes.size());
+    }
+    return of_classes[cls.value];
+  }
+
+  // The owner the taken, not yet stated `id` was taken with, which is still
+  // the unit's to complete.
+  auto UnstatedOwner(CallableId id) -> CallableOwner& {
+    const auto owner = callables.unstated_.find(id);
+    if (owner == callables.unstated_.end()) {
+      throw InternalError(
+          std::format(
+              "mir: callable {} is completed after it is stated, or was never "
+              "taken -- please report this as a bug",
+              id.value));
+    }
+    return owner->second;
   }
 };
 
@@ -547,6 +834,40 @@ struct CompilationUnit {
     const CompilationUnit& unit, ClassId id) -> bool {
   return unit.classes.IsDefined(id) &&
          unit.GetClass(id).defining_unit.has_value();
+}
+
+// The part `callable` takes in its class's dispatch, whether or not its code is
+// stated yet: what its class states of it, and none for a callable no class
+// declares, since only a class dispatches.
+[[nodiscard]] inline auto VirtualDispatchOf(
+    const CompilationUnit& unit, CallableId callable)
+    -> const std::optional<VirtualDispatchRole>& {
+  static const std::optional<VirtualDispatchRole> kNone;
+  const auto* of_class = std::get_if<DeclaredByClass>(&unit.OwnerOf(callable));
+  return of_class != nullptr ? of_class->virtual_dispatch : kNone;
+}
+
+// Whether another unit holds the code of `callable`: a callable of a class or
+// a record another unit defines, or a subroutine of another unit's namespace.
+// A closure is always this unit's.
+[[nodiscard]] inline auto IsDefinedElsewhere(
+    const CompilationUnit& unit, CallableId callable) -> bool {
+  return std::visit(
+      Overloaded{
+          [&](const DeclaredByClass& owner) {
+            return IsDefinedElsewhere(unit, owner.cls);
+          },
+          [&](const ConstructsClass& owner) {
+            return IsDefinedElsewhere(unit, owner.cls);
+          },
+          [](const DeclaredByNamespace& owner) {
+            return owner.defining_unit.has_value();
+          },
+          [&](const DeclaredByRecord& owner) {
+            return unit.GetRecord(owner.record).defining_unit.has_value();
+          },
+          [](const DeclaredByClosure&) { return false; }},
+      unit.OwnerOf(callable));
 }
 
 // Whether every body the unit is compiled to states this class alike, so that
@@ -618,19 +939,44 @@ struct CompilationUnit {
   return defining_unit.has_value() ? *defining_unit : unit.name;
 }
 
+// The class declaring `callable`, one of its callables or its construction.
+// Asking it of a callable no class declares is a producer's defect.
+[[nodiscard]] inline auto DeclaringClassOf(
+    const CompilationUnit& unit, CallableId callable) -> ClassId {
+  const auto refuse = [](std::string_view declarer) -> ClassId {
+    throw InternalError(
+        std::format(
+            "mir: a callable {} declares is asked for the class declaring it "
+            "-- please report this as a bug",
+            declarer));
+  };
+  return std::visit(
+      Overloaded{
+          [](const DeclaredByClass& owner) { return owner.cls; },
+          [](const ConstructsClass& owner) { return owner.cls; },
+          [&](const DeclaredByNamespace&) {
+            return refuse("the unit's namespace");
+          },
+          [&](const DeclaredByClosure&) { return refuse("a closure"); },
+          [&](const DeclaredByRecord&) { return refuse("a record"); }},
+      unit.OwnerOf(callable));
+}
+
 // What spells one body of a unit's namespace: the linkage name the source wrote
 // in the DPI-C name space, which is program-global and belongs to no unit (LRM
 // 35.4); the identifier the unit's own namespace answers (LRM 26.3); which of
 // the two bring-up entries it is; being the entry that makes an object of the
 // body this unit is compiled to, or a block of one of its block bodies; the
 // unit and identifier another unit's namespace publishes it under, for one
-// this unit only declares; or, where nothing names it, the position it sits
-// at.
+// this unit only declares; the callback of the runtime library it answers,
+// reading or subscribing to the data objects the namespace describes, as a
+// class's body answering it is named; or, where nothing names it, where it
+// stands among the namespace's callables.
 //
-// The position is the general case and the five before it are the special
+// The position is the general case and the six before it are the special
 // ones. A namespace holds what the source declared and what the compiler
-// synthesized alike, in one pool for bodies and one for cells; the position is
-// what every entry of either has, and an identifier is a relation over that
+// synthesized alike, in one list of bodies and one pool of cells; the position
+// is what every entry of either has, and an identifier is a relation over that
 // position, stated only where the source wrote one. So an entry answering to
 // nothing is an answer rather than a case to work around.
 struct ReachedByLinkageName {
@@ -654,24 +1000,39 @@ struct ReachedInAnotherUnit {
   std::string_view unit_name;
   std::string_view name;
 };
-// A body nothing names, spelled from where it sits. A target mints the spelling
-// into a range no source name reaches; nothing outside this unit can ask for
-// it, which is why a position suffices.
+// A body nothing names, spelled from where it stands among the namespace's
+// callables. A target mints the spelling into a range no source name reaches;
+// nothing outside this unit can ask for it, which is why a position suffices.
 struct ReachedByPosition {
-  CallableId slot;
+  CallableOrdinal position;
+};
+// A body answering a callback of the runtime library for the namespace,
+// spelled as a class's body answering it is. Only this unit's own record of
+// what the namespace describes names it, so nothing outside the unit asks for
+// it.
+struct ReachedAsLibraryCallback {
+  support::LibraryCallback callback;
 };
 
 using NamespaceReach = std::variant<
     ReachedByLinkageName, ReachedByName, ReachedByBringUpEntry,
-    ReachedAsObjectEntry, ReachedInAnotherUnit, ReachedByPosition>;
+    ReachedAsObjectEntry, ReachedInAnotherUnit, ReachedAsLibraryCallback,
+    ReachedByPosition>;
 
 // How `id` is spelled. Every target names it from this one answer, so no two
 // arrive at different names for one body and none works out for itself which
 // kind of body it is looking at.
 [[nodiscard]] inline auto NamespaceReachOf(
     const CompilationUnit& unit, CallableId id) -> NamespaceReach {
-  const CallableDecl& callable = unit.callables.Get(id);
-  if (callable.defining_unit.has_value()) {
+  const auto* owner = std::get_if<DeclaredByNamespace>(&unit.OwnerOf(id));
+  if (owner == nullptr) {
+    throw InternalError(
+        std::format(
+            "mir: callable {} is spelled as a body of the unit's namespace, "
+            "which does not declare it -- please report this as a bug",
+            id.value));
+  }
+  if (owner->defining_unit.has_value()) {
     const std::optional<std::string_view> name =
         NameOf(unit.named_callables, id);
     if (!name.has_value()) {
@@ -680,10 +1041,10 @@ using NamespaceReach = std::variant<
           "name to reach it by -- please report this as a bug");
     }
     return ReachedInAnotherUnit{
-        .unit_name = *callable.defining_unit, .name = *name};
+        .unit_name = *owner->defining_unit, .name = *name};
   }
-  if (callable.foreign.has_value()) {
-    return ReachedByLinkageName{callable.foreign->foreign_name};
+  if (owner->foreign.has_value()) {
+    return ReachedByLinkageName{owner->foreign->foreign_name};
   }
   if (const BroughtUpNamespace* ns = BroughtUpNamespaceOf(unit)) {
     if (id == ns->install_storage) {
@@ -691,6 +1052,12 @@ using NamespaceReach = std::variant<
     }
     if (id == ns->initialize_storage) {
       return ReachedByBringUpEntry{BringUpEntry::kInitializeStorage};
+    }
+    if (ns->scope_declarations.has_value()) {
+      if (const std::optional<support::LibraryCallback> callback =
+              DataObjectCallbackOf(*ns->scope_declarations, id)) {
+        return ReachedAsLibraryCallback{.callback = *callback};
+      }
     }
   }
   if (const RootedTree* tree = RootedTreeOf(unit)) {
@@ -706,7 +1073,7 @@ using NamespaceReach = std::variant<
           NameOf(unit.named_callables, id)) {
     return ReachedByName{*name};
   }
-  return ReachedByPosition{id};
+  return ReachedByPosition{owner->ordinal};
 }
 
 // The members' types of the record `record`, wherever it was declared, in
@@ -776,6 +1143,43 @@ using NamespaceReach = std::variant<
       return true;
   }
   throw InternalError("mir: unknown record kind");
+}
+
+// The operation the record method `method` answers, which its owner names.
+// Asking it of a callable no record declares is a producer's defect.
+[[nodiscard]] inline auto AnsweredOperationOf(
+    const CompilationUnit& unit, CallableId method) -> support::ValueOperation {
+  const auto* owner = std::get_if<DeclaredByRecord>(&unit.OwnerOf(method));
+  if (owner == nullptr) {
+    throw InternalError(
+        std::format(
+            "mir: callable {} is asked which operation of a record it "
+            "answers, and no record declares it -- please report this as a "
+            "bug",
+            method.value));
+  }
+  return owner->answers;
+}
+
+// The method of the record `record` answering `answers`, as a call names it,
+// wherever the record was declared: every method its declaration states is
+// declared in the unit before any body naming one is built. A call naming an
+// operation the record does not answer states nothing the program has, so it
+// is the producer's defect.
+[[nodiscard]] inline auto RecordMethodOf(
+    const CompilationUnit& unit, RecordId record,
+    support::ValueOperation answers) -> CallableId {
+  for (const CallableId method : unit.RecordMethodsOf(record)) {
+    if (AnsweredOperationOf(unit, method) == answers) {
+      return method;
+    }
+  }
+  throw InternalError(
+      std::format(
+          "mir: a call names the method \"{}\" of record '{}', which its "
+          "declaration does not state -- please report this as a bug",
+          support::ValueOperationName(answers),
+          support::DisplayOf(unit.GetRecord(record).path)));
 }
 
 // The declaration any unit names the record `record` by.

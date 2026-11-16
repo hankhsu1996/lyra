@@ -5,7 +5,9 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/callable.hpp"
-#include "lyra/mir/class.hpp"
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/callable_id.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -22,9 +24,34 @@ auto TakesCallerLocation(
     return code.caller_location.has_value();
   };
   const auto construction_reports_at_caller = [&](ClassId cls) {
-    const std::optional<ConstructorDecl>& constructor =
-        unit.GetClass(cls).constructor;
-    return constructor.has_value() && reports_at_caller(constructor->code);
+    const std::optional<CallableId>& constructor =
+        unit.CallablesOf(cls).constructor;
+    return constructor.has_value() &&
+           reports_at_caller(unit.callables.Get(*constructor).code);
+  };
+  // A record's own operation reports where the entry it answers does. A
+  // closure keeps the location of the body that built it, and a function the
+  // foreign program defines is no text of the tool's.
+  const auto callable_reports_at_caller = [&](CallableId callable) {
+    const CallableDecl& decl = unit.callables.Get(callable);
+    return std::visit(
+        Overloaded{
+            [&](const DeclaredByClass&) {
+              return reports_at_caller(decl.code);
+            },
+            [&](const ConstructsClass&) {
+              return reports_at_caller(decl.code);
+            },
+            [&](const DeclaredByNamespace&) {
+              return !std::holds_alternative<DefinedByForeignCode>(
+                         FormOf(decl)) &&
+                     reports_at_caller(decl.code);
+            },
+            [](const DeclaredByRecord& owner) {
+              return support::TakesCallerLocation(owner.answers);
+            },
+            [](const DeclaredByClosure&) { return false; }},
+        unit.OwnerOf(callable));
   };
   return std::visit(
       Overloaded{
@@ -35,39 +62,22 @@ auto TakesCallerLocation(
                       return support::RuntimeEntryOf(fn).takes_the_location;
                     },
                     [&](const CallableTarget& target) {
-                      return reports_at_caller(unit.GetClass(target.owner)
-                                                   .callables.Get(target.slot)
-                                                   .code);
+                      return callable_reports_at_caller(target.callable);
                     },
-                    [&](const UnitCallableTarget& target) {
-                      return reports_at_caller(
-                          unit.callables.Get(target.slot).code);
-                    },
-                    [&](const ConstructorTarget& target) {
-                      return construction_reports_at_caller(target.cls);
-                    },
-                    // A record's or a type's own operation reports where the
-                    // entry it answers does.
-                    [](const RecordMethodTarget& target) {
-                      return support::TakesCallerLocation(target.answers);
-                    },
+                    // A type's own operation reports where the entry it
+                    // answers does.
                     [](const TypeOperationTarget& target) {
                       return support::TakesCallerLocation(target.answers);
                     },
-                    // A closure keeps the location of the body that built it,
-                    // and a unit's bring-up and a foreign symbol are no text
-                    // of the tool's.
-                    [](const ClosureTarget&) { return false; },
-                    [](const ExternalBringUpTarget&) { return false; },
-                    [](const ForeignSymbolTarget&) { return false; }},
+                    // A unit's bring-up is no text of the tool's.
+                    [](const ExternalBringUpTarget&) { return false; }},
                 direct.target);
           },
           // A behavior dispatched on is what its introducing declaration
           // states, which every body answering it takes alike.
           [&](const Virtual& dispatched) {
-            return reports_at_caller(unit.GetClass(dispatched.slot.owner_class)
-                                         .callables.Get(dispatched.slot.slot)
-                                         .code);
+            return reports_at_caller(
+                unit.callables.Get(dispatched.slot.introduced_by).code);
           },
           [](const Indirect&) { return false; },
           // Constructing an object enters its class's constructor, which

@@ -6,7 +6,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/type.hpp"
@@ -54,16 +53,15 @@ auto ClosureReceiverType(
   throw InternalError("mir::ClosureReceiverType: unknown ClosureKind");
 }
 
-auto ClosureKindOf(const TypePool& types, const ClosureDecl& closure)
+auto ClosureKindOf(const TypePool& types, const CallableCode& invoke)
     -> support::ClosureKind {
-  if (!closure.invoke.receiver.has_value()) {
+  if (!invoke.receiver.has_value()) {
     throw InternalError(
         "mir::ClosureKindOf: a closure's body is entered on no receiver -- "
         "please report this as a bug");
   }
   const auto* pointer =
-      types.Get(closure.invoke.locals.Get(*closure.invoke.receiver).type)
-          .As<PointerType>();
+      types.Get(invoke.locals.Get(*invoke.receiver).type).As<PointerType>();
   if (pointer == nullptr) {
     throw InternalError(
         "mir::ClosureKindOf: a closure's body is entered on something other "
@@ -88,18 +86,17 @@ auto ClosureKindOf(const TypePool& types, const ClosureDecl& closure)
   throw InternalError("mir::ClosureKindOf: unknown PointerOwnership");
 }
 
-auto ErasedTypeOf(const TypePool& types, const ClosureDecl& closure) -> TypeId {
-  const CallableCode& body = closure.invoke;
+auto ErasedTypeOf(const TypePool& types, const CallableCode& invoke) -> TypeId {
   std::vector<TypeId> params;
-  params.reserve(body.params.size());
-  for (const LocalId param : body.params) {
-    params.push_back(body.locals.Get(param).type);
+  params.reserve(invoke.params.size());
+  for (const LocalId param : invoke.params) {
+    params.push_back(invoke.locals.Get(param).type);
   }
   return types.Intern(
       Type{ErasedCallableType{
-          .kind = ClosureKindOf(types, closure),
+          .kind = ClosureKindOf(types, invoke),
           .params = std::move(params),
-          .result = body.result_type}});
+          .result = invoke.result_type}});
 }
 
 auto ClosureErasureOf(const TypePool& types, TypeId from, TypeId to)

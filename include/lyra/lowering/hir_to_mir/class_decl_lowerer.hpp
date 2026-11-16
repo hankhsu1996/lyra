@@ -99,18 +99,19 @@ class ClassDeclLowerer {
       const WalkFrame& declaring_frame, mir::Class& mir_class,
       ScopeChainNode& link) const -> WalkFrame;
 
-  // Defines what `randomize()` asks of the class (LRM 18.6), each at the
-  // identity the class took for it.
+  // Compiles into `compiled` what `randomize()` asks of the class (LRM 18.6),
+  // each for the callable the class took for it.
   void DefineRandomizationHooks(
       const WalkFrame& declaring_frame, mir::Class& mir_class,
-      const RandomizationHooks& hooks) const;
+      const RandomizationHooks& hooks, CompiledClassCode& compiled) const;
 
-  // Defines what answers which instances an object of the class is of (LRM
-  // 6.22, 8.26.2), each at the identity the class took for it: the instance
-  // each interface class the declaration names reaches, from the instance the
-  // class belongs to as the class's code reaches it.
+  // Compiles into `compiled` what answers which instances an object of the
+  // class is of (LRM 6.22, 8.26.2), each for the callable the class took for
+  // it: the instance each interface class the declaration names reaches, from
+  // the instance the class belongs to as the class's code reaches it.
   void DefineInstanceBodies(
-      const WalkFrame& declaring_frame, mir::Class& mir_class) const;
+      const WalkFrame& declaring_frame, mir::Class& mir_class,
+      CompiledClassCode& compiled) const;
 
   UnitLowerer* owner_;
   hir::ClassId hir_class_id_;

@@ -1,6 +1,5 @@
 #include "lyra/mir/referenced_declarations.hpp"
 
-#include <algorithm>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
@@ -59,16 +58,14 @@ auto UnitWithBody(const WriteBody& write_body) -> CompilationUnit {
   derived_class.defining_unit = "P";
   derived_class.identity = PathOf("Derived");
   derived_class.base = ClassRef{base};
+  // A method and a construction of the class, which another unit defines.
+  unit.AddClassCallable(derived, std::nullopt, CallableCode{});
+  unit.AddClassConstructor(derived, CallableCode{});
   unit.DefineClass(derived, std::move(derived_class));
   CallableCode code = CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
   write_body(unit, Builder(code.Body(), diag::SourceSpan{}), derived);
-  unit.callables.Add(
-      CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
+  unit.AddNamespaceCallable(std::move(code));
   return unit;
 }
 
@@ -154,14 +151,17 @@ TEST(ReferencedDeclarationsTest, EveryReachIntoAClassNamesItWithItsLineage) {
                         .receiver = receiver,
                         .slot =
                             VirtualSlot{
-                                .owner_class = cls, .slot = CallableId{}}},
+                                .introduced_by =
+                                    u.CallablesOf(cls).callables.front()}},
                 .arguments = {}},
         .type = u.builtins.void_type};
   })) << "a behavior dispatched on";
   EXPECT_TRUE(names_derived([](CompilationUnit& u, Builder, ClassId cls) {
     return MakeCallExpr(
-        Direct{.target = ConstructorTarget{.cls = cls}}, {},
-        u.builtins.void_type);
+        Direct{
+            .target =
+                CallableTarget{.callable = *u.CallablesOf(cls).constructor}},
+        {}, u.builtins.void_type);
   })) << "a construction entered";
   EXPECT_TRUE(names_derived([](CompilationUnit& u, Builder, ClassId cls) {
     return Expr{
@@ -286,17 +286,12 @@ TEST(
     ANamespaceMemberOfAnotherUnitIsReferencedWhereNamed) {
   const CompilationUnit calling = UnitWithBody([](CompilationUnit& u,
                                                   Builder body, ClassId) {
-    const CallableId declared = u.callables.Add(
-        CallableDecl{
-            .code = CallableCode{},
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .defining_unit = "Q"});
+    const CallableId declared = u.AddSubroutineOfUnit("Q");
     u.named_callables.push_back(NamedCallable{.name = "g", .body = declared});
     body.AppendStmt(
         ExprStmt{
             .expr = body.Add(MakeCallExpr(
-                Direct{.target = UnitCallableTarget{.slot = declared}}, {},
+                Direct{.target = CallableTarget{.callable = declared}}, {},
                 u.builtins.void_type))});
     body.AppendStmt(
         ExprStmt{

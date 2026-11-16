@@ -1,7 +1,7 @@
 #include <array>
-#include <cstddef>
 #include <gtest/gtest.h>
 #include <optional>
+#include <ranges>
 #include <tuple>
 #include <utility>
 
@@ -28,16 +28,6 @@ constexpr std::array<diag::SourceSpan, 2> kWrittenAt = {
     diag::SourceSpan{.start = 1, .end = 2},
     diag::SourceSpan{.start = 3, .end = 4}};
 
-auto AddBody(mir::CompilationUnit& unit, mir::CallableCode code)
-    -> mir::CallableId {
-  return unit.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
-}
-
 // A namespace unit whose one body evaluates a null of `type` twice, each
 // lowered from a piece of source of its own, so a refusal that stopped at the
 // first would be seen reporting one.
@@ -49,10 +39,13 @@ auto UnitWithNullOf(mir::TypeId (*type_of)(mir::CompilationUnit&))
   unit.body_name = "U";
   mir::CallableCode empty = mir::CallableCode::Defined(diag::SourceSpan{});
   empty.result_type = unit.builtins.void_type;
-  const mir::CallableId install = AddBody(unit, empty);
-  const mir::CallableId initialize = AddBody(unit, std::move(empty));
+  const mir::CallableId install = unit.AddNamespaceCallable(empty);
+  const mir::CallableId initialize =
+      unit.AddNamespaceCallable(std::move(empty));
   unit.content = mir::BroughtUpNamespace{
-      .install_storage = install, .initialize_storage = initialize};
+      .install_storage = install,
+      .initialize_storage = initialize,
+      .scope_declarations = std::nullopt};
 
   const mir::TypeId type = type_of(unit);
   mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
@@ -63,7 +56,7 @@ auto UnitWithNullOf(mir::TypeId (*type_of)(mir::CompilationUnit&))
         code_body.Add(mir::Expr{.data = mir::NullLiteral{}, .type = type});
     code_body.AppendStmt(mir::ExprStmt{.expr = null});
   }
-  const mir::CallableId id = AddBody(unit, std::move(code));
+  const mir::CallableId id = unit.AddNamespaceCallable(std::move(code));
   unit.named_callables.push_back(mir::NamedCallable{.name = "f", .body = id});
   return unit;
 }
@@ -80,12 +73,12 @@ TEST(CppBackendRefusal, ANodeWithNoFormIsReportedAsUnsupported) {
       });
   diag::DiagnosticSink refusals;
   std::ignore = EmitCppUnit(refused, refusals);
-  ASSERT_EQ(refusals.Diagnostics().size(), 2U);
-  for (std::size_t i = 0; i < kWrittenAt.size(); ++i) {
-    const diag::Diagnostic& refusal = refusals.Diagnostics()[i];
+  ASSERT_EQ(refusals.Diagnostics().size(), kWrittenAt.size());
+  for (const auto& [refusal, written_at] :
+       std::views::zip(refusals.Diagnostics(), kWrittenAt)) {
     EXPECT_EQ(refusal.primary.kind, diag::DiagKind::kUnsupported)
         << refusal.primary.message;
-    EXPECT_EQ(refusal.primary.span, diag::DiagSpan{kWrittenAt[i]})
+    EXPECT_EQ(refusal.primary.span, diag::DiagSpan{written_at})
         << refusal.primary.message;
   }
 

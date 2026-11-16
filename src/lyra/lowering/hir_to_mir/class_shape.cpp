@@ -1,29 +1,29 @@
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 
-#include <cstddef>
 #include <optional>
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 auto CanonicalVirtualSlot(
-    mir::ClassId self_owner, mir::CallableId self_slot,
-    const mir::VirtualDispatchRole& role) -> mir::VirtualSlot {
+    mir::CallableId self, const mir::VirtualDispatchRole& role)
+    -> mir::VirtualSlot {
   return std::visit(
       Overloaded{
           [&](const mir::IntroducesVirtualSlot&) -> mir::VirtualSlot {
-            return mir::VirtualSlot{
-                .owner_class = self_owner, .slot = self_slot};
+            return mir::VirtualSlot{.introduced_by = self};
           },
           [](const mir::OverridesVirtualSlot& o) -> mir::VirtualSlot {
             return o.overridden;
@@ -32,10 +32,12 @@ auto CanonicalVirtualSlot(
 }
 
 auto AsIntroducer(
-    const mir::TypePool& types, mir::Builder block, mir::ExprId receiver,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver,
     const mir::VirtualSlot& slot) -> mir::ExprId {
-  const mir::TypeId introducer =
-      types.Intern(mir::Type{mir::ObjectType{.of = slot.owner_class}});
+  const mir::TypePool& types = unit.types;
+  const mir::TypeId introducer = types.Intern(
+      mir::Type{mir::ObjectType{
+          .of = mir::DeclaringClassOf(unit, slot.introduced_by)}});
   const auto& held =
       types.Get(block.Get(receiver).type).Get<mir::PointerType>();
   return ObjectAs(
@@ -75,9 +77,7 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .scope_declarations = scope_declarations,
       .fields = fields,
       .named_fields = named_fields,
-      .constructor = std::nullopt,
       .contained = contained,
-      .callables = {},
       .static_properties = static_properties,
       .named_static_properties = named_static_properties,
       .named_callables = {},
@@ -86,9 +86,6 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .interface_reaches = {},
       .exports = {},
       .definition = std::nullopt};
-  for (std::size_t i = 0; i < callable_signatures.size(); ++i) {
-    cls.callables.Declare();
-  }
   return cls;
 }
 

@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -584,19 +586,19 @@ auto ForeignBoundaryReturnType(
 }
 
 // The call to the foreign symbol itself, over already-marshaled arguments. The
-// callee is the linkage name in the DPI-C name space (LRM 35.4), reached by
-// name and never through a class or another unit's namespace.
+// callee is the declaration of the import, `callable`, whose linkage name in
+// the DPI-C name space (LRM 35.4) reaches it by name and never through a class
+// or another unit's namespace.
 auto MakeForeignSymbolCall(
     mir::CompilationUnit& unit, const hir::ForeignImportDecl& import,
-    std::vector<mir::ExprId> carrier_args) -> mir::Expr {
+    mir::CallableId callable, std::vector<mir::ExprId> carrier_args)
+    -> mir::Expr {
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee =
                   mir::Direct{
-                      .target =
-                          mir::ForeignSymbolTarget{
-                              .linkage_name = import.foreign_name}},
+                      .target = mir::CallableTarget{.callable = callable}},
               .arguments = std::move(carrier_args)},
       .type = ForeignBoundaryReturnType(unit, import.ret_abi, import.is_task)};
 }
@@ -610,8 +612,8 @@ auto MakeForeignSymbolCall(
 template <ExprLowerer Lowerer>
 auto LowerForeignImportDirect(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const hir::ForeignImportDecl& import, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
+    const hir::ForeignImportDecl& import, const hir::ForeignImportRef& ref,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
@@ -631,8 +633,9 @@ auto LowerForeignImportDirect(
         ForeignHold::kForTheCall));
   }
 
-  mir::Expr foreign_call =
-      MakeForeignSymbolCall(unit, import, std::move(carrier_args));
+  mir::Expr foreign_call = MakeForeignSymbolCall(
+      unit, import, unit_lowerer.ForeignImportCallable(ref.id),
+      std::move(carrier_args));
   if (!ReturnsValue(import)) {
     return foreign_call;
   }
@@ -797,8 +800,9 @@ auto PopulateForeignImportBoundary(
         unit_lowerer, body, support::BuiltinFn::kBeforeForeignCodeRuns, {});
   }
 
-  mir::Expr foreign_call =
-      MakeForeignSymbolCall(unit, import, std::move(call_args));
+  mir::Expr foreign_call = MakeForeignSymbolCall(
+      unit, import, unit_lowerer.ForeignImportCallable(ref.id),
+      std::move(call_args));
   const mir::TypeId call_type = foreign_call.type;
 
   // A call that hands anything back captures it in a temp so the copy-backs run
@@ -1119,15 +1123,13 @@ auto MakeForeignSignature(
   return code;
 }
 
-auto MakeForeignImportDecl(
+auto AddForeignImport(
     mir::CompilationUnit& unit, const hir::ForeignImportDecl& import)
-    -> mir::CallableDecl {
-  return mir::CallableDecl{
-      .code = MakeForeignSignature(
-          unit, import.params, import.ret_abi, import.is_task),
-      .foreign = mir::ForeignLinkage{.foreign_name = import.foreign_name},
-      .virtual_dispatch = std::nullopt,
-      .defining_unit = std::nullopt};
+    -> mir::CallableId {
+  return unit.AddForeignCallable(
+      mir::ForeignLinkage{.foreign_name = import.foreign_name},
+      MakeForeignSignature(
+          unit, import.params, import.ret_abi, import.is_task));
 }
 
 template <ExprLowerer Lowerer>
@@ -1146,7 +1148,7 @@ auto LowerForeignImportCall(
     return LowerForeignImportSequenced(
         lowerer, frame, c, import, ref, result_type);
   }
-  return LowerForeignImportDirect(lowerer, frame, c, import, result_type);
+  return LowerForeignImportDirect(lowerer, frame, c, import, ref, result_type);
 }
 
 template auto LowerForeignImportCall(
@@ -1327,7 +1329,7 @@ void CloseForeignExportEntry(
 
 auto SynthesizeForeignExportEntry(
     UnitLowerer& module, const WalkFrame& context_frame,
-    mir::DirectTarget target, mir::TypeId result_type,
+    mir::CallableTarget target, mir::TypeId result_type,
     const hir::ForeignExportDecl& export_decl) -> ForeignExportEntry {
   mir::CompilationUnit& unit = module.Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
@@ -1356,8 +1358,23 @@ auto SynthesizeForeignExportEntry(
   // scope it runs against, and the symbol resolves it against the scope in
   // effect. A package subroutine has no receiver and a package has one form, so
   // its entry is the symbol and publishes the prototype directly.
-  const bool through_scope =
-      std::holds_alternative<mir::CallableTarget>(target);
+  const auto refuse = [](std::string_view declarer) -> bool {
+    throw InternalError(
+        std::format(
+            "SynthesizeForeignExportEntry: an exported subroutine is a "
+            "callable {} declares -- please report this as a bug",
+            declarer));
+  };
+  const bool through_scope = std::visit(
+      Overloaded{
+          [](const mir::DeclaredByClass&) { return true; },
+          [](const mir::DeclaredByNamespace&) { return false; },
+          [&](const mir::ConstructsClass&) {
+            return refuse("a class's construction");
+          },
+          [&](const mir::DeclaredByClosure&) { return refuse("a closure"); },
+          [&](const mir::DeclaredByRecord&) { return refuse("a record"); }},
+      unit.OwnerOf(target.callable));
 
   // The entry publishes the same signature an import of the same shape would,
   // and then defines it -- which is the whole difference between the two
@@ -1529,9 +1546,7 @@ auto SynthesizeForeignExportEntry(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = std::move(target), .receiver = receiver},
+                  .callee = mir::Direct{.target = target, .receiver = receiver},
                   .arguments = std::move(call_args)},
           .type = method_result_type});
 

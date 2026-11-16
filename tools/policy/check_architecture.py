@@ -1426,7 +1426,6 @@ HIR_TEXT_FIELDS = {
     ("covergroup.hpp", "Cross", "name"): SPELLING,
     ("covergroup_ref.hpp", "CovergroupKey", "unit_name"): SPELLING,
     ("covergroup_ref.hpp", "CovergroupKey", "path"): SPELLING,
-    ("dumped_declaration.hpp", "DumpedDeclaration", "identifier"): SPELLING,
     ("expr.hpp", "ConstraintBlockMode", "name"): FOUND_AT_RUN_TIME,
     ("expr.hpp", "StaticConstraintBlockMode", "block"): FOUND_AT_RUN_TIME,
     ("fixed_name.hpp", "NameBelowInstance", "text"): SPELLING,

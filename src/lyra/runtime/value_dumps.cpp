@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <memory>
@@ -14,7 +15,6 @@
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
-#include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
@@ -22,6 +22,7 @@
 #include "lyra/runtime/dump_writer.hpp"
 #include "lyra/runtime/file.hpp"
 #include "lyra/runtime/hierarchical_name.hpp"
+#include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/sim_time.hpp"
@@ -93,34 +94,6 @@ auto TicksOf(std::string_view text, std::int8_t precision_power)
   }
   return count;
 }
-
-// Finds, while one instance describes itself, the member that is the variable
-// it declares in `enclosing`, or directly where that is none, under
-// `identifier`, compared as an identifier (LRM 5.6.1).
-class VariableFinder final : public Describer {
- public:
-  VariableFinder(
-      const abi::LexicalScopeRecord* enclosing, std::string_view identifier)
-      : enclosing_(enclosing), identifier_(identifier) {
-  }
-
-  void Var(
-      const abi::DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
-    if (entry.enclosing == enclosing_ &&
-        IdentifierOf(entry.identifier) == identifier_) {
-      found_ = probe->Member();
-    }
-  }
-
-  [[nodiscard]] auto Found() const -> const void* {
-    return found_;
-  }
-
- private:
-  const abi::LexicalScopeRecord* enclosing_;
-  std::string_view identifier_;
-  const void* found_ = nullptr;
-};
 
 }  // namespace
 
@@ -296,15 +269,23 @@ void ValueDumps::DumpFile(const value::String& name) {
   design_file_ = std::string(name.View());
 }
 
-// Levels alone count from the design's tops.
+// Levels alone count from the design's tops, and take in whole each package
+// and compilation unit's scope beside them, which hold no level below.
 void ValueDumps::DumpVarsLevels(std::int64_t levels) {
   if (!DesignActs()) {
     return;
   }
-  root_->ForEachChild([&](Scope& top) {
-    design_selection_.instances.push_back({.scope = &top, .levels = levels});
-  });
+  SelectFromTops(design_selection_, levels);
   Select(runtime_->Now());
+}
+
+void ValueDumps::SelectFromTops(DumpSelection& selection, std::int64_t levels) {
+  root_->ForEachChild([&](Scope& top) {
+    selection.instances.push_back({.scope = &top, .levels = levels});
+  });
+  std::ranges::copy(
+      AsRuntime(*runtime_).Namespaces(),
+      std::back_inserter(selection.namespaces));
 }
 
 void ValueDumps::DumpVarsOf(std::int64_t levels, Scope& instance) {
@@ -315,11 +296,11 @@ void ValueDumps::DumpVarsOf(std::int64_t levels, Scope& instance) {
   Select(runtime_->Now());
 }
 
-void ValueDumps::DumpVarsOfVariable(const void* member) {
+void ValueDumps::DumpVarsOfVariable(const Trigger& variable) {
   if (!DesignActs()) {
     return;
   }
-  design_selection_.variables.push_back(member);
+  design_selection_.variables.push_back(DumpIdentityOf(variable));
   Select(runtime_->Now());
 }
 
@@ -415,7 +396,7 @@ void ValueDumps::DumpPortsOf(Scope& instance, const value::String& name) {
         if (ports.limit.has_value()) {
           ports.dump->Limit(*ports.limit);
         }
-        ports.dump->Start(ports.selection, now, *this);
+        ports.dump->Start(ports.selection, now);
       });
 }
 
@@ -475,14 +456,6 @@ void ValueDumps::DumpPortsFlush(const value::String& name) {
   OnEachPortDump(name, [](ValueDump& dump) { dump.Flush(); });
 }
 
-auto ValueDumps::Describing() -> Describer& {
-  if (describing_ == nullptr) {
-    throw InternalError(
-        "an instance described itself while no value dump was starting");
-  }
-  return *describing_;
-}
-
 // LRM 21.7.1.2: every `$dumpvars` executes at one simulation time, and the
 // dump starts at the end of it.
 void ValueDumps::Select(SimTime now) {
@@ -524,7 +497,7 @@ void ValueDumps::Start(
   if (limit_.has_value()) {
     dump_->Limit(*limit_);
   }
-  dump_->Start(selection, *root_, now, *this);
+  dump_->Start(selection, *root_, AsRuntime(*runtime_).Namespaces(), now);
   OpenWindowsFrom(0);
 }
 
@@ -554,15 +527,15 @@ void ValueDumps::OpenWindowsFrom(std::size_t index) {
 }
 
 // Each path names an instance, walked down from the tops by the names its
-// scopes are written with, or a variable of the instance it stops at; one
-// naming neither, an empty one among them, is reported and ignored.
+// scopes are written with, or a variable of the instance it stops at, or a
+// package by its name alone where no top has that name, or, after a package's
+// name and `::`, a variable that package keeps; one naming none of these, an
+// empty one among them, is reported and ignored.
 auto ValueDumps::OptionSelection() -> DumpSelection {
   DumpSelection selection;
   // No path at all is the whole design, as `$dumpvars` naming nothing is.
   if (option_scopes_.empty()) {
-    root_->ForEachChild([&](Scope& top) {
-      selection.instances.push_back({.scope = &top, .levels = 0});
-    });
+    SelectFromTops(selection, 0);
   }
   for (const NamedScope& named : option_scopes_) {
     const auto ignored = [&] {
@@ -570,25 +543,48 @@ auto ValueDumps::OptionSelection() -> DumpSelection {
       runtime_->Diagnostic().Report(
           base::kNoSourceLocation, Severity::kWarning,
           base::DiagMessage(
-              "the dump scope '{}' names no instance or variable; it is "
-              "ignored",
+              "the dump scope '{}' names no instance, package or variable; it "
+              "is ignored",
               named.path));
     };
     const std::optional<HierarchicalName> read =
         ReadHierarchicalName(named.path);
-    if (!read.has_value() || read->package.has_value() || read->parts.empty()) {
+    if (!read.has_value() || read->parts.empty()) {
       ignored();
+      continue;
+    }
+    if (read->package.has_value()) {
+      const abi::ScopeDeclarations* kept =
+          PackageNamed(AsRuntime(*runtime_).Namespaces(), *read->package);
+      const void* member =
+          kept != nullptr ? FindVariable(nullptr, *kept, read->parts) : nullptr;
+      if (member == nullptr) {
+        ignored();
+        continue;
+      }
+      selection.variables.push_back(member);
       continue;
     }
     const std::span<const NamePart> parts = read->parts;
     const ScopeReached reached = LongestNamedPrefix(*root_, parts);
+    // A package's name alone, where no top-level instance has that name, is
+    // the package, as a name handed to the design reads it.
+    if (reached.parts == 0 && parts.size() == 1 &&
+        parts.front().indices.empty()) {
+      if (const abi::ScopeDeclarations* package = PackageNamed(
+              AsRuntime(*runtime_).Namespaces(), parts.front().identifier)) {
+        selection.namespaces.push_back(package);
+        continue;
+      }
+    }
     const std::span<const NamePart> rest = parts.subspan(reached.parts);
     if (rest.empty()) {
       selection.instances.push_back(
           {.scope = reached.scope, .levels = named.levels});
       continue;
     }
-    if (const void* member = FindVariable(*reached.scope, rest);
+    if (const void* member =
+            FindVariable(reached.scope, reached.scope->Declarations(), rest);
         member != nullptr) {
       selection.variables.push_back(member);
       continue;
@@ -601,8 +597,9 @@ auto ValueDumps::OptionSelection() -> DumpSelection {
 // The leading parts name the blocks, tasks and functions the variable lies in,
 // outermost first, each reached as a name reaches a declaration (LRM 9.3.4),
 // and the last names the variable.
-auto ValueDumps::FindVariable(Scope& instance, std::span<const NamePart> name)
-    -> const void* {
+auto ValueDumps::FindVariable(
+    Scope* instance, const abi::ScopeDeclarations& declared,
+    std::span<const NamePart> name) -> const void* {
   if (std::ranges::any_of(
           name, [](const NamePart& part) { return !part.indices.empty(); })) {
     return nullptr;
@@ -610,13 +607,22 @@ auto ValueDumps::FindVariable(Scope& instance, std::span<const NamePart> name)
   const abi::LexicalScopeRecord* enclosing = nullptr;
   for (const NamePart& part : name.first(name.size() - 1)) {
     enclosing = LexicalDeclarationNamed(
-        instance.Declarations().lexical.Entries(), enclosing, part.identifier);
+        declared.lexical.Entries(), enclosing, part.identifier);
     if (enclosing == nullptr) return nullptr;
   }
-  VariableFinder finder(enclosing, name.back().identifier);
-  const InstalledDescriber installed(*this, finder);
-  instance.Describe();
-  return finder.Found();
+  const std::span<const abi::DataObjectRecord* const> objects =
+      declared.data_objects.Entries();
+  for (std::size_t position = 0; position < objects.size(); ++position) {
+    const abi::DataObjectRecord& object = *objects[position];
+    if (object.enclosing == enclosing &&
+        IdentifierOf(object.identifier) == name.back().identifier) {
+      return DumpIdentityOf(
+          {.instance = instance,
+           .declarations = &declared,
+           .position = static_cast<std::uint32_t>(position)});
+    }
+  }
+  return nullptr;
 }
 
 void DumpFile(
@@ -640,9 +646,9 @@ void DumpVarsOf(
 }
 
 void DumpVarsOfVariable(
-    RuntimeEffects& runtime, const void* member, base::SourceLocation at) {
+    RuntimeEffects& runtime, const Trigger& variable, base::SourceLocation at) {
   const base::SourceLocationScope bound(at);
-  runtime.Dumps().DumpVarsOfVariable(member);
+  runtime.Dumps().DumpVarsOfVariable(variable);
 }
 
 void DumpOff(RuntimeEffects& runtime) {

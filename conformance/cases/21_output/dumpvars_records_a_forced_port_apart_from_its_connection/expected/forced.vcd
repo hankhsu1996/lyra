@@ -1,0 +1,20 @@
+$timescale 1ns $end
+$scope module Top $end
+$var reg 1 X x $end
+$scope module u $end
+$var wire 1 A a $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+0X
+0A
+$end
+#1
+1A
+#2
+0A
+#3
+1X
+1A

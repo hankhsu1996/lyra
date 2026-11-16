@@ -14,7 +14,6 @@
 #include <vector>
 
 #include "lyra/abi/records.hpp"
-#include "lyra/runtime/hierarchy_segment.hpp"
 
 namespace lyra::runtime {
 
@@ -75,5 +74,12 @@ struct ScopeReached {
     std::span<const abi::LexicalScopeRecord* const> declarations,
     const abi::LexicalScopeRecord* enclosing, std::string_view identifier)
     -> const abi::LexicalScopeRecord*;
+
+// The package among `namespaces` that `identifier` names, none where none is
+// so named. A compilation unit's scope answers to no name, since nothing
+// within one is reached by name (LRM 37.10 detail 6).
+[[nodiscard]] auto PackageNamed(
+    std::span<const abi::ScopeDeclarations* const> namespaces,
+    std::string_view identifier) -> const abi::ScopeDeclarations*;
 
 }  // namespace lyra::runtime

@@ -63,15 +63,13 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The callables of a covergroup's class, in the order its shape reserves them:
-// the two virtual methods the first class of a lineage introduces, in the
-// order another unit counts them, then the two of the class itself.
-constexpr mir::CallableId kSample{0};
-constexpr mir::CallableId kMakeRecord{1};
-constexpr mir::CallableId kTypeRecord{2};
-constexpr mir::CallableId kDeclareType{3};
-constexpr std::uint32_t kSampleBehavior = 0;
-constexpr std::uint32_t kMakeRecordBehavior = 1;
+// Where each callable of a covergroup's class stands among those it takes: the
+// two virtual methods the first class of a lineage introduces, in the order
+// another unit counts them, then the two of the class itself.
+constexpr mir::CallableOrdinal kSample{.value = 0};
+constexpr mir::CallableOrdinal kMakeRecord{.value = 1};
+constexpr mir::CallableOrdinal kTypeRecord{.value = 2};
+constexpr mir::CallableOrdinal kDeclareType{.value = 3};
 
 // The library's property `property`, as a member access names it.
 auto LibraryField(
@@ -153,21 +151,23 @@ auto CovergroupHandle(UnitLowerer& unit_lowerer, hir::CovergroupId covergroup)
           .pointee = unit_lowerer.CovergroupObjectType(covergroup)}});
 }
 
-// The behavior `behavior` the first class of `ref`'s lineage introduced.
+// The slot the first class of `ref`'s lineage introduces for its method at
+// `behavior` among its callables.
 auto IntroducedSlot(
     const UnitLowerer& unit_lowerer, hir::CovergroupId ref,
-    std::uint32_t behavior) -> mir::VirtualSlot {
+    mir::CallableOrdinal behavior) -> mir::VirtualSlot {
   return mir::VirtualSlot{
-      .owner_class =
+      .introduced_by = unit_lowerer.ClassCallableAt(
           unit_lowerer.CovergroupClassIdentity(FirstOf(unit_lowerer, ref)),
-      .slot = mir::CallableId{behavior}};
+          behavior)};
 }
 
-// The dispatch role of a class of `ref`'s lineage for the behavior
-// `behavior`: introduced by the first class, overridden by every other.
+// The dispatch role of a class of `ref`'s lineage for its method at
+// `behavior` among its callables: introducing the slot in the first class,
+// overriding it in every other.
 auto RoleIn(
-    UnitLowerer& unit_lowerer, hir::CovergroupId ref, std::uint32_t behavior)
-    -> mir::VirtualDispatchRole {
+    UnitLowerer& unit_lowerer, hir::CovergroupId ref,
+    mir::CallableOrdinal behavior) -> mir::VirtualDispatchRole {
   if (!PublishedOf(unit_lowerer, ref).base.has_value()) {
     return mir::IntroducesVirtualSlot{};
   }
@@ -175,14 +175,15 @@ auto RoleIn(
       .overridden = IntroducedSlot(unit_lowerer, ref, behavior)};
 }
 
-// A method of the class itself, named as a call names it: by position, which
-// is the same in the class this unit writes and in its declaration of another
+// The method of the class itself at `position` among its callables, which is
+// the same in the class this unit writes and in its declaration of another
 // unit's.
 auto TypeMethod(
-    UnitLowerer& unit_lowerer, hir::CovergroupId ref, mir::CallableId slot)
-    -> mir::DirectTarget {
+    UnitLowerer& unit_lowerer, hir::CovergroupId ref,
+    mir::CallableOrdinal position) -> mir::DirectTarget {
   return mir::CallableTarget{
-      .owner = unit_lowerer.CovergroupClassIdentity(ref), .slot = slot};
+      .callable = unit_lowerer.ClassCallableAt(
+          unit_lowerer.CovergroupClassIdentity(ref), position)};
 }
 
 // Whether a class of `ref` belongs to the instance of the scope declaring its
@@ -650,43 +651,42 @@ auto PublishedCovergroupClass(
       unit_lowerer.Hir().covergroups.KeyOf(published);
   const CovergroupClass cls = CovergroupClassOf(unit_lowerer, published);
   const hir::PublishedCovergroup& stated = *cls.published;
-  mir::Class declared = unit_lowerer.IncompleteClass(
-      unit_lowerer.CovergroupClassIdentity(published), key.unit_name, key.path);
+  const mir::ClassId id = unit_lowerer.CovergroupClassIdentity(published);
+  mir::Class declared =
+      unit_lowerer.IncompleteClass(id, key.unit_name, key.path);
   StateCovergroupLayout(unit_lowerer, cls, declared);
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const auto define = [&](mir::CallableOrdinal position, std::string_view name,
+                          std::optional<mir::VirtualDispatchRole> role) {
+    const mir::CallableId callable = unit_lowerer.ClassCallableAt(id, position);
+    unit.StateClassCallable(callable, std::move(role), mir::CallableCode{});
+    declared.named_callables.push_back(
+        mir::NamedCallable{.name = std::string{name}, .body = callable});
+  };
   // `sample` and the record of the object's type, in that order: introduced by
   // the first class of a lineage and overridden by every other, whose first
   // covergroup may be this unit's own where the lineage another unit published
   // passes back through it.
   for (const auto& [name, behavior] :
-       {std::pair{kCovergroupSample, kSampleBehavior},
-        std::pair{kCovergroupMakeRecord, kMakeRecordBehavior}}) {
-    const mir::CallableId callable = declared.callables.Add(
-        mir::CallableDecl{
-            .code = {},
-            .foreign = std::nullopt,
-            .virtual_dispatch =
-                stated.base.has_value()
-                    ? mir::VirtualDispatchRole{mir::OverridesVirtualSlot{
-                          .overridden = IntroducedSlot(
-                              unit_lowerer, published, behavior)}}
-                    : mir::VirtualDispatchRole{mir::IntroducesVirtualSlot{}},
-            .defining_unit = std::nullopt});
-    declared.named_callables.push_back(
-        mir::NamedCallable{.name = std::string{name}, .body = callable});
+       {std::pair{kCovergroupSample, kSample},
+        std::pair{kCovergroupMakeRecord, kMakeRecord}}) {
+    define(
+        behavior, name,
+        stated.base.has_value()
+            ? mir::VirtualDispatchRole{mir::OverridesVirtualSlot{
+                  .overridden =
+                      IntroducedSlot(unit_lowerer, published, behavior)}}
+            : mir::VirtualDispatchRole{mir::IntroducesVirtualSlot{}});
   }
   // Then the two methods of the class itself, which dispatch on nothing.
-  for (const std::string_view name :
-       {kCovergroupTypeRecord, kCovergroupDeclareType}) {
-    declared.named_callables.push_back(
-        mir::NamedCallable{
-            .name = std::string{name},
-            .body = declared.callables.Add(
-                mir::CallableDecl{
-                    .code = {},
-                    .foreign = std::nullopt,
-                    .virtual_dispatch = std::nullopt,
-                    .defining_unit = std::nullopt})});
-  }
+  define(kTypeRecord, kCovergroupTypeRecord, std::nullopt);
+  define(kDeclareType, kCovergroupDeclareType, std::nullopt);
+  // How its objects are built is the other unit's; what a construction of one
+  // as the base of this unit's covergroup hands over is read off the prototype.
+  const mir::CallableId constructor = unit_lowerer.ClassConstructor(id);
+  unit.StateCallable(
+      constructor,
+      CovergroupOperationPrototype(unit_lowerer, published, constructor));
   return declared;
 }
 
@@ -699,13 +699,15 @@ class ClassWriter {
       UnitLowerer& unit_lowerer, hir::CovergroupId covergroup,
       const hir::CovergroupDecl& decl,
       const StructuralScopeLowerer* declaring_scope,
-      const DeclaredScopes& scopes, mir::Class& cls, mir::ClassId class_id,
-      WalkFrame owner, const std::optional<StaticStorageHome>& type_event)
+      const DeclaredScopes& scopes, mir::Class& cls,
+      CompiledClassCode& compiled, mir::ClassId class_id, WalkFrame owner,
+      const std::optional<StaticStorageHome>& type_event)
       : u_(&unit_lowerer),
         decl_(&decl),
         declaring_scope_(declaring_scope),
         scopes_(&scopes),
         cls_(&cls),
+        compiled_(&compiled),
         class_id_(class_id),
         // Every body the class is written of is lowered from the covergroup.
         owner_(owner.WithSpan(decl.span)),
@@ -720,7 +722,8 @@ class ClassWriter {
     for (const CovergroupOperation& operation : CovergroupOperations()) {
       cls_->named_callables.push_back(
           mir::NamedCallable{
-              .name = std::string{operation.name}, .body = operation.callable});
+              .name = std::string{operation.name},
+              .body = Own(operation.position)});
     }
     if (auto r = WriteConstructor(); !r) return r;
     if (auto r = WriteSample(); !r) return r;
@@ -733,6 +736,16 @@ class ClassWriter {
  private:
   [[nodiscard]] auto Unit() const -> mir::CompilationUnit& {
     return u_->Unit();
+  }
+
+  // The callable the class took at `position` among its callables, and the
+  // code compiled for it.
+  [[nodiscard]] auto Own(mir::CallableOrdinal position) const
+      -> mir::CallableId {
+    return u_->ClassCallableAt(class_id_, position);
+  }
+  void Define(mir::CallableOrdinal position, mir::CallableCode code) const {
+    compiled_->callables.emplace(Own(position), std::move(code));
   }
 
   [[nodiscard]] auto Members() const -> const hir::CoverageLibraryMembers& {
@@ -819,7 +832,7 @@ class ClassWriter {
   // A virtual method of the lineage, the first class's `behavior`, called on
   // the running object.
   [[nodiscard]] auto CallVirtual(
-      const Writer& e, std::uint32_t behavior,
+      const Writer& e, mir::CallableOrdinal behavior,
       std::vector<mir::ExprId> arguments,
       std::optional<mir::TypeId> result) const -> mir::ExprId {
     mir::Builder block = e.Block();
@@ -829,7 +842,7 @@ class ClassWriter {
         Unit(), e.Frame(),
         mir::Virtual{
             .receiver = BuildObjectDeref(
-                Unit(), block, AsIntroducer(Unit().types, block, self, slot)),
+                Unit(), block, AsIntroducer(Unit(), block, self, slot)),
             .slot = slot},
         std::move(arguments), result);
   }
@@ -1476,7 +1489,7 @@ class ClassWriter {
       const AccessPath record = Record(e);
       const mir::TypeId record_type =
           CovergroupPropertyType(*u_, first_, *first_.layout.record);
-      e.Store(record, CallVirtual(e, kMakeRecordBehavior, {}, record_type));
+      e.Store(record, CallVirtual(e, kMakeRecord, {}, record_type));
     }
     if (embedding.has_value()) {
       const AccessPath property = e.Own(own_, *own_.layout.embedding);
@@ -1578,7 +1591,8 @@ class ClassWriter {
 
     code.params = std::move(params);
     code.result_type = unit.builtins.void_type;
-    cls_->constructor = mir::ConstructorDecl{.code = std::move(code)};
+    compiled_->callables.emplace(
+        u_->ClassConstructor(class_id_), std::move(code));
     return {};
   }
 
@@ -1619,8 +1633,9 @@ class ClassWriter {
         mir::MakeCallExpr(
             mir::Direct{
                 .target =
-                    mir::ConstructorTarget{
-                        .cls = u_->CovergroupClassIdentity(base)},
+                    mir::CallableTarget{
+                        .callable = u_->ClassConstructor(
+                            u_->CovergroupClassIdentity(base))},
                 .receiver = BuildObjectDeref(
                     unit, block, block.Add(MakeSelfRefExpr(e.Frame())))},
             std::move(arguments), unit.builtins.void_type));
@@ -1709,7 +1724,7 @@ class ClassWriter {
     const Writer round = inside.At(inside.Frame().WithBlock(&each));
     mir::Builder each_builder = round.Block();
     const auto sample = [&](const Writer& at) {
-      at.Do(CallVirtual(at, kSampleBehavior, {}, std::nullopt));
+      at.Do(CallVirtual(at, kSample, {}, std::nullopt));
     };
     auto waited = sampler->wait(lowerer, round, each_builder);
     if (!waited) return std::unexpected(std::move(waited.error()));
@@ -1796,12 +1811,7 @@ class ClassWriter {
       written = SampleItems(collecting);
     });
     if (!written) return written;
-    cls_->callables.Define(
-        kSample, mir::CallableDecl{
-                     .code = function.Finish(std::nullopt),
-                     .foreign = std::nullopt,
-                     .virtual_dispatch = RoleIn(*u_, Self(), kSampleBehavior),
-                     .defining_unit = std::nullopt});
+    Define(kSample, function.Finish(std::nullopt));
     return {};
   }
 
@@ -1902,14 +1912,9 @@ class ClassWriter {
         CovergroupPropertyType(*u_, first_, *first_.layout.record);
     const mir::ExprId made =
         e.Call(TypeRecordOf(e, Self()), e.Members().group_type.make_instance);
-    cls_->callables.Define(
+    Define(
         kMakeRecord,
-        mir::CallableDecl{
-            .code =
-                function.Finish(ConvertToType(Unit(), e.Block(), made, record)),
-            .foreign = std::nullopt,
-            .virtual_dispatch = RoleIn(*u_, Self(), kMakeRecordBehavior),
-            .defining_unit = std::nullopt});
+        function.Finish(ConvertToType(Unit(), e.Block(), made, record)));
   }
 
   // The type's record (LRM 19.11.3), found in the run's registry by the
@@ -1946,8 +1951,7 @@ class ClassWriter {
     then.Do(BuildFunctionCall(
         unit, then.Frame(),
         mir::Direct{
-            .target =
-                mir::CallableTarget{.owner = class_id_, .slot = kDeclareType}},
+            .target = mir::CallableTarget{.callable = Own(kDeclareType)}},
         std::move(arguments), std::nullopt));
     const mir::ExprId writing_claimed =
         then.Call(std::nullopt, then.Members().registry.claim_database_writing);
@@ -1961,13 +1965,7 @@ class ClassWriter {
           BuildKeptClosure(unit, claimed.Block(), at_end.BuildVoid()));
     });
     e.Block().AppendIfThen(undeclared, std::move(first));
-    cls_->callables.Define(
-        kTypeRecord,
-        mir::CallableDecl{
-            .code = function.Finish(e.Block().ReadLocal(found, type)),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .defining_unit = std::nullopt});
+    Define(kTypeRecord, function.Finish(e.Block().ReadLocal(found, type)));
   }
 
   // What the declaration states of its type: its items, each at its place in
@@ -2063,12 +2061,7 @@ class ClassWriter {
         return r;
       }
     }
-    cls_->callables.Define(
-        kDeclareType, mir::CallableDecl{
-                          .code = function.Finish(std::nullopt),
-                          .foreign = std::nullopt,
-                          .virtual_dispatch = std::nullopt,
-                          .defining_unit = std::nullopt});
+    Define(kDeclareType, function.Finish(std::nullopt));
     return {};
   }
 
@@ -2077,6 +2070,7 @@ class ClassWriter {
   const StructuralScopeLowerer* declaring_scope_;
   const DeclaredScopes* scopes_;
   mir::Class* cls_;
+  CompiledClassCode* compiled_;
   mir::ClassId class_id_;
   WalkFrame owner_;
   const std::optional<StaticStorageHome>* type_event_;
@@ -2118,7 +2112,6 @@ void CovergroupLowerer::DeclareShape(
       .named_fields = {},
       .static_properties = {},
       .named_static_properties = {},
-      .callable_signatures = {},
       .library_callbacks = {},
       .static_property_translation = {},
       .contained = {},
@@ -2139,14 +2132,18 @@ void CovergroupLowerer::DeclareShape(
     shape.declaring_instance = DeclaringInstance{
         .type = instance_type, .member = shape.AddField(instance_type)};
   }
-  shape.callable_signatures = {
-      4,
-      {CallableSignature{
-           .virtual_dispatch = RoleIn(unit_lowerer, self, kSampleBehavior)},
-       CallableSignature{
-           .virtual_dispatch = RoleIn(unit_lowerer, self, kMakeRecordBehavior)},
-       CallableSignature{.virtual_dispatch = std::nullopt},
-       CallableSignature{.virtual_dispatch = std::nullopt}}};
+  // `sample` and the record of the object's type take part in dispatch; the
+  // other two dispatch on nothing. The class states it once, whichever body
+  // settles its shape first.
+  if (!unit_lowerer.HasClassShape(class_id_)) {
+    const auto state_signature = [&](mir::CallableOrdinal position) {
+      unit.StateDispatchRole(
+          unit_lowerer.ClassCallableAt(class_id_, position),
+          RoleIn(unit_lowerer, self, position));
+    };
+    state_signature(kSample);
+    state_signature(kMakeRecord);
+  }
 
   // What the class keeps for its type goes where what replicates the
   // covergroup's declaration puts it (LRM 6.22, 8.9): a cell of the scope's
@@ -2182,6 +2179,7 @@ auto CovergroupLowerer::PopulateBodies(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
   mir::Class cls = shape.OpenClass();
+  CompiledClassCode compiled;
   ScopeChainNode link{};
   WalkFrame owner = declaring_frame.WithClass(
       {.cls = &cls,
@@ -2218,14 +2216,14 @@ auto CovergroupLowerer::PopulateBodies(
 
   ClassWriter writer(
       unit_lowerer, covergroup_, *decl_, declaring_scope_, scopes_, cls,
-      class_id_, owner, type_event_);
+      compiled, class_id_, owner, type_event_);
   if (auto r = writer.Write(); !r) return r;
   // A covergroup a design element's unit declares keeps its code in the body
   // realizing the scope its object's instance is, and its class is what every
   // body of the unit states alike.
   if (hir::RootsAnObject(unit_lowerer.Hir().definition)) {
     MoveCodeIntoBody(
-        unit_lowerer, class_id_, cls, declaring_frame,
+        unit_lowerer, class_id_, std::move(compiled), declaring_frame,
         declaring_scope_->PublishedClassId());
     if (!unit.classes.IsDefined(class_id_)) {
       unit.DefineClass(
@@ -2234,35 +2232,34 @@ auto CovergroupLowerer::PopulateBodies(
     }
     return {};
   }
-  if (!unit.classes.IsDefined(class_id_)) {
-    unit.DefineClass(class_id_, std::move(cls));
-  }
+  DefineCompiledClass(
+      unit_lowerer, class_id_, std::move(cls), std::move(compiled));
   return {};
 }
 
 auto CovergroupOperations() -> std::array<CovergroupOperation, 4> {
   return {
       CovergroupOperation{
-          .callable = kSample,
+          .position = kSample,
           .name = kCovergroupSample,
           .form = CallableForm::kInstanceMember},
       CovergroupOperation{
-          .callable = kMakeRecord,
+          .position = kMakeRecord,
           .name = kCovergroupMakeRecord,
           .form = CallableForm::kInstanceMember},
       CovergroupOperation{
-          .callable = kTypeRecord,
+          .position = kTypeRecord,
           .name = kCovergroupTypeRecord,
           .form = CallableForm::kTypeAssociated},
       CovergroupOperation{
-          .callable = kDeclareType,
+          .position = kDeclareType,
           .name = kCovergroupDeclareType,
           .form = CallableForm::kTypeAssociated}};
 }
 
 auto CovergroupOperationPrototype(
     UnitLowerer& unit_lowerer, hir::CovergroupId covergroup,
-    const ClassCodePoint& point) -> mir::CallableCode {
+    mir::CallableId operation) -> mir::CallableCode {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const CovergroupClass own = CovergroupClassOf(unit_lowerer, covergroup);
   const hir::PublishedCovergroup& published = *own.published;
@@ -2303,11 +2300,19 @@ auto CovergroupOperationPrototype(
     return prototype;
   };
   const CoverageLibrary library(unit_lowerer.Hir());
+  const auto none = [](std::string_view declarer) -> mir::CallableCode {
+    throw InternalError(
+        std::format(
+            "CovergroupOperationPrototype: an operation of a covergroup's "
+            "class is asked of a callable {} declares -- please report this "
+            "as a bug",
+            declarer));
+  };
   return std::visit(
       Overloaded{
           // `new(embedding, formals...)`, after the object and its instance,
           // and then where to report what it reads.
-          [&](const ClassConstructorCode&) {
+          [&](const mir::ConstructsClass&) {
             params.push_back(object);
             instance();
             if (own.layout.embedding.has_value()) {
@@ -2319,24 +2324,24 @@ auto CovergroupOperationPrototype(
             return on_object(
                 OperationPrototype(params, unit.builtins.void_type));
           },
-          [&](const ClassCallableCode& code) {
-            if (code.callable == kSample) {
+          [&](const mir::DeclaredByClass& owner) {
+            if (owner.ordinal == kSample) {
               params.push_back(object);
               formals(published.sample_formals);
               return on_object(function(std::nullopt));
             }
-            if (code.callable == kMakeRecord) {
+            if (owner.ordinal == kMakeRecord) {
               const CovergroupClass first = CovergroupClassOf(
                   unit_lowerer, FirstOf(unit_lowerer, covergroup));
               params.push_back(object);
               return on_object(function(CovergroupPropertyType(
                   unit_lowerer, first, *first.layout.record)));
             }
-            if (code.callable == kTypeRecord) {
+            if (owner.ordinal == kTypeRecord) {
               instance();
               return function(TypeRecordType(unit_lowerer, library));
             }
-            if (code.callable == kDeclareType) {
+            if (owner.ordinal == kDeclareType) {
               instance();
               params.push_back(TypeRecordType(unit_lowerer, library));
               return function(std::nullopt);
@@ -2345,8 +2350,13 @@ auto CovergroupOperationPrototype(
                 "CovergroupOperationPrototype: a covergroup's class has four "
                 "operations besides its constructor -- please report this as "
                 "a bug");
-          }},
-      point);
+          },
+          [&](const mir::DeclaredByNamespace&) {
+            return none("the unit's namespace");
+          },
+          [&](const mir::DeclaredByClosure&) { return none("a closure"); },
+          [&](const mir::DeclaredByRecord&) { return none("a record"); }},
+      unit.OwnerOf(operation));
 }
 
 auto StateCovergroupClassFromDeclaration(
@@ -2368,31 +2378,25 @@ auto StateCovergroupClassFromDeclaration(
   // `sample` and the record of the object's type take part in dispatch along
   // the lineage (LRM 19.4.1); the two methods of the class itself do not.
   const std::array<std::optional<mir::VirtualDispatchRole>, 4> roles{
-      RoleIn(unit_lowerer, covergroup, kSampleBehavior),
-      RoleIn(unit_lowerer, covergroup, kMakeRecordBehavior), std::nullopt,
+      RoleIn(unit_lowerer, covergroup, kSample),
+      RoleIn(unit_lowerer, covergroup, kMakeRecord), std::nullopt,
       std::nullopt};
-  for (const auto& [callable, name, form] : CovergroupOperations()) {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  for (const CovergroupOperation& operation : CovergroupOperations()) {
+    const mir::CallableId callable =
+        unit_lowerer.ClassCallableAt(id, operation.position);
     stated.named_callables.push_back(
-        mir::NamedCallable{.name = std::string{name}, .body = callable});
-    const mir::CallableId added = stated.callables.Add(
-        mir::CallableDecl{
-            .code = EntryOf(
-                unit_lowerer, id, instance,
-                ClassCallableCode{.callable = callable}, form, declaring),
-            .foreign = std::nullopt,
-            .virtual_dispatch = roles.at(callable.value),
-            .defining_unit = std::nullopt});
-    if (added != callable) {
-      throw InternalError(
-          "StateCovergroupClassFromDeclaration: a covergroup's class holds its "
-          "operations in the order it reserves them -- please report this as "
-          "a bug");
-    }
+        mir::NamedCallable{
+            .name = std::string{operation.name}, .body = callable});
+    unit.StateClassCallable(
+        callable, roles.at(operation.position.value),
+        EntryOf(unit_lowerer, instance, callable, operation.form, declaring));
   }
-  stated.constructor = mir::ConstructorDecl{
-      .code = EntryOf(
-          unit_lowerer, id, instance, ClassConstructorCode{},
-          CallableForm::kConstructor, declaring)};
+  const mir::CallableId constructor = unit_lowerer.ClassConstructor(id);
+  unit.StateCallable(
+      constructor, EntryOf(
+                       unit_lowerer, instance, constructor,
+                       CallableForm::kConstructor, declaring));
   return stated;
 }
 
@@ -2783,7 +2787,7 @@ auto LowerCovergroupNewExpr(
             .receiver = BuildObjectDeref(
                 unit, block,
                 AsIntroducer(
-                    unit.types, block, BuildObjectPointer(unit, block, handle),
+                    unit, block, BuildObjectPointer(unit, block, handle),
                     slot)),
             .slot = slot},
         *std::move(actuals), result_type));
@@ -2885,15 +2889,15 @@ auto LowerCovergroupMethodCallExpr(
           lowerer, frame, cls.published->sample_formals, given);
       if (!actuals) return std::unexpected(std::move(actuals.error()));
       const mir::VirtualSlot slot =
-          IntroducedSlot(unit_lowerer, call.covergroup, kSampleBehavior);
+          IntroducedSlot(unit_lowerer, call.covergroup, kSample);
       return block.Get(BuildFunctionCall(
           unit, frame,
           mir::Virtual{
               .receiver = BuildObjectDeref(
                   unit, block,
                   AsIntroducer(
-                      unit.types, block,
-                      BuildObjectPointer(unit, block, *object), slot)),
+                      unit, block, BuildObjectPointer(unit, block, *object),
+                      slot)),
               .slot = slot},
           *std::move(actuals), std::nullopt));
     }

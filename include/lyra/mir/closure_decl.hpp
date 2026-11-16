@@ -3,17 +3,16 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
-#include "lyra/diag/source_span.hpp"
-#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/field.hpp"
 
 namespace lyra::mir {
 
 // A closure declaration: the anonymous concrete callable value a closure site
-// constructs. `fields` are the captured bindings; `invoke` is the one body,
-// reached over the closure as its receiver (its `locals[0]`, a borrow of the
-// closure or its box, by its kind). Callability is the unconditional presence
-// of `invoke` -- a closure is always callable, so there is no flag.
+// constructs. `fields` are the captured bindings. Its one body is the callable
+// of the unit's table the closure declares, reached over the closure as its
+// receiver (its `locals[0]`, a borrow of the closure or its box, by its kind);
+// a closure exists only where that body is synthesized, so it is always
+// callable and there is no flag.
 //
 // A closure shares the field substrate (`FieldDecl` / `FieldId`) with the
 // object (`mir::Class`), since a capture is reached by the field id its
@@ -28,9 +27,6 @@ struct ClosureDecl {
   // only pins a stable listing regardless of the order captures were
   // discovered.
   std::vector<FieldId> field_order;
-  // A closure exists only where a body is synthesized for it, so its code is
-  // always a definition.
-  CallableCode invoke = CallableCode::Defined(diag::SourceSpan{});
 };
 
 }  // namespace lyra::mir

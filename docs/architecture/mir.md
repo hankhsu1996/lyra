@@ -329,8 +329,14 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
    is a reading surface, not a compilation path and not an assertion surface. _Programming-language
    consequence: the program is readable as text at the layer where it is meaningful as software._
 6. MIR does not reconstruct topology or identity from side tables. A member is owned by exactly one
-   object; a callable by exactly one owner. _Programming-language consequence: ownership is
-   structural, not name-based._
+   object; a callable by exactly one owner. A callable has one identity in a unit, the entry of the
+   unit's one table of callable declarations that names it, whether a namespace, a class, a closure
+   or a record owns it and whichever unit defines it; the declaration states its owner and its place
+   among the owner's callables where the owner has places, an owner's callables are read off those
+   and stored nowhere else, and every node naming the callable -- a call, a function reference, a
+   dispatch entry, a virtual slot -- names that entry. _Programming-language consequence: ownership
+   is structural, not name-based, and a function has one identity whoever declares it, as a Rust
+   `DefId` names a free function, an inherent method and a closure body alike._
 7. A member is a type, and its identity is the position it occupies in its object. Being reachable
    by an identifier is a relation the object holds over that position, stated only where the source
    declared one, so nothing the compiler introduces answers to a name a design could also write. An

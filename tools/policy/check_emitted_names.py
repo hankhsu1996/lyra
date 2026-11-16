@@ -67,7 +67,7 @@ MAPPERS = [
     "CppFieldName",
     "CppBringUpEntryName",
     "CppObjectEntryName",
-    "CppUnitCallableName",
+    "CppNamespaceCallableName",
     "CppForeignSymbolName",
 ]
 
@@ -76,14 +76,8 @@ MAPPERS = [
 # survives the code moving and stops applying when the expression changes --
 # which is when it wants re-reading. Each needs a reason that does not reduce to
 # "it happens to work today"; an entry added without one is a bypass wearing an
-# exemption. Empty is not the finished state here: a name that never belonged to
-# SystemVerilog's identifier space has nothing to be mapped out of.
-ADMITTED: dict[str, str] = {
-    "t.linkage_name": (
-        "a DPI-C linkage name is an identifier of C, not of SystemVerilog "
-        "(LRM 35.4), so it is already spelled the way the target must see it"
-    ),
-}
+# exemption.
+ADMITTED: dict[str, str] = {}
 
 LINE_COMMENT = re.compile(r"//[^\n]*")
 BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)

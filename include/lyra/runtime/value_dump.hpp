@@ -10,6 +10,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
@@ -23,7 +24,6 @@ namespace lyra::runtime {
 
 class Scope;
 class ValueDump;
-class ValueDumps;
 
 // The record one time step of a dump is made of, built on the simulation's
 // own thread and handed to the one that writes the file.
@@ -57,56 +57,34 @@ class DumpCapture {
   std::vector<std::uint64_t> words_;
 };
 
-// One thing a dump records, as the dump reads it: what it holds now, and the
-// place a change to it is reported at. Each storage the library realizes has
-// its own, made where an instance is described.
-class DumpProbe {
- public:
-  DumpProbe();
-  DumpProbe(const DumpProbe&) = delete;
-  auto operator=(const DumpProbe&) -> DumpProbe& = delete;
-  DumpProbe(DumpProbe&&) = delete;
-  auto operator=(DumpProbe&&) -> DumpProbe& = delete;
-  virtual ~DumpProbe();
+// One thing a dump records, where it is read: the instance declaring it, none
+// for one a package or the compilation unit's scope keeps, what its declarer
+// states of itself, whose two bodies read it and subscribe to it there, and
+// its position among the data objects that states.
+struct DumpedObject {
+  Scope* instance = nullptr;
+  const abi::ScopeDeclarations* declarations = nullptr;
+  std::uint32_t position = 0;
 
-  // Records what the thing holds now under `code`.
-  virtual void Read(DumpCapture& into, DumpCode code) const = 0;
-  // Where a change to the thing is reported.
-  [[nodiscard]] virtual auto Watched() const -> Trigger = 0;
-  // Where the thing holds a reference, the object it refers to now, whose
-  // changes are changes of the thing too; none where it holds no reference.
-  // What it refers to moves only with a change of the thing.
-  [[nodiscard]] virtual auto Referent() const -> value::ObjectRef;
-  // The storage the thing is, which two names standing for one thing share.
-  [[nodiscard]] virtual auto Identity() const -> const void* = 0;
-  // The member of the instance the thing was described from, which is how a
-  // `$dumpvars` naming a variable names it.
-  [[nodiscard]] virtual auto Member() const -> const void* = 0;
+  [[nodiscard]] auto Record() const -> const abi::DataObjectRecord& {
+    return *declarations->data_objects.Entries()[position];
+  }
 };
 
-// What an instance of the design hierarchy is described to (LRM 21.7.1.2): the
-// things it declares that a dump may record, in the order it declares them.
-// Each entry names the named block, task or function it lies in, if any. The
-// instances below it are described on their own.
-class Describer {
- public:
-  Describer() = default;
-  Describer(const Describer&) = delete;
-  auto operator=(const Describer&) -> Describer& = delete;
-  Describer(Describer&&) = delete;
-  auto operator=(Describer&&) -> Describer& = delete;
-  virtual ~Describer();
-
-  virtual void Var(
-      const abi::DumpEntry& entry, std::unique_ptr<DumpProbe> probe) = 0;
-};
+// What a dump finds a variable a `$dumpvars` names by among those it walks
+// (LRM 21.7.1.2): the member a wait for a change of it is reached through,
+// which a force rebinds and the wait follows (LRM 10.6.2), or where a wait
+// reached by itself is reported to; none where a wait on it is reported
+// nowhere.
+auto DumpIdentityOf(const Trigger& trigger) -> const void*;
+auto DumpIdentityOf(const DumpedObject& dumped) -> const void*;
 
 // One thing a running dump records: enrolled on its place for as long as the
 // dump runs, and told when the thing changes so the dump records it once at
 // the end of the time step (LRM 21.7.1.4).
 class DumpWatch {
  public:
-  DumpWatch(ValueDump& dump, DumpCode code, std::unique_ptr<DumpProbe> probe);
+  DumpWatch(ValueDump& dump, DumpCode code, DumpedObject dumped);
   DumpWatch(const DumpWatch&) = delete;
   auto operator=(const DumpWatch&) -> DumpWatch& = delete;
   DumpWatch(DumpWatch&&) = delete;
@@ -114,9 +92,8 @@ class DumpWatch {
   ~DumpWatch();
 
   void Reached();
-  void Read(DumpCapture& into) const {
-    probe_->Read(into, code_);
-  }
+  // Records what the thing holds now, and follows what it refers to there.
+  void Read(DumpCapture& into);
   [[nodiscard]] auto Code() const -> DumpCode {
     return code_;
   }
@@ -127,13 +104,15 @@ class DumpWatch {
   }
 
  private:
-  // Enrols on what the thing refers to now, where that moved.
-  void FollowReferent();
+  // Enrols on what the thing refers to, `now`, where that moved. It moves only
+  // with a change of the thing, and the dump reads the thing before it records
+  // anything more of it.
+  void FollowReferent(value::ObjectRef now);
 
   bool changed_ = false;
   ValueDump* dump_;
   DumpCode code_;
-  std::unique_ptr<DumpProbe> probe_;
+  DumpedObject dumped_;
   WaitMembership membership_;
   // What the thing refers to, held for as long as the watch is enrolled on
   // it, and moved when the thing comes to refer to another.
@@ -143,8 +122,7 @@ class DumpWatch {
 
 // What a dump records (LRM 21.7.1.2): each instance named and as many levels
 // of the hierarchy below it as asked for, none meaning every level, and each
-// variable named on its own, by the member it is of the instance declaring
-// it.
+// variable named on its own, by what a dump tells it from another by.
 struct DumpSelection {
   struct Instances {
     Scope* scope;
@@ -153,6 +131,9 @@ struct DumpSelection {
   };
   std::vector<Instances> instances;
   std::vector<const void*> variables;
+  // Each package and compilation unit's scope recorded whole, which stand
+  // beside the tops (LRM 37.10) and hold no instance below them.
+  std::vector<const abi::ScopeDeclarations*> namespaces;
 };
 
 // What an extended dump records (LRM 21.7.3.1): the ports of each instance
@@ -185,16 +166,15 @@ class ValueDump {
   auto operator=(ValueDump&&) -> ValueDump& = delete;
   ~ValueDump();
 
-  // Declares what `selection` names among the tops below `root`, records its
-  // first values, and records every change from now on. Each instance
-  // describes itself to the describer `dumps` holds meanwhile.
+  // Declares what `selection` names among `namespaces` and the tops below
+  // `root`, records its first values, and records every change from now on.
   void Start(
-      const DumpSelection& selection, Scope& root, SimTime now,
-      ValueDumps& dumps);
+      const DumpSelection& selection, Scope& root,
+      std::span<const abi::ScopeDeclarations* const> namespaces, SimTime now);
   // The same for the ports `selection` names, each instance a scope of its
   // own named by its hierarchical name and its ports in the order its
   // declaration gives them (LRM 21.7.4.2).
-  void Start(const PortSelection& selection, SimTime now, ValueDumps& dumps);
+  void Start(const PortSelection& selection, SimTime now);
 
   // A watched thing changed; it is recorded once at the end of the step.
   void Changed(DumpWatch& watch);

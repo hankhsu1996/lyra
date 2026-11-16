@@ -3,6 +3,7 @@
 #include <format>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -10,11 +11,12 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/callable.hpp"
+#include "lyra/mir/callable_id.hpp"
+#include "lyra/mir/callable_ordinal.hpp"
 #include "lyra/mir/class.hpp"
-#include "lyra/mir/closure_decl.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/dump.hpp"
-#include "lyra/mir/record_decl.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::mir {
@@ -22,11 +24,49 @@ namespace lyra::mir {
 namespace {
 
 // A body the source named goes by that name, and one it did not by where it
-// sits.
-auto BodyLabel(std::optional<std::string_view> name, CallableId slot)
-    -> std::string {
+// stands among its owner's callables.
+auto BodyLabel(
+    std::span<const NamedCallable> named, CallableId callable,
+    CallableOrdinal ordinal) -> std::string {
+  const std::optional<std::string_view> name = NameOf(named, callable);
   return name.has_value() ? std::format("'{}'", *name)
-                          : std::format("body {}", slot.value);
+                          : std::format("body {}", ordinal.value);
+}
+
+auto DescribeCallable(const CompilationUnit& unit, CallableId callable)
+    -> std::string {
+  return std::visit(
+      Overloaded{
+          [&](const DeclaredByClass& owner) {
+            return std::format(
+                "{} of {}",
+                BodyLabel(
+                    unit.GetClass(owner.cls).named_callables, callable,
+                    owner.ordinal),
+                DescribeClass(unit, owner.cls));
+          },
+          [&](const ConstructsClass& owner) {
+            return std::format(
+                "the constructor of {}", DescribeClass(unit, owner.cls));
+          },
+          [&](const DeclaredByNamespace& owner) {
+            return std::format(
+                "{} of unit '{}'",
+                BodyLabel(unit.named_callables, callable, owner.ordinal),
+                unit.name);
+          },
+          [&](const DeclaredByRecord& owner) {
+            return std::format(
+                "method '{}' of record '{}' in unit '{}'",
+                support::ValueOperationName(owner.answers),
+                support::DisplayOf(unit.GetRecord(owner.record).path),
+                unit.name);
+          },
+          [&](const DeclaredByClosure& owner) {
+            return std::format(
+                "closure {} of unit '{}'", owner.closure.value, unit.name);
+          }},
+      unit.OwnerOf(callable));
 }
 
 }  // namespace
@@ -44,39 +84,14 @@ auto Describe(const CompilationUnit& unit, const CodeSource& at)
     -> std::string {
   return std::visit(
       Overloaded{
-          [&](const ConstructorSource& s) {
-            return std::format(
-                "the constructor of {}", DescribeClass(unit, s.owner));
-          },
           [&](const CallableTarget& s) {
-            return std::format(
-                "{} of {}",
-                BodyLabel(
-                    NameOf(unit.GetClass(s.owner).named_callables, s.slot),
-                    s.slot),
-                DescribeClass(unit, s.owner));
-          },
-          [&](const UnitCallableTarget& s) {
-            return std::format(
-                "{} of unit '{}'",
-                BodyLabel(NameOf(unit.named_callables, s.slot), s.slot),
-                unit.name);
-          },
-          [&](const RecordMethodSource& s) {
-            return std::format(
-                "method '{}' of record '{}' in unit '{}'",
-                support::ValueOperationName(s.answers),
-                support::DisplayOf(unit.GetRecord(s.record).path), unit.name);
+            return DescribeCallable(unit, s.callable);
           },
           [&](const TypeOperationSource& s) {
             return std::format(
                 "operation \"{}\" of type {} in unit '{}'",
                 support::ValueOperationName(s.answers), DumpType(unit, s.type),
                 unit.name);
-          },
-          [&](const ClosureSource& s) {
-            return std::format(
-                "closure {} of unit '{}'", s.closure.value, unit.name);
           },
           [&](const ForeignScopeEntrySource& s) {
             return std::format("the foreign entry '{}'", s.foreign_name);
@@ -86,48 +101,33 @@ auto Describe(const CompilationUnit& unit, const CodeSource& at)
 
 auto IsEnteredForeign(const CompilationUnit& unit, const CodeSource& at)
     -> bool {
+  const auto of_callable = [&](CallableId callable) {
+    return std::visit(
+        Overloaded{
+            [](const DeclaredByNamespace& owner) {
+              return owner.foreign.has_value();
+            },
+            [](const DeclaredByClass&) { return false; },
+            [](const ConstructsClass&) { return false; },
+            [](const DeclaredByClosure&) { return false; },
+            [](const DeclaredByRecord&) { return false; }},
+        unit.OwnerOf(callable));
+  };
   return std::visit(
       Overloaded{
-          [](const ConstructorSource&) { return false; },
-          [](const CallableTarget&) { return false; },
-          [&](const UnitCallableTarget& s) {
-            return unit.callables.Get(s.slot).foreign.has_value();
-          },
-          [](const RecordMethodSource&) { return false; },
+          [&](const CallableTarget& s) { return of_callable(s.callable); },
           [](const TypeOperationSource&) { return false; },
-          [](const ClosureSource&) { return false; },
           [](const ForeignScopeEntrySource&) { return false; }},
       at);
 }
 
 void ForEachCode(const CompilationUnit& unit, const CodeVisit& visit) {
-  for (const ClassId owner : unit.classes.Ids()) {
-    const Class& cls = unit.GetClass(owner);
-    // A class another unit defines holds no code here.
-    if (cls.defining_unit.has_value()) continue;
-    if (cls.constructor.has_value()) {
-      visit(ConstructorSource{.owner = owner}, cls.constructor->code);
-    }
-    for (const CallableId slot : cls.callables.Ids()) {
+  for (const CallableId callable : unit.callables.Ids()) {
+    if (!IsDefinedElsewhere(unit, callable)) {
       visit(
-          CallableTarget{.owner = owner, .slot = slot},
-          cls.callables.Get(slot).code);
+          CallableTarget{.callable = callable},
+          unit.callables.Get(callable).code);
     }
-  }
-  for (const CallableId slot : unit.callables.Ids()) {
-    // A subroutine of another unit's namespace holds no code here.
-    if (unit.callables.Get(slot).defining_unit.has_value()) continue;
-    visit(UnitCallableTarget{.slot = slot}, unit.callables.Get(slot).code);
-  }
-  for (const RecordId record : unit.record_methods.Ids()) {
-    for (const RecordMethod& method : unit.GetRecordMethods(record)) {
-      visit(
-          RecordMethodSource{.record = record, .answers = method.answers},
-          method.code);
-    }
-  }
-  for (const ClosureId closure : unit.closures.Ids()) {
-    visit(ClosureSource{.closure = closure}, unit.GetClosure(closure).invoke);
   }
   for (const ForeignScopeEntry& entry : unit.foreign_scope_entries) {
     visit(
@@ -158,42 +158,9 @@ auto RewriteEachCode(CompilationUnit unit, const CodeRewrite& rewrite)
       code = *std::move(answer);
     }
   };
-  unit.classes =
-      std::move(unit.classes).TransformValues([&](ClassId owner, Class cls) {
-        if (cls.constructor.has_value()) {
-          replace(ConstructorSource{.owner = owner}, cls.constructor->code);
-        }
-        cls.callables =
-            std::move(cls.callables)
-                .TransformValues([&](CallableId slot, CallableDecl decl) {
-                  replace(
-                      CallableTarget{.owner = owner, .slot = slot}, decl.code);
-                  return decl;
-                });
-        return cls;
-      });
-  unit.callables =
-      std::move(unit.callables)
-          .TransformValues([&](CallableId slot, CallableDecl decl) {
-            replace(UnitCallableTarget{.slot = slot}, decl.code);
-            return decl;
-          });
-  unit.record_methods =
-      std::move(unit.record_methods)
-          .TransformValues([&](RecordId record, RecordMethods methods) {
-            for (RecordMethod& method : methods) {
-              replace(
-                  RecordMethodSource{
-                      .record = record, .answers = method.answers},
-                  method.code);
-            }
-            return methods;
-          });
-  unit.closures = std::move(unit.closures)
-                      .TransformValues([&](ClosureId id, ClosureDecl closure) {
-                        replace(ClosureSource{.closure = id}, closure.invoke);
-                        return closure;
-                      });
+  unit.callables.RewriteEachCode([&](CallableId callable, CallableCode& code) {
+    replace(CallableTarget{.callable = callable}, code);
+  });
   for (ForeignScopeEntry& entry : unit.foreign_scope_entries) {
     replace(
         ForeignScopeEntrySource{.foreign_name = entry.linkage.foreign_name},

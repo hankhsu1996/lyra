@@ -235,8 +235,8 @@ struct MintedAppliedName {
 
 // The name a method that takes part in dispatch, or answers what the runtime
 // library asks of an object, is spelled by in every unit naming it: as the
-// source wrote it, as the library names the function it answers, or for the
-// body answering the instance its class belongs to, `sv_declaring_instance`.
+// source wrote it, as the library names the function it answers, for the body
+// answering the instance its class belongs to, `sv_declaring_instance`.
 using CppDispatchName = std::variant<SourceName, VerbatimName, MintedWord>;
 
 // The name of the entry of a method, made from the method's dispatch name:
@@ -416,8 +416,8 @@ inline void WriteOne(TargetText& out, NamespaceMemberScope scope) {
 }
 
 [[nodiscard]] inline auto CppDispatchNameOf(
-    const mir::CompilationUnit& unit, const mir::Class& cls,
-    mir::CallableId method) -> CppDispatchName {
+    const mir::CompilationUnit& unit, mir::CallableId method)
+    -> CppDispatchName {
   return std::visit(
       Overloaded{
           [](std::string_view name) -> CppDispatchName {
@@ -429,43 +429,48 @@ inline void WriteOne(TargetText& out, NamespaceMemberScope scope) {
           [](mir::DeclaringInstanceName) -> CppDispatchName {
             return MintedWord{.word = "declaring_instance"};
           }},
-      mir::DispatchNameOf(unit, cls, method));
+      mir::DispatchNameOf(unit, method));
 }
 
-// The member of the table of the class `cls`, the introducer of the behavior
-// `method` introduces, that holds the behavior's body: named as the behavior.
+// The member holding the body of the behavior `method` introduces, in the
+// table of the class declaring `method`: named as the behavior.
 [[nodiscard]] inline auto CppTableMemberName(
-    const mir::CompilationUnit& unit, const mir::Class& cls,
-    mir::CallableId method) -> CppName {
+    const mir::CompilationUnit& unit, mir::CallableId method) -> CppName {
   return std::visit(
       [](const auto& name) -> CppName { return name; },
-      CppDispatchNameOf(unit, cls, method));
+      CppDispatchNameOf(unit, method));
 }
 
-// The entry of `method` of `cls`: the body entering the method on an object
-// handed over as the root every object is. The class defining the method and
-// every unit naming the entry spell it from here.
+// The entry of `method`: the body entering the method on an object handed over
+// as the root every object is. The class defining the method and every unit
+// naming the entry spell it from here.
 [[nodiscard]] inline auto CppDispatchEntryName(
-    const mir::CompilationUnit& unit, const mir::Class& cls,
-    mir::CallableId method) -> EntryName {
-  return EntryName{.method = CppDispatchNameOf(unit, cls, method)};
+    const mir::CompilationUnit& unit, mir::CallableId method) -> EntryName {
+  return EntryName{.method = CppDispatchNameOf(unit, method)};
 }
 
 // The name of a function a class owns -- a method, a process, a lifecycle
 // body, or the entry of a method. An entry is named as the method it enters, a
 // body answering a library callback as the callback, a named body keeps its
-// name, and an unnamed one is `sv_body_<n>`, as the execution backend names
-// each. The declaration, the definition and every call take it from here.
+// name, and an unnamed one is `sv_body_<n>`, `n` where it stands among the
+// class's callables, as the execution backend names each. The declaration, the
+// definition and every call take it from here.
 //
-// It takes a class rather than a unit's namespace, because a function of a
-// namespace can also be reached by a foreign linkage name or as a fixed entry,
-// which this does not spell.
+// It spells only a body a class declares, because a function of a namespace can
+// also be reached by a foreign linkage name or as a fixed entry, which this
+// does not spell.
 [[nodiscard]] inline auto CppClassCallableName(
-    const mir::CompilationUnit& unit, const mir::Class& cls,
-    mir::CallableId body) -> CppName {
+    const mir::CompilationUnit& unit, mir::CallableId body) -> CppName {
+  const auto* owner = std::get_if<mir::DeclaredByClass>(&unit.OwnerOf(body));
+  if (owner == nullptr) {
+    throw InternalError(
+        "backend::cpp: a callable is named as a body of a class, which no "
+        "class declares -- please report this as a bug");
+  }
+  const mir::Class& cls = unit.GetClass(owner->cls);
   for (const mir::MethodEntry& entry : cls.entries) {
     if (entry.entry == body) {
-      return CppDispatchEntryName(unit, cls, entry.method);
+      return CppDispatchEntryName(unit, entry.method);
     }
   }
   if (const std::optional<support::LibraryCallback> callback =
@@ -477,7 +482,15 @@ inline void WriteOne(TargetText& out, NamespaceMemberScope scope) {
   if (name.has_value()) {
     return ToCppName(*name);
   }
-  return MintedCppName("body", body.value);
+  // Where it stands among its class's callables means something only inside
+  // the unit that took it, so nothing names an unnamed body of a class another
+  // unit defines.
+  if (cls.defining_unit.has_value()) {
+    throw InternalError(
+        "backend::cpp: an unnamed body of a class another unit defines is "
+        "named -- please report this as a bug");
+  }
+  return MintedCppName("body", owner->ordinal.value);
 }
 
 // The table a class lays the bodies of its behaviors out in, `sv_table`, a
@@ -1104,9 +1117,10 @@ inline void WriteOne(TargetText& out, const DefinitionPath& definition) {
 }
 
 // The name of a function in a unit's namespace, chosen by how other code
-// reaches it: its DPI-C linkage name, its source name, its fixed entry word, or
+// reaches it: its DPI-C linkage name, its source name, its fixed entry word,
+// the library callback it answers, as a class's body answering it is named, or
 // `sv_body_<n>` if nothing outside the unit reaches it.
-[[nodiscard]] inline auto CppUnitCallableName(
+[[nodiscard]] inline auto CppNamespaceCallableName(
     const mir::CompilationUnit& unit, mir::CallableId body) -> CppName {
   return std::visit(
       Overloaded{
@@ -1125,22 +1139,95 @@ inline void WriteOne(TargetText& out, const DefinitionPath& definition) {
           [](const mir::ReachedInAnotherUnit& r) -> CppName {
             return ToCppName(r.name);
           },
+          [](const mir::ReachedAsLibraryCallback& r) -> CppName {
+            return VerbatimName{
+                .text = support::LibraryCallbackName(r.callback)};
+          },
           [](const mir::ReachedByPosition& r) -> CppName {
-            return MintedCppName("body", r.slot.value);
+            return MintedCppName("body", r.position.value);
           }},
       mir::NamespaceReachOf(unit, body));
 }
 
-// The unit whose namespace a function of the unit's namespace table is in:
-// this one's, or another unit's whose function this unit only declares.
-[[nodiscard]] inline auto CppUnitCallableOwner(
+// The unit whose namespace a callable of the unit's namespace is in: this
+// one's, or another unit's whose subroutine this unit only declares.
+[[nodiscard]] inline auto CppNamespaceCallableUnit(
     const mir::CompilationUnit& unit, mir::CallableId body)
     -> std::string_view {
-  const mir::NamespaceReach reach = mir::NamespaceReachOf(unit, body);
-  if (const auto* declared = std::get_if<mir::ReachedInAnotherUnit>(&reach)) {
-    return declared->unit_name;
-  }
-  return unit.name;
+  return mir::DefiningUnitOf(
+      unit,
+      std::get<mir::DeclaredByNamespace>(unit.OwnerOf(body)).defining_unit);
+}
+
+// A callable of a unit's namespace as code outside that namespace spells it:
+// qualified by the unit's namespace from the global scope, `::Top::f`, this
+// unit's own included, or, for a name in the DPI-C name space, which is
+// program-global (LRM 35.4), unqualified.
+struct NamespaceCallablePath {
+  const mir::CompilationUnit* unit = nullptr;
+  mir::CallableId callable;
+};
+
+inline void WriteOne(TargetText& out, const NamespaceCallablePath& path) {
+  const mir::CompilationUnit& unit = *path.unit;
+  const auto qualified = [&] {
+    Write(
+        out,
+        CppNamespaceMemberScope(CppNamespaceCallableUnit(unit, path.callable)),
+        "::", CppNamespaceCallableName(unit, path.callable));
+  };
+  std::visit(
+      Overloaded{
+          [&](const mir::ReachedByLinkageName& r) {
+            Write(out, CppForeignSymbolName(r.name));
+          },
+          [&](const mir::ReachedByName&) { qualified(); },
+          [&](const mir::ReachedByBringUpEntry&) { qualified(); },
+          [&](const mir::ReachedAsObjectEntry&) { qualified(); },
+          [&](const mir::ReachedInAnotherUnit&) { qualified(); },
+          [&](const mir::ReachedAsLibraryCallback&) { qualified(); },
+          [&](const mir::ReachedByPosition&) { qualified(); }},
+      mir::NamespaceReachOf(unit, path.callable));
+}
+
+// A callable of a class, its construction among them, qualified by the class
+// declaring it, `::Pkg::C::f` or `::Pkg::C::sv_construct`, as a direct call and
+// an address of one both spell it.
+struct ClassCallablePath {
+  const mir::CompilationUnit* unit = nullptr;
+  mir::CallableId callable;
+};
+
+inline void WriteOne(TargetText& out, const ClassCallablePath& path) {
+  const mir::CompilationUnit& unit = *path.unit;
+  std::visit(
+      Overloaded{
+          [&](const mir::DeclaredByClass& owner) {
+            Write(
+                out, CppClassPath(unit, owner.cls),
+                "::", CppClassCallableName(unit, path.callable));
+          },
+          [&](const mir::ConstructsClass& owner) {
+            Write(
+                out, CppClassPath(unit, owner.cls),
+                "::", CppConstructorMemberName());
+          },
+          [](const mir::DeclaredByNamespace&) {
+            throw InternalError(
+                "backend::cpp: a callable of the unit's namespace is "
+                "qualified by a class -- please report this as a bug");
+          },
+          [](const mir::DeclaredByClosure&) {
+            throw InternalError(
+                "backend::cpp: a closure's body is qualified by a class -- "
+                "please report this as a bug");
+          },
+          [](const mir::DeclaredByRecord&) {
+            throw InternalError(
+                "backend::cpp: a record's method is qualified by a class -- "
+                "please report this as a bug");
+          }},
+      unit.OwnerOf(path.callable));
 }
 
 }  // namespace lyra::backend::cpp

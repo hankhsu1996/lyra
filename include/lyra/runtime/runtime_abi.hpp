@@ -1012,15 +1012,14 @@ auto lyra_rt_run_null_host_command(void* out) -> void*;
 
 // The run's value dump (LRM 21.7.1), acted on through the runtime handle: its
 // file named as an opaque string, an instance a `$dumpvars` names by its
-// address, and a variable by the address of the member it is of the instance
-// declaring it.
+// address, and a variable by the trigger a wait for a change of it enrols.
 void lyra_rt_dump_file(void* runtime, const void* name, const void* location);
 void lyra_rt_dump_vars_levels(
     void* runtime, std::int64_t levels, const void* location);
 void lyra_rt_dump_vars_of(
     void* runtime, std::int64_t levels, void* instance, const void* location);
 void lyra_rt_dump_vars_of_variable(
-    void* runtime, const void* member, const void* location);
+    void* runtime, const void* variable, const void* location);
 void lyra_rt_dump_off(void* runtime);
 void lyra_rt_dump_on(void* runtime);
 void lyra_rt_dump_all(void* runtime);
@@ -1037,67 +1036,18 @@ void lyra_rt_dump_ports_limit(
     void* runtime, std::int64_t bytes, const void* name);
 void lyra_rt_dump_ports_flush(void* runtime, const void* name);
 
-// What an instance describes of itself to a dump starting (LRM 21.7.1.2): one
-// member, by the wrapper it is and the domain of what it holds, with the
-// constant stating its declaration, which names the block, task or function
-// it lies in; and an event variable.
-void lyra_rt_bit8_cell_describe(void* cell, void* runtime, const void* entry);
-void lyra_rt_bit16_cell_describe(void* cell, void* runtime, const void* entry);
-void lyra_rt_bit32_cell_describe(void* cell, void* runtime, const void* entry);
-void lyra_rt_bit64_cell_describe(void* cell, void* runtime, const void* entry);
-void lyra_rt_logic8_cell_describe(void* cell, void* runtime, const void* entry);
-void lyra_rt_logic16_cell_describe(
-    void* cell, void* runtime, const void* entry);
-void lyra_rt_logic32_cell_describe(
-    void* cell, void* runtime, const void* entry);
-void lyra_rt_logic64_cell_describe(
-    void* cell, void* runtime, const void* entry);
-void lyra_rt_bit_wide_cell_describe(
-    void* cell, void* runtime, const void* entry);
-void lyra_rt_logic_wide_cell_describe(
-    void* cell, void* runtime, const void* entry);
-void lyra_rt_real_cell_describe(void* cell, void* runtime, const void* entry);
-void lyra_rt_shortreal_cell_describe(
-    void* cell, void* runtime, const void* entry);
-void lyra_rt_bit8_net_describe(void* net, void* runtime, const void* entry);
-void lyra_rt_bit16_net_describe(void* net, void* runtime, const void* entry);
-void lyra_rt_bit32_net_describe(void* net, void* runtime, const void* entry);
-void lyra_rt_bit64_net_describe(void* net, void* runtime, const void* entry);
-void lyra_rt_bit_wide_net_describe(void* net, void* runtime, const void* entry);
-void lyra_rt_logic8_net_describe(void* net, void* runtime, const void* entry);
-void lyra_rt_logic16_net_describe(void* net, void* runtime, const void* entry);
-void lyra_rt_logic32_net_describe(void* net, void* runtime, const void* entry);
-void lyra_rt_logic64_net_describe(void* net, void* runtime, const void* entry);
-void lyra_rt_logic_wide_net_describe(
-    void* net, void* runtime, const void* entry);
-void lyra_rt_real_net_describe(void* net, void* runtime, const void* entry);
-void lyra_rt_shortreal_net_describe(
-    void* net, void* runtime, const void* entry);
-void lyra_rt_bit8_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_bit16_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_bit32_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_bit64_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_logic8_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_logic16_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_logic32_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_logic64_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_bit_wide_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_logic_wide_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_real_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_shortreal_ref_describe(
-    void* reference, void* runtime, const void* entry);
-void lyra_rt_describe_event(void* event, void* runtime, const void* entry);
+// What the code reading a data object hands the reader that asked for it --
+// an integral value's planes, a real, the object an event variable names --
+// and what the code watching one hands it: the trigger a wait for a change of
+// the object would enrol (LRM 38.15, 21.7.2.3, 9.4.2).
+void lyra_rt_value_serializer_bits(
+    void* serializer, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
+void lyra_rt_real_value_serializer_real(void* serializer, const void* value);
+void lyra_rt_shortreal_value_serializer_real(
+    void* serializer, const void* value);
+void lyra_rt_value_serializer_event(void* serializer, const void* event);
+void lyra_rt_subscriber_subscribe(void* subscriber, const void* trigger);
 
 // Whether the simulation's own arguments carry a plusarg with the given prefix
 // (LRM 21.6). Those arguments are the runtime's, so only the prefix crosses, as

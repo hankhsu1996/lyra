@@ -38,12 +38,10 @@ void HashTarget(std::size_t& seed, const ReferenceTarget& target) {
             base::HashField(seed, r.variable.value);
           },
           [&](const FunctionRef& r) {
-            base::HashField(seed, r.body.owner.value);
-            base::HashField(seed, r.body.slot.value);
+            base::HashField(seed, r.callable.value);
           },
           [&](const DispatchEntryRef& r) {
-            base::HashField(seed, r.body.owner.value);
-            base::HashField(seed, r.body.slot.value);
+            base::HashField(seed, r.method.value);
           },
           [&](const DestructorRef& r) { base::HashField(seed, r.of.value); },
           [&](const DispatchTableRef& r) { base::HashField(seed, r.of.value); },

@@ -216,6 +216,14 @@ constexpr std::array kWholeValueEntries{
     support::BuiltinFn::kTakePositions,
 };
 
+// The method of the record `record` answering `answers`, as a call names it.
+auto RecordMethodTarget(
+    const mir::CompilationUnit& unit, mir::RecordId record,
+    support::ValueOperation answers) -> mir::DirectTarget {
+  return mir::CallableTarget{
+      .callable = mir::RecordMethodOf(unit, record, answers)};
+}
+
 // The body answering `answers` for a value of `type`, where the type answers
 // it with a body of its own: the method of the structure or the union it is,
 // or the structural operation of the fixed-size array it is.
@@ -227,7 +235,7 @@ auto OwnOperationTarget(
   }
   const mir::Type& t = unit.types.Get(type);
   if (const mir::RecordId* record = mir::RecordOf(t)) {
-    return mir::RecordMethodTarget{.record = *record, .answers = answers};
+    return RecordMethodTarget(unit, *record, answers);
   }
   if (mir::StructuralOperationsTypeOf(t).has_value()) {
     return mir::TypeOperationTarget{.type = type, .answers = answers};
@@ -684,11 +692,12 @@ class OperationBodies {
 };
 
 // How a body of the record `record` declares names another of its methods: by
-// the record being declared rather than by its type, which has no declaration
-// to read until every method is built.
-auto MethodsOf(mir::RecordId record) -> OperationBodies::OwnTarget {
-  return [record](support::ValueOperation answers) -> mir::DirectTarget {
-    return mir::RecordMethodTarget{.record = record, .answers = answers};
+// the record being declared rather than by its type, whose methods are
+// declared before any of their bodies is built.
+auto MethodsOf(const mir::CompilationUnit& unit, mir::RecordId record)
+    -> OperationBodies::OwnTarget {
+  return [&unit, record](support::ValueOperation answers) -> mir::DirectTarget {
+    return RecordMethodTarget(unit, record, answers);
   };
 }
 
@@ -768,7 +777,8 @@ class StructBodies : public ProductBodies {
       mir::RecordId record, mir::TypeId structure,
       std::vector<mir::TypeId> members)
       : ProductBodies(
-            lowerer.Unit(), structure, std::move(members), MethodsOf(record)),
+            lowerer.Unit(), structure, std::move(members),
+            MethodsOf(lowerer.Unit(), record)),
         lowerer_(&lowerer),
         source_(&source) {
   }
@@ -1117,7 +1127,7 @@ class UnionBodies : public OperationBodies {
       : OperationBodies(
             unit, overlay, members,
             EqualityAnswerOver(unit, mir::RecordKind::kUnion, members),
-            MethodsOf(record)) {
+            MethodsOf(unit, record)) {
   }
 
   auto Equality() -> mir::CallableCode;
@@ -1303,7 +1313,7 @@ class TaggedUnionBodies : public OperationBodies {
       : OperationBodies(
             unit, tagged, members,
             EqualityAnswerOver(unit, mir::RecordKind::kTaggedUnion, members),
-            MethodsOf(record)) {
+            MethodsOf(unit, record)) {
   }
 
   auto Equality() -> mir::CallableCode;
@@ -2200,46 +2210,76 @@ auto BuildBitIdentity(
       unit.builtins.machine_bool);
 }
 
-auto StructMethodsOf(
-    UnitLowerer& lowerer, const hir::UnpackedStructDefinition& source,
-    mir::RecordId record, mir::TypeId structure,
-    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
+namespace {
+
+// Hands `add` every operation on a whole value the record `record` names has,
+// over values of `type`, with what builds its body: a struct's read off its
+// members, its start value off what its declaration `structure` gives (LRM
+// 7.2), an untagged union's each its first member's (LRM 7.3.2), and a tagged
+// union's each that of the member its tag names, with no stream and no net's
+// folds.
+template <typename Add>
+void ForEachRecordMethod(
+    UnitLowerer& lowerer, const hir::UnpackedStructDefinition* structure,
+    mir::RecordId record, mir::TypeId type, Add add) {
   const mir::CompilationUnit& unit = lowerer.Unit();
-  StructBodies bodies(
-      lowerer, source, record, structure, {members.begin(), members.end()});
-  std::vector<mir::RecordMethod> methods;
-  const auto add = [&](support::ValueOperation answers, const auto& build) {
-    methods.push_back(mir::RecordMethod{.answers = answers, .code = build()});
-  };
-  StateProductOperations(bodies, OperationsHadByProduct(unit, members), add);
-  return methods;
+  const std::span<const mir::TypeId> members =
+      mir::RecordElements(unit, record);
+  switch (mir::RecordKindOf(unit, record)) {
+    case mir::RecordKind::kStruct: {
+      if (structure == nullptr) {
+        throw InternalError(
+            "hir_to_mir: a struct's methods are asked for without its "
+            "declaration -- please report this as a bug");
+      }
+      StructBodies bodies(
+          lowerer, *structure, record, type, {members.begin(), members.end()});
+      StateProductOperations(
+          bodies, OperationsHadByProduct(unit, members), add);
+      return;
+    }
+    case mir::RecordKind::kUnion: {
+      const OperationsHad had = OperationsHadByUnion(unit, members);
+      UnionBodies bodies(unit, record, type, {members.begin(), members.end()});
+      StateWholeValue(bodies, add);
+      StateStreamAndFolds(bodies, had, add);
+      return;
+    }
+    case mir::RecordKind::kTaggedUnion: {
+      TaggedUnionBodies bodies(
+          unit, record, type, {members.begin(), members.end()});
+      StateWholeValue(bodies, add);
+      return;
+    }
+  }
+  throw InternalError("hir_to_mir: unknown record kind");
 }
 
-auto UnionMethodsOf(
-    const mir::CompilationUnit& unit, mir::RecordId record, mir::TypeId overlay,
-    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
-  std::vector<mir::RecordMethod> methods;
-  const auto add = [&](support::ValueOperation answers, const auto& build) {
-    methods.push_back(mir::RecordMethod{.answers = answers, .code = build()});
-  };
-  const OperationsHad had = OperationsHadByUnion(unit, members);
-  UnionBodies bodies(unit, record, overlay, {members.begin(), members.end()});
-  StateWholeValue(bodies, add);
-  StateStreamAndFolds(bodies, had, add);
-  return methods;
+}  // namespace
+
+auto RecordOperationsOf(
+    UnitLowerer& lowerer, const hir::UnpackedStructDefinition* structure,
+    mir::RecordId record, mir::TypeId type)
+    -> std::vector<support::ValueOperation> {
+  std::vector<support::ValueOperation> operations;
+  ForEachRecordMethod(
+      lowerer, structure, record, type,
+      [&](support::ValueOperation answers, const auto&) {
+        operations.push_back(answers);
+      });
+  return operations;
 }
 
-auto TaggedUnionMethodsOf(
-    const mir::CompilationUnit& unit, mir::RecordId record, mir::TypeId overlay,
-    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
-  std::vector<mir::RecordMethod> methods;
-  const auto add = [&](support::ValueOperation answers, const auto& build) {
-    methods.push_back(mir::RecordMethod{.answers = answers, .code = build()});
-  };
-  TaggedUnionBodies bodies(
-      unit, record, overlay, {members.begin(), members.end()});
-  StateWholeValue(bodies, add);
-  return methods;
+auto RecordMethodBodies(
+    UnitLowerer& lowerer, const hir::UnpackedStructDefinition* structure,
+    mir::RecordId record, mir::TypeId type) -> std::vector<RecordMethodBody> {
+  std::vector<RecordMethodBody> bodies;
+  ForEachRecordMethod(
+      lowerer, structure, record, type,
+      [&](support::ValueOperation answers, const auto& build) {
+        bodies.push_back(RecordMethodBody{.answers = answers, .code = build()});
+      });
+  return bodies;
 }
 
 auto BuildStructuralOperationBody(

@@ -5,25 +5,20 @@
 #include <span>
 #include <string_view>
 #include <variant>
-#include <vector>
 
 #include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/source_manager.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/float_width.hpp"
 #include "lyra/support/library_decl.hpp"
-#include "lyra/value/enumeration.hpp"
-#include "lyra/value/integral_words.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -807,12 +802,12 @@ namespace {
 void WriteTableAndMember(
     TargetText& out, const mir::CompilationUnit& unit,
     const mir::VirtualSlot& behavior) {
-  const CppDispatchTableOf table{
-      .of = CppClassRef(unit, mir::ClassRef{behavior.owner_class})};
+  const mir::ClassId introducer =
+      mir::DeclaringClassOf(unit, behavior.introduced_by);
+  const CppDispatchTableOf table{.of = CppClassRef(unit, introducer)};
   Write(
-      out, table, ", &", table, "::",
-      CppTableMemberName(
-          unit, unit.GetClass(behavior.owner_class), behavior.slot));
+      out, table, ", &", table,
+      "::", CppTableMemberName(unit, behavior.introduced_by));
 }
 
 }  // namespace
@@ -830,7 +825,9 @@ void WriteOne(TargetText& out, const CppInterfaceDispatchCallee& callee) {
       out, ", &",
       CppDefinitionOf{
           .of = CppClassRef(
-              *callee.unit, mir::ClassRef{callee.requirement.owner_class})},
+              *callee.unit,
+              mir::DeclaringClassOf(
+                  *callee.unit, callee.requirement.introduced_by))},
       ">");
 }
 

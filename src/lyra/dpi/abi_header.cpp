@@ -212,15 +212,17 @@ auto RenderSection(
 // unit's callables and is walked separately.
 auto SurfaceOf(const mir::CompilationUnit& unit) -> ForeignSurface {
   ForeignSurface surface;
-  for (const mir::CallableDecl& callable : unit.callables) {
-    if (!callable.foreign.has_value() ||
-        AlreadyStated(surface, callable.foreign->foreign_name)) {
+  for (const mir::CallableId id : unit.NamespaceCallables()) {
+    const mir::CallableDecl& callable = unit.callables.Get(id);
+    const auto& owner = std::get<mir::DeclaredByNamespace>(callable.owner);
+    if (!owner.foreign.has_value() ||
+        AlreadyStated(surface, owner.foreign->foreign_name)) {
       continue;
     }
     ForeignEntry entry{
-        .name = callable.foreign->foreign_name,
+        .name = owner.foreign->foreign_name,
         .prototype = RenderPrototypeOfCallable(
-            unit, callable.code, callable.foreign->foreign_name)};
+            unit, callable.code, owner.foreign->foreign_name)};
     std::vector<ForeignEntry>& side = std::visit(
         Overloaded{
             [&](mir::DefinedHere) -> std::vector<ForeignEntry>& {

@@ -101,8 +101,8 @@ class Scope : public GcObject {
   // default seed, which is what keeps one instance's draws out of another's.
   [[nodiscard]] auto InitializationSeeds() -> InitializationRng&;
 
-  // The definition the scope comes from and the scopes it declares (LRM
-  // 37.10, 37.12).
+  // The definition the scope comes from, the scopes it declares (LRM 37.10,
+  // 37.12), and the data objects it declares (LRM 21.7.1.2).
   [[nodiscard]] auto Declarations() const -> const abi::ScopeDeclarations& {
     return Info().scope_declarations;
   }
@@ -147,12 +147,6 @@ class Scope : public GcObject {
   void Resolve();
   void Initialize();
   void CreateProcesses();
-
-  // Describes what this instance declares that a value dump may record (LRM
-  // 21.7.1.2), in the order it declares them, to the describer the running
-  // dump installed. Asked once a dump starts, after every route is bound, so a
-  // port is described as the storage it is connected to.
-  void Describe();
 
   void ForEachChild(const ChildVisitor& fn);
 

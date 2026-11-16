@@ -3,13 +3,12 @@
 #include <cstdint>
 #include <string_view>
 
-namespace lyra::support {
+namespace lyra::runtime {
 
 // What a declaration is recorded as in a value dump (LRM 21.7.2.1
 // `var_type`): its net type for a net, and for a variable the kind of data it
-// holds. The front end, which reads the declaration, states it, and the
-// runtime writes it into the file, so it lives beside both. A parameter is no
-// storage, so nothing is recorded as one.
+// holds. The dump reads it off the declaration a data object's record states.
+// A parameter is no storage, so nothing is recorded as one.
 enum class DumpVarKind : std::uint8_t {
   kEvent,
   kInteger,
@@ -53,4 +52,4 @@ enum class DumpPortDirection : std::uint8_t {
   kInOut,
 };
 
-}  // namespace lyra::support
+}  // namespace lyra::runtime

@@ -1,7 +1,7 @@
 $timescale 1ns $end
 $scope module Top $end
-$var reg 4 A a $end
-$var reg 4 B b $end
+$var reg 4 A a [3:0] $end
+$var reg 4 B b [3:0] $end
 $upscope $end
 $enddefinitions $end
 #0

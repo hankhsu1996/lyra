@@ -36,10 +36,10 @@ auto ObjectTypeOf(mir::CompilationUnit& unit, mir::ClassId cls) -> mir::TypeId {
   return unit.types.Intern(mir::Type{mir::ObjectType{.of = cls}});
 }
 
-// The one behavior of the callback `binding` states.
+// The one behavior of the callback `binding` states, introduced by its one
+// method.
 auto InvokeSlot(const ExternBinding& binding) -> mir::VirtualSlot {
-  return mir::VirtualSlot{
-      .owner_class = binding.callback, .slot = mir::CallableId{0}};
+  return mir::VirtualSlot{.introduced_by = binding.invoked};
 }
 
 // A call of the definition `handle` holds, on `arguments`.
@@ -455,9 +455,10 @@ auto ExternBindCode(
 }
 
 auto DefineExternCallback(
-    UnitLowerer& unit_lowerer, mir::ClassId owner, mir::CallableId definition,
+    UnitLowerer& unit_lowerer, mir::CallableId definition,
     const ExternBinding& binding) -> mir::ClassId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::ClassId owner = mir::DeclaringClassOf(unit, definition);
   const mir::ClassId id = unit.DeclareClass();
   const mir::TypeId self_pointer = unit_lowerer.SelfPointerTo(id);
   const mir::TypeId owner_pointer = unit_lowerer.SelfPointerTo(owner);
@@ -492,7 +493,7 @@ auto DefineExternCallback(
                     unit.builtins, target,
                     block.ReadLocal(object, owner_pointer)))});
   }
-  cls.constructor = mir::ConstructorDecl{.code = std::move(constructor)};
+  unit.AddClassConstructor(id, std::move(constructor));
 
   mir::CallableCode invoke =
       BodyOfPrototype(unit_lowerer, binding.invoke, id, binding.invoke.span);
@@ -513,25 +514,19 @@ auto DefineExternCallback(
                     .callee =
                         mir::Direct{
                             .target =
-                                mir::CallableTarget{
-                                    .owner = owner, .slot = definition},
+                                mir::CallableTarget{.callable = definition},
                             .receiver = on},
                     .arguments = std::move(formals)},
             .type = invoke.result_type});
   }
-  const mir::CallableId answering = cls.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(invoke),
-          .foreign = std::nullopt,
-          .virtual_dispatch = mir::IntroducesVirtualSlot{},
-          .defining_unit = std::nullopt});
+  const mir::CallableId answering = unit.AddClassCallable(
+      id, mir::IntroducesVirtualSlot{}, std::move(invoke));
   cls.named_callables.push_back(
       mir::NamedCallable{.name = "invoke", .body = answering});
   cls.conforming.push_back(
       mir::ConformingBehavior{
           .interface_behavior = InvokeSlot(binding),
-          .answered_by =
-              mir::VirtualSlot{.owner_class = id, .slot = answering}});
+          .answered_by = mir::VirtualSlot{.introduced_by = answering}});
   unit.DefineClass(id, std::move(cls));
   return id;
 }

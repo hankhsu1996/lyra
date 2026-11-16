@@ -4,7 +4,7 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/hir/structural_data_object.hpp"
+#include "lyra/support/data_object.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -13,6 +13,6 @@ namespace lyra::lowering::ast_to_hir {
 // type. A net type the compiler does not model is refused by name.
 auto TranslateNetType(
     const slang::ast::NetType& net_type, diag::SourceSpan span)
-    -> diag::Result<hir::NetType>;
+    -> diag::Result<support::NetType>;
 
 }  // namespace lyra::lowering::ast_to_hir

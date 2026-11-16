@@ -76,14 +76,13 @@ struct IntroducesVirtualSlot {
   auto operator==(const IntroducesVirtualSlot&) const -> bool = default;
 };
 
-// Identity of a virtual dispatch slot: the class that introduced it and the
-// callable arena position where it was first declared, whichever unit defines
-// that class. The receiver's dynamic type is what decides which implementation
-// runs; the slot is the canonical logical identity a backend reads to reach the
-// method's name and signature.
+// Identity of a virtual dispatch slot: the method that introduced it,
+// whichever unit defines that method's class, which its declaration names.
+// The receiver's dynamic type is what decides which implementation runs; the
+// slot is the canonical logical identity a backend reads to reach the method's
+// name and signature.
 struct VirtualSlot {
-  ClassId owner_class;
-  CallableId slot;
+  CallableId introduced_by;
 
   auto operator==(const VirtualSlot&) const -> bool = default;
 };

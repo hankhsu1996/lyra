@@ -18,13 +18,12 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/id_allocator.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/procedural_scope.hpp"
-#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/scope_instantiations.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -49,6 +48,7 @@
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/extern_binding.hpp"
+#include "lyra/lowering/hir_to_mir/kept_piece.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/path_select.hpp"
@@ -183,9 +183,10 @@ struct BuiltPublishedClass {
 // It is this class rather than a realization that stands directly in the
 // tree, so what the tree's class is entered with is entered here.
 auto BuildPublishedClass(
-    const mir::CompilationUnit& unit, const ClassShape& shape,
-    const PublishedScope& published, std::span<const ExternBinding> externs)
-    -> BuiltPublishedClass {
+    UnitLowerer& unit_lowerer, mir::ClassId published_id,
+    const ClassShape& shape, const PublishedScope& published,
+    std::span<const ExternBinding> externs) -> BuiltPublishedClass {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::CallableCode ctor = mir::CallableCode::Defined(diag::SourceSpan{});
   const mir::LocalId ctor_self = ctor.AddLocal(shape.self_pointer_type);
   std::vector<mir::LocalId> prefix;
@@ -199,39 +200,25 @@ auto BuildPublishedClass(
   ctor.result_type = unit.builtins.void_type;
 
   mir::Class cls = shape.OpenClass();
+  const auto introduce_pure = [&](mir::CallableId method, std::string name,
+                                  mir::CallableCode prototype) {
+    unit.StateCallable(method, std::move(prototype));
+    cls.named_callables.push_back(
+        mir::NamedCallable{.name = std::move(name), .body = method});
+  };
   for (const hir::PublishedCallableId at : published.subroutines.Ids()) {
     const PublishedSubroutine& subroutine = published.subroutines.Get(at);
-    const mir::CallableId id = PublishedMethodOf(at);
-    cls.callables.Define(
-        id, mir::CallableDecl{
-                .code = subroutine.prototype,
-                .foreign = std::nullopt,
-                .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true},
-                .defining_unit = std::nullopt});
-    cls.named_callables.push_back(
-        mir::NamedCallable{.name = subroutine.name, .body = id});
+    introduce_pure(
+        unit_lowerer.PublishedMethodOf(published_id, at), subroutine.name,
+        subroutine.prototype);
   }
   for (const ExternBinding& binding : externs) {
-    cls.callables.Define(
-        binding.bind,
-        mir::CallableDecl{
-            .code = binding.bind_prototype,
-            .foreign = std::nullopt,
-            .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true},
-            .defining_unit = std::nullopt});
-    cls.named_callables.push_back(
-        mir::NamedCallable{.name = binding.bind_name, .body = binding.bind});
+    introduce_pure(binding.bind, binding.bind_name, binding.bind_prototype);
   }
   for (const ClassCodeSlot& code : published.class_code) {
-    cls.callables.Define(
-        code.slot,
-        mir::CallableDecl{
-            .code = SlotPrototype(code.operation, shape.self_pointer_type),
-            .foreign = std::nullopt,
-            .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true},
-            .defining_unit = std::nullopt});
-    cls.named_callables.push_back(
-        mir::NamedCallable{.name = code.name, .body = code.slot});
+    introduce_pure(
+        code.slot, code.name,
+        SlotPrototype(code.operation, shape.self_pointer_type));
   }
 
   return BuiltPublishedClass{
@@ -1547,8 +1534,8 @@ void InstallExternDefinition(
       unit_lowerer.ScopeClassIdentity(defined.scope_class);
   const ExternBinding& binding =
       unit_lowerer.ExternBindingsOf(published)[defined.of.value];
-  const mir::ClassId callback = DefineExternCallback(
-      unit_lowerer, lowerer.ClassId(), definition, binding);
+  const mir::ClassId callback =
+      DefineExternCallback(unit_lowerer, definition, binding);
   const mir::ExprId interface =
       lowerer.RouteEnd(resolve_frame, defined.target.id);
 
@@ -1579,8 +1566,7 @@ void InstallExternDefinition(
                                       BuildObjectDeref(unit, block, interface),
                                   .slot =
                                       mir::VirtualSlot{
-                                          .owner_class = published,
-                                          .slot = binding.bind}},
+                                          .introduced_by = binding.bind}},
                           .arguments = {handed}},
                   .type = unit.builtins.void_type})});
 }
@@ -1727,7 +1713,8 @@ auto BindInputPort(
       source, support::StrengthLevel::kStrong, std::nullopt, data.sensitivity);
   if (!drive) return std::unexpected(std::move(drive.error()));
   const mir::ExprId runs_as = CreatingInstance(unit_lowerer, activate_frame);
-  const mir::CallableId body = mir_class.callables.Add(*std::move(drive));
+  const mir::CallableId body = unit.AddClassCallable(
+      frame.current_class.id, std::nullopt, *std::move(drive));
   AppendDriverRegistration(
       unit_lowerer, activate_frame, runs_as, body, source.span);
   return {};
@@ -1761,7 +1748,6 @@ auto InstallClockingBlocks(
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  mir::Class& mir_class = *frames.ctor.current_class.cls;
   mir::Builder install = frames.install.Builder();
   const auto own_place = [&](mir::ClassFieldTarget field) {
     return BuildOwnFieldExpr(
@@ -1787,10 +1773,10 @@ auto InstallClockingBlocks(
         hir_scope.structural_data_objects.Get(clocking.block_event).type;
     install_cell(fields.occurrence, event_type);
     const auto started =
-        [&](diag::Result<mir::CallableDecl> execution) -> diag::Result<void> {
+        [&](diag::Result<mir::CallableCode> execution) -> diag::Result<void> {
       if (!execution) return std::unexpected(std::move(execution.error()));
-      const mir::CallableId body =
-          mir_class.callables.Add(std::move(*execution));
+      const mir::CallableId body = unit.AddClassCallable(
+          frames.ctor.current_class.id, std::nullopt, std::move(*execution));
       AppendProcessRegistration(
           unit_lowerer, frames.activate, body,
           support::BuiltinFn::kRegisterObserving, clocking.span);
@@ -1843,8 +1829,9 @@ auto InstallClockingBlocks(
                     hir_scope.exprs.Get(nets.driving),
                     support::StrengthLevel::kStrong, std::nullopt, nets.reads);
                 if (!driver) return std::unexpected(std::move(driver.error()));
-                const mir::CallableId body =
-                    mir_class.callables.Add(std::move(*driver));
+                const mir::CallableId body = unit.AddClassCallable(
+                    frames.ctor.current_class.id, std::nullopt,
+                    std::move(*driver));
                 AppendDriverRegistration(
                     unit_lowerer, frames.activate,
                     CreatingInstance(unit_lowerer, frames.activate), body,
@@ -1858,13 +1845,9 @@ auto InstallClockingBlocks(
       if (!driven) return driven;
       const hir::ClockingOutputLanding landing{.block = id, .clockvar = at};
       const mir::CallableId method = lowerer.ClockingLandingCallable(landing);
-      auto lands = LowerClockingLanding(
-          lowerer, frames.ctor, landing,
-          unit_lowerer.GetClassShape(frames.ctor.current_class.id)
-              .callable_signatures.Get(method)
-              .virtual_dispatch);
+      auto lands = LowerClockingLanding(lowerer, frames.ctor, landing);
       if (!lands) return std::unexpected(std::move(lands.error()));
-      mir_class.callables.Define(method, *std::move(lands));
+      unit.StateCallable(method, *std::move(lands));
     }
   }
   return {};
@@ -1886,7 +1869,6 @@ auto InstallClockingBlocks(
 auto InstallPortConnections(
     StructuralScopeLowerer& lowerer, WalkFrame frame, WalkFrame resolve_frame,
     WalkFrame init_frame, WalkFrame activate_frame) -> diag::Result<void> {
-  mir::Class& mir_class = *frame.current_class.cls;
   mir::Builder resolve_block = resolve_frame.Builder();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   UnitLowerer& unit_lowerer = lowerer.Owner();
@@ -1904,7 +1886,7 @@ auto InstallPortConnections(
     // the two value directions share the reactive edge built below and differ
     // only in which end of it drives (LRM 23.3.3).
     switch (data.direction) {
-      case hir::PortDirection::kInput:
+      case support::PortDirection::kInput:
         if (const auto* route = std::get_if<hir::ValueRoute>(&data.endpoint)) {
           auto bound = BindInputPort(
               lowerer, frame.WithSpan(pc.span), resolve_frame.WithSpan(pc.span),
@@ -1914,14 +1896,14 @@ auto InstallPortConnections(
           continue;
         }
         break;
-      case hir::PortDirection::kOutput:
+      case support::PortDirection::kOutput:
         break;
-      case hir::PortDirection::kInOut:
+      case support::PortDirection::kInOut:
         throw InternalError(
             "InstallPortConnections: a bidirectional connection carries no "
             "data across the boundary and is recorded as the join it is, so "
             "it never reaches the connection switch");
-      case hir::PortDirection::kRef: {
+      case support::PortDirection::kRef: {
         // A `ref` port reaches the child's reference member by the same route
         // navigation any value reference uses, then binds it as another name of
         // what the peer names (LRM 23.3.3.2): where the peer is an input port,
@@ -1964,13 +1946,13 @@ auto InstallPortConnections(
       }
       // A unit publishes every direction the language admits, and AST-to-HIR
       // refuses this one, so a recorded connection never carries it.
-      case hir::PortDirection::kConstRef:
+      case support::PortDirection::kConstRef:
         throw InternalError(
             "InstallPortConnections: a refused port direction reached the "
             "connection switch");
     }
     const auto& cell = std::get<hir::PortCellEndpoint>(data.endpoint);
-    const bool is_input = data.direction == hir::PortDirection::kInput;
+    const bool is_input = data.direction == support::PortDirection::kInput;
     // A port connection is a reactive edge: the source is read, the sink is
     // driven. An input port's source is the parent expression and its sink is
     // the child cell; an output port's source is the child cell and its sink
@@ -1990,7 +1972,8 @@ auto InstallPortConnections(
         resolve_frame.WithSpan(assign.span), init_frame.WithSpan(assign.span),
         assign);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
-    const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
+    const mir::CallableId body = unit_lowerer.Unit().AddClassCallable(
+        frame.current_class.id, std::nullopt, std::move(*method_or));
     // The connection is created by this instantiation and evaluates the
     // code of the instance its source belongs to: this one for an input, the
     // child for an output, which reads the child's port (LRM 4.9.6, 24.3.2).
@@ -2459,49 +2442,258 @@ auto LowerGenerateAsStmt(
       declared.counting);
 }
 
-// Describes, as statements of `frame`'s block, what a value dump records of
-// an instance (LRM 21.7.1.2): each declaration, as the member it is with the
-// constant stating it, which names the record of the named block, task or
-// function it lies in. An event is described by an entry of its own, since what
-// a dump records of it is when the object it names is triggered rather than a
-// value it holds.
-auto DescribeDumped(
-    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const std::vector<hir::DumpedDeclaration>& dumped) -> diag::Result<void> {
-  UnitLowerer& unit_lowerer = lowerer.Owner();
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Builder block = frame.Builder();
-  const auto runtime = [&] {
-    return block.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit()));
-  };
-  const auto append = [&](mir::Expr call) {
-    block.AppendStmt(mir::ExprStmt{.expr = block.Add(std::move(call))});
-  };
-  for (const hir::DumpedDeclaration& declaration : dumped) {
-    auto path = lowerer.LowerAccessPath(
-        lowerer.HirScope().exprs.Get(declaration.named), frame);
-    if (!path) return std::unexpected(std::move(path.error()));
-    const mir::ExprId member = OwnerPlace(*path);
-    const support::BuiltinFn entry =
-        OwnerValueType(unit, block.Body(), path->owner) == unit.builtins.event
-            ? support::BuiltinFn::kDescribeEvent
-            : support::BuiltinFn::kDescribe;
-    append(
-        mir::MakeCallExpr(
-            mir::Direct{.target = entry, .receiver = member},
-            {runtime(), DumpEntryAddress(
-                            unit, block, declaration,
-                            declaration.lexical_scope.transform(
-                                [&](hir::ProceduralScopeId lexical_scope) {
-                                  return lowerer.DeclaredScopeRecords()
-                                      .procedural_scopes.at(lexical_scope);
-                                }))},
-            unit.builtins.void_type));
+// The entry handing a reader by name a value of a data object, of type
+// `held`: an integral value's bits, an enumeration's being its base's, a real
+// at the width it is held at, or the object an event variable names.
+auto SerializeEntryOf(const mir::CompilationUnit& unit, mir::TypeId held)
+    -> support::BuiltinFn {
+  const mir::Type& type = unit.types.Get(held);
+  if (type.IsIntegral()) {
+    return support::BuiltinFn::kSerializeBits;
   }
-  return {};
+  if (type.Is<mir::RealType>()) {
+    return support::BuiltinFn::kSerializeReal;
+  }
+  if (held == unit.builtins.event) {
+    return support::BuiltinFn::kSerializeEvent;
+  }
+  throw InternalError(
+      "hir_to_mir: a described data object holds no integral value, real or "
+      "event -- please report this as a bug");
+}
+
+// What a data object's declaration states of it: the identifier it is declared
+// under, the net type it is declared with, none for a variable, its type as the
+// source declared it, and the block, task or function it is written in, none
+// for one written in the scope itself.
+struct DeclaredDataObject {
+  std::string_view identifier;
+  std::optional<support::NetType> net_type;
+  const hir::Typespec* typespec;
+  std::optional<hir::ProceduralScopeId> lexical_scope;
+};
+
+// Refuses a described data object whose declaration is of nothing a reader by
+// name describes, which no front end hands on.
+[[noreturn]] void RefuseUndescribed() {
+  throw InternalError(
+      "hir_to_mir: a described data object is declared as nothing a reader by "
+      "name describes -- please report this as a bug");
+}
+
+// What the declaration `decl`, of `net_type`, states, refused where it states
+// no type a reader by name describes.
+auto DeclaredDescribed(
+    const hir::StructuralDataObjectDecl& decl,
+    std::optional<support::NetType> net_type) -> DeclaredDataObject {
+  if (!decl.typespec.has_value()) {
+    RefuseUndescribed();
+  }
+  return DeclaredDataObject{
+      .identifier = decl.name,
+      .net_type = net_type,
+      .typespec = &*decl.typespec,
+      .lexical_scope = decl.lexical_scope};
+}
+
+// What a data object a scope declares states of itself, a static one of its
+// bodies writes among them.
+auto DeclaredStructuralDataObject(const hir::StructuralDataObjectDecl& decl)
+    -> DeclaredDataObject {
+  return std::visit(
+      Overloaded{
+          [&](const hir::StructuralVariableDecl&) {
+            return DeclaredDescribed(decl, std::nullopt);
+          },
+          [&](const hir::StructuralReferenceDecl&) {
+            return DeclaredDescribed(decl, std::nullopt);
+          },
+          [&](const hir::StructuralNetDecl& net) {
+            return DeclaredDescribed(decl, net.net_type);
+          },
+          [](const hir::StructuralGenvarDecl&) -> DeclaredDataObject {
+            RefuseUndescribed();
+          },
+          [](const hir::StructuralConstructionValueDecl&)
+              -> DeclaredDataObject { RefuseUndescribed(); },
+          [](const hir::StructuralParameterDecl&) -> DeclaredDataObject {
+            RefuseUndescribed();
+          },
+          [](const hir::StructuralLocalparamDecl&) -> DeclaredDataObject {
+            RefuseUndescribed();
+          }},
+      decl.kind);
+}
+
+// What the declaration the route `named` ends at states of the data object a
+// scope describes, which is one of the scope's own.
+auto DeclaredDataObjectOf(
+    const hir::StructuralScope& scope, const hir::RoutedValueRef& named)
+    -> DeclaredDataObject {
+  return std::visit(
+      Overloaded{
+          [&](const hir::StructuralDataObjectLeaf& leaf) {
+            return DeclaredStructuralDataObject(
+                scope.structural_data_objects.Get(leaf.object));
+          },
+          [](const hir::PublishedMemberLeaf&) -> DeclaredDataObject {
+            RefuseUndescribed();
+          }},
+      scope.routes.values.Get(named.id).leaf);
+}
+
+// What the declaration of a variable a namespace keeps states of it, a data
+// object of the namespace's own scope.
+auto DeclaredNamespaceVariableOf(
+    const hir::CompilationUnit& hir, const hir::StructuralScope& scope,
+    const hir::NamespaceValueRef& named) -> DeclaredDataObject {
+  return DeclaredStructuralDataObject(scope.structural_data_objects.Get(
+      hir.namespace_definition->variables.Get(named.variable)));
+}
+
+// What the declaration of the cell a description names states of it: one an
+// instance holds, reached by a route, or one a namespace keeps.
+auto DeclaredCellOf(
+    const StructuralScopeLowerer& lowerer, const hir::ValueTarget& cell)
+    -> DeclaredDataObject {
+  const hir::StructuralScope& scope = lowerer.HirScope();
+  return std::visit(
+      Overloaded{
+          [&](const hir::RoutedValueRef& routed) {
+            return DeclaredDataObjectOf(scope, routed);
+          },
+          [&](const hir::NamespaceValueRef& kept) {
+            return DeclaredNamespaceVariableOf(
+                lowerer.Owner().Hir(), scope, kept);
+          },
+          // A scope declares no class's static property.
+          [](const hir::StaticPropertyRef&) -> DeclaredDataObject {
+            RefuseUndescribed();
+          }},
+      cell);
 }
 
 }  // namespace
+
+auto TakeDataObjectBodies(mir::CompilationUnit& unit, DescribingBodies bodies)
+    -> mir::DataObjectBodies {
+  const auto take = [&] {
+    return std::visit(
+        Overloaded{
+            [&](const ScopeClassBodies& of_class) {
+              return unit.TakeClassCallable(of_class.id);
+            },
+            [&](const NamespaceBodies&) {
+              return unit.TakeNamespaceCallable();
+            }},
+        bodies);
+  };
+  const mir::CallableId read = take();
+  return mir::DataObjectBodies{.read = read, .subscribe = take()};
+}
+
+auto DescribeDataObjects(
+    const StructuralScopeLowerer& lowerer, const ScopeTable& scopes,
+    DescribingBodies bodies, mir::ScopeDeclarations& declarations,
+    const WalkFrame& scope_frame,
+    const std::vector<hir::DescribedDataObject>& described)
+    -> diag::Result<void> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  for (const hir::DescribedDataObject& object : described) {
+    const DeclaredDataObject declared = DeclaredCellOf(lowerer, object.cell);
+    declarations.data_objects.push_back(
+        mir::DescribedDataObject{
+            .identifier = std::string{declared.identifier},
+            .net_type = declared.net_type,
+            .typespec = TypespecConstant(unit, *declared.typespec),
+            .ports = object.ports,
+            .enclosing = declared.lexical_scope.transform(
+                [&](hir::ProceduralScopeId lexical_scope) {
+                  return scopes.procedural_scopes.at(lexical_scope);
+                })});
+  }
+  // The body `id`, taking the object, the position of the data object it is
+  // asked for among those described, and what the reader gave, of `handed`,
+  // whose case for each data object is the one statement `statement` builds.
+  const auto state = [&](mir::CallableId id, mir::TypeId handed,
+                         const auto& statement) -> diag::Result<void> {
+    mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
+    CallableBindings bindings(unit, code);
+    const mir::LocalId object = std::visit(
+        Overloaded{
+            [&](const ScopeClassBodies& of_class) {
+              return bindings.Declare(ReceiverOrigin{}, of_class.self_type);
+            },
+            [&](const NamespaceBodies&) {
+              return bindings.DeclareAnonymous(
+                  mir::ObjectRootPointer(unit.types));
+            }},
+        bodies);
+    const mir::LocalId position =
+        bindings.DeclareAnonymous(unit.builtins.machine_int64);
+    const mir::LocalId given = bindings.DeclareAnonymous(handed);
+    mir::Builder block(code.Body(), scope_frame.span);
+    mir::SwitchStmt chosen{
+        .discriminant = block.ReadLocal(position, unit.builtins.machine_int64),
+        .cases = {},
+        .default_body = std::nullopt};
+    chosen.cases.reserve(described.size());
+    for (std::size_t at = 0; at < described.size(); ++at) {
+      mir::Block taken;
+      mir::Builder inside = block.Into(taken);
+      const WalkFrame frame =
+          scope_frame.WithBlock(&taken).WithBindings(&bindings);
+      auto call = statement(
+          described[at], inside, frame, inside.LocalPlace(given, handed));
+      if (!call) return std::unexpected(std::move(call.error()));
+      inside.AppendStmt(mir::ExprStmt{.expr = *call});
+      chosen.cases.push_back(
+          mir::SwitchCase{
+              .values = {static_cast<std::int64_t>(at)},
+              .body = block.AddScope(std::move(taken))});
+    }
+    block.AppendStmt(std::move(chosen));
+    code.params = {object, position, given};
+    code.result_type = unit.builtins.void_type;
+    unit.StateCallable(id, std::move(code));
+    return {};
+  };
+  auto read = state(
+      declarations.bodies.read,
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kValueSerializer),
+      [&](const hir::DescribedDataObject& object, mir::Builder block,
+          const WalkFrame& frame,
+          mir::ExprId serializer) -> diag::Result<mir::ExprId> {
+        auto value = lowerer.LowerExpr(
+            hir::MakeValueTargetRefExpr(
+                object.cell, object.type, scope_frame.span),
+            frame);
+        if (!value) return std::unexpected(std::move(value.error()));
+        const support::BuiltinFn entry = SerializeEntryOf(unit, value->type);
+        const mir::ExprId read_value = block.Add(*std::move(value));
+        return block.Add(
+            mir::MakeCallExpr(
+                mir::Direct{.target = entry, .receiver = serializer},
+                {read_value}, unit.builtins.void_type));
+      });
+  if (!read) return std::unexpected(std::move(read.error()));
+  return state(
+      declarations.bodies.subscribe,
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kSubscriber),
+      [&](const hir::DescribedDataObject& object, mir::Builder block,
+          const WalkFrame& frame,
+          mir::ExprId subscriber) -> diag::Result<mir::ExprId> {
+        auto trigger = BuildValueChangeTrigger(
+            block, frame, lowerer, hir::WatchedStorage{object.cell});
+        if (!trigger) return std::unexpected(std::move(trigger.error()));
+        return block.Add(
+            mir::MakeCallExpr(
+                mir::Direct{
+                    .target = support::BuiltinFn::kSubscribe,
+                    .receiver = subscriber},
+                {*trigger}, unit.builtins.void_type));
+      });
+}
 
 auto BuildExecutionStart(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
@@ -2665,7 +2857,11 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   shape.scope_declarations = mir::ScopeDeclarations{
       .definition = unit_lowerer.DefinitionConstant(),
       .elaborated = declared_scope_records_.elaborated,
-      .lexical = declared_scope_records_.lexical};
+      .lexical = declared_scope_records_.lexical,
+      .data_objects = {},
+      .bodies = TakeDataObjectBodies(
+          unit_lowerer.Unit(),
+          ScopeClassBodies{.id = class_id_, .self_type = self_pointer_type})};
 
   AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape);
   // What construction supplies is what distinguishes one built scope from
@@ -2803,7 +2999,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // skewed by a delay reads, and what an output onto a variable puts its value
   // onto it by, are storage nothing outside this scope names either: a drive
   // from another unit reaches them only through the method landing it (LRM
-  // 14.13, 14.16, 14.16.2). Those methods are reserved with the scope's others
+  // 14.13, 14.16, 14.16.2). Those methods are taken with the scope's others
   // below.
   const auto own_field = [&](mir::TypeId type) {
     return mir::ClassFieldTarget{
@@ -2930,13 +3126,13 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   scopes_ = {hir_scope.procedural_scopes.size(), std::move(scopes)};
 
   // Everything a peer may need about a subroutine before its body exists is
-  // settled here, in one pass over the subroutines. Its callable identity comes
-  // from the shape's own pool, so a call in one body resolves a forward or
-  // mutual reference to a peer (LRM 13.7) whatever order the two lower in; the
-  // body pass fills the identity it was handed rather than working out where
-  // the other side will put things.
+  // settled here, in one pass over the subroutines. Its callable is taken in
+  // the unit's table as the shape settles, so a call in one body resolves a
+  // forward or mutual reference to a peer (LRM 13.7) whatever order the two
+  // lower in; the body pass fills the identity it was handed rather than
+  // working out where the other side will put things.
   // A structural scope has no inheritance, so no declaration names another
-  // scope's callable and the scope is the authority for its own identity space.
+  // scope's callable and the scope takes its own.
   // A subroutine the scope published overrides the virtual method its
   // published class introduced at the position the signature gave it.
   std::vector<std::optional<mir::VirtualDispatchRole>> dispatch(
@@ -2947,21 +3143,28 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
             &hir_scope.published.callables.Get(published))) {
       dispatch[subroutine->value] = mir::OverridesVirtualSlot{
           .overridden = mir::VirtualSlot{
-              .owner_class = published_class_id_,
-              .slot = PublishedMethodOf(published)}};
+              .introduced_by = unit_lowerer.PublishedMethodOf(
+                  published_class_id_, published)}};
     }
   }
-  base::IdAllocator<mir::CallableId> subroutine_ids;
+  const auto take = [&](std::optional<mir::VirtualDispatchRole> role) {
+    mir::CompilationUnit& unit = unit_lowerer.Unit();
+    const mir::CallableId taken = unit.TakeClassCallable(class_id_);
+    if (role.has_value()) {
+      unit.StateDispatchRole(taken, *std::move(role));
+    }
+    return taken;
+  };
+  const auto overriding = [&](mir::CallableId method) {
+    return mir::VirtualDispatchRole{mir::OverridesVirtualSlot{
+        .overridden = mir::VirtualSlot{.introduced_by = method}}};
+  };
   std::vector<DeclaredCallable> declared_subroutines;
-  std::vector<CallableSignature> signatures;
   declared_subroutines.reserve(hir_scope.structural_subroutines.size());
-  signatures.reserve(hir_scope.structural_subroutines.size());
   for (const hir::StructuralSubroutineId sub_id :
        hir_scope.structural_subroutines.Ids()) {
     const hir::SubroutineDecl& s = hir_scope.structural_subroutines.Get(sub_id);
-    const mir::CallableId body = subroutine_ids.Take();
-    signatures.push_back(
-        CallableSignature{.virtual_dispatch = dispatch[sub_id.value]});
+    const mir::CallableId body = take(dispatch[sub_id.value]);
     declared_subroutines.push_back(
         DeclaredCallable{
             .callable = body,
@@ -2977,13 +3180,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
         ExternRealization{
             .field =
                 shape.AddField(ExternStorageType(unit_lowerer.Unit(), binding)),
-            .bind = subroutine_ids.Take()});
-    signatures.push_back(
-        CallableSignature{
-            .virtual_dispatch = mir::OverridesVirtualSlot{
-                .overridden = mir::VirtualSlot{
-                    .owner_class = published_class_id_,
-                    .slot = binding.bind}}});
+            .bind = take(overriding(binding.bind))});
   }
   // What lands a clocking output's drives is a method the scope publishes
   // without the source having written it, which overrides the one the
@@ -2995,13 +3192,8 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     if (landing == nullptr) continue;
     clockvar_fields.at(landing->block.value)
         .at(landing->clockvar.value)
-        .landing = subroutine_ids.Take();
-    signatures.push_back(
-        CallableSignature{
-            .virtual_dispatch = mir::OverridesVirtualSlot{
-                .overridden = mir::VirtualSlot{
-                    .owner_class = published_class_id_,
-                    .slot = PublishedMethodOf(published)}}});
+        .landing = take(overriding(
+        unit_lowerer.PublishedMethodOf(published_class_id_, published)));
   }
   std::vector<ClockingFields> clocking_fields;
   clocking_fields.reserve(clockvar_fields.size());
@@ -3014,7 +3206,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   }
   clocking_fields_ = {
       hir_scope.clocking_blocks.size(), std::move(clocking_fields)};
-  shape.callable_signatures = {signatures.size(), std::move(signatures)};
   declared_subroutines_ = {
       hir_scope.structural_subroutines.size(), std::move(declared_subroutines)};
 
@@ -3073,9 +3264,10 @@ namespace {
 // scope takes it as, each other prefix is forwarded -- read where a copy holds
 // the whole of it, moved otherwise -- then the trailing ones.
 void ConstructBaseFirst(
-    mir::CompilationUnit& unit, const mir::ClassRef& base,
+    UnitLowerer& unit_lowerer, const mir::ClassRef& base,
     mir::CallableCode& ctor_code, mir::LocalId self,
     std::span<const mir::LocalId> prefix_local_ids) {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder body(ctor_code.Body(), diag::SourceSpan{});
   std::vector<mir::ExprId> base_args;
   base_args.reserve(prefix_local_ids.size());
@@ -3099,8 +3291,9 @@ void ConstructBaseFirst(
       unit, body, body.ReadLocal(self, ctor_code.locals.Get(self).type));
   const mir::DirectTarget target = std::visit(
       Overloaded{
-          [](const mir::ClassId& extended) -> mir::DirectTarget {
-            return mir::ConstructorTarget{.cls = extended};
+          [&](const mir::ClassId& extended) -> mir::DirectTarget {
+            return mir::CallableTarget{
+                .callable = unit_lowerer.ClassConstructor(extended)};
           },
           [](const mir::ObjectTreeRootRef&) -> mir::DirectTarget {
             return support::BuiltinFn::kSetScopePlace;
@@ -3205,7 +3398,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   const WalkFrame ctor_frame =
       scope_frame.WithBlock(&ctor_block.Body()).WithBindings(&ctor_bindings);
   ConstructBaseFirst(
-      unit_lowerer.Unit(), mir_class.base.value(), ctor_code, self_id,
+      unit_lowerer, mir_class.base.value(), ctor_code, self_id,
       ctor_prefix_local_ids);
   // The construction table follows the prefix, and what construction supplies
   // follows that. Both stay out of the base call: the base contract demands
@@ -3265,12 +3458,6 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   const WalkFrame activate_frame = scope_frame.WithBlock(&activate_block.Body())
                                        .WithBindings(&activate_bindings);
 
-  mir::CallableCode describe_code =
-      mir::CallableCode::Defined(diag::SourceSpan{});
-  CallableBindings describe_bindings(unit_lowerer.Unit(), describe_code);
-  const mir::LocalId describe_self_id = seed_self(describe_bindings);
-  const WalkFrame describe_frame = scope_frame.WithBlock(&describe_code.Body())
-                                       .WithBindings(&describe_bindings);
   const auto self_object = [&]() -> mir::ExprId {
     return BuildObjectDeref(
         unit_lowerer.Unit(), ctor_block,
@@ -3568,17 +3755,10 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
       if (!unit_lowerer.Unit()
                .types.Get(binding.invoke.result_type)
                .Is<mir::CoroutineType>()) {
-        mir_class.callables.Define(
+        unit_lowerer.Unit().StateCallable(
             declared.callable,
-            mir::CallableDecl{
-                .code = ExternFunctionCode(
-                    unit_lowerer, class_id_, field, binding, src.span),
-                .foreign = std::nullopt,
-                .virtual_dispatch =
-                    unit_lowerer.GetClassShape(class_id_)
-                        .callable_signatures.Get(declared.callable)
-                        .virtual_dispatch,
-                .defining_unit = std::nullopt});
+            ExternFunctionCode(
+                unit_lowerer, class_id_, field, binding, src.span));
         subroutine_callables.push_back(declared.callable);
         continue;
       }
@@ -3594,15 +3774,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     auto code_or = subroutine_lowerer.Run(
         src, CallableForm::kInstanceMember, std::nullopt);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
-    mir_class.callables.Define(
-        declared.callable,
-        mir::CallableDecl{
-            .code = *std::move(code_or),
-            .foreign = std::nullopt,
-            .virtual_dispatch = unit_lowerer.GetClassShape(class_id_)
-                                    .callable_signatures.Get(declared.callable)
-                                    .virtual_dispatch,
-            .defining_unit = std::nullopt});
+    unit_lowerer.Unit().StateCallable(declared.callable, *std::move(code_or));
     subroutine_callables.push_back(declared.callable);
     for (const StaticCellBinding& binding : declared.statics) {
       BringUpStaticCell(
@@ -3621,27 +3793,20 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     InitializeExternStorage(
         unit_lowerer.Unit(), ctor_frame, class_id_,
         extern_realizations_[i].field, extern_bindings[i]);
-    mir_class.callables.Define(
+    unit_lowerer.Unit().StateCallable(
         extern_realizations_[i].bind,
-        mir::CallableDecl{
-            .code = ExternBindCode(
-                unit_lowerer, class_id_, extern_realizations_[i].field,
-                extern_bindings[i],
-                hir_scope.structural_subroutines
-                    .Get(PublishedSubroutineOf(
-                        hir_scope.published,
-                        hir_scope.published.signature.externs
-                            .Get(
-                                hir::PublishedExternId{
-                                    .value = static_cast<std::uint32_t>(i)})
-                            .callable))
-                    .span),
-            .foreign = std::nullopt,
-            .virtual_dispatch =
-                unit_lowerer.GetClassShape(class_id_)
-                    .callable_signatures.Get(extern_realizations_[i].bind)
-                    .virtual_dispatch,
-            .defining_unit = std::nullopt});
+        ExternBindCode(
+            unit_lowerer, class_id_, extern_realizations_[i].field,
+            extern_bindings[i],
+            hir_scope.structural_subroutines
+                .Get(PublishedSubroutineOf(
+                    hir_scope.published,
+                    hir_scope.published.signature.externs
+                        .Get(
+                            hir::PublishedExternId{
+                                .value = static_cast<std::uint32_t>(i)})
+                        .callable))
+                .span));
   }
 
   // An exported subroutine's C entry point calls that method on the receiver
@@ -3655,7 +3820,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     const mir::CallableId method_id =
         subroutine_callables[export_decl.subroutine.value];
     const mir::TypeId method_result_type =
-        mir_class.callables.Get(method_id).code.result_type;
+        unit_lowerer.Unit().callables.Get(method_id).code.result_type;
     // The subroutine is compiled once per body of this scope's unit while
     // the DPI-C name is one program-global symbol, so the scope publishes the
     // entry and the symbol resolves against whichever scope the foreign call
@@ -3663,20 +3828,15 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     // as its first argument and is reached only as a code address, while the
     // symbol dispatching to it stays the unit's.
     ForeignExportEntry entry = SynthesizeForeignExportEntry(
-        unit_lowerer, ctor_frame,
-        mir::CallableTarget{.owner = class_id_, .slot = method_id},
+        unit_lowerer, ctor_frame, mir::CallableTarget{.callable = method_id},
         method_result_type, export_decl);
     // Two scopes of one unit may export one name (LRM 35.4), and what the unit
     // states of that name is the same either way, so it is stated once. Each
     // scope still publishes an entry of its own, because which subroutine the
     // symbol reaches is the scope's and only the name is the unit's.
     PublishForeignScopeName(unit_lowerer, entry);
-    const mir::CallableId entry_id = mir_class.callables.Add(
-        mir::CallableDecl{
-            .code = std::move(entry.code),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .defining_unit = std::nullopt});
+    const mir::CallableId entry_id = unit_lowerer.Unit().AddClassCallable(
+        class_id_, std::nullopt, std::move(entry.code));
     // A foreign caller hands the entry the scope every instance is.
     exports.push_back(
         mir::NamedCallable{
@@ -3696,8 +3856,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
           hir::ConcurrentAssertionOf(stmt.data);
       if (!held.has_value()) continue;
       auto built = LowerProceduralConcurrentAssertion(
-          *this, mir_class, ctor_frame.WithSpan(stmt.span), scopes_, statics,
-          p.body, *held);
+          *this, ctor_frame.WithSpan(stmt.span), scopes_, statics, p.body,
+          *held);
       if (!built) return std::unexpected(std::move(built.error()));
       for (const mir::CallableId process : built->processes) {
         AppendProcessRegistration(
@@ -3714,12 +3874,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
         scopes_, statics);
     auto code_or = process_lowerer.Run(p);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
-    const mir::CallableId body = mir_class.callables.Add(
-        mir::CallableDecl{
-            .code = *std::move(code_or),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .defining_unit = std::nullopt});
+    const mir::CallableId body = unit_lowerer.Unit().AddClassCallable(
+        class_id_, std::nullopt, *std::move(code_or));
     // A final procedure is called when the simulation ends, and every other
     // kind starts with the scope (LRM 9.2), registered as the kind it is. What
     // an `always_comb` is at time zero holds of an `always_latch` too (LRM
@@ -3784,7 +3940,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
         resolve_frame.WithSpan(assign.span), init_frame.WithSpan(assign.span),
         assign);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
-    const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
+    const mir::CallableId body = unit_lowerer.Unit().AddClassCallable(
+        class_id_, std::nullopt, std::move(*method_or));
     AppendDriverRegistration(
         unit_lowerer, activate_frame,
         CreatingInstance(unit_lowerer, activate_frame), body, assign.span);
@@ -3830,7 +3987,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     const hir::ConcurrentAssertionDecl& assertion =
         hir_scope.concurrent_assertions.Get(id);
     auto installed = LowerConcurrentAssertion(
-        *this, mir_class, ctor_frame.WithSpan(assertion.span),
+        *this, ctor_frame.WithSpan(assertion.span),
         StorageBringUp{
             .construct = ctor_frame.WithSpan(assertion.span),
             .install = install_frame.WithSpan(assertion.span),
@@ -3883,8 +4040,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   // answer there records one function's ticks against another's clock, which
   // no test would obviously catch. What sharing would save is a wait.
   const auto keep_histories = [&](auto& reader) -> diag::Result<void> {
-    auto samplers =
-        KeepSampledHistories(reader, mir_class, ctor_frame, activate_frame);
+    auto samplers = KeepSampledHistories(reader, ctor_frame, activate_frame);
     if (!samplers) return std::unexpected(std::move(samplers.error()));
     // A sampler is the tool's own, kept for the call that reads its history,
     // and it stands where that call is written.
@@ -3955,27 +4111,21 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   auto& unit = unit_lowerer.Unit();
 
   // The three bodies the runtime drives this scope through after construction
-  // (LRM 23.3.3.2 / 6.8 / 9.2), and the one a value dump starting has it
-  // describe itself with (LRM 21.7.1.2), each answering the library's callback
-  // for its phase. `self` is the body's own receiver, typed as this class.
-  // None of them answers to a name of the source, because
-  // such a name would sit in the same name space as the scope's own subroutines
-  // and a method spelled the same way would then share it. A phase with no work
-  // is a body with no statements, not an absent body: whether emitting one is
-  // worth avoiding is a question for the layer that removes dead work, and
-  // answering it here would cost every consumer a case.
+  // (LRM 23.3.3.2 / 6.8 / 9.2), each answering the library's callback for its
+  // phase. `self` is the body's own receiver, typed as this class. None of
+  // them answers to a name of the source, because such a name would sit in
+  // the same name space as the scope's own subroutines and a method spelled
+  // the same way would then share it. A phase with no work is a body with no
+  // statements, not an absent body: whether emitting one is worth avoiding is
+  // a question for the layer that removes dead work, and answering it here
+  // would cost every consumer a case.
   const auto add_body = [&](mir::CallableCode& code, mir::LocalId self,
                             support::LibraryCallback phase) {
     code.params = {self};
     code.result_type = void_type;
-    const mir::CallableId body = mir_class.callables.Add(
-        mir::CallableDecl{
-            .code = std::move(code),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt,
-            .defining_unit = std::nullopt});
-    mir_class.library_callbacks.push_back(
-        mir::LibraryCallbackBody{.callback = phase, .body = body});
+    const mir::CallableId body = unit_lowerer.Unit().AddClassCallable(
+        class_id_, std::nullopt, std::move(code));
+    mir_class.library_callbacks.emplace(phase, body);
   };
   add_body(
       resolve_code, resolve_self_id, support::LibraryCallback::kScopeResolve);
@@ -3989,13 +4139,13 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   add_body(
       activate_code, activate_self_id,
       support::LibraryCallback::kScopeCreateProcesses);
-  auto described = DescribeDumped(*this, describe_frame, hir_scope.dumped);
+  auto described = DescribeDataObjects(
+      *this, DeclaredScopeRecords(),
+      ScopeClassBodies{.id = class_id_, .self_type = self_ptr_type},
+      *mir_class.scope_declarations, scope_frame, hir_scope.described);
   if (!described) return std::unexpected(std::move(described.error()));
-  add_body(
-      describe_code, describe_self_id,
-      support::LibraryCallback::kScopeDescribe);
 
-  mir_class.constructor = mir::ConstructorDecl{.code = std::move(ctor_code)};
+  unit_lowerer.Unit().AddClassConstructor(class_id_, std::move(ctor_code));
 
   // The design root states every specialization's construction table, its
   // own among them, since nothing hands it one.
@@ -4047,12 +4197,7 @@ auto StructuralScopeLowerer::PublishBlockEntry() const -> mir::CallableId {
           mir::BoxOf(unit.types, object)));
   body.AppendStmt(
       mir::ReturnStmt{.value = ObjectAs(body, built, code.result_type)});
-  return unit.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
+  return unit.AddNamespaceCallable(std::move(code));
 }
 
 // What the unit published of its object, the class every referrer names it
@@ -4062,10 +4207,10 @@ void StructuralScopeLowerer::DefinePublishedClasses(UnitLowerer& unit_lowerer) {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   for (const auto& [id, scope] : unit_lowerer.PublishedScopes()) {
     BuiltPublishedClass published = BuildPublishedClass(
-        unit, unit_lowerer.GetClassShape(id), scope,
+        unit_lowerer, id, unit_lowerer.GetClassShape(id), scope,
         unit_lowerer.ExternBindingsOf(id));
     ConstructBaseFirst(
-        unit, published.cls.base.value(), published.ctor,
+        unit_lowerer, published.cls.base.value(), published.ctor,
         published.ctor.params.front(), published.ctor_prefix);
     // A block keeps the scope that built it, which the class it published
     // holds, so whichever body the block is, a walk climbing out of it reads
@@ -4088,8 +4233,8 @@ void StructuralScopeLowerer::DefinePublishedClasses(UnitLowerer& unit_lowerer) {
               .expr = body.Add(
                   mir::MakeAssignExpr(unit.builtins, target, parent))});
     }
-    published.cls.constructor =
-        mir::ConstructorDecl{.code = std::move(published.ctor)};
+    unit.StateCallable(
+        unit_lowerer.ClassConstructor(id), std::move(published.ctor));
     unit.DefineClass(id, std::move(published.cls));
   }
 }

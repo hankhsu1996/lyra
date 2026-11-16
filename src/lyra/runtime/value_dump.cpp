@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <expected>
@@ -36,10 +37,11 @@
 #include "lyra/runtime/hierarchy_levels.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
+#include "lyra/runtime/reflection.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/scope.hpp"
+#include "lyra/runtime/synchronization_object.hpp"
 #include "lyra/runtime/value_dumps.hpp"
-#include "lyra/support/dump_kind.hpp"
 #include "lyra/support/region.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/object_ref.hpp"
@@ -93,25 +95,93 @@ void DumpCapture::Clear() {
   words_.clear();
 }
 
-DumpProbe::DumpProbe() = default;
-DumpProbe::~DumpProbe() = default;
+namespace {
 
-auto DumpProbe::Referent() const -> value::ObjectRef {
-  return value::ObjectRef{};
+// Records what a data object's reading code hands it into a dump's capture,
+// under the object's code: an event variable in a time step the object it
+// names was triggered in (LRM 21.7.2.2), keeping that object, whose triggers
+// are changes of the variable too.
+class CaptureSerializer final : public ValueSerializer {
+ public:
+  CaptureSerializer(DumpCapture& into, DumpCode code)
+      : into_(&into), code_(code) {
+  }
+
+  void SerializeBits(const value::ConstIntegralView& value) override {
+    into_->Bits(code_, value);
+  }
+  void SerializeReal(double value) override {
+    into_->Real(code_, value);
+  }
+  void SerializeEvent(const value::ObjectRef& event) override {
+    referent_ = event;
+    switch (EventTriggered(event, current_runtime(), nullptr).Truth()) {
+      case value::Truthiness::kKnownNonzero:
+        into_->Triggered(code_);
+        return;
+      case value::Truthiness::kKnownZero:
+      case value::Truthiness::kUnknown:
+        return;
+    }
+  }
+
+  // The object an event variable names; none for any other.
+  [[nodiscard]] auto TakeReferent() -> value::ObjectRef {
+    return std::move(referent_);
+  }
+
+ private:
+  DumpCapture* into_;
+  DumpCode code_;
+  value::ObjectRef referent_;
+};
+
+// Keeps the trigger a data object's watching code hands it.
+class TriggerSubscriber final : public Subscriber {
+ public:
+  void Subscribe(const Trigger& handed) override {
+    trigger = handed;
+  }
+
+  Trigger trigger;
+};
+
+// The trigger a wait for a change of the thing would enrol (LRM 9.4.2), which
+// a dump enrols on too, so it learns of a change where the design's own wait
+// does.
+auto WatchedTriggerOf(const DumpedObject& dumped) -> Trigger {
+  TriggerSubscriber subscriber;
+  dumped.declarations->subscribe(dumped.instance, dumped.position, subscriber);
+  return subscriber.trigger;
 }
-Describer::~Describer() = default;
 
-DumpWatch::DumpWatch(
-    ValueDump& dump, DumpCode code, std::unique_ptr<DumpProbe> probe)
-    : dump_(&dump), code_(code), probe_(std::move(probe)) {
-  EnrolOnPlace(membership_, this, probe_->Watched());
-  FollowReferent();
+}  // namespace
+
+auto DumpIdentityOf(const Trigger& trigger) -> const void* {
+  if (trigger.through != nullptr) {
+    return trigger.through;
+  }
+  return trigger.observable;
+}
+
+auto DumpIdentityOf(const DumpedObject& dumped) -> const void* {
+  return DumpIdentityOf(WatchedTriggerOf(dumped));
+}
+
+DumpWatch::DumpWatch(ValueDump& dump, DumpCode code, DumpedObject dumped)
+    : dump_(&dump), code_(code), dumped_(dumped) {
+  EnrolOnPlace(membership_, this, WatchedTriggerOf(dumped_));
 }
 
 DumpWatch::~DumpWatch() = default;
 
-void DumpWatch::FollowReferent() {
-  value::ObjectRef now = probe_->Referent();
+void DumpWatch::Read(DumpCapture& into) {
+  CaptureSerializer serializer(into, code_);
+  dumped_.declarations->read(dumped_.instance, dumped_.position, serializer);
+  FollowReferent(serializer.TakeReferent());
+}
+
+void DumpWatch::FollowReferent(value::ObjectRef now) {
   if (now.IsBitIdentical(referent_)) {
     return;
   }
@@ -125,9 +195,6 @@ void DumpWatch::FollowReferent() {
 }
 
 void DumpWatch::Reached() {
-  // What the thing refers to moves only with a change of the thing, which is
-  // a change whether or not one was already seen this time step.
-  FollowReferent();
   if (changed_) {
     return;
   }
@@ -142,14 +209,11 @@ struct ScopeCommand {
   std::string name;
 };
 struct UpscopeCommand {};
-// The entry is a constant of the class it describes, which outlives the dump.
+// The name a variable is declared under is a constant of the class declaring
+// it, which outlives the dump.
 struct VarCommand {
   DumpCode code;
-  abi::DumpEntry entry;
-};
-struct AliasCommand {
-  DumpCode code;
-  abi::DumpEntry entry;
+  DumpVarDeclaration variable;
 };
 struct TimescaleCommand {
   std::int8_t precision_power;
@@ -171,7 +235,7 @@ struct FlushCommand {};
 struct CloseCommand {};
 
 using DumpCommand = std::variant<
-    ScopeCommand, UpscopeCommand, VarCommand, AliasCommand, TimescaleCommand,
+    ScopeCommand, UpscopeCommand, VarCommand, TimescaleCommand,
     EndDefinitionsCommand, TimeCommand, ChangesCommand, BeginCheckpointCommand,
     EndCheckpointCommand, LimitCommand, FlushCommand, CloseCommand>;
 
@@ -498,11 +562,7 @@ class DumpOutput {
               return false;
             },
             [&](const VarCommand& c) {
-              Attempt([&] { writer_->Var(c.code, c.entry); });
-              return false;
-            },
-            [&](const AliasCommand& c) {
-              Attempt([&] { writer_->Alias(c.code, c.entry); });
+              Attempt([&] { writer_->Var(c.code, c.variable); });
               return false;
             },
             [&](const TimescaleCommand& c) {
@@ -665,57 +725,62 @@ auto RecordsUnknown(DumpCheckpoint checkpoint) -> bool {
   throw InternalError("dump: unknown checkpoint");
 }
 
-// Describes the selected part of the design to a dump: every instance, from
-// the tops down, in the order the tree holds them, declaring a scope only where
-// something below it is recorded, and each thing once, a second name for it
-// being an alias (LRM 21.7.2.3 `$var` b).
-class SelectionDescriber final : public Describer {
+// Declares the selected part of the design to a dump: each package and
+// compilation unit's scope, then every instance from the tops down in the
+// order the tree holds them, each data object a scope declares in the order it
+// declares them, and a scope only where something below it is recorded. Every
+// name is recorded under a code of its own.
+class SelectionDeclarer final {
  public:
-  SelectionDescriber(
+  SelectionDeclarer(
       DumpOutput& output, ValueDump& dump,
       std::vector<std::unique_ptr<DumpWatch>>& watches)
       : output_(&output), dump_(&dump), watches_(&watches) {
   }
 
-  void Walk(const DumpSelection& selection, Scope& root) {
+  void Walk(
+      const DumpSelection& selection, Scope& root,
+      std::span<const abi::ScopeDeclarations* const> namespaces) {
     for (const DumpSelection::Instances& named : selection.instances) {
       std::int64_t& levels = levels_[named.scope];
       levels = std::max(levels, LevelsNamed(named.levels));
     }
     variables_ = selection.variables;
+    // A package and the compilation unit's scope each stand beside the tops
+    // (LRM 37.10), declared first, as their storage comes up first.
+    for (const abi::ScopeDeclarations* declared : namespaces) {
+      WalkNamespace(
+          *declared, std::ranges::contains(selection.namespaces, declared));
+    }
     // A top's own scope is the outermost a dump declares: the root above the
     // tops is no scope of the design (LRM 23.3.1).
     root.ForEachChild([&](Scope& top) { WalkScope(top, 0); });
   }
 
-  void Var(
-      const abi::DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
-    if (!Records(probe->Member())) {
+ private:
+  // Declares `dumped`, which the instance it names declares or, where it
+  // names none, a namespace keeps, and records it from now on, where the
+  // selection names it.
+  void Declare(const DumpedObject& dumped) {
+    if (!Records(dumped)) {
       return;
     }
-    MoveToScopesAround(entry);
+    const abi::DataObjectRecord& object = dumped.Record();
+    MoveToScopesAround(object);
     OpenPending();
-    const auto [known, inserted] =
-        codes_.try_emplace(probe->Identity(), DumpCode{});
-    if (!inserted) {
-      output_->Send(AliasCommand{.code = known->second, .entry = entry});
-      return;
-    }
     const DumpCode code{static_cast<std::uint32_t>(watches_->size())};
-    known->second = code;
-    output_->Send(VarCommand{.code = code, .entry = entry});
-    watches_->push_back(
-        std::make_unique<DumpWatch>(*dump_, code, std::move(probe)));
+    output_->Send(
+        VarCommand{.code = code, .variable = DumpVarDeclarationOf(object)});
+    watches_->push_back(std::make_unique<DumpWatch>(*dump_, code, dumped));
   }
 
- private:
   // Leaves the named scopes the last thing recorded lay in that this one does
   // not, and enters those it lies in that the last did not.
-  void MoveToScopesAround(const abi::DumpEntry& entry) {
+  void MoveToScopesAround(const abi::DataObjectRecord& object) {
     // A scope the source gave no name is one a dump declares no scope for (LRM
     // 21.7.2.3).
     const std::vector<const abi::LexicalScopeRecord*> around =
-        NamedEnclosingScopes(entry.enclosing);
+        NamedEnclosingScopes(object.enclosing);
     const auto common = static_cast<std::size_t>(
         std::ranges::mismatch(blocks_, around).in1 - blocks_.begin());
     LeaveBlocksDownTo(common);
@@ -744,17 +809,48 @@ class SelectionDescriber final : public Describer {
         {.kind = DumpScopeKindOf(scope.Segment().Declaration().Kind()),
          .name = scope.DisplaySegment()});
     whole_ = remaining > 0;
-    if (whole_ || !variables_.empty()) {
-      scope.Describe();
-      LeaveBlocksDownTo(0);
-    }
+    DeclareAll(&scope, scope.Declarations());
     scope.ForEachChild(
         [&](Scope& child) { WalkScope(child, LevelsBelow(child, remaining)); });
     CloseScope();
   }
 
-  [[nodiscard]] auto Records(const void* member) const -> bool {
-    return whole_ || std::ranges::find(variables_, member) != variables_.end();
+  // A package, and the compilation unit's scope, which VPI shows as one (LRM
+  // 37.10 detail 5), is recorded as a package under its definition's name.
+  void WalkNamespace(const abi::ScopeDeclarations& declared, bool whole) {
+    pending_.push_back(
+        {.kind = DumpScopeKind::kPackage, .name = declared.definition->name});
+    whole_ = whole;
+    DeclareAll(nullptr, declared);
+    CloseScope();
+  }
+
+  // Declares each data object `declared` states that the selection names.
+  void DeclareAll(Scope* scope, const abi::ScopeDeclarations& declared) {
+    if (!whole_ && variables_.empty()) {
+      return;
+    }
+    const std::size_t count = declared.data_objects.Entries().size();
+    for (std::size_t position = 0; position < count; ++position) {
+      Declare(
+          DumpedObject{
+              .instance = scope,
+              .declarations = &declared,
+              .position = static_cast<std::uint32_t>(position)});
+    }
+    LeaveBlocksDownTo(0);
+  }
+
+  // Whether the selection names `dumped`: every object where it records
+  // whole, and otherwise only those it named, whose identity is asked of the
+  // object only then.
+  [[nodiscard]] auto Records(const DumpedObject& dumped) const -> bool {
+    if (whole_) {
+      return true;
+    }
+    const void* identity = DumpIdentityOf(dumped);
+    return identity != nullptr &&
+           std::ranges::find(variables_, identity) != variables_.end();
   }
 
   // Declares every scope entered since the last declaration, which something
@@ -780,7 +876,6 @@ class SelectionDescriber final : public Describer {
   std::vector<std::unique_ptr<DumpWatch>>* watches_;
   std::unordered_map<const Scope*, std::int64_t> levels_;
   std::vector<const void*> variables_;
-  std::unordered_map<const void*, DumpCode> codes_;
   std::vector<ScopeCommand> pending_;
   // The named scopes of the instance being described that the last thing
   // recorded lay in, outermost first, each among `pending_`.
@@ -789,15 +884,15 @@ class SelectionDescriber final : public Describer {
   bool whole_ = false;
 };
 
-// Describes the ports of the instances an extended dump names (LRM 21.7.3.1):
+// Declares the ports of the instances an extended dump names (LRM 21.7.3.1):
 // each instance a module scope named by its hierarchical name, and in it each
 // port, in the order the declaration gives them, with a code of its own -- a
 // port's values are read by its direction, so two ports connected to one net
 // are two things. What a named block, task or function inside declares is no
 // port, and neither is an event, which the format has no value for.
-class PortDescriber final : public Describer {
+class PortDeclarer final {
  public:
-  PortDescriber(
+  PortDeclarer(
       DumpOutput& output, ValueDump& dump,
       std::vector<std::unique_ptr<DumpWatch>>& watches)
       : output_(&output), dump_(&dump), watches_(&watches) {
@@ -805,60 +900,44 @@ class PortDescriber final : public Describer {
 
   void Walk(const PortSelection& selection) {
     for (Scope* instance : selection.instances) {
-      ports_.clear();
-      instance->Describe();
-      std::ranges::sort(ports_, {}, &Port::position);
-      if (ports_.empty()) {
-        continue;
-      }
-      output_->Send(
-          ScopeCommand{
-              .kind = DumpScopeKind::kModule,
-              .name = std::string(instance->HierarchicalPath().View())});
-      for (Port& port : ports_) {
+      const abi::ScopeDeclarations& declarations = instance->Declarations();
+      const std::span<const abi::DescribedPort* const> ports =
+          declarations.ports.Entries();
+      bool opened = false;
+      for (std::size_t position = 0; position < ports.size(); ++position) {
+        const abi::DescribedPort& port = *ports[position];
+        const DumpedObject connects{
+            .instance = instance,
+            .declarations = &declarations,
+            .position = port.connects};
+        const std::optional<DumpVarDeclaration> declared =
+            DumpPortDeclarationOf(
+                connects.Record(), port, static_cast<std::uint32_t>(position));
+        if (!declared.has_value()) {
+          continue;
+        }
+        if (!opened) {
+          output_->Send(
+              ScopeCommand{
+                  .kind = DumpScopeKind::kModule,
+                  .name = std::string(instance->HierarchicalPath().View())});
+          opened = true;
+        }
         const DumpCode code{static_cast<std::uint32_t>(watches_->size())};
-        output_->Send(VarCommand{.code = code, .entry = port.entry});
+        output_->Send(VarCommand{.code = code, .variable = *declared});
         watches_->push_back(
-            std::make_unique<DumpWatch>(*dump_, code, std::move(port.probe)));
+            std::make_unique<DumpWatch>(*dump_, code, connects));
       }
-      output_->Send(UpscopeCommand{});
+      if (opened) {
+        output_->Send(UpscopeCommand{});
+      }
     }
-  }
-
-  void Var(
-      const abi::DumpEntry& entry, std::unique_ptr<DumpProbe> probe) override {
-    const std::optional<abi::DumpEntry::Connection> port = entry.Port();
-    if (!port.has_value() || !HasPortValue(entry)) {
-      return;
-    }
-    ports_.push_back(
-        {.position = port->position,
-         .entry = entry,
-         .probe = std::move(probe)});
   }
 
  private:
-  static auto HasPortValue(const abi::DumpEntry& entry) -> bool {
-    switch (support::DumpValueFormOf(entry.Kind())) {
-      case support::DumpValueForm::kTriggered:
-        return false;
-      case support::DumpValueForm::kBits:
-      case support::DumpValueForm::kReal:
-        return true;
-    }
-    throw InternalError("PortDescriber: unknown value");
-  }
-
-  struct Port {
-    std::uint32_t position;
-    abi::DumpEntry entry;
-    std::unique_ptr<DumpProbe> probe;
-  };
-
   DumpOutput* output_;
   ValueDump* dump_;
   std::vector<std::unique_ptr<DumpWatch>>* watches_;
-  std::vector<Port> ports_;
 };
 
 }  // namespace
@@ -890,23 +969,15 @@ ValueDump::ValueDump(
 ValueDump::~ValueDump() = default;
 
 void ValueDump::Start(
-    const DumpSelection& selection, Scope& root, SimTime now,
-    ValueDumps& dumps) {
-  SelectionDescriber describer(*output_, *this, watches_);
-  {
-    const ValueDumps::InstalledDescriber installed(dumps, describer);
-    describer.Walk(selection, root);
-  }
+    const DumpSelection& selection, Scope& root,
+    std::span<const abi::ScopeDeclarations* const> namespaces, SimTime now) {
+  SelectionDeclarer(*output_, *this, watches_)
+      .Walk(selection, root, namespaces);
   Begin(now);
 }
 
-void ValueDump::Start(
-    const PortSelection& selection, SimTime now, ValueDumps& dumps) {
-  PortDescriber describer(*output_, *this, watches_);
-  {
-    const ValueDumps::InstalledDescriber installed(dumps, describer);
-    describer.Walk(selection);
-  }
+void ValueDump::Start(const PortSelection& selection, SimTime now) {
+  PortDeclarer(*output_, *this, watches_).Walk(selection);
   Begin(now);
 }
 

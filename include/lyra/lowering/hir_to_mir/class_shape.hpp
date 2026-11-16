@@ -1,48 +1,39 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/translation.hpp"
-#include "lyra/hir/field_id.hpp"
 #include "lyra/hir/static_property_id.hpp"
 #include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/mir/builder.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
-#include "lyra/mir/constant_id.hpp"
-#include "lyra/mir/expr.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/param.hpp"
 #include "lyra/mir/static_property_id.hpp"
-#include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/class_name.hpp"
+#include "lyra/support/library_callback.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-// The declaration-facing view of a callable: what its class states of it
-// before any body is lowered. The callable's body itself is not here; the
-// finished `mir::CallableDecl` on the class carries the body once every body
-// composes.
-struct CallableSignature {
-  std::optional<mir::VirtualDispatchRole> virtual_dispatch;
-};
-
-// The behavior a method of `self_owner` at `self_slot` answers, read off its
-// stated dispatch role and named the way a call names one: an introducer names
-// itself, and an override the slot of the behavior it overrides, whichever
-// unit's class introduced it. A one-arm dispatch, never a chain walk.
+// The behavior the method `self` answers, read off its stated dispatch role
+// and named the way a call names one: an introducer names itself, and an
+// override the slot of the behavior it overrides, whichever unit's class
+// introduced it. A one-arm dispatch, never a chain walk.
 [[nodiscard]] auto CanonicalVirtualSlot(
-    mir::ClassId self_owner, mir::CallableId self_slot,
-    const mir::VirtualDispatchRole& role) -> mir::VirtualSlot;
+    mir::CallableId self, const mir::VirtualDispatchRole& role)
+    -> mir::VirtualSlot;
 
 // The object a dispatch on `slot` is made on, as the class that introduced the
 // behavior, which is the class whose table, or whose row among the interface
@@ -50,7 +41,7 @@ struct CallableSignature {
 // the same whichever class it is seen as (LRM 8.15, 8.26.5), so only its type
 // changes. A receiver already of that class is left as it is.
 [[nodiscard]] auto AsIntroducer(
-    const mir::TypePool& types, mir::Builder block, mir::ExprId receiver,
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver,
     const mir::VirtualSlot& slot) -> mir::ExprId;
 
 // Which kind of callable of a class a body is, as far as what it takes ahead of
@@ -73,6 +64,17 @@ enum class CallableForm : std::uint8_t {
 struct DeclaringInstance {
   mir::TypeId type;
   std::optional<mir::FieldId> member;
+};
+
+// The code one body compiles for a class its unit declares, by each callable
+// the class took, its construction among them. It is held until where it lands
+// is known -- as the class's own definitions, or, in a unit whose instances are
+// a tree, as the methods of the body realizing the scope the class's instance
+// is, which every place a generate block is built at compiles anew (LRM 27.3)
+// while the class itself is stated once. Who declares each callable and the
+// part it takes in dispatch the unit recorded when the class took it.
+struct CompiledClassCode {
+  std::map<mir::CallableId, mir::CallableCode> callables;
 };
 
 // The structural portion of a class declaration: the facts a peer needs to read
@@ -107,15 +109,9 @@ struct ClassShape {
   std::vector<mir::NamedField> named_fields;
   base::Arena<mir::StaticPropertyDecl, mir::StaticPropertyId> static_properties;
   std::vector<mir::NamedStaticProperty> named_static_properties;
-  // Which pass owns the callable identity space depends on the entity: an SV
-  // class's methods are named by another class's declaration (an override
-  // states the slot its base declared, LRM 8.20), so they are taken before any
-  // declaration settles; a structural scope's callables are named by no
-  // declaration, so the scope settles them itself.
-  base::Translation<mir::CallableId, CallableSignature> callable_signatures;
   // The bodies the runtime library calls on an object of the class, each under
   // the callback it answers.
-  std::vector<mir::LibraryCallbackBody> library_callbacks;
+  std::map<support::LibraryCallback, mir::CallableId> library_callbacks;
   // Where each static property's cell was placed. It is a home rather than a
   // slot because which pool holds it follows from what replicates the class
   // declaration: a class a namespace unit declares owns its cells, and one a
@@ -145,14 +141,12 @@ struct ClassShape {
   auto AddField(mir::TypeId type) -> mir::FieldId;
 
   // The class this declaration becomes: everything settled here carried over
-  // verbatim, and one reserved callable identity per signature. What is left
-  // absent is exactly what the body stage produces -- each reserved callable's
-  // body, the constructor, the static init, what the class conforms to, and
-  // what it tells the library about itself.
-  //
-  // The reservation is what lets a call resolve before the callee's body exists
-  // (LRM 13.7): the declaration hands out the identity, the body stage fills
-  // it.
+  // verbatim. What is left absent is exactly what the body stage produces --
+  // each taken callable's body, the constructor, the static init, what the
+  // class conforms to, and what it tells the library about itself. The
+  // callables it declares are the unit's, which the class took before any body
+  // lowers: taking a callable before its body exists is what lets a call
+  // resolve before the callee's body exists (LRM 13.7).
   [[nodiscard]] auto OpenClass() const -> mir::Class;
 };
 

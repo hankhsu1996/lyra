@@ -41,6 +41,15 @@ module Leaf (input logic a);
   end
 endmodule
 
+// Two ports connecting one net are two ports, each in its own position and
+// under its own name.
+module Twin (
+    .a(x),
+    .b(x)
+);
+  input wire x;
+endmodule
+
 module Top;
   logic clk = 0;
   logic [3:0] d = 4'h5;
@@ -51,9 +60,14 @@ module Top;
   wire io;
   Dut u (.clk(clk), .d(d), .q(q), .level(level), .wide(wide), .t(t), .io(io));
   Leaf l (.a(clk));
+  Twin w (
+      .a(clk),
+      .b(clk)
+  );
 
   initial begin
     $dumpports(Top.u, "ports.evcd");
+    $dumpports(Top.w, "twin.evcd");
     #1 clk = 1;
     #1 clk = 0;
     d = 4'ha;

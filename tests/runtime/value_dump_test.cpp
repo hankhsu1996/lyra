@@ -18,21 +18,19 @@
 #include "lyra/base/source_location.hpp"
 #include "lyra/runtime/dump_writer.hpp"
 #include "lyra/runtime/scope.hpp"
-#include "lyra/runtime/value_dumps.hpp"
 
 namespace {
 
 using lyra::SimulationError;
-using lyra::abi::DumpEntry;
 using lyra::runtime::DumpCheckpoint;
 using lyra::runtime::DumpCode;
 using lyra::runtime::DumpScopeKind;
 using lyra::runtime::DumpSelection;
 using lyra::runtime::DumpValue;
+using lyra::runtime::DumpVarDeclaration;
 using lyra::runtime::DumpWriter;
 using lyra::runtime::Scope;
 using lyra::runtime::ValueDump;
-using lyra::runtime::ValueDumps;
 
 // What a format was handed, one line a call, and what it does meanwhile:
 // waits at its first checkpoint until `opened` is set, and refuses everything
@@ -58,11 +56,8 @@ class RecordingWriter final : public DumpWriter {
   void Upscope() override {
     Record("upscope");
   }
-  void Var(DumpCode code, const DumpEntry& entry) override {
-    Record(std::format("var {} {}", code.value, entry.identifier));
-  }
-  void Alias(DumpCode code, const DumpEntry& entry) override {
-    Record(std::format("alias {} {}", code.value, entry.identifier));
+  void Var(DumpCode code, const DumpVarDeclaration& variable) override {
+    Record(std::format("var {} {}", code.value, variable.identifier));
   }
   void EndDefinitions() override {
     Record("enddefinitions");
@@ -172,11 +167,10 @@ TEST(ValueDumpTest, AWriterBehindHoldsTheSimulationBackAndLosesNothing) {
 TEST(ValueDumpTest, AnEndingReturnsOnceTheFileIsEndedWhereTheRunWas) {
   for (const lyra::SimTime ending_at : {7, 2}) {
     Handed handed;
-    ValueDumps dumps({});
     const std::unique_ptr<ValueDump> dump = DumpWritingTo(handed);
     // A design with no tops, so the dump declares nothing.
     Scope root;
-    dump->Start(DumpSelection{}, root, 0, dumps);
+    dump->Start(DumpSelection{}, root, {}, 0);
     dump->Off(3);
     dump->FinishAtEnding(ending_at);
     std::vector<std::string> expected = {

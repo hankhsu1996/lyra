@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/translation.hpp"
@@ -16,6 +17,7 @@
 #include "lyra/lir/constant_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
+#include "lyra/lir/referent.hpp"
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -142,24 +144,18 @@ class UnitLowerer {
   auto ReferentOf(const mir::ReferenceTarget& target, mir::TypeId named)
       -> lir::Referent;
 
-  // What a direct call of the callable `callable` of `owner` enters: the
-  // function this unit lowers it to, or the symbol the unit defining the class
-  // emits it under.
-  [[nodiscard]] auto CallableCallTarget(
-      mir::ClassId owner, mir::CallableId callable) const -> lir::CallTarget;
-
-  // What a construction of an object of `cls` enters, the same way.
-  [[nodiscard]] auto ConstructorCallTarget(mir::ClassId cls) const
+  // What a direct call of `callable` enters: the function this unit lowers a
+  // body it defines to, whoever declares it; the symbol the unit defining it
+  // emits it under for a callable of a class another unit defines, a subroutine
+  // of another unit's namespace and a method of another unit's record, which
+  // every unit reaching one spells alike; or the foreign symbol a function the
+  // foreign program defines is (LRM 35.4).
+  [[nodiscard]] auto CallTargetOf(mir::CallableId callable) const
       -> lir::CallTarget;
 
-  // The LIR function a class's callable lowers to. Throws if `callable` has no
-  // body in `owner` -- a DPI-C import is reached as a foreign symbol and a pure
-  // virtual has no implementation here, so neither is a function of this unit.
-  [[nodiscard]] auto MethodFunction(
-      mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId;
-  // The LIR function a closure's body lowers to.
-  [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
-      -> lir::FunctionId;
+  // What a construction of an object of `cls` enters, the same way.
+  [[nodiscard]] auto ConstructionCallTargetOf(mir::ClassId cls) const
+      -> lir::CallTarget;
 
   // The symbol a variable of a unit's namespace is linked under, by the unit
   // whose namespace owns it.
@@ -184,27 +180,47 @@ class UnitLowerer {
   [[nodiscard]] auto SlotRef(const mir::VirtualSlot& slot)
       -> lir::StatedDispatchRef;
 
+ private:
+  // How code naming a callable enters it, which its declaration's form alone
+  // decides.
+  using CallableEntered =
+      std::variant<lir::FunctionTarget, lir::SymbolTarget, lir::ForeignTarget>;
+
+  // How code naming `callable` enters it: the function this unit lowers it to
+  // where this unit defines it, whoever declares it; the symbol the unit
+  // defining it emits it under, which every unit reaching it spells alike; or
+  // the foreign symbol a function the foreign program defines is (LRM 35.4). A
+  // behavior its class leaves to what extends it is entered only by dispatch.
+  [[nodiscard]] auto EnteredAs(mir::CallableId callable) const
+      -> CallableEntered;
+
+  // The symbol the unit defining `callable` emits it under.
+  [[nodiscard]] auto SymbolOfElsewhere(mir::CallableId callable) const
+      -> std::string;
+
+  // The address of `callable`, at `prototype`, entered as `EnteredAs` says.
+  [[nodiscard]] auto ReferentOfCallable(
+      mir::CallableId callable, lir::TypeId prototype) const -> lir::TableBody;
+
+  // The LIR function `callable` lowers to, whoever declares it. Throws where it
+  // has no body here -- a DPI-C import is reached as a foreign symbol, a pure
+  // virtual has no implementation, and another unit's body is that unit's, so
+  // none is a function of this unit.
+  [[nodiscard]] auto FunctionOf(mir::CallableId callable) const
+      -> lir::FunctionId;
+
   // The address of the entry of `method`, a method of a class this unit
   // declares, whichever unit defines it, at `prototype`.
-  [[nodiscard]] auto EntryBody(
-      const mir::CallableTarget& method, lir::TypeId prototype)
+  [[nodiscard]] auto EntryBody(mir::CallableId method, lir::TypeId prototype)
       -> lir::TableBody;
-
-  // The LIR function the constructor of a class this unit defines lowers to,
-  // named before any body is lowered -- which is what lets a derived class
-  // enter its base's whichever order the two are lowered in.
-  [[nodiscard]] auto ConstructorFunction(mir::ClassId cls) const
-      -> lir::FunctionId;
 
   // The symbol a callable of this unit's namespace is emitted and linked under:
   // whatever reaches it where anything does, and the position it sits at where
-  // nothing does, composed for the linker. A call written inside this unit
-  // composes the same symbol from the same parts, so the two agree with no
-  // table between them.
-  [[nodiscard]] auto UnitCallableSymbol(mir::CallableId id) const
+  // nothing does, composed for the linker. A unit naming another's subroutine
+  // composes the same symbol from the name that unit published it under.
+  [[nodiscard]] auto NamespaceCallableSymbolOf(mir::CallableId id) const
       -> std::string;
 
- private:
   // The unit being produced carries its source's name from the moment it
   // exists: it is the one thing about the output that is settled before any
   // lowering happens, and everything else here is minted as the pass runs.
@@ -229,44 +245,29 @@ class UnitLowerer {
   [[nodiscard]] auto RecordDeclaration(mir::RecordId record) const
       -> lir::RecordId;
 
-  // What is settled about one MIR class before any body of it is lowered: its
-  // own LIR identity, its constructor's function where it defines one,
-  // one function identity per callable that has a body here, and which of the
-  // class's introductions each callable is, counted in the order it introduces
-  // them. A callable with no body here is no function of this unit and holds
-  // none; one that introduces no behavior holds no ordinal, and the two are
-  // independent.
-  struct ClassIdentities {
-    lir::ClassId lir_class{};
-    std::optional<lir::FunctionId> constructor;
-    base::Translation<mir::CallableId, std::optional<lir::FunctionId>> methods;
-    base::Translation<mir::CallableId, std::optional<lir::DispatchOrdinal>>
-        ordinals;
-  };
+  // Which of the introductions of the class `cls` each callable introducing a
+  // behavior is, counted in the order it introduces them, recorded against the
+  // callable. One that introduces no behavior holds no ordinal. Reads nothing
+  // but this class and its callables' declarations, so classes take theirs in
+  // any order and none waits on another.
+  void TakeDispatchOrdinals(
+      mir::ClassId cls,
+      std::vector<std::optional<lir::DispatchOrdinal>>& ordinals) const;
 
-  // The LIR identities taken on behalf of one MIR closure: the declaration its
-  // captures are members of, and the function its invoke becomes.
-  struct ClosureIdentities {
-    lir::ClosureId declaration{};
-    lir::FunctionId invoke{};
-  };
+  // The symbol one body a class declares is emitted and linked under, as a body
+  // of that class: a synthesized body is spelled by the method it enters, the
+  // callback it answers, its name, or its place among the class's callables.
+  [[nodiscard]] auto ClassBodySymbolOf(mir::CallableId id) const -> std::string;
 
-  // Everything one class can be named by before it is built: its own LIR
-  // identity and one function identity per body it will contribute. The
-  // identities come from the LIR pools, which hold the reservation itself; what
-  // this answers is which LIR identity stands for which MIR entity, since
-  // neither pool's numbering determines the other's. Reads nothing but this
-  // class, so classes take theirs in any order and none waits on another.
-  [[nodiscard]] auto TakeClassIdentities(const mir::Class& cls)
-      -> ClassIdentities;
+  // The symbol the construction of `cls` is emitted and linked under, which
+  // the class qualifies as it does each of its bodies.
+  [[nodiscard]] auto ConstructorSymbolOf(mir::ClassId cls) const -> std::string;
 
-  // The symbol one body of `cls` is emitted and linked under, as a body of the
-  // class `class_part` names. Which body it is decides the rest: a body the
-  // source declared is reached by its name, and one the compiler synthesized
-  // by which body it is.
-  [[nodiscard]] auto ClassBodySymbol(
-      lir::SymbolPart class_part, const mir::Class& cls,
-      mir::CallableId id) const -> std::string;
+  // The symbol a method of a record is emitted and linked under, composed from
+  // the record and the operation it answers, which is how every unit reaching
+  // it names it.
+  [[nodiscard]] auto RecordMethodSymbolOf(mir::CallableId method) const
+      -> std::string;
 
   auto TranslateType(const mir::Type& ty) -> lir::Type;
   auto LowerClass(mir::ClassId owner, const mir::Class& cls)
@@ -322,9 +323,16 @@ class UnitLowerer {
   // The first MIR type each LIR type translates, which is what an operation
   // found to be used below MIR is built at.
   std::unordered_map<lir::TypeId, mir::TypeId> mir_type_of_;
-  base::Translation<mir::ClassId, ClassIdentities> class_identities_;
-  base::Translation<mir::ClosureId, ClosureIdentities> closure_identities_;
+  base::Translation<mir::ClassId, lir::ClassId> class_identities_;
+  base::Translation<mir::ClosureId, lir::ClosureId> closure_identities_;
   base::Translation<mir::RecordId, lir::RecordId> record_identities_;
+  // The function each callable of the unit's table this unit defines lowers
+  // to, whoever declares it, and none for one it only declares; and which of
+  // its class's introductions each callable introducing a behavior is. Both by
+  // the callable's identity.
+  base::Translation<mir::CallableId, std::optional<lir::FunctionId>> functions_;
+  base::Translation<mir::CallableId, std::optional<lir::DispatchOrdinal>>
+      ordinals_;
   // An operation marked used and not yet lowered, with the MIR type it is built
   // at.
   struct PendingOperation {

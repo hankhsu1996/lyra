@@ -1,7 +1,5 @@
 #pragma once
 
-#include <compare>
-#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -9,7 +7,6 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -20,6 +17,7 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
+#include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
@@ -30,6 +28,7 @@
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/callable_ordinal.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -118,7 +117,8 @@ struct RandomizationHooks {
       case support::LibraryCallback::kScopeResolve:
       case support::LibraryCallback::kScopeInitialize:
       case support::LibraryCallback::kScopeCreateProcesses:
-      case support::LibraryCallback::kScopeDescribe:
+      case support::LibraryCallback::kScopeReadDataObject:
+      case support::LibraryCallback::kScopeSubscribeDataObject:
         break;
     }
     throw InternalError(
@@ -159,14 +159,12 @@ struct ClassFields {
 // 9.4.2), in method order; the body answering, of an object, the instance the
 // class belongs to, where it keeps one (LRM 6.22); and one reach for each name
 // of an interface class of an instance its declaration writes, in the order
-// written (LRM 8.26.2). `count` is how many callables the class has, its
-// methods among them.
+// written (LRM 8.26.2).
 struct ClassCallables {
   std::optional<RandomizationHooks> hooks;
   std::vector<std::pair<hir::MethodId, mir::CallableId>> reporting_forms;
   std::optional<mir::CallableId> declaring_instance;
   std::vector<mir::InterfaceReach> reaches;
-  std::size_t count = 0;
 };
 
 // The field of a scope's published class each thing the scope published
@@ -185,16 +183,6 @@ struct PublishedScopeLayout {
   std::optional<mir::FieldId> enclosing;
 };
 
-// The virtual method of a scope's published class the subroutine the scope
-// published at `published` is: the class introduces one per published
-// subroutine, at the position the signature gave it, and leaves it to each
-// class realizing the scope. A realizing class overrides it there and a call
-// names it there, so both read it from here.
-[[nodiscard]] inline auto PublishedMethodOf(hir::PublishedCallableId published)
-    -> mir::CallableId {
-  return mir::CallableId{published.value};
-}
-
 // What this unit knows of a scope class some unit published: the class, the
 // type each of its fields holds, and where it placed each thing the scope
 // published.
@@ -211,30 +199,17 @@ struct PublishedSubroutine {
   mir::CallableCode prototype;
 };
 
-// Which of a class's operations some code is: its constructor (LRM 8.7), or
-// the callable the class took for it at a position.
-struct ClassConstructorCode {
-  auto operator<=>(const ClassConstructorCode&) const
-      -> std::strong_ordering = default;
-};
-struct ClassCallableCode {
-  mir::CallableId callable;
-
-  auto operator<=>(const ClassCallableCode&) const
-      -> std::strong_ordering = default;
-};
-using ClassCodePoint = std::variant<ClassConstructorCode, ClassCallableCode>;
-
 // The virtual method a scope's published class introduces for one operation of
 // a class the scope declares, or of the class a covergroup it declares is
-// written as (LRM 6.22, 8.25, 19.3). What the operation does is the
-// code of the body realizing the scope, so each body overrides the method with
-// the code it compiled, and the class reaches it by dispatching on the
-// instance its object belongs to. Which methods there are follows from the
-// class's declaration alone, so every body of the unit states them alike.
+// written as (LRM 6.22, 8.25, 19.3): the operation is a callable of that
+// class, its construction among them, whose owner names the class. What the
+// operation does is the code of the body realizing the scope, so each body
+// overrides the method with the code it compiled, and the class reaches it by
+// dispatching on the instance its object belongs to. Which methods there are
+// follows from the class's declaration alone, so every body of the unit states
+// them alike.
 struct ClassCodeSlot {
-  mir::ClassId cls;
-  ClassCodePoint point;
+  mir::CallableId operation_of;
   mir::CallableId slot;
   // What the method is called, which names it where it is dispatched: the
   // class's path as an identity, since two classes of one scope may read alike
@@ -249,13 +224,14 @@ struct ClassCodeSlot {
 // What the class a scope published states of one subroutine the scope leaves to
 // a connected module to define (LRM 25.7), alike in the unit publishing it and
 // in every unit reading the signature. `callback` is the abstract class a
-// definition is handed over as, whose one method `invoke` takes what the
-// subroutine takes;
-// `bind` is the method of the published class a definer hands it to, taking a
-// `handle` to it, and named apart by a space, which no identifier holds, so no
-// subroutine the scope published shares it.
+// definition is handed over as, whose one method `invoked`, of the prototype
+// `invoke`, takes what the subroutine takes; `bind` is the method of the
+// published class a definer hands it to, taking a `handle` to it, and named
+// apart by a space, which no identifier holds, so no subroutine the scope
+// published shares it.
 struct ExternBinding {
   mir::ClassId callback;
+  mir::CallableId invoked;
   mir::CallableCode invoke;
   mir::CallableId bind;
   std::string bind_name;
@@ -415,15 +391,15 @@ class UnitLowerer {
   [[nodiscard]] auto InstanceScopeOf(hir::CovergroupId covergroup) const
       -> std::optional<support::DefPath>;
 
-  // The virtual method the class `published` introduces for the code at
-  // `point` of the class `cls` its scopes declare.
+  // The virtual method the class `published` introduces for the operation
+  // `operation`, a callable of a class its scopes declare.
   [[nodiscard]] auto ClassCodeSlotOf(
-      mir::ClassId published, mir::ClassId cls, ClassCodePoint point) const
+      mir::ClassId published, mir::CallableId operation) const
       -> mir::CallableId;
 
   // What the code of that operation takes and answers.
   [[nodiscard]] auto ClassCodePrototypeOf(
-      mir::ClassId published, mir::ClassId cls, ClassCodePoint point) const
+      mir::ClassId published, mir::CallableId operation) const
       -> const mir::CallableCode&;
 
   // What this unit knows of the scope class `hir_id` records: of one of its
@@ -595,9 +571,9 @@ class UnitLowerer {
 
   // A subroutine a unit published on the object its instances are (LRM 23.6,
   // 25.7): a virtual method of that unit's published class, which the class
-  // the object is answers. A slot of this unit's own class is named by its
-  // position, as any of its callables is; another unit's by the position its
-  // signature gave the subroutine.
+  // the object is answers: the method the published class took at the
+  // position the signature gave the subroutine, alike for this unit's own
+  // class and another unit's.
   [[nodiscard]] auto PublishedSubroutineSlot(
       hir::ScopeClassId scope_class, hir::PublishedCallableId callable) const
       -> mir::VirtualSlot;
@@ -631,6 +607,45 @@ class UnitLowerer {
     return declarations_.Find(id) != nullptr;
   }
 
+  // The callable the class `cls` declares at `ordinal`. What something other
+  // than the class's own lowering names -- a class extending it, a call, every
+  // unit reading its declaration -- is taken in the unit's table before any
+  // body naming one lowers, whatever order the classes lower in, and defined
+  // where the class is, so its ordinal is the order of the takes.
+  [[nodiscard]] auto ClassCallableAt(
+      mir::ClassId cls, mir::CallableOrdinal ordinal) const -> mir::CallableId;
+
+  // The construction the class `cls` took, the same way.
+  [[nodiscard]] auto ClassConstructor(mir::ClassId cls) const
+      -> mir::CallableId;
+
+  // The virtual method of a scope's published class `published` the subroutine
+  // the scope published at `subroutine` is: the class introduces one per
+  // published subroutine, at the ordinal the signature gave it, and leaves it
+  // to each class realizing the scope. A realizing class overrides it there and
+  // a call names it there, so both read it from here.
+  [[nodiscard]] auto PublishedMethodOf(
+      mir::ClassId published, hir::PublishedCallableId subroutine) const
+      -> mir::CallableId {
+    return ClassCallableAt(
+        published, mir::CallableOrdinal{.value = subroutine.value});
+  }
+
+  // The callable of the class `cls` its declaration's method `method` is: a
+  // class takes one for each method its declaration publishes, in the order it
+  // publishes them, before any other.
+  [[nodiscard]] auto ClassMethodCallable(
+      mir::ClassId cls, hir::MethodId method) const -> mir::CallableId {
+    return ClassCallableAt(cls, mir::CallableOrdinal{.value = method.value});
+  }
+
+  // The declaration of the DPI-C import `import` this unit takes part in, which
+  // every call of it names (LRM 35.4).
+  [[nodiscard]] auto ForeignImportCallable(hir::ForeignImportId import) const
+      -> mir::CallableId {
+    return foreign_imports_.Get(import);
+  }
+
   // What the class `id` extends, read while bodies lower: off the shape this
   // unit settled for a class it defines, and off the declaration of one another
   // unit defines.
@@ -653,14 +668,14 @@ class UnitLowerer {
   // as its first member, while both project onto one vector below the front
   // end.
   [[nodiscard]] auto AssignmentPatternTextOf(hir::TypeId type) const
-      -> mir::UnitCallableTarget {
+      -> mir::CallableTarget {
     const auto it = assignment_pattern_texts_.find(type);
     if (it == assignment_pattern_texts_.end()) {
       throw InternalError(
           "UnitLowerer::AssignmentPatternTextOf: this type states no "
           "assignment-pattern text");
     }
-    return mir::UnitCallableTarget{.slot = it->second};
+    return mir::CallableTarget{.callable = it->second};
   }
 
  private:
@@ -761,9 +776,13 @@ class UnitLowerer {
   // value of it then depends on.
   void DefineRecord(const hir::Type& source, mir::RecordId id);
 
-  // States the methods of the struct or the union `id` from `source`, over
-  // values of `type`, the interned type naming it: none for one another unit
-  // declares, which states its own.
+  // Declares the methods of the struct or the union `id` from `source`, over
+  // values of `type`, the interned type naming it, before any record's bodies
+  // are built, since a body reaches the methods of its members' records; then
+  // states their bodies, of a record this unit declares, which another unit's
+  // states for its own.
+  void DeclareRecordMethods(
+      const hir::Type& source, mir::RecordId id, mir::TypeId type);
   void DefineRecordMethods(
       const hir::Type& source, mir::RecordId id, mir::TypeId type);
 
@@ -775,6 +794,7 @@ class UnitLowerer {
   // callables beyond its methods each one this unit declares takes.
   base::Translation<hir::ClassId, mir::ClassId> class_identities_;
   std::map<hir::ClassId, ClassCallables> class_callables_;
+  base::Translation<hir::ForeignImportId, mir::CallableId> foreign_imports_;
   // The callable and the cell each member of a namespace this unit names is:
   // this unit's own as it defines them, and another's as declared here the
   // first time a reference reaches it.

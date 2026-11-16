@@ -92,9 +92,9 @@ such a fact on this list and then removed it.
 ### D2. A referrer names anything inherited by the class where the front end resolved it
 
 A property is named by the class that declares it and the slot that class gave it; a behavior by the
-class that introduced it and the method that introduced it there. Both are where the front end
-resolved the name along the lineage of the class the source wrote, which crosses every unit that
-lineage does; an override a class publishes names the introducing class the same way.
+method that introduced it, whose declaration names the class introducing it. Both are where the
+front end resolved the name along the lineage of the class the source wrote, which crosses every
+unit that lineage does; an override a class publishes names the introducing class the same way.
 
 The coordinate therefore often names an ancestor of the class the source named, which is what makes
 it an identity rather than a route: every class extending the introducer answers the same behavior

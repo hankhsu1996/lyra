@@ -77,6 +77,14 @@ struct PromotedVarBinding {
 using ProceduralVarBinding =
     std::variant<AutomaticVarBinding, PromotedVarBinding>;
 
+// Where the form of a method a waited evaluation calls (LRM 9.4.2) goes, for a
+// method whose class took one: the callable the class took for it, and the
+// code the class compiles, which holds it until it lands.
+struct ReportingForm {
+  mir::CallableId callable;
+  CompiledClassCode* compiled;
+};
+
 // Lowers one procedural body -- a process, a method, a subroutine, a
 // constructor -- into its callable code. What holds for the whole body sits
 // here: where it lives, what it may name, where each of its vars keeps its
@@ -158,11 +166,12 @@ class ProcessLowerer {
   // it (LRM 8.6, 8.10); a subroutine of a namespace unit (LRM 26.3) is a member
   // of no class, has no form, and takes nothing. Deferred static initializers
   // are drained the same way as for a process body. A function's form a waited
-  // evaluation calls is defined at `reporting_at` where the class declaring it
-  // reserved one there, and otherwise added beside the form returned.
+  // evaluation calls is compiled for the callable `reporting_at` names where
+  // the class declaring it took one, and otherwise added beside the form
+  // returned.
   auto Run(
       const hir::SubroutineDecl& src, std::optional<CallableForm> member_form,
-      std::optional<mir::CallableId> reporting_at)
+      std::optional<ReportingForm> reporting_at)
       -> diag::Result<mir::CallableCode>;
 
   // Binds each of the constructor's formals -- an input where its lifetime puts

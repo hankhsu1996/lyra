@@ -31,7 +31,6 @@
 #include "lyra/backend/llvm/codegen_function.hpp"
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/constant_record.hpp"
-#include "lyra/backend/llvm/entry_realizations.hpp"
 #include "lyra/backend/llvm/llvm_fn_abi.hpp"
 #include "lyra/backend/llvm/machine_signature.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
@@ -51,7 +50,6 @@
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/constant_span.hpp"
-#include "lyra/value/enumeration.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/layout.hpp"
 

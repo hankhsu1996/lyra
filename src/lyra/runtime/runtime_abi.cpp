@@ -35,7 +35,6 @@
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/distribution.hpp"
 #include "lyra/runtime/dpi_context.hpp"
-#include "lyra/runtime/dump_probe.hpp"
 #include "lyra/runtime/erased_value_families.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
@@ -58,6 +57,7 @@
 #include "lyra/runtime/randomize.hpp"
 #include "lyra/runtime/reaction.hpp"
 #include "lyra/runtime/read_report.hpp"
+#include "lyra/runtime/reflection.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -1974,7 +1974,6 @@ auto SourceLocationAt(const void* location) -> base::SourceLocation {
 }  // namespace lyra::runtime
 
 using lyra::abi::ConstructionTable;
-using lyra::abi::DumpEntry;
 using lyra::abi::ElaboratedScopeRecord;
 using lyra::abi::ObjectDefinition;
 using lyra::abi::ScopeDeclarations;
@@ -2020,8 +2019,6 @@ using lyra::runtime::Delay;
 using lyra::runtime::DelayReal;
 using lyra::runtime::DelayTicks;
 using lyra::runtime::DelayTicksReal;
-using lyra::runtime::DescribeReference;
-using lyra::runtime::DescribeTo;
 using lyra::runtime::DesignateArrayElement;
 using lyra::runtime::DesignateElement;
 using lyra::runtime::DesignationAt;
@@ -3633,9 +3630,10 @@ void lyra_rt_dump_vars_of(
       static_cast<Scope*>(instance), SourceLocationAt(location));
 }
 void lyra_rt_dump_vars_of_variable(
-    void* runtime, const void* member, const void* location) {
+    void* runtime, const void* variable, const void* location) {
   DumpVarsOfVariable(
-      *static_cast<RuntimeEffects*>(runtime), member,
+      *static_cast<RuntimeEffects*>(runtime),
+      *static_cast<const lyra::runtime::Trigger*>(variable),
       SourceLocationAt(location));
 }
 void lyra_rt_dump_off(void* runtime) {
@@ -3677,213 +3675,32 @@ void lyra_rt_dump_ports_flush(void* runtime, const void* name) {
   DumpPortsFlush(*static_cast<RuntimeEffects*>(runtime), Read<String>(name));
 }
 
-void lyra_rt_bit8_cell_describe(void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<Bit8>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
+void lyra_rt_value_serializer_bits(
+    void* serializer, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  static_cast<lyra::runtime::ValueSerializer*>(serializer)
+      ->SerializeBits(BitsAt(bits, bits_width, bits_are_four_state).View());
 }
-void lyra_rt_bit16_cell_describe(void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<Bit16>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
+
+void lyra_rt_real_value_serializer_real(void* serializer, const void* value) {
+  static_cast<lyra::runtime::ValueSerializer*>(serializer)
+      ->SerializeReal(*static_cast<const double*>(value));
 }
-void lyra_rt_bit32_cell_describe(void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<Bit32>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
+
+void lyra_rt_shortreal_value_serializer_real(
+    void* serializer, const void* value) {
+  static_cast<lyra::runtime::ValueSerializer*>(serializer)
+      ->SerializeReal(*static_cast<const float*>(value));
 }
-void lyra_rt_bit64_cell_describe(void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<Bit64>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
+
+void lyra_rt_value_serializer_event(void* serializer, const void* event) {
+  static_cast<lyra::runtime::ValueSerializer*>(serializer)
+      ->SerializeEvent(Read<ObjectRef>(event));
 }
-void lyra_rt_logic8_cell_describe(
-    void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<Logic8>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic16_cell_describe(
-    void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<Logic16>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic32_cell_describe(
-    void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<Logic32>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic64_cell_describe(
-    void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<Logic64>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_bit_wide_cell_describe(
-    void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<BitWide>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic_wide_cell_describe(
-    void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<LogicWide>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_real_cell_describe(void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<Real>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_shortreal_cell_describe(
-    void* cell, void* runtime, const void* entry) {
-  DescribeTo(
-      VariableAt<ShortReal>(cell), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_bit8_net_describe(void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<Bit8>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_bit16_net_describe(void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<Bit16>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_bit32_net_describe(void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<Bit32>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_bit64_net_describe(void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<Bit64>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_bit_wide_net_describe(
-    void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<BitWide>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic8_net_describe(void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<Logic8>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic16_net_describe(void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<Logic16>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic32_net_describe(void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<Logic32>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic64_net_describe(void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<Logic64>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic_wide_net_describe(
-    void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<LogicWide>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_real_net_describe(void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<Real>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_shortreal_net_describe(
-    void* net, void* runtime, const void* entry) {
-  DescribeTo(
-      NetOf<ShortReal>(net), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_bit8_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<Bit8>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_bit16_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<Bit16>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_bit32_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<Bit32>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_bit64_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<Bit64>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic8_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<Logic8>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic16_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<Logic16>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic32_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<Logic32>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic64_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<Logic64>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_bit_wide_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<BitWide>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_logic_wide_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<LogicWide>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_real_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<Real>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_shortreal_ref_describe(
-    void* reference, void* runtime, const void* entry) {
-  DescribeReference<ShortReal>(
-      ErasedAt(reference), *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
-}
-void lyra_rt_describe_event(void* event, void* runtime, const void* entry) {
-  DescribeTo(
-      *static_cast<Var<ObjectRef>*>(event),
-      *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const DumpEntry*>(entry));
+
+void lyra_rt_subscriber_subscribe(void* subscriber, const void* trigger) {
+  static_cast<lyra::runtime::Subscriber*>(subscriber)
+      ->Subscribe(*static_cast<const lyra::runtime::Trigger*>(trigger));
 }
 
 auto lyra_rt_test_plusargs(void* runtime, const void* user_string, void* out)

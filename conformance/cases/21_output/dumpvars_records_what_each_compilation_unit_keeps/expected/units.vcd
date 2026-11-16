@@ -1,0 +1,19 @@
+$timescale 1ns $end
+$scope package $unit $end
+$var reg 4 R theirs [3:0] $end
+$upscope $end
+$scope package $unit $end
+$var reg 4 M mine [3:0] $end
+$upscope $end
+$scope module Top $end
+$var reg 1 T t $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+b1001 R
+b0111 M
+1T
+$end
+#1
+b0010 M

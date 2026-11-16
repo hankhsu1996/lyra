@@ -445,8 +445,9 @@ TEST(VerdictTest, ARunStoppedAtALimitIsUnresolvedAndACrashIsNot) {
 // A dump is free format, its identifier codes and the text of its header are
 // the tool's, and a vector may be written shortened to the bits that do not
 // extend to the left (LRM 21.7.2, 21.7.2.2); none of that is a difference.
-// What each name is declared as, in which scope, and the value it holds at
-// each simulated time are, the time read in the unit the dump states.
+// What each name is declared as, with the range its reference states, in
+// which scope, and the value it holds at each simulated time are, the time
+// read in the unit the dump states.
 TEST(VerdictTest, DumpsAreComparedAsTheStandardReadsThem) {
   constexpr std::string_view kExpected =
       "$timescale 1ns $end\n"
@@ -467,7 +468,7 @@ TEST(VerdictTest, DumpsAreComparedAsTheStandardReadsThem) {
       "1C\n";
   constexpr std::string_view kSameOtherwiseSpelled =
       "$date today $end $version some tool $end $timescale 1 ns $end\n"
-      "$scope module Top $end $var reg 4 ! a $end\n"
+      "$scope module Top $end $var reg 4 ! a [3:0] $end\n"
       "$var real 64 \" r $end $var event 1 # e $end\n"
       "$scope task bump $end $var reg 1 $ d $end $upscope $end\n"
       "$upscope $end $enddefinitions $end\n"
@@ -485,7 +486,7 @@ TEST(VerdictTest, DumpsAreComparedAsTheStandardReadsThem) {
       DumpDifference(
           kExpected,
           "$timescale 100 ps $end\n"
-          "$scope module Top $end $var reg 4 ! a $end\n"
+          "$scope module Top $end $var reg 4 ! a [3:0] $end\n"
           "$var real 64 \" r $end $var event 1 # e $end\n"
           "$scope task bump $end $var reg 1 $ d $end $upscope $end\n"
           "$upscope $end $enddefinitions $end\n"
@@ -522,6 +523,9 @@ TEST(VerdictTest, DumpsAreComparedAsTheStandardReadsThem) {
   EXPECT_NE(
       DumpDifference(kExpected, replaced("reg 4 !", "reg four !")),
       std::nullopt);
+  EXPECT_NE(
+      DumpDifference(kExpected, replaced("a [3:0]", "a [4:1]")), std::nullopt);
+  EXPECT_NE(DumpDifference(kExpected, replaced("a [3:0]", "a")), std::nullopt);
   EXPECT_NE(DumpDifference(kExpected, "not a dump at all"), std::nullopt);
 }
 

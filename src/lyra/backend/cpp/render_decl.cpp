@@ -27,6 +27,7 @@
 #include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/dispatch_table.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/linkage.hpp"
 #include "lyra/mir/local.hpp"
@@ -166,14 +167,15 @@ auto SpecifiersOf(DefinedAs defined) -> std::string_view {
 // The definition of a member function -- a class's method (LRM 8.6), static
 // method (LRM 8.10), process or lifecycle body, the entry a scope answers a
 // foreign caller with (LRM 35.5.3), or a record's method -- written
-// outside its type so the body can use any type of the unit as a complete one.
-template <typename Owner, typename Member>
+// outside its type so the body can use any type of the unit as a complete one,
+// under the name `qualified` spells, qualified by its type.
+template <typename... Qualified>
 void RenderMemberFunctionDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    DefinedAs defined, const Owner& owner, const Member& member,
-    const mir::CallableCode& code, TargetText& out) {
+    DefinedAs defined, const mir::CallableCode& code, TargetText& out,
+    const Qualified&... qualified) {
   const std::optional<ReceiverSpelling> receiver = MemberReceiverOf(unit, code);
-  Write(out, SpecifiersOf(defined), "auto ", owner, "::", member);
+  Write(out, SpecifiersOf(defined), "auto ", qualified...);
   WriteMemberSignatureTail(
       unit, code, receiver, code.ParamsAfterReceiver(), out);
   out += " ";
@@ -249,14 +251,14 @@ auto HasBody(const mir::CallableDecl& m) -> bool {
 // only a dispatching call reaches its behavior, through the table of the
 // object's class.
 void RenderClassCallableDecl(
-    const mir::CompilationUnit& unit, const mir::Class& s, mir::CallableId id,
+    const mir::CompilationUnit& unit, mir::CallableId id,
     const mir::CallableDecl& m, TargetText& out) {
   if (!HasBody(m)) return;
   const mir::CallableCode& code = m.code;
   const std::optional<ReceiverSpelling> receiver = MemberReceiverOf(unit, code);
   out.OpenLine();
   out += StaticPrefix(receiver);
-  Write(out, "auto ", CppClassCallableName(unit, s, id));
+  Write(out, "auto ", CppClassCallableName(unit, id));
   WriteMemberSignatureTail(
       unit, code, receiver, code.ParamsAfterReceiver(), out);
   out += ";\n";
@@ -273,7 +275,8 @@ void RenderClassCallableDecl(
 //     std::add_pointer_t<R(lyra::runtime::GcObject*, int)> f;
 //   };
 void RenderDispatchTableType(
-    const mir::CompilationUnit& unit, const mir::Class& s, TargetText& out) {
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s,
+    TargetText& out) {
   out.OpenLine();
   Write(out, "struct ", CppDispatchTableTypeName());
   if (const std::optional<mir::ClassId> base = mir::DeclaredBase(s)) {
@@ -283,13 +286,13 @@ void RenderDispatchTableType(
   }
   out += " {\n";
   out.Indent();
-  for (const mir::CallableId callable : s.IntroducedBehaviors()) {
+  for (const mir::CallableId callable : mir::IntroducedBehaviors(unit, id)) {
     out.OpenLine();
     Write(
         out,
         CppEntryPointerType{
-            .unit = &unit, .code = &s.callables.Get(callable).code},
-        " ", CppTableMemberName(unit, s, callable), ";\n");
+            .unit = &unit, .code = &unit.callables.Get(callable).code},
+        " ", CppTableMemberName(unit, callable), ";\n");
   }
   out.Outdent();
   out.OpenLine();
@@ -299,15 +302,15 @@ void RenderDispatchTableType(
 // The entry `answered_by` names, as a member of a table holds it, or none.
 void WriteTableEntry(
     const mir::CompilationUnit& unit,
-    const std::optional<mir::CallableTarget>& answered_by, TargetText& out) {
+    const std::optional<mir::CallableId>& answered_by, TargetText& out) {
   if (!answered_by.has_value()) {
     out += "nullptr";
     return;
   }
-  const mir::Class& owner = unit.GetClass(answered_by->owner);
+  const mir::ClassId declaring = mir::DeclaringClassOf(unit, *answered_by);
   Write(
-      out, "&", CppClassRef(unit, mir::ClassRef{answered_by->owner}),
-      "::", CppDispatchEntryName(unit, owner, answered_by->slot));
+      out, "&", CppClassRef(unit, declaring),
+      "::", CppDispatchEntryName(unit, *answered_by));
 }
 
 // The value of the table of `s`, class `id`: the entry of each behavior its
@@ -332,8 +335,10 @@ void WriteOwnTable(
       self(self, level + 1);
       first = false;
     }
-    while (!remaining.empty() &&
-           remaining.front().behavior.owner_class == lineage[level]) {
+    while (
+        !remaining.empty() &&
+        mir::DeclaringClassOf(unit, remaining.front().behavior.introduced_by) ==
+            lineage[level]) {
       if (!first) out += ", ";
       first = false;
       WriteTableEntry(unit, remaining.front().answered_by, out);
@@ -385,7 +390,7 @@ void RenderDispatchTables(
         "::", CppInterfaceTableName(row), "{");
     WriteSeparated(
         code, implemented.answered_by, ", ",
-        [&](const std::optional<mir::CallableTarget>& entry) {
+        [&](const std::optional<mir::CallableId>& entry) {
           WriteTableEntry(unit, entry, code);
         });
     code += "};\n";
@@ -396,12 +401,12 @@ void RenderDispatchTables(
 // none.
 void RenderClassCallableDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    DefinedAs defined, mir::ClassId cls_id, const mir::Class& s,
-    mir::CallableId id, const mir::CallableDecl& m, TargetText& out) {
+    DefinedAs defined, mir::CallableId id, const mir::CallableDecl& m,
+    TargetText& out) {
   if (!HasBody(m)) return;
   RenderMemberFunctionDef(
-      unit, report, defined, CppClassPath(unit, cls_id),
-      CppClassCallableName(unit, s, id), m.code, out);
+      unit, report, defined, m.code, out,
+      ClassCallablePath{.unit = &unit, .callable = id});
 }
 
 // The constructor, a member function declared in the class and defined in the
@@ -418,9 +423,9 @@ void RenderClassCallableDef(
 // every other body does.
 void RenderConstructor(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    mir::ClassId cls_id, const mir::ConstructorDecl& ctor, DefinedAs defined,
-    TargetText& signature, TargetText& code) {
-  const mir::CallableCode& ctor_code = ctor.code;
+    mir::CallableId ctor, DefinedAs defined, TargetText& signature,
+    TargetText& code) {
+  const mir::CallableCode& ctor_code = unit.callables.Get(ctor).code;
   const std::optional<ReceiverSpelling> receiver =
       MemberReceiverOf(unit, ctor_code);
   signature.OpenLine();
@@ -429,8 +434,8 @@ void RenderConstructor(
       unit, ctor_code, receiver, ctor_code.ParamsAfterReceiver(), signature);
   signature += ";\n";
   RenderMemberFunctionDef(
-      unit, report, defined, CppClassPath(unit, cls_id),
-      CppConstructorMemberName(), ctor_code, code);
+      unit, report, defined, ctor_code, code,
+      ClassCallablePath{.unit = &unit, .callable = ctor});
 }
 
 // The definition every object of class `id` carries (LRM 8.16 reads it), which
@@ -670,7 +675,7 @@ void RenderClass(
 
   {
     const TargetText::Section table_type(out);
-    RenderDispatchTableType(unit, s, out);
+    RenderDispatchTableType(unit, id, s, out);
   }
 
   // The class's own part is defined ahead of every body of the unit, a closure
@@ -694,10 +699,11 @@ void RenderClass(
     detail += "};\n";
   }
 
-  if (s.constructor.has_value()) {
+  const mir::DeclaredCallables& callables = unit.CallablesOf(id);
+  if (callables.constructor.has_value()) {
     const TargetText::Section declared(out);
     const TargetText::Section constructor_defined(code);
-    RenderConstructor(unit, report, id, *s.constructor, defined, out, code);
+    RenderConstructor(unit, report, *callables.constructor, defined, out, code);
   }
 
   // Members are public so cross-unit references can reach them directly.
@@ -714,12 +720,12 @@ void RenderClass(
   // Every function the class owns except the constructor, written above.
   {
     const TargetText::Section declared(out);
-    for (const mir::CallableId callable_id : s.callables.Ids()) {
-      const mir::CallableDecl& callable = s.callables.Get(callable_id);
-      RenderClassCallableDecl(unit, s, callable_id, callable, out);
+    for (const mir::CallableId callable_id : callables.callables) {
+      const mir::CallableDecl& callable = unit.callables.Get(callable_id);
+      RenderClassCallableDecl(unit, callable_id, callable, out);
       const TargetText::Section callable_defined(code);
       RenderClassCallableDef(
-          unit, report, defined, id, s, callable_id, callable, code);
+          unit, report, defined, callable_id, callable, code);
     }
   }
 
@@ -756,6 +762,9 @@ auto RenderFreeCallableLinkage(const mir::NamespaceReach& reach)
           [](const mir::ReachedInAnotherUnit&) -> std::string_view {
             return "";
           },
+          [](const mir::ReachedAsLibraryCallback&) -> std::string_view {
+            return "";
+          },
           [](const mir::ReachedByPosition&) -> std::string_view { return ""; }},
       reach);
 }
@@ -776,7 +785,7 @@ void RenderFreeCallableSignature(
     const mir::CallableDecl& callable, TargetText& out) {
   RenderFreeSignature(
       unit, RenderFreeCallableLinkage(mir::NamespaceReachOf(unit, id)),
-      CppUnitCallableName(unit, id), callable.code, out);
+      CppNamespaceCallableName(unit, id), callable.code, out);
 }
 
 // A function of the unit's namespace, written as a free function. It has no
@@ -791,7 +800,7 @@ void RenderFreeCallable(
     RenderBlockStatements(
         ScopeView::ForCode(
             unit, callable.code,
-            mir::LinkageOf(unit, mir::UnitCallableTarget{.slot = id}), report),
+            mir::LinkageOf(unit, mir::CallableTarget{.callable = id}), report),
         out);
   });
   out += "\n";
@@ -820,18 +829,19 @@ void RenderRecord(
   Write(declared, "using ", base, " = ", library_type, ";\n");
   declared.OpenLine();
   Write(declared, "using ", base, "::", base, ";\n");
-  for (const mir::RecordMethod& method : unit.GetRecordMethods(id)) {
-    const VerbatimName member = CppValueOperationMemberName(method.answers);
+  for (const mir::CallableId method : unit.RecordMethodsOf(id)) {
+    const mir::CallableCode& code = unit.callables.Get(method).code;
+    const VerbatimName member =
+        CppValueOperationMemberName(mir::AnsweredOperationOf(unit, method));
     const std::optional<ReceiverSpelling> receiver =
-        MemberReceiverOf(unit, method.code);
+        MemberReceiverOf(unit, code);
     declared.OpenLine();
     Write(declared, StaticPrefix(receiver), "auto ", member);
     WriteMemberSignatureTail(
-        unit, method.code, receiver, method.code.ParamsAfterReceiver(),
-        declared);
+        unit, code, receiver, code.ParamsAfterReceiver(), declared);
     declared += ";\n";
     RenderMemberFunctionDef(
-        unit, report, defined_as, name, member, method.code, defined);
+        unit, report, defined_as, code, defined, name, "::", member);
   }
   declared.Outdent();
   declared += "};\n";
@@ -874,7 +884,8 @@ auto RenderUnitClosures(
   UnitClosures text;
   for (const mir::ClosureId id : unit.closures.Ids()) {
     const mir::ClosureDecl& decl = unit.GetClosure(id);
-    const mir::CallableCode& code = decl.invoke;
+    const mir::CallableId body = unit.BodyOf(id);
+    const mir::CallableCode& code = unit.callables.Get(body).code;
     const MintedName name = CppClosureName(id);
     if (!code.receiver.has_value()) {
       throw InternalError(
@@ -888,7 +899,7 @@ auto RenderUnitClosures(
     // call operator, and one taking over the box it was made in, as `FnOnce`
     // takes `self`, by a name of its own.
     const auto write_function = [&](TargetText& out) {
-      switch (mir::ClosureKindOf(unit.types, decl)) {
+      switch (mir::ClosureKindOf(unit.types, code)) {
         case support::ClosureKind::kFn:
         case support::ClosureKind::kFnMut:
           out += "operator()";
@@ -962,7 +973,8 @@ auto RenderUnitClosures(
       RenderBlockStatements(
           ScopeView::ForCode(
               unit, code,
-              mir::LinkageOf(unit, mir::ClosureSource{.closure = id}), report),
+              mir::LinkageOf(unit, mir::CallableTarget{.callable = body}),
+              report),
           out);
     });
     out += "\n";
@@ -981,10 +993,10 @@ auto RenderUnitCallables(
   // All are declared before any class, because a class's body may call one,
   // and defined after the classes, because an export's entry point uses them.
   // An import has no body here; the user's C code defines it.
-  for (const mir::CallableId id : unit.callables.Ids()) {
+  for (const mir::CallableId id : unit.NamespaceCallables()) {
     const mir::CallableDecl& callable = unit.callables.Get(id);
     // Another unit's header declares a function of its own namespace.
-    if (callable.defining_unit.has_value()) continue;
+    if (mir::IsDefinedElsewhere(unit, id)) continue;
     UnitText& out = std::visit(
         Overloaded{
             [&](const mir::ReachedByLinkageName&) -> UnitText& {
@@ -1004,16 +1016,35 @@ auto RenderUnitCallables(
                   "backend::cpp: a function another unit's namespace defines "
                   "is rendered here -- please report this as a bug");
             },
+            [&](const mir::ReachedAsLibraryCallback&) -> UnitText& {
+              return text.of_artifact;
+            },
             [&](const mir::ReachedByPosition&) -> UnitText& {
               return text.of_artifact;
             }},
         mir::NamespaceReachOf(unit, id));
     RenderFreeCallableSignature(unit, id, callable, out.signature);
     out.signature += ";\n";
-    if (std::holds_alternative<mir::DefinedHere>(mir::FormOf(callable))) {
-      const TargetText::Section defined(out.code);
-      RenderFreeCallable(unit, report, id, callable, out.code);
-    }
+    // Only a body this unit defines is written here; an import's definition
+    // is the user's C.
+    std::visit(
+        Overloaded{
+            [&](const mir::DefinedHere&) {
+              const TargetText::Section defined(out.code);
+              RenderFreeCallable(unit, report, id, callable, out.code);
+            },
+            [](const mir::DefinedByForeignCode&) {},
+            [](const mir::DefinedByAnotherUnit&) {
+              throw InternalError(
+                  "backend::cpp: a subroutine of this unit's namespace has no "
+                  "body -- please report this as a bug");
+            },
+            [](const mir::LeftAbstract&) {
+              throw InternalError(
+                  "backend::cpp: a subroutine of a unit's namespace is left to "
+                  "what extends it -- please report this as a bug");
+            }},
+        mir::FormOf(callable));
   }
   return text;
 }

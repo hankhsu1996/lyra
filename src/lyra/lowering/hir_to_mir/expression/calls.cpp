@@ -672,8 +672,8 @@ auto LowerHirCallExpr(
           [&](const hir::ArrayIteratorMethodRef& a) -> diag::Result<mir::Expr> {
             return LowerArrayIteratorMethod(lowerer, frame, c, a, result_type);
           },
-          [&](const hir::PastValueRef& p) -> diag::Result<mir::Expr> {
-            return LowerPastValueCall(lowerer, frame, c, p);
+          [&](const hir::PastValueRef&) -> diag::Result<mir::Expr> {
+            return LowerPastValueCall(lowerer, frame, c);
           },
           [&](const hir::ValueChangeRef& v) -> diag::Result<mir::Expr> {
             return LowerValueChangeCall(

@@ -458,7 +458,7 @@ auto ConnectDataPort(
   // An input whose member owns no cell holds whatever this scope binds it to,
   // connected or not.
   const auto* reference = std::get_if<hir::ReferenceStorage>(&member.storage);
-  const bool bound_input = data.direction == hir::PortDirection::kInput &&
+  const bool bound_input = data.direction == support::PortDirection::kInput &&
                            reference != nullptr &&
                            reference->binding == hir::ReferenceBinding::kInput;
   const auto* expr = conn.getExpression();
@@ -494,13 +494,13 @@ auto ConnectDataPort(
             span))};
   };
 
-  const hir::PortDirection direction = data.direction;
+  const support::PortDirection direction = data.direction;
   hir::PortEndpoint endpoint;
   hir::ExprId peer{};
   std::vector<hir::SensitivityEntry> sensitivity;
 
   switch (direction) {
-    case hir::PortDirection::kInput: {
+    case support::PortDirection::kInput: {
       if (bound_input) {
         endpoint = port_route;
       } else {
@@ -529,7 +529,7 @@ auto ConnectDataPort(
       sensitivity = *std::move(entries);
       break;
     }
-    case hir::PortDirection::kOutput: {
+    case support::PortDirection::kOutput: {
       endpoint = cell_endpoint();
       // The connection observes the child's whole internal signal on any
       // change, and writes the parent-side target.
@@ -547,7 +547,7 @@ auto ConnectDataPort(
           .part = hir::WatchedWhole{}}};
       break;
     }
-    case hir::PortDirection::kRef: {
+    case support::PortDirection::kRef: {
       // A `ref` port seals to the connected variable's own cell (LRM
       // 23.3.3.2), so what the route reaches has to be the whole of the child's
       // declaration rather than a part of it.
@@ -566,10 +566,10 @@ auto ConnectDataPort(
     // it (LRM 23.3.3.2); the child member is a read-only reference the parent
     // still rebinds at construction, which is a storage shape of its own and
     // not the rebindable plain `ref`.
-    case hir::PortDirection::kConstRef:
+    case support::PortDirection::kConstRef:
       return PortConnectionUnsupported(
           span, "connecting a 'const ref' port is not yet supported");
-    case hir::PortDirection::kInOut: {
+    case support::PortDirection::kInOut: {
       // A bidirectional connection is not a directional edge: it states that
       // positions of the nets on both sides are one physical net, resolving
       // over the contributions of all of them (LRM 23.3.3, 23.3.3.7), so it

@@ -32,9 +32,11 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/data_object.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/float_width.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/port_direction.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
@@ -165,10 +167,16 @@ class MirDumper {
     // object.
     Line("Callables:");
     Indent();
-    for (const CallableId id : unit.callables.Ids()) {
-      DumpCallable(unit.named_callables, id, unit.callables.Get(id), id.value);
+    for (const CallableId id : unit.NamespaceCallables()) {
+      DumpCallable(unit.named_callables, id);
     }
     Dedent();
+    // A package or the compilation unit's scope states of itself what a class
+    // of the design hierarchy states of its instances.
+    if (const BroughtUpNamespace* brought_up = BroughtUpNamespaceOf(unit);
+        brought_up != nullptr && brought_up->scope_declarations.has_value()) {
+      DumpScopeDeclarations(*brought_up->scope_declarations);
+    }
     // The foreign names this unit declares on a scope: a prototype no callable
     // of the unit carries, and the symbol the unit writes for it, which belongs
     // to no unit and so sits outside the pool above.
@@ -284,12 +292,44 @@ class MirDumper {
     return FormatClassRef(ClassRef{id});
   }
 
+  // A callable of the unit's table, by its identity, who declares it and the
+  // name it answers to there.
+  [[nodiscard]] auto FormatCallable(CallableId callable) const -> std::string {
+    return std::visit(
+        Overloaded{
+            [&](const DeclaredByClass& owner) -> std::string {
+              return std::format(
+                  R"(Class[{}].Callable[{}] "{}")", owner.cls.value,
+                  callable.value,
+                  CallableLabel(
+                      unit_->GetClass(owner.cls).named_callables, callable));
+            },
+            [&](const ConstructsClass& owner) -> std::string {
+              return std::format(
+                  R"(Class[{}].Callable[{}] "new")", owner.cls.value,
+                  callable.value);
+            },
+            [&](const DeclaredByNamespace&) -> std::string {
+              return std::format(
+                  R"(Unit.Callable[{}] "{}")", callable.value,
+                  CallableLabel(unit_->named_callables, callable));
+            },
+            [&](const DeclaredByClosure& owner) -> std::string {
+              return std::format(
+                  "Closure[{}].Callable[{}]", owner.closure.value,
+                  callable.value);
+            },
+            [&](const DeclaredByRecord& owner) -> std::string {
+              return std::format(
+                  R"(Record[{}].Callable[{}] "{}")", owner.record.value,
+                  callable.value, support::ValueOperationName(owner.answers));
+            }},
+        unit_->OwnerOf(callable));
+  }
+
   [[nodiscard]] auto FormatVirtualSlot(const VirtualSlot& s) const
       -> std::string {
-    const auto& owner = unit_->GetClass(s.owner_class);
-    return std::format(
-        "Class[{}].{}(Callable[{}])", s.owner_class.value,
-        CallableLabel(owner.named_callables, s.slot), s.slot.value);
+    return FormatCallable(s.introduced_by);
   }
 
   [[nodiscard]] auto FormatType(const Type& t) const -> std::string {
@@ -559,30 +599,11 @@ class MirDumper {
     return std::visit(
         Overloaded{
             [this](const CallableTarget& c) -> std::string {
-              return std::format(
-                  R"(callable=Class[{}].{} "{}")", c.owner.value, c.slot.value,
-                  CallableLabel(
-                      unit_->GetClass(c.owner).named_callables, c.slot));
-            },
-            [](const ClosureTarget& c) -> std::string {
-              return std::format("closure=Closure[{}]", c.closure.value);
-            },
-            [this](const UnitCallableTarget& c) -> std::string {
-              return std::format(
-                  R"(callable=Unit.{} "{}")", c.slot.value,
-                  CallableLabel(unit_->named_callables, c.slot));
+              return std::format("callable={}", FormatCallable(c.callable));
             },
             [](const support::BuiltinFn& id) -> std::string {
               return std::format(
                   "builtin=\"{}\"", support::RuntimeEntryOf(id).name);
-            },
-            [this](const ConstructorTarget& c) -> std::string {
-              return std::format("constructor={}", FormatClassRef(c.cls));
-            },
-            [](const RecordMethodTarget& s) -> std::string {
-              return std::format(
-                  R"(struct_method=Record[{}] "{}")", s.record.value,
-                  support::ValueOperationName(s.answers));
             },
             [](const TypeOperationTarget& t) -> std::string {
               return std::format(
@@ -593,9 +614,6 @@ class MirDumper {
               return std::format(
                   "external_bring_up={}::{}", e.unit_name,
                   FormatBringUpEntry(e.entry));
-            },
-            [](const ForeignSymbolTarget& f) -> std::string {
-              return std::format("foreign_symbol=\"{}\"", f.linkage_name);
             }},
         target);
   }
@@ -659,15 +677,13 @@ class MirDumper {
                   "StaticVariableRef variable=StaticVariable[{}]",
                   r.variable.value);
             },
-            [](const FunctionRef& r) -> std::string {
+            [this](const FunctionRef& r) -> std::string {
               return std::format(
-                  "FunctionRef owner=Class[{}] body=Callable[{}]",
-                  r.body.owner.value, r.body.slot.value);
+                  "FunctionRef callable={}", FormatCallable(r.callable));
             },
-            [](const DispatchEntryRef& r) -> std::string {
+            [this](const DispatchEntryRef& r) -> std::string {
               return std::format(
-                  "DispatchEntryRef owner=Class[{}] body=Callable[{}]",
-                  r.body.owner.value, r.body.slot.value);
+                  "DispatchEntryRef method={}", FormatCallable(r.method));
             },
             [this](const DestructorRef& r) -> std::string {
               return std::format("DestructorRef of={}", FormatClassRef(r.of));
@@ -914,11 +930,8 @@ class MirDumper {
                   ? FormatVirtualSlot(*answered.answered_by)
                   : std::string{"nothing"}));
     }
-    const auto answer = [](const std::optional<CallableTarget>& body) {
-      return body.has_value() ? std::format(
-                                    "Class[{}].Callable[{}]", body->owner.value,
-                                    body->slot.value)
-                              : std::string{"nothing"};
+    const auto answer = [&](const std::optional<CallableId>& body) {
+      return body.has_value() ? FormatCallable(*body) : std::string{"nothing"};
     };
     for (const MethodEntry& entry : s.entries) {
       Line(
@@ -926,12 +939,11 @@ class MirDumper {
               "Entry: Callable[{}] <- Callable[{}]", entry.method.value,
               entry.entry.value));
     }
-    for (const LibraryCallbackBody& answered : s.library_callbacks) {
+    for (const auto& [callback, body] : s.library_callbacks) {
       Line(
           std::format(
               "Callback: {} <- Callable[{}]",
-              support::LibraryCallbackName(answered.callback),
-              answered.body.value));
+              support::LibraryCallbackName(callback), body.value));
     }
     if (s.declaring_instance.has_value()) {
       Line(
@@ -939,21 +951,7 @@ class MirDumper {
               "DeclaringInstance: Callable[{}]", s.declaring_instance->value));
     }
     if (s.scope_declarations.has_value()) {
-      const auto listed = [](const std::vector<ConstantId>& records) {
-        std::string text;
-        for (const ConstantId record : records) {
-          if (!text.empty()) text += ", ";
-          text += std::format("Constant[{}]", record.value);
-        }
-        return text;
-      };
-      Line(
-          std::format(
-              "ScopeDeclarations: definition=Constant[{}] elaborated=[{}] "
-              "lexical=[{}]",
-              s.scope_declarations->definition.value,
-              listed(s.scope_declarations->elaborated),
-              listed(s.scope_declarations->lexical)));
+      DumpScopeDeclarations(*s.scope_declarations);
     }
     for (const InterfaceReach& named : s.interface_reaches) {
       Line(
@@ -968,7 +966,7 @@ class MirDumper {
               answer(dispatched.answered_by)));
     }
     for (const InterfaceTable& table : s.interface_tables) {
-      for (const std::optional<CallableTarget>& body : table.answered_by) {
+      for (const std::optional<CallableId>& body : table.answered_by) {
         Line(
             std::format(
                 "InterfaceTable {}: {}", FormatClassRef(table.of),
@@ -1010,24 +1008,28 @@ class MirDumper {
 
     Line("Callables:");
     Indent();
-    for (const CallableId id : s.callables.Ids()) {
-      DumpCallable(s.named_callables, id, s.callables.Get(id), id.value);
+    const DeclaredCallables& declared = unit_->CallablesOf(id);
+    for (const CallableId callable : declared.callables) {
+      DumpCallable(s.named_callables, callable);
     }
     Dedent();
 
-    if (s.constructor.has_value()) {
-      const ConstructorDecl& ctor = *s.constructor;
-      if (!ctor.code.body.has_value()) {
-        Line("Constructor declaration:");
+    if (declared.constructor.has_value()) {
+      const CallableId constructor = *declared.constructor;
+      const CallableCode& ctor = unit_->callables.Get(constructor).code;
+      if (!ctor.body.has_value()) {
+        Line(
+            std::format(
+                "Constructor declaration: Callable[{}]", constructor.value));
         Indent();
-        DumpCallerLocation(ctor.code);
+        DumpCallerLocation(ctor);
         Dedent();
       } else {
-        Line("Constructor:");
+        Line(std::format("Constructor: Callable[{}]", constructor.value));
         Indent();
         Line("Body:");
         Indent();
-        DumpCallableBody(ctor.code);
+        DumpCallableBody(ctor);
         Dedent();
         Dedent();
       }
@@ -1035,6 +1037,47 @@ class MirDumper {
 
     Dedent();
     scope_stack_.pop_back();
+  }
+
+  // What a scope of the design hierarchy, a package or the compilation unit's
+  // scope states of itself, on one line.
+  void DumpScopeDeclarations(const ScopeDeclarations& declarations) {
+    const auto listed = [](const std::vector<ConstantId>& records) {
+      std::string text;
+      for (const ConstantId record : records) {
+        if (!text.empty()) text += ", ";
+        text += std::format("Constant[{}]", record.value);
+      }
+      return text;
+    };
+    std::string data_objects;
+    for (const DescribedDataObject& object : declarations.data_objects) {
+      if (!data_objects.empty()) data_objects += ", ";
+      data_objects += std::format(
+          "{} {} typespec=Constant[{}]", object.identifier,
+          object.net_type.has_value()
+              ? support::NetTypeKeyword(*object.net_type)
+              : "variable",
+          object.typespec.value);
+      for (const support::DescribedPort& port : object.ports) {
+        data_objects += std::format(
+            " port={}:{}:{}", port.position,
+            support::PortDirectionKeyword(port.direction), port.name);
+      }
+      if (object.enclosing.has_value()) {
+        data_objects +=
+            std::format(" enclosing=Constant[{}]", object.enclosing->value);
+      }
+    }
+    Line(
+        std::format(
+            "ScopeDeclarations: definition=Constant[{}] elaborated=[{}] "
+            "lexical=[{}] data_objects=[{}] read=Callable[{}] "
+            "subscribe=Callable[{}]",
+            declarations.definition.value, listed(declarations.elaborated),
+            listed(declarations.lexical), data_objects,
+            declarations.bodies.read.value,
+            declarations.bodies.subscribe.value));
   }
 
   void DumpFieldList(
@@ -1052,23 +1095,21 @@ class MirDumper {
     Line(std::format(R"(ForeignLinkage: c_name="{}")", linkage.foreign_name));
   }
 
-  void DumpCallable(
-      std::span<const NamedCallable> named, CallableId id,
-      const CallableDecl& d, std::size_t index) {
+  void DumpCallable(std::span<const NamedCallable> named, CallableId id) {
+    const CallableDecl& d = unit_->callables.Get(id);
     Line(
         std::format(
-            R"([{}] "{}"{} : Type[{}])", index, CallableLabel(named, id),
+            R"([{}] "{}"{} : Type[{}])", id.value, CallableLabel(named, id),
             d.code.body.has_value() ? "" : " declaration",
             d.code.result_type.value));
     Indent();
-    if (d.virtual_dispatch.has_value()) {
+    if (const std::optional<VirtualDispatchRole>& role = VirtualDispatchOf(d)) {
       Line(
-          std::format(
-              "VirtualDispatch: {}",
-              FormatVirtualDispatchRole(*d.virtual_dispatch)));
+          std::format("VirtualDispatch: {}", FormatVirtualDispatchRole(*role)));
     }
-    if (d.foreign.has_value()) {
-      DumpForeignLinkage(*d.foreign);
+    if (const auto* of_namespace = std::get_if<DeclaredByNamespace>(&d.owner);
+        of_namespace != nullptr && of_namespace->foreign.has_value()) {
+      DumpForeignLinkage(*of_namespace->foreign);
     }
     DumpParams(d.code);
     if (d.code.body.has_value()) {
@@ -1089,15 +1130,19 @@ class MirDumper {
                 : std::string{},
             FormatTypeList(decl.elements)));
     Indent();
-    for (const RecordMethod& method : unit_->GetRecordMethods(id)) {
+    for (const CallableId method : unit_->RecordMethodsOf(id)) {
+      const CallableCode& code = unit_->callables.Get(method).code;
       Line(
           std::format(
-              R"(Method "{}" : Type[{}])",
-              support::ValueOperationName(method.answers),
-              method.code.result_type.value));
+              R"(Method "{}" Callable[{}]{} : Type[{}])",
+              support::ValueOperationName(AnsweredOperationOf(*unit_, method)),
+              method.value, code.body.has_value() ? "" : " declaration",
+              code.result_type.value));
       Indent();
-      DumpParams(method.code);
-      DumpCallableBody(method.code);
+      DumpParams(code);
+      if (code.body.has_value()) {
+        DumpCallableBody(code);
+      }
       Dedent();
     }
     Dedent();
@@ -1129,9 +1174,10 @@ class MirDumper {
       }
       Line(std::format("FieldOrder: [{}]", order));
     }
-    Line("Invoke:");
+    const CallableId body = unit_->BodyOf(id);
+    Line(std::format("Invoke: Callable[{}]", body.value));
     Indent();
-    DumpCallableBody(decl.invoke);
+    DumpCallableBody(unit_->callables.Get(body).code);
     Dedent();
     Dedent();
   }

@@ -2,19 +2,23 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <span>
 #include <utility>
 #include <vector>
 
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/class.hpp"
+#include "lyra/mir/callable_id.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_decl.hpp"
+#include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/operand_use.hpp"
 #include "lyra/mir/record_decl.hpp"
+#include "lyra/mir/record_id.hpp"
 #include "lyra/mir/referenced_declarations.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -42,19 +46,21 @@ auto IsCoroutine(const CompilationUnit& unit, const CallableCode& code)
 // Every member of a class is taken apart by name, so a member added to one
 // does not compile here until it is said what kind of thing it is, or that it
 // is none.
-void Add(const CompilationUnit& unit, const Class& cls, HeldByClasses& held) {
-  const auto& [defining_unit, identity, base, implements, conforming, entries, dispatch, interface_tables, is_final, is_interface, self_pointer_type, scope_declarations, fields, named_fields, constructor, contained, callables, static_properties, named_static_properties, named_callables, library_callbacks, declaring_instance, interface_reaches, exports, definition] =
-      cls;
+void Add(const CompilationUnit& unit, ClassId id, HeldByClasses& held) {
+  const auto& [defining_unit, identity, base, implements, conforming, entries, dispatch, interface_tables, is_final, is_interface, self_pointer_type, scope_declarations, fields, named_fields, contained, static_properties, named_static_properties, named_callables, library_callbacks, declaring_instance, interface_reaches, exports, definition] =
+      unit.GetClass(id);
   // What another unit defines is declared here, and held there.
   if (defining_unit.has_value()) {
     ++held.declared;
     return;
   }
+  const DeclaredCallables& declared = unit.CallablesOf(id);
   held.fields += fields.size();
-  held.constructors += constructor.has_value() ? 1 : 0;
-  held.callables += callables.size();
-  for (const CallableDecl& callable : callables) {
-    held.coroutines += IsCoroutine(unit, callable.code) ? 1 : 0;
+  held.constructors += declared.constructor.has_value() ? 1 : 0;
+  held.callables += declared.callables.size();
+  for (const CallableId callable : declared.callables) {
+    held.coroutines +=
+        IsCoroutine(unit, unit.callables.Get(callable).code) ? 1 : 0;
   }
   held.static_properties += static_properties.size();
 }
@@ -123,19 +129,23 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // As for a class: every member of the unit is named here. The layouts kept
   // on it are answers to questions asked of it, which no unit states, its
   // phase says where it stands, and its builtin types and the library's
-  // structures are the same in every unit, so none of these is counted.
-  const auto& [name, body_name, source_name, types, constants, builtins, library_records, classes, content, callables, named_callables, static_variables, named_static_variables, foreign_scope_entries, records, record_methods, closures, layouts, phase] =
+  // structures are the same in every unit, so none of these is counted. The
+  // table of callables is counted through what declares each.
+  const auto& [name, body_name, source_name, types, constants, builtins, library_records, classes, content, callables, named_callables, static_variables, named_static_variables, foreign_scope_entries, records, closures, layouts, phase] =
       unit;
 
   HeldByClasses in_classes;
-  for (const Class& cls : classes) {
-    Add(unit, cls, in_classes);
+  for (const ClassId id : classes.Ids()) {
+    Add(unit, id, in_classes);
   }
 
   std::uint64_t coroutines = in_classes.coroutines;
   std::uint64_t declared_callables = 0;
-  for (const CallableDecl& callable : callables) {
-    if (callable.defining_unit.has_value()) {
+  const std::span<const CallableId> namespace_callables =
+      unit.NamespaceCallables();
+  for (const CallableId id : namespace_callables) {
+    const CallableDecl& callable = callables.Get(id);
+    if (IsDefinedElsewhere(unit, id)) {
       ++declared_callables;
       continue;
     }
@@ -149,14 +159,18 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   for (const RecordDecl& record : records) {
     declared_records += record.defining_unit.has_value() ? 1 : 0;
   }
+  // A method of a record another unit declares is that unit's.
   std::uint64_t methods_of_records = 0;
-  for (const RecordMethods& methods : record_methods) {
-    methods_of_records += methods.size();
+  for (const RecordId id : records.Ids()) {
+    if (!records.Get(id).defining_unit.has_value()) {
+      methods_of_records += unit.RecordMethodsOf(id).size();
+    }
   }
   std::uint64_t captures = 0;
-  for (const ClosureDecl& closure : closures) {
-    captures += closure.fields.size();
-    coroutines += IsCoroutine(unit, closure.invoke) ? 1 : 0;
+  for (const ClosureId id : closures.Ids()) {
+    captures += closures.Get(id).fields.size();
+    coroutines +=
+        IsCoroutine(unit, callables.Get(unit.BodyOf(id)).code) ? 1 : 0;
   }
 
   return {
@@ -165,7 +179,8 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
       {.kind = "fields", .held = in_classes.fields},
       {.kind = "constructors", .held = in_classes.constructors},
       {.kind = "callables",
-       .held = callables.size() - declared_callables + in_classes.callables},
+       .held = namespace_callables.size() - declared_callables +
+               in_classes.callables},
       {.kind = "declared callables", .held = declared_callables},
       {.kind = "coroutines", .held = coroutines},
       {.kind = "closures", .held = closures.size()},

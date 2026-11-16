@@ -3,6 +3,8 @@
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/callable.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::mir {
@@ -44,25 +46,40 @@ auto LinkageOf(const CompilationUnit& unit, const CodeSource& at)
             [](const ReachedInAnotherUnit&) {
               return support::Linkage::kExternal;
             },
+            [](const ReachedAsLibraryCallback&) {
+              return support::Linkage::kInternal;
+            },
             [](const ReachedByPosition&) {
               return support::Linkage::kInternal;
             }},
         reach);
   };
+  const auto of_callable = [&](CallableId callable) {
+    return std::visit(
+        Overloaded{
+            [&](const DeclaredByClass& owner) {
+              return LinkageOf(unit, owner.cls);
+            },
+            [&](const ConstructsClass& owner) {
+              return LinkageOf(unit, owner.cls);
+            },
+            [&](const DeclaredByNamespace&) {
+              return of_namespace(NamespaceReachOf(unit, callable));
+            },
+            [&](const DeclaredByRecord& owner) {
+              return LinkageOf(unit, owner.record);
+            },
+            [](const DeclaredByClosure&) {
+              return support::Linkage::kInternal;
+            }},
+        unit.OwnerOf(callable));
+  };
   return std::visit(
       Overloaded{
-          [&](const ConstructorSource& s) { return LinkageOf(unit, s.owner); },
-          [&](const CallableTarget& s) { return LinkageOf(unit, s.owner); },
-          [&](const UnitCallableTarget& s) {
-            return of_namespace(NamespaceReachOf(unit, s.slot));
-          },
-          [&](const RecordMethodSource& s) {
-            return LinkageOf(unit, s.record);
-          },
+          [&](const CallableTarget& s) { return of_callable(s.callable); },
           [](const TypeOperationSource&) {
             return support::Linkage::kInternal;
           },
-          [](const ClosureSource&) { return support::Linkage::kInternal; },
           [](const ForeignScopeEntrySource&) {
             return ForeignScopeEntryLinkage();
           }},

@@ -19,20 +19,11 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto AddBody(mir::Class& cls, mir::CallableCode code) -> mir::CallableId {
-  return cls.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
-}
-
-// The entry calling `callable` of class `id` on the object, and no other body
+// The entry calling `callable` of class `cls` on the object, and no other body
 // in its place, of the prototype `entry`: handed the object first, it views it
 // as the class and passes on what it takes after the object.
 auto EntryBody(
-    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
+    const mir::CompilationUnit& unit, const mir::Class& cls,
     mir::CallableId callable, mir::TypeId entry) -> mir::CallableCode {
   const auto& prototype = unit.types.Get(entry).Get<mir::MachineFunctionType>();
   mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
@@ -44,7 +35,7 @@ auto EntryBody(
   // A callable reporting at its caller is entered through an entry that does
   // the same: what the entry was handed is what the callable is handed, which
   // the call it makes states as its own location.
-  if (cls.callables.Get(callable).code.caller_location.has_value()) {
+  if (unit.callables.Get(callable).code.caller_location.has_value()) {
     code.caller_location = code.params.back();
   }
 
@@ -68,9 +59,7 @@ auto EntryBody(
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target =
-                              mir::CallableTarget{
-                                  .owner = id, .slot = callable},
+                          .target = mir::CallableTarget{.callable = callable},
                           .receiver = BuildObjectDeref(unit, body, self)},
                   .arguments = std::move(args)},
           .type = code.result_type});
@@ -101,12 +90,14 @@ void CompleteWith(
 }
 
 auto EntryOf(
-    const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    mir::CallableId callable, mir::TypeId entry) -> mir::CallableId {
-  if (!cls.callables.Get(callable).code.TakesReceiver()) {
+    mir::CompilationUnit& unit, const mir::Class& cls, mir::CallableId callable,
+    mir::TypeId entry) -> mir::CallableId {
+  if (!unit.callables.Get(callable).code.TakesReceiver()) {
     return callable;
   }
-  return AddBody(cls, EntryBody(unit, id, cls, callable, entry));
+  mir::CallableCode code = EntryBody(unit, cls, callable, entry);
+  return unit.AddClassCallable(
+      mir::DeclaringClassOf(unit, callable), std::nullopt, std::move(code));
 }
 
 auto EntryPrototypeOf(

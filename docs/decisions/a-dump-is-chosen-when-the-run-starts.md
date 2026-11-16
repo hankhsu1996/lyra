@@ -3,7 +3,10 @@
 ## Date
 
 2026-10-19 (revised 2026-11-09: each recorded variable names the declaration it lies in, and a scope
-is recorded as what the declaration it fills is)
+is recorded as what the declaration it fills is; revised 2026-11-12: a class states each data object
+as a row naming the methods that read it and subscribe to it; revised 2026-11-13: a package states
+its variables the same way and is recorded as a package; revised 2026-11-15: each port is a row of
+its own naming the object it connects, and two methods per class reach every row by its position)
 
 ## Status
 
@@ -57,22 +60,44 @@ axis with an optimizing compiler's code behind it.
 
 ### D1. Every scope class describes what a dump may record of it, and a run chooses from that
 
-A class of the design hierarchy is compiled with one more method beside its elaboration phases,
-which states each data object the class declares that a dump may record -- a variable, a net, a
-port, a named event, the static variables of a named block, task or function -- as a constant
-holding its name, its kind, its width, its declared range and, for a port, its direction and
-position, and the declaration of the block, task or function it lies in, which the class states once
-among the scopes it declares, together with the member that holds it. The runtime walks its own
-object tree and asks each instance it selects to describe itself; nothing is listed for child
-scopes, which the tree already holds, and nothing opens or closes a block, which the declaration
-each variable names already places.
+A class of the design hierarchy states, beside its definition, one row for each data object it
+declares that a reader reaching the design by name may record -- a variable, a net, a named event,
+the static variables of a named block, task or function. A row holds the object's name; what it is
+declared as, a variable or a net of its net type; its type as the language declares it -- the kind
+of type, its bits, the outermost packed range, an enumeration's base; and the declaration of the
+block, task or function it lies in, which the class states once among the scopes it declares. Beside
+the rows the class states each of its ports, in the order the declaration gives them, by the port's
+name, its direction and the position of the row of the object it connects inside (LRM 21.7.4.2), so
+two ports connecting one object are two ports, as the standard counts them; and two methods of the
+class, each handed the instance, the position of a row and what the reader gave, which switch on the
+position to the case for that row. One reads the object's name as the class's own code reads it and
+hands the value to the reader: an integral value's bits, a real, or the object an event variable
+names. The other builds the trigger a wait for a change of the object would enrol and hands it to
+the reader, which enrols on it as a waiting process would; an event variable also changes with each
+trigger of the object it names, which the reader follows from the object each read hands it. A
+package and the compilation unit's scope, each one object of the run beside the instance tree (LRM
+37.10), state the same rows for the variables they keep, and their two bodies are the unit's own:
+they take an object as a class's do and leave it unread, as Java's `Field.get` does for a static
+field. The runtime walks its own object tree, reads each selected instance's rows from the
+definition the instance's first word names, and calls those methods on the instance with the row's
+position; it reads a package's rows from what the package handed it as its storage came up. Nothing
+is listed for child scopes, which the tree already holds, and nothing opens or closes a block, which
+the declaration each variable names already places. The keyword, width and range a file declares are
+the dump's reading of the row (LRM 21.7.2.1, 21.7.5), since they are one format's spelling of the
+declaration rather than the declaration. Each name is recorded under a code of its own, though two
+may share one (LRM 21.7.2.3 `$var` b): a port is a member a force rebinds (LRM 10.6.2), so the value
+it shows can part from its connection's, and nothing else two names of one walk stand for reaches
+one place.
 
-It is a method rather than a table of offsets because no layer below MIR states a member's offset as
-a constant, and C++ guarantees `offsetof` only for a standard-layout class, which a scope class with
-virtual functions is not. A member's address comes from code in both backends, as it does everywhere
-else. The method reaches the dump starting through the run rather than taking it as an argument,
-because the library's own scope class defines it too, for a class that describes nothing, and would
-have no use for one.
+The reading and the subscribing are methods of the class because the class is where the object's
+type is known, and the runtime is handed values and triggers rather than told how to read storage. A
+method reads through a net's resolution and a port's binding as the design does, follows a force
+(LRM 10.6.2), and passes the runtime nothing it would have to interpret. It is how the runtime
+library already reaches a method of a class it does not know -- the entry of the method, handed the
+object as the root every object is -- and how serde has generated code hand a value to a serializer
+the library supplies. They are two for the whole class rather than two for each row, as serde
+generates one serialize function for a type that handles every field of it: what a design costs to
+compile grows with the code it states, and a row is data.
 
 What is never recorded is what the standard leaves out (LRM 21.7.2.1), which is an unpacked array or
 structure, a string, a handle and a dynamic container, and a parameter, which is no storage.
@@ -159,7 +184,15 @@ function have no object, so a variable declared in one names its declaration, an
 scope of that declaration's kind around the first variable it records there; a scope nothing is
 recorded in is not written. A level `$dumpvars` counts is an instance. A block belongs to the
 instance holding it, so `$dumpvars(1, top)` records the variables of `top`'s generate blocks as well
-as its own.
+as its own. A package is recorded as a scope of its own beside the tops, which a `$dumpvars` naming
+levels alone records whole, under the type `package`. The five scope types of LRM 21.7.2.1 predate
+packages; GTKWave reads that word, and FST names the same type. The compilation unit's scope, which
+VPI shows as a package (LRM 37.10 detail 5), is recorded the same way, under the name `$unit`. The
+text format names what a package declares after the package's name and `::`, `p::v` and
+`p::touch.s`, as LRM 26.3 names it, so a member of a package `p` is never spelled as one of a top
+module `p` would be; a VCD or FST file tells the two apart by the scope's type. An option naming a
+package by its name alone, where no top has that name, records the package whole, as a name handed
+to the design reads it.
 
 ## Rejected alternatives
 
@@ -167,6 +200,13 @@ as its own.
   compiler leave the dump code out of a build that wants none. Rejected because every new question
   becomes a rebuild, which is the cost this decision exists to remove, and because D3 already makes
   a run that dumps nothing pay nothing.
+- **One method per class handing the dump each member's address and a probe of its kind.** It was
+  this decision's shape until 2026-11-12. It left the runtime reading storage through a kind it
+  chose, where the rows of D1 hand it only what the design's own code produced.
+- **Two methods per row, each naming its row.** It was this decision's shape from 2026-11-12 to
+  2026-11-15. Each data object then cost four functions to compile, the two methods and an entry for
+  each, so a design's compile cost grew with what a dump may record rather than with the code it
+  states.
 - **A command-line option of `lyra run` for each plusarg.** It would be a second spelling of the
   same thing; a run's own arguments already follow the `--` that ends Lyra's command line.
 - **Printing each change of one variable on the run's output.** The text format, selected to one
@@ -178,8 +218,9 @@ as its own.
 
 ## Consequences
 
-- A design gains one method per scope class and one constant per dumped declaration, emitted whether
-  or not any run dumps it.
+- A design gains one row per data object a dump may record and one per port, one constant per
+  declared type, and two bodies per scope class, package and compilation unit's scope, which grow by
+  a case per row; all are emitted whether or not any run dumps it.
 - A run that dumps nothing enrolls no storage and starts no thread.
 - The strength of a net's resolved value is what an exact extended dump of ports would need, and it
   is not kept.

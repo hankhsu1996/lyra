@@ -12,10 +12,7 @@
 #include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_id.hpp"
-#include "lyra/mir/class.hpp"
-#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -44,13 +41,13 @@ struct InstalledConcurrentAssertion {
 // takes -- what a tick runs; the process of its clock, at each tick of which
 // the statement the assertion stands for is reached and its attempt matures
 // (LRM 16.14.5, 16.14.6); and where it is written, the process watching its
-// `disable iff` -- adding each to `mir_class`. `statics` are the cells its
-// action block keeps past an activation, which `bring_up` brings up.
+// `disable iff` -- each declared by the class `ctor_frame` constructs.
+// `statics` are the cells its action block keeps past an activation, which
+// `bring_up` brings up.
 [[nodiscard]] auto LowerConcurrentAssertion(
-    StructuralScopeLowerer& lowerer, mir::Class& mir_class,
-    const WalkFrame& ctor_frame, const StorageBringUp& bring_up,
-    const DeclaredScopes& scopes, const StaticCellBindings& statics,
-    const hir::ConcurrentAssertionDecl& decl)
+    StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
+    const StorageBringUp& bring_up, const DeclaredScopes& scopes,
+    const StaticCellBindings& statics, const hir::ConcurrentAssertionDecl& decl)
     -> diag::Result<InstalledConcurrentAssertion>;
 
 // Fills the storage where the design activates: the positions the property
@@ -65,14 +62,13 @@ void AppendConcurrentAssertionInstall(
 // Lowers one concurrent assertion a procedure of the scope holds as a statement
 // into what the scope keeps for it -- the machinery a declared one takes,
 // whose attempt matures where an instance the statement queued matures
-// rather than at every tick (LRM 16.14.6) -- adding each callable to
-// `mir_class`. `statics` are the procedure's own, which its own lowering
-// brings up.
+// rather than at every tick (LRM 16.14.6) -- each callable declared by the
+// class `ctor_frame` constructs. `statics` are the procedure's own, which its
+// own lowering brings up.
 [[nodiscard]] auto LowerProceduralConcurrentAssertion(
-    StructuralScopeLowerer& lowerer, mir::Class& mir_class,
-    const WalkFrame& ctor_frame, const DeclaredScopes& scopes,
-    const StaticCellBindings& statics, const hir::ProceduralBody& body,
-    const hir::ConcurrentAssertion& assertion)
+    StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
+    const DeclaredScopes& scopes, const StaticCellBindings& statics,
+    const hir::ProceduralBody& body, const hir::ConcurrentAssertion& assertion)
     -> diag::Result<InstalledConcurrentAssertion>;
 
 // LRM 16.14.6: reaching the statement queues a pending instance on the running

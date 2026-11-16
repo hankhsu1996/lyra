@@ -1,0 +1,19 @@
+$timescale 1ns $end
+$scope package p $end
+$var reg 4 V v [3:0] $end
+$scope function touch $end
+$var reg 2 S s [1:0] $end
+$upscope $end
+$upscope $end
+$scope module Top $end
+$var reg 1 T t $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+b1001 V
+b10 S
+0T
+$end
+#1
+b0011 V

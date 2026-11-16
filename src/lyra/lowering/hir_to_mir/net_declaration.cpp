@@ -15,6 +15,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/data_object.hpp"
 #include "lyra/support/strength_level.hpp"
 #include "lyra/value/integral_words.hpp"
 
@@ -46,44 +47,44 @@ auto ResolutionOf(const hir::StructuralNetDecl& net) -> NetTypeResolution {
     // contribution that determines no position and therefore takes no part in
     // any resolution. A `uwire` is one driver's worth of the same resolution;
     // what makes it single-driver is decided before this layer (LRM 6.6.2).
-    case hir::NetType::kWire:
-    case hir::NetType::kTri:
-    case hir::NetType::kUwire:
+    case support::NetType::kWire:
+    case support::NetType::kTri:
+    case support::NetType::kUwire:
       return {
           .fold = NetFold::kTriState,
           .undriven = FourStateBit::kHighImpedance,
           .strength = StrengthLevel::kHighImpedance};
-    case hir::NetType::kWand:
-    case hir::NetType::kTriand:
+    case support::NetType::kWand:
+    case support::NetType::kTriand:
       return {
           .fold = NetFold::kWiredAnd,
           .undriven = FourStateBit::kHighImpedance,
           .strength = StrengthLevel::kHighImpedance};
-    case hir::NetType::kWor:
-    case hir::NetType::kTrior:
+    case support::NetType::kWor:
+    case support::NetType::kTrior:
       return {
           .fold = NetFold::kWiredOr,
           .undriven = FourStateBit::kHighImpedance,
           .strength = StrengthLevel::kHighImpedance};
     // LRM 6.6.5: a resistive pulldown or pullup, which every ordinary driver
     // outranks, so it shows only where nothing else drives.
-    case hir::NetType::kTri0:
+    case support::NetType::kTri0:
       return {
           .fold = NetFold::kTriState,
           .undriven = FourStateBit::kZero,
           .strength = StrengthLevel::kPull};
-    case hir::NetType::kTri1:
+    case support::NetType::kTri1:
       return {
           .fold = NetFold::kTriState,
           .undriven = FourStateBit::kOne,
           .strength = StrengthLevel::kPull};
     // LRM 6.6.6: a power supply, which outranks every ordinary driver instead.
-    case hir::NetType::kSupply0:
+    case support::NetType::kSupply0:
       return {
           .fold = NetFold::kTriState,
           .undriven = FourStateBit::kZero,
           .strength = StrengthLevel::kSupply};
-    case hir::NetType::kSupply1:
+    case support::NetType::kSupply1:
       return {
           .fold = NetFold::kTriState,
           .undriven = FourStateBit::kOne,
@@ -91,7 +92,7 @@ auto ResolutionOf(const hir::StructuralNetDecl& net) -> NetTypeResolution {
     // LRM 6.6.4, 6.7.1: a stored value, unknown until something drives it, and
     // held at the charge the declaration names once something has -- medium
     // where the declaration names none (LRM 28.15.2).
-    case hir::NetType::kTrireg:
+    case support::NetType::kTrireg:
       return {
           .fold = NetFold::kRetaining,
           .undriven = FourStateBit::kUnknown,

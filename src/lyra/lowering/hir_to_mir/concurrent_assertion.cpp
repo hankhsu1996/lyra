@@ -924,7 +924,7 @@ auto BuildSharedSatisfiedPositions(
 auto LowerStepOverAttempts(
     ProcessLowerer& action, const WalkFrame& parent,
     const StaticCellBinding& attempts, const AssertionAutomaton& automaton,
-    const std::vector<bool>& reads_saved) -> diag::Result<mir::CallableDecl> {
+    const std::vector<bool>& reads_saved) -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = action.Owner().Unit();
   mir::CallableCode code = mir::CallableCode::Defined(parent.span);
   CallableBindings bindings(unit, code);
@@ -948,11 +948,7 @@ auto LowerStepOverAttempts(
                       .receiver = place(body)},
                   {*shared}, unit.builtins.void_type))});
   body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  return mir::CallableDecl{
-      .code = std::move(code),
-      .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt,
-      .defining_unit = std::nullopt};
+  return code;
 }
 
 // Starts the statement `arm` an attempt's answer selects, as an execution of
@@ -1181,7 +1177,7 @@ auto AppendAttemptBecomingDue(
 auto LowerDisableWatcher(
     ProcessLowerer& action, const WalkFrame& ctor_frame,
     const StaticCellBinding& attempts, const hir::DisableCondition& disable,
-    std::span<const hir::ExprId> saved) -> diag::Result<mir::CallableDecl> {
+    std::span<const hir::ExprId> saved) -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = action.Owner().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
 
@@ -1233,11 +1229,7 @@ auto LowerDisableWatcher(
   entry_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
-  return mir::CallableDecl{
-      .code = std::move(code),
-      .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt,
-      .defining_unit = std::nullopt};
+  return code;
 }
 
 // The process of an assertion's leading clock. LRM 16.5 evaluates an assertion
@@ -1251,7 +1243,7 @@ auto LowerProcess(
     ProcessLowerer& action, const WalkFrame& ctor_frame,
     const hir::EventControl& clock, const StaticCellBinding& attempts,
     const std::optional<AttemptCode>& matured_at_each_tick)
-    -> diag::Result<mir::CallableDecl> {
+    -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = action.Owner().Unit();
   const mir::TypeId void_type = unit.builtins.void_type;
   const mir::TypeId self_ptr_type =
@@ -1311,11 +1303,7 @@ auto LowerProcess(
   entry_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
-  return mir::CallableDecl{
-      .code = std::move(code),
-      .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt,
-      .defining_unit = std::nullopt};
+  return code;
 }
 
 // LRM 16.14.6.1: what a procedural concurrent assertion saves where its
@@ -1440,12 +1428,12 @@ auto InstalledAttemptCode(
 }
 
 // The machinery of one assertion, from the body its expressions are written
-// in, each callable added to `mir_class`: what a tick runs, its clock's
-// process, and where the source wrote `disable iff` the process watching that
-// condition. A static assertion's process makes the closure of each
-// attempt it begins.
+// in, each callable declared by the class the construction `ctor_frame` builds:
+// what a tick runs, its clock's process, and where the source wrote `disable
+// iff` the process watching that condition. A static assertion's process makes
+// the closure of each attempt it begins.
 auto LowerMachinery(
-    ProcessLowerer& action, mir::Class& mir_class, const WalkFrame& ctor_frame,
+    ProcessLowerer& action, const WalkFrame& ctor_frame,
     const AnalyzedAssertion& analyzed,
     const std::optional<AttemptCode>& matured_at_each_tick)
     -> diag::Result<InstalledConcurrentAssertion> {
@@ -1461,19 +1449,23 @@ auto LowerMachinery(
       action, ctor_frame, dispositions.spec->clock, attempts,
       matured_at_each_tick);
   if (!process) return std::unexpected(std::move(process.error()));
+  mir::CompilationUnit& unit = action.Owner().Unit();
+  const mir::ClassId owner = ctor_frame.current_class.id;
   std::vector<mir::CallableId> processes;
-  processes.push_back(mir_class.callables.Add(*std::move(process)));
+  processes.push_back(
+      unit.AddClassCallable(owner, std::nullopt, *std::move(process)));
   if (dispositions.spec->disable.has_value()) {
     auto watcher = LowerDisableWatcher(
         action, ctor_frame, attempts, *dispositions.spec->disable,
         analyzed.saved);
     if (!watcher) return std::unexpected(std::move(watcher.error()));
-    processes.push_back(mir_class.callables.Add(*std::move(watcher)));
+    processes.push_back(
+        unit.AddClassCallable(owner, std::nullopt, *std::move(watcher)));
   }
 
   return InstalledConcurrentAssertion{
       .processes = std::move(processes),
-      .step = mir_class.callables.Add(*std::move(step)),
+      .step = unit.AddClassCallable(owner, std::nullopt, *std::move(step)),
       .start = analyzed.automaton.parts.front().start,
       .control = action.ControlCellOf(dispositions.control),
       .attempts = attempts};
@@ -1482,10 +1474,9 @@ auto LowerMachinery(
 }  // namespace
 
 auto LowerConcurrentAssertion(
-    StructuralScopeLowerer& lowerer, mir::Class& mir_class,
-    const WalkFrame& ctor_frame, const StorageBringUp& bring_up,
-    const DeclaredScopes& scopes, const StaticCellBindings& statics,
-    const hir::ConcurrentAssertionDecl& decl)
+    StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
+    const StorageBringUp& bring_up, const DeclaredScopes& scopes,
+    const StaticCellBindings& statics, const hir::ConcurrentAssertionDecl& decl)
     -> diag::Result<InstalledConcurrentAssertion> {
   ProcessLowerer action(
       lowerer.Owner(), &lowerer, decl.action, std::nullopt, ctor_frame, scopes,
@@ -1496,7 +1487,7 @@ auto LowerConcurrentAssertion(
   const AnalyzedAssertion analyzed =
       AnalyzeAssertion(decl.action, decl.assertion, {});
   auto built = LowerMachinery(
-      action, mir_class, ctor_frame, analyzed,
+      action, ctor_frame, analyzed,
       InstalledAttemptCode(decl.action, analyzed, decl.span));
   if (!built) return std::unexpected(std::move(built.error()));
 
@@ -1507,17 +1498,16 @@ auto LowerConcurrentAssertion(
 }
 
 auto LowerProceduralConcurrentAssertion(
-    StructuralScopeLowerer& lowerer, mir::Class& mir_class,
-    const WalkFrame& ctor_frame, const DeclaredScopes& scopes,
-    const StaticCellBindings& statics, const hir::ProceduralBody& body,
-    const hir::ConcurrentAssertion& assertion)
+    StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
+    const DeclaredScopes& scopes, const StaticCellBindings& statics,
+    const hir::ProceduralBody& body, const hir::ConcurrentAssertion& assertion)
     -> diag::Result<InstalledConcurrentAssertion> {
   ProcessLowerer action(
       lowerer.Owner(), &lowerer, body, std::nullopt, ctor_frame, scopes,
       statics);
   const AnalyzedAssertion analyzed =
       AnalyzeProceduralAssertion(action, assertion);
-  return LowerMachinery(action, mir_class, ctor_frame, analyzed, std::nullopt);
+  return LowerMachinery(action, ctor_frame, analyzed, std::nullopt);
 }
 
 auto LowerExpectStmt(

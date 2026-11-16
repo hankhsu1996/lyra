@@ -113,8 +113,9 @@ auto LowerClassNew(
               mir::MakeCallExpr(
                   mir::Direct{
                       .target =
-                          mir::ConstructorTarget{
-                              .cls = lowerer.Owner().ClassIdentity(n.class_id)},
+                          mir::CallableTarget{
+                              .callable = lowerer.Owner().ClassConstructor(
+                                  lowerer.Owner().ClassIdentity(n.class_id))},
                       .receiver = BuildObjectDeref(unit, body, object())},
                   std::move(args), unit.builtins.void_type))});
   return steps.Build(body.ReadLocal(*created, result_type));

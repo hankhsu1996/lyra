@@ -10,8 +10,8 @@
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable_id.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -28,10 +28,11 @@ struct HistorySampler {
 // Postponed region of that step, so a reader in the step never sees that tick;
 // and, where the design activates, each history filled with what the piece is
 // before any tick, which is its default sampled value (LRM 16.5.1). The
-// sampling those pieces read is armed before this runs.
+// sampling those pieces read is armed before this runs. Each process is
+// declared by the class `ctor_frame` constructs.
 template <ExprLowerer Lowerer>
 [[nodiscard]] auto KeepSampledHistories(
-    Lowerer& reader, mir::Class& mir_class, const WalkFrame& ctor_frame,
+    Lowerer& reader, const WalkFrame& ctor_frame,
     const WalkFrame& activate_frame)
     -> diag::Result<std::vector<HistorySampler>>;
 
@@ -46,8 +47,8 @@ template <ExprLowerer Lowerer>
 // names (LRM 16.9.3).
 template <ExprLowerer Lowerer>
 [[nodiscard]] auto LowerPastValueCall(
-    Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call,
-    const hir::PastValueRef& ref) -> diag::Result<mir::Expr>;
+    Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call)
+    -> diag::Result<mir::Expr>;
 
 // A value change function: the sampled value of this time step -- the one
 // `$sampled` gives, read here the same way -- against the one of the most

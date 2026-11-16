@@ -1,18 +1,18 @@
 $timescale 1ns $end
 $scope module Top $end
-$var reg 100 W wide $end
-$var wire 100 N wide_net $end
+$var reg 100 W wide [99:0] $end
+$var wire 100 N wide_net [99:0] $end
 $scope module u $end
-$var wire 100 I in $end
+$var wire 100 I in [99:0] $end
 $upscope $end
 $scope task bump $end
-$var reg 4 C count $end
+$var reg 4 C count [3:0] $end
 $upscope $end
 $scope function twice $end
 $var integer 32 K calls $end
 $upscope $end
 $scope begin body $end
-$var reg 4 H held $end
+$var reg 4 H held [3:0] $end
 $scope fork side $end
 $var reg 1 F forked $end
 $upscope $end

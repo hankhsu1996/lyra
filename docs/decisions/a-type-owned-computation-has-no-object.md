@@ -14,6 +14,11 @@ questions put to a member list the unit states as data, so an enumeration synthe
 be owned. The decision below is unchanged for the text, and its package and compilation-unit cases
 hold for the enumeration methods by the same argument, since a member list takes no object either.
 
+Revised 2026-11-15: a callable's identity is its entry in the unit's one table of callables
+([a-callable-has-one-identity-in-a-unit](a-callable-has-one-identity-in-a-unit.md)), not the
+position its declaration sits at. The position is still what spells a body nothing names, and D2 and
+D3 are restated in those terms.
+
 ## Why this decision matters
 
 Some of what a value reads as is decided by its declaration rather than by the value: an enumeration
@@ -24,10 +29,9 @@ generic MIR.
 
 Where that function lives was answered by whatever was in hand at the first site that needed one.
 The print site and the enumeration method are both lowered from inside a design element, a design
-element's body is lowered into a class, and a class owns a callable arena -- so the function was put
-there, and the three sites that build one refused when the lowering had no class. Every one of them
-said "in a package context", which is the context they guessed rather than the condition they
-tested.
+element's body is lowered into a class, and a class owns callables -- so the function was put there,
+and the three sites that build one refused when the lowering had no class. Every one of them said
+"in a package context", which is the context they guessed rather than the condition they tested.
 
 **A real design stopped there and nowhere else.** Both constructs are ordinary in package code, and
 two diagnostics stood between that design and a simulation.
@@ -63,14 +67,15 @@ leading `.`, Rust's hygiene, the Itanium ABI's reserved range. Lyra does not min
 program-wide symbol is parts under a category rather than a spelling
 ([a-name-is-a-relation-not-an-identity](a-name-is-a-relation-not-an-identity.md)) and because a
 SystemVerilog identifier admits every printable non-space character (LRM 5.6.1), leaving no range
-reserved to mint from. So the entity is reached by its position and each backend mints its own
-target-side spelling. That is the same split taken one layer earlier: the symbol a backend composes
-is still a minted name, and it is minted where the target's rules are known.
+reserved to mint from. So the entity is reached by its entry in the unit's table of callables, and
+each backend mints its own target-side spelling from where it stands among its owner's callables.
+That is the same split taken one layer earlier: the symbol a backend composes is still a minted
+name, and it is minted where the target's rules are known.
 
 ## Decision
 
 **A computation a type owns takes no object, so the compilation unit's namespace owns the function
-that performs it, and its identity is the position that function's declaration sits at.**
+that performs it, and its identity is its entry in the unit's table of callables.**
 
 ### D1. The owner is the unit, in every context
 
@@ -83,23 +88,25 @@ This is the rule
 [type-associated-storage-is-the-declarers](type-associated-storage-is-the-declarers.md) reached on
 the storage axis, read on the code axis: what no instance holds belongs to the namespace.
 
-### D2. Identity is the position; a name is a relation over it
+### D2. Identity is the entry in the unit's table; a name is a relation over it
 
-`mir.md` invariant 7 states this for a member: identity is the position it occupies, and being
-reachable by an identifier is a relation its owner holds over that position, stated only where the
-source declared one. A callable is the same. A body the compiler synthesized simply does not take
-part in that relation, which is an answer rather than a case to work around -- the namespace's own
+A callable's identity is its declaration's entry in the unit's table of callables, which every
+callable has and which is what a reference names. Being reachable by an identifier is a relation its
+owner holds over that entry, stated only where the source declared one, as `mir.md` invariant 7
+states it for a field over its position. A body the compiler synthesized simply does not take part
+in that relation, which is an answer rather than a case to work around -- the namespace's own
 storage pool already reads this way, because it holds the static-lifetime cells of the unit's
-subroutines and those answer to nothing.
+subroutines and those answer to nothing. A body nothing names is spelled by where it stands among
+its owner's callables, which nothing outside the unit can ask for.
 
-### D3. Inside the unit a body is named by position, outside it by what the namespace published
+### D3. Inside the unit a body is named by its entry, outside it by what the namespace published
 
-A call written in the unit that owns the body holds the arena, so it names the position. A call from
+A call written in the unit that owns the body holds the table, so it names the entry. A call from
 another unit has only the identifier that namespace published, which is the whole of what a unit
 publishes, so it names that. The two are total and do not overlap, and a synthesized body is
 unreachable from outside for the same reason it needs no name: nothing published it. This mirrors
-the storage axis exactly, where an intra-unit reference already names a position and a cross-unit
-one a published identifier.
+the storage axis, where an intra-unit reference names a position and a cross-unit one a published
+identifier.
 
 ### D4. Which reading of which type is keyed by the SystemVerilog type
 
@@ -151,8 +158,8 @@ namespace is qualified from the root; opening one is not.
   made conditional.
 - A unit's namespace holds bodies the source never named, so what spells one is a position where
   nothing else does, and the fallback that could name no such body is gone.
-- An intra-unit call to a package subroutine names a position rather than resolving the unit's own
-  published identifier against itself.
+- An intra-unit call to a package subroutine names the callable's entry rather than resolving the
+  unit's own published identifier against itself.
 - The three per-reading caches the lowering kept become one, keyed by the reading and the type.
 - The C++ backend emits every callable of a unit's namespace as a declaration before the unit's
   classes, because a class body may now call one.
@@ -169,5 +176,8 @@ namespace is qualified from the root; opening one is not.
 - [a-name-is-a-relation-not-an-identity](a-name-is-a-relation-not-an-identity.md) -- why no name is
   minted. Its rule is about program-wide symbols; this decision is about an identity inside one
   unit, which that entry does not reach.
-- `../architecture/mir.md` invariant 7 -- identity is the position, a name is a relation over it.
+- `../architecture/mir.md` invariant 7 -- a field's identity is its position, a name is a relation
+  over it.
+- [a-callable-has-one-identity-in-a-unit](a-callable-has-one-identity-in-a-unit.md) -- the table a
+  callable's identity is an entry of.
 - `../architecture/callable.md` invariant 2 -- a type-associated function has no receiver.

@@ -1,7 +1,7 @@
 // A child of N output ports, each connected to its own variable.
 // @each-adds: bytes,
 // @each-adds: mir.callables 4, lir.functions 4, mir.fields 3, lir.members 3,
-// @each-adds: mir.constants 4, lir.constants 4
+// @each-adds: mir.constants 5, lir.constants 5
 module Child #(parameter int N = 4) ([[output int p{i}|, ]]);
   [[assign p{i} = {i};| ]]
 endmodule

@@ -1,16 +1,18 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/callable_bounds.hpp"
 
@@ -102,10 +104,15 @@ class ClosureBuilder {
   mir::CompilationUnit* unit_;
   mir::Builder outer_;
   mir::ClosureDecl closure_decl_;
+  // The closure's body while it is built, declared in the unit's table as the
+  // closure's once it is whole.
+  mir::CallableCode invoke_;
   mir::ClosureId closure_id_;
   CallableBindings bindings_;
   WalkFrame frame_;
   std::vector<mir::LocalId> invocation_params_;
+  // The identity the closure's body took once it is whole.
+  std::optional<mir::CallableId> body_;
 };
 
 // `closure`, a synchronous closure value, added to `block` as a library

@@ -18,7 +18,6 @@
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -203,13 +202,12 @@ auto SoleNestedBlock(const mir::Block& block) -> std::optional<mir::BlockId> {
   return only != nullptr ? std::optional{only->scope} : std::nullopt;
 }
 
-// Whether `decl` is a body entered on its object alone and completing with
-// nothing, as a process's is.
+// Whether `decl`, a callable of a class, is a body entered on its object alone
+// and completing with nothing, as a process's is.
 auto IsEnteredOnItsObjectAlone(
     const mir::CompilationUnit& unit, const mir::CallableDecl& decl) -> bool {
   const mir::CallableCode& code = decl.code;
-  return !decl.foreign.has_value() && !decl.virtual_dispatch.has_value() &&
-         code.body.has_value() &&
+  return !mir::VirtualDispatchOf(decl).has_value() && code.body.has_value() &&
          code.result_type == unit.builtins.coroutine_void &&
          code.params.size() == 1 && code.TakesReceiver();
 }
@@ -333,20 +331,20 @@ auto MatchReaction(
       .wait_local = *wait_local};
 }
 
-// What a process split around its loop adds beside its own slot, which its pass
-// keeps: the slot of its setup, and the runtime's entry that runs the two,
-// which says what the setup answers.
+// What a process split around its loop adds beside its own callable, which its
+// pass keeps: the callable of its setup, a member of the same class, and the
+// runtime's entry that runs the two, which says what the setup answers.
 struct SplitParts {
   mir::CallableId setup;
   support::BuiltinFn entry;
 };
 
-// A process that never stops, whose slot holds an ordinary function.
+// A process that never stops, whose callable holds an ordinary function.
 struct RunsToCompletion {};
 
 using RewrittenProcess = std::variant<SplitParts, RunsToCompletion>;
 using RewrittenProcesses =
-    std::unordered_map<mir::CallableTarget, RewrittenProcess>;
+    std::unordered_map<mir::CallableId, RewrittenProcess>;
 
 auto EntryFor(LoopOrder order) -> support::BuiltinFn {
   switch (order) {
@@ -392,16 +390,6 @@ auto PartCodeOf(
   code.named_locals = process.named_locals;
   code.span = process.span;
   return PartCode{.code = std::move(code), .object = object, .wait = wait};
-}
-
-// A part is reached by its position alone: no foreign code calls it and no
-// class overrides it.
-auto PartDecl(mir::CallableCode code) -> mir::CallableDecl {
-  return mir::CallableDecl{
-      .code = std::move(code),
-      .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt,
-      .defining_unit = std::nullopt};
 }
 
 // `to = (T)from;`, a parameter handed erased restored to its type.
@@ -620,7 +608,8 @@ auto RewrittenProcessStarted(
   const auto* target = direct != nullptr
                            ? std::get_if<mir::CallableTarget>(&direct->target)
                            : nullptr;
-  return target != nullptr && rewritten.contains(*target) ? target : nullptr;
+  return target != nullptr && rewritten.contains(target->callable) ? target
+                                                                   : nullptr;
 }
 
 // Whether `block`, at any depth, starts a process that was rewritten.
@@ -671,17 +660,12 @@ auto RewriteStarts(
             mir::Expr{
                 .data = mir::CastExpr{.operand = address},
                 .type = mir::ErasedPointer(unit.types)});
-        const auto code = [&](mir::CallableId slot, mir::TypeId type) {
+        const auto code = [&](mir::CallableId callable, mir::TypeId type) {
           return rebuild.Add(
               mir::Expr{
                   .data =
                       mir::ReferenceExpr{
-                          .target =
-                              mir::FunctionRef{
-                                  .body =
-                                      mir::CallableTarget{
-                                          .owner = target->owner,
-                                          .slot = slot}}},
+                          .target = mir::FunctionRef{.callable = callable}},
                   .type = type});
         };
         return std::visit(
@@ -691,28 +675,29 @@ auto RewriteStarts(
                   return mir::MakeCallExpr(
                       mir::Direct{.target = parts.entry},
                       {erased, code(parts.setup, part),
-                       code(target->slot, part)},
+                       code(target->callable, part)},
                       expr.type);
                 },
                 [&](const RunsToCompletion&) {
                   return mir::MakeCallExpr(
                       mir::Direct{
                           .target = support::BuiltinFn::kEnterRunToCompletion},
-                      {erased, code(target->slot, CompletingBodyType(unit))},
+                      {erased,
+                       code(target->callable, CompletingBodyType(unit))},
                       expr.type);
                 }},
-            rewritten.at(*target));
+            rewritten.at(target->callable));
       }};
   return RebuildCode(code, rules);
 }
 
-using ReactionShapes = std::unordered_map<mir::CallableTarget, ReactionShape>;
+using ReactionShapes = std::unordered_map<mir::CallableId, ReactionShape>;
 
 }  // namespace
 
 auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
   ReactionShapes shapes;
-  std::unordered_map<mir::CallableTarget, mir::CallableCode> setups;
+  std::unordered_map<mir::CallableId, mir::CallableCode> setups;
   RewrittenProcesses rewritten;
   for (const mir::ClassId owner : unit.classes.Ids()) {
     // A body changes its signature here, which only every caller's unit can
@@ -725,18 +710,16 @@ auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
       case support::Linkage::kShared:
         continue;
     }
-    const mir::Class& cls = unit.GetClass(owner);
-    for (const mir::CallableId slot : cls.callables.Ids()) {
-      const mir::CallableDecl& process = cls.callables.Get(slot);
+    for (const mir::CallableId callable : unit.CallablesOf(owner).callables) {
+      const mir::CallableDecl& process = unit.callables.Get(callable);
       if (!IsEnteredOnItsObjectAlone(unit, process)) {
         continue;
       }
-      const mir::CallableTarget target{.owner = owner, .slot = slot};
       if (std::optional<ReactionShape> shape = MatchReaction(unit, process)) {
-        setups.emplace(target, SetupOf(unit, process.code, *shape));
-        shapes.emplace(target, *std::move(shape));
+        setups.emplace(callable, SetupOf(unit, process.code, *shape));
+        shapes.emplace(callable, *std::move(shape));
       } else if (!StopsWithin(*process.code.body, std::nullopt)) {
-        rewritten.emplace(target, RunsToCompletion{});
+        rewritten.emplace(callable, RunsToCompletion{});
       }
     }
   }
@@ -746,22 +729,20 @@ auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
 
   // Each setup is added to its class before any code naming one is rebuilt,
   // so every code the rewrite below reads is defined.
-  unit.classes =
-      std::move(unit.classes)
-          .TransformValues([&](mir::ClassId owner, mir::Class cls) {
-            for (const mir::CallableId slot : cls.callables.Ids()) {
-              const mir::CallableTarget target{.owner = owner, .slot = slot};
-              if (const auto shape = shapes.find(target);
-                  shape != shapes.end()) {
-                rewritten.emplace(
-                    target, SplitParts{
-                                .setup = cls.callables.Add(
-                                    PartDecl(std::move(setups.at(target)))),
-                                .entry = EntryFor(shape->second.order)});
-              }
-            }
-            return cls;
-          });
+  for (const mir::ClassId owner : unit.classes.Ids()) {
+    const std::vector<mir::CallableId> declared =
+        unit.CallablesOf(owner).callables;
+    for (const mir::CallableId callable : declared) {
+      if (const auto shape = shapes.find(callable); shape != shapes.end()) {
+        rewritten.emplace(
+            callable,
+            SplitParts{
+                .setup = unit.AddClassCallable(
+                    owner, std::nullopt, std::move(setups.at(callable))),
+                .entry = EntryFor(shape->second.order)});
+      }
+    }
+  }
 
   // Each process split around its loop becomes its pass, one that never stops
   // an ordinary function, and every other code starting either starts it
@@ -771,10 +752,11 @@ auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
       [&](const mir::CompilationUnit& unit, const mir::CodeSource& at,
           const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
         if (const auto* method = std::get_if<mir::CallableTarget>(&at)) {
-          if (const auto shape = shapes.find(*method); shape != shapes.end()) {
+          if (const auto shape = shapes.find(method->callable);
+              shape != shapes.end()) {
             return PassOf(unit, code, shape->second);
           }
-          if (rewritten.contains(*method)) {
+          if (rewritten.contains(method->callable)) {
             return RunToCompletionOf(unit, code);
           }
         }

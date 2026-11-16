@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -532,6 +533,30 @@ auto WaitReuseBlock(
   return stop_block.Into(frame.bindings->RootBlock());
 }
 
+namespace {
+
+// The trigger watching `leaf`, built in `target_block`: what a wait on the
+// leaf enrols.
+template <typename Lowerer>
+auto BuildTrigger(
+    mir::Builder target_block, const WalkFrame& frame, Lowerer& lowerer,
+    const ObservedLeaf& leaf) -> diag::Result<mir::ExprId> {
+  auto& unit = lowerer.Owner().Unit();
+  return std::visit(
+      Overloaded{
+          [&](const hir::SensitivityEntry& entry) -> diag::Result<mir::ExprId> {
+            return BuildTriggerExpr(
+                target_block, frame, unit, lowerer, entry, leaf.observation);
+          },
+          [&](const HeldEvent& event) -> diag::Result<mir::ExprId> {
+            return BuildEventTriggerExpr(
+                target_block, unit, event, leaf.observation);
+          }},
+      leaf.watched);
+}
+
+}  // namespace
+
 template <typename Lowerer>
 auto BuildTriggerArray(
     mir::Builder target_block, const WalkFrame& frame, Lowerer& lowerer,
@@ -540,18 +565,7 @@ auto BuildTriggerArray(
   std::vector<mir::ExprId> triggers;
   triggers.reserve(leaves.size());
   for (const ObservedLeaf& leaf : leaves) {
-    auto trigger = std::visit(
-        Overloaded{
-            [&](const hir::SensitivityEntry& entry)
-                -> diag::Result<mir::ExprId> {
-              return BuildTriggerExpr(
-                  target_block, frame, unit, lowerer, entry, leaf.observation);
-            },
-            [&](const HeldEvent& event) -> diag::Result<mir::ExprId> {
-              return BuildEventTriggerExpr(
-                  target_block, unit, event, leaf.observation);
-            }},
-        leaf.watched);
+    auto trigger = BuildTrigger(target_block, frame, lowerer, leaf);
     if (!trigger) return std::unexpected(std::move(trigger.error()));
     triggers.push_back(*trigger);
   }
@@ -609,6 +623,17 @@ auto BuildValueChangeLeaves(
         ObservedLeaf{.watched = entry, .observation = observation});
   }
   return leaves;
+}
+
+template <typename Lowerer>
+auto BuildValueChangeTrigger(
+    mir::Builder block, const WalkFrame& frame, Lowerer& lowerer,
+    const hir::WatchedStorage& watched) -> diag::Result<mir::ExprId> {
+  const std::array whole{
+      hir::SensitivityEntry{.cell = watched, .part = hir::WatchedWhole{}}};
+  const std::vector<ObservedLeaf> leaves =
+      BuildValueChangeLeaves(lowerer.Owner().Unit(), frame, block, whole);
+  return BuildTrigger(block, frame, lowerer, leaves.front());
 }
 
 namespace {
@@ -698,6 +723,12 @@ template auto ReportReads(
 template auto ReportReads(
     const StructuralScopeLowerer&, const WalkFrame&, const hir::Reads&,
     mir::LocalId) -> diag::Result<void>;
+template auto BuildValueChangeTrigger(
+    mir::Builder, const WalkFrame&, ProcessLowerer&, const hir::WatchedStorage&)
+    -> diag::Result<mir::ExprId>;
+template auto BuildValueChangeTrigger(
+    mir::Builder, const WalkFrame&, const StructuralScopeLowerer&,
+    const hir::WatchedStorage&) -> diag::Result<mir::ExprId>;
 template auto BuildTriggerArray(
     mir::Builder, const WalkFrame&, ProcessLowerer&,
     std::span<const ObservedLeaf>) -> diag::Result<mir::ExprId>;

@@ -257,7 +257,7 @@ auto LowerClockingSample(
 
 auto LowerClockingSampler(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
-    hir::ClockingBlockId id) -> diag::Result<mir::CallableDecl> {
+    hir::ClockingBlockId id) -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const hir::ClockingBlockDecl& block = hir_scope.clocking_blocks.Get(id);
@@ -304,7 +304,7 @@ auto LowerClockingSampler(
 auto LowerClockingFollower(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     hir::ClockingBlockId id, hir::ClockvarId clockvar)
-    -> diag::Result<mir::CallableDecl> {
+    -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const hir::Clockvar& followed =
@@ -351,9 +351,7 @@ auto LowerClockingFollower(
 
 auto LowerClockingLanding(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
-    hir::ClockingOutputLanding landing,
-    std::optional<mir::VirtualDispatchRole> virtual_dispatch)
-    -> diag::Result<mir::CallableDecl> {
+    hir::ClockingOutputLanding landing) -> diag::Result<mir::CallableCode> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
@@ -378,7 +376,7 @@ auto LowerClockingLanding(
     return body.Add(*std::move(amount));
   };
   return ScopeCoroutine(
-      lowerer, ctor_frame, output.span, params, completion, virtual_dispatch,
+      lowerer, ctor_frame, output.span, params, completion,
       [&](const WalkFrame& frame,
           std::span<const mir::LocalId> taken) -> diag::Result<void> {
         mir::Builder body = frame.Builder();

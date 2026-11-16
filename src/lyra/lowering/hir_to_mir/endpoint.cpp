@@ -77,6 +77,25 @@ auto WholeRoutedTarget(
   return route.parts.front();
 }
 
+auto WholeVariableTarget(
+    const UnitLowerer& owner, const hir::StructuralScope& scope,
+    const hir::Expr& expr) -> std::optional<hir::ValueTarget> {
+  if (const std::optional<hir::RoutedValueRef> routed =
+          WholeRoutedTarget(owner, scope, expr)) {
+    return hir::ValueTarget{*routed};
+  }
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
+  if (primary == nullptr) return std::nullopt;
+  if (const auto* kept = std::get_if<hir::NamespaceValueRef>(&primary->data)) {
+    return hir::ValueTarget{*kept};
+  }
+  if (const auto* property =
+          std::get_if<hir::StaticPropertyRef>(&primary->data)) {
+    return hir::ValueTarget{*property};
+  }
+  return std::nullopt;
+}
+
 auto BindEndpoint(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::RoutedValueRef& reference) -> MemberPlace {

@@ -17,7 +17,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/id_allocator.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/translation.hpp"
@@ -382,26 +381,37 @@ void GuardNamespaceInitialization(
 // out what this one supplied. What the value body reads of other units is read
 // off the initializers before the extent is wrapped around them, and becomes
 // calls that body makes.
+//
+// Where the unit is an object of the run (`described`), installing its
+// storage is where the design brings it up, so the install body ends handing
+// the library what the unit holds of what it states of itself, read through
+// the cells just installed.
 void PublishNamespaceStorageBringUp(
-    const UnitLowerer& unit_lowerer, mir::CompilationUnit& unit,
-    mir::CallableCode install_code, mir::CallableCode value_code) {
+    UnitLowerer& unit_lowerer, mir::CompilationUnit& unit,
+    mir::CallableCode install_code, mir::CallableCode value_code,
+    std::optional<mir::ScopeDeclarations> described, diag::SourceSpan span) {
   const std::vector<std::string> reads = UnitsReadBy(unit, value_code.Body());
   WrapInNamespaceStaticInitExtent(unit_lowerer, unit, value_code);
   GuardNamespaceInitialization(unit_lowerer, unit, value_code, reads);
 
+  const mir::CallableId install_storage = unit.TakeNamespaceCallable();
+  const mir::CallableId initialize_storage = unit.TakeNamespaceCallable();
+  const bool registers = described.has_value();
   unit.content = mir::BroughtUpNamespace{
-      .install_storage = unit.callables.Add(
-          mir::CallableDecl{
-              .code = std::move(install_code),
-              .foreign = std::nullopt,
-              .virtual_dispatch = std::nullopt,
-              .defining_unit = std::nullopt}),
-      .initialize_storage = unit.callables.Add(
-          mir::CallableDecl{
-              .code = std::move(value_code),
-              .foreign = std::nullopt,
-              .virtual_dispatch = std::nullopt,
-              .defining_unit = std::nullopt})};
+      .install_storage = install_storage,
+      .initialize_storage = initialize_storage,
+      .scope_declarations = std::move(described)};
+  if (registers) {
+    mir::Builder install(install_code.Body(), span);
+    const mir::ExprId info = ScopeDeclarationsAddress(unit, install);
+    install.AppendStmt(
+        mir::ExprStmt{
+            .expr = install.Add(BuildBuiltinMethodCall(
+                unit, install, support::BuiltinFn::kRegisterNamespace,
+                std::nullopt, {info}, unit.builtins.void_type))});
+  }
+  unit.StateCallable(install_storage, std::move(install_code));
+  unit.StateCallable(initialize_storage, std::move(value_code));
 }
 
 // Publishes the one body that makes an object of this unit. A unit that
@@ -473,12 +483,7 @@ auto PublishObjectEntry(
           made));
   body.AppendStmt(mir::ReturnStmt{.value = ObjectAs(body, built, owning)});
 
-  return unit.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
+  return unit.AddNamespaceCallable(std::move(code));
 }
 
 // Whether an object of the class records the instance its class belongs to
@@ -552,26 +557,27 @@ auto UnitLowerer::SettlePublishedScope(
       settled != published_scopes_.end()) {
     return settled->second.layout.published;
   }
-  DeclareExternBindings(published, std::nullopt, signature);
   ClassShape shape;
   shape.identity = signature.class_path;
   shape.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
   shape.self_pointer_type = SelfPointerTo(published);
+  // A class realizing the scope constructs this one first, whichever is
+  // lowered first.
+  unit_.TakeClassConstructor(published);
   // Each published subroutine is a virtual method it introduces, its identity
-  // reserved here at the position the signature gave the subroutine, so a body
+  // taken here at the position the signature gave the subroutine, so a body
   // reaching another instance of this unit calls it by position before any
   // class realizing the scope is built. Which body runs is the answer of the
   // class the object is, which it carries.
-  std::vector<CallableSignature> signatures(
-      signature.callables.size(),
-      CallableSignature{
-          .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true}});
-  base::IdAllocator<mir::CallableId> methods;
+  const auto introduce_pure = [&](mir::CallableId method) {
+    unit_.StateDispatchRole(
+        method, mir::IntroducesVirtualSlot{.is_pure = true});
+  };
   base::Translation<hir::PublishedCallableId, PublishedSubroutine> subroutines{
       signature.callables.size()};
   for (const hir::ScopeCallable& listed : signature.callables) {
     const hir::SubroutinePrototype& callable = listed.prototype;
-    methods.Take();
+    introduce_pure(unit_.TakeClassCallable(published));
     subroutines.Append(
         PublishedSubroutine{
             .name = callable.name,
@@ -582,11 +588,9 @@ auto UnitLowerer::SettlePublishedScope(
   // Then the method a definer hands each subroutine the scope leaves to a
   // connected module to, at the position every reader of the signature gives
   // it, since each of those calls it.
-  for (std::size_t i = 0; i < ExternBindingsOf(published).size(); ++i) {
-    methods.Take();
-    signatures.push_back(
-        CallableSignature{
-            .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true}});
+  DeclareExternBindings(published, std::nullopt, signature);
+  for (const ExternBinding& binding : ExternBindingsOf(published)) {
+    introduce_pure(binding.bind);
   }
 
   // Then one virtual method per operation of each class the unit declares in
@@ -599,20 +603,19 @@ auto UnitLowerer::SettlePublishedScope(
   // are read off the declarations, so a body whose construction built none of
   // the scope states them alike.
   std::vector<ClassCodeSlot> class_code;
-  const auto introduce = [&](mir::ClassId cls, const support::DefPath& path,
-                             ClassCodePoint point, std::string_view operation,
+  const auto introduce = [&](const support::DefPath& path,
+                             mir::CallableId operation_of,
+                             std::string_view operation,
                              const mir::CallableCode& code) {
+    const mir::CallableId method = unit_.TakeClassCallable(published);
+    introduce_pure(method);
     class_code.push_back(
         ClassCodeSlot{
-            .cls = cls,
-            .point = point,
-            .slot = methods.Take(),
+            .operation_of = operation_of,
+            .slot = method,
             .name =
                 std::format("{} {}", support::DefPathIdentity(path), operation),
             .operation = code});
-    signatures.push_back(
-        CallableSignature{
-            .virtual_dispatch = mir::IntroducesVirtualSlot{.is_pure = true}});
   };
   for (const hir::ClassId hir_class : InstanceClassesOf(signature.class_path)) {
     const hir::ClassDeclaration& declared =
@@ -621,22 +624,21 @@ auto UnitLowerer::SettlePublishedScope(
     const support::DefPath& path = hir_->classes.PathOf(hir_class);
     if (declared.constructor.has_value()) {
       introduce(
-          cls, path, ClassConstructorCode{}, "new",
+          path, ClassConstructor(cls), "new",
           ClassConstructorPrototype(*this, hir_class));
     }
     for (const hir::MethodId method : declared.methods.Ids()) {
       const hir::DeclaredMethod& m = declared.methods.Get(method);
       if (hir::IsLeftAbstract(m.dispatch)) continue;
       introduce(
-          cls, path,
-          ClassCallableCode{.callable = mir::CallableId{method.value}},
-          m.prototype.name, ClassMethodPrototype(*this, hir_class, method));
+          path, ClassMethodCallable(cls, method), m.prototype.name,
+          ClassMethodPrototype(*this, hir_class, method));
     }
     const ClassCallables& callables = ClassCallablesOf(hir_class);
     if (callables.hooks.has_value()) {
       for (const auto& [body, callback] : callables.hooks->Callbacks()) {
         introduce(
-            cls, path, ClassCallableCode{.callable = body},
+            path, body,
             std::format("hook {}", support::LibraryCallbackName(callback)),
             ClassHookPrototype(*this, hir_class, callback));
       }
@@ -646,13 +648,11 @@ auto UnitLowerer::SettlePublishedScope(
           "{} reporting", declared.methods.Get(method).prototype.name);
       const mir::CallableCode prototype =
           ClassMethodPrototype(*this, hir_class, method);
-      introduce(
-          cls, path, ClassCallableCode{.callable = form}, operation, prototype);
+      introduce(path, form, operation, prototype);
     }
     for (const mir::InterfaceReach& named : callables.reaches) {
       introduce(
-          cls, path, ClassCallableCode{.callable = named.reach},
-          std::format("reach #{}", named.reach.value),
+          path, named.reach, std::format("reach #{}", named.reach.value),
           ClassInterfaceReachPrototype(*this));
     }
   }
@@ -662,17 +662,17 @@ auto UnitLowerer::SettlePublishedScope(
        InstanceCovergroupsOf(signature.class_path)) {
     const mir::ClassId cls = CovergroupClassIdentity(covergroup);
     const support::DefPath& path = hir_->covergroups.PathOf(covergroup);
-    const auto operation = [&](ClassCodePoint point, std::string_view name) {
+    const auto operation = [&](mir::CallableId operation_of,
+                               std::string_view name) {
       introduce(
-          cls, path, point, name,
-          CovergroupOperationPrototype(*this, covergroup, point));
+          path, operation_of, name,
+          CovergroupOperationPrototype(*this, covergroup, operation_of));
     };
-    operation(ClassConstructorCode{}, "new");
+    operation(ClassConstructor(cls), "new");
     for (const CovergroupOperation& made : CovergroupOperations()) {
-      operation(ClassCallableCode{.callable = made.callable}, made.name);
+      operation(ClassCallableAt(cls, made.position), made.name);
     }
   }
-  shape.callable_signatures = {signatures.size(), std::move(signatures)};
 
   std::vector<mir::FieldId> slots;
   std::vector<mir::TypeId> field_types;
@@ -751,34 +751,24 @@ auto UnitLowerer::InstanceClassesOf(const support::DefPath& scope) const
 }
 
 auto UnitLowerer::ClassCodeSlotOf(
-    mir::ClassId published, mir::ClassId cls, ClassCodePoint point) const
+    mir::ClassId published, mir::CallableId operation) const
     -> mir::CallableId {
   for (const ClassCodeSlot& code : published_scopes_.at(published).class_code) {
-    if (code.cls == cls && code.point == point) return code.slot;
+    if (code.operation_of == operation) return code.slot;
   }
   throw InternalError(
       std::format(
           "UnitLowerer::ClassCodeSlotOf: the class {} published of a scope "
-          "introduces no method for {} of the class {} the scope declares "
+          "introduces no method for callable {} of a class the scope declares "
           "-- please report this as a bug",
-          published.value,
-          std::visit(
-              Overloaded{
-                  [](const ClassConstructorCode&) {
-                    return std::string{"the constructor"};
-                  },
-                  [](const ClassCallableCode& code) {
-                    return std::format("callable {}", code.callable.value);
-                  }},
-              point),
-          cls.value));
+          published.value, operation.value));
 }
 
 auto UnitLowerer::ClassCodePrototypeOf(
-    mir::ClassId published, mir::ClassId cls, ClassCodePoint point) const
+    mir::ClassId published, mir::CallableId operation) const
     -> const mir::CallableCode& {
   for (const ClassCodeSlot& code : published_scopes_.at(published).class_code) {
-    if (code.cls == cls && code.point == point) return code.operation;
+    if (code.operation_of == operation) return code.operation;
   }
   throw InternalError(
       "UnitLowerer::ClassCodePrototypeOf: a scope's published class "
@@ -786,30 +776,54 @@ auto UnitLowerer::ClassCodePrototypeOf(
       "declares -- please report this as a bug");
 }
 
+auto UnitLowerer::ClassCallableAt(
+    mir::ClassId cls, mir::CallableOrdinal ordinal) const -> mir::CallableId {
+  const std::vector<mir::CallableId>& taken = unit_.CallablesOf(cls).callables;
+  if (ordinal.value >= taken.size()) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::ClassCallableAt: class {} took no callable at "
+            "ordinal {} -- please report this as a bug",
+            cls.value, ordinal.value));
+  }
+  return taken[ordinal.value];
+}
+
+auto UnitLowerer::ClassConstructor(mir::ClassId cls) const -> mir::CallableId {
+  const std::optional<mir::CallableId>& taken =
+      unit_.CallablesOf(cls).constructor;
+  if (!taken.has_value()) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::ClassConstructor: class {} is constructed and took "
+            "no constructor -- please report this as a bug",
+            cls.value));
+  }
+  return *taken;
+}
+
 auto UnitLowerer::TakeClassCallables(hir::ClassId cls) -> ClassCallables {
   const hir::ClassDeclaration& declared = hir_->classes.Declaration(cls);
-  // Each method the class declares is the callable at its position, so a
-  // method is named alike in this unit and in every unit reading the
-  // declaration; everything else follows in one order.
-  base::IdAllocator<mir::CallableId> callables;
-  for (std::size_t m = 0; m < declared.methods.size(); ++m) {
-    callables.Take();
-  }
+  // Each method the class declares took the callable at its position with
+  // the class's identity, so a method is named alike in this unit and in
+  // every unit reading the declaration; everything else follows in one
+  // order.
+  const mir::ClassId id = ClassIdentity(cls);
+  const auto take = [&] { return unit_.TakeClassCallable(id); };
   ClassCallables taken{
       .hooks = std::nullopt,
       .reporting_forms = {},
       .declaring_instance = std::nullopt,
-      .reaches = {},
-      .count = 0};
+      .reaches = {}};
   if (!declared.is_interface_class) {
     const auto calls_declared = [&](hir::MethodId method) {
       return RandomizationHooks::CallsDeclared{
-          .body = callables.Take(), .method = method};
+          .body = take(), .method = method};
     };
     taken.hooks = RandomizationHooks{
-        .rand_variables = callables.Take(),
-        .constrain = callables.Take(),
-        .rand_objects = callables.Take(),
+        .rand_variables = take(),
+        .constrain = take(),
+        .rand_objects = take(),
         .pre_randomize =
             hir::MethodReplacing(
                 declared.methods, hir::RandomizationHook::kPreRandomize)
@@ -827,19 +841,17 @@ auto UnitLowerer::TakeClassCallables(hir::ClassId cls) -> ClassCallables {
         !ReportParamTypeOf(unit_, m.prototype.interface.kind).has_value()) {
       continue;
     }
-    taken.reporting_forms.emplace_back(method, callables.Take());
+    taken.reporting_forms.emplace_back(method, take());
   }
   if (KeepsDeclaringInstance(declared)) {
-    taken.declaring_instance = callables.Take();
+    taken.declaring_instance = take();
   }
   for (const hir::ClassId iface : declared.implements) {
     if (hir_->classes.Declaration(iface).instance_scope.has_value()) {
       taken.reaches.push_back(
-          mir::InterfaceReach{
-              .of = ClassIdentity(iface), .reach = callables.Take()});
+          mir::InterfaceReach{.of = ClassIdentity(iface), .reach = take()});
     }
   }
-  taken.count = callables.size();
   return taken;
 }
 
@@ -862,6 +874,32 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
       hir_->covergroups.size()};
   for (std::size_t i = 0; i < hir_->covergroups.size(); ++i) {
     covergroup_identities_.Append(unit_.DeclareClass());
+  }
+  // So does what a peer names of a class by its position: each method a class
+  // declares, which a class extending it overrides and a call names, at the
+  // position its declaration gives it, its construction, and each operation of
+  // the class a covergroup is written as, in the order every unit counts them.
+  for (const hir::ClassId hir_id : hir_->classes.Ids()) {
+    if (!hir_->classes.HasDeclaration(hir_id)) continue;
+    const hir::ClassDeclaration& declared = hir_->classes.Declaration(hir_id);
+    const mir::ClassId id = ClassIdentity(hir_id);
+    for (std::size_t m = 0; m < declared.methods.size(); ++m) {
+      unit_.TakeClassCallable(id);
+    }
+    if (declared.constructor.has_value()) {
+      unit_.TakeClassConstructor(id);
+    }
+  }
+  for (const hir::CovergroupId covergroup : hir_->covergroups.Ids()) {
+    if (!hir_->covergroups.IsOwn(covergroup) &&
+        !hir_->covergroups.IsPublished(covergroup)) {
+      continue;
+    }
+    const mir::ClassId id = CovergroupClassIdentity(covergroup);
+    for (std::size_t i = 0; i < CovergroupOperations().size(); ++i) {
+      unit_.TakeClassCallable(id);
+    }
+    unit_.TakeClassConstructor(id);
   }
   for (const hir::ClassId hir_id : hir_->classes.OwnIds()) {
     class_callables_.emplace(hir_id, TakeClassCallables(hir_id));
@@ -894,14 +932,22 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     if (id == nullptr) continue;
     DefineRecord(hir_->types.Get(hir_id), *id);
   }
-  for (const hir::TypeId hir_id : hir_->types.Ids()) {
-    const std::optional<mir::TypeId>& translated =
-        type_translations_.Get(hir_id);
-    if (!translated.has_value()) continue;
-    const mir::RecordId* id = mir::RecordOf(unit_.types.Get(*translated));
-    if (id == nullptr) continue;
-    DefineRecordMethods(hir_->types.Get(hir_id), *id, *translated);
-  }
+  const auto each_record = [&](const auto& visit) {
+    for (const hir::TypeId hir_id : hir_->types.Ids()) {
+      const std::optional<mir::TypeId>& translated =
+          type_translations_.Get(hir_id);
+      if (!translated.has_value()) continue;
+      const mir::RecordId* id = mir::RecordOf(unit_.types.Get(*translated));
+      if (id == nullptr) continue;
+      visit(hir_->types.Get(hir_id), *id, *translated);
+    }
+  };
+  each_record([&](const hir::Type& source, mir::RecordId id, mir::TypeId type) {
+    DeclareRecordMethods(source, id, type);
+  });
+  each_record([&](const hir::Type& source, mir::RecordId id, mir::TypeId type) {
+    DefineRecordMethods(source, id, type);
+  });
 
   for (const hir::ClassId published : hir_->classes.ImportedIds()) {
     DeclarePublishedClass(published);
@@ -970,8 +1016,10 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   // published as a bodyless callable of the unit: the DPI-C name space contains
   // no class, so no class owns one. Every call to the import resolves against
   // this one declaration, whichever unit wrote the source declaration.
+  foreign_imports_ = base::Translation<hir::ForeignImportId, mir::CallableId>{
+      hir_->foreign_imports.size()};
   for (const hir::ForeignImportDecl& import : hir_->foreign_imports) {
-    unit_.callables.Add(MakeForeignImportDecl(unit_, import));
+    foreign_imports_.Append(AddForeignImport(unit_, import));
   }
 
   PublishAssignmentPatternTexts();
@@ -987,19 +1035,15 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
   // types it names and a type is free to name one interned after it.
   for (const hir::TypeId type : hir_->types.Ids()) {
     if (names_its_text(type)) {
-      assignment_pattern_texts_.emplace(type, unit_.callables.Declare());
+      assignment_pattern_texts_.emplace(type, unit_.TakeNamespaceCallable());
     }
   }
 
   for (const hir::TypeId type : hir_->types.Ids()) {
     if (names_its_text(type)) {
-      unit_.callables.Define(
+      unit_.StateCallable(
           assignment_pattern_texts_.at(type),
-          mir::CallableDecl{
-              .code = BuildAssignmentPatternTextCode(*this, type),
-              .foreign = std::nullopt,
-              .virtual_dispatch = std::nullopt,
-              .defining_unit = std::nullopt});
+          BuildAssignmentPatternTextCode(*this, type));
     }
   }
 }
@@ -1143,7 +1187,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
       subroutine_callables{scope.structural_subroutines.size()};
   for (const hir::StructuralSubroutineId id :
        scope.structural_subroutines.Ids()) {
-    const mir::CallableId body = unit_.callables.Declare();
+    const mir::CallableId body = unit_.TakeNamespaceCallable();
     // A package subroutine is what another unit spells (LRM 26.3), so the
     // unit's namespace records the name against the body it reaches.
     unit_.named_callables.push_back(
@@ -1170,27 +1214,6 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
       namespace_frame.WithBlock(&install_code.Body())
           .WithBindings(&install_bindings);
 
-  // A package and the compilation unit's scope are each one object of the run
-  // beside the instance tree (LRM 37.10), and installing its storage is where
-  // the design brings it up, so that is where it hands the library what it
-  // states of itself: the definition it is and the scopes it declares (LRM
-  // 37.12). A class lowered alone and a text of the tool's are no such object.
-  if (hir::IsNamespaceObject(hir_->definition)) {
-    const ScopeTable declared = StateScopeTable(unit_, *hir_, scope);
-    mir::Builder install(install_code.Body(), namespace_frame.span);
-    const mir::ExprId info = ScopeDeclarationsAddress(
-        unit_, install,
-        mir::ScopeDeclarations{
-            .definition = DefinitionConstant(),
-            .elaborated = declared.elaborated,
-            .lexical = declared.lexical});
-    install.AppendStmt(
-        mir::ExprStmt{
-            .expr = install.Add(BuildBuiltinMethodCall(
-                unit_, install, support::BuiltinFn::kRegisterNamespace,
-                std::nullopt, {info}, unit_.builtins.void_type))});
-  }
-
   mir::CallableCode value_code =
       mir::CallableCode::Defined(namespace_frame.span);
   value_code.result_type = unit_.builtins.void_type;
@@ -1203,6 +1226,28 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
           value_frame);
       !own) {
     return std::unexpected(std::move(own.error()));
+  }
+
+  // A package and the compilation unit's scope are each one object of the run
+  // beside the instance tree (LRM 37.10), which states of itself the
+  // definition it is, the scopes it declares (LRM 37.12), and the variables it
+  // keeps, described once each has the cell its reading body names. A class
+  // lowered alone and a text of the tool's are no such object.
+  std::optional<mir::ScopeDeclarations> described;
+  if (hir::IsNamespaceObject(hir_->definition)) {
+    const ScopeTable declared = StateScopeTable(unit_, *hir_, scope);
+    described = mir::ScopeDeclarations{
+        .definition = DefinitionConstant(),
+        .elaborated = declared.elaborated,
+        .lexical = declared.lexical,
+        .data_objects = {},
+        .bodies = TakeDataObjectBodies(unit_, NamespaceBodies{})};
+    if (auto stated = DescribeDataObjects(
+            StructuralScopeLowerer(*this, scope), declared, NamespaceBodies{},
+            *described, namespace_frame, scope.described);
+        !stated) {
+      return std::unexpected(std::move(stated.error()));
+    }
   }
 
   // The classes this unit holds. A namespace replicates nothing, so an object
@@ -1255,12 +1300,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
         package_scopes, subroutine_statics.Get(id));
     auto code_or = subroutine_lowerer.Run(src, std::nullopt, std::nullopt);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
-    unit_.callables.Define(
-        subroutine_callables.Get(id), mir::CallableDecl{
-                                          .code = *std::move(code_or),
-                                          .foreign = std::nullopt,
-                                          .virtual_dispatch = std::nullopt,
-                                          .defining_unit = std::nullopt});
+    unit_.StateCallable(subroutine_callables.Get(id), *std::move(code_or));
   }
 
   // Each exported package subroutine (LRM 26.3, 35.7) is receiver-less: its
@@ -1275,20 +1315,16 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     // entry calls the body this unit's own namespace holds, naming the position
     // it already has in hand.
     ForeignExportEntry entry = SynthesizeForeignExportEntry(
-        *this, namespace_frame, mir::UnitCallableTarget{.slot = callable_id},
+        *this, namespace_frame, mir::CallableTarget{.callable = callable_id},
         result_type, export_decl);
     // A name a namespace owns needs no entry beside its callable: that callable
     // is the program-global symbol and carries the prototype it publishes.
-    unit_.callables.Add(
-        mir::CallableDecl{
-            .code = std::move(entry.code),
-            .foreign = std::move(entry.linkage),
-            .virtual_dispatch = std::nullopt,
-            .defining_unit = std::nullopt});
+    unit_.AddForeignCallable(std::move(entry.linkage), std::move(entry.code));
   }
 
   PublishNamespaceStorageBringUp(
-      *this, unit_, std::move(install_code), std::move(value_code));
+      *this, unit_, std::move(install_code), std::move(value_code),
+      std::move(described), namespace_frame.span);
   StateObjectDefinitions(unit_);
 
   return std::move(unit_);
@@ -1379,13 +1415,11 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
   // what a call of it hands over is read off the prototype here.
   for (const hir::MethodId method : published.methods.Ids()) {
     const hir::DeclaredMethod& declared_method = published.methods.Get(method);
-    const mir::CallableId callable = declared.callables.Add(
-        mir::CallableDecl{
-            .code = ClassMethodPrototype(*this, cls, method),
-            .foreign = std::nullopt,
-            .virtual_dispatch = DispatchRoleOf(
-                hir::ClassMethodTarget{.owner = cls, .method = method}),
-            .defining_unit = std::nullopt});
+    const mir::CallableId callable = ClassMethodCallable(id, method);
+    unit_.StateClassCallable(
+        callable,
+        DispatchRoleOf(hir::ClassMethodTarget{.owner = cls, .method = method}),
+        ClassMethodPrototype(*this, cls, method));
     declared.named_callables.push_back(
         mir::NamedCallable{
             .name = declared_method.prototype.name, .body = callable});
@@ -1401,22 +1435,21 @@ auto UnitLowerer::DeclarePublishedClass(hir::ClassId cls) -> void {
              hir::MethodReplacing(
                  published.methods, hir::RandomizationHook::kPostRandomize)
                  .has_value())) {
-      const mir::CallableId body = declared.callables.Add(
-          mir::CallableDecl{
-              .code = ClassHookPrototype(*this, cls, function),
-              .foreign = std::nullopt,
-              .virtual_dispatch = std::nullopt,
-              .defining_unit = std::nullopt});
-      declared.library_callbacks.push_back(
-          mir::LibraryCallbackBody{.callback = function, .body = body});
+      const mir::CallableId body = unit_.AddClassCallable(
+          id, std::nullopt, ClassHookPrototype(*this, cls, function));
+      declared.library_callbacks.emplace(function, body);
     }
-    // How its objects are built is the other unit's too; what a construction
-    // hands over is read off the prototype.
-    declared.constructor = mir::ConstructorDecl{
-        .code = ClassBodyConstructorPrototype(
+  }
+  // How its objects are built is the other unit's too; what a construction
+  // hands over is read off the prototype.
+  if (const std::optional<mir::CallableId> constructor =
+          unit_.CallablesOf(id).constructor) {
+    unit_.StateCallable(
+        *constructor,
+        ClassBodyConstructorPrototype(
             *this, cls, instance.transform([](const DeclaringInstance& i) {
               return i.type;
-            }))};
+            })));
   }
   unit_.DefineClass(id, std::move(declared));
 }
@@ -1425,9 +1458,6 @@ void UnitLowerer::DeclareExternBindings(
     mir::ClassId published, const std::optional<std::string>& defining_unit,
     const hir::ScopeClassSignature& scope) {
   const mir::TypeId scope_pointer = SelfPointerTo(published);
-  base::IdAllocator<mir::CallableId> methods;
-  std::ranges::for_each(
-      scope.callables.Ids(), [&](hir::PublishedCallableId) { methods.Take(); });
   std::vector<ExternBinding> bindings;
   bindings.reserve(scope.externs.size());
   for (const hir::PublishedExtern& declared : scope.externs) {
@@ -1447,16 +1477,10 @@ void UnitLowerer::DeclareExternBindings(
         support::ClassStep{.name = "callback", .arguments = std::nullopt});
     stated.self_pointer_type = SelfPointerTo(callback);
     stated.is_interface = true;
+    const mir::CallableId invoked = unit_.AddClassCallable(
+        callback, mir::IntroducesVirtualSlot{.is_pure = true}, invoke);
     stated.named_callables.push_back(
-        mir::NamedCallable{
-            .name = "invoke",
-            .body = stated.callables.Add(
-                mir::CallableDecl{
-                    .code = invoke,
-                    .foreign = std::nullopt,
-                    .virtual_dispatch =
-                        mir::IntroducesVirtualSlot{.is_pure = true},
-                    .defining_unit = std::nullopt})});
+        mir::NamedCallable{.name = "invoke", .body = invoked});
     unit_.DefineClass(callback, std::move(stated));
 
     const mir::TypeId handle = unit_.types.Intern(
@@ -1472,8 +1496,9 @@ void UnitLowerer::DeclareExternBindings(
     bindings.push_back(
         ExternBinding{
             .callback = callback,
+            .invoked = invoked,
             .invoke = std::move(invoke),
-            .bind = methods.Take(),
+            .bind = unit_.TakeClassCallable(published),
             .bind_name = std::format("{} bind", subroutine.name),
             .bind_prototype = std::move(bind),
             .handle = handle,
@@ -1518,31 +1543,23 @@ auto UnitLowerer::DeclarePublishedScopeClass(
     slots.push_back(slot);
     field_types.push_back(field.type);
   }
+  const auto introduce_pure = [&](std::string name, mir::CallableId method,
+                                  mir::CallableCode prototype) {
+    unit_.StateClassCallable(
+        method, mir::IntroducesVirtualSlot{.is_pure = true},
+        std::move(prototype));
+    declared.named_callables.push_back(
+        mir::NamedCallable{.name = std::move(name), .body = method});
+  };
   for (const hir::ScopeCallable& listed : scope.callables) {
     const hir::SubroutinePrototype& callable = listed.prototype;
-    declared.named_callables.push_back(
-        mir::NamedCallable{
-            .name = callable.name,
-            .body = declared.callables.Add(
-                mir::CallableDecl{
-                    .code = PrototypeOf(*this, callable, SelfPointerTo(id)),
-                    .foreign = std::nullopt,
-                    .virtual_dispatch =
-                        mir::IntroducesVirtualSlot{.is_pure = true},
-                    .defining_unit = std::nullopt})});
+    introduce_pure(
+        callable.name, unit_.TakeClassCallable(id),
+        PrototypeOf(*this, callable, SelfPointerTo(id)));
   }
   DeclareExternBindings(id, key.unit_name, scope);
   for (const ExternBinding& binding : ExternBindingsOf(id)) {
-    declared.named_callables.push_back(
-        mir::NamedCallable{
-            .name = binding.bind_name,
-            .body = declared.callables.Add(
-                mir::CallableDecl{
-                    .code = binding.bind_prototype,
-                    .foreign = std::nullopt,
-                    .virtual_dispatch =
-                        mir::IntroducesVirtualSlot{.is_pure = true},
-                    .defining_unit = std::nullopt})});
+    introduce_pure(binding.bind_name, binding.bind, binding.bind_prototype);
   }
   unit_.DefineClass(id, std::move(declared));
   scope_layouts_.emplace(
@@ -1734,8 +1751,8 @@ auto UnitLowerer::TranslateStaticPropertyTarget(
 auto UnitLowerer::TranslateMethodTarget(
     const hir::ClassMethodTarget& target) const -> mir::CallableTarget {
   return mir::CallableTarget{
-      .owner = ClassIdentity(target.owner),
-      .slot = mir::CallableId{target.method.value}};
+      .callable =
+          ClassMethodCallable(ClassIdentity(target.owner), target.method)};
 }
 
 auto UnitLowerer::DispatchRoleOf(const hir::ClassMethodTarget& method) const
@@ -1774,8 +1791,7 @@ auto UnitLowerer::DispatchRoleOf(const hir::ClassMethodTarget& method) const
 auto UnitLowerer::VirtualSlotOf(const hir::ClassMethodTarget& behavior) const
     -> mir::VirtualSlot {
   return mir::VirtualSlot{
-      .owner_class = ClassIdentity(behavior.owner),
-      .slot = mir::CallableId{behavior.method.value}};
+      .introduced_by = TranslateMethodTarget(behavior).callable};
 }
 
 auto UnitLowerer::ConformanceOf(hir::ClassId cls) const
@@ -1798,7 +1814,7 @@ auto UnitLowerer::MakeNamespaceCallableTarget(
     const hir::NamespaceSubroutineRef& ref) -> mir::DirectTarget {
   if (const auto known = namespace_callables_.find(ref);
       known != namespace_callables_.end()) {
-    return mir::UnitCallableTarget{.slot = known->second};
+    return mir::CallableTarget{.callable = known->second};
   }
   if (hir_->namespaces.IsOwn(ref.owner)) {
     throw InternalError(
@@ -1808,19 +1824,15 @@ auto UnitLowerer::MakeNamespaceCallableTarget(
   }
   // Another unit's subroutine is a body declared here under the identifier
   // that unit published it by, which is how the program's link spells it.
-  const mir::CallableId callable = unit_.callables.Add(
-      mir::CallableDecl{
-          .code = {},
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = hir_->namespaces.KeyOf(ref.owner).unit_name});
+  const mir::CallableId callable =
+      unit_.AddSubroutineOfUnit(hir_->namespaces.KeyOf(ref.owner).unit_name);
   unit_.named_callables.push_back(
       mir::NamedCallable{
           .name = hir_->namespaces.SubroutineOf(ref.owner, ref.subroutine)
                       .prototype.name,
           .body = callable});
   namespace_callables_.emplace(ref, callable);
-  return mir::UnitCallableTarget{.slot = callable};
+  return mir::CallableTarget{.callable = callable};
 }
 
 auto UnitLowerer::NamespaceCellType(const hir::NamespaceValueRef& ref)
@@ -1878,8 +1890,8 @@ auto UnitLowerer::PublishedSubroutineSlot(
     hir::ScopeClassId scope_class, hir::PublishedCallableId callable) const
     -> mir::VirtualSlot {
   return mir::VirtualSlot{
-      .owner_class = ScopeClassIdentity(scope_class),
-      .slot = PublishedMethodOf(callable)};
+      .introduced_by =
+          PublishedMethodOf(ScopeClassIdentity(scope_class), callable)};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

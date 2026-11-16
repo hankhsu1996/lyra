@@ -5,38 +5,38 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/hir/structural_data_object.hpp"
+#include "lyra/support/data_object.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 auto TranslateNetType(
     const slang::ast::NetType& net_type, diag::SourceSpan span)
-    -> diag::Result<hir::NetType> {
+    -> diag::Result<support::NetType> {
   switch (net_type.netKind) {
     case slang::ast::NetType::Wire:
-      return hir::NetType::kWire;
+      return support::NetType::kWire;
     case slang::ast::NetType::Tri:
-      return hir::NetType::kTri;
+      return support::NetType::kTri;
     case slang::ast::NetType::WAnd:
-      return hir::NetType::kWand;
+      return support::NetType::kWand;
     case slang::ast::NetType::TriAnd:
-      return hir::NetType::kTriand;
+      return support::NetType::kTriand;
     case slang::ast::NetType::WOr:
-      return hir::NetType::kWor;
+      return support::NetType::kWor;
     case slang::ast::NetType::TriOr:
-      return hir::NetType::kTrior;
+      return support::NetType::kTrior;
     case slang::ast::NetType::Tri0:
-      return hir::NetType::kTri0;
+      return support::NetType::kTri0;
     case slang::ast::NetType::Tri1:
-      return hir::NetType::kTri1;
+      return support::NetType::kTri1;
     case slang::ast::NetType::Supply0:
-      return hir::NetType::kSupply0;
+      return support::NetType::kSupply0;
     case slang::ast::NetType::Supply1:
-      return hir::NetType::kSupply1;
+      return support::NetType::kSupply1;
     case slang::ast::NetType::UWire:
-      return hir::NetType::kUwire;
+      return support::NetType::kUwire;
     case slang::ast::NetType::TriReg:
-      return hir::NetType::kTrireg;
+      return support::NetType::kTrireg;
     case slang::ast::NetType::Interconnect:
       // LRM 6.6.8.
       return diag::Fail(

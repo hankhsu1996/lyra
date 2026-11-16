@@ -2,7 +2,7 @@
 
 #include <optional>
 
-#include "lyra/mir/closure_decl.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -18,15 +18,16 @@ namespace lyra::mir {
     const TypePool& types, ClosureId closure, support::ClosureKind kind)
     -> TypeId;
 
-// The kind of `closure`, read off the receiver its body is entered on.
+// The kind of the closure whose body is `invoke`, read off the receiver that
+// body is entered on.
 [[nodiscard]] auto ClosureKindOf(
-    const TypePool& types, const ClosureDecl& closure) -> support::ClosureKind;
+    const TypePool& types, const CallableCode& invoke) -> support::ClosureKind;
 
-// The erased callable `closure` is made into where its type stops being known:
-// one of its kind, taking what its body takes and answering what its body
-// answers.
+// The erased callable the closure whose body is `invoke` is made into where its
+// type stops being known: one of its kind, taking what its body takes and
+// answering what its body answers.
 [[nodiscard]] auto ErasedTypeOf(
-    const TypePool& types, const ClosureDecl& closure) -> TypeId;
+    const TypePool& types, const CallableCode& invoke) -> TypeId;
 
 // A closure made one of no known type, which is how a closure is handed to
 // the library without its type, as rustc's unsizing coercion makes

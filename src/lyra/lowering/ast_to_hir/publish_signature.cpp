@@ -60,6 +60,7 @@
 #include "lyra/lowering/ast_to_hir/canonical_body.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
+#include "lyra/lowering/ast_to_hir/port_direction.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -99,16 +100,6 @@ auto DeclaredSubroutineOf(
   }
   return hir::DeclaredSubroutine<Id>{
       .prototype = std::move(published), .defaults = std::move(defaults)};
-}
-
-// Whether the declaration a `ref` port reaches forbids writing through it (LRM
-// 23.3.3.2). The frontend carries this on the declaration rather than on the
-// port, so the unit reads its own declaration to state what it publishes.
-auto IsConstRef(const slang::ast::Symbol* internal) -> bool {
-  if (internal == nullptr) return false;
-  const auto* variable = internal->as_if<slang::ast::VariableSymbol>();
-  return variable != nullptr &&
-         variable->flags.has(slang::ast::VariableFlags::Const);
 }
 
 // One coordinate a port expression wrote. LRM 23.2.2.1 gives a port reference a
@@ -245,24 +236,6 @@ auto PositionsOfPortExpression(
       .position = static_cast<std::uint32_t>(path.lspBounds.first),
       .width = static_cast<std::uint32_t>(
           path.lspBounds.second - path.lspBounds.first + 1)};
-}
-
-auto TranslateDirection(
-    slang::ast::ArgumentDirection direction, const slang::ast::Symbol* internal)
-    -> hir::PortDirection {
-  switch (direction) {
-    case slang::ast::ArgumentDirection::In:
-      return hir::PortDirection::kInput;
-    case slang::ast::ArgumentDirection::Out:
-      return hir::PortDirection::kOutput;
-    case slang::ast::ArgumentDirection::InOut:
-      return hir::PortDirection::kInOut;
-    case slang::ast::ArgumentDirection::Ref:
-      return IsConstRef(internal) ? hir::PortDirection::kConstRef
-                                  : hir::PortDirection::kRef;
-  }
-  throw InternalError(
-      "PublishSignature: a port direction the language does not define");
 }
 
 // The descent a port expression's own selects state, turned from the leaf-first
@@ -560,8 +533,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     const auto span = frontend::PointSpanOf(port.location);
     auto interned = InternType(port.getType(), span);
     if (!interned) return std::unexpected(std::move(interned.error()));
-    const hir::PortDirection direction =
-        TranslateDirection(port.direction, port.internalSymbol);
+    const support::PortDirection direction = PortDirectionOf(port);
     // A port expression names the part of a declaration the port stands for
     // (LRM 23.2.2.2); a port written as a plain name has none, and the whole
     // of the declaration behind it is the same descent with no steps. A port
@@ -598,22 +570,22 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     // a port written as a plain name is, and a net is driven rather than
     // assigned (LRM 6.5).
     switch (direction) {
-      case hir::PortDirection::kRef:
+      case support::PortDirection::kRef:
         ref_port_internals_.emplace(peeled->base, hir::ReferenceBinding::kRef);
         break;
-      case hir::PortDirection::kConstRef:
+      case support::PortDirection::kConstRef:
         ref_port_internals_.emplace(
             peeled->base, hir::ReferenceBinding::kConstRef);
         break;
-      case hir::PortDirection::kInput:
+      case support::PortDirection::kInput:
         if (written == nullptr &&
             peeled->base->kind == slang::ast::SymbolKind::Variable) {
           ref_port_internals_.emplace(
               peeled->base, hir::ReferenceBinding::kInput);
         }
         break;
-      case hir::PortDirection::kOutput:
-      case hir::PortDirection::kInOut:
+      case support::PortDirection::kOutput:
+      case support::PortDirection::kInOut:
         break;
     }
     auto path = PublishPath(*this, peeled->steps, span);

@@ -159,10 +159,10 @@ enum class LibraryDecl : std::uint8_t {
 
   // What every object of one class carries, the parts a class's definition is
   // made of, what a constructor of the design hierarchy is handed and how
-  // each of its objects is made, what a value dump may record (LRM 21.7.1.2),
-  // and where in the source an operation that can fail the design was written
-  // (LRM 20.10): the structures a unit states constants of, which the library
-  // reads.
+  // each of its objects is made, the data objects a scope declares and their
+  // types (LRM 21.7.1.2, 37.25), and where in the source an operation that can
+  // fail the design was written (LRM 20.10): the structures a unit states
+  // constants of, which the library reads.
   kObjectDefinition,
   kScopeInfo,
   kDefinitionRecord,
@@ -176,7 +176,9 @@ enum class LibraryDecl : std::uint8_t {
   kConstructionTable,
   kInstantiation,
   kGeneratePlaces,
-  kDumpEntry,
+  kTypespec,
+  kDataObjectRecord,
+  kDescribedPort,
   kSourceLocation,
   kSourceLocationRecord,
 
@@ -186,6 +188,13 @@ enum class LibraryDecl : std::uint8_t {
   kRuntimeEffects,
   kFileTable,
   kDiagnosticDispatcher,
+
+  // What a reader reaching the design by name hands the code reading and the
+  // code watching one data object, each reached as a live reference: where the
+  // value read is handed, and where the trigger a wait for a change of the
+  // object would enrol is handed (LRM 38.15, 21.7.2.3).
+  kValueSerializer,
+  kSubscriber,
 
   // The classes of the runtime's whose objects generated code reaches but
   // never lays out: the scope an instance of the design hierarchy is (LRM
@@ -995,10 +1004,20 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
           kNamedByAddress("generate places", "lyra::abi::GeneratePlaces");
       return &kGeneratePlaces;
     }
-    case LibraryDecl::kDumpEntry: {
-      static constexpr LibraryDeclData kDumpEntry =
-          kNamedByAddress("dump entry", "lyra::abi::DumpEntry");
-      return &kDumpEntry;
+    case LibraryDecl::kTypespec: {
+      static constexpr LibraryDeclData kTypespec =
+          kNamedByAddress("typespec", "lyra::abi::Typespec");
+      return &kTypespec;
+    }
+    case LibraryDecl::kDataObjectRecord: {
+      static constexpr LibraryDeclData kDataObjectRecord =
+          kNamedByAddress("data object record", "lyra::abi::DataObjectRecord");
+      return &kDataObjectRecord;
+    }
+    case LibraryDecl::kDescribedPort: {
+      static constexpr LibraryDeclData kDescribedPort =
+          kNamedByAddress("described port", "lyra::abi::DescribedPort");
+      return &kDescribedPort;
     }
     // One word, the address of the constant a unit states for the location,
     // which a copy holds whole and a member holds as that word.
@@ -1033,6 +1052,16 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       static constexpr LibraryDeclData kDiagnosticDispatcher = kFacility(
           "diagnostic dispatcher", "lyra::runtime::DiagnosticDispatcher&");
       return &kDiagnosticDispatcher;
+    }
+    case LibraryDecl::kValueSerializer: {
+      static constexpr LibraryDeclData kValueSerializer =
+          kFacility("value serializer", "lyra::runtime::ValueSerializer&");
+      return &kValueSerializer;
+    }
+    case LibraryDecl::kSubscriber: {
+      static constexpr LibraryDeclData kSubscriber =
+          kFacility("subscriber", "lyra::runtime::Subscriber&");
+      return &kSubscriber;
     }
 
     case LibraryDecl::kScope: {
