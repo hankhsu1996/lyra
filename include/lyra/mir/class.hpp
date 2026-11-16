@@ -1,16 +1,12 @@
 #pragma once
 
-#include <compare>
-#include <cstdint>
 #include <map>
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
-#include "lyra/base/internal_error.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -42,75 +38,47 @@ struct DescribedDataObject {
   auto operator==(const DescribedDataObject&) const -> bool = default;
 };
 
-// Where a data object stands among those its scope describes, in the order
-// the scope lists them.
-struct DescribedDataObjectId {
-  std::uint32_t value = 0;
+// The two bodies through which a reader reaching the design by name reaches
+// every data object a scope describes, each handed the object, the position of
+// the data object among those the scope describes, and what the reader gave:
+// one hands the serializer the value it holds, the other hands the subscriber
+// the trigger a wait for a change of it enrols. They are methods of the
+// scope's class, or bodies of a namespace's unit, as serde's generated code is
+// one serialize function per type handling every field.
+struct DataObjectBodies {
+  CallableId read;
+  CallableId subscribe;
 
-  auto operator<=>(const DescribedDataObjectId&) const
-      -> std::strong_ordering = default;
-};
-
-// Which data object a body reads or subscribes to, and which of the two the
-// body does. The body reading it hands its value, the one subscribing to it the
-// trigger a wait for a change of it enrols.
-struct DataObjectAccess {
-  enum class Kind : std::uint8_t { kRead, kSubscribe };
-  DescribedDataObjectId object;
-  Kind kind;
-
-  auto operator==(const DataObjectAccess&) const -> bool = default;
-};
-
-// The word naming what a body of `kind` does to its data object, which every
-// spelling of such a body is named by.
-[[nodiscard]] inline auto AccessWordOf(DataObjectAccess::Kind kind)
-    -> std::string_view {
-  switch (kind) {
-    case DataObjectAccess::Kind::kRead:
-      return "read";
-    case DataObjectAccess::Kind::kSubscribe:
-      return "subscribe";
-  }
-  throw InternalError("mir: unknown data object access");
-}
-
-// A body reading or subscribing to a data object its scope describes, and the
-// identifier the object is declared under there, which is what names the body.
-struct DataObjectAccessName {
-  DataObjectAccess access;
-  std::string_view identifier;
+  auto operator==(const DataObjectBodies&) const -> bool = default;
 };
 
 // What a scope of the design hierarchy states of itself (LRM 37.10, 37.12):
 // the record of the definition it comes from, the record of each scope it
 // declares that the run builds and of each it builds nothing for, each a
 // constant of the unit, each data object it declares, in the order it lists
-// them, and, by the body, the bodies reading and subscribing to each of those
-// -- methods of its class, or bodies of a namespace's unit.
+// them, and the two bodies reaching those.
 struct ScopeDeclarations {
   ConstantId definition;
   std::vector<ConstantId> elaborated;
   std::vector<ConstantId> lexical;
   std::vector<DescribedDataObject> data_objects;
-  std::map<CallableId, DataObjectAccess> data_object_bodies;
+  DataObjectBodies bodies;
 
   auto operator==(const ScopeDeclarations&) const -> bool = default;
 };
 
-// What the body `body` reads or subscribes to among what `declarations`
-// describes, none where it does neither.
-[[nodiscard]] inline auto DataObjectAccessOf(
+// The callback of the runtime library the body `body` answers among the two
+// reaching what `declarations` describes, none where it is neither.
+[[nodiscard]] inline auto DataObjectCallbackOf(
     const ScopeDeclarations& declarations, CallableId body)
-    -> std::optional<DataObjectAccessName> {
-  const auto found = declarations.data_object_bodies.find(body);
-  if (found == declarations.data_object_bodies.end()) {
-    return std::nullopt;
+    -> std::optional<support::LibraryCallback> {
+  if (body == declarations.bodies.read) {
+    return support::LibraryCallback::kScopeReadDataObject;
   }
-  return DataObjectAccessName{
-      .access = found->second,
-      .identifier =
-          declarations.data_objects.at(found->second.object.value).identifier};
+  if (body == declarations.bodies.subscribe) {
+    return support::LibraryCallback::kScopeSubscribeDataObject;
+  }
+  return std::nullopt;
 }
 
 // A class static property (LRM 8.9): a named, mutable type-associated storage

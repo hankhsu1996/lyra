@@ -117,6 +117,8 @@ struct RandomizationHooks {
       case support::LibraryCallback::kScopeResolve:
       case support::LibraryCallback::kScopeInitialize:
       case support::LibraryCallback::kScopeCreateProcesses:
+      case support::LibraryCallback::kScopeReadDataObject:
+      case support::LibraryCallback::kScopeSubscribeDataObject:
         break;
     }
     throw InternalError(

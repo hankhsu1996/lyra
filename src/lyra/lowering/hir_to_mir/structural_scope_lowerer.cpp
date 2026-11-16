@@ -2575,6 +2575,23 @@ auto DeclaredCellOf(
 
 }  // namespace
 
+auto TakeDataObjectBodies(mir::CompilationUnit& unit, DescribingBodies bodies)
+    -> mir::DataObjectBodies {
+  const auto take = [&] {
+    return std::visit(
+        Overloaded{
+            [&](const ScopeClassBodies& of_class) {
+              return unit.TakeClassCallable(of_class.id);
+            },
+            [&](const NamespaceBodies&) {
+              return unit.TakeNamespaceCallable();
+            }},
+        bodies);
+  };
+  const mir::CallableId read = take();
+  return mir::DataObjectBodies{.read = read, .subscribe = take()};
+}
+
 auto DescribeDataObjects(
     const StructuralScopeLowerer& lowerer, const ScopeTable& scopes,
     DescribingBodies bodies, mir::ScopeDeclarations& declarations,
@@ -2582,10 +2599,24 @@ auto DescribeDataObjects(
     const std::vector<hir::DescribedDataObject>& described)
     -> diag::Result<void> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  // A body taking the object and what the reader handed it, of `handed`,
-  // whose one statement `statement` builds, doing `access`.
-  const auto body = [&](mir::DataObjectAccess access, mir::TypeId handed,
-                        const auto& statement) -> diag::Result<void> {
+  for (const hir::DescribedDataObject& object : described) {
+    const DeclaredDataObject declared = DeclaredCellOf(lowerer, object.cell);
+    declarations.data_objects.push_back(
+        mir::DescribedDataObject{
+            .identifier = std::string{declared.identifier},
+            .net_type = declared.net_type,
+            .typespec = TypespecConstant(unit, *declared.typespec),
+            .ports = object.ports,
+            .enclosing = declared.lexical_scope.transform(
+                [&](hir::ProceduralScopeId lexical_scope) {
+                  return scopes.procedural_scopes.at(lexical_scope);
+                })});
+  }
+  // The body `id`, taking the object, the position of the data object it is
+  // asked for among those described, and what the reader gave, of `handed`,
+  // whose case for each data object is the one statement `statement` builds.
+  const auto state = [&](mir::CallableId id, mir::TypeId handed,
+                         const auto& statement) -> diag::Result<void> {
     mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
     CallableBindings bindings(unit, code);
     const mir::LocalId object = std::visit(
@@ -2598,81 +2629,70 @@ auto DescribeDataObjects(
                   mir::ObjectRootPointer(unit.types));
             }},
         bodies);
+    const mir::LocalId position =
+        bindings.DeclareAnonymous(unit.builtins.machine_int64);
     const mir::LocalId given = bindings.DeclareAnonymous(handed);
     mir::Builder block(code.Body(), scope_frame.span);
-    const WalkFrame frame =
-        scope_frame.WithBlock(&block.Body()).WithBindings(&bindings);
-    auto call = statement(block, frame, block.LocalPlace(given, handed));
-    if (!call) return std::unexpected(std::move(call.error()));
-    block.AppendStmt(mir::ExprStmt{.expr = *call});
-    code.params = {object, given};
+    mir::SwitchStmt chosen{
+        .discriminant = block.ReadLocal(position, unit.builtins.machine_int64),
+        .cases = {},
+        .default_body = std::nullopt};
+    chosen.cases.reserve(described.size());
+    for (std::size_t at = 0; at < described.size(); ++at) {
+      mir::Block taken;
+      mir::Builder inside = block.Into(taken);
+      const WalkFrame frame =
+          scope_frame.WithBlock(&taken).WithBindings(&bindings);
+      auto call = statement(
+          described[at], inside, frame, inside.LocalPlace(given, handed));
+      if (!call) return std::unexpected(std::move(call.error()));
+      inside.AppendStmt(mir::ExprStmt{.expr = *call});
+      chosen.cases.push_back(
+          mir::SwitchCase{
+              .values = {static_cast<std::int64_t>(at)},
+              .body = block.AddScope(std::move(taken))});
+    }
+    block.AppendStmt(std::move(chosen));
+    code.params = {object, position, given};
     code.result_type = unit.builtins.void_type;
-    declarations.data_object_bodies.emplace(
-        std::visit(
-            Overloaded{
-                [&](const ScopeClassBodies& of_class) {
-                  return unit.AddClassCallable(
-                      of_class.id, std::nullopt, std::move(code));
-                },
-                [&](const NamespaceBodies&) {
-                  return unit.AddNamespaceCallable(std::move(code));
-                }},
-            bodies),
-        access);
+    unit.StateCallable(id, std::move(code));
     return {};
   };
-  for (const hir::DescribedDataObject& object : described) {
-    const DeclaredDataObject declared = DeclaredCellOf(lowerer, object.cell);
-    const mir::DescribedDataObjectId at{
-        static_cast<std::uint32_t>(declarations.data_objects.size())};
-    declarations.data_objects.push_back(
-        mir::DescribedDataObject{
-            .identifier = std::string{declared.identifier},
-            .net_type = declared.net_type,
-            .typespec = TypespecConstant(unit, *declared.typespec),
-            .ports = object.ports,
-            .enclosing = declared.lexical_scope.transform(
-                [&](hir::ProceduralScopeId lexical_scope) {
-                  return scopes.procedural_scopes.at(lexical_scope);
-                })});
-    auto read = body(
-        mir::DataObjectAccess{
-            .object = at, .kind = mir::DataObjectAccess::Kind::kRead},
-        mir::LibraryTypeOf(unit.types, support::LibraryDecl::kValueSerializer),
-        [&](mir::Builder block, const WalkFrame& frame,
-            mir::ExprId serializer) -> diag::Result<mir::ExprId> {
-          auto value = lowerer.LowerExpr(
-              hir::MakeValueTargetRefExpr(
-                  object.cell, object.type, scope_frame.span),
-              frame);
-          if (!value) return std::unexpected(std::move(value.error()));
-          const support::BuiltinFn entry = SerializeEntryOf(unit, value->type);
-          const mir::ExprId read_value = block.Add(*std::move(value));
-          return block.Add(
-              mir::MakeCallExpr(
-                  mir::Direct{.target = entry, .receiver = serializer},
-                  {read_value}, unit.builtins.void_type));
-        });
-    if (!read) return std::unexpected(std::move(read.error()));
-    auto subscribe = body(
-        mir::DataObjectAccess{
-            .object = at, .kind = mir::DataObjectAccess::Kind::kSubscribe},
-        mir::LibraryTypeOf(unit.types, support::LibraryDecl::kSubscriber),
-        [&](mir::Builder block, const WalkFrame& frame,
-            mir::ExprId subscriber) -> diag::Result<mir::ExprId> {
-          auto trigger = BuildValueChangeTrigger(
-              block, frame, lowerer, hir::WatchedStorage{object.cell});
-          if (!trigger) return std::unexpected(std::move(trigger.error()));
-          return block.Add(
-              mir::MakeCallExpr(
-                  mir::Direct{
-                      .target = support::BuiltinFn::kSubscribe,
-                      .receiver = subscriber},
-                  {*trigger}, unit.builtins.void_type));
-        });
-    if (!subscribe) return std::unexpected(std::move(subscribe.error()));
-  }
-  return {};
+  auto read = state(
+      declarations.bodies.read,
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kValueSerializer),
+      [&](const hir::DescribedDataObject& object, mir::Builder block,
+          const WalkFrame& frame,
+          mir::ExprId serializer) -> diag::Result<mir::ExprId> {
+        auto value = lowerer.LowerExpr(
+            hir::MakeValueTargetRefExpr(
+                object.cell, object.type, scope_frame.span),
+            frame);
+        if (!value) return std::unexpected(std::move(value.error()));
+        const support::BuiltinFn entry = SerializeEntryOf(unit, value->type);
+        const mir::ExprId read_value = block.Add(*std::move(value));
+        return block.Add(
+            mir::MakeCallExpr(
+                mir::Direct{.target = entry, .receiver = serializer},
+                {read_value}, unit.builtins.void_type));
+      });
+  if (!read) return std::unexpected(std::move(read.error()));
+  return state(
+      declarations.bodies.subscribe,
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kSubscriber),
+      [&](const hir::DescribedDataObject& object, mir::Builder block,
+          const WalkFrame& frame,
+          mir::ExprId subscriber) -> diag::Result<mir::ExprId> {
+        auto trigger = BuildValueChangeTrigger(
+            block, frame, lowerer, hir::WatchedStorage{object.cell});
+        if (!trigger) return std::unexpected(std::move(trigger.error()));
+        return block.Add(
+            mir::MakeCallExpr(
+                mir::Direct{
+                    .target = support::BuiltinFn::kSubscribe,
+                    .receiver = subscriber},
+                {*trigger}, unit.builtins.void_type));
+      });
 }
 
 auto BuildExecutionStart(
@@ -2839,7 +2859,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       .elaborated = declared_scope_records_.elaborated,
       .lexical = declared_scope_records_.lexical,
       .data_objects = {},
-      .data_object_bodies = {}};
+      .bodies = TakeDataObjectBodies(
+          unit_lowerer.Unit(),
+          ScopeClassBodies{.id = class_id_, .self_type = self_pointer_type})};
 
   AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape);
   // What construction supplies is what distinguishes one built scope from

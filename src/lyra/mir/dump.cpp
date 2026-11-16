@@ -1069,19 +1069,15 @@ class MirDumper {
             std::format(" enclosing=Constant[{}]", object.enclosing->value);
       }
     }
-    std::string bodies;
-    for (const auto& [callable, access] : declarations.data_object_bodies) {
-      if (!bodies.empty()) bodies += ", ";
-      bodies += std::format(
-          "Callable[{}]={} {}", callable.value, AccessWordOf(access.kind),
-          access.object.value);
-    }
     Line(
         std::format(
             "ScopeDeclarations: definition=Constant[{}] elaborated=[{}] "
-            "lexical=[{}] data_objects=[{}] bodies=[{}]",
+            "lexical=[{}] data_objects=[{}] read=Callable[{}] "
+            "subscribe=Callable[{}]",
             declarations.definition.value, listed(declarations.elaborated),
-            listed(declarations.lexical), data_objects, bodies));
+            listed(declarations.lexical), data_objects,
+            declarations.bodies.read.value,
+            declarations.bodies.subscribe.value));
   }
 
   void DumpFieldList(

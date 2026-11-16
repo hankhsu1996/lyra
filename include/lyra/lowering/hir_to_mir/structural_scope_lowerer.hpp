@@ -12,7 +12,6 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -535,14 +534,22 @@ struct ScopeClassBodies {
 struct NamespaceBodies {};
 using DescribingBodies = std::variant<ScopeClassBodies, NamespaceBodies>;
 
+// The two bodies reaching the data objects a scope describes, taken where
+// `bodies` says, their code stated once the objects are known.
+[[nodiscard]] auto TakeDataObjectBodies(
+    mir::CompilationUnit& unit, DescribingBodies bodies)
+    -> mir::DataObjectBodies;
+
 // Each data object the scope `lowerer` lowers describes (LRM 21.7.1.2, 37.17),
-// as its declaration states it, stated in `declarations`, and the two bodies
-// that read it and subscribe to it, added where `bodies` says. One reads the
-// object's cell as the scope's own code reads it and hands the value to the
-// serializer the reader gave; the other builds the trigger a wait for a change
-// of it enrols and hands it to the subscriber the reader gave. Each is compiled
-// where the object's type is known, so a reader reads no storage itself.
-// `scopes` holds the records of the procedural scopes an object lies in.
+// as its declaration states it, stated in `declarations`, and the code of the
+// two bodies `declarations` names, which `bodies` says the kind of. Each
+// switches on the position of the data object it is asked for, and in the
+// case for each: one reads the object's cell as the scope's own code reads it
+// and hands the value to the serializer the reader gave; the other builds the
+// trigger a wait for a change of it enrols and hands it to the subscriber the
+// reader gave. Each case is compiled where the object's type is known, so a
+// reader reads no storage itself. `scopes` holds the records of the
+// procedural scopes an object lies in.
 auto DescribeDataObjects(
     const StructuralScopeLowerer& lowerer, const ScopeTable& scopes,
     DescribingBodies bodies, mir::ScopeDeclarations& declarations,

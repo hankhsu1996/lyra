@@ -10,6 +10,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
@@ -57,11 +58,17 @@ class DumpCapture {
 };
 
 // One thing a dump records, where it is read: the instance declaring it, none
-// for one a package or the compilation unit's scope keeps, and the record its
-// declarer states of it, whose bodies read it and watch it there.
+// for one a package or the compilation unit's scope keeps, what its declarer
+// states of itself, whose two bodies read it and subscribe to it there, and
+// its position among the data objects that states.
 struct DumpedObject {
   Scope* instance = nullptr;
-  const abi::DataObjectRecord* object = nullptr;
+  const abi::ScopeDeclarations* declarations = nullptr;
+  std::uint32_t position = 0;
+
+  [[nodiscard]] auto Record() const -> const abi::DataObjectRecord& {
+    return *declarations->data_objects.Entries()[position];
+  }
 };
 
 // What a dump finds a variable a `$dumpvars` names by among those it walks

@@ -46,7 +46,7 @@ auto LinkageOf(const CompilationUnit& unit, const CodeSource& at)
             [](const ReachedInAnotherUnit&) {
               return support::Linkage::kExternal;
             },
-            [](const ReachedAsDataObjectAccess&) {
+            [](const ReachedAsLibraryCallback&) {
               return support::Linkage::kInternal;
             },
             [](const ReachedByPosition&) {

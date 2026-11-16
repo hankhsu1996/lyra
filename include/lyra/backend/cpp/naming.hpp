@@ -236,12 +236,8 @@ struct MintedAppliedName {
 // The name a method that takes part in dispatch, or answers what the runtime
 // library asks of an object, is spelled by in every unit naming it: as the
 // source wrote it, as the library names the function it answers, for the body
-// answering the instance its class belongs to, `sv_declaring_instance`, and
-// for the bodies reading and subscribing to a data object a scope describes,
-// where it stands and its identifier, `sv_read_2_count` and
-// `sv_subscribe_2_count`.
-using CppDispatchName =
-    std::variant<SourceName, VerbatimName, MintedWord, MintedName>;
+// answering the instance its class belongs to, `sv_declaring_instance`.
+using CppDispatchName = std::variant<SourceName, VerbatimName, MintedWord>;
 
 // The name of the entry of a method, made from the method's dispatch name:
 // `sv_entry_f` for the entry of a method `f`. A method is named alike in every
@@ -419,16 +415,6 @@ inline void WriteOne(TargetText& out, NamespaceMemberScope scope) {
   return MintedName{.what = what, .ordinal = ordinal, .source = name};
 }
 
-// A body reading or subscribing to a data object its scope describes, named by
-// which of the two it does, where the object stands among those the scope
-// describes, and the identifier it is declared under.
-[[nodiscard]] inline auto CppDataObjectAccessName(
-    const mir::DataObjectAccessName& named) -> MintedName {
-  return MintedCppNameWith(
-      mir::AccessWordOf(named.access.kind), named.access.object.value,
-      named.identifier);
-}
-
 [[nodiscard]] inline auto CppDispatchNameOf(
     const mir::CompilationUnit& unit, mir::CallableId method)
     -> CppDispatchName {
@@ -442,9 +428,6 @@ inline void WriteOne(TargetText& out, NamespaceMemberScope scope) {
           },
           [](mir::DeclaringInstanceName) -> CppDispatchName {
             return MintedWord{.word = "declaring_instance"};
-          },
-          [](const mir::DataObjectAccessName& named) -> CppDispatchName {
-            return CppDataObjectAccessName(named);
           }},
       mir::DispatchNameOf(unit, method));
 }
@@ -1135,8 +1118,8 @@ inline void WriteOne(TargetText& out, const DefinitionPath& definition) {
 
 // The name of a function in a unit's namespace, chosen by how other code
 // reaches it: its DPI-C linkage name, its source name, its fixed entry word,
-// the data object it reads or subscribes to, as the entry of a class's body
-// doing so is named, or `sv_body_<n>` if nothing outside the unit reaches it.
+// the library callback it answers, as a class's body answering it is named, or
+// `sv_body_<n>` if nothing outside the unit reaches it.
 [[nodiscard]] inline auto CppNamespaceCallableName(
     const mir::CompilationUnit& unit, mir::CallableId body) -> CppName {
   return std::visit(
@@ -1156,8 +1139,9 @@ inline void WriteOne(TargetText& out, const DefinitionPath& definition) {
           [](const mir::ReachedInAnotherUnit& r) -> CppName {
             return ToCppName(r.name);
           },
-          [](const mir::ReachedAsDataObjectAccess& r) -> CppName {
-            return CppDataObjectAccessName(r.named);
+          [](const mir::ReachedAsLibraryCallback& r) -> CppName {
+            return VerbatimName{
+                .text = support::LibraryCallbackName(r.callback)};
           },
           [](const mir::ReachedByPosition& r) -> CppName {
             return MintedCppName("body", r.position.value);
@@ -1201,7 +1185,7 @@ inline void WriteOne(TargetText& out, const NamespaceCallablePath& path) {
           [&](const mir::ReachedByBringUpEntry&) { qualified(); },
           [&](const mir::ReachedAsObjectEntry&) { qualified(); },
           [&](const mir::ReachedInAnotherUnit&) { qualified(); },
-          [&](const mir::ReachedAsDataObjectAccess&) { qualified(); },
+          [&](const mir::ReachedAsLibraryCallback&) { qualified(); },
           [&](const mir::ReachedByPosition&) { qualified(); }},
       mir::NamespaceReachOf(unit, path.callable));
 }

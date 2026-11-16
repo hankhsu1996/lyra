@@ -42,6 +42,7 @@
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/float_width.hpp"
 #include "lyra/support/layout.hpp"
+#include "lyra/support/library_callback.hpp"
 #include "lyra/support/library_decl.hpp"
 
 namespace lyra::mir {
@@ -163,9 +164,9 @@ struct RootedTree {
 // run beside the instance tree (LRM 37.10), and state of themselves what a
 // class of the design hierarchy states of its instances: the definition they
 // are, the scopes they declare, and the data objects they declare, with the
-// bodies of the namespace reading and subscribing to each, which the install
-// body hands the library. Absent for a unit that is no such object: a class
-// lowered alone, or a text of the tool's.
+// two bodies of the namespace reading and subscribing to them, which the
+// install body hands the library. Absent for a unit that is no such object: a
+// class lowered alone, or a text of the tool's.
 struct BroughtUpNamespace {
   CallableId install_storage;
   CallableId initialize_storage;
@@ -967,9 +968,10 @@ struct CompilationUnit {
 // the two bring-up entries it is; being the entry that makes an object of the
 // body this unit is compiled to, or a block of one of its block bodies; the
 // unit and identifier another unit's namespace publishes it under, for one
-// this unit only declares; reading or subscribing to a data object the
-// namespace describes, as a class's body doing so is named; or, where nothing
-// names it, where it stands among the namespace's callables.
+// this unit only declares; the callback of the runtime library it answers,
+// reading or subscribing to the data objects the namespace describes, as a
+// class's body answering it is named; or, where nothing names it, where it
+// stands among the namespace's callables.
 //
 // The position is the general case and the six before it are the special
 // ones. A namespace holds what the source declared and what the compiler
@@ -1004,15 +1006,17 @@ struct ReachedInAnotherUnit {
 struct ReachedByPosition {
   CallableOrdinal position;
 };
-// Only this unit's own record of what the namespace describes names it, so
-// nothing outside the unit asks for it.
-struct ReachedAsDataObjectAccess {
-  DataObjectAccessName named;
+// A body answering a callback of the runtime library for the namespace,
+// spelled as a class's body answering it is. Only this unit's own record of
+// what the namespace describes names it, so nothing outside the unit asks for
+// it.
+struct ReachedAsLibraryCallback {
+  support::LibraryCallback callback;
 };
 
 using NamespaceReach = std::variant<
     ReachedByLinkageName, ReachedByName, ReachedByBringUpEntry,
-    ReachedAsObjectEntry, ReachedInAnotherUnit, ReachedAsDataObjectAccess,
+    ReachedAsObjectEntry, ReachedInAnotherUnit, ReachedAsLibraryCallback,
     ReachedByPosition>;
 
 // How `id` is spelled. Every target names it from this one answer, so no two
@@ -1050,9 +1054,9 @@ using NamespaceReach = std::variant<
       return ReachedByBringUpEntry{BringUpEntry::kInitializeStorage};
     }
     if (ns->scope_declarations.has_value()) {
-      if (const std::optional<DataObjectAccessName> named =
-              DataObjectAccessOf(*ns->scope_declarations, id)) {
-        return ReachedAsDataObjectAccess{.named = *named};
+      if (const std::optional<support::LibraryCallback> callback =
+              DataObjectCallbackOf(*ns->scope_declarations, id)) {
+        return ReachedAsLibraryCallback{.callback = *callback};
       }
     }
   }

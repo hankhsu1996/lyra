@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <expected>
@@ -29,7 +30,6 @@
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/base/write_all.hpp"
-#include "lyra/runtime/dump_kind.hpp"
 #include "lyra/runtime/dump_scope_kind.hpp"
 #include "lyra/runtime/dump_writer.hpp"
 #include "lyra/runtime/file.hpp"
@@ -151,7 +151,7 @@ class TriggerSubscriber final : public Subscriber {
 // does.
 auto WatchedTriggerOf(const DumpedObject& dumped) -> Trigger {
   TriggerSubscriber subscriber;
-  dumped.object->subscribe(dumped.instance, subscriber);
+  dumped.declarations->subscribe(dumped.instance, dumped.position, subscriber);
   return subscriber.trigger;
 }
 
@@ -177,7 +177,7 @@ DumpWatch::~DumpWatch() = default;
 
 void DumpWatch::Read(DumpCapture& into) {
   CaptureSerializer serializer(into, code_);
-  dumped_.object->read(dumped_.instance, serializer);
+  dumped_.declarations->read(dumped_.instance, dumped_.position, serializer);
   FollowReferent(serializer.TakeReferent());
 }
 
@@ -758,14 +758,14 @@ class SelectionDeclarer final {
   }
 
  private:
-  // Declares `object`, which the instance `scope` declares or, where there is
-  // none, a namespace keeps, and records it from now on, where the selection
-  // names it.
-  void Declare(Scope* scope, const abi::DataObjectRecord& object) {
-    const DumpedObject dumped{.instance = scope, .object = &object};
+  // Declares `dumped`, which the instance it names declares or, where it
+  // names none, a namespace keeps, and records it from now on, where the
+  // selection names it.
+  void Declare(const DumpedObject& dumped) {
     if (!Records(dumped)) {
       return;
     }
+    const abi::DataObjectRecord& object = dumped.Record();
     MoveToScopesAround(object);
     OpenPending();
     const DumpCode code{static_cast<std::uint32_t>(watches_->size())};
@@ -830,9 +830,13 @@ class SelectionDeclarer final {
     if (!whole_ && variables_.empty()) {
       return;
     }
-    for (const abi::DataObjectRecord* object :
-         declared.data_objects.Entries()) {
-      Declare(scope, *object);
+    const std::size_t count = declared.data_objects.Entries().size();
+    for (std::size_t position = 0; position < count; ++position) {
+      Declare(
+          DumpedObject{
+              .instance = scope,
+              .declarations = &declared,
+              .position = static_cast<std::uint32_t>(position)});
     }
     LeaveBlocksDownTo(0);
   }
@@ -896,13 +900,19 @@ class PortDeclarer final {
 
   void Walk(const PortSelection& selection) {
     for (Scope* instance : selection.instances) {
+      const abi::ScopeDeclarations& declarations = instance->Declarations();
       const std::span<const abi::DescribedPort* const> ports =
-          instance->Declarations().ports.Entries();
+          declarations.ports.Entries();
       bool opened = false;
       for (std::size_t position = 0; position < ports.size(); ++position) {
         const abi::DescribedPort& port = *ports[position];
+        const DumpedObject connects{
+            .instance = instance,
+            .declarations = &declarations,
+            .position = port.connects};
         const std::optional<DumpVarDeclaration> declared =
-            DumpPortDeclarationOf(port, static_cast<std::uint32_t>(position));
+            DumpPortDeclarationOf(
+                connects.Record(), port, static_cast<std::uint32_t>(position));
         if (!declared.has_value()) {
           continue;
         }
@@ -916,9 +926,7 @@ class PortDeclarer final {
         const DumpCode code{static_cast<std::uint32_t>(watches_->size())};
         output_->Send(VarCommand{.code = code, .variable = *declared});
         watches_->push_back(
-            std::make_unique<DumpWatch>(
-                *dump_, code,
-                DumpedObject{.instance = instance, .object = port.connects}));
+            std::make_unique<DumpWatch>(*dump_, code, connects));
       }
       if (opened) {
         output_->Send(UpscopeCommand{});

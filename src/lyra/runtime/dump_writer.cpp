@@ -213,9 +213,9 @@ auto DumpVarDeclarationOf(const abi::DataObjectRecord& object)
 }
 
 auto DumpPortDeclarationOf(
-    const abi::DescribedPort& port, std::uint32_t position)
-    -> std::optional<DumpVarDeclaration> {
-  DumpVarDeclaration declared = DumpVarDeclarationOf(*port.connects);
+    const abi::DataObjectRecord& connects, const abi::DescribedPort& port,
+    std::uint32_t position) -> std::optional<DumpVarDeclaration> {
+  DumpVarDeclaration declared = DumpVarDeclarationOf(connects);
   switch (DumpValueFormOf(declared.kind)) {
     case DumpValueForm::kTriggered:
       return std::nullopt;

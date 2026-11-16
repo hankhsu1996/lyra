@@ -164,9 +164,9 @@ auto DispatchNameOf(const CompilationUnit& unit, CallableId method)
     return DeclaringInstanceName{};
   }
   if (cls.scope_declarations.has_value()) {
-    if (const std::optional<DataObjectAccessName> named =
-            DataObjectAccessOf(*cls.scope_declarations, method)) {
-      return *named;
+    if (const std::optional<support::LibraryCallback> callback =
+            DataObjectCallbackOf(*cls.scope_declarations, method)) {
+      return *callback;
     }
   }
   const std::optional<VirtualDispatchRole>& role =

@@ -762,7 +762,7 @@ auto RenderFreeCallableLinkage(const mir::NamespaceReach& reach)
           [](const mir::ReachedInAnotherUnit&) -> std::string_view {
             return "";
           },
-          [](const mir::ReachedAsDataObjectAccess&) -> std::string_view {
+          [](const mir::ReachedAsLibraryCallback&) -> std::string_view {
             return "";
           },
           [](const mir::ReachedByPosition&) -> std::string_view { return ""; }},
@@ -1016,7 +1016,7 @@ auto RenderUnitCallables(
                   "backend::cpp: a function another unit's namespace defines "
                   "is rendered here -- please report this as a bug");
             },
-            [&](const mir::ReachedAsDataObjectAccess&) -> UnitText& {
+            [&](const mir::ReachedAsLibraryCallback&) -> UnitText& {
               return text.of_artifact;
             },
             [&](const mir::ReachedByPosition&) -> UnitText& {

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <memory>
@@ -609,10 +610,16 @@ auto ValueDumps::FindVariable(
         declared.lexical.Entries(), enclosing, part.identifier);
     if (enclosing == nullptr) return nullptr;
   }
-  for (const abi::DataObjectRecord* object : declared.data_objects.Entries()) {
-    if (object->enclosing == enclosing &&
-        IdentifierOf(object->identifier) == name.back().identifier) {
-      return DumpIdentityOf({.instance = instance, .object = object});
+  const std::span<const abi::DataObjectRecord* const> objects =
+      declared.data_objects.Entries();
+  for (std::size_t position = 0; position < objects.size(); ++position) {
+    const abi::DataObjectRecord& object = *objects[position];
+    if (object.enclosing == enclosing &&
+        IdentifierOf(object.identifier) == name.back().identifier) {
+      return DumpIdentityOf(
+          {.instance = instance,
+           .declarations = &declared,
+           .position = static_cast<std::uint32_t>(position)});
     }
   }
   return nullptr;

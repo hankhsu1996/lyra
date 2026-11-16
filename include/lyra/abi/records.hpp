@@ -177,18 +177,12 @@ struct Typespec {
 // finds -- a variable, a net or a named event (LRM 21.7.1.2) -- as a constant
 // of its unit, the same for every instance: its name, the named block, task
 // or function it lies in, if any, the net type it is declared with, none for
-// a variable, its type, and the bodies that read it and subscribe to it,
-// compiled where the object's type is known: one hands the value it reads,
-// the other the trigger a wait for a change of the object would enrol. A
-// class's bodies are entered on the instance; a package's take an object and
-// leave it unread. Each enumeration is held as the number a constant record
-// writes.
+// a variable, and its type. Each enumeration is held as the number a constant
+// record writes.
 struct DataObjectRecord {
   const char* identifier = nullptr;
   const LexicalScopeRecord* enclosing = nullptr;
   const Typespec* typespec = nullptr;
-  void (*read)(runtime::GcObject*, runtime::ValueSerializer&) = nullptr;
-  void (*subscribe)(runtime::GcObject*, runtime::Subscriber&) = nullptr;
   std::uint8_t net_type = 0;
   std::uint8_t has_net_type = 0;
 
@@ -202,11 +196,12 @@ struct DataObjectRecord {
 
 // One port of a scope of the design hierarchy that connects a data object the
 // scope declares (LRM 23.2.2), as a constant of its unit: the port's name, the
-// record of the object it connects, and the direction data flows across it.
-// Two ports connecting one object are two of these.
+// position among the scope's data objects of the one it connects, and the
+// direction data flows across it. Two ports connecting one object are two of
+// these.
 struct DescribedPort {
   const char* name = nullptr;
-  const DataObjectRecord* connects = nullptr;
+  std::uint32_t connects = 0;
   std::uint8_t direction = 0;
 
   [[nodiscard]] auto Direction() const -> support::PortDirection {
@@ -216,17 +211,27 @@ struct DescribedPort {
 
 // What a scope of the design hierarchy states of itself (LRM 37.10, 37.12): the
 // definition it comes from, the scopes it declares, the data objects it
-// declares, in the order it declares them, and the ports connecting them, in
-// the order the declaration gives the ports (LRM 21.7.4.2). A class of the
-// hierarchy states it of its instances; a package and the compilation unit's
-// scope, each one object of the run, state it once, as a constant handed to
-// the library as its storage is installed, and have no ports.
+// declares, in the order it declares them, the ports connecting them, in the
+// order the declaration gives the ports (LRM 21.7.4.2), and the two bodies
+// reaching any of the data objects, compiled where each one's type is known,
+// each handed the object, the data object's position among those listed, and
+// what the reader gave: one hands the serializer the value it holds, the
+// other hands the subscriber the trigger a wait for a change of it would
+// enrol. A class of the hierarchy states it of its instances, and its bodies
+// are entered on the instance; a package and the compilation unit's scope,
+// each one object of the run, state it once, as a constant handed to the
+// library as its storage is installed, have no ports, and have bodies that
+// take an object and leave it unread.
 struct ScopeDeclarations {
   const DefinitionRecord* definition = nullptr;
   value::ConstantSpan<const ElaboratedScopeRecord*> elaborated;
   value::ConstantSpan<const LexicalScopeRecord*> lexical;
   value::ConstantSpan<const DataObjectRecord*> data_objects;
   value::ConstantSpan<const DescribedPort*> ports;
+  void (*read)(runtime::GcObject*, std::int64_t, runtime::ValueSerializer&) =
+      nullptr;
+  void (*subscribe)(runtime::GcObject*, std::int64_t, runtime::Subscriber&) =
+      nullptr;
 };
 
 // What a class of the design hierarchy tells the library about its instances:
@@ -411,12 +416,15 @@ constexpr void ForEachField(
 template <typename Visit>
 constexpr void ForEachField(
     const ScopeDeclarations& record, const Visit& visit) {
-  const auto& [definition, elaborated, lexical, data_objects, ports] = record;
+  const auto& [definition, elaborated, lexical, data_objects, ports, read, subscribe] =
+      record;
   visit(definition);
   visit(elaborated);
   visit(lexical);
   visit(data_objects);
   visit(ports);
+  visit(read);
+  visit(subscribe);
 }
 
 template <typename Visit>
@@ -433,13 +441,11 @@ constexpr void ForEachField(const Typespec& record, const Visit& visit) {
 template <typename Visit>
 constexpr void ForEachField(
     const DataObjectRecord& record, const Visit& visit) {
-  const auto& [identifier, enclosing, typespec, read, subscribe, net_type, has_net_type] =
+  const auto& [identifier, enclosing, typespec, net_type, has_net_type] =
       record;
   visit(identifier);
   visit(enclosing);
   visit(typespec);
-  visit(read);
-  visit(subscribe);
   visit(net_type);
   visit(has_net_type);
 }

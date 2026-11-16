@@ -14,6 +14,10 @@ auto LibraryCallbackName(LibraryCallback callback) -> std::string_view {
       return "sv_initialize";
     case LibraryCallback::kScopeCreateProcesses:
       return "sv_create_processes";
+    case LibraryCallback::kScopeReadDataObject:
+      return "sv_read_data_object";
+    case LibraryCallback::kScopeSubscribeDataObject:
+      return "sv_subscribe_data_object";
     case LibraryCallback::kClassRandVariables:
       return "sv_rand_variables";
     case LibraryCallback::kClassConstrain:

@@ -57,12 +57,13 @@ auto DumpVarDeclarationOf(const abi::DataObjectRecord& object)
     -> DumpVarDeclaration;
 
 // How an extended dump declares the port `port` at `position` among its
-// scope's ports (LRM 21.7.4.2): as the object it connects, under the port's
-// name, none for a port bound by reference, which carries no value across it,
-// and for one connecting an event, which the format has no value for.
+// scope's ports (LRM 21.7.4.2): as `connects`, the object it connects, under
+// the port's name, none for a port bound by reference, which carries no value
+// across it, and for one connecting an event, which the format has no value
+// for.
 auto DumpPortDeclarationOf(
-    const abi::DescribedPort& port, std::uint32_t position)
-    -> std::optional<DumpVarDeclaration>;
+    const abi::DataObjectRecord& connects, const abi::DescribedPort& port,
+    std::uint32_t position) -> std::optional<DumpVarDeclaration>;
 
 // The name a declaration is written under, its declared range after it (LRM
 // 21.7.2.3 `$var` reference).

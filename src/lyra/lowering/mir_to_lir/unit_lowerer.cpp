@@ -77,15 +77,6 @@ auto TranslateRecordKind(mir::RecordKind kind) -> lir::RecordKind {
           support::ValueOperationName(answers)));
 }
 
-// What a body reading or subscribing to a data object its scope describes
-// contributes to a symbol: which of the two it does, and where the object
-// stands among those the scope describes.
-auto DataObjectAccessPart(const mir::DataObjectAccess& access)
-    -> lir::SymbolPart {
-  return lir::SymbolPart::DataObjectAccess(
-      mir::AccessWordOf(access.kind), access.object.value);
-}
-
 }  // namespace
 
 auto UnitLowerer::LowerUnit(const mir::CompilationUnit& mir)
@@ -396,11 +387,11 @@ auto UnitLowerer::NamespaceCallableSymbolOf(mir::CallableId id) const
             return lir::NamespaceCallableSymbol(
                 r.unit_name, lir::SymbolPart::Name(r.name));
           },
-          // Named by what it reads or subscribes to, as the entry of a class's
-          // body doing so is.
-          [&](const mir::ReachedAsDataObjectAccess& r) {
+          // Named by the callback it answers, as a class's body answering it
+          // is.
+          [&](const mir::ReachedAsLibraryCallback& r) {
             return lir::NamespaceCallableSymbol(
-                out_.body_name, DataObjectAccessPart(r.named.access));
+                out_.body_name, lir::SymbolPart::LibraryCallback(r.callback));
           },
           [&](const mir::ReachedByPosition& r) {
             return lir::NamespaceCallableSymbol(
@@ -444,9 +435,6 @@ auto DispatchNamePart(const mir::DispatchName& name) -> lir::SymbolPart {
           },
           [](mir::DeclaringInstanceName) {
             return lir::SymbolPart::DeclaringInstance();
-          },
-          [](const mir::DataObjectAccessName& named) {
-            return DataObjectAccessPart(named.access);
           }},
       name);
 }

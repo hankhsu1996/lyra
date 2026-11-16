@@ -1241,7 +1241,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
         .elaborated = declared.elaborated,
         .lexical = declared.lexical,
         .data_objects = {},
-        .data_object_bodies = {}};
+        .bodies = TakeDataObjectBodies(unit_, NamespaceBodies{})};
     if (auto stated = DescribeDataObjects(
             StructuralScopeLowerer(*this, scope), declared, NamespaceBodies{},
             *described, namespace_frame, scope.described);

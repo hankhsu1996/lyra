@@ -65,12 +65,11 @@ struct DeclaringInstanceName {};
 // The name a method taking part in dispatch, or answering what the runtime
 // library calls on an object, is reached by in every unit naming it: the name
 // the source gave the method introducing its behavior, the library callback
-// it answers, that it answers the instance its class belongs to, or the data
-// object it reads or subscribes to. Every body of a behavior is named alike, so
-// each class's table names one behavior by one name.
+// it answers, or that it answers the instance its class belongs to. Every body
+// of a behavior is named alike, so each class's table names one behavior by
+// one name.
 using DispatchName = std::variant<
-    std::string_view, support::LibraryCallback, DeclaringInstanceName,
-    DataObjectAccessName>;
+    std::string_view, support::LibraryCallback, DeclaringInstanceName>;
 
 [[nodiscard]] auto DispatchNameOf(
     const CompilationUnit& unit, CallableId method) -> DispatchName;
