@@ -190,10 +190,11 @@ auto DefaultValueOf(
                         .callee =
                             mir::Direct{
                                 .target =
-                                    mir::RecordMethodTarget{
-                                        .record = s.declaration,
-                                        .answers = support::BuiltinFn::
-                                            kDeclaredDefault}},
+                                    mir::CallableTarget{
+                                        .callable = mir::RecordMethodOf(
+                                            unit, s.declaration,
+                                            support::BuiltinFn::
+                                                kDeclaredDefault)}},
                         .arguments = {}},
                 .type = type};
           },

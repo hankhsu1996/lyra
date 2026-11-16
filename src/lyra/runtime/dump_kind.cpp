@@ -1,10 +1,10 @@
-#include "lyra/support/dump_kind.hpp"
+#include "lyra/runtime/dump_kind.hpp"
 
 #include <string_view>
 
 #include "lyra/base/internal_error.hpp"
 
-namespace lyra::support {
+namespace lyra::runtime {
 
 auto DumpVarKindKeyword(DumpVarKind kind) -> std::string_view {
   switch (kind) {
@@ -72,4 +72,4 @@ auto DumpValueFormOf(DumpVarKind kind) -> DumpValueForm {
   throw InternalError("DumpValueFormOf: unknown kind");
 }
 
-}  // namespace lyra::support
+}  // namespace lyra::runtime

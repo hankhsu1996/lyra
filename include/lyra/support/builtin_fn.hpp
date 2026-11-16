@@ -761,10 +761,10 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 21.7 value dumps. Free functions on `lyra::runtime` that take the
   // runtime handle and act on the run's one dump: naming its file, selecting
   // what it records -- the whole design, an instance and the levels below it,
-  // or one variable, as the instance declaring it and the member it is there
-  // -- and switching it off, on, checkpointing, bounding and flushing it. Each
-  // form `$dumpvars` takes is its own entry, so which a call means is settled
-  // here rather than by counting its arguments.
+  // or one variable, as the trigger a wait for a change of it enrols -- and
+  // switching it off, on, checkpointing, bounding and flushing it. Each form
+  // `$dumpvars` takes is its own entry, so which a call means is settled here
+  // rather than by counting its arguments.
   kDumpFile,
   kDumpVarsLevels,
   kDumpVarsOf,
@@ -783,13 +783,17 @@ enum class BuiltinFn : std::uint16_t {
   kDumpPortsAll,
   kDumpPortsLimit,
   kDumpPortsFlush,
-  // LRM 21.7.1.2: what an instance describes of itself to a dump starting, in
-  // the order listed: one member -- a variable, a net, a port -- with the
-  // constant stating its declaration and the named block, task or function it
-  // lies in, and a named event. Each reaches the describer the starting dump
-  // installed through the runtime handle.
-  kDescribe,
-  kDescribeEvent,
+  // What the code reading and the code watching a data object hand a reader
+  // reaching the design by name, each a method of what the reader handed in:
+  // an integral value's bits, a real, the object an event variable names, and
+  // the trigger a wait for a change of the object would enrol (LRM 38.15,
+  // 21.7.2.3, 9.4.2). An integral value crosses with its width, so one library
+  // function takes every integral value; a real is handed at the width it is
+  // held at.
+  kSerializeBits,
+  kSerializeReal,
+  kSerializeEvent,
+  kSubscribe,
   // LRM 21.6 command-line plusargs. Free functions on `lyra::runtime` that
   // take the runtime handle plus SV `string` operands; the value form also
   // takes the destination's value and completes with it beside the answer. A

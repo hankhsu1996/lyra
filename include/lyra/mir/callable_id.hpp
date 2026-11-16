@@ -9,10 +9,9 @@
 
 namespace lyra::mir {
 
-// Identity of a callable a namespace owns -- a class's instance method, a
-// class's or a package's receiver-less static callable, a DPI-C import. One
-// identity for the one callable concept, scoped to the class or unit that
-// declares it.
+// Identity of a callable in its unit: its entry in the unit's one table of
+// callable declarations, whoever declares it -- a class, its construction, the
+// unit's namespace, a closure or a record. Meaningless beside another unit's.
 struct CallableId {
   std::uint32_t value = base::kUnassignedId;
 

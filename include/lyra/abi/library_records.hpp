@@ -30,7 +30,9 @@ constexpr void ForEachLibraryRecord(const Visit& visit) {
   visit.template operator()<ConstructionTable>(Decl::kConstructionTable);
   visit.template operator()<Instantiation>(Decl::kInstantiation);
   visit.template operator()<GeneratePlaces>(Decl::kGeneratePlaces);
-  visit.template operator()<DumpEntry>(Decl::kDumpEntry);
+  visit.template operator()<Typespec>(Decl::kTypespec);
+  visit.template operator()<DataObjectRecord>(Decl::kDataObjectRecord);
+  visit.template operator()<DescribedPort>(Decl::kDescribedPort);
   visit.template operator()<base::SourceLocation::Impl>(
       Decl::kSourceLocationRecord);
   visit.template operator()<value::Enumeration>(Decl::kEnumeration);

@@ -1,8 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
-namespace lyra::hir {
+namespace lyra::support {
 
 // The direction data flows across a port (LRM 23.2.2.3). All four the language
 // admits are here because a unit publishes what it declared, not what a
@@ -23,4 +24,8 @@ enum class PortDirection : std::uint8_t {
   kConstRef
 };
 
-}  // namespace lyra::hir
+// The keywords the source declares a port of `direction` by.
+[[nodiscard]] auto PortDirectionKeyword(PortDirection direction)
+    -> std::string_view;
+
+}  // namespace lyra::support

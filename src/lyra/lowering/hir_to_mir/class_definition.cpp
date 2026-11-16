@@ -41,8 +41,9 @@
 #include "lyra/mir/library_record_builder.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
-#include "lyra/support/dump_kind.hpp"
+#include "lyra/support/data_object.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/port_direction.hpp"
 #include "lyra/support/scope_kind.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -108,14 +109,12 @@ auto PointerTo(mir::ReferenceTarget to, mir::TypeId type)
       mir::PointerValue{.to = std::move(to), .type = type}};
 }
 
-// `callable` of class `id`, as the code it is: `&Mid::bump_entry`.
-auto Function(
-    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
-    mir::CallableId callable) -> mir::ConstantValue {
+// `callable`, as the code it is: `&Mid::bump_entry`.
+auto Function(const mir::CompilationUnit& unit, mir::CallableId callable)
+    -> mir::ConstantValue {
   return PointerTo(
-      mir::FunctionRef{
-          .body = mir::CallableTarget{.owner = id, .slot = callable}},
-      mir::FunctionTypeOf(unit.types, cls.callables.Get(callable).code));
+      mir::FunctionRef{.callable = callable},
+      mir::FunctionTypeOf(unit.types, unit.callables.Get(callable).code));
 }
 
 // What the address of a record of the library's structure `Record` is a value
@@ -156,7 +155,7 @@ auto Table(
 // prototype of the entry the library enters it through, which hands it the
 // object as the library does.
 struct LibraryBody {
-  mir::CallableTarget body;
+  mir::CallableId body;
   mir::TypeId prototype;
 };
 
@@ -166,7 +165,8 @@ auto EntryOrNone(const std::optional<LibraryBody>& body) -> mir::ConstantValue {
   if (!body.has_value()) {
     return Null();
   }
-  return PointerTo(mir::DispatchEntryRef{.body = body->body}, body->prototype);
+  return PointerTo(
+      mir::DispatchEntryRef{.method = body->body}, body->prototype);
 }
 
 // The callback answering each phase of a scope of the design hierarchy, by
@@ -179,9 +179,7 @@ constexpr std::array kScopePhases{
         support::LibraryCallback::kScopeInitialize},
     std::pair{
         &abi::ScopeInfo::create_processes,
-        support::LibraryCallback::kScopeCreateProcesses},
-    std::pair{
-        &abi::ScopeInfo::describe, support::LibraryCallback::kScopeDescribe}};
+        support::LibraryCallback::kScopeCreateProcesses}};
 
 // The callback answering each question `randomize()` asks of an object of a
 // source class (LRM 18.6), by the member of its record that holds it: those
@@ -231,12 +229,128 @@ void SetEntries(
   }
 }
 
+//   {"count", &blk, &typespec, &C::sv_read_2_count, &C::sv_subscribe_2_count,
+//    kWire, 1}
+//
+// `read` and `subscribe` name the code the library enters for each.
+auto DataObjectRecordConstant(
+    const mir::CompilationUnit& unit, const mir::DescribedDataObject& object,
+    const mir::ReferenceTarget& read, const mir::ReferenceTarget& subscribe)
+    -> mir::ConstantId {
+  using abi::DataObjectRecord;
+  mir::LibraryRecordBuilder<DataObjectRecord> record(unit);
+  record.Set(&DataObjectRecord::identifier, Name(object.identifier));
+  record.Set(
+      &DataObjectRecord::enclosing, object.enclosing.has_value()
+                                        ? AddressOf(unit, *object.enclosing)
+                                        : Null());
+  record.Set(&DataObjectRecord::typespec, AddressOf(unit, object.typespec));
+  const auto entry = [&]<typename Member>(
+                         const mir::ReferenceTarget& body,
+                         Member DataObjectRecord::* at) {
+    return PointerTo(body, mir::LibraryRecordMemberType(unit, at));
+  };
+  record.Set(&DataObjectRecord::read, entry(read, &DataObjectRecord::read));
+  record.Set(
+      &DataObjectRecord::subscribe,
+      entry(subscribe, &DataObjectRecord::subscribe));
+  record.Set(
+      &DataObjectRecord::net_type,
+      Number(
+          static_cast<std::uint8_t>(
+              object.net_type.value_or(support::NetType::kWire))));
+  record.Set(
+      &DataObjectRecord::has_net_type,
+      Number(object.net_type.has_value() ? 1 : 0));
+  return std::move(record).Intern();
+}
+
+//   {"a", &count, kInput}
+//
+// The port `port`, connecting the object whose record is `connects`.
+auto DescribedPortConstant(
+    const mir::CompilationUnit& unit, const support::DescribedPort& port,
+    mir::ConstantId connects) -> mir::ConstantId {
+  using abi::DescribedPort;
+  mir::LibraryRecordBuilder<DescribedPort> record(unit);
+  record.Set(&DescribedPort::name, Name(port.name));
+  record.Set(&DescribedPort::connects, AddressOf(unit, connects));
+  record.Set(
+      &DescribedPort::direction,
+      Number(static_cast<std::uint8_t>(port.direction)));
+  return std::move(record).Intern();
+}
+
+// The record of each port of a scope, in the order the declaration gives the
+// ports (LRM 21.7.4.2), each naming the record among `data_objects`, those
+// of what `scope_declarations` describes, of the object it connects.
+auto DescribedPortRecords(
+    const mir::CompilationUnit& unit,
+    const mir::ScopeDeclarations& scope_declarations,
+    const std::vector<mir::ConstantId>& data_objects)
+    -> std::vector<mir::ConstantId> {
+  std::vector<std::pair<std::uint32_t, mir::ConstantId>> ports;
+  for (std::size_t at = 0; at < data_objects.size(); ++at) {
+    for (const support::DescribedPort& port :
+         scope_declarations.data_objects[at].ports) {
+      ports.emplace_back(
+          port.position, DescribedPortConstant(unit, port, data_objects[at]));
+    }
+  }
+  std::ranges::sort(
+      ports, {}, &std::pair<std::uint32_t, mir::ConstantId>::first);
+  std::vector<mir::ConstantId> records;
+  records.reserve(ports.size());
+  for (const auto& port : ports) {
+    records.push_back(port.second);
+  }
+  return records;
+}
+
+// The record of each data object `scope_declarations` describes, in the
+// order it describes them, naming the bodies that read it and subscribe to it,
+// each as `entry_of` names the code the library enters for one of them.
+auto DataObjectRecords(
+    const mir::CompilationUnit& unit,
+    const mir::ScopeDeclarations& scope_declarations, const auto& entry_of)
+    -> std::vector<mir::ConstantId> {
+  const std::size_t count = scope_declarations.data_objects.size();
+  std::vector<std::optional<mir::CallableId>> reads(count);
+  std::vector<std::optional<mir::CallableId>> subscribes(count);
+  for (const auto& [body, access] : scope_declarations.data_object_bodies) {
+    switch (access.kind) {
+      case mir::DataObjectAccess::Kind::kRead:
+        reads.at(access.object.value) = body;
+        break;
+      case mir::DataObjectAccess::Kind::kSubscribe:
+        subscribes.at(access.object.value) = body;
+        break;
+    }
+  }
+  std::vector<mir::ConstantId> records;
+  records.reserve(count);
+  for (std::size_t at = 0; at < count; ++at) {
+    if (!reads[at].has_value() || !subscribes[at].has_value()) {
+      throw InternalError(
+          "hir_to_mir: a described data object has no body reading it or "
+          "none subscribing to it -- please report this as a bug");
+    }
+    records.push_back(DataObjectRecordConstant(
+        unit, scope_declarations.data_objects[at], entry_of(*reads[at]),
+        entry_of(*subscribes[at])));
+  }
+  return records;
+}
+
 // What a scope states of itself, as the record the library reads it from: the
 // address of the record of its definition, and a view of the addresses of the
-// records of the scopes it declares, of each family.
+// records of the scopes it declares, of each family, of `data_objects`, the
+// records of the data objects it declares, and of the records of the ports
+// connecting them.
 auto ScopeDeclarationsRecord(
     const mir::CompilationUnit& unit,
-    const mir::ScopeDeclarations& scope_declarations)
+    const mir::ScopeDeclarations& scope_declarations,
+    const std::vector<mir::ConstantId>& data_objects)
     -> mir::LibraryRecordBuilder<abi::ScopeDeclarations> {
   using abi::ScopeDeclarations;
   const auto addresses_of = [&](const std::vector<mir::ConstantId>& records) {
@@ -261,6 +375,17 @@ auto ScopeDeclarationsRecord(
       mir::ViewOf(
           unit, RecordPointerType<abi::LexicalScopeRecord>(unit),
           addresses_of(scope_declarations.lexical)));
+  record.Set(
+      &ScopeDeclarations::data_objects,
+      mir::ViewOf(
+          unit, RecordPointerType<abi::DataObjectRecord>(unit),
+          addresses_of(data_objects)));
+  record.Set(
+      &ScopeDeclarations::ports,
+      mir::ViewOf(
+          unit, RecordPointerType<abi::DescribedPort>(unit),
+          addresses_of(
+              DescribedPortRecords(unit, scope_declarations, data_objects))));
   return record;
 }
 
@@ -268,13 +393,20 @@ auto ScopeDeclarationsRecord(
 // of the unit, and its address: what they state of themselves, the bodies its
 // exports name, then the body of each of its phases.
 auto ScopeInfoAddress(
-    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
+    const mir::CompilationUnit& unit, const mir::Class& cls,
     const LibraryBodies& bodies) -> mir::ConstantValue {
   using abi::ScopeInfo;
   mir::LibraryRecordBuilder<ScopeInfo> info(unit);
   info.Set(
       &ScopeInfo::scope_declarations,
-      ScopeDeclarationsRecord(unit, *cls.scope_declarations).Build());
+      ScopeDeclarationsRecord(
+          unit, *cls.scope_declarations,
+          DataObjectRecords(
+              unit, *cls.scope_declarations,
+              [&](mir::CallableId method) -> mir::ReferenceTarget {
+                return mir::DispatchEntryRef{.method = method};
+              }))
+          .Build());
   info.Set(
       &ScopeInfo::exports,
       Table<abi::ScopeCallable>(unit, cls.exports.size(), [&](std::size_t i) {
@@ -282,8 +414,7 @@ auto ScopeInfoAddress(
         const mir::NamedCallable& exported = cls.exports[i];
         mir::LibraryRecordBuilder<ScopeCallable> callable(unit);
         callable.Set(&ScopeCallable::name, Name(exported.name));
-        callable.Set(
-            &ScopeCallable::entry, Function(unit, id, cls, exported.body));
+        callable.Set(&ScopeCallable::entry, Function(unit, exported.body));
         return std::move(callable).Build();
       }));
   SetEntries(info, kScopePhases, bodies);
@@ -355,37 +486,36 @@ auto RecordedDefinitionOf(const hir::DefinitionForm& form)
       form);
 }
 
+//   {nullptr, 7, 0, 8, kLogic, 1}
+auto TypespecConstant(
+    const mir::CompilationUnit& unit, support::TypespecKind kind,
+    std::uint32_t width, std::optional<support::Range> range,
+    std::optional<mir::ConstantId> base) -> mir::ConstantId {
+  using abi::Typespec;
+  const support::Range bounds =
+      range.value_or(support::Range{.left = 0, .right = 0});
+  mir::LibraryRecordBuilder<Typespec> record(unit);
+  record.Set(
+      &Typespec::base, base.has_value() ? AddressOf(unit, *base) : Null());
+  record.Set(&Typespec::left, Number(bounds.left));
+  record.Set(&Typespec::right, Number(bounds.right));
+  record.Set(&Typespec::width, Number(width));
+  record.Set(&Typespec::kind, Number(static_cast<std::uint8_t>(kind)));
+  record.Set(&Typespec::has_range, Number(range.has_value() ? 1 : 0));
+  return std::move(record).Intern();
+}
+
 }  // namespace
 
-//   {&blk, "count", 7, 0, 8, kReg, 1, 1, kInput, 2}
-auto DumpEntryAddress(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    const hir::DumpedDeclaration& declaration,
-    std::optional<mir::ConstantId> enclosing) -> mir::ExprId {
-  using abi::DumpEntry;
-  const hir::DumpedDeclaration::Range range = declaration.range.value_or(
-      hir::DumpedDeclaration::Range{.left = 0, .right = 0});
-  const hir::DumpedDeclaration::Port port = declaration.port.value_or(
-      hir::DumpedDeclaration::Port{
-          .direction = support::DumpPortDirection::kInput, .position = 0});
-  mir::LibraryRecordBuilder<DumpEntry> entry(unit);
-  entry.Set(
-      &DumpEntry::enclosing,
-      enclosing.has_value() ? AddressOf(unit, *enclosing) : Null());
-  entry.Set(&DumpEntry::identifier, Name(declaration.identifier));
-  entry.Set(&DumpEntry::left, Number(range.left));
-  entry.Set(&DumpEntry::right, Number(range.right));
-  entry.Set(&DumpEntry::width, Number(declaration.width));
-  entry.Set(
-      &DumpEntry::kind, Number(static_cast<std::uint8_t>(declaration.kind)));
-  entry.Set(
-      &DumpEntry::has_range, Number(declaration.range.has_value() ? 1 : 0));
-  entry.Set(&DumpEntry::has_port, Number(declaration.port.has_value() ? 1 : 0));
-  entry.Set(
-      &DumpEntry::port_direction,
-      Number(static_cast<std::uint8_t>(port.direction)));
-  entry.Set(&DumpEntry::port_position, Number(port.position));
-  return ConstantAddressIn(unit, block, std::move(entry).Intern());
+auto TypespecConstant(
+    const mir::CompilationUnit& unit, const hir::Typespec& type)
+    -> mir::ConstantId {
+  const std::optional<mir::ConstantId> base =
+      type.base.transform([&](const hir::Typespec::Base& declared) {
+        return TypespecConstant(
+            unit, declared.kind, type.width, declared.range, std::nullopt);
+      });
+  return TypespecConstant(unit, type.kind, type.width, type.range, base);
 }
 
 //   {"Top", "work", "Top", -9, -12, 1, kModule, kWire, kNone, 0, 0}
@@ -423,10 +553,27 @@ auto DefinitionRecordConstant(
 
 //   {&definition, {&run, &step}}
 auto ScopeDeclarationsAddress(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    const mir::ScopeDeclarations& scope_declarations) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Builder block) -> mir::ExprId {
+  const mir::BroughtUpNamespace* brought_up = mir::BroughtUpNamespaceOf(unit);
+  if (brought_up == nullptr || !brought_up->scope_declarations.has_value()) {
+    throw InternalError(
+        "hir_to_mir: a unit that is no object of the run is asked what it "
+        "states of itself -- please report this as a bug");
+  }
+  const mir::ScopeDeclarations& scope_declarations =
+      *brought_up->scope_declarations;
+  // A namespace has no object, so the library enters the bodies reading and
+  // subscribing to what it keeps as the code they are.
   return ConstantAddressIn(
-      unit, block, ScopeDeclarationsRecord(unit, scope_declarations).Intern());
+      unit, block,
+      ScopeDeclarationsRecord(
+          unit, scope_declarations,
+          DataObjectRecords(
+              unit, scope_declarations,
+              [](mir::CallableId body) -> mir::ReferenceTarget {
+                return mir::FunctionRef{.callable = body};
+              }))
+          .Intern());
 }
 
 //   {"u", kModuleArray, 0}
@@ -844,7 +991,6 @@ struct EntryPrototypes {
       case support::LibraryCallback::kScopeResolve:
       case support::LibraryCallback::kScopeInitialize:
       case support::LibraryCallback::kScopeCreateProcesses:
-      case support::LibraryCallback::kScopeDescribe:
       case support::LibraryCallback::kClassPreRandomize:
       case support::LibraryCallback::kClassPostRandomize:
         return on_object;
@@ -862,7 +1008,7 @@ void AddBodies(
   for (const auto& [_, callback] : answers) {
     bodies.emplace(
         callback, mir::CallbackBodyOf(unit, id, callback)
-                      .transform([&](const mir::CallableTarget& body) {
+                      .transform([&](mir::CallableId body) {
                         return LibraryBody{
                             .body = body, .prototype = prototypes.Of(callback)};
                       }));
@@ -939,23 +1085,27 @@ auto FactsOf(
 
 // Gives each body of `cls`, class `id`, that something reaches without knowing
 // the object's class its entry: every one taking part in dispatch, answering
-// a callback the library makes on an object, or answering the instance the
-// object keeps, that the class defines. One answering a callback is entered at
-// that callback's prototype, the one answering the instance at its own, and one
-// taking part in dispatch at its own, handed the object as the root.
+// a callback the library makes on an object, answering the instance the object
+// keeps, or reading or subscribing to a data object a reader by name finds,
+// that the class defines. One answering a callback is entered at that
+// callback's prototype, the one answering the instance at its own, and the
+// rest at their own, handed the object as the root.
 void AddEntries(
-    const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
+    mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
     const EntryPrototypes& prototypes) {
   const mir::TypeId root = mir::ObjectRootPointer(unit.types);
+  const auto reads_or_subscribes = [&](mir::CallableId callable) {
+    return cls.scope_declarations.has_value() &&
+           cls.scope_declarations->data_object_bodies.contains(callable);
+  };
   std::vector<mir::CallableId> entered;
-  for (const mir::CallableId callable : cls.callables.Ids()) {
-    const mir::CallableDecl& decl = cls.callables.Get(callable);
+  for (const mir::CallableId callable : unit.CallablesOf(id).callables) {
+    const mir::CallableDecl& decl = unit.callables.Get(callable);
     const bool reached_by_definition =
-        decl.virtual_dispatch.has_value() ||
+        mir::VirtualDispatchOf(decl).has_value() ||
         cls.CallbackAnsweredBy(callable).has_value() ||
-        cls.declaring_instance == callable;
-    if (reached_by_definition &&
-        std::holds_alternative<mir::DefinedHere>(mir::FormOf(decl))) {
+        cls.declaring_instance == callable || reads_or_subscribes(callable);
+    if (reached_by_definition && mir::IsDefinedHere(decl)) {
       entered.push_back(callable);
     }
   }
@@ -967,12 +1117,11 @@ void AddEntries(
       if (cls.declaring_instance == method) {
         return prototypes.instance_of_object;
       }
-      return EntryPrototypeOf(unit, cls.callables.Get(method).code, root);
+      return EntryPrototypeOf(unit, unit.callables.Get(method).code, root);
     }();
     cls.entries.push_back(
         mir::MethodEntry{
-            .method = method,
-            .entry = EntryOf(unit, id, cls, method, prototype)});
+            .method = method, .entry = EntryOf(unit, cls, method, prototype)});
   }
 }
 
@@ -1012,10 +1161,9 @@ auto DefinitionOf(
       &ObjectDefinition::base,
       base.has_value() ? DefinitionAddress(unit, *base) : Null());
   definition.Set(
-      &ObjectDefinition::scope,
-      cls.scope_declarations.has_value()
-          ? ScopeInfoAddress(unit, id, cls, facts.bodies)
-          : Null());
+      &ObjectDefinition::scope, cls.scope_declarations.has_value()
+                                    ? ScopeInfoAddress(unit, cls, facts.bodies)
+                                    : Null());
   definition.Set(
       &ObjectDefinition::class_object,
       facts.is_class_object ? ClassObjectInfoAddress(unit, facts.bodies)
@@ -1050,10 +1198,7 @@ auto DefinitionOf(
       &ObjectDefinition::declaring_instance,
       cls.declaring_instance.has_value()
           ? PointerTo(
-                mir::DispatchEntryRef{
-                    .body =
-                        mir::CallableTarget{
-                            .owner = id, .slot = *cls.declaring_instance}},
+                mir::DispatchEntryRef{.method = *cls.declaring_instance},
                 definition.TypeOf(&ObjectDefinition::declaring_instance))
           : Null());
   definition.Set(
@@ -1063,8 +1208,7 @@ auto DefinitionOf(
             const mir::InterfaceReach& named = cls.interface_reaches[i];
             mir::LibraryRecordBuilder<InterfaceReach> entry(unit);
             entry.Set(&InterfaceReach::of, DefinitionAddress(unit, named.of));
-            entry.Set(
-                &InterfaceReach::reach, Function(unit, id, cls, named.reach));
+            entry.Set(&InterfaceReach::reach, Function(unit, named.reach));
             return std::move(entry).Build();
           }));
   return std::move(definition).Build();

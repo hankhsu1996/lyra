@@ -83,6 +83,10 @@ auto MirTypeOf(const TypePool& types) -> TypeId {
     return ObjectRootPointer(types);
   } else if constexpr (std::is_same_v<Field, runtime::Scope*>) {
     return ScopePointer(types);
+  } else if constexpr (std::is_same_v<Field, runtime::ValueSerializer&>) {
+    return LibraryTypeOf(types, support::LibraryDecl::kValueSerializer);
+  } else if constexpr (std::is_same_v<Field, runtime::Subscriber&>) {
+    return LibraryTypeOf(types, support::LibraryDecl::kSubscriber);
   } else if constexpr (std::is_same_v<Field, const value::ObjectRef&>) {
     // A handle, of whatever class, borrowed for the call.
     return types.Intern(

@@ -2744,8 +2744,23 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
                        << "    static logic [3:0] e = 4'h6;\n"
                        << "  end\n"
                        << "endmodule\n";
+  // A variable of a package is named by the dump as a whole variable too,
+  // which no instance holds: the package is a scope of its own beside the
+  // tops, and each subroutine of it holding a static variable is a scope in
+  // it. A variable declared outside every design element is one the
+  // compilation unit's scope keeps, recorded the same way under `$unit`.
   const auto owning = dir / "owning.sv";
-  std::ofstream(owning) << "module Test;\n"
+  std::ofstream(owning) << "logic [3:0] u = 4'h7;\n"
+                        << "package p;\n"
+                        << "  logic [3:0] v = 4'h9;\n"
+                        << "  function automatic void touch();\n"
+                        << "    static logic [1:0] s = 2'b10;\n"
+                        << "  endfunction\n"
+                        << "  task automatic tick();\n"
+                        << "    static logic t = 1'b1;\n"
+                        << "  endtask\n"
+                        << "endpackage\n"
+                        << "module Test;\n"
                         << "  logic [3:0] a = 4'h1;\n"
                         << "  logic [3:0] b = 4'h2;\n"
                         << "  logic [3:0] c = 4'h4;\n"
@@ -2754,6 +2769,7 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
                         << "    $dumpfile(\"" << (dir / "own.txt").string()
                         << "\");\n"
                         << "    $dumpvars(0, a);\n"
+                        << "    $dumpvars(0, p::v);\n"
                         << "    #10 a = 4'h3;\n"
                         << "  end\n"
                         << "endmodule\n";
@@ -2799,16 +2815,11 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
       << "endmodule\n";
 
   const auto run = [&](const std::filesystem::path& source,
-                       const std::vector<std::string>& options) {
+                       const std::vector<std::string>& options,
+                       std::string_view backend = "llvm") {
     std::vector<std::string> args = {
-        "run",
-        "--backend",
-        "llvm",
-        "--top",
-        "Test",
-        "--cache-dir",
-        (dir / "cache").string(),
-        source.string(),
+        "run",  "--backend",   std::string(backend),     "--top",
+        "Test", "--cache-dir", (dir / "cache").string(), source.string(),
         "--"};
     args.insert(args.end(), options.begin(), options.end());
     return RunChildProcess(lyra, args);
@@ -2935,24 +2946,71 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
     ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
     EXPECT_FALSE(std::filesystem::exists(file));
   }
-  {
-    const auto file = dir / "taken.txt";
-    const auto ran = run(owning, {"+lyra+dump=" + file.string()});
-    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
-    EXPECT_FALSE(std::filesystem::exists(file));
-    const std::string text = read(dir / "own.txt");
-    EXPECT_TRUE(has(text, "10ns Test.a = 0011")) << text;
-    EXPECT_FALSE(has(text, "Test.d")) << text;
-  }
-  {
-    std::filesystem::remove(dir / "own.txt");
-    const auto file = dir / "forced.txt";
-    const auto ran =
-        run(owning, {"+lyra+dump=" + file.string(), "+lyra+dump+force"});
-    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
-    EXPECT_FALSE(std::filesystem::exists(dir / "own.txt"));
-    const std::string text = read(file);
-    EXPECT_TRUE(has(text, "10ns Test.a = 0011")) << text;
+  // What a package and the compilation unit's scope keep is stated by bodies
+  // of their units, which each backend compiles as its own.
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    SCOPED_TRACE(backend);
+    const std::string prefix = std::string(backend) + "_";
+    {
+      std::filesystem::remove(dir / "own.txt");
+      const auto file = dir / (prefix + "taken.txt");
+      const auto ran = run(owning, {"+lyra+dump=" + file.string()}, backend);
+      ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+      EXPECT_FALSE(std::filesystem::exists(file));
+      const std::string text = read(dir / "own.txt");
+      EXPECT_TRUE(has(text, "10ns Test.a = 0011")) << text;
+      EXPECT_TRUE(has(text, "0ns p::v = 1001")) << text;
+      EXPECT_FALSE(has(text, "Test.d")) << text;
+      EXPECT_FALSE(has(text, "p::touch.s")) << text;
+    }
+    {
+      std::filesystem::remove(dir / "own.txt");
+      const auto file = dir / (prefix + "forced.txt");
+      const auto ran = run(
+          owning, {"+lyra+dump=" + file.string(), "+lyra+dump+force"}, backend);
+      ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+      EXPECT_FALSE(std::filesystem::exists(dir / "own.txt"));
+      const std::string text = read(file);
+      EXPECT_TRUE(has(text, "10ns Test.a = 0011")) << text;
+      EXPECT_TRUE(has(text, "0ns p::v = 1001")) << text;
+      EXPECT_TRUE(has(text, "0ns p::touch.s = 10")) << text;
+      EXPECT_TRUE(has(text, "0ns p::tick.t = 1")) << text;
+      EXPECT_TRUE(has(text, "package $unit\n")) << text;
+      EXPECT_TRUE(has(text, "0ns $unit::u = 0111")) << text;
+    }
+    {
+      // A path naming a package's variable is read after the package's name
+      // and `::` (LRM 26.3).
+      const auto file = dir / (prefix + "kept.txt");
+      const auto ran =
+          run(owning,
+              {"+lyra+dump=" + file.string(), "+lyra+dump+force",
+               "+lyra+dump+scope=p::touch.s"},
+              backend);
+      ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+      const std::string text = read(file);
+      EXPECT_TRUE(has(text, "0ns p::touch.s = 10")) << text;
+      EXPECT_FALSE(has(text, "p::v")) << text;
+      EXPECT_FALSE(has(text, "Test.a")) << text;
+    }
+    {
+      // A path naming a package and nothing in it is read as a name handed to
+      // the design is (LRM 23.6), and selects the package whole.
+      const auto file = dir / (prefix + "package.txt");
+      const auto ran =
+          run(owning,
+              {"+lyra+dump=" + file.string(), "+lyra+dump+force",
+               "+lyra+dump+scope=p"},
+              backend);
+      ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+      const std::string text = read(file);
+      EXPECT_TRUE(has(text, "0ns p::v = 1001")) << text;
+      EXPECT_TRUE(has(text, "0ns p::touch.s = 10")) << text;
+      EXPECT_TRUE(has(text, "0ns p::tick.t = 1")) << text;
+      EXPECT_FALSE(has(text, "Test.a")) << text;
+      EXPECT_FALSE(has(text, "$unit::u")) << text;
+      EXPECT_FALSE(has(ran.stderr_text, "names no")) << ran.stderr_text;
+    }
   }
 }
 

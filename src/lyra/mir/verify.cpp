@@ -21,6 +21,7 @@
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/callable_ordinal.hpp"
 #include "lyra/mir/caller_location.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -497,17 +498,18 @@ auto TakesItsReceiverOver(
   if (direct == nullptr) {
     return false;
   }
-  const auto* closure = std::get_if<ClosureTarget>(&direct->target);
-  if (closure == nullptr) {
+  const auto* target = std::get_if<CallableTarget>(&direct->target);
+  if (target == nullptr || !std::holds_alternative<DeclaredByClosure>(
+                               unit.OwnerOf(target->callable))) {
     return false;
   }
-  const ClosureDecl& decl = unit.GetClosure(closure->closure);
-  switch (ClosureKindOf(unit.types, decl)) {
+  const CallableCode& invoke = unit.callables.Get(target->callable).code;
+  switch (ClosureKindOf(unit.types, invoke)) {
     case support::ClosureKind::kFn:
     case support::ClosureKind::kFnMut:
       return false;
     case support::ClosureKind::kFnOnce:
-      return handed == decl.invoke.locals.Get(*decl.invoke.receiver).type;
+      return handed == invoke.locals.Get(*invoke.receiver).type;
   }
   throw InternalError("mir verify: unknown ClosureKind");
 }
@@ -840,9 +842,8 @@ void VerifyTypeArguments(
   }
 }
 
-// A call naming a method of a record the unit declares names one its
-// declaration states, and one naming an operation stated per type names a type
-// that can have it; another leaves the call bound to nothing.
+// A call naming an operation stated per type names a type that can have it;
+// another leaves the call bound to nothing.
 void VerifyTypeOperationCalls(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   for (const ExprId id : block.exprs.Ids()) {
@@ -853,23 +854,6 @@ void VerifyTypeOperationCalls(
     const auto* direct = std::get_if<Direct>(&call->callee);
     if (direct == nullptr) {
       continue;
-    }
-    // A method of a record this unit declares is one its declaration states.
-    if (const auto* method = std::get_if<RecordMethodTarget>(&direct->target);
-        method != nullptr &&
-        !unit.GetRecord(method->record).defining_unit.has_value() &&
-        std::ranges::none_of(
-            unit.GetRecordMethods(method->record), [&](const RecordMethod& m) {
-              return m.answers == method->answers;
-            })) {
-      throw InternalError(
-          std::format(
-              "mir verify: {} calls the method \"{}\" of record '{}' "
-              "(expression {} of its block), which its declaration does not "
-              "state -- please report this as a bug",
-              describe(), support::ValueOperationName(method->answers),
-              support::DisplayOf(unit.GetRecord(method->record).path),
-              id.value));
     }
     const auto* target = std::get_if<TypeOperationTarget>(&direct->target);
     if (target != nullptr &&
@@ -1392,67 +1376,50 @@ auto CastReadsAsAnother(const TypePool& types, TypeId from, TypeId to) -> bool {
           from_member->mutability == Mutability::kMutable);
 }
 
-// The constructor of a class, which a construction of its object enters with
-// the call's arguments as one naming it does. A class another unit defines
-// states what its construction takes.
-auto ConstructorCode(const CompilationUnit& unit, ClassId cls)
+// The code of `callable` where the unit states what a call meets: a body it
+// holds, or the prototype of another unit's construction, which a construction
+// of its object enters with the call's arguments as one naming it does. None
+// where another unit holds the signature of a body it defines, and none for a
+// function the foreign program defines, which a call reaches across the
+// boundary its own way (LRM 35.5).
+auto CodeHeld(const CompilationUnit& unit, CallableId callable)
     -> const CallableCode* {
-  const std::optional<ConstructorDecl>& constructor =
-      unit.GetClass(cls).constructor;
-  return constructor.has_value() ? &constructor->code : nullptr;
+  const CallableDecl& decl = unit.callables.Get(callable);
+  const auto held_here = [&]() -> const CallableCode* {
+    return IsDefinedElsewhere(unit, callable) ? nullptr : &decl.code;
+  };
+  return std::visit(
+      Overloaded{
+          [&](const DeclaredByClass&) { return held_here(); },
+          [&](const ConstructsClass&) -> const CallableCode* {
+            return &decl.code;
+          },
+          [&](const DeclaredByNamespace&) -> const CallableCode* {
+            return std::holds_alternative<DefinedByForeignCode>(FormOf(decl))
+                       ? nullptr
+                       : held_here();
+          },
+          [&](const DeclaredByClosure&) -> const CallableCode* {
+            return &decl.code;
+          },
+          [&](const DeclaredByRecord&) { return held_here(); }},
+      decl.owner);
 }
 
-// The code of `target`, a body of a class, where this unit holds it; none
-// where another unit holds the signature of a class it defines.
-auto ClassBodyCode(const CompilationUnit& unit, const CallableTarget& target)
-    -> const CallableCode* {
-  const Class& owner = unit.GetClass(target.owner);
-  return owner.defining_unit.has_value()
-             ? nullptr
-             : &owner.callables.Get(target.slot).code;
-}
-
-// The code a direct call enters, where the unit states what the call meets: a
-// body it holds, or the prototype of another unit's constructor. None where
-// another unit or the library holds it.
+// The code a direct call enters, where the unit states what the call meets.
+// None where another unit or the library holds it.
 auto CodeEntered(const CompilationUnit& unit, const Direct& direct)
     -> const CallableCode* {
   return std::visit(
       Overloaded{
-          [&](const CallableTarget& t) { return ClassBodyCode(unit, t); },
-          [&](const ClosureTarget& t) -> const CallableCode* {
-            return &unit.GetClosure(t.closure).invoke;
-          },
-          // Another unit holds the signature of a body of its namespace.
-          [&](const UnitCallableTarget& t) -> const CallableCode* {
-            const CallableDecl& body = unit.callables.Get(t.slot);
-            return body.defining_unit.has_value() ? nullptr : &body.code;
-          },
+          [&](const CallableTarget& t) { return CodeHeld(unit, t.callable); },
           [](support::BuiltinFn) -> const CallableCode* { return nullptr; },
-          [&](const ConstructorTarget& t) -> const CallableCode* {
-            return ConstructorCode(unit, t.cls);
-          },
-          // Another unit states the methods of a record it declares.
-          [&](const RecordMethodTarget& t) -> const CallableCode* {
-            if (unit.GetRecord(t.record).defining_unit.has_value()) {
-              return nullptr;
-            }
-            for (const RecordMethod& method : unit.GetRecordMethods(t.record)) {
-              if (method.answers == t.answers) {
-                return &method.code;
-              }
-            }
-            return nullptr;
-          },
           // Such a body is built once something below this layer finds it
           // is needed, so no unit holds one.
           [](const TypeOperationTarget&) -> const CallableCode* {
             return nullptr;
           },
           [](const ExternalBringUpTarget&) -> const CallableCode* {
-            return nullptr;
-          },
-          [](const ForeignSymbolTarget&) -> const CallableCode* {
             return nullptr;
           }},
       direct.target);
@@ -1466,20 +1433,75 @@ auto TypeOf(const Block& in, ExprId id) -> TypeId {
 // unit, or the body through which such a class enters one of its methods. None
 // for code another unit holds, whose type is what that unit published, and for
 // a target that names no code. A method of a class of this unit is entered
-// only through an entry the class gives it.
+// only through an entry the class gives it. Code named as a value is a method
+// or a body of a namespace, and an entry is a method's: a construction, a
+// closure's body and a record's method are each entered only by what they are
+// for, and naming one as a value is refused.
 auto CodeNamed(
     const CompilationUnit& unit, const ReferenceTarget& target,
     const auto& describe) -> const CallableCode* {
   const auto none = [](const auto&) -> const CallableCode* { return nullptr; };
+  const auto refuse = [&](std::string_view what) -> const CallableCode* {
+    throw InternalError(
+        std::format(
+            "mir verify: {} {} -- please report this as a bug", describe(),
+            what));
+  };
   return std::visit(
       Overloaded{
-          [&](const FunctionRef& r) { return ClassBodyCode(unit, r.body); },
+          // Code is named as a value where something enters it without a
+          // call naming it: a method of a class, or a body of a namespace. A
+          // function the foreign program defines is no code of the program's
+          // own to name, and no target spells one as a value.
+          [&](const FunctionRef& r) -> const CallableCode* {
+            const auto not_a_value = [&] {
+              return refuse(
+                  "names as code a callable that is no method nor namespace "
+                  "body");
+            };
+            return std::visit(
+                Overloaded{
+                    [&](const DeclaredByClass&) {
+                      if (IsDefinedElsewhere(unit, r.callable)) {
+                        return refuse(
+                            "names as code a method of a class another unit "
+                            "defines");
+                      }
+                      if (std::holds_alternative<LeftAbstract>(
+                              FormOf(unit.callables.Get(r.callable)))) {
+                        return refuse(
+                            "names as code a method its class leaves to what "
+                            "extends it");
+                      }
+                      return CodeHeld(unit, r.callable);
+                    },
+                    [&](const DeclaredByNamespace&) {
+                      if (std::holds_alternative<DefinedByForeignCode>(
+                              FormOf(unit.callables.Get(r.callable)))) {
+                        return refuse(
+                            "names as code a function the foreign program "
+                            "defines");
+                      }
+                      return CodeHeld(unit, r.callable);
+                    },
+                    [&](const ConstructsClass&) { return not_a_value(); },
+                    [&](const DeclaredByClosure&) { return not_a_value(); },
+                    [&](const DeclaredByRecord&) { return not_a_value(); }},
+                unit.OwnerOf(r.callable));
+          },
           [&](const DispatchEntryRef& r) -> const CallableCode* {
-            const Class& owner = unit.GetClass(r.body.owner);
+            const auto* declared_by =
+                std::get_if<DeclaredByClass>(&unit.OwnerOf(r.method));
+            if (declared_by == nullptr) {
+              return refuse(
+                  "names the entry of a callable no class declares as a "
+                  "method");
+            }
+            const Class& owner = unit.GetClass(declared_by->cls);
             if (owner.defining_unit.has_value()) {
               return nullptr;
             }
-            const std::optional<CallableId> entry = owner.EntryOf(r.body.slot);
+            const std::optional<CallableId> entry = owner.EntryOf(r.method);
             if (!entry.has_value()) {
               throw InternalError(
                   std::format(
@@ -1487,7 +1509,7 @@ auto CodeNamed(
                       "gives none -- please report this as a bug",
                       describe()));
             }
-            return &owner.callables.Get(*entry).code;
+            return &unit.callables.Get(*entry).code;
           },
           [&](const ExternalObjectEntryRef& r) { return none(r); },
           [&](const DestructorRef& r) { return none(r); },
@@ -1686,6 +1708,17 @@ void VerifyExprsMeetTheirTypes(
     // A direct call answers what the code it enters returns; a construction
     // enters its object's constructor and answers the object.
     if (const auto* direct = std::get_if<Direct>(&call->callee)) {
+      // A behavior its class leaves to what extends it has no body anywhere
+      // (LRM 8.21), so only a dispatching call reaches it.
+      if (const auto* target = std::get_if<CallableTarget>(&direct->target);
+          target != nullptr && std::holds_alternative<LeftAbstract>(FormOf(
+                                   unit.callables.Get(target->callable)))) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} calls directly a method its class leaves to "
+                "what extends it -- please report this as a bug",
+                describe()));
+      }
       callee = CodeEntered(unit, *direct);
       if (callee != nullptr && expr.type != callee->result_type) {
         throw InternalError(
@@ -1698,8 +1731,12 @@ void VerifyExprsMeetTheirTypes(
     } else if (
         std::holds_alternative<Construct>(call->callee) &&
         unit.types.Get(expr.type).Is<ObjectType>()) {
-      callee =
-          ConstructorCode(unit, unit.types.Get(expr.type).Get<ObjectType>().of);
+      const std::optional<CallableId>& constructor =
+          unit.CallablesOf(unit.types.Get(expr.type).Get<ObjectType>().of)
+              .constructor;
+      if (constructor.has_value()) {
+        callee = CodeHeld(unit, *constructor);
+      }
     }
     // What the call's arguments meet: the parameters of a body this unit
     // holds, or, for code reached through an address, what its type states.
@@ -2187,7 +2224,9 @@ void VerifyErasures(
           id, "at a type other than the one its answer holds", describe);
     }
     if (erasure->erased !=
-        ErasedTypeOf(unit.types, unit.GetClosure(erasure->closure))) {
+        ErasedTypeOf(
+            unit.types,
+            unit.callables.Get(unit.BodyOf(erasure->closure)).code)) {
       RefuseErasure(
           id, "at a kind or a signature its body does not have", describe);
     }
@@ -2950,12 +2989,12 @@ auto IsCalledAt(
          CrossesAs(unit, erased.result, signature.Returns());
 }
 
-// Whether a closure `closure` is called at `signature` as its body is: it
-// takes what the entry hands it and answers what the entry takes back.
+// Whether the closure whose body is `invoke` is called at `signature` as that
+// body is: it takes what the entry hands it and answers what the entry takes
+// back.
 auto IsCalledAt(
-    const CompilationUnit& unit, const ClosureDecl& closure,
+    const CompilationUnit& unit, const CallableCode& invoke,
     const support::MachineSignature& signature) -> bool {
-  const CallableCode& invoke = closure.invoke;
   const auto crosses = [&](LocalId param, support::MachineKind kind) {
     return CrossesAs(unit, invoke.locals.Get(param).type, kind);
   };
@@ -2980,10 +3019,11 @@ auto HandsOverAs(
           [&](const support::StartedBody&) { return t.Is<CoroutineType>(); },
           [&](const support::CalledClosure& called) {
             if (const ClosureType* made = MadeInPlace(unit.types, type)) {
-              const ClosureDecl& closure = unit.GetClosure(made->closure_id);
+              const CallableCode& invoke =
+                  unit.callables.Get(unit.BodyOf(made->closure_id)).code;
               return support::Extends(
-                         ClosureKindOf(unit.types, closure), called.asks) &&
-                     IsCalledAt(unit, closure, called.signature);
+                         ClosureKindOf(unit.types, invoke), called.asks) &&
+                     IsCalledAt(unit, invoke, called.signature);
             }
             const std::optional<TypeId> held = Held(unit.types, type);
             const auto* erased =
@@ -3146,8 +3186,12 @@ class HandedClosures {
     }
     if (const auto* call = std::get_if<CallExpr>(&data)) {
       const auto* direct = std::get_if<Direct>(&call->callee);
-      if (direct != nullptr &&
-          std::holds_alternative<ClosureTarget>(direct->target) &&
+      const auto* target = direct != nullptr
+                               ? std::get_if<CallableTarget>(&direct->target)
+                               : nullptr;
+      if (target != nullptr &&
+          std::holds_alternative<DeclaredByClosure>(
+              unit_->OwnerOf(target->callable)) &&
           direct->receiver.has_value()) {
         return Handed(code, block, *direct->receiver);
       }
@@ -3503,6 +3547,69 @@ void VerifyLibraryTypes(const CompilationUnit& unit, std::string_view when) {
   }
 }
 
+// Each callable's owner is the one statement of who declares it and where it
+// stands. Where a callable stands is handed out by its owner's take, and only
+// an owner the unit has an identity for takes one, so what is left to hold is
+// what the takes cannot rule out: every identity taken is stated, a class has
+// at most one construction, a closure exactly one body, and a record answers
+// each operation with one method at most.
+void VerifyMembers(const CompilationUnit& unit, std::string_view when) {
+  const auto refuse = [&](CallableId callable, std::string_view what) {
+    throw InternalError(
+        std::format(
+            "mir verify: unit '{}', {}, {} callable {} -- please report this "
+            "as a bug",
+            unit.name, when, what, callable.value));
+  };
+  if (const std::optional<CallableId> unstated = unit.callables.AnyUnstated()) {
+    refuse(*unstated, "never states the taken");
+  }
+  std::vector<std::optional<CallableId>> constructions(unit.classes.size());
+  std::vector<std::optional<CallableId>> closure_bodies(unit.closures.size());
+  std::vector<std::vector<support::ValueOperation>> answered(
+      unit.records.size());
+  for (const CallableId callable : unit.callables.Ids()) {
+    std::visit(
+        Overloaded{
+            [](const DeclaredByNamespace&) {}, [](const DeclaredByClass&) {},
+            [&](const ConstructsClass& owner) {
+              if (constructions[owner.cls.value].has_value()) {
+                refuse(callable, "gives a class a second construction in the");
+              }
+              constructions[owner.cls.value] = callable;
+            },
+            [&](const DeclaredByClosure& owner) {
+              if (closure_bodies[owner.closure.value].has_value()) {
+                refuse(callable, "gives a closure a second body in the");
+              }
+              closure_bodies[owner.closure.value] = callable;
+            },
+            [&](const DeclaredByRecord& owner) {
+              std::vector<support::ValueOperation>& of_record =
+                  answered[owner.record.value];
+              if (std::ranges::find(of_record, owner.answers) !=
+                  of_record.end()) {
+                refuse(
+                    callable, "answers one operation of a record twice in the");
+              }
+              of_record.push_back(owner.answers);
+            }},
+        unit.callables.Get(callable).owner);
+  }
+  const auto refuse_owner = [&](std::string_view what) {
+    throw InternalError(
+        std::format(
+            "mir verify: unit '{}', {}, {} -- please report this as a bug",
+            unit.name, when, what));
+  };
+  for (const ClosureId id : unit.closures.Ids()) {
+    if (!closure_bodies[id.value].has_value()) {
+      refuse_owner(
+          std::format("declares closure {} with no body to invoke", id.value));
+    }
+  }
+}
+
 // An entry has one identity here however the name reaching it was written:
 // one this unit defines is never declared as another unit's, and one another
 // unit defines is declared once, by the unit and the name it published it
@@ -3542,13 +3649,14 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
     declared.emplace_back(*cls.defining_unit, class_path);
     // What it states of the class is prototypes: a body of a method or of the
     // construction is the defining unit's.
+    const auto has_body = [&](CallableId callable) {
+      return unit.callables.Get(callable).code.body.has_value();
+    };
+    const DeclaredCallables& declared_callables = unit.CallablesOf(id);
     const bool holds_code =
-        std::ranges::any_of(
-            cls.callables.Ids(),
-            [&](CallableId callable) {
-              return cls.callables.Get(callable).code.body.has_value();
-            }) ||
-        (cls.constructor.has_value() && cls.constructor->code.body.has_value());
+        std::ranges::any_of(declared_callables.callables, has_body) ||
+        (declared_callables.constructor.has_value() &&
+         has_body(*declared_callables.constructor));
     if (holds_code || !cls.contained.empty() || cls.definition.has_value()) {
       refuse(*class_path, "holds code or data of its own for the class");
     }
@@ -3559,7 +3667,9 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
     if (*record.defining_unit == unit.name) {
       refuse(record.path, "declares as another unit's its own record");
     }
-    if (!unit.GetRecordMethods(id).empty()) {
+    if (std::ranges::any_of(unit.RecordMethodsOf(id), [&](CallableId method) {
+          return unit.callables.Get(method).code.body.has_value();
+        })) {
       refuse(record.path, "states methods of its own for the record");
     }
   }
@@ -3570,34 +3680,52 @@ void VerifyDeclaredEntries(const CompilationUnit& unit, std::string_view when) {
             unit.name, when, what, at));
   };
   // A method of a class this unit defines has its body here unless the class
-  // leaves it to what extends it, and a subroutine of this unit's namespace
-  // has its body here unless foreign code defines it: nothing else defines one.
-  for (const ClassId id : unit.classes.Ids()) {
-    const Class& cls = unit.GetClass(id);
-    if (cls.defining_unit.has_value()) continue;
-    for (const CallableId callable : cls.callables.Ids()) {
-      if (std::holds_alternative<DefinedByAnotherUnit>(
-              FormOf(cls.callables.Get(callable)))) {
+  // leaves it to what extends it, and so does its construction, which nothing
+  // leaves to anything; a method of a record this unit defines has its body
+  // here, and a subroutine of this unit's namespace has its body here unless
+  // foreign code defines it: nothing else defines one.
+  for (const RecordId id : unit.records.Ids()) {
+    if (unit.GetRecord(id).defining_unit.has_value()) continue;
+    for (const CallableId method : unit.RecordMethodsOf(id)) {
+      if (!unit.callables.Get(method).code.body.has_value()) {
         refuse_member(
-            "leaves with no body a method of a class it defines, slot",
-            callable.value);
+            "leaves with no body a method of a record it defines, callable",
+            method.value);
       }
     }
   }
-  for (const CallableId id : unit.callables.Ids()) {
+  for (const ClassId id : unit.classes.Ids()) {
+    const Class& cls = unit.GetClass(id);
+    if (cls.defining_unit.has_value()) continue;
+    const DeclaredCallables& declared = unit.CallablesOf(id);
+    for (const CallableId callable : declared.callables) {
+      if (std::holds_alternative<DefinedByAnotherUnit>(
+              FormOf(unit.callables.Get(callable)))) {
+        refuse_member(
+            "leaves with no body a method of a class it defines, callable",
+            callable.value);
+      }
+    }
+    if (declared.constructor.has_value() &&
+        !unit.callables.Get(*declared.constructor).code.body.has_value()) {
+      refuse_member(
+          "leaves with no body the construction of a class it defines, "
+          "callable",
+          declared.constructor->value);
+    }
+  }
+  for (const CallableId id : unit.NamespaceCallables()) {
     const CallableDecl& callable = unit.callables.Get(id);
-    if (!callable.defining_unit.has_value()) {
+    const std::optional<std::string>& defining_unit =
+        std::get<DeclaredByNamespace>(callable.owner).defining_unit;
+    if (!defining_unit.has_value()) {
       if (std::holds_alternative<DefinedByAnotherUnit>(FormOf(callable))) {
         refuse_member("leaves with no body its own subroutine", id.value);
       }
       continue;
     }
-    if (*callable.defining_unit == unit.name) {
+    if (*defining_unit == unit.name) {
       refuse_member("declares as another unit's its own subroutine", id.value);
-    }
-    if (callable.code.body.has_value()) {
-      refuse_member(
-          "holds a body for a subroutine another unit defines", id.value);
     }
     if (!NameOf(unit.named_callables, id).has_value()) {
       refuse_member(
@@ -3650,6 +3778,32 @@ auto InternalClass(const CompilationUnit& unit, ClassId owner) -> Named {
   return std::nullopt;
 }
 
+// What naming `callable` names that is one body's own: the class declaring
+// it, where only one body has that class, a function of the unit's namespace
+// only one body has, or a closure, which one body's site builds. A record is no
+// body's alone.
+auto InternalCallable(const CompilationUnit& unit, CallableId callable)
+    -> Named {
+  return std::visit(
+      Overloaded{
+          [&](const DeclaredByClass& owner) {
+            return InternalClass(unit, owner.cls);
+          },
+          [&](const ConstructsClass& owner) {
+            return InternalClass(unit, owner.cls);
+          },
+          [&](const DeclaredByNamespace&) -> Named {
+            if (IsInternal(
+                    LinkageOf(unit, CallableTarget{.callable = callable}))) {
+              return "a function only one body has";
+            }
+            return std::nullopt;
+          },
+          [](const DeclaredByClosure&) -> Named { return "a closure"; },
+          [](const DeclaredByRecord&) -> Named { return std::nullopt; }},
+      unit.OwnerOf(callable));
+}
+
 // What `target` names that is one body's own, or nothing. A constant of the
 // unit is the value it is, which every artifact holding it holds alike, so
 // naming one names nothing one body has alone; what it holds is followed
@@ -3666,8 +3820,12 @@ auto InternalNamedBy(const CompilationUnit& unit, const ReferenceTarget& target)
           [](const ConstantRef&) -> Named { return std::nullopt; },
           [&](const StaticPropertyRef& r) { return of_class(r.owner); },
           [](const StaticVariableRef&) -> Named { return std::nullopt; },
-          [&](const FunctionRef& r) { return of_class(r.body.owner); },
-          [&](const DispatchEntryRef& r) { return of_class(r.body.owner); },
+          [&](const FunctionRef& r) {
+            return InternalCallable(unit, r.callable);
+          },
+          [&](const DispatchEntryRef& r) {
+            return InternalCallable(unit, r.method);
+          },
           [&](const DestructorRef& r) { return of_class(r.of); },
           [&](const DispatchTableRef& r) { return of_class(r.of); },
           [&](const InterfaceTableRef& r) { return of_class(r.of); },
@@ -3703,20 +3861,12 @@ auto InternalNamedBy(const CompilationUnit& unit, const ExprData& data)
   }
   return std::visit(
       Overloaded{
-          [&](const CallableTarget& t) { return of_class(t.owner); },
-          [](const ClosureTarget&) -> Named { return "a closure"; },
-          [&](const UnitCallableTarget& t) -> Named {
-            if (IsInternal(LinkageOf(unit, t))) {
-              return "a function only one body has";
-            }
-            return std::nullopt;
+          [&](const CallableTarget& t) {
+            return InternalCallable(unit, t.callable);
           },
           [](const support::BuiltinFn&) -> Named { return std::nullopt; },
-          [&](const ConstructorTarget& t) { return of_class(t.cls); },
-          [](const RecordMethodTarget&) -> Named { return std::nullopt; },
           [](const TypeOperationTarget&) -> Named { return std::nullopt; },
-          [](const ExternalBringUpTarget&) -> Named { return std::nullopt; },
-          [](const ForeignSymbolTarget&) -> Named { return std::nullopt; }},
+          [](const ExternalBringUpTarget&) -> Named { return std::nullopt; }},
       direct->target);
 }
 
@@ -3820,6 +3970,7 @@ void VerifyBody(
 }
 
 void Verify(const CompilationUnit& unit, std::string_view when) {
+  VerifyMembers(unit, when);
   VerifyLibraryTypes(unit, when);
   VerifyDeclaredEntries(unit, when);
   VerifySharedCodeNamesNothingInternal(unit, when);

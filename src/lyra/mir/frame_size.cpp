@@ -11,6 +11,8 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/callable.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/operand_use.hpp"
@@ -27,7 +29,6 @@
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/constant_span.hpp"
 #include "lyra/value/frame_bound.hpp"
-#include "lyra/value/integral.hpp"
 #include "lyra/value/layout.hpp"
 #include "lyra/value/scalar.hpp"
 
@@ -340,14 +341,32 @@ auto TakesAValueTooLargeForAFrame(const CompilationUnit& unit, TypeId type)
 
 auto EntersACompiledBody(
     const CompilationUnit& unit, const CallExpr& call, TypeId result) -> bool {
+  const auto compiled = [&](CallableId callable) {
+    const CallableDecl& decl = unit.callables.Get(callable);
+    return std::visit(
+        Overloaded{
+            [&](const DeclaredByNamespace&) {
+              return !std::holds_alternative<DefinedByForeignCode>(
+                  FormOf(decl));
+            },
+            [](const DeclaredByClass&) { return true; },
+            [](const ConstructsClass&) { return true; },
+            [](const DeclaredByClosure&) { return true; },
+            [](const DeclaredByRecord&) { return false; }},
+        unit.OwnerOf(callable));
+  };
   return std::visit(
       Overloaded{
-          [](const Direct& direct) {
-            return !std::holds_alternative<support::BuiltinFn>(direct.target) &&
-                   !std::holds_alternative<ForeignSymbolTarget>(
-                       direct.target) &&
-                   !std::holds_alternative<RecordMethodTarget>(direct.target) &&
-                   !std::holds_alternative<TypeOperationTarget>(direct.target);
+          [&](const Direct& direct) {
+            return std::visit(
+                Overloaded{
+                    [&](const CallableTarget& target) {
+                      return compiled(target.callable);
+                    },
+                    [](const support::BuiltinFn&) { return false; },
+                    [](const TypeOperationTarget&) { return false; },
+                    [](const ExternalBringUpTarget&) { return true; }},
+                direct.target);
           },
           [](const Indirect&) { return true; },
           [](const Virtual&) { return true; },

@@ -49,7 +49,8 @@ void LeaveInputsUnconnected(
   for (const hir::PortDecl& port : hir::DesignElementOf(signature).ports) {
     for (const hir::PortPart& part : port.parts) {
       const auto* data = std::get_if<hir::DataPortPart>(&part);
-      if (data == nullptr || data->direction != hir::PortDirection::kInput) {
+      if (data == nullptr ||
+          data->direction != support::PortDirection::kInput) {
         continue;
       }
       const auto* projection =
@@ -69,7 +70,7 @@ void LeaveInputsUnconnected(
               .span = {},
               .instance = step,
               .kind = hir::DataPortConnection{
-                  .direction = hir::PortDirection::kInput,
+                  .direction = support::PortDirection::kInput,
                   .endpoint =
                       hir::ValueRoute{
                           .base = hir::InUnitBase{.hops = {}},

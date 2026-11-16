@@ -331,16 +331,6 @@ constexpr std::array kSampled{
         .wrapper = WrapperKind::kRef,
         .domains = kVariableValues,
         .told = ToldNothing{}}};
-// What a dump records of a member (LRM 21.7.2): an integral value or a real,
-// held by a variable, shown by a net, or stood for by a port.
-constexpr std::array kDescribed{
-    ThroughWrapper{
-        .wrapper = WrapperKind::kCell, .domains = kIntegral | kReals},
-    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kIntegral | kReals},
-    ThroughWrapper{
-        .wrapper = WrapperKind::kRef,
-        .domains = kIntegral | kReals,
-        .told = ToldNothing{}}};
 constexpr ThroughWrapper kThroughAReferenceToBytesOrAnObject{
     .wrapper = WrapperKind::kRef,
     .domains = kOneWordIntegral | kHeldThroughEntries};
@@ -872,6 +862,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kScanString:
       return NamedByValue{.realized = kForStrings};
 
+    // A real is handed over at the width it is held at.
+    case support::BuiltinFn::kSerializeReal:
+      return NamedByValue{.operand = 1, .realized = kForReals};
+
     case support::BuiltinFn::kBitIdentical:
       return NamedByValue{.realized = kForWhatAnEntryComparesWhole};
     case support::BuiltinFn::kCaseEqual:
@@ -949,12 +943,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       return NamedByWrapper{.realized = kSampled};
     case support::BuiltinFn::kArmSampling:
       return NamedByWrapper{.realized = kSampled};
-    // What a dump starting is told of a member (LRM 21.7.1.2): the wrapper
-    // decides where the value lies and where a change to it is reported, and
-    // the constant beside it states the declaration, its width included, so
-    // nothing more is told.
-    case support::BuiltinFn::kDescribe:
-      return NamedByWrapper{.realized = kDescribed};
     // A takeover acts on the cell it covers and carries that cell's value, so
     // the wrapper it is reached through is what names the entry (LRM 10.6).
     case support::BuiltinFn::kBeginTakeover:
@@ -1086,6 +1074,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEvaluationAttemptsAllocate:
     case support::BuiltinFn::kEvaluationAttemptsCommit:
     case support::BuiltinFn::kAssertionControlDescribe:
+    case support::BuiltinFn::kSerializeBits:
+    case support::BuiltinFn::kSerializeEvent:
+    case support::BuiltinFn::kSubscribe:
     case support::BuiltinFn::kAssertionControlRegisterIn:
     case support::BuiltinFn::kAssertionControlRegister:
     case support::BuiltinFn::kAssertionControlRegisterWithin:
@@ -1153,7 +1144,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDumpPortsAll:
     case support::BuiltinFn::kDumpPortsLimit:
     case support::BuiltinFn::kDumpPortsFlush:
-    case support::BuiltinFn::kDescribeEvent:
     case support::BuiltinFn::kRunHostCommand:
     case support::BuiltinFn::kRunNullHostCommand:
     case support::BuiltinFn::kDelay:

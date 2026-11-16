@@ -6,7 +6,8 @@
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
-#include "lyra/support/dump_kind.hpp"
+#include "lyra/support/data_object.hpp"
+#include "lyra/support/port_direction.hpp"
 #include "lyra/support/scope_execution.hpp"
 #include "lyra/support/scope_kind.hpp"
 #include "lyra/value/constant_span.hpp"
@@ -14,20 +15,22 @@
 #include "lyra/value/object_ref.hpp"
 
 // The structures the runtime library reads out of constants a compiled design
-// states: what each class is, what a scope of the design hierarchy is, how each
-// object of the design is constructed, what a value dump records, where an
-// operation was written, and an enumeration's members. Each is declared once,
-// here, or for the last two in the layer that reads them -- the base layer's
-// reports and the value layer -- and both sides read the declaration: the
-// library to read a constant, and the compiler, which is built against it, to
-// state one -- the type of each member it fills and where the member lies. A
-// record's members are the ones `ForEachField` hands over, in the order the
-// record declares them; a member that is a structure of its own is handed over
-// whole.
+// states: what each class is, what a scope of the design hierarchy is and the
+// data objects it declares, how each object of the design is constructed,
+// where an operation was written, and an enumeration's members. Each is
+// declared once, here, or for the last two in the layer that reads them -- the
+// base layer's reports and the value layer -- and both sides read the
+// declaration: the library to read a constant, and the compiler, which is built
+// against it, to state one -- the type of each member it fills and where the
+// member lies. A record's members are the ones `ForEachField` hands over, in
+// the order the record declares them; a member that is a structure of its own
+// is handed over whole.
 
 namespace lyra::runtime {
 class GcObject;
 class Scope;
+class Subscriber;
+class ValueSerializer;
 }  // namespace lyra::runtime
 
 namespace lyra::abi {
@@ -145,15 +148,85 @@ struct ScopeCallable {
 // The body a class of the design hierarchy runs on an instance in one phase.
 using ScopePhase = void (*)(runtime::GcObject*);
 
+// A data object's type as the source declared it (LRM 37.25), a constant of
+// the unit describing the object: what kind of type it is, how many bits a
+// value of it holds, the outermost packed range a vector declares, and, for an
+// enumeration, its base type (LRM 6.19), none for any other type. Each
+// enumeration is held as the number a constant record writes.
+struct Typespec {
+  const Typespec* base = nullptr;
+  std::int64_t left = 0;
+  std::int64_t right = 0;
+  std::uint32_t width = 0;
+  std::uint8_t kind = 0;
+  std::uint8_t has_range = 0;
+
+  [[nodiscard]] auto Kind() const -> support::TypespecKind {
+    return static_cast<support::TypespecKind>(kind);
+  }
+  [[nodiscard]] auto Range() const -> std::optional<support::Range> {
+    if (has_range == 0) {
+      return std::nullopt;
+    }
+    return support::Range{.left = left, .right = right};
+  }
+};
+
+// One data object a scope of the design hierarchy, a package or the
+// compilation unit's scope declares that a reader reaching the design by name
+// finds -- a variable, a net or a named event (LRM 21.7.1.2) -- as a constant
+// of its unit, the same for every instance: its name, the named block, task
+// or function it lies in, if any, the net type it is declared with, none for
+// a variable, its type, and the bodies that read it and subscribe to it,
+// compiled where the object's type is known: one hands the value it reads,
+// the other the trigger a wait for a change of the object would enrol. A
+// class's bodies are entered on the instance; a package's take an object and
+// leave it unread. Each enumeration is held as the number a constant record
+// writes.
+struct DataObjectRecord {
+  const char* identifier = nullptr;
+  const LexicalScopeRecord* enclosing = nullptr;
+  const Typespec* typespec = nullptr;
+  void (*read)(runtime::GcObject*, runtime::ValueSerializer&) = nullptr;
+  void (*subscribe)(runtime::GcObject*, runtime::Subscriber&) = nullptr;
+  std::uint8_t net_type = 0;
+  std::uint8_t has_net_type = 0;
+
+  [[nodiscard]] auto NetType() const -> std::optional<support::NetType> {
+    if (has_net_type == 0) {
+      return std::nullopt;
+    }
+    return static_cast<support::NetType>(net_type);
+  }
+};
+
+// One port of a scope of the design hierarchy that connects a data object the
+// scope declares (LRM 23.2.2), as a constant of its unit: the port's name, the
+// record of the object it connects, and the direction data flows across it.
+// Two ports connecting one object are two of these.
+struct DescribedPort {
+  const char* name = nullptr;
+  const DataObjectRecord* connects = nullptr;
+  std::uint8_t direction = 0;
+
+  [[nodiscard]] auto Direction() const -> support::PortDirection {
+    return static_cast<support::PortDirection>(direction);
+  }
+};
+
 // What a scope of the design hierarchy states of itself (LRM 37.10, 37.12): the
-// definition it comes from and the scopes it declares. A class of the hierarchy
-// states it of its instances; a package and the compilation unit's scope, each
-// one object of the run, state it once, as a constant handed to the library as
-// its storage is installed.
+// definition it comes from, the scopes it declares, the data objects it
+// declares, in the order it declares them, and the ports connecting them, in
+// the order the declaration gives the ports (LRM 21.7.4.2). A class of the
+// hierarchy states it of its instances; a package and the compilation unit's
+// scope, each one object of the run, state it once, as a constant handed to
+// the library as its storage is installed, and have no ports.
 struct ScopeDeclarations {
   const DefinitionRecord* definition = nullptr;
   value::ConstantSpan<const ElaboratedScopeRecord*> elaborated;
   value::ConstantSpan<const LexicalScopeRecord*> lexical;
+  value::ConstantSpan<const DataObjectRecord*> data_objects;
+  value::ConstantSpan<const DescribedPort*> ports;
 };
 
 // What a class of the design hierarchy tells the library about its instances:
@@ -163,8 +236,7 @@ struct ScopeDeclarations {
 // (LRM 35.4), so the foreign side has no type to reach the body through and
 // finds it by that name. The phases are listed in the order they run -- every
 // route and alias is bound, then every cell takes the value its declaration
-// gives it (LRM 10.5), then every process is created (LRM 9.2) -- and then what
-// an instance describes to a value dump starting (LRM 21.7.1.2); each is
+// gives it (LRM 10.5), then every process is created (LRM 9.2); each is
 // entered on the instance, as every entry of a class's definition is. What a
 // unit publishes of its object has none of this, since no instance is built of
 // it.
@@ -174,7 +246,6 @@ struct ScopeInfo {
   ScopePhase resolve = nullptr;
   ScopePhase initialize = nullptr;
   ScopePhase create_processes = nullptr;
-  ScopePhase describe = nullptr;
 };
 
 // One interface class an object's class implements (LRM 8.26), directly or
@@ -295,58 +366,6 @@ struct ConstructionTable {
   value::ConstantSpan<GeneratePlaces> generates;
 };
 
-// What a class of the design hierarchy states of one thing a dump may record:
-// a variable, a net, a port or a named event it declares (LRM 21.7.1.2). The
-// unit declaring the class emits one as a constant per such declaration, which
-// is what an instance is described with and what a format declares the thing
-// by. A range is the declared one of a vector, which a dump writes beside its
-// name (LRM 21.7.2.3 `$var`); a port is where the thing is what a port of the
-// class connects, with the port's direction, which an extended dump reads its
-// values by, and its position among the ports, which it records them in (LRM
-// 21.7.3.1, 21.7.4.2). A static variable of a block, a task or a function lies
-// in that procedural scope, whose record the entry names, and a dump writes a
-// `$scope` around it for each named one from there out to the instance (LRM
-// 21.7.2.3).
-struct DumpEntry {
-  const LexicalScopeRecord* enclosing = nullptr;
-  const char* identifier = nullptr;
-  std::int64_t left = 0;
-  std::int64_t right = 0;
-  std::uint32_t width = 0;
-  std::uint8_t kind = 0;
-  std::uint8_t has_range = 0;
-  std::uint8_t has_port = 0;
-  std::uint8_t port_direction = 0;
-  std::uint32_t port_position = 0;
-
-  struct Bounds {
-    std::int64_t left;
-    std::int64_t right;
-  };
-  struct Connection {
-    support::DumpPortDirection direction;
-    std::uint32_t position;
-  };
-
-  [[nodiscard]] auto Kind() const -> support::DumpVarKind {
-    return static_cast<support::DumpVarKind>(kind);
-  }
-  [[nodiscard]] auto Range() const -> std::optional<Bounds> {
-    if (has_range == 0) {
-      return std::nullopt;
-    }
-    return Bounds{.left = left, .right = right};
-  }
-  [[nodiscard]] auto Port() const -> std::optional<Connection> {
-    if (has_port == 0) {
-      return std::nullopt;
-    }
-    return Connection{
-        .direction = static_cast<support::DumpPortDirection>(port_direction),
-        .position = port_position};
-  }
-};
-
 // Hands each member of a record to `visit`, in the order the record declares
 // them, as Boost.PFR's `for_each_field` does. A structured binding names every
 // member, so a record gaining or losing one stops these from compiling until
@@ -392,10 +411,45 @@ constexpr void ForEachField(
 template <typename Visit>
 constexpr void ForEachField(
     const ScopeDeclarations& record, const Visit& visit) {
-  const auto& [definition, elaborated, lexical] = record;
+  const auto& [definition, elaborated, lexical, data_objects, ports] = record;
   visit(definition);
   visit(elaborated);
   visit(lexical);
+  visit(data_objects);
+  visit(ports);
+}
+
+template <typename Visit>
+constexpr void ForEachField(const Typespec& record, const Visit& visit) {
+  const auto& [base, left, right, width, kind, has_range] = record;
+  visit(base);
+  visit(left);
+  visit(right);
+  visit(width);
+  visit(kind);
+  visit(has_range);
+}
+
+template <typename Visit>
+constexpr void ForEachField(
+    const DataObjectRecord& record, const Visit& visit) {
+  const auto& [identifier, enclosing, typespec, read, subscribe, net_type, has_net_type] =
+      record;
+  visit(identifier);
+  visit(enclosing);
+  visit(typespec);
+  visit(read);
+  visit(subscribe);
+  visit(net_type);
+  visit(has_net_type);
+}
+
+template <typename Visit>
+constexpr void ForEachField(const DescribedPort& record, const Visit& visit) {
+  const auto& [name, connects, direction] = record;
+  visit(name);
+  visit(connects);
+  visit(direction);
 }
 
 template <typename Visit>
@@ -407,14 +461,13 @@ constexpr void ForEachField(const ScopeCallable& record, const Visit& visit) {
 
 template <typename Visit>
 constexpr void ForEachField(const ScopeInfo& record, const Visit& visit) {
-  const auto& [scope_declarations, exports, resolve, initialize, create_processes, describe] =
+  const auto& [scope_declarations, exports, resolve, initialize, create_processes] =
       record;
   visit(scope_declarations);
   visit(exports);
   visit(resolve);
   visit(initialize);
   visit(create_processes);
-  visit(describe);
 }
 
 template <typename Visit>
@@ -476,22 +529,6 @@ constexpr void ForEachField(
   const auto& [instantiations, generates] = record;
   visit(instantiations);
   visit(generates);
-}
-
-template <typename Visit>
-constexpr void ForEachField(const DumpEntry& record, const Visit& visit) {
-  const auto& [enclosing, identifier, left, right, width, kind, has_range, has_port, port_direction, port_position] =
-      record;
-  visit(enclosing);
-  visit(identifier);
-  visit(left);
-  visit(right);
-  visit(width);
-  visit(kind);
-  visit(has_range);
-  visit(has_port);
-  visit(port_direction);
-  visit(port_position);
 }
 
 template <typename Visit>

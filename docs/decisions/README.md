@@ -274,9 +274,10 @@ the detail lives in the entry itself.
   21.2.1.6 is a callable synthesized per type, not a description handed to a formatter. Where that
   callable is homed is revised by the next entry.
 - [a-type-owned-computation-has-no-object](a-type-owned-computation-has-no-object.md) -- a
-  computation a type owns takes no object, so the unit's namespace owns it and its identity is the
-  position it sits at; a name is a relation over that position, held only where the source wrote
-  one.
+  computation a type owns takes no object, so the unit's namespace owns it and its identity is its
+  entry in the unit's table of callables; a name is a relation over that entry, held only where the
+  source wrote one, and a body nothing names is spelled by where it stands among its owner's
+  callables.
 - [a-types-readings-exist-because-the-type-does](a-types-readings-exist-because-the-type-does.md) --
   which readings a type owns follows from the type alone, so they are settled with the unit's
   declarations rather than at whichever site asks first; and a type that is not a value has none.
@@ -848,12 +849,17 @@ the detail lives in the entry itself.
   front end's fact and arrives indistinguishable from `real * int`; no conformance case asserts
   either reading. Undoing the conversions in the lowering, changing the front end, and recording the
   wider value as a defect are rejected.
+- [a-callable-has-one-identity-in-a-unit](a-callable-has-one-identity-in-a-unit.md) -- a unit holds
+  one table of callable declarations, each stating who declares it, and every call, address and
+  runtime entry names a callable by its entry; what an owner declares is read off the owners; a body
+  no name reaches is spelled by its place among its owner's callables. Naming another unit's
+  callable by that unit's identity, and a table per owner, are rejected.
 - [a-class-has-one-identity-in-a-unit](a-class-has-one-identity-in-a-unit.md) -- a class is named by
   one identity in a unit whichever unit declares it, the registry turning its key into that identity
   once; what is known of a class is one answer computed for this unit's and read back for another's;
-  every member is named in one coordinate space, a behavior by the class that introduced it; a loop
-  generate's blocks stay held as the scope every block is, since which blocks share a body is a fact
-  of the bodies.
+  a property is named by its class and position, a method by its callable entry, a behavior by the
+  method that introduced it; a loop generate's blocks stay held as the scope every block is, since
+  which blocks share a body is a fact of the bodies.
 - [a-specialization-is-held-where-its-arguments-are](a-specialization-is-held-where-its-arguments-are.md)
   -- a generic's specialization is held by the design element whose instances replicate it, or is a
   unit of its own where none does, never by the unit declaring the generic; the scope replicating a
@@ -1514,15 +1520,17 @@ the detail lives in the entry itself.
 ### Runtime execution and scheduling
 
 - [a-dump-is-chosen-when-the-run-starts](a-dump-is-chosen-when-the-run-starts.md) -- every scope
-  class describes what a value dump may record of it, and the run chooses what to record and in
-  which format: the run's plusargs are defaults the design's `$dump*` tasks override, a change is
-  found per write and written once per step on a writer thread of its own, the file's name picks
-  VCD, FST or text, and each `$dumpports` file is a dump of its own. Choosing at build time is
-  rejected. Revised 2026-11-05: the writer thread is also what an ending hands the dump to, the
-  simulation publishing each unit whole with no lock between the sides, and a file the system
+  class and every package describes what a value dump may record of it, and the run chooses what to
+  record and in which format: the run's plusargs are defaults the design's `$dump*` tasks override,
+  a change is found per write and written once per step on a writer thread of its own, the file's
+  name picks VCD, FST or text, and each `$dumpports` file is a dump of its own. Choosing at build
+  time is rejected. Revised 2026-11-05: the writer thread is also what an ending hands the dump to,
+  the simulation publishing each unit whole with no lock between the sides, and a file the system
   refuses to write is reported where it was asked for, FST included through a carried libfst change.
   Revised 2026-11-09: each recorded variable names the declaration it lies in, and a scope is
-  recorded as what the declaration it fills is.
+  recorded as what the declaration it fills is. Revised 2026-11-12: a class, a package and the
+  compilation unit's scope state each data object they declare as a row naming the bodies that read
+  and watch it.
 - [static-initializer-draws-from-its-container](static-initializer-draws-from-its-container.md) -- a
   randomization call draws from the generator installed for whatever is running, and a static
   initialization installs one just as a process does, seeded from the container the standard names

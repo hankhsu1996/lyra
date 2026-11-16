@@ -26,10 +26,11 @@ namespace lyra::lowering::hir_to_mir {
 
 CallableBindings::CallableBindings(
     const mir::CompilationUnit& unit, mir::ClosureDecl& decl,
-    mir::ClosureId closure_id, support::ClosureKind kind,
-    CallableBindings& parent, mir::Builder capture_site, CapturePolicy policy)
+    mir::CallableCode& invoke, mir::ClosureId closure_id,
+    support::ClosureKind kind, CallableBindings& parent,
+    mir::Builder capture_site, CapturePolicy policy)
     : unit_(&unit),
-      code_(&decl.invoke),
+      code_(&invoke),
       closure_decl_(&decl),
       closure_id_(closure_id),
       parent_(&parent),

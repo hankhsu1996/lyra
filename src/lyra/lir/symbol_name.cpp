@@ -93,6 +93,11 @@ auto SymbolPart::DeclaringInstance() -> SymbolPart {
   return SymbolPart{"$x;"};
 }
 
+auto SymbolPart::DataObjectAccess(std::string_view access, std::uint32_t object)
+    -> SymbolPart {
+  return SymbolPart{std::format("$d{}:{}{};", access.size(), access, object)};
+}
+
 auto SymbolPartOf(std::optional<std::string_view> name, std::uint32_t ordinal)
     -> SymbolPart {
   return name.has_value() ? SymbolPart::Name(*name)

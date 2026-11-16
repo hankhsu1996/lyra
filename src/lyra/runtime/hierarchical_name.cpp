@@ -13,6 +13,7 @@
 
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/scope.hpp"
+#include "lyra/support/scope_kind.hpp"
 #include "lyra/support/simple_identifier.hpp"
 
 namespace lyra::runtime {
@@ -159,6 +160,18 @@ auto LexicalDeclarationNamed(
     if (declaration->enclosing == enclosing &&
         IdentifierOf(declaration->name) == identifier) {
       return declaration;
+    }
+  }
+  return nullptr;
+}
+
+auto PackageNamed(
+    std::span<const abi::ScopeDeclarations* const> namespaces,
+    std::string_view identifier) -> const abi::ScopeDeclarations* {
+  for (const abi::ScopeDeclarations* declared : namespaces) {
+    if (!support::IsCompilationUnit(declared->definition->Kind()) &&
+        IdentifierOf(declared->definition->name) == identifier) {
+      return declared;
     }
   }
   return nullptr;

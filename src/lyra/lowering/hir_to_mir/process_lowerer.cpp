@@ -577,7 +577,7 @@ auto ProcessLowerer::LowerSubroutine(
 
 auto ProcessLowerer::Run(
     const hir::SubroutineDecl& src, std::optional<CallableForm> member_form,
-    std::optional<mir::CallableId> reporting_at)
+    std::optional<ReportingForm> reporting_at)
     -> diag::Result<mir::CallableCode> {
   switch (src.kind) {
     case hir::SubroutineKind::kTask:
@@ -646,26 +646,20 @@ auto ProcessLowerer::Run(
   // It is declared beside the form that enters it -- a member of the class
   // that declares the function, or of the unit where none does -- so it is
   // entered on the same object.
-  mir::CallableDecl recording_decl{
-      .code = *std::move(recording_code),
-      .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt,
-      .defining_unit = std::nullopt};
-  mir::DirectTarget recording;
-  if (mir::Class* declaring = owner_ctor_frame_.current_class.cls;
-      declaring != nullptr) {
-    mir::CallableId slot{};
+  mir::CallableTarget recording{};
+  if (owner_ctor_frame_.current_class.cls != nullptr) {
     if (reporting_at.has_value()) {
-      slot = *reporting_at;
-      declaring->callables.Define(slot, std::move(recording_decl));
+      recording.callable = reporting_at->callable;
+      reporting_at->compiled->callables.emplace(
+          reporting_at->callable, *std::move(recording_code));
     } else {
-      slot = declaring->callables.Add(std::move(recording_decl));
+      recording.callable = owner_->Unit().AddClassCallable(
+          owner_ctor_frame_.current_class.id, std::nullopt,
+          *std::move(recording_code));
     }
-    recording = mir::CallableTarget{
-        .owner = owner_ctor_frame_.current_class.id, .slot = slot};
   } else {
-    recording = mir::UnitCallableTarget{
-        .slot = owner_->Unit().callables.Add(std::move(recording_decl))};
+    recording.callable =
+        owner_->Unit().AddNamespaceCallable(*std::move(recording_code));
   }
 
   return LowerSubroutine(

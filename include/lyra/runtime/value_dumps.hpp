@@ -6,18 +6,18 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/hierarchical_name.hpp"
+#include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_dump.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
-class Describer;
 class RuntimeEffects;
 class Scope;
 
@@ -61,11 +61,11 @@ class ValueDumps {
   // LRM 21.7.1.1.
   void DumpFile(const value::String& name);
   // LRM 21.7.1.2: `levels` of the design from its tops, an instance and
-  // `levels` below it, or one variable, by the member it is of the instance
-  // declaring it; 0 levels is every level.
+  // `levels` below it, or one variable, by the trigger a wait for a change of
+  // it enrols; 0 levels is every level.
   void DumpVarsLevels(std::int64_t levels);
   void DumpVarsOf(std::int64_t levels, Scope& instance);
-  void DumpVarsOfVariable(const void* member);
+  void DumpVarsOfVariable(const Trigger& variable);
   // LRM 21.7.1.3 - 21.7.1.6.
   void DumpOff();
   void DumpOn();
@@ -83,32 +83,6 @@ class ValueDumps {
   void DumpPortsAll(const value::String& name);
   void DumpPortsLimit(std::int64_t bytes, const value::String& name);
   void DumpPortsFlush(const value::String& name);
-
-  // The describer an instance describes itself to while a dump starts.
-  [[nodiscard]] auto Describing() -> Describer&;
-
-  // For as long as it lives, the describer every instance asked to describe
-  // itself describes itself to. An instance reaches it through the run
-  // rather than being handed it, because the library's own scope class
-  // defines the method too and describes nothing, so it would have no use
-  // for it.
-  class InstalledDescriber {
-   public:
-    InstalledDescriber(ValueDumps& dumps, Describer& describer)
-        : dumps_(&dumps) {
-      dumps_->describing_ = &describer;
-    }
-    InstalledDescriber(const InstalledDescriber&) = delete;
-    auto operator=(const InstalledDescriber&) -> InstalledDescriber& = delete;
-    InstalledDescriber(InstalledDescriber&&) = delete;
-    auto operator=(InstalledDescriber&&) -> InstalledDescriber& = delete;
-    ~InstalledDescriber() {
-      dumps_->describing_ = nullptr;
-    }
-
-   private:
-    ValueDumps* dumps_;
-  };
 
  private:
   // Every dump file holds each time step it recorded and is ended where the
@@ -147,10 +121,16 @@ class ValueDumps {
       const std::string& file, base::SourceLocation asked_at, SimTime now,
       const DumpSelection& selection);
   [[nodiscard]] auto OptionSelection() -> DumpSelection;
-  // The member of `instance` that is the variable it declares under `name`,
-  // none where it declares none.
-  [[nodiscard]] auto FindVariable(
-      Scope& instance, std::span<const NamePart> name) -> const void*;
+  // Adds the design from its tops to `selection`: each top and `levels`
+  // below it, and every package and compilation unit's scope beside them,
+  // whole.
+  void SelectFromTops(DumpSelection& selection, std::int64_t levels);
+  // The identity a dump finds the variable `declared` states under `name` by,
+  // none where it states none: a variable of the instance `instance`, or,
+  // where that is none, one a package keeps.
+  [[nodiscard]] static auto FindVariable(
+      Scope* instance, const abi::ScopeDeclarations& declared,
+      std::span<const NamePart> name) -> const void*;
   void OpenWindowsFrom(std::size_t index);
   // Has `act` act on each dump of ports `name` names: at once on one that has
   // started, and on one whose `$dumpports` ran in this time step once it
@@ -188,12 +168,11 @@ class ValueDumps {
   // the end of the time step finds it by.
   std::deque<PortDump> port_dumps_;
   std::optional<SimTime> ports_selected_at_;
-  Describer* describing_ = nullptr;
 };
 
 // The entries generated code calls, each acting on the run's value dump (LRM
 // 21.7.1). A `$dumpvars` naming an instance hands that instance, and one
-// naming a variable the member it is of the instance declaring it.
+// naming a variable the trigger a wait for a change of it enrols.
 void DumpFile(
     RuntimeEffects& runtime, const value::String& name,
     base::SourceLocation at);
@@ -203,7 +182,7 @@ void DumpVarsOf(
     RuntimeEffects& runtime, std::int64_t levels, Scope* instance,
     base::SourceLocation at);
 void DumpVarsOfVariable(
-    RuntimeEffects& runtime, const void* member, base::SourceLocation at);
+    RuntimeEffects& runtime, const Trigger& variable, base::SourceLocation at);
 void DumpOff(RuntimeEffects& runtime);
 void DumpOn(RuntimeEffects& runtime);
 void DumpAll(RuntimeEffects& runtime);

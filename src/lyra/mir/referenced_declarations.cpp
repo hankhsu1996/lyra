@@ -174,36 +174,43 @@ class Names {
             },
             [](const Indirect&) {}, [](const Construct&) {},
             [&](const Virtual& dispatched) {
-              NameClass(dispatched.slot.owner_class);
+              NameCallable(dispatched.slot.introduced_by);
             }},
         call.callee);
+  }
+
+  // A callable, by what declares it: a class or a record, either of which
+  // another unit may define, or a body of a unit's namespace, which another
+  // unit's namespace may define. A closure is this unit's own.
+  void NameCallable(CallableId callable) {
+    std::visit(
+        Overloaded{
+            [&](const DeclaredByClass& owner) { NameClass(owner.cls); },
+            [&](const ConstructsClass& owner) { NameClass(owner.cls); },
+            [&](const DeclaredByRecord& owner) { NameRecord(owner.record); },
+            [&](const DeclaredByNamespace& owner) {
+              if (owner.defining_unit.has_value()) {
+                Add(ReferencedNamespace{.unit_name = *owner.defining_unit});
+              }
+            },
+            [](const DeclaredByClosure&) {}},
+        unit_->OwnerOf(callable));
   }
 
   void NameTarget(const Direct& direct) {
     std::visit(
         Overloaded{
-            [&](const CallableTarget& target) { NameClass(target.owner); },
-            [](const ClosureTarget&) {},
-            [&](const UnitCallableTarget& target) {
-              if (const std::optional<std::string>& defining =
-                      unit_->callables.Get(target.slot).defining_unit) {
-                Add(ReferencedNamespace{.unit_name = *defining});
-              }
+            [&](const CallableTarget& target) {
+              NameCallable(target.callable);
             },
-            [](const support::BuiltinFn&) {},
-            [&](const ConstructorTarget& target) { NameClass(target.cls); },
-            [&](const RecordMethodTarget& target) {
-              NameRecord(target.record);
-            },
-            [](const TypeOperationTarget&) {},
+            [](const support::BuiltinFn&) {}, [](const TypeOperationTarget&) {},
             // The design root brings up every namespace of the design by
             // name, its own set aside.
             [&](const ExternalBringUpTarget& target) {
               if (target.unit_name != unit_->name) {
                 Add(ReferencedNamespace{.unit_name = target.unit_name});
               }
-            },
-            [](const ForeignSymbolTarget&) {}},
+            }},
         direct.target);
   }
 
@@ -225,9 +232,9 @@ class Names {
               }
             },
             [&](const FunctionRef& function) {
-              NameClass(function.body.owner);
+              NameCallable(function.callable);
             },
-            [&](const DispatchEntryRef& entry) { NameClass(entry.body.owner); },
+            [&](const DispatchEntryRef& entry) { NameCallable(entry.method); },
             [&](const DestructorRef& end) { NameClass(end.of); },
             [&](const DispatchTableRef& table) { NameClass(table.of); },
             [&](const InterfaceTableRef& table) {

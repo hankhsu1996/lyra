@@ -11,7 +11,7 @@
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/callable.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -34,7 +34,7 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
-    const hir::ContinuousAssign& src) -> diag::Result<mir::CallableDecl>;
+    const hir::ContinuousAssign& src) -> diag::Result<mir::CallableCode>;
 
 // What a continuous drive writes, named in the body it is asked for: the
 // drive is stated once and written into its Resolve step, its Initialize seed
@@ -58,6 +58,6 @@ auto LowerContinuousDrive(
     support::StrengthLevel drive_strength,
     const std::optional<DriveDelay>& delay,
     std::span<const hir::SensitivityEntry> sensitivity)
-    -> diag::Result<mir::CallableDecl>;
+    -> diag::Result<mir::CallableCode>;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -16,6 +16,7 @@
 #include "lyra/base/registry.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/described_data_object.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
@@ -35,7 +36,9 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_id.hpp"
+#include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -324,8 +327,8 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto TranslateClockingLanding(
       hir::ClockingOutputLanding landing) const -> mir::Direct {
     return mir::Direct{
-        .target = mir::CallableTarget{
-            .owner = class_id_, .slot = ClockingLandingCallable(landing)}};
+        .target =
+            mir::CallableTarget{.callable = ClockingLandingCallable(landing)}};
   }
 
   // The MIR field a structural data object of this scope became: a field of
@@ -369,14 +372,13 @@ class StructuralScopeLowerer {
     return std::get<InstanceFieldHome>(*home).field;
   }
 
-  // The call target a subroutine this scope declares resolves to: this
-  // scope's class, and the callable's identity within it.
+  // The call target a subroutine this scope declares resolves to: the callable
+  // this scope's class took for it.
   [[nodiscard]] auto TranslateStructuralSubroutine(
       hir::StructuralSubroutineId hir_id) const -> mir::Direct {
     return mir::Direct{
         .target = mir::CallableTarget{
-            .owner = class_id_,
-            .slot = declared_subroutines_.Get(hir_id).callable}};
+            .callable = declared_subroutines_.Get(hir_id).callable}};
   }
 
   // The MIR field one instance member became. A declaration is one field
@@ -521,6 +523,32 @@ struct ReachedObject {
 auto ApplyInstanceSelects(
     UnitLowerer& unit_lowerer, mir::Builder block, ReachedObject reached,
     std::span<const std::uint32_t> selects) -> ReachedObject;
+
+// Where the bodies reading and subscribing to what a scope describes go:
+// methods of the scope's class, entered on an instance, or bodies of the
+// unit's namespace, which has no object and ignores the one it is handed, as a
+// reflective read of a static field ignores its receiver (Java's `Field.get`).
+struct ScopeClassBodies {
+  mir::ClassId id;
+  mir::TypeId self_type;
+};
+struct NamespaceBodies {};
+using DescribingBodies = std::variant<ScopeClassBodies, NamespaceBodies>;
+
+// Each data object the scope `lowerer` lowers describes (LRM 21.7.1.2, 37.17),
+// as its declaration states it, stated in `declarations`, and the two bodies
+// that read it and subscribe to it, added where `bodies` says. One reads the
+// object's cell as the scope's own code reads it and hands the value to the
+// serializer the reader gave; the other builds the trigger a wait for a change
+// of it enrols and hands it to the subscriber the reader gave. Each is compiled
+// where the object's type is known, so a reader reads no storage itself.
+// `scopes` holds the records of the procedural scopes an object lies in.
+auto DescribeDataObjects(
+    const StructuralScopeLowerer& lowerer, const ScopeTable& scopes,
+    DescribingBodies bodies, mir::ScopeDeclarations& declarations,
+    const WalkFrame& scope_frame,
+    const std::vector<hir::DescribedDataObject>& described)
+    -> diag::Result<void>;
 
 // The call `start` makes of `body`, a callable of the scope `frame` stands on
 // whose result is the execution it runs as, written into `frame`'s block, for

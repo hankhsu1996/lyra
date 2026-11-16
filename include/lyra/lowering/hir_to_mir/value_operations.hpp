@@ -8,10 +8,10 @@
 #include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/type_definition.hpp"
 #include "lyra/mir/builder.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/record_decl.hpp"
-#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -20,30 +20,33 @@ namespace lyra::lowering::hir_to_mir {
 
 class UnitLowerer;
 
-// A method for every operation on a whole value the struct `record` names has
-// (LRM 7.2), over values of `structure` whose members are of `members`, and
-// the value what it declares, `source`, gives a variable of it to start as.
-// What the struct itself answers is read off its members; a member that is
-// itself a struct is reached by the record naming it, which is defined before
-// any record's methods are asked for.
-[[nodiscard]] auto StructMethodsOf(
-    UnitLowerer& lowerer, const hir::UnpackedStructDefinition& source,
-    mir::RecordId record, mir::TypeId structure,
-    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
+// The operations on a whole value the struct or the union `record` names has,
+// over values of `type`, each answered by a method of the record: what it
+// answers is read off its members, a struct's (LRM 7.2) each member in turn
+// and a union's (LRM 7.3) its first member, read as that member's type holds a
+// value (LRM 7.3.2), or for a tagged union the member its tag names, which has
+// no stream and no net's folds. Which there are follows from the members
+// alone, so the unit declaring the record and every unit reaching it list the
+// same methods. `structure` is the record's declaration where it is a struct,
+// and nothing for a union.
+[[nodiscard]] auto RecordOperationsOf(
+    UnitLowerer& lowerer, const hir::UnpackedStructDefinition* structure,
+    mir::RecordId record, mir::TypeId type)
+    -> std::vector<support::ValueOperation>;
 
-// A method for every operation on a whole value the union `record` names
-// has (LRM 7.3), over values of `overlay`, whose members are of `members`:
-// each is its first member's, read as that member's type holds a value (LRM
-// 7.3.2). What the union itself answers is read off its members.
-[[nodiscard]] auto UnionMethodsOf(
-    const mir::CompilationUnit& unit, mir::RecordId record, mir::TypeId overlay,
-    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
+// One of those operations, with the body of the method answering it.
+struct RecordMethodBody {
+  support::ValueOperation answers;
+  mir::CallableCode code;
+};
 
-// The same for a tagged union, each method that of the member its tag names
-// (LRM 7.3.2); a tagged union has no stream and no net's folds.
-[[nodiscard]] auto TaggedUnionMethodsOf(
-    const mir::CompilationUnit& unit, mir::RecordId record, mir::TypeId overlay,
-    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
+// Every one of those, each with its body, in the same order, the value the
+// struct's declaration gives a variable of it to start as among them. A member
+// that is itself a record is reached by the methods the record naming it
+// declares, which are declared before any record's bodies are built.
+[[nodiscard]] auto RecordMethodBodies(
+    UnitLowerer& lowerer, const hir::UnpackedStructDefinition* structure,
+    mir::RecordId record, mir::TypeId type) -> std::vector<RecordMethodBody>;
 
 // Whether the net types' tables fold contributions to a net of `type` (LRM
 // 6.6.1, 6.6.3). They are tables over 4-state bits. An integral net holds its

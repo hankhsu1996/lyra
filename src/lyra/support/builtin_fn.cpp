@@ -1577,6 +1577,27 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = RuntimeFunction("DumpFlush"),
           .takes_the_runtime_handle = true,
           .takes_the_location = false};
+    case BuiltinFn::kSerializeBits:
+      return {
+          .name = "value_serializer_bits",
+          .declaration = Method{"Bits"},
+          .takes_the_location = false,
+          .operands = {kMachine, kBits}};
+    case BuiltinFn::kSerializeReal:
+      return {
+          .name = "value_serializer_real",
+          .declaration = Method{"Real"},
+          .takes_the_location = false};
+    case BuiltinFn::kSerializeEvent:
+      return {
+          .name = "value_serializer_event",
+          .declaration = Method{"SerializeEvent"},
+          .takes_the_location = false};
+    case BuiltinFn::kSubscribe:
+      return {
+          .name = "subscriber_subscribe",
+          .declaration = Method{"Subscribe"},
+          .takes_the_location = false};
     case BuiltinFn::kDumpPortsOf:
       return {
           .name = "dump_ports_of",
@@ -1610,18 +1631,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "dump_ports_flush",
           .declaration = RuntimeFunction("DumpPortsFlush"),
-          .takes_the_runtime_handle = true,
-          .takes_the_location = false};
-    case BuiltinFn::kDescribe:
-      return {
-          .name = "describe",
-          .declaration = RuntimeFunction("DescribeTo"),
-          .takes_the_runtime_handle = true,
-          .takes_the_location = false};
-    case BuiltinFn::kDescribeEvent:
-      return {
-          .name = "describe_event",
-          .declaration = RuntimeFunction("DescribeTo"),
           .takes_the_runtime_handle = true,
           .takes_the_location = false};
     case BuiltinFn::kTestPlusargs:

@@ -59,21 +59,22 @@ call family. Three structural facts fix its shape:
   export publishes: both directions of the boundary are owned alike and separated only by whether
   the declaration has a body.
 
-An import call names that symbol directly. Because the name space is its own, the call reaches it
-without naming a class or a unit, and a declaration written in a package or at `$unit` scope is
-called from any unit with no cross-unit reference at all. What belongs to the declaring scope is
-apart from the symbol: the scope a `context` import observes, and the functions evaluating its
-defaults (a-formal-default-is-evaluated-by-its-callee D7), which a call reaches as it reaches any
-subroutine of that scope. What the calling unit needs is the declaration's ABI projection -- a fact
-of the declaration, identical wherever it is read -- so it holds its own copy and depends on no
-other unit's artifact.
+An import call names the import's declaration in the calling unit, which carries the symbol's
+linkage name. Because the name space is its own, the call reaches it without naming a class or a
+unit, and a declaration written in a package or at `$unit` scope is called from any unit with no
+cross-unit reference at all. What belongs to the declaring scope is apart from the symbol: the scope
+a `context` import observes, and the functions evaluating its defaults
+(a-formal-default-is-evaluated-by-its-callee D7), which a call reaches as it reaches any subroutine
+of that scope. What the calling unit needs is the declaration's ABI projection -- a fact of the
+declaration, identical wherever it is read -- so it holds its own copy and depends on no other
+unit's artifact.
 
-Reason: putting the import in a class's callable arena is a category error twice over -- it has no
+Reason: putting the import among a class's callables is a category error twice over -- it has no
 receiver, and its symbol belongs to a name space no class contains -- and it makes an import's
-presence shift the identity of the class's other callables. A separate incompatible
+presence shift where the class's other callables stand among its callables. A separate incompatible
 external-declaration type contradicts the one callable-declaration shape the model unifies toward.
-Owning the declaration at the unit and naming the symbol by its linkage name is what makes the
-package and `$unit` cases fall out with no mechanism of their own.
+Owning the declaration at the unit and stating the symbol's linkage name on that declaration is what
+makes the package and `$unit` cases fall out with no mechanism of their own.
 
 ### 2. The C prototype is the callable's own signature; linkage is a separate record
 
@@ -278,16 +279,16 @@ usage inflate the scope.
   after it -- and a package, which has no class at all, could then declare no import.
 - **A temporary DPI-only callable-target variant, unified later.** Leaves a DPI-specific identity in
   the IR to be refactored away; the unification is done once instead.
-- **The program-global export symbol as its own species beside the callable arena.** It is exactly
-  what a unit-level namespace callable already is -- receiver-less, bodied, owned by the unit that
-  defines it -- plus a linkage name, so a parallel container would give it a second declaration
-  shape, a second render path, and a second thing every consumer must walk. Worse, it would leave
-  the export with no prototype record while the import has one, so the two directions of one
-  boundary are modeled differently and a generated header derives the same LRM 35.5.6 mapping twice.
-  The per-specialization entry a scope publishes is a different object and is not what this rejects:
-  the runtime holds it by address in the scope's table, which is what a scope's lifecycle entries
-  already are, so it joins that species instead of inventing one, and it carries the linkage too --
-  so neither direction is left without a prototype.
+- **The program-global export symbol as its own species beside the unit's table of callables.** It
+  is exactly what a unit-level namespace callable already is -- receiver-less, bodied, owned by the
+  unit that defines it -- plus a linkage name, so a parallel container would give it a second
+  declaration shape, a second render path, and a second thing every consumer must walk. Worse, it
+  would leave the export with no prototype record while the import has one, so the two directions of
+  one boundary are modeled differently and a generated header derives the same LRM 35.5.6 mapping
+  twice. The per-specialization entry a scope publishes is a different object and is not what this
+  rejects: the runtime holds it by address in the scope's table, which is what a scope's lifecycle
+  entries already are, so it joins that species instead of inventing one, and it carries the linkage
+  too -- so neither direction is left without a prototype.
 
   **What holds here is the half about a symbol a unit owns**, and
   [program-facts-belong-after-compilation](program-facts-belong-after-compilation.md) reverses the

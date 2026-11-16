@@ -57,12 +57,12 @@ auto WriteExternTaskBody(
     const ExternBinding& binding, diag::SourceSpan declared)
     -> mir::CallableCode;
 
-// The class of what the class `owner` hands over for its method `definition`:
-// it implements the abstract class `binding` states, holds the object it was
-// made for, and its `invoke` runs the method on that object. It is the code of
-// the one body defining it, so nothing outside the body names it.
+// The class of what the class declaring the method `definition` hands over for
+// it: it implements the abstract class `binding` states, holds the object it
+// was made for, and its `invoke` runs the method on that object. It is the
+// code of the one body defining it, so nothing outside the body names it.
 [[nodiscard]] auto DefineExternCallback(
-    UnitLowerer& unit_lowerer, mir::ClassId owner, mir::CallableId definition,
+    UnitLowerer& unit_lowerer, mir::CallableId definition,
     const ExternBinding& binding) -> mir::ClassId;
 
 }  // namespace lyra::lowering::hir_to_mir

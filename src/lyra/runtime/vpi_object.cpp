@@ -26,7 +26,6 @@ namespace lyra::runtime {
 
 namespace {
 
-using support::DefinitionKind;
 using support::ElaboratedScopeKind;
 using support::LexicalScopeKind;
 
@@ -110,22 +109,6 @@ auto ArrayTypesOf(ElaboratedScopeKind kind) -> std::optional<ArrayTypes> {
       return std::nullopt;
   }
   throw InternalError("ArrayTypesOf: unknown kind");
-}
-
-// Whether a namespace of a definition of `kind` is a compilation unit's scope
-// rather than a package (LRM 37.10 detail 5).
-auto IsCompilationUnit(DefinitionKind kind) -> bool {
-  switch (kind) {
-    case DefinitionKind::kCompilationUnit:
-      return true;
-    case DefinitionKind::kModule:
-    case DefinitionKind::kInterface:
-    case DefinitionKind::kProgram:
-    case DefinitionKind::kPackage:
-    case DefinitionKind::kDesignRoot:
-      return false;
-  }
-  throw InternalError("IsCompilationUnit: unknown kind");
 }
 
 // The type of a scope the run constructed, which its declaration states: an
@@ -448,17 +431,15 @@ auto Step(const VpiObject& at, const NamePart& part)
       at);
 }
 
-// The package named `identifier`. A compilation unit's scope answers to no
-// name, since nothing within one is reached by name (LRM 37.10 detail 6).
-auto PackageNamed(RuntimeEffects& run, std::string_view identifier)
+// The package named `identifier`.
+auto PackageObjectNamed(RuntimeEffects& run, std::string_view identifier)
     -> std::optional<VpiObject> {
-  for (const abi::ScopeDeclarations* ns : AsRuntime(run).Namespaces()) {
-    if (!IsCompilationUnit(ns->definition->Kind()) &&
-        IdentifierOf(ns->definition->name) == identifier) {
-      return NamespaceObject{.scope_declarations = ns};
-    }
+  const abi::ScopeDeclarations* declared =
+      PackageNamed(AsRuntime(run).Namespaces(), identifier);
+  if (declared == nullptr) {
+    return std::nullopt;
   }
-  return std::nullopt;
+  return NamespaceObject{.scope_declarations = declared};
 }
 
 // Whether `object` is a compilation unit's scope or lies within one.
@@ -466,7 +447,7 @@ auto InCompilationUnit(const VpiObject& object) -> bool {
   const ScopeHolder holder = HolderOf(object);
   const auto* ns = std::get_if<NamespaceObject>(&holder);
   return ns != nullptr &&
-         IsCompilationUnit(ns->scope_declarations->definition->Kind());
+         support::IsCompilationUnit(ns->scope_declarations->definition->Kind());
 }
 
 // The object `parts` name from the design's tops, or a package's name alone
@@ -474,7 +455,7 @@ auto InCompilationUnit(const VpiObject& object) -> bool {
 auto NamedFromDesign(RuntimeEffects& run, const HierarchicalName& name)
     -> std::optional<VpiObject> {
   if (name.package.has_value()) {
-    std::optional<VpiObject> at = PackageNamed(run, *name.package);
+    std::optional<VpiObject> at = PackageObjectNamed(run, *name.package);
     for (const NamePart& part : name.parts) {
       if (!at.has_value()) return std::nullopt;
       at = Step(*at, part);
@@ -489,7 +470,7 @@ auto NamedFromDesign(RuntimeEffects& run, const HierarchicalName& name)
     at = reached.scope;
     parts = parts.subspan(reached.parts);
   } else if (parts.size() == 1 && parts.front().indices.empty()) {
-    return PackageNamed(run, parts.front().identifier);
+    return PackageObjectNamed(run, parts.front().identifier);
   }
   for (const NamePart& part : parts) {
     if (!at.has_value()) return std::nullopt;
@@ -698,7 +679,7 @@ auto ObjectIntegerProperty(PLI_INT32 property, const VpiObject& object)
             const abi::DefinitionRecord& definition =
                 *ns.scope_declarations->definition;
             if (property == vpiUnit) {
-              return IsCompilationUnit(definition.Kind()) ? 1 : 0;
+              return support::IsCompilationUnit(definition.Kind()) ? 1 : 0;
             }
             return DefinitionIntegerProperty(property, definition);
           },

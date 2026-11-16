@@ -18,6 +18,9 @@ verification holds a unit to the first. Revised 2026-11-05: D2's dependency is w
 read, recorded where it read it; the set read off the finished MIR had been taken for it, on the
 ground that, like `-MD`, it could miss no read, but a read that decides a construct and is written
 as a library call leaves nothing in MIR, so that set is what the unit's text names and no more.
+Revised 2026-11-15: a method is named by its entry in the unit's one table of callables, not by its
+class and position (D3), since every node naming a callable had come to carry one alternative per
+table that held one.
 
 ## Why this decision matters
 
@@ -55,14 +58,15 @@ and inside a unit by the handle the unit's class registry gives that key the fir
 the one place a key becomes an identity, as rustc maps a crate number read from metadata to its own
 where it decodes it. A key naming this unit lands on the class it declares, so a name reaching a
 class of this unit through another instance or through a signature naming this unit is that class.
-Every reference -- an object type, a property, a method, a static property, a behavior, a
-construction -- names the class by the handle, and MIR and LIR keep it: a class another unit defines
-is an entry of the same registry, declared with what that unit published, and whether this unit
-defines the class is a fact of the entry. The same holds of a covergroup's class and of the class a
-scope of the design hierarchy is published as, and of a namespace: a package or the compilation-unit
-scope is one declaration, whose variables and subroutines are named by the unit's entry for it and
-their positions in what it declares, the namespace's own bodies included. A record is named in HIR
-by its key, and from MIR down by one entry of the reader's tables.
+Every reference to a class -- an object type, a property, a static property -- names it by the
+handle, and MIR and LIR keep it; a method, a behavior and a construction name a callable whose
+declaration names the class. A class another unit defines is an entry of the same registry, declared
+with what that unit published, and whether this unit defines the class is a fact of the entry. The
+same holds of a covergroup's class and of the class a scope of the design hierarchy is published as,
+and of a namespace: a package or the compilation-unit scope is one declaration, whose variables are
+named by the unit's entry for it and their positions in what it declares, and whose subroutines by
+their entries in the unit's table of callables, the namespace's own bodies included. A record is
+named in HIR by its key, and from MIR down by one entry of the reader's tables.
 
 ### D2. What is known of a class is one answer, with two providers
 
@@ -94,21 +98,24 @@ view, as a C++ file includes the headers whose declarations it uses. A `$cast` t
 its definition's address, as Itanium C++ names a class's type information by its mangled name alone,
 so it brings nothing of the class into view.
 
-### D3. Every member is named in one coordinate space
+### D3. A property is named by its class and position, a method by its callable entry
 
-A member is named by its class's handle and its position in that class, whichever unit declares the
-class. A property of another unit's class is at the slot that unit gave it, its published properties
-being the class's first fields in order; a method at the position its declaration publishes it; and
-a behavior by the class that introduced it and that method's position, which a unit counts from the
-front end's declaration of the introducing class by the one function the declaring unit counts it
-by, so it needs no other unit's signature to state it. Which class introduced the behavior an
+A property is named by its class's handle and its position in that class, whichever unit declares
+the class. A property of another unit's class is at the slot that unit gave it, its published
+properties being the class's first fields in order. A method is named by its entry in the unit's one
+table of callables, which states the class as its owner
+([a-callable-has-one-identity-in-a-unit](a-callable-has-one-identity-in-a-unit.md)); its methods
+stand among the class's callables in the order its declaration publishes them, and a behavior is
+named by the method that introduced it, whose position among its class's methods a unit counts from
+the front end's declaration of the introducing class by the one function the declaring unit counts
+it by, so it needs no other unit's signature to state it. Which class introduced the behavior an
 override replaces is found once, by the unit declaring the overriding class, along its own lineage
 as the front end resolved it, and published, so a reader never re-derives it. A lineage another unit
 published may lead back to this unit -- a specialization of a generic this unit declares, extending
 one of this unit's classes -- and the introducing class is then this unit's own by D1, with no
-second step. A published scope class reserves one method per published subroutine, in the
-signature's order, before any body lowers, so a body reaching another instance of its own unit calls
-the method by position.
+second step. A published scope class takes one method per published subroutine, in the signature's
+order, before any body lowers, so a body reaching another instance of its own unit names the method
+its class took at that position.
 
 ### D4. What holds objects of a loop generate stays the scope every block is
 

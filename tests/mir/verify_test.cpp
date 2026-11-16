@@ -82,12 +82,7 @@ void AddAwaitingBody(CompilationUnit& unit, TypeId result) {
   const BlockId scope = code.Body().child_scopes.Add(std::move(inner));
   Builder code_body(code.Body(), diag::SourceSpan{});
   code_body.AppendStmt(BlockStmt{.scope = scope});
-  const CallableId id = unit.callables.Add(
-      CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
+  const CallableId id = unit.AddNamespaceCallable(std::move(code));
   unit.named_callables.push_back(NamedCallable{.name = "f", .body = id});
 }
 
@@ -132,12 +127,7 @@ TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
           .data = AwaitExpr{.execution = answer},
           .type = unit.builtins.void_type});
   code_body.AppendStmt(ExprStmt{.expr = await});
-  unit.callables.Add(
-      CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
+  unit.AddNamespaceCallable(std::move(code));
   try {
     Verify(unit);
     FAIL() << "an await on a park's answer was accepted";
@@ -155,12 +145,7 @@ auto UnitWithCode(const Fill& fill) -> CompilationUnit {
   CallableCode code = CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
   fill(unit, code);
-  const CallableId id = unit.callables.Add(
-      CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
+  const CallableId id = unit.AddNamespaceCallable(std::move(code));
   unit.named_callables.push_back(NamedCallable{.name = "f", .body = id});
   return unit;
 }
@@ -171,6 +156,14 @@ auto UnitWithBody(const Fill& fill) -> CompilationUnit {
   return UnitWithCode([&](CompilationUnit& unit, CallableCode& code) {
     fill(unit, Builder(code.Body(), diag::SourceSpan{}));
   });
+}
+
+// Declares, as the record `record`'s one method, the one answering equality,
+// whose code is `code`.
+void DeclareEquality(
+    CompilationUnit& unit, RecordId record, CallableCode code) {
+  unit.AddRecordMethod(
+      record, support::ValueOperator::kEquality, std::move(code));
 }
 
 // The verifier refuses `unit` as every backend reads it, and its refusal says
@@ -396,8 +389,6 @@ TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
               .path = {},
               .kind = kind,
               .elements = {u.builtins.int_type}});
-      u.record_methods.Declare();
-      u.record_methods.Define(record, RecordMethods{});
       const TypeId type =
           u.types.Intern(Type{RecordType{.declaration = record}});
       const LocalId local = code.locals.Add(LocalDecl{.type = type});
@@ -638,13 +629,10 @@ TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
       Class cls;
       CallableCode member = CallableCode::Defined(diag::SourceSpan{});
       member.result_type = u.builtins.void_type;
-      cls.callables.Add(
-          CallableDecl{
-              .code = std::move(member),
-              .foreign = std::nullopt,
-              .virtual_dispatch = std::nullopt,
-              .defining_unit = std::nullopt});
-      u.DefineClass(u.DeclareClass(), std::move(cls));
+      const ClassId owner = u.DeclareClass();
+      const CallableId called =
+          u.AddClassCallable(owner, std::nullopt, std::move(member));
+      u.DefineClass(owner, std::move(cls));
       body.AppendStmt(
           ExprStmt{
               .expr = body.Add(
@@ -654,9 +642,7 @@ TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
                               .callee =
                                   Direct{
                                       .target =
-                                          CallableTarget{
-                                              .owner = ClassId{.value = 0},
-                                              .slot = CallableId{.value = 0}},
+                                          CallableTarget{.callable = called},
                                       .receiver = receiver},
                               .arguments = {}},
                       .type = u.builtins.void_type})});
@@ -1526,16 +1512,12 @@ TEST(MirVerifyTest, CodeNamedAsAValueIsOfTheTypeTheCodeHas) {
           named.params.push_back(named.AddLocal(u.builtins.int_type));
           const TypeId own = FunctionTypeOf(u.types, named);
           Class cls;
-          const CallableId slot = cls.callables.Add(
-              CallableDecl{
-                  .code = std::move(named),
-                  .foreign = std::nullopt,
-                  .virtual_dispatch = std::nullopt,
-                  .defining_unit = std::nullopt});
+          const ClassId owner = u.DeclareClass();
+          const CallableId slot =
+              u.AddClassCallable(owner, std::nullopt, std::move(named));
           if (named_as == Named::kEntry) {
             cls.entries.push_back(MethodEntry{.method = slot, .entry = slot});
           }
-          const ClassId owner = u.DeclareClass();
           u.DefineClass(owner, std::move(cls));
           const TypeId stated =
               at_its_own_type
@@ -1543,11 +1525,10 @@ TEST(MirVerifyTest, CodeNamedAsAValueIsOfTheTypeTheCodeHas) {
                   : u.types.Intern(
                         Type{MachineFunctionType{
                             .params = {}, .result = u.builtins.void_type}});
-          const CallableTarget body_of{.owner = owner, .slot = slot};
           const ReferenceTarget target =
               named_as == Named::kBody
-                  ? ReferenceTarget{FunctionRef{.body = body_of}}
-                  : ReferenceTarget{DispatchEntryRef{.body = body_of}};
+                  ? ReferenceTarget{FunctionRef{.callable = slot}}
+                  : ReferenceTarget{DispatchEntryRef{.method = slot}};
           Builder body(code.Body(), diag::SourceSpan{});
           const ExprId reference = body.Add(
               Expr{.data = ReferenceExpr{.target = target}, .type = stated});
@@ -1864,8 +1845,8 @@ TEST(MirVerifyTest, ACallableOfTheUnitIsCalledAtNoTypesAndAnswersItsResult) {
                               .callee =
                                   Direct{
                                       .target =
-                                          UnitCallableTarget{
-                                              .slot = CallableId{0}},
+                                          CallableTarget{
+                                              .callable = CallableId{0}},
                                       .type_arguments =
                                           at_a_type
                                               ? std::vector{u.builtins.int_type}
@@ -1966,14 +1947,16 @@ auto UnitCommittingAnEffect(
     ClosureDecl effect;
     const FieldId field = effect.fields.Add(FieldDecl{.type = captured});
     effect.field_order = {field};
-    effect.invoke.receiver = effect.invoke.AddLocal(u.types.Intern(
+    CallableCode invoke = CallableCode::Defined(diag::SourceSpan{});
+    invoke.receiver = invoke.AddLocal(u.types.Intern(
         Type{PointerType{
             .pointee = effect_type,
             .ownership = PointerOwnership::kUnique,
             .mutability = Mutability::kMutable}}));
-    effect.invoke.result_type = u.builtins.void_type;
-    Builder(effect.invoke.Body(), diag::SourceSpan{})
+    invoke.result_type = u.builtins.void_type;
+    Builder(invoke.Body(), diag::SourceSpan{})
         .AppendStmt(ReturnStmt{.value = std::nullopt});
+    u.AddClosureBody(id, std::move(invoke));
     u.DefineClosure(id, std::move(effect));
 
     Builder body(code.Body(), diag::SourceSpan{});
@@ -2106,13 +2089,12 @@ TEST(MirVerifyTest, AnEffectMayReachAnObjectThroughALocalAndNotTheLocal) {
 }
 
 // An entry another unit defines is declared here and holds nothing this unit
-// emits: a record states none of its methods, a subroutine has no body, and
-// each is named as that unit published it, by a unit other than this one.
+// emits: a record states none of its methods, and each is named as that unit
+// published it, by a unit other than this one.
 TEST(MirVerifyTest, AnEntryAnotherUnitDefinesHoldsNothingOfItsOwn) {
   struct Declared {
     bool own_unit = false;
     bool record_methods = false;
-    bool subroutine_body = false;
     bool named = true;
   };
   const auto unit_declaring = [](Declared declared) {
@@ -2124,22 +2106,11 @@ TEST(MirVerifyTest, AnEntryAnotherUnitDefinesHoldsNothingOfItsOwn) {
               .path = {},
               .kind = RecordKind::kStruct,
               .elements = {}});
-      u.record_methods.Declare();
-      u.record_methods.Define(
-          RecordId{0},
-          declared.record_methods
-              ? RecordMethods{RecordMethod{
-                    .answers = support::ValueOperator::kEquality,
-                    .code = CallableCode::Defined(diag::SourceSpan{})}}
-              : RecordMethods{});
-      const CallableId subroutine = u.callables.Add(
-          CallableDecl{
-              .code = declared.subroutine_body
-                          ? CallableCode::Defined(diag::SourceSpan{})
-                          : CallableCode{},
-              .foreign = std::nullopt,
-              .virtual_dispatch = std::nullopt,
-              .defining_unit = defining});
+      if (declared.record_methods) {
+        DeclareEquality(
+            u, RecordId{0}, CallableCode::Defined(diag::SourceSpan{}));
+      }
+      const CallableId subroutine = u.AddSubroutineOfUnit(defining);
       const StaticVariableId variable = u.static_variables.Add(
           StaticVariableDecl{
               .type = u.builtins.int_type, .defining_unit = defining});
@@ -2161,9 +2132,6 @@ TEST(MirVerifyTest, AnEntryAnotherUnitDefinesHoldsNothingOfItsOwn) {
       unit_declaring({.record_methods = true}),
       "states methods of its own for the record");
   ExpectRefused(
-      unit_declaring({.subroutine_body = true}),
-      "holds a body for a subroutine another unit defines");
-  ExpectRefused(
       unit_declaring({.named = false}),
       "declares with no name a subroutine another unit defines");
 }
@@ -2177,12 +2145,7 @@ TEST(MirVerifyTest, ADefinitionEveryBodyStatesNamesNothingOneBodyHas) {
     return UnitWithCode([&](CompilationUnit& u, CallableCode&) {
       CallableCode callee = CallableCode::Defined(diag::SourceSpan{});
       callee.result_type = u.builtins.void_type;
-      const CallableId called = u.callables.Add(
-          CallableDecl{
-              .code = std::move(callee),
-              .foreign = std::nullopt,
-              .virtual_dispatch = std::nullopt,
-              .defining_unit = std::nullopt});
+      const CallableId called = u.AddNamespaceCallable(std::move(callee));
       if (a_named_function) {
         u.named_callables.push_back(NamedCallable{.name = "g", .body = called});
       }
@@ -2194,7 +2157,7 @@ TEST(MirVerifyTest, ADefinitionEveryBodyStatesNamesNothingOneBodyHas) {
               .data =
                   CallExpr{
                       .callee =
-                          Direct{.target = UnitCallableTarget{.slot = called}},
+                          Direct{.target = CallableTarget{.callable = called}},
                       .arguments = {}},
               .type = u.builtins.void_type});
       body.AppendStmt(ExprStmt{.expr = call});
@@ -2204,11 +2167,7 @@ TEST(MirVerifyTest, ADefinitionEveryBodyStatesNamesNothingOneBodyHas) {
               .path = {},
               .kind = RecordKind::kStruct,
               .elements = {}});
-      u.record_methods.Declare();
-      u.record_methods.Define(
-          RecordId{0}, RecordMethods{RecordMethod{
-                           .answers = support::ValueOperator::kEquality,
-                           .code = std::move(method)}});
+      DeclareEquality(u, RecordId{0}, std::move(method));
     });
   };
 
@@ -2314,19 +2273,15 @@ TEST(MirVerifyTest, WhatEveryBodyStatesReachesNoClassOneBodyHas) {
                 .path = {},
                 .kind = RecordKind::kStruct,
                 .elements = {}});
-        u.record_methods.Declare();
-        u.record_methods.Define(
-            RecordId{0}, RecordMethods{RecordMethod{
-                             .answers = support::ValueOperator::kEquality,
-                             .code = std::move(method)}});
+        DeclareEquality(u, RecordId{0}, std::move(method));
       }),
       "names a class only one body has");
 }
 
 // A class another unit defines is declared here once, under that unit's name,
-// and holds nothing this unit emits; a method of a class this unit defines and
-// a subroutine of its own namespace have their bodies here, since no other
-// unit defines one.
+// and holds nothing this unit emits; a method of a class this unit defines, its
+// construction and a subroutine of its own namespace have their bodies here,
+// since no other unit defines one.
 TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
   struct Declared {
     bool own_unit = false;
@@ -2334,6 +2289,7 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
     bool method_body = false;
     bool object_record = false;
     bool own_method_without_body = false;
+    bool own_construction_without_body = false;
     bool own_subroutine_without_body = false;
   };
   const auto unit_declaring = [](Declared declared) {
@@ -2345,39 +2301,34 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
             .data = {
                 support::ClassStep{.name = "C", .arguments = std::nullopt}}};
         cls.base = ClassRef{ClassObjectRootRef{}};
+        const ClassId id = u.DeclareClass();
         if (declared.method_body) {
-          cls.callables.Add(
-              CallableDecl{
-                  .code = CallableCode::Defined(diag::SourceSpan{}),
-                  .foreign = std::nullopt,
-                  .virtual_dispatch = std::nullopt,
-                  .defining_unit = std::nullopt});
+          u.AddClassCallable(
+              id, std::nullopt, CallableCode::Defined(diag::SourceSpan{}));
         }
         if (declared.object_record) {
           cls.definition = ConstantValue{NullValue{}};
         }
-        u.DefineClass(u.DeclareClass(), std::move(cls));
+        u.DefineClass(id, std::move(cls));
       };
       declare();
       if (declared.twice) declare();
       if (declared.own_method_without_body) {
         Class own;
         own.base = ClassRef{ClassObjectRootRef{}};
-        own.callables.Add(
-            CallableDecl{
-                .code = CallableCode{},
-                .foreign = std::nullopt,
-                .virtual_dispatch = std::nullopt,
-                .defining_unit = std::nullopt});
-        u.DefineClass(u.DeclareClass(), std::move(own));
+        const ClassId id = u.DeclareClass();
+        u.AddClassCallable(id, std::nullopt, CallableCode{});
+        u.DefineClass(id, std::move(own));
+      }
+      if (declared.own_construction_without_body) {
+        Class own;
+        own.base = ClassRef{ClassObjectRootRef{}};
+        const ClassId id = u.DeclareClass();
+        u.AddClassConstructor(id, CallableCode{});
+        u.DefineClass(id, std::move(own));
       }
       if (declared.own_subroutine_without_body) {
-        u.callables.Add(
-            CallableDecl{
-                .code = CallableCode{},
-                .foreign = std::nullopt,
-                .virtual_dispatch = std::nullopt,
-                .defining_unit = std::nullopt});
+        u.AddNamespaceCallable(CallableCode{});
       }
     });
   };
@@ -2397,8 +2348,261 @@ TEST(MirVerifyTest, ADeclaredClassHoldsNothingAndAnOwnBodyIsHere) {
       unit_declaring({.own_method_without_body = true}),
       "leaves with no body a method of a class it defines");
   ExpectRefused(
+      unit_declaring({.own_construction_without_body = true}),
+      "leaves with no body the construction of a class it defines");
+  ExpectRefused(
       unit_declaring({.own_subroutine_without_body = true}),
       "leaves with no body its own subroutine");
+}
+
+// Each callable's owner states who declares it and where it stands, and what
+// the take functions cannot rule out is refused: an identity taken and never
+// stated, a second construction of a class, a record answering one operation
+// twice, and a closure with no body to invoke. Where a callable stands is
+// handed out by its owner's take, so none can stand where another does.
+TEST(MirVerifyTest, TheOwnersOfAUnitsCallablesCohere) {
+  enum class Keyed : std::uint8_t {
+    kByTheUnit,
+    kNeverStated,
+    kASecondConstruction,
+    kOneOperationTwice,
+    kAClosureWithNoBody,
+  };
+  const auto unit_keyed = [](Keyed keyed) {
+    return UnitWithBody([keyed](CompilationUnit& u, Builder) {
+      const ClassId id = u.DeclareClass();
+      Class cls;
+      cls.base = ClassRef{ClassObjectRootRef{}};
+      u.DefineClass(id, std::move(cls));
+      const auto member = [&] {
+        CallableCode code = CallableCode::Defined(diag::SourceSpan{});
+        code.result_type = u.builtins.void_type;
+        return code;
+      };
+      u.AddClassCallable(id, std::nullopt, member());
+      u.AddClassCallable(id, std::nullopt, member());
+      u.AddClassConstructor(id, member());
+      switch (keyed) {
+        case Keyed::kByTheUnit:
+          break;
+        case Keyed::kNeverStated:
+          u.TakeClassCallable(id);
+          break;
+        case Keyed::kASecondConstruction:
+          u.AddClassConstructor(id, member());
+          break;
+        case Keyed::kAClosureWithNoBody:
+          u.DefineClosure(u.DeclareClosure(), ClosureDecl{});
+          break;
+        case Keyed::kOneOperationTwice: {
+          const RecordId record = u.records.Add(
+              RecordDecl{
+                  .defining_unit = std::nullopt,
+                  .path = {},
+                  .kind = RecordKind::kStruct,
+                  .elements = {}});
+          const support::ValueOperation equality =
+              support::ValueOperator::kEquality;
+          u.AddRecordMethod(record, equality, member());
+          u.AddRecordMethod(record, equality, member());
+          break;
+        }
+      }
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(unit_keyed(Keyed::kByTheUnit)));
+  ExpectRefused(unit_keyed(Keyed::kNeverStated), "never states the taken");
+  ExpectRefused(
+      unit_keyed(Keyed::kASecondConstruction),
+      "gives a class a second construction");
+  ExpectRefused(
+      unit_keyed(Keyed::kOneOperationTwice),
+      "answers one operation of a record twice");
+  ExpectRefused(
+      unit_keyed(Keyed::kAClosureWithNoBody),
+      "declares closure 0 with no body to invoke");
+}
+
+// A record this unit defines states the body of every method it declares;
+// one it leaves bodiless is refused whether or not anything calls it.
+TEST(MirVerifyTest, ARecordThisUnitDefinesStatesEveryMethod) {
+  const auto unit_with_method = [](bool with_body) {
+    return UnitWithBody([with_body](CompilationUnit& u, Builder) {
+      u.records.Add(
+          RecordDecl{
+              .defining_unit = std::nullopt,
+              .path = {},
+              .kind = RecordKind::kStruct,
+              .elements = {}});
+      CallableCode code = with_body ? CallableCode::Defined(diag::SourceSpan{})
+                                    : CallableCode{};
+      code.result_type = u.builtins.void_type;
+      DeclareEquality(u, RecordId{0}, std::move(code));
+    });
+  };
+  EXPECT_NO_THROW(Verify(unit_with_method(true)));
+  ExpectRefused(
+      unit_with_method(false), "leaves with no body a method of a record");
+}
+
+// A behavior a class leaves to what extends it has no body anywhere (LRM
+// 8.21), so a direct call of it is refused, as one of a method with a body is
+// not.
+TEST(MirVerifyTest, OnlyDispatchReachesAMethodLeftAbstract) {
+  const auto calling = [](bool left_abstract) {
+    return UnitWithBody([left_abstract](CompilationUnit& u, Builder body) {
+      const TypeId pointer_type = u.types.Intern(
+          Type{PointerType{
+              .pointee = u.builtins.int_type,
+              .ownership = PointerOwnership::kBorrowed}});
+      const ExprId pointer =
+          body.Add(Expr{.data = NullLiteral{}, .type = pointer_type});
+      const ExprId receiver =
+          body.Add(MakeDerefExpr(pointer, u.builtins.int_type));
+      Class cls;
+      CallableCode member = left_abstract
+                                ? CallableCode{}
+                                : CallableCode::Defined(diag::SourceSpan{});
+      member.result_type = u.builtins.void_type;
+      const ClassId owner = u.DeclareClass();
+      const CallableId called = u.AddClassCallable(
+          owner,
+          left_abstract
+              ? std::optional<VirtualDispatchRole>{IntroducesVirtualSlot{
+                    .is_pure = true}}
+              : std::nullopt,
+          std::move(member));
+      u.DefineClass(owner, std::move(cls));
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.Add(
+                  Expr{
+                      .data =
+                          CallExpr{
+                              .callee =
+                                  Direct{
+                                      .target =
+                                          CallableTarget{.callable = called},
+                                      .receiver = receiver},
+                              .arguments = {}},
+                      .type = u.builtins.void_type})});
+    });
+  };
+  EXPECT_NO_THROW(Verify(calling(false)));
+  ExpectRefused(
+      calling(true),
+      "calls directly a method its class leaves to what extends it");
+}
+
+// Code named as a value is a body a class this unit defines declares, or one of
+// a unit's namespace: a construction, a closure's body and a record's method
+// are entered only by what they are for, a function the foreign program
+// defines is no code of the program's own, a method its class leaves to what
+// extends it has no code anywhere, and a dispatch entry is of a method.
+TEST(MirVerifyTest, CodeNamedAsAValueIsAMethodOrANamespaceBody) {
+  enum class Named : std::uint8_t {
+    kMethod,
+    kNamespaceBody,
+    kConstruction,
+    kClosureBody,
+    kRecordMethod,
+    kForeignFunction,
+    kAbstractMethod,
+  };
+  const auto naming = [](Named named, bool as_entry) {
+    return UnitWithCode([named, as_entry](
+                            CompilationUnit& u, CallableCode& code) {
+      const ClassId owner = u.DeclareClass();
+      Class cls;
+      cls.base = ClassRef{ClassObjectRootRef{}};
+      CallableCode body = CallableCode::Defined(diag::SourceSpan{});
+      body.result_type = u.builtins.void_type;
+      const TypeId type = FunctionTypeOf(u.types, body);
+      CallableCode decl = std::move(body);
+      CallableId callable{};
+      switch (named) {
+        case Named::kMethod:
+          callable = u.AddClassCallable(owner, std::nullopt, std::move(decl));
+          break;
+        case Named::kAbstractMethod: {
+          CallableCode prototype;
+          prototype.result_type = u.builtins.void_type;
+          callable = u.AddClassCallable(
+              owner, IntroducesVirtualSlot{.is_pure = true},
+              std::move(prototype));
+          break;
+        }
+        case Named::kNamespaceBody:
+          callable = u.AddNamespaceCallable(std::move(decl));
+          break;
+        case Named::kConstruction:
+          callable = u.AddClassConstructor(owner, std::move(decl));
+          break;
+        case Named::kClosureBody: {
+          const ClosureId closure = u.DeclareClosure();
+          callable = u.AddClosureBody(closure, std::move(decl));
+          u.DefineClosure(closure, ClosureDecl{});
+          break;
+        }
+        case Named::kRecordMethod: {
+          const RecordId record = u.records.Add(
+              RecordDecl{
+                  .defining_unit = std::nullopt,
+                  .path = {},
+                  .kind = RecordKind::kStruct,
+                  .elements = {}});
+          callable = u.AddRecordMethod(
+              record, support::ValueOperator::kEquality, std::move(decl));
+          break;
+        }
+        case Named::kForeignFunction: {
+          CallableCode prototype;
+          prototype.result_type = u.builtins.void_type;
+          callable = u.AddForeignCallable(
+              ForeignLinkage{.foreign_name = "c_function"},
+              std::move(prototype));
+          break;
+        }
+      }
+      if (as_entry) {
+        cls.entries.push_back(
+            MethodEntry{.method = callable, .entry = callable});
+      }
+      u.DefineClass(owner, std::move(cls));
+      const ReferenceTarget target =
+          as_entry ? ReferenceTarget{DispatchEntryRef{.method = callable}}
+                   : ReferenceTarget{FunctionRef{.callable = callable}};
+      Builder at(code.Body(), diag::SourceSpan{});
+      at.AppendStmt(
+          LocalDeclStmt{
+              .target = code.locals.Add(LocalDecl{.type = type}),
+              .init = at.Add(
+                  Expr{
+                      .data = ReferenceExpr{.target = target}, .type = type})});
+    });
+  };
+  EXPECT_NO_THROW(Verify(naming(Named::kMethod, false)));
+  EXPECT_NO_THROW(Verify(naming(Named::kNamespaceBody, false)));
+  EXPECT_NO_THROW(Verify(naming(Named::kMethod, true)));
+  ExpectRefused(
+      naming(Named::kConstruction, false),
+      "names as code a callable that is no method nor namespace body");
+  ExpectRefused(
+      naming(Named::kClosureBody, false),
+      "names as code a callable that is no method nor namespace body");
+  ExpectRefused(
+      naming(Named::kRecordMethod, false),
+      "names as code a callable that is no method nor namespace body");
+  ExpectRefused(
+      naming(Named::kForeignFunction, false),
+      "names as code a function the foreign program defines");
+  ExpectRefused(
+      naming(Named::kAbstractMethod, false),
+      "names as code a method its class leaves to what extends it");
+  ExpectRefused(
+      naming(Named::kNamespaceBody, true),
+      "names the entry of a callable no class declares as a method");
 }
 
 // A call of something that reports a failure of the design at its caller -- a
@@ -2560,14 +2764,9 @@ TEST(MirVerifyTest, ACleanupLeavesOnlyByRunningToItsEnd) {
                                Builder cleanup) {
         CallableCode callee = CallableCode::Defined(diag::SourceSpan{});
         callee.result_type = u.builtins.void_type;
-        const CallableId called = u.callables.Add(
-            CallableDecl{
-                .code = std::move(callee),
-                .foreign = std::nullopt,
-                .virtual_dispatch = std::nullopt,
-                .defining_unit = std::nullopt});
+        const CallableId called = u.AddNamespaceCallable(std::move(callee));
         AppendCall(
-            u, cleanup, Direct{.target = UnitCallableTarget{.slot = called}});
+            u, cleanup, Direct{.target = CallableTarget{.callable = called}});
       }),
       "a cleanup holds a call of a body, which is not stated not to leave it");
   ExpectRefused(

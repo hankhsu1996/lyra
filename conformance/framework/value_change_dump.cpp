@@ -78,16 +78,20 @@ auto FemtosecondsPerUnit(std::string_view spelled)
   return std::nullopt;
 }
 
-// A declaration's kind, and its size, which counts the bits in the variable
-// (LRM 21.7.2.3). A real or an event has no bits to count and the type mapping
-// gives a real no size (LRM Table 21-11), so for those the size is the tool's.
+// A declaration's kind, its size, which counts the bits in the variable (LRM
+// 21.7.2.3), and the range its reference states after the identifier, empty
+// where it states none (LRM 21.7.2.1 `reference`). A real or an event has no
+// bits to count and the type mapping gives a real no size (LRM Table 21-11),
+// so for those the size is the tool's.
 struct Declared {
   std::string kind;
   std::string size;
+  std::string range;
 
   auto operator==(const Declared& other) const -> bool {
     const bool sized = kind != "real" && kind != "realtime" && kind != "event";
-    return kind == other.kind && (!sized || size == other.size);
+    return kind == other.kind && (!sized || size == other.size) &&
+           range == other.range;
   }
 };
 
@@ -229,13 +233,19 @@ auto Parse(std::string_view text) -> std::expected<Dump, std::string> {
               std::format("'{}' is no size of a $var", size));
         }
         const std::string name = Joined(path, tokens[at + 4]);
-        dump.declared[name] =
-            Declared{.kind = std::string(kind), .size = std::string(size)};
         named[std::string(tokens[at + 3])].push_back(name);
-        at += 4;
-        if (!to_end(at)) {
+        at += 5;
+        std::string range;
+        for (; at < tokens.size() && tokens[at] != "$end"; ++at) {
+          range += tokens[at];
+        }
+        if (at >= tokens.size()) {
           return std::unexpected("a $var is never ended");
         }
+        dump.declared[name] = Declared{
+            .kind = std::string(kind),
+            .size = std::string(size),
+            .range = std::move(range)};
       } else if (token == "$timescale") {
         std::string spelled;
         for (++at; at < tokens.size() && tokens[at] != "$end"; ++at) {
@@ -444,10 +454,16 @@ auto Difference(const Dump& expected, const Dump& written)
           "'{}' is declared, and no declaration of it is expected", name);
     }
     if (want->second != got->second) {
+      const auto spelled = [](const Declared& declared) {
+        return declared.range.empty()
+                   ? std::format("{} {}", declared.kind, declared.size)
+                   : std::format(
+                         "{} {} {}", declared.kind, declared.size,
+                         declared.range);
+      };
       return std::format(
-          "'{}' is declared as {} {}, where {} {} is expected", name,
-          got->second.kind, got->second.size, want->second.kind,
-          want->second.size);
+          "'{}' is declared as {}, where {} is expected", name,
+          spelled(got->second), spelled(want->second));
     }
   }
   static const Moment kNothing;

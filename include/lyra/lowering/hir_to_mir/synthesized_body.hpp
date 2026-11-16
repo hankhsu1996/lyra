@@ -13,7 +13,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
-#include "lyra/mir/callable.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 
@@ -37,15 +37,12 @@ auto AppendForever(const WalkFrame& frame, Each each) -> diag::Result<void> {
 
 // A body of the scope the source wrote none of, on its own object: a coroutine
 // taking the object first and then `params`, completing with `payload`, whose
-// body `write` appends, its return included, in the role `virtual_dispatch`
-// names among the class's methods.
+// body `write` appends, its return included.
 template <typename Write>
 auto ScopeCoroutine(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     diag::SourceSpan span, std::span<const mir::TypeId> params,
-    mir::TypeId payload,
-    std::optional<mir::VirtualDispatchRole> virtual_dispatch, Write write)
-    -> diag::Result<mir::CallableDecl> {
+    mir::TypeId payload, Write write) -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::CallableCode code = mir::CallableCode::Defined(span);
   CallableBindings bindings(unit, code);
@@ -66,11 +63,7 @@ auto ScopeCoroutine(
   code.params = std::move(locals);
   code.result_type =
       unit.types.Intern(mir::Type{mir::CoroutineType{.payload = payload}});
-  return mir::CallableDecl{
-      .code = std::move(code),
-      .foreign = std::nullopt,
-      .virtual_dispatch = virtual_dispatch,
-      .defining_unit = std::nullopt};
+  return code;
 }
 
 // An execution of the scope the source wrote none of, which runs `each` for
@@ -78,10 +71,9 @@ auto ScopeCoroutine(
 template <typename Each>
 auto ScopeExecution(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
-    diag::SourceSpan span, Each each) -> diag::Result<mir::CallableDecl> {
+    diag::SourceSpan span, Each each) -> diag::Result<mir::CallableCode> {
   return ScopeCoroutine(
       lowerer, ctor_frame, span, {}, lowerer.Owner().Unit().builtins.void_type,
-      std::nullopt,
       [&](const WalkFrame& frame,
           std::span<const mir::LocalId>) -> diag::Result<void> {
         if (auto r = AppendForever(frame, each); !r) return r;

@@ -23,13 +23,12 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
-#include "lyra/hir/dumped_declaration.hpp"
+#include "lyra/hir/described_data_object.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/owned_child_step.hpp"
 #include "lyra/hir/pattern.hpp"
-#include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/published_callable.hpp"
@@ -43,6 +42,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/unit_definition.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/support/port_direction.hpp"
 
 namespace lyra::hir {
 
@@ -427,7 +427,7 @@ struct PortConnectionId {
 // direction, so it has no source, no sink and nothing to wait on; what it
 // states is a join.
 struct DataPortConnection {
-  PortDirection direction;
+  support::PortDirection direction;
   PortEndpoint endpoint;
   std::optional<ExprId> peer;
   std::vector<SensitivityEntry> sensitivity;
@@ -763,9 +763,10 @@ struct StructuralScope {
   // later. That is what the declare-then-define gap buys: the id exists up
   // front and the body pass fills the contents when it reaches the scope.
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
-  // What a value dump records of an instance of this scope (LRM 21.7.1.2). The
-  // scopes inside this one are dumped as their own.
-  std::vector<DumpedDeclaration> dumped;
+  // What a reader reaching the design by name finds this scope declares -- a
+  // value dump (LRM 21.7.1.2) among them. The scopes inside this one describe
+  // their own.
+  std::vector<DescribedDataObject> described;
 
   // Two scopes are equal when everything they state is equal. Derived rather
   // than written. A field added to any node below is compared

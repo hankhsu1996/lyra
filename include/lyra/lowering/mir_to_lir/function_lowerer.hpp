@@ -17,6 +17,7 @@
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/closure_decl.hpp"
+#include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -39,8 +40,7 @@ class FunctionLowerer {
   // Lowers a closure's invoke. Its signature leads with the receiver naming the
   // storage the captures live in, and the body reads each of them as a member
   // of it.
-  FunctionLowerer(
-      UnitLowerer& unit, const mir::ClosureDecl& closure, std::string name);
+  FunctionLowerer(UnitLowerer& unit, mir::ClosureId closure, std::string name);
   auto Run() -> diag::Result<lir::Function>;
 
  private:

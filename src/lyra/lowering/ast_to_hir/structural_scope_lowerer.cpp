@@ -8,6 +8,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -39,7 +40,7 @@
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/clocking_block.hpp"
 #include "lyra/hir/continuous_assign.hpp"
-#include "lyra/hir/dumped_declaration.hpp"
+#include "lyra/hir/described_data_object.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/structural_data_object.hpp"
@@ -58,6 +59,7 @@
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
+#include "lyra/lowering/ast_to_hir/port_direction.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/sampled_reads.hpp"
@@ -66,184 +68,82 @@
 #include "lyra/lowering/ast_to_hir/strength.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/time_resolution.hpp"
+#include "lyra/lowering/ast_to_hir/typespec.hpp"
 #include "lyra/lowering/ast_to_hir/unit_definition.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 #include "lyra/profiling/time_trace.hpp"
-#include "lyra/support/dump_kind.hpp"
+#include "lyra/support/data_object.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// What a variable of `declared` type is recorded as in a value dump, by the
-// type mapping (LRM 21.7.5, Table 21-11): an int and an enumeration are
-// integers, an enumeration whose base type is stated is recorded as that type,
-// and every other integral type is a reg.
-auto DumpedKindOfVariableType(const slang::ast::Type& declared)
-    -> std::optional<support::DumpVarKind> {
-  const slang::ast::Type& type = declared.getCanonicalType();
-  if (type.isEvent()) {
-    return support::DumpVarKind::kEvent;
+// Whether a reader reaching the design by name finds `value` among what this
+// scope stores (LRM 21.7.1.2): a variable of static lifetime, since one of
+// automatic lifetime lives in a frame, or a net of a net type a keyword names,
+// either of a type such a reader describes.
+auto IsDescribed(const slang::ast::ValueSymbol& value) -> bool {
+  if (!TypespecOf(value.getType()).has_value()) {
+    return false;
   }
-  if (const auto* floating = type.as_if<slang::ast::FloatingType>()) {
-    switch (floating->floatKind) {
-      case slang::ast::FloatingType::Real:
-      case slang::ast::FloatingType::ShortReal:
-        return support::DumpVarKind::kReal;
-      case slang::ast::FloatingType::RealTime:
-        return support::DumpVarKind::kRealtime;
-    }
-    return std::nullopt;
-  }
-  if (const auto* enumeration = type.as_if<slang::ast::EnumType>()) {
-    return DumpedKindOfVariableType(enumeration->baseType);
-  }
-  if (const auto* predefined =
-          type.as_if<slang::ast::PredefinedIntegerType>()) {
-    switch (predefined->integerKind) {
-      case slang::ast::PredefinedIntegerType::Integer:
-      case slang::ast::PredefinedIntegerType::Int:
-        return support::DumpVarKind::kInteger;
-      case slang::ast::PredefinedIntegerType::Time:
-        return support::DumpVarKind::kTime;
-      case slang::ast::PredefinedIntegerType::ShortInt:
-      case slang::ast::PredefinedIntegerType::LongInt:
-      case slang::ast::PredefinedIntegerType::Byte:
-        return support::DumpVarKind::kReg;
-    }
-    return std::nullopt;
-  }
-  if (type.isIntegral()) {
-    return support::DumpVarKind::kReg;
-  }
-  return std::nullopt;
-}
-
-// What a net or a variable is recorded as in a value dump (LRM 21.7.2.1
-// `var_type`), none for one a dump records nothing of: a variable holding no
-// integral value, real or event -- an unpacked array or structure, a string, a
-// handle, a container (LRM 21.7.2.1) -- one of automatic lifetime, which no
-// dump can reach, a net of a type the language gives no keyword there, and a
-// net holding neither an integral value nor a real. A net holding a real is an
-// input port of that type written with no port kind (LRM 23.2.2.3), and is
-// recorded by its value, as a variable of its type is, since no net type
-// keyword names it.
-auto DumpedKindOf(const slang::ast::ValueSymbol& value)
-    -> std::optional<support::DumpVarKind> {
   if (const auto* net = value.as_if<slang::ast::NetSymbol>()) {
-    if (value.getType().isFloating()) {
-      return DumpedKindOfVariableType(value.getType());
-    }
-    if (!value.getType().isIntegral()) {
-      return std::nullopt;
-    }
     switch (net->netType.netKind) {
       case slang::ast::NetType::Wire:
       case slang::ast::NetType::UWire:
-        // LRM 21.7.2.3: a `uwire` is recorded as a `wire`.
-        return support::DumpVarKind::kWire;
       case slang::ast::NetType::Tri:
-        return support::DumpVarKind::kTri;
       case slang::ast::NetType::WAnd:
-        return support::DumpVarKind::kWand;
       case slang::ast::NetType::TriAnd:
-        return support::DumpVarKind::kTriand;
       case slang::ast::NetType::WOr:
-        return support::DumpVarKind::kWor;
       case slang::ast::NetType::TriOr:
-        return support::DumpVarKind::kTrior;
       case slang::ast::NetType::Tri0:
-        return support::DumpVarKind::kTri0;
       case slang::ast::NetType::Tri1:
-        return support::DumpVarKind::kTri1;
       case slang::ast::NetType::Supply0:
-        return support::DumpVarKind::kSupply0;
       case slang::ast::NetType::Supply1:
-        return support::DumpVarKind::kSupply1;
       case slang::ast::NetType::TriReg:
-        return support::DumpVarKind::kTrireg;
+        return true;
       case slang::ast::NetType::Interconnect:
       case slang::ast::NetType::UserDefined:
       case slang::ast::NetType::Unknown:
-        return std::nullopt;
+        return false;
     }
-    return std::nullopt;
+    return false;
   }
   const auto* variable = value.as_if<slang::ast::VariableSymbol>();
-  if (variable == nullptr || !HasStaticStorage(*variable)) return std::nullopt;
-  return DumpedKindOfVariableType(value.getType());
-}
-
-// How many bits a dump declares a thing of `kind` and type `type` with: an
-// event the one bit the format gives it, a real a double's.
-auto DumpedWidthOf(support::DumpVarKind kind, const slang::ast::Type& type)
-    -> std::uint32_t {
-  switch (support::DumpValueFormOf(kind)) {
-    case support::DumpValueForm::kTriggered:
-      return 1;
-    case support::DumpValueForm::kReal:
-      return 64;
-    case support::DumpValueForm::kBits:
-      return static_cast<std::uint32_t>(type.getBitWidth());
-  }
-  throw InternalError("DumpedWidthOf: unknown value");
-}
-
-// The range a vector declares, which a dump writes beside its name (LRM
-// 21.7.2.3 `$var`): the outermost of a packed array's, none for anything else.
-auto DumpedRangeOf(const slang::ast::Type& type)
-    -> std::optional<hir::DumpedDeclaration::Range> {
-  const auto* packed =
-      type.getCanonicalType().as_if<slang::ast::PackedArrayType>();
-  if (packed == nullptr) {
-    return std::nullopt;
-  }
-  return hir::DumpedDeclaration::Range{
-      .left = packed->range.left, .right = packed->range.right};
+  return variable != nullptr && HasStaticStorage(*variable);
 }
 
 // Each port `scope` declares, by the net or variable inside the instance it
-// connects, with its direction and its position among the ports in the order
-// the declaration gives them -- a port written as a concatenation being one
-// position for each part (LRM 21.7.4.2). A port connecting nothing inside, or
-// one connecting storage by reference, is no port an extended dump records.
-auto DumpedPortsOf(const slang::ast::Scope& scope) -> DumpedPorts {
-  DumpedPorts ports;
+// connects, with its name, its direction and its position among the ports in
+// the order the declaration gives them -- a port written as a concatenation
+// being one position for each part, each under the port's name (LRM
+// 21.7.4.2). Two ports connecting one object are each listed for it. A port
+// connecting nothing inside describes no object.
+auto DescribedPortsOf(const slang::ast::Scope& scope) -> DescribedPorts {
+  DescribedPorts ports;
   const auto* body = scope.asSymbol().as_if<slang::ast::InstanceBodySymbol>();
   if (body == nullptr) {
     return ports;
   }
   std::uint32_t position = 0;
-  const auto take = [&](const slang::ast::PortSymbol& port) {
+  const auto take = [&](const slang::ast::PortSymbol& port,
+                        std::string_view name) {
     const std::uint32_t at = position++;
-    std::optional<support::DumpPortDirection> direction;
-    switch (port.direction) {
-      case slang::ast::ArgumentDirection::In:
-        direction = support::DumpPortDirection::kInput;
-        break;
-      case slang::ast::ArgumentDirection::Out:
-        direction = support::DumpPortDirection::kOutput;
-        break;
-      case slang::ast::ArgumentDirection::InOut:
-        direction = support::DumpPortDirection::kInOut;
-        break;
-      case slang::ast::ArgumentDirection::Ref:
-        break;
-    }
-    if (direction.has_value() && port.internalSymbol != nullptr) {
-      ports.try_emplace(
-          port.internalSymbol, hir::DumpedDeclaration::Port{
-                                   .direction = *direction, .position = at});
+    if (port.internalSymbol != nullptr) {
+      ports[port.internalSymbol].push_back(
+          support::DescribedPort{
+              .name = std::string(name),
+              .direction = PortDirectionOf(port),
+              .position = at});
     }
   };
   for (const slang::ast::Symbol* port : body->getPortList()) {
     if (const auto* single = port->as_if<slang::ast::PortSymbol>()) {
-      take(*single);
+      take(*single, single->name);
     } else if (const auto* multi = port->as_if<slang::ast::MultiPortSymbol>()) {
       for (const slang::ast::PortSymbol* part : multi->ports) {
-        take(*part);
+        take(*part, multi->name);
       }
     }
   }
@@ -575,10 +475,18 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   auto pc = PopulatePortConnections(*slang_scope_, frame);
   if (!pc) return std::unexpected(std::move(pc.error()));
 
-  auto dumped = CollectDumped(DumpedPortsOf(*slang_scope_), frame);
-  if (!dumped) return std::unexpected(std::move(dumped.error()));
-  scope.dumped = *std::move(dumped);
-  std::ranges::move(*written, std::back_inserter(scope.dumped));
+  // A scope a reader by name reaches -- an instance, or a package or the
+  // compilation unit's scope, each one object of the run (LRM 37.10) --
+  // describes the data objects it declares, the statics its bodies write
+  // among them; a class lowered alone and a text of the tool's are reached by
+  // no name.
+  if (hir::RootsAnObject(owner_->Unit().definition) ||
+      hir::IsNamespaceObject(owner_->Unit().definition)) {
+    auto described = CollectDescribed(DescribedPortsOf(*slang_scope_), frame);
+    if (!described) return std::unexpected(std::move(described.error()));
+    scope.described = *std::move(described);
+    std::ranges::move(*written, std::back_inserter(scope.described));
+  }
 
   scope.routes = owner_->TakeRoutesForFrame(frame_);
   scope.published = owner_->TakePublication(*slang_scope_);
@@ -668,11 +576,13 @@ auto StructuralScopeLowerer::DeclareSettledValue(
       value.getType(), frontend::PointSpanOf(value.location));
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   scope.structural_data_objects.Define(
-      owner_->ReservedDataObject(value), hir::StructuralDataObjectDecl{
-                                             .name = std::string{value.name},
-                                             .type = *type_or,
-                                             .kind = std::move(kind),
-                                             .lexical_scope = std::nullopt});
+      owner_->ReservedDataObject(value),
+      hir::StructuralDataObjectDecl{
+          .name = std::string{value.name},
+          .type = *type_or,
+          .kind = std::move(kind),
+          .lexical_scope = std::nullopt,
+          .typespec = TypespecOf(value.getType())});
   return {};
 }
 
@@ -948,11 +858,13 @@ auto StructuralScopeLowerer::PopulateVariableMember(
         .initializer = frame.Exprs().Add(*std::move(init_or))};
   }
   frame.current_structural_scope->structural_data_objects.Define(
-      owner_->ReservedDataObject(var), hir::StructuralDataObjectDecl{
-                                           .name = std::string{var.name},
-                                           .type = *type_id_or,
-                                           .kind = std::move(kind),
-                                           .lexical_scope = std::nullopt});
+      owner_->ReservedDataObject(var),
+      hir::StructuralDataObjectDecl{
+          .name = std::string{var.name},
+          .type = *type_id_or,
+          .kind = std::move(kind),
+          .lexical_scope = std::nullopt,
+          .typespec = TypespecOf(var.getType())});
   return {};
 }
 
@@ -1028,7 +940,8 @@ auto StructuralScopeLowerer::PopulateNetMember(
                   .net_type = *net_type,
                   .charge_strength =
                       TranslateChargeStrength(net.getChargeStrength())},
-          .lexical_scope = std::nullopt});
+          .lexical_scope = std::nullopt,
+          .typespec = TypespecOf(net.getType())});
 
   // A net-declaration assignment (`wire w = expr;`, LRM 6.5) is a single
   // continuous driver of the net. slang carries it as the net's initializer
@@ -1579,60 +1492,52 @@ auto StructuralScopeLowerer::PopulateNetAliasMember(
   return {};
 }
 
-auto StructuralScopeLowerer::DumpedEntryOf(
-    const slang::ast::ValueSymbol& value, const DumpedPorts& ports,
-    WalkFrame frame, std::optional<hir::ProceduralScopeId> lexical_scope)
-    -> diag::Result<std::optional<hir::DumpedDeclaration>> {
-  const std::optional<support::DumpVarKind> kind = DumpedKindOf(value);
-  if (!kind.has_value()) return std::nullopt;
+auto StructuralScopeLowerer::DescribedEntryOf(
+    const slang::ast::ValueSymbol& value, const DescribedPorts& ports,
+    WalkFrame frame) -> diag::Result<std::optional<hir::DescribedDataObject>> {
+  if (!IsDescribed(value)) return std::nullopt;
   const auto span = frontend::PointSpanOf(value.location);
   auto type = owner_->InternType(value.getType(), span);
   if (!type) return std::unexpected(std::move(type.error()));
   // A namespace's variables are named by the namespace wherever they are read
   // (LRM 26.2, 6.21); a design element's are storage of this scope's object.
-  diag::Result<hir::Expr> named =
+  diag::Result<hir::ValueTarget> cell =
       !hir::RootsAnObject(owner_->Unit().definition)
-          ? owner_
-                ->ResolveValueTarget(
-                    frame, value,
-                    RouteOrigin{.start = FromReader{}, .written = {}}, span)
-                .transform([&](const hir::ValueTarget& target) {
-                  return hir::MakeValueTargetRefExpr(target, *type, span);
-                })
+          ? owner_->ResolveValueTarget(
+                frame, value, RouteOrigin{.start = FromReader{}, .written = {}},
+                span)
           : owner_->MakeRoutedValueRef(value, frame_, ScopeRoute::Enclosing({}))
-                .transform([&](hir::RoutedValueRef ref) {
-                  return hir::MakeRefExpr(std::move(ref), *type, span);
+                .transform([](hir::RoutedValueRef ref) {
+                  return hir::ValueTarget{ref};
                 });
-  if (!named) return std::unexpected(std::move(named.error()));
-  const auto port = ports.find(&value);
-  return hir::DumpedDeclaration{
-      .identifier = std::string{value.name},
-      .kind = *kind,
-      .width = DumpedWidthOf(*kind, value.getType().getCanonicalType()),
-      .range = DumpedRangeOf(value.getType()),
-      .port = port != ports.end() ? std::optional(port->second) : std::nullopt,
-      .named = frame.Exprs().Add(*std::move(named)),
-      .lexical_scope = lexical_scope};
+  if (!cell) return std::unexpected(std::move(cell.error()));
+  const auto connecting = ports.find(&value);
+  return hir::DescribedDataObject{
+      .cell = *std::move(cell),
+      .type = *type,
+      .ports = connecting != ports.end()
+                   ? connecting->second
+                   : std::vector<support::DescribedPort>{}};
 }
 
-auto StructuralScopeLowerer::CollectDumped(
-    const DumpedPorts& ports, WalkFrame frame)
-    -> diag::Result<std::vector<hir::DumpedDeclaration>> {
-  std::vector<hir::DumpedDeclaration> dumped;
+auto StructuralScopeLowerer::CollectDescribed(
+    const DescribedPorts& ports, WalkFrame frame)
+    -> diag::Result<std::vector<hir::DescribedDataObject>> {
+  std::vector<hir::DescribedDataObject> described;
   for (const slang::ast::Symbol& member : slang_scope_->members()) {
     const auto* value = member.as_if<slang::ast::ValueSymbol>();
     if (value == nullptr || !owner_->Owns(member)) continue;
-    auto entry = DumpedEntryOf(*value, ports, frame, std::nullopt);
+    auto entry = DescribedEntryOf(*value, ports, frame);
     if (!entry) return std::unexpected(std::move(entry.error()));
-    if (entry->has_value()) dumped.push_back(**std::move(entry));
+    if (entry->has_value()) described.push_back(**std::move(entry));
   }
-  return dumped;
+  return described;
 }
 
 auto StructuralScopeLowerer::DefineWrittenStatics(
     std::span<const WrittenStatic> statics, WalkFrame frame)
-    -> diag::Result<std::vector<hir::DumpedDeclaration>> {
-  std::vector<hir::DumpedDeclaration> dumped;
+    -> diag::Result<std::vector<hir::DescribedDataObject>> {
+  std::vector<hir::DescribedDataObject> described;
   for (const WrittenStatic& written : statics) {
     const slang::ast::ValueSymbol& value = *written.symbol;
     const auto span = frontend::PointSpanOf(value.location);
@@ -1663,12 +1568,13 @@ auto StructuralScopeLowerer::DefineWrittenStatics(
                         .name = std::string{value.name},
                         .type = *type,
                         .kind = std::move(kind),
-                        .lexical_scope = scope});
-    auto entry = DumpedEntryOf(value, {}, frame, scope);
+                        .lexical_scope = scope,
+                        .typespec = TypespecOf(value.getType())});
+    auto entry = DescribedEntryOf(value, {}, frame);
     if (!entry) return std::unexpected(std::move(entry.error()));
-    if (entry->has_value()) dumped.push_back(**std::move(entry));
+    if (entry->has_value()) described.push_back(**std::move(entry));
   }
-  return dumped;
+  return described;
 }
 
 auto StructuralScopeLowerer::PopulateGenerateArrayMember(

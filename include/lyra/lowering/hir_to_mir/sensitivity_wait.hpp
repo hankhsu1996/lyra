@@ -209,6 +209,14 @@ auto BuildWaitOnStmt(
     mir::Builder block, std::span<const hir::SensitivityEntry> sensitivity)
     -> std::vector<ObservedLeaf>;
 
+// The trigger a wait for a change of the whole of `watched` enrols, built in
+// `block`, which is also what a reader reaching the design by name subscribes
+// to to learn of a change where the wait would.
+template <typename Lowerer>
+auto BuildValueChangeTrigger(
+    mir::Builder block, const WalkFrame& frame, Lowerer& lowerer,
+    const hir::WatchedStorage& watched) -> diag::Result<mir::ExprId>;
+
 // The wait of an `@*`, and of anything else that waits as an event control
 // does, on the variables `sensitivity_list` names, where a change to any of
 // them once its process waits there is the event (LRM 9.4.2, 9.4.2.2). Being

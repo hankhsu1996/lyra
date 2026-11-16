@@ -13,49 +13,49 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/base/version.hpp"
+#include "lyra/runtime/dump_kind.hpp"
 #include "lyra/runtime/dump_writer.hpp"
-#include "lyra/support/dump_kind.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
 
 namespace {
 
-auto FstVarType(support::DumpVarKind kind) -> fstVarType {
+auto FstVarType(DumpVarKind kind) -> fstVarType {
   switch (kind) {
-    case support::DumpVarKind::kEvent:
+    case DumpVarKind::kEvent:
       return FST_VT_VCD_EVENT;
-    case support::DumpVarKind::kInteger:
+    case DumpVarKind::kInteger:
       return FST_VT_VCD_INTEGER;
-    case support::DumpVarKind::kReal:
+    case DumpVarKind::kReal:
       return FST_VT_VCD_REAL;
-    case support::DumpVarKind::kRealtime:
+    case DumpVarKind::kRealtime:
       return FST_VT_VCD_REALTIME;
-    case support::DumpVarKind::kReg:
+    case DumpVarKind::kReg:
       return FST_VT_VCD_REG;
-    case support::DumpVarKind::kSupply0:
+    case DumpVarKind::kSupply0:
       return FST_VT_VCD_SUPPLY0;
-    case support::DumpVarKind::kSupply1:
+    case DumpVarKind::kSupply1:
       return FST_VT_VCD_SUPPLY1;
-    case support::DumpVarKind::kTime:
+    case DumpVarKind::kTime:
       return FST_VT_VCD_TIME;
-    case support::DumpVarKind::kTri:
+    case DumpVarKind::kTri:
       return FST_VT_VCD_TRI;
-    case support::DumpVarKind::kTriand:
+    case DumpVarKind::kTriand:
       return FST_VT_VCD_TRIAND;
-    case support::DumpVarKind::kTrior:
+    case DumpVarKind::kTrior:
       return FST_VT_VCD_TRIOR;
-    case support::DumpVarKind::kTrireg:
+    case DumpVarKind::kTrireg:
       return FST_VT_VCD_TRIREG;
-    case support::DumpVarKind::kTri0:
+    case DumpVarKind::kTri0:
       return FST_VT_VCD_TRI0;
-    case support::DumpVarKind::kTri1:
+    case DumpVarKind::kTri1:
       return FST_VT_VCD_TRI1;
-    case support::DumpVarKind::kWand:
+    case DumpVarKind::kWand:
       return FST_VT_VCD_WAND;
-    case support::DumpVarKind::kWire:
+    case DumpVarKind::kWire:
       return FST_VT_VCD_WIRE;
-    case support::DumpVarKind::kWor:
+    case DumpVarKind::kWor:
       return FST_VT_VCD_WOR;
   }
   throw InternalError("FstVarType: unknown kind");
@@ -73,6 +73,8 @@ auto FstScopeType(DumpScopeKind kind) -> fstScopeType {
       return FST_ST_VCD_BEGIN;
     case DumpScopeKind::kFork:
       return FST_ST_VCD_FORK;
+    case DumpScopeKind::kPackage:
+      return FST_ST_VCD_PACKAGE;
   }
   throw InternalError("FstScopeType: unknown kind");
 }
@@ -83,8 +85,8 @@ class FstWriter final : public DumpWriter {
  public:
   explicit FstWriter(fstWriterContext* context) : context_(context) {
     fstWriterSetPackType(context_, FST_WR_PT_LZ4);
-    // The name is a string literal, so its characters end in a null.
-    fstWriterSetVersion(context_, base::kProductName.data());
+    const std::string version(base::kProductName);
+    fstWriterSetVersion(context_, version.c_str());
   }
   FstWriter(const FstWriter&) = delete;
   auto operator=(const FstWriter&) -> FstWriter& = delete;
@@ -109,18 +111,14 @@ class FstWriter final : public DumpWriter {
     fstWriterSetUpscope(context_);
   }
 
-  void Var(DumpCode code, const abi::DumpEntry& entry) override {
+  void Var(DumpCode code, const DumpVarDeclaration& variable) override {
     if (things_.size() <= code.value) {
       things_.resize(code.value + 1);
     }
     things_[code.value] = {
-        .handle = Create(entry, 0),
-        .width = entry.width,
-        .form = support::DumpValueFormOf(entry.Kind())};
-  }
-
-  void Alias(DumpCode code, const abi::DumpEntry& entry) override {
-    Create(entry, things_.at(code.value).handle);
+        .handle = Create(variable),
+        .width = variable.width,
+        .form = DumpValueFormOf(variable.kind)};
   }
 
   void EndDefinitions() override {
@@ -205,11 +203,12 @@ class FstWriter final : public DumpWriter {
   }
 
   // The name the FST hierarchy records is the reference a VCD `$var` writes.
-  auto Create(const abi::DumpEntry& entry, fstHandle alias) -> fstHandle {
-    const std::string name = DumpReference(entry);
+  // Each thing is a variable of its own, aliasing none.
+  auto Create(const DumpVarDeclaration& variable) -> fstHandle {
+    const std::string name = DumpReference(variable);
     return fstWriterCreateVar(
-        context_, FstVarType(entry.Kind()), FST_VD_IMPLICIT, entry.width,
-        name.c_str(), alias);
+        context_, FstVarType(variable.kind), FST_VD_IMPLICIT, variable.width,
+        name.c_str(), 0);
   }
 
   // A dumped thing as FST takes its values: a real as the double itself, and
@@ -217,20 +216,20 @@ class FstWriter final : public DumpWriter {
   struct Thing {
     fstHandle handle = 0;
     std::uint32_t width = 0;
-    support::DumpValueForm form = support::DumpValueForm::kBits;
+    DumpValueForm form = DumpValueForm::kBits;
   };
 
   // A double has no unknown value, so a real is recorded as not a number,
   // which a reader shows as no value at all.
   void EmitUnknown(const Thing& thing) {
     switch (thing.form) {
-      case support::DumpValueForm::kReal: {
+      case DumpValueForm::kReal: {
         const double unknown = std::numeric_limits<double>::quiet_NaN();
         fstWriterEmitValueChange(context_, thing.handle, &unknown);
         return;
       }
-      case support::DumpValueForm::kBits:
-      case support::DumpValueForm::kTriggered:
+      case DumpValueForm::kBits:
+      case DumpValueForm::kTriggered:
         spelled_.assign(thing.width, 'x');
         fstWriterEmitValueChange(context_, thing.handle, spelled_.data());
         return;

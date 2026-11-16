@@ -9,6 +9,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/builder.hpp"
+#include "lyra/mir/callable.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_signature.hpp"
@@ -44,8 +45,10 @@ auto ErasedOf(const mir::CompilationUnit& unit, mir::TypeId closure_type)
     -> mir::TypeId {
   return mir::ErasedTypeOf(
       unit.types,
-      unit.GetClosure(
-          unit.types.Get(closure_type).Get<mir::ClosureType>().closure_id));
+      unit.callables
+          .Get(unit.BodyOf(
+              unit.types.Get(closure_type).Get<mir::ClosureType>().closure_id))
+          .code);
 }
 
 // `held`, a box or a borrow of a closure, made one of the closure of no known
@@ -68,15 +71,13 @@ ClosureBuilder::ClosureBuilder(
     support::ClosureKind kind, CapturePolicy policy)
     : unit_(&unit),
       outer_(enclosing.Builder()),
-      closure_decl_{
-          .fields = {},
-          .field_order = {},
-          .invoke = mir::CallableCode::Defined(enclosing.span)},
+      closure_decl_{.fields = {}, .field_order = {}},
+      invoke_(mir::CallableCode::Defined(enclosing.span)),
       closure_id_(unit.DeclareClosure()),
       bindings_(
-          unit, closure_decl_, closure_id_, kind, *enclosing.bindings, outer_,
-          std::move(policy)),
-      frame_(enclosing.WithBlock(&closure_decl_.invoke.Body())
+          unit, closure_decl_, invoke_, closure_id_, kind, *enclosing.bindings,
+          outer_, std::move(policy)),
+      frame_(enclosing.WithBlock(&invoke_.Body())
                  .WithBindings(&bindings_)
                  .WithReportingReachedTo(std::nullopt)) {
 }
@@ -101,20 +102,21 @@ auto ClosureBuilder::Finish(mir::TypeId result_type) -> mir::Expr {
         bindings_.DeclareAnonymous(unit_->builtins.source_location);
     const mir::ExprId captured = body.Add(bindings_.MakeBindingPlace(
         bindings_.EnsureCarrier(CallerLocationOrigin{}), body));
-    mir::Block& root = closure_decl_.invoke.Body();
+    mir::Block& root = invoke_.Body();
     const mir::StmtId declared = root.stmts.Add(
         mir::Stmt{
             .label = std::nullopt,
             .data = mir::LocalDeclStmt{
                 .target = held, .init = body.Read(captured)}});
     root.root_stmts.insert(root.root_stmts.begin(), declared);
-    closure_decl_.invoke.caller_location = held;
+    invoke_.caller_location = held;
   }
-  closure_decl_.invoke.result_type = result_type;
-  closure_decl_.invoke.params = invocation_params_;
+  invoke_.result_type = result_type;
+  invoke_.params = invocation_params_;
   std::vector<mir::FieldInit> field_inits = bindings_.Finalize();
   const mir::TypeId value_type = unit_->types.Intern(
       mir::Type{mir::ClosureType{.closure_id = closure_id_}});
+  body_ = unit_->AddClosureBody(closure_id_, std::move(invoke_));
   unit_->DefineClosure(closure_id_, std::move(closure_decl_));
   return mir::Expr{
       .data =
@@ -124,8 +126,7 @@ auto ClosureBuilder::Finish(mir::TypeId result_type) -> mir::Expr {
 }
 
 auto ClosureBuilder::Build(mir::ExprId result) -> mir::Expr {
-  const mir::TypeId result_type =
-      closure_decl_.invoke.Body().exprs.Get(result).type;
+  const mir::TypeId result_type = invoke_.Body().exprs.Get(result).type;
   Body().AppendStmt(mir::ReturnStmt{.value = result});
   return Finish(result_type);
 }
@@ -143,7 +144,7 @@ auto ClosureBuilder::BuildCallOnce() -> mir::Expr {
           mir::CallExpr{
               .callee =
                   mir::Direct{
-                      .target = mir::ClosureTarget{.closure = closure_id_},
+                      .target = mir::CallableTarget{.callable = *body_},
                       .receiver = box},
               .arguments = {}},
       .type = result_type};

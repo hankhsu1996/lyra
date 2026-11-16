@@ -15,7 +15,6 @@
 #include "lyra/hir/covergroup.hpp"
 #include "lyra/hir/covergroup_ref.hpp"
 #include "lyra/hir/namespace.hpp"
-#include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_covergroup.hpp"
 #include "lyra/hir/published_member.hpp"
@@ -29,6 +28,7 @@
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_import.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/port_direction.hpp"
 
 namespace lyra::hir {
 
@@ -38,7 +38,7 @@ namespace lyra::hir {
 // narrower than the storage behind it whenever that expression names part of an
 // internal name.
 struct DataPortPart {
-  PortDirection direction{};
+  support::PortDirection direction{};
   TypeId type{};
   ConnectionTarget target;
 

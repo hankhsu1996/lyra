@@ -15,19 +15,21 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/timing.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
+#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -86,10 +88,31 @@ auto FileNameOperand(
       unit, block, block.Add(*std::move(lowered)), unit.builtins.string);
 }
 
+// The storage a wait for a change of the variable `named` names watches, none
+// where it names no whole variable: a name a route reaches, one of them a
+// name a modport defines for one whole variable (LRM 25.5.4), a variable of a
+// namespace or a class, or a variable of the running body.
+auto WatchedVariable(const ProcessLowerer& process, const hir::Expr& named)
+    -> std::optional<hir::WatchedStorage> {
+  if (std::optional<hir::ValueTarget> cell = WholeVariableTarget(
+          process.Owner(), process.EnclosingScopeLowerer().HirScope(), named)) {
+    return hir::WatchedStorage{*std::move(cell)};
+  }
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&named.data);
+  const auto* local = primary != nullptr
+                          ? std::get_if<hir::ProceduralVarRef>(&primary->data)
+                          : nullptr;
+  if (local == nullptr) {
+    return std::nullopt;
+  }
+  return *local;
+}
+
 // One item a `$dumpvars` names after its levels (LRM 21.7.1.2): an instance,
 // as the pointer to the object it is that the route to it ends at, or a
-// variable, as the address of the member it is of the instance declaring it.
-// A part of a variable is no item (LRM 21.7.2.1).
+// variable, as the trigger a wait for a change of it enrols, which says what
+// the dump records of it where its own description does. A part of a variable
+// is no item (LRM 21.7.2.1).
 auto DumpVarsItem(
     ProcessLowerer& process, const WalkFrame& frame, mir::ExprId levels,
     hir::ExprId item) -> diag::Result<mir::Expr> {
@@ -102,22 +125,17 @@ auto DumpVarsItem(
                      process.Owner().Unit().types,
                      process.RouteEnd(frame, instance->id))});
   }
-  auto path = process.LowerAccessPath(named, frame);
-  if (!path) return std::unexpected(std::move(path.error()));
-  if (!path->descent.empty()) {
+  const std::optional<hir::WatchedStorage> variable =
+      WatchedVariable(process, named);
+  if (!variable.has_value()) {
     return diag::Fail(
         named.span, diag::DiagCode::kUnsupportedExpressionForm,
         "a part of a variable cannot be dumped; name the whole variable");
   }
-  const mir::ExprId member = OwnerPlace(*path);
-  auto& unit = process.Owner().Unit();
-  const mir::TypeId pointer = unit.types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = block.Get(member).type,
-          .ownership = mir::PointerOwnership::kBorrowed}});
+  auto trigger = BuildValueChangeTrigger(block, frame, process, *variable);
+  if (!trigger) return std::unexpected(std::move(trigger.error()));
   return DumpCall(
-      process, block, support::BuiltinFn::kDumpVarsOfVariable,
-      {block.Add(mir::MakeAddressOfExpr(member, pointer))});
+      process, block, support::BuiltinFn::kDumpVarsOfVariable, {*trigger});
 }
 
 // LRM 21.7.1.2: levels alone are that many levels of the design from its
@@ -153,7 +171,7 @@ auto LowerDumpVars(
 
 // A `$dumpports` control task naming no file acts on every file, which the
 // runtime is told by the empty name (LRM 21.7.3.7).
-constexpr std::string_view kEveryPortFile = "";
+constexpr std::string_view kEveryPortFile;
 
 // The instance a body stands in, which a `$dumpports` naming none dumps the
 // ports of (LRM 21.7.3.1): the instance of the unit its code belongs to.

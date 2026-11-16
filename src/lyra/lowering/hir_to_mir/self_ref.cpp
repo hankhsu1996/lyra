@@ -64,9 +64,7 @@ auto BuildOwnCallExpr(
   return block.Add(
       mir::MakeCallExpr(
           mir::Direct{
-              .target =
-                  mir::CallableTarget{
-                      .owner = frame.current_class.id, .slot = callable},
+              .target = mir::CallableTarget{.callable = callable},
               .receiver = BuildObjectDeref(unit, block, self)},
           {}, result));
 }

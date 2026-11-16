@@ -42,7 +42,9 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/support/data_object.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/port_direction.hpp"
 #include "lyra/support/strength_level.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -93,36 +95,6 @@ auto StrengthLevelLabel(support::StrengthLevel level) -> std::string_view {
       return "supply";
   }
   throw InternalError("StrengthLevelLabel: unknown strength level");
-}
-
-auto NetTypeLabel(NetType net_type) -> std::string_view {
-  switch (net_type) {
-    case NetType::kWire:
-      return "wire";
-    case NetType::kTri:
-      return "tri";
-    case NetType::kWand:
-      return "wand";
-    case NetType::kTriand:
-      return "triand";
-    case NetType::kWor:
-      return "wor";
-    case NetType::kTrior:
-      return "trior";
-    case NetType::kTri0:
-      return "tri0";
-    case NetType::kTri1:
-      return "tri1";
-    case NetType::kSupply0:
-      return "supply0";
-    case NetType::kSupply1:
-      return "supply1";
-    case NetType::kUwire:
-      return "uwire";
-    case NetType::kTrireg:
-      return "trireg";
-  }
-  throw InternalError("NetTypeLabel: unknown NetType");
 }
 
 auto ForkJoinModeLabel(JoinMode mode) -> std::string_view {
@@ -237,9 +209,11 @@ auto FormatStructuralDataObject(const StructuralDataObjectDecl& decl)
           [](const StructuralNetDecl& net) {
             return net.charge_strength.has_value()
                        ? std::format(
-                             " net={} charge={}", NetTypeLabel(net.net_type),
+                             " net={} charge={}",
+                             support::NetTypeKeyword(net.net_type),
                              StrengthLevelLabel(*net.charge_strength))
-                       : std::format(" net={}", NetTypeLabel(net.net_type));
+                       : std::format(
+                             " net={}", support::NetTypeKeyword(net.net_type));
           },
           [](const StructuralReferenceDecl& reference) {
             return std::string{ReferenceBindingLabel(reference.binding)};
@@ -2767,24 +2741,8 @@ class HirDumper {
       const std::string body = std::visit(
           Overloaded{
               [](const DataPortConnection& d) -> std::string {
-                std::string_view direction;
-                switch (d.direction) {
-                  case PortDirection::kInput:
-                    direction = "input";
-                    break;
-                  case PortDirection::kOutput:
-                    direction = "output";
-                    break;
-                  case PortDirection::kInOut:
-                    direction = "inout";
-                    break;
-                  case PortDirection::kRef:
-                    direction = "ref";
-                    break;
-                  case PortDirection::kConstRef:
-                    direction = "const ref";
-                    break;
-                }
+                const std::string_view direction =
+                    support::PortDirectionKeyword(d.direction);
                 const std::string endpoint = std::visit(
                     Overloaded{
                         [](const PortCellEndpoint& c) -> std::string {

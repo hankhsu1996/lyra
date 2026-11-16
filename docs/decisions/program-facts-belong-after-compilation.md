@@ -87,14 +87,14 @@ distinction: a consumer emitting a definition from the second reaches for a merg
 emitting from the first does not, and neither asks which kind it is holding.
 
 This reverses the second half of [dpi-foreign-boundary](dpi-foreign-boundary.md)'s rejection of "the
-program-global export symbol as its own species beside the callable arena". That rejection argues
-from the symbol being "owned by the unit that defines it", which D3 has just shown is false here,
-and from such a container leaving the export with no prototype record, which does not arise because
-the record holding the definition is the one that already held the prototype. Its remaining cost is
-real and is paid: the name is reached by a second walk wherever a unit's definitions are enumerated.
-What that buys is the removal of a discriminator every one of those walks had to read and read
-correctly -- and a body naming nothing the unit owns does not belong among the unit's own, which is
-the same statement from the other side.
+program-global export symbol as its own species beside the unit's table of callables". That
+rejection argues from the symbol being "owned by the unit that defines it", which D3 has just shown
+is false here, and from such a container leaving the export with no prototype record, which does not
+arise because the record holding the definition is the one that already held the prototype. Its
+remaining cost is real and is paid: the name is reached by a second walk wherever a unit's
+definitions are enumerated. What that buys is the removal of a discriminator every one of those
+walks had to read and read correctly -- and a body naming nothing the unit owns does not belong
+among the unit's own, which is the same statement from the other side.
 
 ### D4. The union of the foreign name space is assembled by the build
 

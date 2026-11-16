@@ -56,13 +56,12 @@ wrote, carried by a `SubroutineRef` arm of their own over a six-valued HIR-local
 below HIR names the six; what MIR names is the four library questions they become.
 
 MIR's callee for a built-in is one shape -- `Direct { target = BuiltinFn }` -- shared with
-user-method calls, where `target` is the symbol identity (several alternatives today, one identity
-space once callable identity is unified). The instance / static / free distinction is **not**
-structural at MIR: at the generic-language layer these are one direct invocation, differing only in
-whether the callee binds an object. The split into `BuiltinFnCallee` / `BuiltinStaticCallee` /
-`FreeFnCallee` arms was a backend-convenience pre-classification that violated `mir.md` invariant 10
-(a field a backend's realization can ignore, restating what the id and signature already fix), and
-is gone.
+user-method calls, where `target` is the symbol identity. The instance / static / free distinction
+is **not** structural at MIR: at the generic-language layer these are one direct invocation,
+differing only in whether the callee binds an object. The split into `BuiltinFnCallee` /
+`BuiltinStaticCallee` / `FreeFnCallee` arms was a backend-convenience pre-classification that
+violated `mir.md` invariant 10 (a field a backend's realization can ignore, restating what the id
+and signature already fix), and is gone.
 
 The scope a static entry is reached on is not carried either, for the same reason. A factory is
 declared on the type it builds, and the value a call to it answers with is of that type, so the

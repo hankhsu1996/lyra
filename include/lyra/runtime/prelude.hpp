@@ -47,7 +47,6 @@
 #include "lyra/runtime/diagnostic.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/distribution.hpp"            // IWYU pragma: keep
 #include "lyra/runtime/dpi_context.hpp"             // IWYU pragma: keep
-#include "lyra/runtime/dump_probe.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/evaluation_attempts.hpp"     // IWYU pragma: keep
 #include "lyra/runtime/file_table.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/finish.hpp"                  // IWYU pragma: keep
@@ -67,6 +66,7 @@
 #include "lyra/runtime/randomize.hpp"               // IWYU pragma: keep
 #include "lyra/runtime/reaction.hpp"                // IWYU pragma: keep
 #include "lyra/runtime/read_report.hpp"             // IWYU pragma: keep
+#include "lyra/runtime/reflection.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/runtime.hpp"                 // IWYU pragma: keep
 #include "lyra/runtime/runtime_effects.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/runtime_process.hpp"         // IWYU pragma: keep

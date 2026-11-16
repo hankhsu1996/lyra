@@ -11,6 +11,7 @@
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
@@ -18,6 +19,7 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/float_width.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -86,13 +88,7 @@ auto TranslateMemberTypes(
 }  // namespace
 
 auto UnitLowerer::DeclareRecord() -> mir::RecordType {
-  const mir::RecordId id = unit_.records.Declare();
-  if (unit_.record_methods.Declare() != id) {
-    throw InternalError(
-        "hir_to_mir: a record's methods and its declaration took different "
-        "identities -- please report this as a bug");
-  }
-  return mir::RecordType{.declaration = id};
+  return mir::RecordType{.declaration = unit_.records.Declare()};
 }
 
 auto UnitLowerer::UnionMemberTypes(const hir::UnpackedUnionDefinition& src)
@@ -138,27 +134,43 @@ void UnitLowerer::DefineRecord(const hir::Type& source, mir::RecordId id) {
   }
 }
 
+namespace {
+
+// The declaration of the struct `source` is, and nothing for a union.
+auto StructureOf(const hir::CompilationUnit& hir, const hir::Type& source)
+    -> const hir::UnpackedStructDefinition* {
+  const auto* structure = source.As<hir::UnpackedStructType>();
+  return structure != nullptr ? &hir.DefinitionOf(*structure) : nullptr;
+}
+
+}  // namespace
+
+void UnitLowerer::DeclareRecordMethods(
+    const hir::Type& source, mir::RecordId id, mir::TypeId type) {
+  // A method of a record another unit declares is that unit's, so it is
+  // declared here as stating nothing; one of this unit's own takes its
+  // identity, and its body is built once every record's methods are declared.
+  const bool is_own = !unit_.GetRecord(id).defining_unit.has_value();
+  for (const support::ValueOperation answers :
+       RecordOperationsOf(*this, StructureOf(*hir_, source), id, type)) {
+    if (is_own) {
+      unit_.TakeRecordMethod(id, answers);
+    } else {
+      unit_.AddRecordMethod(id, answers, mir::CallableCode{});
+    }
+  }
+}
+
 void UnitLowerer::DefineRecordMethods(
     const hir::Type& source, mir::RecordId id, mir::TypeId type) {
-  const mir::RecordDecl& declared = unit_.GetRecord(id);
-  // Another unit states the methods of a record it declares.
-  if (declared.defining_unit.has_value()) {
-    unit_.record_methods.Define(id, mir::RecordMethods{});
+  if (unit_.GetRecord(id).defining_unit.has_value()) {
     return;
   }
-  unit_.record_methods.Define(id, [&] {
-    switch (declared.kind) {
-      case mir::RecordKind::kStruct:
-        return StructMethodsOf(
-            *this, Hir().DefinitionOf(source.Get<hir::UnpackedStructType>()),
-            id, type, declared.elements);
-      case mir::RecordKind::kUnion:
-        return UnionMethodsOf(Unit(), id, type, declared.elements);
-      case mir::RecordKind::kTaggedUnion:
-        return TaggedUnionMethodsOf(Unit(), id, type, declared.elements);
-    }
-    throw InternalError("hir_to_mir: unknown record kind");
-  }());
+  for (RecordMethodBody& body :
+       RecordMethodBodies(*this, StructureOf(*hir_, source), id, type)) {
+    unit_.StateCallable(
+        mir::RecordMethodOf(unit_, id, body.answers), std::move(body.code));
+  }
 }
 
 auto UnitLowerer::TranslateType(const hir::Type& type)

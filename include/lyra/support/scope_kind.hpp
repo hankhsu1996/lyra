@@ -32,6 +32,10 @@ inline constexpr std::string_view kDesignRootName = "$root";
 // the reactive region set and every other's in the active one (LRM 24.3.1).
 [[nodiscard]] auto ExecutionOf(DefinitionKind kind) -> ScopeExecution;
 
+// Whether a namespace of a definition of `kind` is a compilation unit's scope
+// rather than a package (LRM 37.10 detail 5).
+[[nodiscard]] auto IsCompilationUnit(DefinitionKind kind) -> bool;
+
 // What a declaration of a scope inside another is where the run builds the
 // scopes it declares (LRM 23.3.2, 27): an instance of a module, an interface or
 // a program, an array of them, a block a generate builds and the blocks a loop

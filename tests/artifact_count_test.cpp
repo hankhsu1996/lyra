@@ -1569,6 +1569,16 @@ auto TypeText(const lyra::mir::CompilationUnit& unit, lyra::mir::TypeId type)
   return text + dumped.substr(at);
 }
 
+// Where `callable`, which a class declares, stands among that class's
+// callables, as text.
+auto ClassOrdinalText(
+    const lyra::mir::CompilationUnit& unit, lyra::mir::CallableId callable)
+    -> std::string {
+  return std::to_string(
+      std::get<lyra::mir::DeclaredByClass>(unit.OwnerOf(callable))
+          .ordinal.value);
+}
+
 // What a callable of `unit` takes and answers, and the part it takes in
 // dispatch, which is what a class states of it to every unit; its body is the
 // body's own.
@@ -1582,19 +1592,23 @@ auto CallableText(
   text += std::format(
       ") receiver={} -> {}", decl.code.TakesReceiver(),
       TypeText(unit, decl.code.result_type));
-  if (decl.virtual_dispatch.has_value()) {
+  if (const std::optional<lyra::mir::VirtualDispatchRole>& role =
+          lyra::mir::VirtualDispatchOf(decl)) {
     text += std::visit(
         lyra::Overloaded{
             [](const lyra::mir::IntroducesVirtualSlot& introduces) {
               return std::format(" introduces pure={}", introduces.is_pure);
             },
             [&](const lyra::mir::OverridesVirtualSlot& overrides) {
+              const lyra::mir::CallableId introducer =
+                  overrides.overridden.introduced_by;
               return std::format(
                   " overrides {}.{}",
-                  ClassText(unit, overrides.overridden.owner_class),
-                  overrides.overridden.slot.value);
+                  ClassText(
+                      unit, lyra::mir::DeclaringClassOf(unit, introducer)),
+                  ClassOrdinalText(unit, introducer));
             }},
-        *decl.virtual_dispatch);
+        *role);
   }
   return text;
 }
@@ -1623,23 +1637,20 @@ auto ClassesEveryBodyStates(const lyra::mir::CompilationUnit& unit)
     for (const lyra::mir::NamedField& named : cls.named_fields) {
       text += std::format("named field {} {}\n", named.name, named.slot.value);
     }
-    for (const lyra::mir::CallableDecl& callable : cls.callables) {
-      text += "callable " + CallableText(unit, callable) + "\n";
+    const lyra::mir::DeclaredCallables& declared = unit.CallablesOf(id);
+    for (const lyra::mir::CallableId callable : declared.callables) {
+      text +=
+          "callable " + CallableText(unit, unit.callables.Get(callable)) + "\n";
     }
     for (const lyra::mir::NamedCallable& named : cls.named_callables) {
-      text +=
-          std::format("named callable {} {}\n", named.name, named.body.value);
+      text += std::format(
+          "named callable {} {}\n", named.name,
+          ClassOrdinalText(unit, named.body));
     }
     text += std::format("conforms to {}\n", cls.conforming.size());
-    if (cls.constructor.has_value()) {
+    if (declared.constructor.has_value()) {
       text += "constructor " +
-              CallableText(
-                  unit,
-                  lyra::mir::CallableDecl{
-                      .code = cls.constructor->code,
-                      .foreign = std::nullopt,
-                      .virtual_dispatch = std::nullopt,
-                      .defining_unit = std::nullopt}) +
+              CallableText(unit, unit.callables.Get(*declared.constructor)) +
               "\n";
     }
     stated.emplace(ClassText(unit, id), std::move(text));

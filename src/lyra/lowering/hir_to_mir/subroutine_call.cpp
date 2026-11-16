@@ -120,7 +120,7 @@ auto DispatchingCallee(
     const mir::VirtualSlot& behavior) -> mir::Callee {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::ExprId receiver = BuildObjectDeref(
-      unit, block, AsIntroducer(unit.types, block, object, behavior));
+      unit, block, AsIntroducer(unit, block, object, behavior));
   return mir::Virtual{.receiver = receiver, .slot = behavior};
 }
 

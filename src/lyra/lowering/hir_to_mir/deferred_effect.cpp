@@ -117,7 +117,7 @@ auto BuildLandingCallee(
                 published.scope_class, published.callable);
             return mir::Virtual{
                 .receiver = BuildObjectDeref(
-                    unit, body, AsIntroducer(unit.types, body, held, slot)),
+                    unit, body, AsIntroducer(unit, body, held, slot)),
                 .slot = slot};
           }},
       landing);

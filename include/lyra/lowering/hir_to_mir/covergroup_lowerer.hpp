@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/callable_ordinal.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
@@ -37,7 +38,7 @@ class UnitLowerer;
 // it, and where each property of the class sits.
 struct CovergroupClass {
   hir::CovergroupId covergroup;
-  const hir::PublishedCovergroup* published;
+  const hir::PublishedCovergroup* published = nullptr;
   CovergroupLayout layout;
 };
 
@@ -106,25 +107,25 @@ class CovergroupLowerer {
 };
 
 // An operation of the class a covergroup is written as, besides its
-// constructor: the name the class gives it, and whether it runs on an object or
-// on the type.
+// constructor: where it stands among the callables the class took, the name
+// the class gives it, and whether it runs on an object or on the type.
 struct CovergroupOperation {
-  mir::CallableId callable;
+  mir::CallableOrdinal position;
   std::string_view name;
   CallableForm form;
 };
 
-// Those operations, in the order the class's shape reserves them.
+// Those operations, in the order the class takes them.
 [[nodiscard]] auto CovergroupOperations() -> std::array<CovergroupOperation, 4>;
 
-// What the code of the operation `point` of the class the covergroup
-// `covergroup` is written as takes and answers, read off what the unit
+// What the code of `operation`, a callable of the class the covergroup
+// `covergroup` is written as, takes and answers, read off what the unit
 // published of the covergroup alone: the code is compiled only by a body whose
 // construction built the scope declaring the covergroup, and what it takes is
 // the same to every body of the unit.
 [[nodiscard]] auto CovergroupOperationPrototype(
     UnitLowerer& unit_lowerer, hir::CovergroupId covergroup,
-    const ClassCodePoint& point) -> mir::CallableCode;
+    mir::CallableId operation) -> mir::CallableCode;
 
 // The class the covergroup `covergroup`, which belongs to an instance (LRM
 // 6.22), is written as, as every body of its unit states it: its layout and an

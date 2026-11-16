@@ -19,8 +19,8 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
@@ -43,13 +43,13 @@ auto MakeForeignSignature(
     mir::CompilationUnit& unit, std::span<const hir::DpiParamAbi> params,
     support::DpiScalarAbi ret_abi, bool is_task) -> mir::CallableCode;
 
-// The bodyless callable that publishes an import's foreign prototype (LRM
-// 35.4). The unit owns it, because the DPI-C name space is program-global and
-// contains no class; a backend emits it as the declaration the foreign call
-// resolves against, and the user's C supplies the definition.
-auto MakeForeignImportDecl(
+// Declares the bodyless callable that publishes an import's foreign prototype
+// (LRM 35.4). The unit's namespace owns it, because the DPI-C name space is
+// program-global and contains no class; a backend emits it as the declaration
+// the foreign call resolves against, and the user's C supplies the definition.
+auto AddForeignImport(
     mir::CompilationUnit& unit, const hir::ForeignImportDecl& import)
-    -> mir::CallableDecl;
+    -> mir::CallableId;
 
 // LRM 35.4 import call: a call to the foreign symbol, wrapped in boundary
 // marshaling. The marshaling is built here, at the call, because an open-array
@@ -92,16 +92,17 @@ struct ForeignExportEntry {
 
 // Builds that adaptation: C-ABI parameters marshal to the exported subroutine's
 // SV arguments, the subroutine is called through the context the entry
-// recovers, and the result marshals back. `target` is the call the body makes
-// -- a subroutine of a scope dispatches on a `self`, which the entry takes as
-// its own first parameter; any other target is a package free function taking
-// the run's effects -- so it also fixes what that context is.
+// recovers, and the result marshals back. `target` is the callable the body
+// calls -- a subroutine a scope's class declares dispatches on a `self`, which
+// the entry takes as its own first parameter; one a package's namespace
+// declares is a free function taking the run's effects -- so who declares it
+// also fixes what that context is.
 // `context_frame` supplies the enclosing class for a receiver (a bare frame
 // otherwise); `result_type` is the exported subroutine's result type the
 // writeback destructures.
 auto SynthesizeForeignExportEntry(
     UnitLowerer& module, const WalkFrame& context_frame,
-    mir::DirectTarget target, mir::TypeId result_type,
+    mir::CallableTarget target, mir::TypeId result_type,
     const hir::ForeignExportDecl& export_decl) -> ForeignExportEntry;
 
 // Records what `unit` states of one exported name whose entries sit on scopes

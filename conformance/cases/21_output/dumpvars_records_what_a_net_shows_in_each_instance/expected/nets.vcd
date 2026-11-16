@@ -1,0 +1,39 @@
+$timescale 1ns $end
+$scope module Top $end
+$var reg 1 A a $end
+$scope module m0 $end
+$var wire 1 B a $end
+$var reg 4 C d [3:0] $end
+$var wire 1 D w $end
+$upscope $end
+$scope module m1 $end
+$var wire 1 E a $end
+$var reg 4 F d [3:0] $end
+$var wire 1 G w $end
+$scope begin g $end
+$var reg 1 H x $end
+$upscope $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+#0
+$dumpvars
+0A
+0B
+b0011 C
+0D
+0E
+b0100 F
+0G
+1H
+$end
+#1
+1D
+#2
+0D
+#3
+1A
+1B
+1D
+1E
+1G

@@ -18,4 +18,18 @@ auto ExecutionOf(DefinitionKind kind) -> ScopeExecution {
   throw InternalError("ExecutionOf: unknown kind");
 }
 
+auto IsCompilationUnit(DefinitionKind kind) -> bool {
+  switch (kind) {
+    case DefinitionKind::kCompilationUnit:
+      return true;
+    case DefinitionKind::kModule:
+    case DefinitionKind::kInterface:
+    case DefinitionKind::kProgram:
+    case DefinitionKind::kPackage:
+    case DefinitionKind::kDesignRoot:
+      return false;
+  }
+  throw InternalError("IsCompilationUnit: unknown kind");
+}
+
 }  // namespace lyra::support

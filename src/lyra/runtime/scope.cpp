@@ -95,10 +95,6 @@ void Scope::CreateProcesses() {
   Enter(&abi::ScopeInfo::create_processes);
 }
 
-void Scope::Describe() {
-  Enter(&abi::ScopeInfo::describe);
-}
-
 auto Scope::EnclosingScope(const abi::ObjectDefinition* cls) -> Scope* {
   for (Scope* level = parent_; level != nullptr; level = level->parent_) {
     if (IsOfClass(level->definition, cls)) return level;

@@ -118,17 +118,17 @@ class CallableBindings {
       : unit_(&unit), code_(&code) {
   }
 
-  // A closure body: bindings it does not declare are captured from `parent`,
-  // their sources read into `capture_site` (a block of the parent) and their
-  // fields added to the closure declaration `decl`, with the snapshot-vs-alias
-  // view chosen by `policy`. The closure receiver -- the closure as `kind`
-  // enters it, typed from `closure_id` -- is materialized here as the body's
-  // `locals[0]`; a captured read is a field access over it.
+  // A closure body, `invoke`: bindings it does not declare are captured from
+  // `parent`, their sources read into `capture_site` (a block of the parent)
+  // and their fields added to the closure declaration `decl`, with the
+  // snapshot-vs-alias view chosen by `policy`. The closure receiver -- the
+  // closure as `kind` enters it, typed from `closure_id` -- is materialized
+  // here as the body's `locals[0]`; a captured read is a field access over it.
   CallableBindings(
       const mir::CompilationUnit& unit, mir::ClosureDecl& decl,
-      mir::ClosureId closure_id, support::ClosureKind kind,
-      CallableBindings& parent, mir::Builder capture_site,
-      CapturePolicy policy);
+      mir::CallableCode& invoke, mir::ClosureId closure_id,
+      support::ClosureKind kind, CallableBindings& parent,
+      mir::Builder capture_site, CapturePolicy policy);
 
   CallableBindings(const CallableBindings&) = delete;
   auto operator=(const CallableBindings&) -> CallableBindings& = delete;

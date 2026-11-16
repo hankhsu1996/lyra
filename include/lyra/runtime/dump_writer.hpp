@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -9,7 +10,9 @@
 
 #include "lyra/abi/records.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/dump_kind.hpp"
 #include "lyra/runtime/dump_scope_kind.hpp"
+#include "lyra/support/data_object.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
@@ -21,9 +24,49 @@ struct DumpCode {
   std::uint32_t value = 0;
 };
 
+// A port as an extended dump records it: the direction its values are read
+// by and its position among the ports.
+struct DumpedPort {
+  DumpPortDirection direction;
+  std::uint32_t position;
+};
+
+// One data object as a dump declares it (LRM 21.7.2.1 `$var`): the name it is
+// written under, the keyword of its kind, its size, and the range a vector
+// declares, written beside the name (LRM 21.7.2.3); and, where an extended
+// dump declares it as a port of its scope that carries a value, the port's
+// direction and position among the ports, which that dump reads its values by
+// and records them in (LRM 21.7.3.1, 21.7.4.2), the name then being the
+// port's.
+struct DumpVarDeclaration {
+  const char* identifier = nullptr;
+  DumpVarKind kind = DumpVarKind::kWire;
+  std::uint32_t width = 0;
+  std::optional<support::Range> range;
+  std::optional<DumpedPort> port;
+};
+
+// How a dump declares the data object `object` states (LRM 21.7.2.1, 21.7.5
+// Table 21-11): an event by `event` and a real by `real` or `realtime`
+// whatever holds it, a net by its net type, a `uwire` as a `wire` (LRM
+// 21.7.2.3), and a variable by its type -- an `int`, an `integer` and an
+// enumeration whose base is one as an `integer`, a `time` as a `time`, and
+// every other integral one as a `reg` of all its bits. An event is declared
+// one bit wide, and a real as wide as a double.
+auto DumpVarDeclarationOf(const abi::DataObjectRecord& object)
+    -> DumpVarDeclaration;
+
+// How an extended dump declares the port `port` at `position` among its
+// scope's ports (LRM 21.7.4.2): as the object it connects, under the port's
+// name, none for a port bound by reference, which carries no value across it,
+// and for one connecting an event, which the format has no value for.
+auto DumpPortDeclarationOf(
+    const abi::DescribedPort& port, std::uint32_t position)
+    -> std::optional<DumpVarDeclaration>;
+
 // The name a declaration is written under, its declared range after it (LRM
 // 21.7.2.3 `$var` reference).
-auto DumpReference(const abi::DumpEntry& entry) -> std::string;
+auto DumpReference(const DumpVarDeclaration& variable) -> std::string;
 
 // The character LRM 21.7.2.1 `value` writes a scalar as.
 auto DumpBitCharacter(value::FourStateBit bit) -> char;
@@ -70,10 +113,7 @@ class DumpWriter {
   virtual void Timescale(std::int8_t precision_power) = 0;
   virtual void Scope(DumpScopeKind kind, std::string_view name) = 0;
   virtual void Upscope() = 0;
-  virtual void Var(DumpCode code, const abi::DumpEntry& entry) = 0;
-  // Several names may stand for one thing (LRM 21.7.2.3 `$var` b): a port and
-  // what it is connected to.
-  virtual void Alias(DumpCode code, const abi::DumpEntry& entry) = 0;
+  virtual void Var(DumpCode code, const DumpVarDeclaration& variable) = 0;
   virtual void EndDefinitions() = 0;
   virtual void Time(SimTime time) = 0;
   virtual void Change(DumpCode code, const DumpValue& value) = 0;

@@ -33,7 +33,6 @@
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
-#include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -291,7 +290,7 @@ auto AppendArm(
 auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
-    const hir::ContinuousAssign& src) -> diag::Result<mir::CallableDecl> {
+    const hir::ContinuousAssign& src) -> diag::Result<mir::CallableCode> {
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const hir::Expr& hir_lhs = hir_scope.exprs.Get(src.lhs);
   std::optional<DriveDelay> delay;
@@ -329,7 +328,7 @@ auto LowerContinuousDrive(
     support::StrengthLevel drive_strength,
     const std::optional<DriveDelay>& delay,
     std::span<const hir::SensitivityEntry> sensitivity)
-    -> diag::Result<mir::CallableDecl> {
+    -> diag::Result<mir::CallableCode> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::TypeId self_ptr_type =
       ctor_frame.current_class.cls->self_pointer_type;
@@ -602,11 +601,7 @@ auto LowerContinuousDrive(
   entry_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.params = {self_id};
   code.result_type = unit.builtins.coroutine_void;
-  return mir::CallableDecl{
-      .code = std::move(code),
-      .foreign = std::nullopt,
-      .virtual_dispatch = std::nullopt,
-      .defining_unit = std::nullopt};
+  return code;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -14,8 +14,6 @@ auto LibraryCallbackName(LibraryCallback callback) -> std::string_view {
       return "sv_initialize";
     case LibraryCallback::kScopeCreateProcesses:
       return "sv_create_processes";
-    case LibraryCallback::kScopeDescribe:
-      return "sv_describe";
     case LibraryCallback::kClassRandVariables:
       return "sv_rand_variables";
     case LibraryCallback::kClassConstrain:

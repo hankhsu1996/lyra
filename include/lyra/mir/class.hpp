@@ -1,7 +1,8 @@
 #pragma once
 
-#include <algorithm>
+#include <compare>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -9,37 +10,108 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
-#include "lyra/base/registry.hpp"
-#include "lyra/diag/source_span.hpp"
-#include "lyra/mir/behavior_ordinal.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/mir/callable.hpp"
-#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/constant_value.hpp"
-#include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/class_name.hpp"
+#include "lyra/support/data_object.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_callback.hpp"
 
 namespace lyra::mir {
 
+// One data object a scope describes (LRM 21.7.1.2): what its declaration
+// states -- the identifier it is declared under, the net type it is declared
+// with, none for a variable, and its type as the source declared it, a
+// constant of the unit -- each port of the scope connecting it, and the record
+// of the block, task or function enclosing it.
+struct DescribedDataObject {
+  std::string identifier;
+  std::optional<support::NetType> net_type;
+  ConstantId typespec;
+  std::vector<support::DescribedPort> ports;
+  std::optional<ConstantId> enclosing;
+
+  auto operator==(const DescribedDataObject&) const -> bool = default;
+};
+
+// Where a data object stands among those its scope describes, in the order
+// the scope lists them.
+struct DescribedDataObjectId {
+  std::uint32_t value = 0;
+
+  auto operator<=>(const DescribedDataObjectId&) const
+      -> std::strong_ordering = default;
+};
+
+// Which data object a body reads or subscribes to, and which of the two the
+// body does. The body reading it hands its value, the one subscribing to it the
+// trigger a wait for a change of it enrols.
+struct DataObjectAccess {
+  enum class Kind : std::uint8_t { kRead, kSubscribe };
+  DescribedDataObjectId object;
+  Kind kind;
+
+  auto operator==(const DataObjectAccess&) const -> bool = default;
+};
+
+// The word naming what a body of `kind` does to its data object, which every
+// spelling of such a body is named by.
+[[nodiscard]] inline auto AccessWordOf(DataObjectAccess::Kind kind)
+    -> std::string_view {
+  switch (kind) {
+    case DataObjectAccess::Kind::kRead:
+      return "read";
+    case DataObjectAccess::Kind::kSubscribe:
+      return "subscribe";
+  }
+  throw InternalError("mir: unknown data object access");
+}
+
+// A body reading or subscribing to a data object its scope describes, and the
+// identifier the object is declared under there, which is what names the body.
+struct DataObjectAccessName {
+  DataObjectAccess access;
+  std::string_view identifier;
+};
+
 // What a scope of the design hierarchy states of itself (LRM 37.10, 37.12):
-// the record of the definition it comes from, and the record of each scope it
-// declares that the run builds and of each it builds nothing for, in the order
-// it lists them, each a constant of the unit.
+// the record of the definition it comes from, the record of each scope it
+// declares that the run builds and of each it builds nothing for, each a
+// constant of the unit, each data object it declares, in the order it lists
+// them, and, by the body, the bodies reading and subscribing to each of those
+// -- methods of its class, or bodies of a namespace's unit.
 struct ScopeDeclarations {
   ConstantId definition;
   std::vector<ConstantId> elaborated;
   std::vector<ConstantId> lexical;
+  std::vector<DescribedDataObject> data_objects;
+  std::map<CallableId, DataObjectAccess> data_object_bodies;
 
   auto operator==(const ScopeDeclarations&) const -> bool = default;
 };
+
+// What the body `body` reads or subscribes to among what `declarations`
+// describes, none where it does neither.
+[[nodiscard]] inline auto DataObjectAccessOf(
+    const ScopeDeclarations& declarations, CallableId body)
+    -> std::optional<DataObjectAccessName> {
+  const auto found = declarations.data_object_bodies.find(body);
+  if (found == declarations.data_object_bodies.end()) {
+    return std::nullopt;
+  }
+  return DataObjectAccessName{
+      .access = found->second,
+      .identifier =
+          declarations.data_objects.at(found->second.object.value).identifier};
+}
 
 // A class static property (LRM 8.9): a named, mutable type-associated storage
 // cell the class owns, shared by every instance.
@@ -77,21 +149,6 @@ struct NamedStaticProperty {
   return nullptr;
 }
 
-// The class's constructor, entered on an object already created whole (LRM
-// 8.7): every member of every class of its lineage exists and the object is of
-// its own class before any constructor runs. It is a body the class owns
-// directly rather than a member of the callable arena, since it never
-// dispatches. Every step of construction is a statement of it, in order: what
-// the compiler records for the object, the base's construction, each
-// property's start value and initializer, then the source's body.
-struct ConstructorDecl {
-  // A class this unit defines defines its construction, and an empty body is a
-  // class that constructs nothing. A class another unit defines states only
-  // what its construction takes, as it states each method's prototype, so a
-  // construction here is checked and hands over what the body is handed.
-  CallableCode code = CallableCode::Defined(diag::SourceSpan{});
-};
-
 // One behavior of an interface a class answers (LRM 8.26.2), and the
 // behavior of the class's lineage answering it, each named the way a call
 // names one. A class extending this one that takes the answering behavior over
@@ -100,16 +157,6 @@ struct ConstructorDecl {
 struct ConformingBehavior {
   VirtualSlot interface_behavior;
   std::optional<VirtualSlot> answered_by;
-};
-
-// One entry of the relation between a class and the bodies the runtime library
-// calls on its objects (LRM 18.6, and the phases a scope is driven through):
-// which callback, and the callable of the class answering it. A body answering
-// one is no method of the source and takes no part in dispatch; the library
-// finds it through the class's definition.
-struct LibraryCallbackBody {
-  support::LibraryCallback callback;
-  CallableId body;
 };
 
 // An interface class the class's own declaration names (LRM 8.26.2) that is a
@@ -137,7 +184,7 @@ struct MethodEntry {
 // 8.21).
 struct DispatchedBehavior {
   VirtualSlot behavior;
-  std::optional<CallableTarget> answered_by;
+  std::optional<CallableId> answered_by;
 };
 
 // What an object of a class answers the methods one interface declares
@@ -146,16 +193,21 @@ struct DispatchedBehavior {
 // class leaves it.
 struct InterfaceTable {
   ClassId of;
-  std::vector<std::optional<CallableTarget>> answered_by;
+  std::vector<std::optional<CallableId>> answered_by;
 };
 
 struct Class {
   // The unit that defines the class, where it is another unit's. Such a class
   // is declared here and defined there, as an imported declaration is: its
   // fields are its storage as that unit published it, the named ones first and
-  // the rest by type alone; its callables and its constructor state what each
-  // takes and, for a method, its name and dispatch, and no body; and it has no
-  // constant or record value here, which are that unit's to emit.
+  // the rest by type alone; the callables it declares and its construction
+  // state what each takes and, for a method, its name and dispatch, and no
+  // body; and it has no constant or record value here, which are that unit's
+  // to emit.
+  //
+  // What the class declares among the unit's callables is read off their
+  // owners, which name the class, so a class still being built already
+  // declares them.
   std::optional<std::string> defining_unit;
   // The path another unit reaches this class by, for a class the source
   // declared (LRM 8.3) and for what a scope of the design hierarchy published,
@@ -202,34 +254,12 @@ struct Class {
   // does not, which is what makes "did the source write this" a question the
   // class answers rather than one a consumer reads out of a spelling.
   std::vector<NamedField> named_fields;
-  // How an object of this class is built, absent for a class no object is ever
-  // built of: an interface (LRM 8.26) holds no storage and is never
-  // constructed, so it has no construction to state.
-  std::optional<ConstructorDecl> constructor;
   // The classes this one structurally owns -- the children it builds. Each
   // names a registry identity, in construction order. Ownership of the
   // declarations is the unit's registry; this is the containment relation over
   // those identities. Where a backend places a class is the backend's own
   // affair and is not stated here.
   std::vector<ClassId> contained;
-  // Every callable this class owns, in one pool: instance methods (LRM 8.6),
-  // process and lifecycle bodies, and the receiver-less static methods (LRM
-  // 8.10). A foreign function is never here: its name is program-global and
-  // belongs to no class (LRM 35.4), so the unit owns it. An instance method
-  // carries `self` as its first parameter and a static callable omits it,
-  // but both are one `CallableDecl` reached by one `CallableId` -- the
-  // receiver is a property of the signature, not a separate declaration
-  // space. The constructor is not here: it is a bare body block on the
-  // protocol, never a call target.
-  //
-  // A callable a peer body may name -- a subroutine or method, reachable by a
-  // forward or mutual call (LRM 13.7) -- takes its identity while the class's
-  // shape is declared, so the call resolves whatever order the two bodies
-  // lower in; its body arrives later, against that identity. A callable
-  // nothing names early -- a process, a continuous assign, a synthesized
-  // method -- takes identity and body together where it is built. Both kinds
-  // share this pool, which is why the pool admits the gap.
-  base::Registry<CallableDecl, CallableId> callables;
   // The class's static properties (LRM 8.9): mutable type-associated storage
   // cells shared by every instance. Peer to `fields` on the instance-versus-
   // type-associated axis: a static property is one cell owned by the type,
@@ -245,9 +275,11 @@ struct Class {
   // this unit spells where this is the class it names; a body the compiler
   // synthesized is not, because nothing spells one.
   std::vector<NamedCallable> named_callables;
-  // The bodies of this class the runtime library calls on its objects, each
-  // under the callback it answers.
-  std::vector<LibraryCallbackBody> library_callbacks;
+  // The bodies of this class the runtime library calls on its objects (LRM
+  // 18.6, and the phases a scope is driven through), each under the callback
+  // it answers. A body answering one is no method of the source and takes no
+  // part in dispatch; the library finds it through the class's definition.
+  std::map<support::LibraryCallback, CallableId> library_callbacks;
   // The body answering, of an object, the instance the class belongs to (LRM
   // 6.22), as the object keeps it; none where the class belongs to none, and
   // for an interface class, which keeps nothing.
@@ -277,20 +309,19 @@ struct Class {
   // where the class gives it none of its own.
   [[nodiscard]] auto CallbackBody(support::LibraryCallback callback) const
       -> std::optional<CallableId> {
-    for (const LibraryCallbackBody& answered : library_callbacks) {
-      if (answered.callback == callback) {
-        return answered.body;
-      }
+    const auto answered = library_callbacks.find(callback);
+    if (answered == library_callbacks.end()) {
+      return std::nullopt;
     }
-    return std::nullopt;
+    return answered->second;
   }
 
   // The library callback `callable` answers, or nothing where it answers none.
   [[nodiscard]] auto CallbackAnsweredBy(CallableId callable) const
       -> std::optional<support::LibraryCallback> {
-    for (const LibraryCallbackBody& answered : library_callbacks) {
-      if (answered.body == callable) {
-        return answered.callback;
+    for (const auto& [callback, body] : library_callbacks) {
+      if (body == callable) {
+        return callback;
       }
     }
     return std::nullopt;
@@ -306,34 +337,6 @@ struct Class {
       }
     }
     return std::nullopt;
-  }
-
-  // The callables introducing the behaviors this class adds to dispatch (LRM
-  // 8.20), or the methods an interface declares itself (LRM 8.26), in the
-  // order the class declares them. It is the one order a class's table, an
-  // interface's table and every position a dispatch names are read in,
-  // whichever layer lays the table out.
-  [[nodiscard]] auto IntroducedBehaviors() const -> std::vector<CallableId> {
-    std::vector<CallableId> introduced;
-    for (const CallableId callable : callables.Ids()) {
-      if (IntroducesSlot(callables.Get(callable).virtual_dispatch)) {
-        introduced.push_back(callable);
-      }
-    }
-    return introduced;
-  }
-
-  // Where `callable` stands among the behaviors this class introduces, or
-  // nothing where it introduces none.
-  [[nodiscard]] auto IntroductionOrdinal(CallableId callable) const
-      -> std::optional<BehaviorOrdinal> {
-    const std::vector<CallableId> introduced = IntroducedBehaviors();
-    const auto at = std::ranges::find(introduced, callable);
-    if (at == introduced.end()) {
-      return std::nullopt;
-    }
-    return BehaviorOrdinal{
-        .value = static_cast<std::uint32_t>(at - introduced.begin())};
   }
 };
 

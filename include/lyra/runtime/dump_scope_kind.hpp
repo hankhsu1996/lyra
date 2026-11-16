@@ -7,13 +7,16 @@
 
 namespace lyra::runtime {
 
-// What a scope is recorded as in a value dump (LRM 21.7.2.1 `scope_type`).
+// What a scope is recorded as in a value dump (LRM 21.7.2.1 `scope_type`),
+// and a package, which that list predates and which a reader of the format
+// takes as `package`, as GTKWave and FST's scope types do.
 enum class DumpScopeKind : std::uint8_t {
   kModule,
   kTask,
   kFunction,
   kBegin,
   kFork,
+  kPackage,
 };
 
 auto DumpScopeKindKeyword(DumpScopeKind kind) -> std::string_view;

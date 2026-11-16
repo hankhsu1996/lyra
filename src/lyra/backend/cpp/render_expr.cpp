@@ -27,13 +27,15 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_id.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/float_width.hpp"
-#include "lyra/support/linkage.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -307,17 +309,43 @@ void WriteNamedEntity(
                 CppStaticVariableName(unit.named_static_variables, r.variable));
           },
           [&](const mir::FunctionRef& r) {
-            const mir::Class& owner = unit.GetClass(r.body.owner);
-            Write(
-                out, CppClassPath(unit, r.body.owner),
-                "::", CppClassCallableName(unit, owner, r.body.slot));
+            std::visit(
+                Overloaded{
+                    [&](const mir::DeclaredByClass&) {
+                      Write(
+                          out, ClassCallablePath{
+                                   .unit = &unit, .callable = r.callable});
+                    },
+                    // `::Pkg::sv_body_3`, as a call names it.
+                    [&](const mir::DeclaredByNamespace&) {
+                      Write(
+                          out, NamespaceCallablePath{
+                                   .unit = &unit, .callable = r.callable});
+                    },
+                    [](const mir::ConstructsClass&) {
+                      throw InternalError(
+                          "backend::cpp: the address of a class's "
+                          "construction is taken -- please report this as a "
+                          "bug");
+                    },
+                    [](const mir::DeclaredByClosure&) {
+                      throw InternalError(
+                          "backend::cpp: the address of a closure's body is "
+                          "taken -- please report this as a bug");
+                    },
+                    [](const mir::DeclaredByRecord&) {
+                      throw InternalError(
+                          "backend::cpp: the address of a record's method is "
+                          "taken -- please report this as a bug");
+                    }},
+                unit.OwnerOf(r.callable));
           },
           // `&B::sv_entry_f`.
           [&](const mir::DispatchEntryRef& r) {
-            const mir::Class& owner = unit.GetClass(r.body.owner);
             Write(
-                out, "&", CppClassPath(unit, r.body.owner),
-                "::", CppDispatchEntryName(unit, owner, r.body.slot));
+                out, "&",
+                CppClassPath(unit, mir::DeclaringClassOf(unit, r.method)),
+                "::", CppDispatchEntryName(unit, r.method));
           },
           // `&lyra::runtime::EndObjectOf<C>`.
           [&](const mir::DestructorRef& r) {

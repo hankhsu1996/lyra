@@ -1,9 +1,7 @@
 #pragma once
 
 #include <compare>
-#include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -153,65 +151,30 @@ struct AssignExpr {
   ExprId value;
 };
 
-// Identity of a concrete callable at a call site: the class whose callable
-// arena declares (or implements) it, and the slot within that arena. Owner is
-// the declaring class, not the receiver's class; the two coincide when the
-// receiver's class declares the callable itself and diverge when it is
-// inherited from a base. A receiver-less callable (a DPI-C import declared in a
-// module, a static class method) has no receiver to recover its owner from, so
-// the owner is part of the symbol identity the same way; the target shape does
-// not split on whether the signature carries `self`. A backend reads the slot's
-// name and signature from this stated owner rather than deriving them from the
-// receiver's type.
+// A callable this unit declares, named by its declaration whoever declares it,
+// as clang's `DeclRefExpr` names one `FunctionDecl` and rustc's `FnDef` one
+// `DefId`: a method, static method, process or lifecycle body of a class, a
+// class's constructor, a closure's body, a record's operation, a subroutine of
+// a unit's namespace, a DPI-C import. One of another unit's is declared in this
+// unit's table too, with what that unit published, and is spelled from that.
+//
+// The unit records who declares the callable, which is the declaring class and
+// not the receiver's class where a method is inherited from a base. A backend
+// reads the callable's name and signature from its declaration rather than
+// deriving them from the receiver's type.
 //
 // This target is a concrete direct callable identity; a virtual call site does
 // not name a `CallableTarget`; virtual dispatch is a separate reference form --
 // a logical dispatch slot -- that a receiver and slot together identify.
+//
+// A closure's body is entered on what its receiver parameter states: the
+// closure itself where the body borrows it, and the closure's box where the
+// body takes it over -- a body started as a coroutine, which outlives the call
+// and ends the box when it ends.
 struct CallableTarget {
-  ClassId owner;
-  CallableId slot;
+  CallableId callable;
 
   auto operator<=>(const CallableTarget&) const
-      -> std::strong_ordering = default;
-};
-
-// The body of a closure this unit declares, as clang calls a lambda's
-// `operator()`. The call's receiver is what that body is entered on, which its
-// receiver parameter states: the closure itself where the body borrows it, and
-// the closure's box where the body takes it over -- a body started as a
-// coroutine, which outlives the call and ends the box when it ends.
-struct ClosureTarget {
-  ClosureId closure;
-
-  auto operator==(const ClosureTarget&) const -> bool = default;
-};
-
-// Identity of a symbol in the DPI-C name space (LRM 35.4): the program-global
-// linkage names imported and exported subroutines resolve to, a name space of
-// its own that no compilation-unit scope contains. It is therefore neither a
-// callable of this unit nor one of another unit's namespace, and a call names
-// it by linkage name alone. A backend renders the unqualified symbol; the
-// prototype it resolves against is published once by the unit that declares the
-// import.
-struct ForeignSymbolTarget {
-  std::string linkage_name;
-
-  auto operator==(const ForeignSymbolTarget&) const -> bool = default;
-};
-
-// Identity of a receiver-less callable of a unit's namespace -- a package
-// function or task (LRM 26.3), and the type-associated functions the compiler
-// synthesizes -- whichever unit's namespace defines it: one of another unit's
-// is declared among this unit's callables. Its identity is the position its
-// declaration sits at, which every body has; being reachable by an identifier
-// is a separate relation the namespace holds over that position, stated only
-// where the source declared one, so a synthesized body takes no part in it and
-// needs no name of the compiler's own. This is the same shape a namespace's
-// storage already has, whose pool likewise holds cells the source never named.
-struct UnitCallableTarget {
-  CallableId slot;
-
-  auto operator<=>(const UnitCallableTarget&) const
       -> std::strong_ordering = default;
 };
 
@@ -227,28 +190,6 @@ struct ExternalBringUpTarget {
   BringUpEntry entry;
 
   auto operator==(const ExternalBringUpTarget&) const -> bool = default;
-};
-
-// The constructor of a class some unit declares, entered on the object the
-// call's receiver names: how a constructor constructs its base (LRM 8.7, 8.17),
-// as Java's constructor invokes its superclass's on `this`. The object is
-// already of its own class, so nothing about it changes as the base's
-// constructor runs.
-struct ConstructorTarget {
-  ClassId cls;
-
-  auto operator==(const ConstructorTarget&) const -> bool = default;
-};
-
-// Identity of a method a record's declaration has: the structure or the union,
-// and the operation on a whole value the method answers. A record has one
-// method per operation, so the pair names the method whichever unit declares
-// the record.
-struct RecordMethodTarget {
-  RecordId record;
-  support::ValueOperation answers;
-
-  auto operator==(const RecordMethodTarget&) const -> bool = default;
 };
 
 // An operation of a type no declaration states it for, named by the type and
@@ -313,26 +254,20 @@ using FieldRef =
 using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 
 // The target of a `Direct` call -- the symbol identity. Each alternative is one
-// identity space, told apart by the table that resolves the name: a class this
-// unit names, whichever unit defines it (`CallableTarget`), a closure of this
-// unit (`ClosureTarget`), a unit's namespace, whichever unit it is
-// (`UnitCallableTarget`), the closed set of runtime library entries
-// (`BuiltinFn`), a class's constructor (`ConstructorTarget`), a declared
-// struct's or union's methods (`RecordMethodTarget`), an operation of a type
-// with no declaration, whose body is built below MIR (`TypeOperationTarget`),
-// the bodies another unit's namespace is brought up through
-// (`ExternalBringUpTarget`), and the DPI-C name space (`ForeignSymbolTarget`,
-// LRM 35.4). Nothing here says whether the call dispatches on an object -- that
-// is the callee's receiver -- and none is recovered from the receiver's runtime
-// type.
+// identity space, told apart by the table that resolves the name: the callables
+// this unit declares (`CallableTarget`), the closed set of runtime library
+// entries (`BuiltinFn`), an operation of a type with no declaration, whose body
+// is built below MIR (`TypeOperationTarget`), and the bodies another unit's
+// namespace is brought up through (`ExternalBringUpTarget`). Nothing here says
+// whether the call dispatches on an object -- that is the callee's receiver --
+// and none is recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
-    CallableTarget, ClosureTarget, UnitCallableTarget, support::BuiltinFn,
-    ConstructorTarget, RecordMethodTarget, TypeOperationTarget,
-    ExternalBringUpTarget, ForeignSymbolTarget>;
+    CallableTarget, support::BuiltinFn, TypeOperationTarget,
+    ExternalBringUpTarget>;
 
 // A direct call whose callee is settled at compile time. The single shape for
 // every direct invocation: a user method, a built-in, a subroutine of this
-// unit's namespace or of another's, a name in the DPI-C space.
+// unit's namespace or of another's, a DPI-C import.
 //
 // The object the call dispatches on rides here, distinct from user-supplied
 // `CallExpr::arguments`, so the call carries exactly the arguments the SV
@@ -434,9 +369,9 @@ struct PlacementAllocation {
 //
 // An object created with no `initializer` exists whole and of its class with
 // none of its constructors run, as a JVM `new` answers one before its
-// `invokespecial`. Whoever made the expression enters the
-// constructor by name on what it answers, having first evaluated on the object
-// what that constructor is handed (LRM 8.7, 13.5.3).
+// `invokespecial`. Whoever made the expression enters the class's construction
+// on what it answers, having first evaluated on the object what that
+// construction is handed (LRM 8.7, 13.5.3).
 struct NewExpr {
   std::optional<ExprId> initializer;
   std::optional<PlacementAllocation> placement = std::nullopt;
@@ -644,12 +579,13 @@ struct StaticVariableRef {
   auto operator==(const StaticVariableRef&) const -> bool = default;
 };
 
-// A body of a class this unit defines, named as the code it is rather than
-// called. `Expr::type` is the machine function type the body has: every
+// A callable named as the code it is rather than called, by its declaration
+// as a call names it: one of a class this unit defines, or one of a unit's
+// namespace. `Expr::type` is the machine function type the body has: every
 // parameter it takes, the receiver among them, and what it results in. Read as
 // a value it is the body's address, the way a function's name is in C.
 struct FunctionRef {
-  CallableTarget body;
+  CallableId callable;
 
   auto operator==(const FunctionRef&) const -> bool = default;
 };
@@ -669,14 +605,14 @@ struct ExternalObjectEntryRef {
   auto operator==(const ExternalObjectEntryRef&) const -> bool = default;
 };
 
-// The entry of the method `body`: the body, stated by the class defining the
+// The entry of the method `method`: the body, stated by the class defining the
 // method, that is handed the object as the root every object is and calls the
 // method on it, which is how the runtime library and a dispatching call reach a
-// method of a class they do not know. `body` is a method of a class some unit
+// method of a class they do not know. `method` is a method of a class some unit
 // declares, whichever unit defines it, so an entry is named by the method it
 // enters. `Expr::type` is the entry's machine function type.
 struct DispatchEntryRef {
-  CallableTarget body;
+  CallableId method;
 
   auto operator==(const DispatchEntryRef&) const -> bool = default;
 };
@@ -1181,15 +1117,3 @@ struct Expr {
 }
 
 }  // namespace lyra::mir
-
-// A `CallableTarget` is a value identity, so it keys hashed containers directly
-// rather than being unwrapped to its parts at the use site.
-template <>
-struct std::hash<lyra::mir::CallableTarget> {
-  auto operator()(lyra::mir::CallableTarget target) const noexcept
-      -> std::size_t {
-    const std::size_t owner = std::hash<lyra::mir::ClassId>{}(target.owner);
-    const std::size_t slot = std::hash<lyra::mir::CallableId>{}(target.slot);
-    return owner ^ (slot << 1U);
-  }
-};

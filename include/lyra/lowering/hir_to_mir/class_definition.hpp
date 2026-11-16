@@ -4,23 +4,20 @@
 #include <functional>
 #include <map>
 #include <optional>
-#include <span>
 #include <string>
 
 #include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/dumped_declaration.hpp"
 #include "lyra/hir/lowering_ref.hpp"
 #include "lyra/hir/owned_child_step.hpp"
+#include "lyra/hir/typespec.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/block_body_ordinal.hpp"
 #include "lyra/mir/builder.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/constant_id.hpp"
-#include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type_id.hpp"
 #include "lyra/support/scope_kind.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -39,13 +36,11 @@ auto BuildDefinitionRead(
 // complete.
 void StateObjectDefinitions(mir::CompilationUnit& unit);
 
-// The address, as a value of `block`, of the record of one thing a value dump
-// may record of an instance (LRM 21.7.1.2), held as a constant of the unit,
-// naming the record of the block, task or function `enclosing` it.
-auto DumpEntryAddress(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    const hir::DumpedDeclaration& declaration,
-    std::optional<mir::ConstantId> enclosing) -> mir::ExprId;
+// The typespec `type` as a constant of `unit` (LRM 37.25), its base's first
+// for an enumeration, which a data object's record names.
+auto TypespecConstant(
+    const mir::CompilationUnit& unit, const hir::Typespec& type)
+    -> mir::ConstantId;
 
 // The record of the definition every scope of the unit `hir` comes from
 // (LRM 37.10), as a constant of `unit`: the unit's source name and what the
@@ -71,11 +66,11 @@ auto LexicalScopeRecordConstant(
     std::optional<mir::ConstantId> enclosing, std::uint32_t position)
     -> mir::ConstantId;
 
-// The address, as a value of `block`, of what a package or the compilation
-// unit's scope states of itself, held as a constant of the unit.
+// The address, as a value of `block`, of what the package or the compilation
+// unit's scope `unit` is states of itself, as the unit holds it, held as a
+// constant of the unit.
 auto ScopeDeclarationsAddress(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    const mir::ScopeDeclarations& scope_declarations) -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Builder block) -> mir::ExprId;
 
 // The address of `constant`, a constant of the unit, as a value of `block`.
 auto ConstantAddressIn(

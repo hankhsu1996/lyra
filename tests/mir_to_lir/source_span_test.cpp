@@ -11,13 +11,10 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/mir/builder.hpp"
-#include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/phase.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "tests/mir_to_lir/lowered.hpp"
@@ -29,28 +26,11 @@ constexpr diag::SourceSpan kFirst{.start = 1, .end = 2};
 constexpr diag::SourceSpan kSecond{.start = 3, .end = 9};
 constexpr diag::SourceSpan kInsideSecond{.start = 5, .end = 6};
 
-auto AddEmptyBody(mir::CompilationUnit& unit) -> mir::CallableId {
-  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
-  code.result_type = unit.builtins.void_type;
-  return unit.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
-}
-
 // A namespace unit whose one named body declares two shared pointers, each a
 // statement lowered from a piece of source of its own; the object the second
 // starts out pointing at was made by a narrower piece inside it.
 auto UnitOfTwoStatements() -> mir::CompilationUnit {
-  mir::CompilationUnit unit;
-  unit.name = "U";
-  unit.phase = mir::Phase::kLegalized;
-  unit.body_name = "U";
-  unit.content = mir::BroughtUpNamespace{
-      .install_storage = AddEmptyBody(unit),
-      .initialize_storage = AddEmptyBody(unit)};
+  mir::CompilationUnit unit = NamespaceUnit();
   mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
   const mir::TypeId shared = unit.types.Intern(
@@ -75,13 +55,7 @@ auto UnitOfTwoStatements() -> mir::CompilationUnit {
   mir::Builder first(code.Body(), kFirst);
   declare(first, diag::SourceSpan{});
   declare(mir::Builder(code.Body(), kSecond), kInsideSecond);
-  const mir::CallableId id = unit.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt,
-          .defining_unit = std::nullopt});
-  unit.named_callables.push_back(mir::NamedCallable{.name = "f", .body = id});
+  AddNamedBody(unit, "f", std::move(code));
   return unit;
 }
 

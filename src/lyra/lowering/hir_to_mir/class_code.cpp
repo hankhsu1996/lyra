@@ -216,7 +216,6 @@ auto ClassHookPrototype(
     case support::LibraryCallback::kScopeResolve:
     case support::LibraryCallback::kScopeInitialize:
     case support::LibraryCallback::kScopeCreateProcesses:
-    case support::LibraryCallback::kScopeDescribe:
       break;
   }
   throw InternalError(
@@ -295,14 +294,15 @@ auto SlotPrototype(const mir::CallableCode& operation, mir::TypeId self)
 }
 
 auto EntryOf(
-    UnitLowerer& unit_lowerer, mir::ClassId id,
-    const DeclaringInstance& instance, const ClassCodePoint& point,
-    CallableForm form, mir::ClassId published) -> mir::CallableCode {
+    UnitLowerer& unit_lowerer, const DeclaringInstance& instance,
+    mir::CallableId operation_of, CallableForm form, mir::ClassId published)
+    -> mir::CallableCode {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::ClassId id = mir::DeclaringClassOf(unit, operation_of);
   const mir::CallableCode& operation =
-      unit_lowerer.ClassCodePrototypeOf(published, id, point);
+      unit_lowerer.ClassCodePrototypeOf(published, operation_of);
   const mir::CallableId slot =
-      unit_lowerer.ClassCodeSlotOf(published, id, point);
+      unit_lowerer.ClassCodeSlotOf(published, operation_of);
   mir::CallableCode entry = mir::CallableCode::Defined(diag::SourceSpan{});
   for (const mir::LocalId param : operation.params) {
     entry.params.push_back(entry.AddLocal(operation.locals.Get(param).type));
@@ -353,9 +353,7 @@ auto EntryOf(
                               ObjectAs(
                                   block, handed,
                                   unit_lowerer.SelfPointerTo(published))),
-                          .slot =
-                              mir::VirtualSlot{
-                                  .owner_class = published, .slot = slot}},
+                          .slot = mir::VirtualSlot{.introduced_by = slot}},
                   .arguments = std::move(arguments)},
           .type = entry.result_type});
   CompleteWith(unit, block, call, entry.result_type);
@@ -382,25 +380,23 @@ auto StateClassFromDeclaration(UnitLowerer& unit_lowerer, hir::ClassId cls)
   stated.conforming = unit_lowerer.ConformanceOf(cls);
   // Only a class belonging to an instance has code in the body realizing its
   // scope.
-  const auto entry = [&](const ClassCodePoint& point, CallableForm form) {
+  const auto entry = [&](mir::CallableId operation_of, CallableForm form) {
     return EntryOf(
-        unit_lowerer, id, instance, point, form,
+        unit_lowerer, instance, operation_of, form,
         unit_lowerer.PublishedClassOf(*declared.instance_scope));
   };
 
   // Every callable the class has sits at the identity the class took for it.
   const ClassCallables& callables = unit_lowerer.ClassCallablesOf(cls);
-  for (std::size_t i = 0; i < callables.count; ++i) {
-    stated.callables.Declare();
-  }
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   // Each method at its position, under its name or, for the one making a
   // covergroup the class embeds, under that covergroup's (LRM 19.4.1). One the
   // declaration leaves pure has no code anywhere (LRM 8.21) and states only
   // what its definitions take.
   for (const hir::MethodId method : declared.methods.Ids()) {
     const hir::DeclaredMethod& stated_method = declared.methods.Get(method);
-    const mir::CallableId callable{method.value};
-    const ClassCodePoint point = ClassCallableCode{.callable = callable};
+    const mir::CallableId callable =
+        unit_lowerer.ClassMethodCallable(id, method);
     stated.named_callables.push_back(
         mir::NamedCallable{
             .name = stated_method.makes.has_value()
@@ -409,37 +405,28 @@ auto StateClassFromDeclaration(UnitLowerer& unit_lowerer, hir::ClassId cls)
                                   *stated_method.makes))
                         : stated_method.prototype.name,
             .body = callable});
-    stated.callables.Define(
+    unit.StateClassCallable(
         callable,
-        mir::CallableDecl{
-            .code = hir::IsLeftAbstract(stated_method.dispatch)
-                        ? PrototypeOf(
-                              unit_lowerer, stated_method.prototype,
-                              stated.self_pointer_type)
-                        : entry(point, CallableFormOf(stated_method.dispatch)),
-            .foreign = std::nullopt,
-            .virtual_dispatch = unit_lowerer.DispatchRoleOf(
-                hir::ClassMethodTarget{.owner = cls, .method = method}),
-            .defining_unit = std::nullopt});
+        unit_lowerer.DispatchRoleOf(
+            hir::ClassMethodTarget{.owner = cls, .method = method}),
+        hir::IsLeftAbstract(stated_method.dispatch)
+            ? PrototypeOf(
+                  unit_lowerer, stated_method.prototype,
+                  stated.self_pointer_type)
+            : entry(callable, CallableFormOf(stated_method.dispatch)));
   }
   // What `randomize()` asks of the class (LRM 18.6), the form a waited
   // evaluation calls of each function (LRM 9.4.2), and which instances an
   // object of it is of (LRM 6.22).
   const auto define = [&](mir::CallableId callable, mir::CallableCode code) {
-    stated.callables.Define(
-        callable, mir::CallableDecl{
-                      .code = std::move(code),
-                      .foreign = std::nullopt,
-                      .virtual_dispatch = std::nullopt,
-                      .defining_unit = std::nullopt});
+    unit.StateCallable(callable, std::move(code));
   };
   const auto define_entry = [&](mir::CallableId callable, CallableForm form) {
-    define(callable, entry(ClassCallableCode{.callable = callable}, form));
+    define(callable, entry(callable, form));
   };
   if (callables.hooks.has_value()) {
     for (const auto& [body, callback] : callables.hooks->Callbacks()) {
-      stated.library_callbacks.push_back(
-          mir::LibraryCallbackBody{.callback = callback, .body = body});
+      stated.library_callbacks.emplace(callback, body);
       define_entry(body, CallableForm::kInstanceMember);
     }
   }
@@ -449,74 +436,79 @@ auto StateClassFromDeclaration(UnitLowerer& unit_lowerer, hir::ClassId cls)
   if (const std::optional<mir::CallableId> kept =
           callables.declaring_instance) {
     stated.declaring_instance = *kept;
-    define(
-        *kept,
-        DeclaringInstanceBody(unit_lowerer.Unit(), id, stated, instance));
+    define(*kept, DeclaringInstanceBody(unit, id, stated, instance));
   }
   stated.interface_reaches = callables.reaches;
   for (const mir::InterfaceReach& named : callables.reaches) {
     define_entry(named.reach, CallableForm::kTypeAssociated);
   }
   if (declared.constructor.has_value()) {
-    stated.constructor = mir::ConstructorDecl{
-        .code = entry(ClassConstructorCode{}, CallableForm::kConstructor)};
+    define_entry(unit_lowerer.ClassConstructor(id), CallableForm::kConstructor);
   }
   return stated;
 }
 
+void DefineCompiledClass(
+    UnitLowerer& unit_lowerer, mir::ClassId id, mir::Class cls,
+    CompiledClassCode compiled) {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  if (unit.classes.IsDefined(id)) {
+    return;
+  }
+  // The part each callable takes in dispatch its class stated when it took
+  // it, so only the code is left to state.
+  for (auto& [callable, code] : compiled.callables) {
+    unit.StateCallable(callable, std::move(code));
+  }
+  unit.DefineClass(id, std::move(cls));
+}
+
 void MoveCodeIntoBody(
-    UnitLowerer& unit_lowerer, mir::ClassId id, const mir::Class& compiled,
+    UnitLowerer& unit_lowerer, mir::ClassId id, CompiledClassCode compiled,
     const WalkFrame& declaring_frame, mir::ClassId published) {
-  mir::Class& body = *declaring_frame.current_class.cls;
-  const auto move_into_body = [&](const ClassCodePoint& point,
+  const mir::Class& body = *declaring_frame.current_class.cls;
+  const mir::ClassId body_id = declaring_frame.current_class.id;
+  const auto move_into_body = [&](mir::CallableId operation_of,
                                   mir::CallableCode code) {
     // What every override takes was read off the class's declaration, so the
     // code this body compiled has to take and answer what that states.
     const mir::CallableCode& operation =
-        unit_lowerer.ClassCodePrototypeOf(published, id, point);
+        unit_lowerer.ClassCodePrototypeOf(published, operation_of);
     if (!SameSignature(code, operation)) {
-      const std::string point_text = std::visit(
-          Overloaded{
-              [](const ClassConstructorCode&) {
-                return std::string{"the constructor"};
-              },
-              [](const ClassCallableCode& callable) {
-                return std::format("callable {}", callable.callable.value);
-              }},
-          point);
       const std::string code_text = SignatureText(code);
       const std::string operation_text = SignatureText(operation);
       throw InternalError(
           std::format(
-              "MoveCodeIntoBody: the code a body compiled for {} of class {} "
-              "takes {} where the class's declaration states {} -- please "
-              "report this as a bug",
-              point_text, id.value, code_text, operation_text));
+              "MoveCodeIntoBody: the code a body compiled for callable {} of "
+              "class {} takes {} where the class's declaration states {} -- "
+              "please report this as a bug",
+              operation_of.value, id.value, code_text, operation_text));
     }
     const mir::LocalId self = code.AddLocal(body.self_pointer_type);
     code.params.insert(code.params.begin(), self);
     code.receiver = self;
-    body.callables.Add(
-        mir::CallableDecl{
-            .code = std::move(code),
-            .foreign = std::nullopt,
-            .virtual_dispatch =
-                mir::OverridesVirtualSlot{
-                    .overridden =
-                        mir::VirtualSlot{
-                            .owner_class = published,
-                            .slot = unit_lowerer.ClassCodeSlotOf(
-                                published, id, point)}},
-            .defining_unit = std::nullopt});
+    unit_lowerer.Unit().AddClassCallable(
+        body_id,
+        mir::OverridesVirtualSlot{
+            .overridden =
+                mir::VirtualSlot{
+                    .introduced_by =
+                        unit_lowerer.ClassCodeSlotOf(published, operation_of)}},
+        std::move(code));
   };
 
-  if (compiled.constructor.has_value()) {
-    move_into_body(ClassConstructorCode{}, compiled.constructor->code);
+  // A copy, since moving code into the body takes callables of the unit.
+  const mir::DeclaredCallables declared = unit_lowerer.Unit().CallablesOf(id);
+  if (declared.constructor.has_value()) {
+    if (const auto at = compiled.callables.find(*declared.constructor);
+        at != compiled.callables.end()) {
+      move_into_body(*declared.constructor, std::move(at->second));
+    }
   }
-  for (const mir::CallableId callable : compiled.callables.Ids()) {
-    const mir::CallableCode& code = compiled.callables.Get(callable).code;
-    if (code.body.has_value()) {
-      move_into_body(ClassCallableCode{.callable = callable}, code);
+  for (const mir::CallableId callable : declared.callables) {
+    const auto at = compiled.callables.find(callable);
+    if (at != compiled.callables.end() && at->second.body.has_value()) {
+      move_into_body(callable, std::move(at->second));
     }
   }
 }
