@@ -309,6 +309,7 @@ void ReadMemGridCore(
 
   const std::vector<std::string> tokens = Tokenize(*text);
   std::size_t inner = 0;
+  bool reported_outside = false;
   for (const std::string& token : tokens) {
     if (IsAddress(token)) {
       const auto a = ParseAtAddress(runtime, base, token);
@@ -329,10 +330,19 @@ void ReadMemGridCore(
     // An address is an index into the memory (LRM 21.4), and a write at one
     // the memory does not hold performs no operation (LRM 7.4.5), so a range
     // reaching past the memory loads what lies inside it and still reads the
-    // words the file gives the rest.
+    // words the file gives the rest. That clause lets a tool warn, and a load
+    // is told once, at its first word stored nowhere: a file addressing bytes
+    // of a memory of wider rows loses all of it this way (LRM 21.4.3).
     if (!AdmitWord(runtime, values, base, token)) return;
     if (cursor >= top_lo && cursor <= top_hi) {
       store(cursor, inner, token);
+    } else if (!reported_outside) {
+      Warn(
+          runtime,
+          "'{}' read a word for address {}, which the memory does not hold; "
+          "no word for an address outside {} to {} is stored",
+          TaskName(base, Direction::kLoad), cursor, top_lo, top_hi);
+      reported_outside = true;
     }
     if (++inner == inner_count) {
       cursor += step;

@@ -113,8 +113,9 @@ using RenderMemoryWord =
 // `inner_count == 1` case; a multidimensional one passes its inner leaf span.
 // An `@address` repositions the highest-dimension cursor and resets the inner
 // ordinal, and a highest-dimension word the file leaves partly filled keeps
-// its remaining leaves. A token that is no word of `values` is an error after
-// which nothing more is read.
+// its remaining leaves. A word at an address outside `top_lo..top_hi` is stored
+// nowhere, and the first such word is reported as a warning. A token that is no
+// word of `values` is an error after which nothing more is read.
 void ReadMemGridCore(
     RuntimeEffects& runtime, const value::String& filename, unsigned base,
     std::int64_t top_lo, std::int64_t top_hi, std::size_t inner_count,
