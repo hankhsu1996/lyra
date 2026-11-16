@@ -159,11 +159,10 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 """,
-    commit = "f63e557d638d7305b44bc1d6c58170bd2cdec3c8",
+    commit = "7c2adb0e88750f68493fad7291a7a2f39dd66f93",
     patch_strip = 1,
     patches = [
         "//third_party/rtlmeter:caliptra_memory_preload.patch",
-        "//third_party/rtlmeter:veer_el2_error_injection_mode.patch",
     ],
     remote = "https://github.com/verilator/rtlmeter.git",
 )
